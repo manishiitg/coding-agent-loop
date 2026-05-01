@@ -919,6 +919,32 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     return () => { clearTimeout(timer1); clearTimeout(timer2) }
   }, [targetTabId, scrollToBottom, setAutoScroll])
 
+  // Cross-mode switchers can change mode/preset before the target ChatArea has
+  // fully rendered. Listen for an explicit request and retry shortly after.
+  useEffect(() => {
+    const handleScrollRequest = () => {
+      setAutoScroll(true)
+      scrollToBottom('instant')
+      const timer1 = setTimeout(() => scrollToBottom('instant'), 80)
+      const timer2 = setTimeout(() => scrollToBottom('instant'), 350)
+      return () => {
+        clearTimeout(timer1)
+        clearTimeout(timer2)
+      }
+    }
+
+    let cleanupTimers: (() => void) | null = null
+    const listener = () => {
+      cleanupTimers?.()
+      cleanupTimers = handleScrollRequest()
+    }
+    window.addEventListener('chat-scroll-to-bottom', listener)
+    return () => {
+      cleanupTimers?.()
+      window.removeEventListener('chat-scroll-to-bottom', listener)
+    }
+  }, [scrollToBottom, setAutoScroll])
+
   // Auto-scroll when streaming text first appears (brings the "Generating..." card into view)
   const hasStreamingText = useChatStore(state =>
     activeSessionId ? !!state.streamingText[activeSessionId] : false

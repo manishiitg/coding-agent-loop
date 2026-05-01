@@ -2491,7 +2491,7 @@ Rules:
 - **3 ways to schedule a workflow:**
   1. **Execute** (mode=workflow, default) — runs the orchestrator directly, no LLM involved. Fast, no messages needed.
   2. **Run** (mode=workshop, workshop_mode=runner) — LLM-driven execution with per-step notifications. Requires `+"`messages`"+` array (e.g. a single message: "Run the full workflow using run_full_workflow").
-  3. **Optimize** (mode=workshop, workshop_mode=optimizer) — LLM-driven optimization run. Requires `+"`messages`"+` array instructing the agent to optimize steps one-by-one.
+  3. **Optimize** (mode=workshop, workshop_mode=optimizer) — LLM-driven optimizer run. Requires `+"`messages`"+` array with exact group scope, `+"`runs/iteration-0`"+` evidence scope, active-experiment guards when metrics exist, and bounded stop conditions.
 - `+"`messages`"+` is an ordered queue of strings sent to the workshop LLM one-by-one as user turns. The LLM completes all tool calls triggered by message N before message N+1 is sent.
 - **How to write messages:**
   - Write each message as a plain instruction, like you would type in chat: "Run the full workflow", "Generate the final report"
@@ -2504,9 +2504,9 @@ Rules:
   - Provide all required parameters upfront in the message (group names, run folders, step IDs) so the agent never needs to ask
   - Tell the agent to skip or use defaults for anything unclear rather than pausing to ask
   - Never include open-ended questions or "let me know" style instructions
-  - Bad: "Run the workflow and ask me which steps to optimize" — Good: "Run the workflow, then optimize all unoptimized steps automatically"
-- **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message to optimize steps **one by one** after each step completes. Example message: "Run the full workflow using run_full_workflow. After each step completes, if it succeeded and is not yet optimized, call optimize_step and apply fixes. If a step fails, retry it once after fixing — if it fails again, skip it and move to the next step. Do NOT retry the same step more than 2 times to avoid infinite loops."
-- **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) skip already-optimized steps, (2) limit retries per step to 2 attempts max, (3) move on to the next step after repeated failures instead of looping, (4) stop after all steps have been attempted once.
+  - Bad: "Run the workflow and ask me which steps to optimize" — Good: "Review runs/iteration-0 for group-1, check active experiments, then choose optimize/harden/replan/propose_experiment using the scheduled decision model. Log no action if nothing is ready."
+- **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message around the exact recurring job. For `+"`/improve-continuously`"+`, the message should name the configured group_names, use only `+"`runs/iteration-0`"+` evidence for those groups, check active experiments before proposing more, and route report-layout work to Reporting mode.
+- **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) use bounded evidence review, (2) open at most one experiment per fire in experiment mode, (3) avoid fresh workflow reruns unless verification is explicitly needed, (4) stop after recording what was applied, proposed, or deferred.
 
 {{end}}
 
@@ -7999,7 +7999,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. The schedule will automatically run the workflow at the specified times. Use mode='workshop' with messages to drive execution via the LLM (with per-step notifications). For optimizer schedules (workshop_mode='optimizer'), the message MUST instruct the agent to optimize steps one-by-one after each completion, skip already-optimized steps, limit retries to 2 per step, and move on after repeated failures to prevent infinite loops.",
+		"Create a new cron schedule for this workflow. The schedule will automatically run the workflow at the specified times. Use mode='workshop' with messages to drive execution via the LLM (with per-step notifications). For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, iteration-0 evidence scope, active-experiment guards when metrics are present, and bounded stop conditions so unattended runs cannot loop indefinitely.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8134,8 +8134,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Workshop builder mode: 'runner' (default) or 'optimizer'.",
-					"enum":        []string{"runner", "optimizer"},
+					"description": "Workshop builder mode: 'run' (default) or 'optimizer'.",
+					"enum":        []string{"run", "optimizer"},
 				},
 			},
 			"required": []string{"job_id"},

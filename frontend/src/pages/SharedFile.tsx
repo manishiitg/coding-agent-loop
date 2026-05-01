@@ -45,6 +45,7 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
   const fileName = filePath?.split('/').pop() || 'Unknown file'
   const lowerPath = (filePath || '').toLowerCase()
   const isVideoFile = lowerPath.endsWith('.mp4') || lowerPath.endsWith('.webm') || lowerPath.endsWith('.mov')
+  const isAudioFile = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.flac', '.opus'].some(ext => lowerPath.endsWith(ext))
   const isImageFile = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico'].some(ext => lowerPath.endsWith(ext))
 
   useEffect(() => {
@@ -76,7 +77,7 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
           throw new Error(resp.status === 404 ? 'File not found' : `Failed to load file (${resp.status})`)
         }
 
-        if (isVideoFile || isImageFile) {
+        if (isVideoFile || isAudioFile || isImageFile) {
           const blob = await resp.blob()
           const objectUrl = URL.createObjectURL(blob)
           setBinaryUrl(objectUrl)
@@ -100,7 +101,7 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
         return null
       })
     }
-  }, [encodedPath, filePath, uid, isVideoFile, isImageFile])
+  }, [encodedPath, filePath, uid, isVideoFile, isAudioFile, isImageFile])
 
   if (loading) {
     return (
@@ -159,6 +160,14 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
       return (
         <div className="h-[calc(100vh-180px)] w-full flex items-center justify-center bg-black rounded-lg">
           <video controls autoPlay className="max-h-full max-w-full" src={binaryUrl} />
+        </div>
+      )
+    }
+
+    if (isAudioFile && binaryUrl) {
+      return (
+        <div className="min-h-[240px] w-full flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 p-8 dark:border-gray-700 dark:bg-gray-900">
+          <audio controls autoPlay className="w-full max-w-3xl" src={binaryUrl} />
         </div>
       )
     }

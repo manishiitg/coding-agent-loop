@@ -4136,6 +4136,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			} else {
 				underlyingAgent.AppendSystemPrompt(GetWorkspaceMap(shellRoot, perUserChatsFolder, perUserMemoryFolder))
 			}
+			if capabilitySection := buildLLMCapabilityPromptSection(r.Context()); capabilitySection != "" {
+				underlyingAgent.AppendSystemPrompt(capabilitySection)
+				log.Printf("[LLM TOOLS] Added LLM/media capability snapshot to system prompt")
+			}
 
 			// 3. CONTEXT — employees, workflow references, skills (what the agent needs to know).
 			if !isWorkflowPhase {
@@ -4533,6 +4537,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 				// Re-append supplementary prompts after system prompt override
 				// (ClearAppendedSystemPrompts above wiped browser/GWS/secrets instructions)
+				if capabilitySection := buildLLMCapabilityPromptSection(r.Context()); capabilitySection != "" {
+					underlyingAgent.AppendSystemPrompt(capabilitySection)
+					log.Printf("[WORKFLOW_PHASE] Appended LLM/media capability snapshot to %s system prompt", workflowPhaseID)
+				}
 				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder || workflowPhaseID == workflowtypes.WorkflowStatusEvalBuilder {
 					// Secrets
 					phaseSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)

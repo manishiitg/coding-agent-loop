@@ -796,7 +796,7 @@ export default function Workspace({
   // Check if a file is a viewable binary format that we can render inline.
   const isViewableBinaryFile = (fileName: string): boolean => {
     const ext = fileName.split('.').pop()?.toLowerCase() || ''
-    return ['xls', 'xlsx', 'docx', 'pdf', 'webm', 'mp4', 'mov'].includes(ext)
+    return ['xls', 'xlsx', 'docx', 'pdf', 'webm', 'mp4', 'mov', 'mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'flac', 'opus'].includes(ext)
   }
 
   // Handle file click - fetch content and show in chat area

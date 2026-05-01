@@ -22,12 +22,6 @@
 // user is editing shouldn't break the whole report; bad widgets should just not render.
 
 import type {
-  ReportCostsMetric,
-  ReportCostsScope,
-  ReportCostsView,
-  ReportEvalsMetric,
-  ReportEvalsView,
-  ReportRunsView,
   ParsedReportPlan,
   ReportAlertSeverity,
   ReportChartType,
@@ -54,18 +48,7 @@ const KNOWN_ALERT_SEVERITIES: ReportAlertSeverity[] = ['info', 'warning', 'error
 const KNOWN_ALERT_SEVERITY_SET = new Set<string>(KNOWN_ALERT_SEVERITIES)
 const KNOWN_PIVOT_AGGREGATES: ReportPivotAggregate[] = ['sum', 'avg', 'count', 'min', 'max', 'first']
 const KNOWN_PIVOT_AGGREGATE_SET = new Set<string>(KNOWN_PIVOT_AGGREGATES)
-const KNOWN_COSTS_SCOPES: ReportCostsScope[] = ['phase', 'execution', 'evaluation', 'all']
-const KNOWN_COSTS_SCOPE_SET = new Set<string>(KNOWN_COSTS_SCOPES)
-const KNOWN_COSTS_VIEWS: ReportCostsView[] = ['summary', 'stage-breakdown', 'run-table', 'step-table', 'model-table']
-const KNOWN_COSTS_VIEW_SET = new Set<string>(KNOWN_COSTS_VIEWS)
-const KNOWN_COSTS_METRICS: ReportCostsMetric[] = ['cost', 'total_tokens', 'input_tokens', 'output_tokens', 'llm_calls']
-const KNOWN_COSTS_METRIC_SET = new Set<string>(KNOWN_COSTS_METRICS)
-const KNOWN_EVALS_VIEWS: ReportEvalsView[] = ['summary', 'run-chart', 'run-table', 'step-table']
-const KNOWN_EVALS_VIEW_SET = new Set<string>(KNOWN_EVALS_VIEWS)
-const KNOWN_EVALS_METRICS: ReportEvalsMetric[] = ['score_percentage', 'total_score']
-const KNOWN_EVALS_METRIC_SET = new Set<string>(KNOWN_EVALS_METRICS)
-const KNOWN_RUNS_VIEWS: ReportRunsView[] = ['summary', 'duration-chart', 'status-chart', 'table']
-const KNOWN_RUNS_VIEW_SET = new Set<string>(KNOWN_RUNS_VIEWS)
+const LEGACY_EMPTY_WIDGET_KIND_SET = new Set<string>(['costs', 'evals', 'runs'])
 
 // Parses a comma-separated list of field names into a trimmed non-empty array.
 // Returns undefined when the resulting list is empty so callers can drop the key.
@@ -274,21 +257,19 @@ function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
   if (!raw || typeof raw !== 'object') return null
   const source = raw as Record<string, unknown>
   const kind = typeof source.kind === 'string' ? source.kind.toLowerCase() : ''
+  if (isLegacyEmptyWidgetKind(kind)) return parseLegacyEmptyWidget(source)
   if (!isWidgetKind(kind)) return null
 
   const widget: ReportWidget = {
     kind,
     hidden: source.hidden === true ? true : undefined,
-    source: kind === 'costs' || kind === 'evals' || kind === 'runs'
-      ? ''
-      : typeof source.source === 'string'
-        ? source.source
-        : '',
+    source: typeof source.source === 'string' ? source.source : '',
     path: normalizePath(typeof source.path === 'string' ? source.path : ''),
   }
-  if (kind !== 'costs' && kind !== 'evals' && kind !== 'runs' && !widget.source) return null
+  if (!widget.source) return null
 
   if (typeof source.filter === 'string') widget.filter = source.filter
+  if (typeof source.query === 'string') widget.query = source.query
   if (typeof source.title === 'string') widget.title = source.title
   if (typeof source.description === 'string') widget.description = source.description
   if (typeof source.height === 'number' && Number.isFinite(source.height) && source.height > 0) widget.height = Math.trunc(source.height)
@@ -368,21 +349,6 @@ function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
       const colors = source.heatmapColors.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
       if (colors.length >= 2) widget.heatmapColors = [colors[0], colors[1]]
     }
-  } else if (widget.kind === 'costs') {
-    if (typeof source.costsScope === 'string' && KNOWN_COSTS_SCOPE_SET.has(source.costsScope.toLowerCase())) widget.costsScope = source.costsScope.toLowerCase() as ReportCostsScope
-    if (typeof source.costsView === 'string' && KNOWN_COSTS_VIEW_SET.has(source.costsView.toLowerCase())) widget.costsView = source.costsView.toLowerCase() as ReportCostsView
-    if (typeof source.costsMetric === 'string' && KNOWN_COSTS_METRIC_SET.has(source.costsMetric.toLowerCase())) widget.costsMetric = source.costsMetric.toLowerCase() as ReportCostsMetric
-    if (typeof source.runFolder === 'string') widget.runFolder = source.runFolder
-    if (typeof source.group === 'string') widget.group = source.group
-  } else if (widget.kind === 'evals') {
-    if (typeof source.evalsView === 'string' && KNOWN_EVALS_VIEW_SET.has(source.evalsView.toLowerCase())) widget.evalsView = source.evalsView.toLowerCase() as ReportEvalsView
-    if (typeof source.evalsMetric === 'string' && KNOWN_EVALS_METRIC_SET.has(source.evalsMetric.toLowerCase())) widget.evalsMetric = source.evalsMetric.toLowerCase() as ReportEvalsMetric
-    if (typeof source.runFolder === 'string') widget.runFolder = source.runFolder
-    if (typeof source.group === 'string') widget.group = source.group
-  } else if (widget.kind === 'runs') {
-    if (typeof source.runsView === 'string' && KNOWN_RUNS_VIEW_SET.has(source.runsView.toLowerCase())) widget.runsView = source.runsView.toLowerCase() as ReportRunsView
-    if (typeof source.runFolder === 'string') widget.runFolder = source.runFolder
-    if (typeof source.group === 'string') widget.group = source.group
   }
 
   if (widget.kind === 'chart' || widget.kind === 'table' || widget.kind === 'cards') {
@@ -442,6 +408,10 @@ function parseWidgetBlock(kind: string, body: string[]): ReportEntry | null {
     if (row.widgets.length === 0) return null
     return { kind: 'row', row }
   }
+  if (isLegacyEmptyWidgetKind(kind)) {
+    const widget = parseLegacyEmptyWidget(parseKeyValueFields(body))
+    return { kind: 'single', widget }
+  }
   if (!isWidgetKind(kind)) return null
   const widget = parseKeyValueWidget(kind, body)
   if (!widget) return null
@@ -457,11 +427,46 @@ function isWidgetKind(kind: string): kind is ReportWidgetKind {
     kind === 'cards' ||
     kind === 'stat' ||
     kind === 'alert' ||
-    kind === 'pivot' ||
-    kind === 'costs' ||
-    kind === 'evals' ||
-    kind === 'runs'
+    kind === 'pivot'
   )
+}
+
+function isLegacyEmptyWidgetKind(kind: string): boolean {
+  return LEGACY_EMPTY_WIDGET_KIND_SET.has(kind)
+}
+
+function parseLegacyEmptyWidget(source: Record<string, unknown>): ReportWidget {
+  const widget: ReportWidget = {
+    kind: 'markdown',
+    hidden: source.hidden === true ? true : undefined,
+    source: '',
+    path: '',
+  }
+  if (typeof source.title === 'string') widget.title = source.title
+  if (typeof source.description === 'string') widget.description = source.description
+  if (typeof source.height === 'number' && Number.isFinite(source.height) && source.height > 0) {
+    widget.height = Math.trunc(source.height)
+  } else if (typeof source.height === 'string') {
+    const height = parsePositiveInt(source.height)
+    if (height !== undefined) widget.height = height
+  }
+  const widgetLayout = parseWidgetLayout(source.layout)
+  if (widgetLayout) widget.layout = widgetLayout
+  return widget
+}
+
+function parseKeyValueFields(body: string[]): Record<string, string> {
+  const fields: Record<string, string> = {}
+  for (const line of body) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const sepIdx = trimmed.indexOf(':')
+    if (sepIdx <= 0) continue
+    const key = trimmed.slice(0, sepIdx).trim().toLowerCase()
+    const value = trimmed.slice(sepIdx + 1).trim()
+    if (value) fields[key] = value
+  }
+  return fields
 }
 
 // Parses `key: value` lines inside a widget block. Unknown keys are ignored. `source` is
@@ -476,23 +481,15 @@ function isWidgetKind(kind: string): kind is ReportWidgetKind {
 //   x_axis: <field>                           (chart only)
 //   y_axis: <field>                           (chart only)
 function parseKeyValueWidget(kind: ReportWidgetKind, body: string[]): ReportWidget | null {
-  const fields: Record<string, string> = {}
-  for (const line of body) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const sepIdx = trimmed.indexOf(':')
-    if (sepIdx <= 0) continue
-    const key = trimmed.slice(0, sepIdx).trim().toLowerCase()
-    const value = trimmed.slice(sepIdx + 1).trim()
-    if (value) fields[key] = value
-  }
-  if (kind !== 'costs' && kind !== 'evals' && kind !== 'runs' && !fields.source) return null
+  const fields = parseKeyValueFields(body)
+  if (!fields.source) return null
   const widget: ReportWidget = {
     kind,
-    source: kind === 'costs' || kind === 'evals' || kind === 'runs' ? '' : fields.source,
+    source: fields.source,
     path: normalizePath(fields.path),
   }
   if (fields.filter) widget.filter = fields.filter
+  if (fields.query) widget.query = fields.query
   if (fields.show_if || fields.showif) widget.showIf = fields.show_if || fields.showif
   applyOptionalFields(widget, fields)
   return widget
@@ -618,39 +615,6 @@ function applyOptionalFields(widget: ReportWidget, fields: Record<string, string
       const list = parseColorsField(fields.heatmap_colors || fields.heatmapcolors)
       if (list && list.length >= 2) widget.heatmapColors = [list[0], list[1]]
     }
-  } else if (widget.kind === 'costs') {
-    if (fields.scope) {
-      const scope = fields.scope.toLowerCase()
-      if (KNOWN_COSTS_SCOPE_SET.has(scope)) widget.costsScope = scope as ReportCostsScope
-    }
-    if (fields.view) {
-      const view = fields.view.toLowerCase()
-      if (KNOWN_COSTS_VIEW_SET.has(view)) widget.costsView = view as ReportCostsView
-    }
-    if (fields.metric) {
-      const metric = fields.metric.toLowerCase()
-      if (KNOWN_COSTS_METRIC_SET.has(metric)) widget.costsMetric = metric as ReportCostsMetric
-    }
-    if (fields.run_folder || fields.runfolder) widget.runFolder = fields.run_folder || fields.runfolder
-    if (fields.group) widget.group = fields.group
-  } else if (widget.kind === 'evals') {
-    if (fields.view) {
-      const view = fields.view.toLowerCase()
-      if (KNOWN_EVALS_VIEW_SET.has(view)) widget.evalsView = view as ReportEvalsView
-    }
-    if (fields.metric) {
-      const metric = fields.metric.toLowerCase()
-      if (KNOWN_EVALS_METRIC_SET.has(metric)) widget.evalsMetric = metric as ReportEvalsMetric
-    }
-    if (fields.run_folder || fields.runfolder) widget.runFolder = fields.run_folder || fields.runfolder
-    if (fields.group) widget.group = fields.group
-  } else if (widget.kind === 'runs') {
-    if (fields.view) {
-      const view = fields.view.toLowerCase()
-      if (KNOWN_RUNS_VIEW_SET.has(view)) widget.runsView = view as ReportRunsView
-    }
-    if (fields.run_folder || fields.runfolder) widget.runFolder = fields.run_folder || fields.runfolder
-    if (fields.group) widget.group = fields.group
   }
 
   // Color options — apply to chart, table, and cards; ignored for text widgets.
@@ -695,8 +659,6 @@ function normalizePath(raw: string | undefined): string {
 
 // Parses a `widget:row` body. Each non-blank non-comment line is expected to be:
 //   - {kind} | source: {path} | path: {key} [ | filter: {expr} ]
-// Costs / evals / runs widgets are the exception: they read from dedicated APIs, so
-// `source` is omitted and the row can be as small as `costs | view: summary`.
 // The leading `-` is optional to tolerate agent-edited variants.
 function parseRowBlock(body: string[]): ReportWidgetRow {
   const widgets: ReportWidget[] = []
@@ -705,9 +667,10 @@ function parseRowBlock(body: string[]): ReportWidgetRow {
     if (!line || line.startsWith('#')) continue
 
     const parts = line.split('|').map(p => p.trim()).filter(Boolean)
-    if (parts.length < 2) continue
+    if (parts.length < 1) continue
     const kind = parts[0].toLowerCase()
-    if (!isWidgetKind(kind)) continue
+    const isLegacyEmpty = isLegacyEmptyWidgetKind(kind)
+    if (!isLegacyEmpty && !isWidgetKind(kind)) continue
 
     const fields: Record<string, string> = {}
     for (let p = 1; p < parts.length; p++) {
@@ -718,13 +681,19 @@ function parseRowBlock(body: string[]): ReportWidgetRow {
       const value = segment.slice(sepIdx + 1).trim()
       if (value) fields[key] = value
     }
-    if (kind !== 'costs' && kind !== 'evals' && kind !== 'runs' && !fields.source) continue
+    if (isLegacyEmpty) {
+      widgets.push(parseLegacyEmptyWidget(fields))
+      continue
+    }
+    if (!isWidgetKind(kind)) continue
+    if (!fields.source) continue
     const widget: ReportWidget = {
       kind,
-      source: kind === 'costs' || kind === 'evals' || kind === 'runs' ? '' : fields.source,
+      source: fields.source,
       path: normalizePath(fields.path),
     }
     if (fields.filter) widget.filter = fields.filter
+    if (fields.query) widget.query = fields.query
     if (fields.show_if || fields.showif) widget.showIf = fields.show_if || fields.showif
     applyOptionalFields(widget, fields)
     widgets.push(widget)

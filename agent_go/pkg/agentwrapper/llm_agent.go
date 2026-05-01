@@ -820,18 +820,46 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		// This is critical for CLI providers (Gemini CLI, Claude Code) where the entire
 		// agentic loop runs inside the CLI process — without this, the user sees nothing
 		// until the full response is ready.
-		streamedAny := false
-		streamedChunks := 0
+		var streamedAny atomic.Bool
+		var streamedChunks atomic.Int64
+		heartbeatStop := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(8 * time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-heartbeatStop:
+					return
+				case <-ticker.C:
+					if streamedAny.Load() {
+						continue
+					}
+					label := "Agent"
+					if strings.Contains(strings.ToLower(w.config.ModelID), "kimi") {
+						label = "Kimi"
+					}
+					w.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
+						BaseEventData: events.BaseEventData{Timestamp: time.Now()},
+						Content:       fmt.Sprintf("⏳ %s is still working...", label),
+						ChunkIndex:    -1,
+						IsToolCall:    false,
+					})
+				}
+			}
+		}()
 
 		w.mu.Lock()
 		prevCallback := w.agent.StreamingCallback
 		w.agent.StreamingCallback = func(chunk llmtypes.StreamChunk) {
 			if chunk.Type == llmtypes.StreamChunkTypeContent && chunk.Content != "" && !chanClosed.Load() {
-				if !streamedAny {
+				if !streamedAny.Load() {
 					w.logger.Info(fmt.Sprintf("[STREAMING] First real-time chunk received (len=%d), streaming callback active", len(chunk.Content)))
 				}
-				streamedAny = true
-				streamedChunks++
+				streamedAny.Store(true)
+				streamedChunks.Add(1)
 				select {
 				case <-ctx.Done():
 				case textChan <- chunk.Content:
@@ -853,11 +881,12 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 
 		// Restore previous callback on exit
 		defer func() {
+			close(heartbeatStop)
 			w.mu.Lock()
 			w.agent.StreamingCallback = prevCallback
 			w.mu.Unlock()
-			if streamedAny {
-				w.logger.Info(fmt.Sprintf("[STREAMING] Streamed %d chunks in real-time", streamedChunks))
+			if streamedAny.Load() {
+				w.logger.Info(fmt.Sprintf("[STREAMING] Streamed %d chunks in real-time", streamedChunks.Load()))
 			} else {
 				w.logger.Info("[STREAMING] No real-time chunks received, will send full response")
 			}
@@ -1019,7 +1048,7 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		// Only send the full response if we didn't already stream it via callback.
 		// For non-streaming providers (standard API), no callback fires and we send the full text.
 		// For CLI providers with streaming, chunks were already sent incrementally.
-		if !streamedAny && response != "" {
+		if !streamedAny.Load() && response != "" {
 			select {
 			case <-ctx.Done():
 				return

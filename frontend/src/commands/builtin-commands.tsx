@@ -126,7 +126,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'improve-continuously',
-    description: 'Set up recurring workflow run + slower recurring optimizer improvement',
+    description: 'Set up recurring workflow run + frequent lightweight optimizer improvement',
     icon: <Bot className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',

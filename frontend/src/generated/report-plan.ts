@@ -34,10 +34,11 @@ export interface ReportPlanDocumentEntry {
 export interface ReportPlanDocumentWidget {
   id?: string;
   hidden?: boolean;
-  kind: "text" | "markdown" | "chart" | "table" | "cards" | "stat" | "alert" | "pivot" | "costs" | "evals" | "runs";
+  kind: "text" | "markdown" | "chart" | "table" | "cards" | "stat" | "alert" | "pivot";
   source?: string;
   path?: string;
   filter?: string;
+  query?: string;
   title?: string;
   description?: string;
   height?: number;
@@ -109,14 +110,6 @@ export interface ReportPlanDocumentWidget {
   series?: string[];
   seriesColors?: string[];
   stacked?: boolean;
-  costsScope?: "phase" | "execution" | "evaluation" | "all";
-  costsView?: "summary" | "stage-breakdown" | "run-table" | "step-table" | "model-table";
-  costsMetric?: "cost" | "total_tokens" | "input_tokens" | "output_tokens" | "llm_calls";
-  evalsView?: "summary" | "run-chart" | "run-table" | "step-table";
-  evalsMetric?: "score_percentage" | "total_score";
-  runsView?: "summary" | "duration-chart" | "status-chart" | "table";
-  runFolder?: string;
-  group?: string;
   layout?: ReportPlanDocumentWidgetLayout;
 }
 export interface ReportPlanDocumentDefaultSort {

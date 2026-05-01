@@ -195,6 +195,7 @@ function App() {
   } = useWorkspaceStore()
 
   const [videoObjectUrl, setVideoObjectUrl] = useState<string | null>(null)
+  const [audioObjectUrl, setAudioObjectUrl] = useState<string | null>(null)
 
   useEffect(() => {
     const filePath = selectedFile?.path?.toLowerCase() || ''
@@ -219,6 +220,48 @@ function App() {
     const nextUrl = URL.createObjectURL(blob)
 
     setVideoObjectUrl((current) => {
+      if (current) {
+        URL.revokeObjectURL(current)
+      }
+      return nextUrl
+    })
+
+    return () => {
+      URL.revokeObjectURL(nextUrl)
+    }
+  }, [binaryFileData, selectedFile?.path])
+
+  useEffect(() => {
+    const filePath = selectedFile?.path?.toLowerCase() || ''
+    const isAudioFile = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.flac', '.opus'].some(ext => filePath.endsWith(ext))
+
+    if (!isAudioFile || !binaryFileData) {
+      setAudioObjectUrl((current) => {
+        if (current) {
+          URL.revokeObjectURL(current)
+        }
+        return null
+      })
+      return
+    }
+
+    const mimeType = filePath.endsWith('.wav')
+      ? 'audio/wav'
+      : filePath.endsWith('.m4a')
+        ? 'audio/mp4'
+        : filePath.endsWith('.aac')
+          ? 'audio/aac'
+          : filePath.endsWith('.ogg') || filePath.endsWith('.oga')
+            ? 'audio/ogg'
+            : filePath.endsWith('.flac')
+              ? 'audio/flac'
+              : filePath.endsWith('.opus')
+                ? 'audio/opus'
+                : 'audio/mpeg'
+    const blob = new Blob([binaryFileData], { type: mimeType })
+    const nextUrl = URL.createObjectURL(blob)
+
+    setAudioObjectUrl((current) => {
       if (current) {
         URL.revokeObjectURL(current)
       }
@@ -1629,6 +1672,20 @@ function App() {
                                   autoPlay
                                   className="max-h-full max-w-full"
                                   src={videoObjectUrl}
+                                />
+                              </div>
+                            )
+                          }
+
+                          // Audio files
+                          if ((filePath.endsWith('.mp3') || filePath.endsWith('.wav') || filePath.endsWith('.m4a') || filePath.endsWith('.aac') || filePath.endsWith('.ogg') || filePath.endsWith('.oga') || filePath.endsWith('.flac') || filePath.endsWith('.opus')) && audioObjectUrl) {
+                            return (
+                              <div className="min-h-[260px] w-full flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 p-8 dark:border-gray-700 dark:bg-gray-900">
+                                <audio
+                                  controls
+                                  autoPlay
+                                  className="w-full max-w-3xl"
+                                  src={audioObjectUrl}
                                 />
                               </div>
                             )

@@ -663,6 +663,68 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 	return all
 }
 
+func buildLLMCapabilityPromptSection(ctx context.Context) string {
+	capabilities := buildLLMCapabilities(ctx, "all", false)
+	orderedCapabilities := []string{
+		"chat",
+		"search_web",
+		"read_image",
+		"read_video",
+		"generate_image",
+		"generate_video",
+		"text_to_speech",
+		"speech_to_text",
+		"generate_music",
+	}
+
+	var lines []string
+	for _, capability := range orderedCapabilities {
+		entry, _ := capabilities[capability].(map[string]interface{})
+		if entry == nil {
+			continue
+		}
+		providers, _ := entry["providers"].([]llmCapabilityProvider)
+		if len(providers) == 0 {
+			continue
+		}
+
+		var providerSummaries []string
+		for _, provider := range providers {
+			if strings.TrimSpace(provider.Provider) == "" {
+				continue
+			}
+			summary := provider.Provider
+			if provider.DefaultModel != "" {
+				summary += " (" + provider.DefaultModel + ")"
+			}
+			if provider.Usable {
+				summary += " usable"
+			} else if provider.AuthConfigured {
+				summary += " auth configured"
+			} else {
+				summary += " auth missing"
+			}
+			providerSummaries = append(providerSummaries, summary)
+		}
+		if len(providerSummaries) == 0 {
+			continue
+		}
+		lines = append(lines, "- `"+capability+"`: "+strings.Join(providerSummaries, ", "))
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+
+	return `## Workspace LLM And Media Capability Snapshot
+
+Published LLM entries are chat/text routing entries. Provider-backed media tools can be available even when they are not listed as published LLMs. Use ` + "`list_llm_capabilities`" + ` for authoritative provider, model, auth, runtime, and pricing status before answering availability questions or selecting a provider.
+
+For audio/music requests, call the dedicated ` + "`text_to_speech`" + ` or ` + "`generate_music`" + ` tool directly. If provider auth is missing and the user supplied a key, call ` + "`set_provider_auth`" + `; never paste provider keys into shell commands, scripts, curl calls, or logs.
+
+` + strings.Join(lines, "\n")
+}
+
 func normalizePricingCapability(capability string) string {
 	switch normalizeManagedProvider(capability) {
 	case "video", "video_generation":
@@ -1444,7 +1506,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id: openrouter, openai, anthropic, z-ai, vertex, gemini-cli, minimax, minimax-coding-plan, bedrock, or azure.",
+					"description": "Provider id: openrouter, openai, anthropic, z-ai, vertex, gemini-cli, minimax, minimax-coding-plan, elevenlabs, deepgram, bedrock, or azure.",
 				},
 				"api_key": map[string]interface{}{
 					"type":        "string",

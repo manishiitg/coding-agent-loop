@@ -3,6 +3,7 @@
 // See docs/workflow/persistent_stores_design.md.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import jsonata from 'jsonata'
 import { TextWidget } from './reportWidgets/TextWidget'
 import { MarkdownWidget } from './reportWidgets/MarkdownWidget'
 import { StatWidget } from './reportWidgets/StatWidget'
@@ -11,9 +12,6 @@ import { CardsWidget } from './reportWidgets/CardsWidget'
 import { TableWidget } from './reportWidgets/TableWidget'
 import { PivotWidget } from './reportWidgets/PivotWidget'
 import { ChartWidget } from './reportWidgets/ChartWidget'
-import { CostsWidget } from './reportWidgets/CostsWidget'
-import { EvalsWidget } from './reportWidgets/EvalsWidget'
-import { RunsWidget } from './reportWidgets/RunsWidget'
 import {
   StandaloneWidgetNotice,
   WidgetError,
@@ -23,7 +21,6 @@ import {
   type SingularWidgetSourceResolution,
 } from './reportWidgets/shared'
 import { useCompactWidgetLayout, useContainerSizeTier } from './reportWidgets/tableHelpers'
-import { parseTimestamp } from './reportWidgets/costSummaries'
 import { BarChart3, Download, Laptop, Loader2, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { useChatStore } from '../../stores/useChatStore'
@@ -35,19 +32,11 @@ import {
 } from '../../lib/reportPlanParser'
 import ModalPortal from '../ui/ModalPortal'
 import type {
-  EvaluationReportsResponse,
-  ModelTokenUsage,
   ParsedReportPlan,
-  PhaseTokenUsageFile,
-  PlannerFile,
   ReportEntry,
   ReportSection,
   ReportWidget,
   ReportWidgetKind,
-  RunFoldersResponse,
-  TokenUsageFile,
-  WorkflowCostsResponse,
-  WorkflowReviewDataResponse,
 } from '../../services/api-types'
 
 export const REPORT_PREVIEW_PREFERENCE_KEY = 'workflow_report_preview_preference'
@@ -268,192 +257,6 @@ async function readWorkspaceText(filepath: string): Promise<string | null> {
   }
 }
 
-type DailyGroupTokenUsageFile = {
-  date?: string
-  group_folder?: string
-  updated_at?: string
-  run_folders?: Record<string, TokenUsageFile>
-}
-
-type DailyPhaseTokenUsageFile = {
-  date: string
-  updated_at?: string
-  token_usage?: PhaseTokenUsageFile
-}
-
-function collectPlannerFilePaths(items: PlannerFile[], into: Set<string>): void {
-  for (const item of items) {
-    if (item.type === 'file' && item.filepath) {
-      into.add(item.filepath)
-    }
-    if (Array.isArray(item.children) && item.children.length > 0) {
-      collectPlannerFilePaths(item.children, into)
-    }
-  }
-}
-
-async function listWorkspaceFilePaths(folderPath: string, maxDepth = 10): Promise<string[]> {
-  try {
-    const resp = await agentApi.getPlannerFiles(folderPath, -1, maxDepth)
-    const items = Array.isArray(resp?.data) ? resp.data : []
-    const filePaths = new Set<string>()
-    collectPlannerFilePaths(items, filePaths)
-    for (const item of items) {
-      if (item.type === 'file' && item.filepath) filePaths.add(item.filepath)
-    }
-    return Array.from(filePaths).sort()
-  } catch {
-    return []
-  }
-}
-
-async function readWorkspaceJSON<T>(filepath: string): Promise<T | null> {
-  const content = await readWorkspaceText(filepath)
-  if (!content) return null
-  try {
-    return JSON.parse(content) as T
-  } catch {
-    return null
-  }
-}
-
-function mergeModelUsage(a?: ModelTokenUsage, b?: ModelTokenUsage): ModelTokenUsage | undefined {
-  if (!a) return b ? { ...b } : undefined
-  if (!b) return { ...a }
-  return {
-    provider: b.provider || a.provider,
-    input_tokens: (a.input_tokens || 0) + (b.input_tokens || 0),
-    output_tokens: (a.output_tokens || 0) + (b.output_tokens || 0),
-    input_tokens_m: b.input_tokens_m || a.input_tokens_m || '0.000M',
-    output_tokens_m: b.output_tokens_m || a.output_tokens_m || '0.000M',
-    cache_tokens: (a.cache_tokens || 0) + (b.cache_tokens || 0),
-    cache_tokens_m: b.cache_tokens_m || a.cache_tokens_m || '0.000M',
-    cache_read_tokens: (a.cache_read_tokens || 0) + (b.cache_read_tokens || 0),
-    cache_read_tokens_m: b.cache_read_tokens_m || a.cache_read_tokens_m || '0.000M',
-    cache_write_tokens: (a.cache_write_tokens || 0) + (b.cache_write_tokens || 0),
-    cache_write_tokens_m: b.cache_write_tokens_m || a.cache_write_tokens_m || '0.000M',
-    reasoning_tokens: (a.reasoning_tokens || 0) + (b.reasoning_tokens || 0),
-    reasoning_tokens_m: b.reasoning_tokens_m || a.reasoning_tokens_m || '0.000M',
-    llm_call_count: (a.llm_call_count || 0) + (b.llm_call_count || 0),
-    input_cost_usd: (a.input_cost_usd || 0) + (b.input_cost_usd || 0),
-    output_cost_usd: (a.output_cost_usd || 0) + (b.output_cost_usd || 0),
-    reasoning_cost_usd: (a.reasoning_cost_usd || 0) + (b.reasoning_cost_usd || 0),
-    cache_cost_usd: (a.cache_cost_usd || 0) + (b.cache_cost_usd || 0),
-    cache_read_cost_usd: (a.cache_read_cost_usd || 0) + (b.cache_read_cost_usd || 0),
-    cache_write_cost_usd: (a.cache_write_cost_usd || 0) + (b.cache_write_cost_usd || 0),
-    total_cost_usd: (a.total_cost_usd || 0) + (b.total_cost_usd || 0),
-    context_window_usage: Math.max(a.context_window_usage || 0, b.context_window_usage || 0),
-    model_context_window: Math.max(a.model_context_window || 0, b.model_context_window || 0),
-    context_usage_percent: Math.max(a.context_usage_percent || 0, b.context_usage_percent || 0),
-  }
-}
-
-function pickEarlierTimestamp(a?: string, b?: string): string {
-  if (!a) return b || ''
-  if (!b) return a
-  return new Date(a).getTime() <= new Date(b).getTime() ? a : b
-}
-
-function pickLaterTimestamp(a?: string, b?: string): string {
-  if (!a) return b || ''
-  if (!b) return a
-  return new Date(a).getTime() >= new Date(b).getTime() ? a : b
-}
-
-function mergeTokenUsageFiles(a?: TokenUsageFile, b?: TokenUsageFile): TokenUsageFile | undefined {
-  if (!a) return b ? { ...b } : undefined
-  if (!b) return { ...a }
-  const byModel: Record<string, ModelTokenUsage> = { ...(a.by_model || {}) }
-  for (const [modelID, usage] of Object.entries(b.by_model || {})) {
-    const merged = mergeModelUsage(byModel[modelID], usage)
-    if (merged) byModel[modelID] = merged
-  }
-
-  const byStepAndModel: Record<string, Record<string, ModelTokenUsage>> = { ...(a.by_step_and_model || {}) }
-  for (const [stepID, modelUsage] of Object.entries(b.by_step_and_model || {})) {
-    const mergedStep = { ...(byStepAndModel[stepID] || {}) }
-    for (const [modelID, usage] of Object.entries(modelUsage || {})) {
-      const merged = mergeModelUsage(mergedStep[modelID], usage)
-      if (merged) mergedStep[modelID] = merged
-    }
-    byStepAndModel[stepID] = mergedStep
-  }
-
-  return {
-    created_at: pickEarlierTimestamp(a.created_at, b.created_at),
-    updated_at: pickLaterTimestamp(a.updated_at, b.updated_at),
-    by_model: byModel,
-    by_step_and_model: Object.keys(byStepAndModel).length > 0 ? byStepAndModel : undefined,
-  }
-}
-
-async function loadCostsDataFallback(workspacePath: string): Promise<WorkflowCostsResponse | null> {
-  const [phaseTokenUsage, phaseDailyPaths, executionPaths, evaluationPaths] = await Promise.all([
-    readWorkspaceJSON<PhaseTokenUsageFile>(`${workspacePath}/costs/phase/token_usage.json`),
-    listWorkspaceFilePaths(`${workspacePath}/costs/phase/daily`, 4),
-    listWorkspaceFilePaths(`${workspacePath}/costs/execution`, 6),
-    listWorkspaceFilePaths(`${workspacePath}/costs/evaluation`, 6),
-  ])
-
-  const executionMap = new Map<string, TokenUsageFile>()
-  const evaluationMap = new Map<string, TokenUsageFile>()
-
-  const loadScopedRuns = async (
-    filePaths: string[],
-    target: Map<string, TokenUsageFile>,
-  ) => {
-    for (const filePath of filePaths.filter(path => path.endsWith('.json'))) {
-      const daily = await readWorkspaceJSON<DailyGroupTokenUsageFile>(filePath)
-      if (!daily?.run_folders) continue
-      for (const [runFolder, tokenUsage] of Object.entries(daily.run_folders)) {
-        const merged = mergeTokenUsageFiles(target.get(runFolder), tokenUsage)
-        if (merged) target.set(runFolder, merged)
-      }
-    }
-  }
-
-  await Promise.all([
-    loadScopedRuns(executionPaths, executionMap),
-    loadScopedRuns(evaluationPaths, evaluationMap),
-  ])
-
-  const phaseDailyCosts: WorkflowCostsResponse['phase_daily_costs'] = []
-  for (const filePath of phaseDailyPaths.filter(path => path.endsWith('.json'))) {
-    const daily = await readWorkspaceJSON<DailyPhaseTokenUsageFile>(filePath)
-    if (!daily?.date) continue
-    phaseDailyCosts.push({
-      date: daily.date,
-      token_usage: daily.token_usage,
-    })
-  }
-
-  const runFolderSet = new Set<string>([
-    ...Array.from(executionMap.keys()),
-    ...Array.from(evaluationMap.keys()),
-  ])
-
-  const runs = Array.from(runFolderSet)
-    .map(runFolder => ({
-      run_folder: runFolder,
-      token_usage: executionMap.get(runFolder),
-      evaluation_token_usage: evaluationMap.get(runFolder),
-    }))
-    .sort((a, b) => {
-      const aTime = parseTimestamp(a.token_usage?.updated_at || a.evaluation_token_usage?.updated_at || a.token_usage?.created_at || a.evaluation_token_usage?.created_at || null) || 0
-      const bTime = parseTimestamp(b.token_usage?.updated_at || b.evaluation_token_usage?.updated_at || b.token_usage?.created_at || b.evaluation_token_usage?.created_at || null) || 0
-      return bTime - aTime || a.run_folder.localeCompare(b.run_folder)
-    })
-
-  if (!phaseTokenUsage && phaseDailyCosts.length === 0 && runs.length === 0) return null
-
-  return {
-    success: true,
-    phase_token_usage: phaseTokenUsage || undefined,
-    phase_daily_costs: phaseDailyCosts,
-    runs,
-  }
-}
-
 interface ReportViewerProps {
   workspacePath: string
   isOpen: boolean
@@ -463,7 +266,7 @@ interface ReportViewerProps {
 interface ReportViewProps {
   workspacePath: string
   selectedRunFolder?: string | null
-  reviewData?: WorkflowReviewDataResponse | null
+  reviewData?: unknown
   /** Optional close/back handler; when omitted, no close button is rendered (used for canvas-mode). */
   onClose?: () => void
   mobilePreview?: boolean
@@ -472,6 +275,43 @@ interface ReportViewProps {
 // Source content cached per workspace-relative path. `undefined` = not yet fetched;
 // `null` = fetched and missing/malformed; otherwise the parsed JSON value.
 type SourceCache = Record<string, unknown>
+
+type JSONataQueryState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; value: unknown }
+  | { status: 'error'; message: string }
+
+function useJSONataQuery(source: unknown, query: string): JSONataQueryState {
+  const [state, setState] = useState<JSONataQueryState>({ status: 'idle' })
+
+  useEffect(() => {
+    const trimmedQuery = query.trim()
+    if (!trimmedQuery || source === undefined || source === null) {
+      setState({ status: 'idle' })
+      return
+    }
+
+    let cancelled = false
+    setState({ status: 'loading' })
+    Promise.resolve()
+      .then(() => jsonata(trimmedQuery).evaluate(source))
+      .then(value => {
+        if (!cancelled) setState({ status: 'success', value })
+      })
+      .catch(error => {
+        if (cancelled) return
+        const message = error instanceof Error ? error.message : String(error)
+        setState({ status: 'error', message: message || 'JSONata query failed.' })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [source, query])
+
+  return state
+}
 
 function widgetInstanceKey(
   widget: ReportWidget,
@@ -490,7 +330,6 @@ function widgetInstanceKey(
 
 function widgetShouldRender(widget: ReportWidget, raw: unknown) {
   if (widget.hidden) return false
-  if (widget.kind === 'costs' || widget.kind === 'evals' || widget.kind === 'runs') return true
   if (raw === undefined || raw === null) return true
   if (!evaluateShowIf(raw, widget.showIf)) return false
   if (widget.kind === 'stat' || widget.kind === 'alert' || widget.kind === 'pivot') return true
@@ -542,15 +381,6 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
   const [loading, setLoading] = useState(false)
   const [planSource, setPlanSource] = useState<string | null>(null)
   const [sources, setSources] = useState<SourceCache>({})
-  const [costsData, setCostsData] = useState<WorkflowCostsResponse | null>(null)
-  const [costsLoading, setCostsLoading] = useState(false)
-  const [costsError, setCostsError] = useState<string | null>(null)
-  const [evalsData, setEvalsData] = useState<EvaluationReportsResponse | null>(null)
-  const [evalsLoading, setEvalsLoading] = useState(false)
-  const [evalsError, setEvalsError] = useState<string | null>(null)
-  const [runsData, setRunsData] = useState<RunFoldersResponse | null>(null)
-  const [runsLoading, setRunsLoading] = useState(false)
-  const [runsError, setRunsError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshNonce, setRefreshNonce] = useState(0)
   const [hiddenWidgetKeys, setHiddenWidgetKeys] = useState<Set<string>>(() => new Set())
@@ -570,54 +400,15 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
     for (const section of plan.sections) {
       for (const entry of section.entries) {
         if (entry.kind === 'single') {
-          if (entry.widget.kind !== 'costs' && entry.widget.kind !== 'evals' && entry.widget.kind !== 'runs' && entry.widget.source) set.add(entry.widget.source)
+          if (entry.widget.source) set.add(entry.widget.source)
         } else {
           for (const w of entry.row.widgets) {
-            if (w.kind !== 'costs' && w.kind !== 'evals' && w.kind !== 'runs' && w.source) set.add(w.source)
+            if (w.source) set.add(w.source)
           }
         }
       }
     }
     return Array.from(set).sort().join('|')
-  }, [plan])
-
-  const hasCostsWidget = useMemo(() => {
-    for (const section of plan.sections) {
-      for (const entry of section.entries) {
-        if (entry.kind === 'single') {
-          if (entry.widget.kind === 'costs') return true
-        } else {
-          if (entry.row.widgets.some(widget => widget.kind === 'costs')) return true
-        }
-      }
-    }
-    return false
-  }, [plan])
-
-  const hasEvalsWidget = useMemo(() => {
-    for (const section of plan.sections) {
-      for (const entry of section.entries) {
-        if (entry.kind === 'single') {
-          if (entry.widget.kind === 'evals') return true
-        } else {
-          if (entry.row.widgets.some(widget => widget.kind === 'evals')) return true
-        }
-      }
-    }
-    return false
-  }, [plan])
-
-  const hasRunsWidget = useMemo(() => {
-    for (const section of plan.sections) {
-      for (const entry of section.entries) {
-        if (entry.kind === 'single') {
-          if (entry.widget.kind === 'runs') return true
-        } else {
-          if (entry.row.widgets.some(widget => widget.kind === 'runs')) return true
-        }
-      }
-    }
-    return false
   }, [plan])
 
   useEffect(() => {
@@ -680,142 +471,12 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
   }, [workspacePath, referencedSourcesKey, refreshNonce])
 
   useEffect(() => {
-    if (!workspacePath || (!hasCostsWidget && !hasEvalsWidget)) {
-      if (!hasCostsWidget) {
-        setCostsData(null)
-        setCostsError(null)
-        setCostsLoading(false)
-      }
-      if (!hasEvalsWidget) {
-        setEvalsData(null)
-        setEvalsError(null)
-        setEvalsLoading(false)
-      }
-      return
-    }
-
-    let cancelled = false
-    if (hasCostsWidget) {
-      setCostsLoading(true)
-      setCostsError(null)
-    }
-    if (hasEvalsWidget) {
-      setEvalsLoading(true)
-      setEvalsError(null)
-    }
-
-    const reviewDataPromise = reviewData
-      ? Promise.resolve(reviewData)
-      : agentApi.getWorkflowReviewData(workspacePath, selectedRunFolder || undefined)
-
-    reviewDataPromise
-      .then(async response => {
-        if (cancelled) return
-
-        if (hasCostsWidget) {
-          const costsResponse = response.costs
-          if (costsResponse?.success) {
-            if ((costsResponse.runs?.length ?? 0) > 0) {
-              setCostsData(costsResponse)
-            } else {
-              const fallback = await loadCostsDataFallback(workspacePath)
-              if (cancelled) return
-              setCostsData(fallback ?? costsResponse)
-            }
-          } else {
-            const fallback = await loadCostsDataFallback(workspacePath)
-            if (cancelled) return
-            if (fallback) {
-              setCostsData(fallback)
-              setCostsError(null)
-            } else {
-              setCostsData(null)
-              setCostsError('Failed to load workflow costs.')
-            }
-          }
-        }
-
-        if (hasEvalsWidget) {
-          const evalsResponse = response.evaluations
-          if (evalsResponse?.success) {
-            setEvalsData(evalsResponse)
-          } else {
-            setEvalsData(null)
-            setEvalsError(evalsResponse?.error || 'Failed to load evaluation reports.')
-          }
-        }
-      })
-      .catch(async () => {
-        if (cancelled) return
-        if (hasCostsWidget) {
-          const fallback = await loadCostsDataFallback(workspacePath)
-          if (cancelled) return
-          if (fallback) {
-            setCostsData(fallback)
-            setCostsError(null)
-          } else {
-            setCostsData(null)
-            setCostsError('Failed to load workflow costs.')
-          }
-        }
-        if (hasEvalsWidget) {
-          setEvalsData(null)
-          setEvalsError('Failed to load evaluation reports.')
-        }
-      })
-      .finally(() => {
-        if (cancelled) return
-        if (hasCostsWidget) setCostsLoading(false)
-        if (hasEvalsWidget) setEvalsLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [workspacePath, selectedRunFolder, reviewData, hasCostsWidget, hasEvalsWidget, refreshNonce])
-
-  useEffect(() => {
-    if (!workspacePath || !hasRunsWidget) {
-      setRunsData(null)
-      setRunsError(null)
-      setRunsLoading(false)
-      return
-    }
-    let cancelled = false
-    setRunsLoading(true)
-    setRunsError(null)
-    agentApi.getRunFolders(workspacePath)
-      .then(response => {
-        if (cancelled) return
-        setRunsData(response)
-      })
-      .catch(() => {
-        if (cancelled) return
-        setRunsData(null)
-        setRunsError('Failed to load workflow runs.')
-      })
-      .finally(() => {
-        if (!cancelled) setRunsLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [workspacePath, hasRunsWidget, refreshNonce])
-
-  useEffect(() => {
     setHiddenWidgetKeys(new Set())
   }, [workspacePath, planSource, refreshNonce])
 
   const handleRefresh = () => {
     setError(null)
     setSources({})
-    setCostsData(null)
-    setCostsError(null)
-    setEvalsData(null)
-    setEvalsError(null)
-    setRunsData(null)
-    setRunsError(null)
     setRefreshNonce(prev => prev + 1)
   }
 
@@ -874,7 +535,6 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
         for (let widgetIndex = 0; widgetIndex < widgets.length; widgetIndex += 1) {
           const w = widgets[widgetIndex]
           if (hiddenWidgetKeys.has(widgetInstanceKey(w, { sectionIndex, entryIndex, widgetIndex }))) return true
-          if (w.kind === 'costs' || w.kind === 'evals' || w.kind === 'runs') return true
           if (widgetShouldRender(w, sources[w.source])) return true
         }
       }
@@ -890,7 +550,7 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
       ? mobilePreview ? 'mobile' : 'desktop'
       : previewPreference
     : 'desktop'
-  const isRefreshing = loading || costsLoading || evalsLoading || runsLoading
+  const isRefreshing = loading
   // Per-mode shell width. Mobile mimics a phone (~480px), tablet mimics an
   // iPad-class device (~880px), laptop fills available space. Content width
   // mirrors the shell so widget reflow tests against the right container size.
@@ -982,15 +642,6 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
                     sectionIndex={sectionIndex}
                     entries={entries}
                     sources={sources}
-                    costsData={costsData}
-                    costsLoading={costsLoading}
-                    costsError={costsError}
-                    evalsData={evalsData}
-                    evalsLoading={evalsLoading}
-                    evalsError={evalsError}
-                    runsData={runsData}
-                    runsLoading={runsLoading}
-                    runsError={runsError}
                     hiddenWidgetKeys={hiddenWidgetKeys}
                     handleToggleWidgetHidden={handleToggleWidgetHidden}
                   />
@@ -1172,15 +823,6 @@ function SectionContainer({
   sectionIndex,
   entries,
   sources,
-  costsData,
-  costsLoading,
-  costsError,
-  evalsData,
-  evalsLoading,
-  evalsError,
-  runsData,
-  runsLoading,
-  runsError,
   hiddenWidgetKeys,
   handleToggleWidgetHidden,
 }: {
@@ -1188,15 +830,6 @@ function SectionContainer({
   sectionIndex: number
   entries: Array<{ entry: ReportEntry; entryIndex: number }>
   sources: SourceCache
-  costsData: WorkflowCostsResponse | null
-  costsLoading: boolean
-  costsError: string | null
-  evalsData: EvaluationReportsResponse | null
-  evalsLoading: boolean
-  evalsError: string | null
-  runsData: RunFoldersResponse | null
-  runsLoading: boolean
-  runsError: string | null
   hiddenWidgetKeys: Set<string>
   handleToggleWidgetHidden: (widgetKey: string) => void
 }) {
@@ -1266,15 +899,6 @@ function SectionContainer({
               entryIndex={entryIndex}
               sectionIndex={sectionIndex}
               sources={sources}
-              costsData={costsData}
-              costsLoading={costsLoading}
-              costsError={costsError}
-              evalsData={evalsData}
-              evalsLoading={evalsLoading}
-              evalsError={evalsError}
-              runsData={runsData}
-              runsLoading={runsLoading}
-              runsError={runsError}
               hiddenWidgetKeys={hiddenWidgetKeys}
               onToggleWidgetHidden={handleToggleWidgetHidden}
             />
@@ -1295,15 +919,6 @@ function EntryRenderer({
   entryIndex,
   sectionIndex,
   sources,
-  costsData,
-  costsLoading,
-  costsError,
-  evalsData,
-  evalsLoading,
-  evalsError,
-  runsData,
-  runsLoading,
-  runsError,
   hiddenWidgetKeys,
   onToggleWidgetHidden,
 }: {
@@ -1311,15 +926,6 @@ function EntryRenderer({
   entryIndex: number
   sectionIndex: number
   sources: SourceCache
-  costsData: WorkflowCostsResponse | null
-  costsLoading: boolean
-  costsError: string | null
-  evalsData: EvaluationReportsResponse | null
-  evalsLoading: boolean
-  evalsError: string | null
-  runsData: RunFoldersResponse | null
-  runsLoading: boolean
-  runsError: string | null
   hiddenWidgetKeys: Set<string>
   onToggleWidgetHidden: (widgetKey: string) => void
 }) {
@@ -1330,15 +936,6 @@ function EntryRenderer({
       <WidgetCard
         widget={entry.widget}
         sources={sources}
-        costsData={costsData}
-        costsLoading={costsLoading}
-        costsError={costsError}
-        evalsData={evalsData}
-        evalsLoading={evalsLoading}
-        evalsError={evalsError}
-        runsData={runsData}
-        runsLoading={runsLoading}
-        runsError={runsError}
         hidden={hiddenWidgetKeys.has(widgetKey)}
         onToggleHidden={() => onToggleWidgetHidden(widgetKey)}
       />
@@ -1358,15 +955,6 @@ function EntryRenderer({
           <WidgetCard
             widget={widget}
             sources={sources}
-            costsData={costsData}
-            costsLoading={costsLoading}
-            costsError={costsError}
-            evalsData={evalsData}
-            evalsLoading={evalsLoading}
-            evalsError={evalsError}
-            runsData={runsData}
-            runsLoading={runsLoading}
-            runsError={runsError}
             hidden={Boolean(hidden)}
             onToggleHidden={() => onToggleWidgetHidden(widgetKey)}
           />
@@ -1376,19 +964,15 @@ function EntryRenderer({
   )
 }
 
-// Source mode classifies how WidgetCard should resolve data for each widget
-// kind. The four modes determine the dispatch path:
-//   - api-*       — pulls from a workflow-level API endpoint, ignores `source`
-//   - singular    — narrows the source to a single row (for stat / alert)
-//   - pivot       — feeds the raw source straight to the renderer
-//   - collection  — resolves `path` + `filter` then hands an array/value to
-//                   the renderer
-type WidgetSourceMode = 'api-costs' | 'api-evals' | 'api-runs' | 'singular' | 'pivot' | 'collection'
+// Source mode classifies how WidgetCard should resolve data for each widget kind.
+// The modes determine the dispatch path:
+//   - singular   — narrows the source to a single row (for stat / alert)
+//   - pivot      — feeds the raw source straight to the renderer
+//   - collection — resolves `path` + `filter` then hands an array/value to
+//                  the renderer
+type WidgetSourceMode = 'singular' | 'pivot' | 'collection'
 
 const WIDGET_SOURCE_MODE: Record<ReportWidgetKind, WidgetSourceMode> = {
-  costs: 'api-costs',
-  evals: 'api-evals',
-  runs: 'api-runs',
   stat: 'singular',
   alert: 'singular',
   pivot: 'pivot',
@@ -1447,60 +1031,23 @@ function HiddenWidgetCard({
 function WidgetCard({
   widget,
   sources,
-  costsData,
-  costsLoading,
-  costsError,
-  evalsData,
-  evalsLoading,
-  evalsError,
-  runsData,
-  runsLoading,
-  runsError,
   hidden = false,
   onToggleHidden,
 }: {
   widget: ReportWidget
   sources: SourceCache
-  costsData: WorkflowCostsResponse | null
-  costsLoading: boolean
-  costsError: string | null
-  evalsData: EvaluationReportsResponse | null
-  evalsLoading: boolean
-  evalsError: string | null
-  runsData: RunFoldersResponse | null
-  runsLoading: boolean
-  runsError: string | null
   hidden?: boolean
   onToggleHidden?: () => void
 }) {
+  const query = widget.query?.trim() ?? ''
+  const raw = widget.source ? sources[widget.source] : undefined
+  const queryState = useJSONataQuery(raw, query)
+
   if (hidden && onToggleHidden) {
     return <HiddenWidgetCard widget={widget} onShow={onToggleHidden} />
   }
 
   const mode = WIDGET_SOURCE_MODE[widget.kind]
-
-  // API-driven widgets bypass the file-source pipeline.
-  if (mode === 'api-costs') {
-    return (
-      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
-        <CostsWidget widget={widget} costsData={costsData} loading={costsLoading} error={costsError} />
-      </WidgetShell>
-    )
-  }
-  if (mode === 'api-evals') {
-    return (
-      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
-        <EvalsWidget widget={widget} evalsData={evalsData} loading={evalsLoading} error={evalsError} />
-      </WidgetShell>
-    )
-  }
-  if (mode === 'api-runs') {
-    return (
-      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
-        <RunsWidget widget={widget} runsData={runsData} loading={runsLoading} error={runsError} />
-      </WidgetShell>
-    )
-  }
 
   const wrapNotice = (content: React.ReactNode) =>
     isStandaloneWidget(widget.kind) ? (
@@ -1509,7 +1056,16 @@ function WidgetCard({
       <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>{content}</WidgetShell>
     )
 
-  const raw = sources[widget.source]
+  if (!widget.source) {
+    return (
+      <div
+        aria-hidden="true"
+        className="w-full"
+        style={{ minHeight: `${widget.height ?? 72}px` }}
+      />
+    )
+  }
+
   if (raw === undefined) {
     return wrapNotice(
       <div className="py-1.5 text-xs italic text-muted-foreground">Loading {widget.source}…</div>,
@@ -1522,9 +1078,25 @@ function WidgetCard({
       </div>,
     )
   }
+  if (query && queryState.status === 'loading') {
+    return wrapNotice(
+      <div className="py-1.5 text-xs italic text-muted-foreground">Running JSONata query…</div>,
+    )
+  }
+  if (query && queryState.status === 'error') {
+    return wrapNotice(
+      <WidgetError
+        widget={widget}
+        message="JSONata query failed."
+        hint={queryState.message}
+      />,
+    )
+  }
 
-  const singularSource = mode === 'singular' ? resolveSingularWidgetSource(raw, widget) : null
-  const conditionalSource = singularSource?.status === 'ok' ? singularSource.value : raw
+  const effectiveRaw = query && queryState.status === 'success' ? queryState.value : raw
+
+  const singularSource = mode === 'singular' ? resolveSingularWidgetSource(effectiveRaw, widget) : null
+  const conditionalSource = singularSource?.status === 'ok' ? singularSource.value : effectiveRaw
   if (!evaluateShowIf(conditionalSource, widget.showIf)) return null
 
   if (mode === 'singular') {
@@ -1533,7 +1105,7 @@ function WidgetCard({
     return (
       <Renderer
         source={singularSource?.status === 'ok' ? singularSource.value : undefined}
-        resolution={singularSource ?? { status: 'ok', value: raw }}
+        resolution={singularSource ?? { status: 'ok', value: effectiveRaw }}
         widget={widget}
         onToggleHidden={onToggleHidden}
       />
@@ -1545,13 +1117,13 @@ function WidgetCard({
     if (!Renderer) return null
     return (
       <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
-        <Renderer source={raw} widget={widget} />
+        <Renderer source={effectiveRaw} widget={widget} />
       </WidgetShell>
     )
   }
 
   // Collection mode: resolve path → filter → render.
-  const resolvedRaw = resolveJSONPath(raw, widget.path)
+  const resolvedRaw = resolveJSONPath(effectiveRaw, widget.path)
   let content: React.ReactNode = null
   if (resolvedRaw === undefined) {
     content = (

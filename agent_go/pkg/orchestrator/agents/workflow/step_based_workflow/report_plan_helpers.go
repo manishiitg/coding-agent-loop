@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -73,10 +72,10 @@ type reportPlanSection struct {
 }
 
 type reportPlanDocument struct {
-	Version      int                            `json:"version,omitempty"`
-	Theme        string                         `json:"theme,omitempty"`
-	ThemeColors  *reportPlanDocumentThemeColors `json:"themeColors,omitempty"`
-	Sections     []reportPlanDocumentSection    `json:"sections"`
+	Version     int                            `json:"version,omitempty"`
+	Theme       string                         `json:"theme,omitempty"`
+	ThemeColors *reportPlanDocumentThemeColors `json:"themeColors,omitempty"`
+	Sections    []reportPlanDocumentSection    `json:"sections"`
 }
 
 // Inline custom palette. When set, the renderer converts each hex value to an
@@ -127,67 +126,60 @@ type reportPlanDocumentDefaultSort struct {
 }
 
 type reportPlanDocumentWidget struct {
-	ID            string                         `json:"id,omitempty"`
-	Hidden        bool                           `json:"hidden,omitempty"`
-	Kind          string                         `json:"kind" jsonschema:"required,enum=text,enum=markdown,enum=chart,enum=table,enum=cards,enum=stat,enum=alert,enum=pivot,enum=costs,enum=evals,enum=runs"`
-	Source        string                         `json:"source,omitempty"`
-	Path          string                         `json:"path,omitempty"`
-	Filter        string                         `json:"filter,omitempty"`
-	Title         string                         `json:"title,omitempty"`
-	Description   string                         `json:"description,omitempty"`
-	Height        int                            `json:"height,omitempty"`
-	Formats       map[string]string              `json:"formats,omitempty"`
-	PageSize      int                            `json:"pageSize,omitempty"`
-	EnableSearch  *bool                          `json:"enableSearch,omitempty"`
-	DefaultSort   *reportPlanDocumentDefaultSort `json:"defaultSort,omitempty"`
-	HideColumns   []string                       `json:"hideColumns,omitempty"`
+	ID           string                         `json:"id,omitempty"`
+	Hidden       bool                           `json:"hidden,omitempty"`
+	Kind         string                         `json:"kind" jsonschema:"required,enum=text,enum=markdown,enum=chart,enum=table,enum=cards,enum=stat,enum=alert,enum=pivot"`
+	Source       string                         `json:"source,omitempty"`
+	Path         string                         `json:"path,omitempty"`
+	Filter       string                         `json:"filter,omitempty"`
+	Query        string                         `json:"query,omitempty"`
+	Title        string                         `json:"title,omitempty"`
+	Description  string                         `json:"description,omitempty"`
+	Height       int                            `json:"height,omitempty"`
+	Formats      map[string]string              `json:"formats,omitempty"`
+	PageSize     int                            `json:"pageSize,omitempty"`
+	EnableSearch *bool                          `json:"enableSearch,omitempty"`
+	DefaultSort  *reportPlanDocumentDefaultSort `json:"defaultSort,omitempty"`
+	HideColumns  []string                       `json:"hideColumns,omitempty"`
 	// Cards-specific layout overrides. Tables ignore them at render time, but
 	// the schema accepts them on every widget so a single hand-edited plan can
 	// switch a widget between table and cards without losing the field hints.
-	Fields                []string `json:"fields,omitempty"`
-	CardTitleField        string   `json:"cardTitleField,omitempty"`
-	CardSubtitleField     string   `json:"cardSubtitleField,omitempty"`
-	CardDescriptionField  string   `json:"cardDescriptionField,omitempty"`
-	CardLinkField         string   `json:"cardLinkField,omitempty"`
-	CardImageField        string   `json:"cardImageField,omitempty"`
-	ChartType     string                         `json:"chartType,omitempty" jsonschema:"enum=bar,enum=line,enum=area,enum=pie"`
-	XAxis         string                         `json:"xAxis,omitempty"`
-	YAxis         string                         `json:"yAxis,omitempty"`
-	TopN          int                            `json:"topN,omitempty"`
-	Sort          string                         `json:"sort,omitempty" jsonschema:"enum=asc,enum=desc,enum=none"`
-	ShowValues    *bool                          `json:"showValues,omitempty"`
-	Colors        []string                       `json:"colors,omitempty"`
-	ColorsDark    []string                       `json:"colorsDark,omitempty"`
-	ColorBy       string                         `json:"colorBy,omitempty"`
-	ColorMap      map[string]string              `json:"colorMap,omitempty"`
-	ShowIf        string                         `json:"showIf,omitempty"`
-	Label         string                         `json:"label,omitempty"`
-	Prefix        string                         `json:"prefix,omitempty"`
-	Suffix        string                         `json:"suffix,omitempty"`
-	Format        string                         `json:"format,omitempty" jsonschema:"enum=currency-inr,enum=currency-usd,enum=percent,enum=percent-1dp,enum=short-date,enum=long-date,enum=datetime,enum=number,enum=number-1dp,enum=number-2dp,enum=bytes,enum=boolean-icon"`
-	DeltaPath     string                         `json:"deltaPath,omitempty"`
-	DeltaFormat   string                         `json:"deltaFormat,omitempty" jsonschema:"enum=currency-inr,enum=currency-usd,enum=percent,enum=percent-1dp,enum=short-date,enum=long-date,enum=datetime,enum=number,enum=number-1dp,enum=number-2dp,enum=bytes,enum=boolean-icon"`
-	TrendPath     string                         `json:"trendPath,omitempty"`
-	Severity      string                         `json:"severity,omitempty" jsonschema:"enum=info,enum=warning,enum=error,enum=success"`
-	Message       string                         `json:"message,omitempty"`
-	RowsField     string                         `json:"rowsField,omitempty"`
-	ColumnsField  string                         `json:"columnsField,omitempty"`
-	ValuesField   string                         `json:"valuesField,omitempty"`
-	Aggregate     string                         `json:"aggregate,omitempty" jsonschema:"enum=sum,enum=avg,enum=count,enum=min,enum=max,enum=first"`
-	Heatmap       *bool                          `json:"heatmap,omitempty"`
-	HeatmapColors []string                       `json:"heatmapColors,omitempty"`
-	Series        []string                       `json:"series,omitempty"`
-	SeriesColors  []string                       `json:"seriesColors,omitempty"`
-	Stacked       *bool                          `json:"stacked,omitempty"`
-	CostsScope    string                         `json:"costsScope,omitempty" jsonschema:"enum=phase,enum=execution,enum=evaluation,enum=all"`
-	CostsView     string                         `json:"costsView,omitempty" jsonschema:"enum=summary,enum=stage-breakdown,enum=run-table,enum=step-table,enum=model-table"`
-	CostsMetric   string                         `json:"costsMetric,omitempty" jsonschema:"enum=cost,enum=total_tokens,enum=input_tokens,enum=output_tokens,enum=llm_calls"`
-	EvalsView     string                         `json:"evalsView,omitempty" jsonschema:"enum=summary,enum=run-chart,enum=run-table,enum=step-table"`
-	EvalsMetric   string                         `json:"evalsMetric,omitempty" jsonschema:"enum=score_percentage,enum=total_score"`
-	RunsView      string                         `json:"runsView,omitempty" jsonschema:"enum=summary,enum=duration-chart,enum=status-chart,enum=table"`
-	RunFolder     string                         `json:"runFolder,omitempty"`
-	Group         string                         `json:"group,omitempty"`
-	Layout        *reportPlanDocumentWidgetLayout `json:"layout,omitempty"`
+	Fields               []string                        `json:"fields,omitempty"`
+	CardTitleField       string                          `json:"cardTitleField,omitempty"`
+	CardSubtitleField    string                          `json:"cardSubtitleField,omitempty"`
+	CardDescriptionField string                          `json:"cardDescriptionField,omitempty"`
+	CardLinkField        string                          `json:"cardLinkField,omitempty"`
+	CardImageField       string                          `json:"cardImageField,omitempty"`
+	ChartType            string                          `json:"chartType,omitempty" jsonschema:"enum=bar,enum=line,enum=area,enum=pie"`
+	XAxis                string                          `json:"xAxis,omitempty"`
+	YAxis                string                          `json:"yAxis,omitempty"`
+	TopN                 int                             `json:"topN,omitempty"`
+	Sort                 string                          `json:"sort,omitempty" jsonschema:"enum=asc,enum=desc,enum=none"`
+	ShowValues           *bool                           `json:"showValues,omitempty"`
+	Colors               []string                        `json:"colors,omitempty"`
+	ColorsDark           []string                        `json:"colorsDark,omitempty"`
+	ColorBy              string                          `json:"colorBy,omitempty"`
+	ColorMap             map[string]string               `json:"colorMap,omitempty"`
+	ShowIf               string                          `json:"showIf,omitempty"`
+	Label                string                          `json:"label,omitempty"`
+	Prefix               string                          `json:"prefix,omitempty"`
+	Suffix               string                          `json:"suffix,omitempty"`
+	Format               string                          `json:"format,omitempty" jsonschema:"enum=currency-inr,enum=currency-usd,enum=percent,enum=percent-1dp,enum=short-date,enum=long-date,enum=datetime,enum=number,enum=number-1dp,enum=number-2dp,enum=bytes,enum=boolean-icon"`
+	DeltaPath            string                          `json:"deltaPath,omitempty"`
+	DeltaFormat          string                          `json:"deltaFormat,omitempty" jsonschema:"enum=currency-inr,enum=currency-usd,enum=percent,enum=percent-1dp,enum=short-date,enum=long-date,enum=datetime,enum=number,enum=number-1dp,enum=number-2dp,enum=bytes,enum=boolean-icon"`
+	TrendPath            string                          `json:"trendPath,omitempty"`
+	Severity             string                          `json:"severity,omitempty" jsonschema:"enum=info,enum=warning,enum=error,enum=success"`
+	Message              string                          `json:"message,omitempty"`
+	RowsField            string                          `json:"rowsField,omitempty"`
+	ColumnsField         string                          `json:"columnsField,omitempty"`
+	ValuesField          string                          `json:"valuesField,omitempty"`
+	Aggregate            string                          `json:"aggregate,omitempty" jsonschema:"enum=sum,enum=avg,enum=count,enum=min,enum=max,enum=first"`
+	Heatmap              *bool                           `json:"heatmap,omitempty"`
+	HeatmapColors        []string                        `json:"heatmapColors,omitempty"`
+	Series               []string                        `json:"series,omitempty"`
+	SeriesColors         []string                        `json:"seriesColors,omitempty"`
+	Stacked              *bool                           `json:"stacked,omitempty"`
+	Layout               *reportPlanDocumentWidgetLayout `json:"layout,omitempty"`
 }
 
 // Public aliases for schema generation. The package-private types above are
@@ -244,72 +236,40 @@ type reportPlanCapabilityExample struct {
 	Markdown string `json:"markdown"`
 }
 
-type reportPlanAPIWidgetCapability struct {
-	Views   []string `json:"views"`
-	Scopes  []string `json:"scopes,omitempty"`
-	Metrics []string `json:"metrics,omitempty"`
-}
-
 type reportPlanCapabilitiesResult struct {
-	FilePath             string                                   `json:"file_path"`
-	ValidationTool       string                                   `json:"validation_tool"`
-	PreviewTool          string                                   `json:"preview_tool"`
-	WidgetKinds          []string                                 `json:"widget_kinds"`
-	SourceBackedWidgets  []string                                 `json:"source_backed_widgets"`
-	APIBackedWidgets     map[string]reportPlanAPIWidgetCapability `json:"api_backed_widgets"`
-	ValidSourcePatterns  []string                                 `json:"valid_source_patterns"`
-	CommonFields         []string                                 `json:"common_fields"`
-	SourceBackedRequired []string                                 `json:"source_backed_required_fields"`
-	APIBackedRules       []string                                 `json:"api_backed_rules"`
-	WidgetSpecificFields map[string][]string                      `json:"widget_specific_fields"`
-	RowSyntax            map[string]string                        `json:"row_syntax"`
-	WorkflowRules        []string                                 `json:"workflow_rules"`
-	Examples             []reportPlanCapabilityExample            `json:"examples"`
+	FilePath             string                        `json:"file_path"`
+	ValidationTool       string                        `json:"validation_tool"`
+	PreviewTool          string                        `json:"preview_tool"`
+	WidgetKinds          []string                      `json:"widget_kinds"`
+	SourceBackedWidgets  []string                      `json:"source_backed_widgets"`
+	ValidSourcePatterns  []string                      `json:"valid_source_patterns"`
+	CommonFields         []string                      `json:"common_fields"`
+	SourceBackedRequired []string                      `json:"source_backed_required_fields"`
+	WidgetSpecificFields map[string][]string           `json:"widget_specific_fields"`
+	RowSyntax            map[string]string             `json:"row_syntax"`
+	WorkflowRules        []string                      `json:"workflow_rules"`
+	Examples             []reportPlanCapabilityExample `json:"examples"`
 }
 
 func getReportPlanCapabilities() reportPlanCapabilitiesResult {
 	return reportPlanCapabilitiesResult{
-		FilePath:            "reports/report_plan.json",
-		ValidationTool:      "validate_report_plan",
-		PreviewTool:         "preview_report_render",
-		WidgetKinds:         []string{"text", "table", "chart", "stat", "alert", "pivot", "costs", "evals", "runs", "row"},
-		SourceBackedWidgets: []string{"text", "table", "chart", "stat", "alert", "pivot"},
-		APIBackedWidgets: map[string]reportPlanAPIWidgetCapability{
-			"costs": {
-				Views:   []string{"summary", "stage-breakdown", "run-table", "step-table", "model-table"},
-				Scopes:  []string{"phase", "execution", "evaluation", "all"},
-				Metrics: []string{"cost", "total_tokens", "input_tokens", "output_tokens", "llm_calls"},
-			},
-			"evals": {
-				Views:   []string{"summary", "run-chart", "run-table", "step-table"},
-				Metrics: []string{"score_percentage", "total_score"},
-			},
-			"runs": {
-				Views: []string{"summary", "duration-chart", "status-chart", "table"},
-			},
-		},
+		FilePath:             "reports/report_plan.json",
+		ValidationTool:       "validate_report_plan",
+		PreviewTool:          "preview_report_render",
+		WidgetKinds:          []string{"text", "table", "chart", "stat", "alert", "pivot", "row"},
+		SourceBackedWidgets:  []string{"text", "table", "chart", "stat", "alert", "pivot"},
 		ValidSourcePatterns:  []string{"db/<file>.json"},
-		CommonFields:         []string{"title", "description", "height", "filter", "show_if"},
+		CommonFields:         []string{"title", "description", "height", "query", "filter", "show_if"},
 		SourceBackedRequired: []string{"source", "path"},
-		APIBackedRules: []string{
-			"costs, evals, and runs are API-backed widgets and do not require source or path",
-			"if source/path are present on costs/evals/runs, the renderer ignores them",
-			"after editing reports/report_plan.json always call validate_report_plan",
-			"call preview_report_render to inspect the final widget structure and resolved data preview",
-		},
 		WidgetSpecificFields: map[string][]string{
 			"table": {"formats", "page_size", "enable_search", "default_sort", "hide_columns", "colors", "colors_dark", "color_by", "color_map"},
 			"chart": {"chart_type", "x_axis", "y_axis", "top_n", "sort", "show_values", "series", "series_colors", "stacked", "colors", "colors_dark", "color_by", "color_map"},
 			"stat":  {"label", "prefix", "suffix", "format", "delta_path", "delta_format", "trend_path"},
 			"alert": {"severity", "title", "message", "format"},
 			"pivot": {"rows", "columns", "values", "aggregate", "format", "heatmap", "heatmap_colors"},
-			"costs": {"view", "scope", "metric", "run_folder", "group"},
-			"evals": {"view", "metric", "run_folder", "group"},
-			"runs":  {"view", "run_folder", "group"},
 		},
 		RowSyntax: map[string]string{
 			"source_backed": "- {kind} | source: <path> | path: <dot.path> [ | filter: <key=value> ] [ | show_if: <expr> ]",
-			"api_backed":    "- costs | view: summary | scope: all ; - evals | view: run-chart ; - runs | view: table",
 		},
 		WorkflowRules: []string{
 			"edit reports/report_plan.json instead of generating HTML or markdown artifacts",
@@ -330,16 +290,8 @@ func getReportPlanCapabilities() reportPlanCapabilitiesResult {
 				Markdown: "## Account Balances\n\n```widget:row\n- stat | source: db/account_status.json | filter: group_name=mahimakh | path: balance | label: Mahima\n- stat | source: db/account_status.json | filter: group_name=manishiitg | path: balance | label: Manish\n```",
 			},
 			{
-				Name:     "Workflow cost summary",
-				Markdown: "## Workflow Costs\n\n```widget:costs\ntitle: Workflow cost overview\nview: summary\nscope: all\nmetric: cost\n```",
-			},
-			{
-				Name:     "Evaluation scores",
-				Markdown: "## Evaluation Quality\n\n```widget:evals\ntitle: Eval scores by run\nview: run-chart\nmetric: score_percentage\n```",
-			},
-			{
-				Name:     "Run history",
-				Markdown: "## Run History\n\n```widget:runs\ntitle: Recent runs\nview: table\n```",
+				Name:     "JSONata aggregate KPI",
+				Markdown: "## Order Metrics\n\n```widget:stat\nsource: db/orders.json\nquery: $sum(rows[status='paid'].amount)\nlabel: Paid total\nformat: currency-usd\n```",
 			},
 		},
 	}
@@ -355,6 +307,7 @@ type reportPlanParsedWidget struct {
 	Source   string `json:"source"`
 	Path     string `json:"path,omitempty"`
 	Filter   string `json:"filter,omitempty"`
+	Query    string `json:"query,omitempty"`
 	ShowIf   string `json:"show_if,omitempty"`
 	Line     int    `json:"line,omitempty"`
 	InRow    bool   `json:"in_row,omitempty"`
@@ -397,28 +350,6 @@ type reportPlanPreviewWidget struct {
 	Reason      string      `json:"reason,omitempty"`
 	Summary     string      `json:"summary,omitempty"`
 	DataPreview interface{} `json:"data_preview,omitempty"`
-}
-
-type reportPlanCostsPreviewData struct {
-	HasPhaseLedger        bool     `json:"has_phase_ledger"`
-	ExecutionLedgerFiles  int      `json:"execution_ledger_files"`
-	EvaluationLedgerFiles int      `json:"evaluation_ledger_files"`
-	ExecutionRunFolders   []string `json:"execution_run_folders,omitempty"`
-	EvaluationRunFolders  []string `json:"evaluation_run_folders,omitempty"`
-}
-
-type reportPlanEvalPreviewItem struct {
-	RunFolder        string  `json:"run_folder"`
-	GeneratedAt      string  `json:"generated_at,omitempty"`
-	ScorePercentage  float64 `json:"score_percentage"`
-	TotalScore       int     `json:"total_score"`
-	MaxPossibleScore int     `json:"max_possible_score"`
-	StepCount        int     `json:"step_count"`
-}
-
-type reportPlanRunPreviewItem struct {
-	RunFolder  string `json:"run_folder"`
-	ModifiedAt string `json:"modified_at,omitempty"`
 }
 
 func readReportPlanDocument(
@@ -535,7 +466,7 @@ func parseReportPlanMarkdownKeyValueWidget(kind string, body []string) *reportPl
 			fields[key] = val
 		}
 	}
-	if !reportPlanWidgetIsAPIBacked(kind) && fields["source"] == "" {
+	if fields["source"] == "" {
 		return nil
 	}
 	return reportPlanDocumentWidgetFromLegacyFields(kind, fields)
@@ -575,7 +506,7 @@ func parseReportPlanMarkdownRowDocument(body []string) *reportPlanDocumentRow {
 				fields[key] = val
 			}
 		}
-		if !reportPlanWidgetIsAPIBacked(kind) && fields["source"] == "" {
+		if fields["source"] == "" {
 			continue
 		}
 		if widget := reportPlanDocumentWidgetFromLegacyFields(kind, fields); widget != nil {
@@ -588,8 +519,7 @@ func parseReportPlanMarkdownRowDocument(body []string) *reportPlanDocumentRow {
 func reportPlanDocumentWidgetKindAllowed(kind string) bool {
 	return kind == "text" || kind == "markdown" ||
 		kind == "table" || kind == "cards" || kind == "chart" ||
-		kind == "stat" || kind == "alert" || kind == "pivot" ||
-		kind == "costs" || kind == "evals" || kind == "runs"
+		kind == "stat" || kind == "alert" || kind == "pivot"
 }
 
 func reportPlanDocumentWidgetFromLegacyFields(kind string, fields map[string]string) *reportPlanDocumentWidget {
@@ -598,6 +528,7 @@ func reportPlanDocumentWidgetFromLegacyFields(kind string, fields map[string]str
 		Source:      fields["source"],
 		Path:        normalizeReportPlanPath(fields["path"]),
 		Filter:      fields["filter"],
+		Query:       fields["query"],
 		Title:       fields["title"],
 		Description: fields["description"],
 		ShowIf:      reportPlanFirstNonEmpty(fields["show_if"], fields["showif"]),
@@ -658,14 +589,6 @@ func reportPlanDocumentWidgetFromLegacyFields(kind string, fields map[string]str
 	if v, ok := parseReportPlanBoolPointer(fields["stacked"]); ok {
 		widget.Stacked = v
 	}
-	widget.CostsScope = fields["scope"]
-	widget.CostsView = fields["view"]
-	widget.CostsMetric = fields["metric"]
-	widget.EvalsView = fields["view"]
-	widget.EvalsMetric = fields["metric"]
-	widget.RunsView = fields["view"]
-	widget.RunFolder = reportPlanFirstNonEmpty(fields["run_folder"], fields["runfolder"])
-	widget.Group = fields["group"]
 	return widget
 }
 
@@ -852,6 +775,7 @@ func reportPlanLegacyWidgetFromDocumentWidget(widget reportPlanDocumentWidget, s
 	add("source", widget.Source)
 	add("path", widget.Path)
 	add("filter", widget.Filter)
+	add("query", widget.Query)
 	add("title", widget.Title)
 	add("description", widget.Description)
 	if widget.Height > 0 {
@@ -943,11 +867,6 @@ func reportPlanLegacyWidgetFromDocumentWidget(widget reportPlanDocumentWidget, s
 	if widget.Stacked != nil {
 		fields["stacked"] = strconv.FormatBool(*widget.Stacked)
 	}
-	add("scope", widget.CostsScope)
-	add("view", reportPlanFirstNonEmpty(widget.CostsView, widget.EvalsView, widget.RunsView))
-	add("metric", reportPlanFirstNonEmpty(widget.CostsMetric, widget.EvalsMetric))
-	add("run_folder", widget.RunFolder)
-	add("group", widget.Group)
 	if widget.Hidden {
 		fields["hidden"] = "true"
 	}
@@ -1040,8 +959,7 @@ func parseReportPlan(markdown string) []reportPlanSection {
 				continue
 			}
 			if kind != "text" && kind != "table" && kind != "chart" &&
-				kind != "stat" && kind != "alert" && kind != "pivot" &&
-				kind != "costs" && kind != "evals" && kind != "runs" {
+				kind != "stat" && kind != "alert" && kind != "pivot" {
 				continue
 			}
 			w := parseReportPlanKeyValue(kind, body)
@@ -1078,7 +996,7 @@ func parseReportPlanKeyValue(kind string, body []string) *reportPlanWidget {
 			fields[key] = val
 		}
 	}
-	if !reportPlanWidgetIsAPIBacked(kind) && fields["source"] == "" {
+	if fields["source"] == "" {
 		return nil
 	}
 	return &reportPlanWidget{
@@ -1112,8 +1030,7 @@ func parseReportPlanRow(body []string) []*reportPlanWidget {
 		}
 		kind := strings.ToLower(cleaned[0])
 		if kind != "text" && kind != "table" && kind != "chart" &&
-			kind != "stat" && kind != "alert" && kind != "pivot" &&
-			kind != "costs" && kind != "evals" && kind != "runs" {
+			kind != "stat" && kind != "alert" && kind != "pivot" {
 			continue
 		}
 		fields := map[string]string{}
@@ -1128,7 +1045,7 @@ func parseReportPlanRow(body []string) []*reportPlanWidget {
 				fields[key] = val
 			}
 		}
-		if !reportPlanWidgetIsAPIBacked(kind) && fields["source"] == "" {
+		if fields["source"] == "" {
 			continue
 		}
 		out = append(out, &reportPlanWidget{
@@ -1140,10 +1057,6 @@ func parseReportPlanRow(body []string) []*reportPlanWidget {
 		})
 	}
 	return out
-}
-
-func reportPlanWidgetIsAPIBacked(kind string) bool {
-	return kind == "costs" || kind == "evals" || kind == "runs"
 }
 
 func normalizeReportPlanPath(raw string) string {
@@ -1262,12 +1175,6 @@ func validateReportPlan(
 				locator = fmt.Sprintf("row[%d]:%s", w.RowIndex, locator)
 			}
 
-			if reportPlanWidgetIsAPIBacked(w.Kind) {
-				validateReportPlanAPIWidget(w, section.Heading, locator, result)
-				validateReportPlanOptions(w, section.Heading, locator, result)
-				continue
-			}
-
 			// 1. Source path allowlist.
 			if !reportPlanValidSourceRE.MatchString(w.Source) {
 				result.Valid = false
@@ -1308,6 +1215,15 @@ func validateReportPlan(
 				hasData = true
 			}
 			if !hasData {
+				continue
+			}
+
+			// JSONata query widgets transform the raw source in the browser before
+			// path/filter/widget-shape validation applies. The Go validator does
+			// not evaluate JSONata, so keep source validation and option sanity but
+			// avoid false shape errors against the pre-query JSON.
+			if strings.TrimSpace(w.Fields["query"]) != "" {
+				validateReportPlanOptions(w, section.Heading, locator, result)
 				continue
 			}
 
@@ -1796,81 +1712,6 @@ func validateReportPlanPivotShape(
 	}
 }
 
-func validateReportPlanAPIWidget(
-	w *reportPlanWidget, section, locator string, result *reportPlanValidationResult,
-) {
-	if w.Kind == "costs" {
-		if raw := reportPlanFirstNonEmpty(w.Fields["scope"]); raw != "" {
-			scope := strings.ToLower(raw)
-			if _, ok := map[string]struct{}{"phase": {}, "execution": {}, "evaluation": {}, "all": {}}[scope]; !ok {
-				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-					Message: fmt.Sprintf("unknown costs scope %q.", raw),
-					Hint:    "Use one of: phase, execution, evaluation, all.",
-				})
-			}
-		}
-		if raw := reportPlanFirstNonEmpty(w.Fields["view"]); raw != "" {
-			view := strings.ToLower(raw)
-			if _, ok := map[string]struct{}{"summary": {}, "stage-breakdown": {}, "run-table": {}, "step-table": {}, "model-table": {}}[view]; !ok {
-				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-					Message: fmt.Sprintf("unknown costs view %q.", raw),
-					Hint:    "Use one of: summary, stage-breakdown, run-table, step-table, model-table.",
-				})
-			}
-		}
-		if raw := reportPlanFirstNonEmpty(w.Fields["metric"]); raw != "" {
-			metric := strings.ToLower(raw)
-			if _, ok := map[string]struct{}{"cost": {}, "total_tokens": {}, "input_tokens": {}, "output_tokens": {}, "llm_calls": {}}[metric]; !ok {
-				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-					Message: fmt.Sprintf("unknown costs metric %q.", raw),
-					Hint:    "Use one of: cost, total_tokens, input_tokens, output_tokens, llm_calls.",
-				})
-			}
-		}
-		return
-	}
-
-	if w.Kind == "evals" {
-		if raw := reportPlanFirstNonEmpty(w.Fields["view"]); raw != "" {
-			view := strings.ToLower(raw)
-			if _, ok := map[string]struct{}{"summary": {}, "run-chart": {}, "run-table": {}, "step-table": {}}[view]; !ok {
-				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-					Message: fmt.Sprintf("unknown evals view %q.", raw),
-					Hint:    "Use one of: summary, run-chart, run-table, step-table.",
-				})
-			}
-		}
-		if raw := reportPlanFirstNonEmpty(w.Fields["metric"]); raw != "" {
-			metric := strings.ToLower(raw)
-			if _, ok := map[string]struct{}{"score_percentage": {}, "total_score": {}}[metric]; !ok {
-				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-					Message: fmt.Sprintf("unknown evals metric %q.", raw),
-					Hint:    "Use one of: score_percentage, total_score.",
-				})
-			}
-		}
-		return
-	}
-
-	if w.Kind == "runs" {
-		if raw := reportPlanFirstNonEmpty(w.Fields["view"]); raw != "" {
-			view := strings.ToLower(raw)
-			if _, ok := map[string]struct{}{"summary": {}, "duration-chart": {}, "status-chart": {}, "table": {}}[view]; !ok {
-				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-					Message: fmt.Sprintf("unknown runs view %q.", raw),
-					Hint:    "Use one of: summary, duration-chart, status-chart, table.",
-				})
-			}
-		}
-	}
-}
-
 // Small helper mirroring parseBool in reportPlanParser.ts. Only treats 'true'
 // / 'yes' / '1' as true; everything else is false.
 func parseReportPlanBool(v string) bool {
@@ -2017,7 +1858,7 @@ func buildReportPlanParsedDump(sections []reportPlanSection) []reportPlanParsedS
 	// set is surfaced under `options` — that's where typos and unrecognized
 	// keys become visible.
 	recognized := map[string]struct{}{
-		"source": {}, "path": {}, "filter": {}, "show_if": {}, "showif": {},
+		"source": {}, "path": {}, "filter": {}, "query": {}, "show_if": {}, "showif": {},
 	}
 	out := make([]reportPlanParsedSection, 0, len(sections))
 	for _, s := range sections {
@@ -2028,6 +1869,7 @@ func buildReportPlanParsedDump(sections []reportPlanSection) []reportPlanParsedS
 				Source:   w.Source,
 				Path:     w.Path,
 				Filter:   w.Filter,
+				Query:    w.Fields["query"],
 				ShowIf:   reportPlanFirstNonEmpty(w.Fields["show_if"], w.Fields["showif"]),
 				Line:     w.LineNum,
 				InRow:    w.InRow,
@@ -2103,10 +1945,6 @@ func previewReportRender(
 
 	sourceCache := map[string]interface{}{}
 	sourceErrors := map[string]string{}
-	absWorkspacePath := filepath.Join(GetPromptDocsRoot(), workspacePath)
-	costsPreview := loadReportPreviewCosts(absWorkspacePath)
-	evalsPreview := loadReportPreviewEvaluations(absWorkspacePath)
-	runsPreview := loadReportPreviewRuns(absWorkspacePath)
 
 	var rendered strings.Builder
 	for _, section := range sections {
@@ -2121,9 +1959,6 @@ func previewReportRender(
 				readFile,
 				sourceCache,
 				sourceErrors,
-				costsPreview,
-				evalsPreview,
-				runsPreview,
 			)
 			previewSection.Widgets = append(previewSection.Widgets, pw)
 			state := pw.RenderState
@@ -2153,9 +1988,6 @@ func buildReportPlanWidgetPreview(
 	readFile func(context.Context, string) (string, error),
 	sourceCache map[string]interface{},
 	sourceErrors map[string]string,
-	costsPreview reportPlanCostsPreviewData,
-	evalsPreview []reportPlanEvalPreviewItem,
-	runsPreview []reportPlanRunPreviewItem,
 ) reportPlanPreviewWidget {
 	out := reportPlanPreviewWidget{
 		Kind:        w.Kind,
@@ -2176,10 +2008,6 @@ func buildReportPlanWidgetPreview(
 		out.Reason = "widget is hidden"
 		out.Summary = "hidden"
 		return out
-	}
-
-	if reportPlanWidgetIsAPIBacked(w.Kind) {
-		return buildReportPlanAPIWidgetPreview(w, out, costsPreview, evalsPreview, runsPreview)
 	}
 
 	raw, readErr := reportPlanLoadSourceData(ctx, workspacePath, w.Source, readFile, sourceCache, sourceErrors)
@@ -2215,49 +2043,6 @@ func buildReportPlanWidgetPreview(
 
 	out.DataPreview = reportPlanPreviewValue(resolved)
 	out.Summary = reportPlanSummarizeWidgetData(w, resolved)
-	return out
-}
-
-func buildReportPlanAPIWidgetPreview(
-	w *reportPlanWidget,
-	out reportPlanPreviewWidget,
-	costsPreview reportPlanCostsPreviewData,
-	evalsPreview []reportPlanEvalPreviewItem,
-	runsPreview []reportPlanRunPreviewItem,
-) reportPlanPreviewWidget {
-	if w.Kind == "costs" {
-		scope := reportPlanFirstNonEmpty(w.Fields["scope"])
-		if scope == "" {
-			scope = "all"
-		}
-		view := reportPlanFirstNonEmpty(w.Fields["view"])
-		if view == "" {
-			view = "summary"
-		}
-		out.DataPreview = costsPreview
-		out.Summary = fmt.Sprintf(
-			"costs preview (%s/%s): phase ledger=%t, execution ledgers=%d, evaluation ledgers=%d",
-			scope, view, costsPreview.HasPhaseLedger, costsPreview.ExecutionLedgerFiles, costsPreview.EvaluationLedgerFiles,
-		)
-		return out
-	}
-
-	if w.Kind == "evals" {
-		selected := filterReportPreviewEvals(evalsPreview, reportPlanFirstNonEmpty(w.Fields["group"]), reportPlanFirstNonEmpty(w.Fields["run_folder"], w.Fields["runfolder"]))
-		out.DataPreview = previewSlice(selected, 5)
-		out.Summary = fmt.Sprintf("evals preview: %d report(s) matched", len(selected))
-		if len(selected) == 0 {
-			out.Reason = "no evaluation reports matched current filters"
-		}
-		return out
-	}
-
-	selectedRuns := filterReportPreviewRuns(runsPreview, reportPlanFirstNonEmpty(w.Fields["group"]), reportPlanFirstNonEmpty(w.Fields["run_folder"], w.Fields["runfolder"]))
-	out.DataPreview = previewSlice(selectedRuns, 8)
-	out.Summary = fmt.Sprintf("runs preview: %d run folder(s) matched", len(selectedRuns))
-	if len(selectedRuns) == 0 {
-		out.Reason = "no run folders matched current filters"
-	}
 	return out
 }
 
@@ -2440,191 +2225,6 @@ func previewSlice[T any](items []T, max int) []T {
 		return items
 	}
 	return items[:max]
-}
-
-func loadReportPreviewCosts(absWorkspacePath string) reportPlanCostsPreviewData {
-	preview := reportPlanCostsPreviewData{}
-	phasePath := filepath.Join(absWorkspacePath, "costs", "phase", "token_usage.json")
-	if _, err := os.Stat(phasePath); err == nil {
-		preview.HasPhaseLedger = true
-	}
-	preview.ExecutionLedgerFiles, preview.ExecutionRunFolders = countCostLedgerFiles(filepath.Join(absWorkspacePath, "costs", "execution"))
-	preview.EvaluationLedgerFiles, preview.EvaluationRunFolders = countCostLedgerFiles(filepath.Join(absWorkspacePath, "costs", "evaluation"))
-	return preview
-}
-
-func countCostLedgerFiles(root string) (int, []string) {
-	seenRuns := map[string]struct{}{}
-	count := 0
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info == nil || info.IsDir() || filepath.Ext(path) != ".json" {
-			return nil
-		}
-		count++
-		content, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return nil
-		}
-		var payload struct {
-			RunFolders map[string]json.RawMessage `json:"run_folders"`
-		}
-		if json.Unmarshal(content, &payload) == nil {
-			for runFolder := range payload.RunFolders {
-				seenRuns[runFolder] = struct{}{}
-			}
-		}
-		return nil
-	})
-	runs := make([]string, 0, len(seenRuns))
-	for runFolder := range seenRuns {
-		runs = append(runs, runFolder)
-	}
-	sort.Strings(runs)
-	return count, previewSlice(runs, 8)
-}
-
-func loadReportPreviewEvaluations(absWorkspacePath string) []reportPlanEvalPreviewItem {
-	root := filepath.Join(absWorkspacePath, "evaluation", "runs")
-	out := make([]reportPlanEvalPreviewItem, 0)
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info == nil || info.IsDir() || info.Name() != EvaluationReportFileName {
-			return nil
-		}
-		content, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return nil
-		}
-		var report EvaluationReport
-		if json.Unmarshal(content, &report) != nil {
-			return nil
-		}
-		runFolder, relErr := filepath.Rel(root, filepath.Dir(path))
-		if relErr != nil {
-			runFolder = filepath.Dir(path)
-		}
-		runFolder = filepath.ToSlash(runFolder)
-		out = append(out, reportPlanEvalPreviewItem{
-			RunFolder:        runFolder,
-			GeneratedAt:      report.GeneratedAt,
-			ScorePercentage:  report.ScorePercentage,
-			TotalScore:       report.TotalScore,
-			MaxPossibleScore: report.MaxPossibleScore,
-			StepCount:        len(report.StepScores),
-		})
-		return nil
-	})
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].GeneratedAt == out[j].GeneratedAt {
-			return out[i].RunFolder < out[j].RunFolder
-		}
-		return out[i].GeneratedAt > out[j].GeneratedAt
-	})
-	return out
-}
-
-func loadReportPreviewRuns(absWorkspacePath string) []reportPlanRunPreviewItem {
-	root := filepath.Join(absWorkspacePath, "runs")
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil
-	}
-	internalNames := map[string]struct{}{
-		"execution": {}, "logs": {}, "learning": {}, "validation": {}, "artifacts": {}, "evaluation": {},
-	}
-	out := make([]reportPlanRunPreviewItem, 0)
-	for _, iteration := range entries {
-		if !iteration.IsDir() {
-			continue
-		}
-		iterPath := filepath.Join(root, iteration.Name())
-		childDirs, _ := os.ReadDir(iterPath)
-		groupDirs := make([]os.DirEntry, 0)
-		for _, child := range childDirs {
-			if !child.IsDir() {
-				continue
-			}
-			if _, isInternal := internalNames[child.Name()]; isInternal {
-				continue
-			}
-			groupDirs = append(groupDirs, child)
-		}
-		if len(groupDirs) > 0 {
-			for _, child := range groupDirs {
-				if info, err := child.Info(); err == nil {
-					out = append(out, reportPlanRunPreviewItem{
-						RunFolder:  filepath.ToSlash(filepath.Join(iteration.Name(), child.Name())),
-						ModifiedAt: info.ModTime().UTC().Format(time.RFC3339),
-					})
-				}
-			}
-			continue
-		}
-		if info, err := iteration.Info(); err == nil {
-			out = append(out, reportPlanRunPreviewItem{
-				RunFolder:  iteration.Name(),
-				ModifiedAt: info.ModTime().UTC().Format(time.RFC3339),
-			})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].ModifiedAt == out[j].ModifiedAt {
-			return out[i].RunFolder < out[j].RunFolder
-		}
-		return out[i].ModifiedAt > out[j].ModifiedAt
-	})
-	return out
-}
-
-func filterReportPreviewEvals(items []reportPlanEvalPreviewItem, group, runFolder string) []reportPlanEvalPreviewItem {
-	filtered := make([]reportPlanEvalPreviewItem, 0, len(items))
-	for _, item := range items {
-		if group != "" && item.RunFolder != group && !strings.HasSuffix(item.RunFolder, "/"+group) {
-			continue
-		}
-		filtered = append(filtered, item)
-	}
-	if runFolder == "" {
-		return filtered
-	}
-	if runFolder == "latest" {
-		if len(filtered) == 0 {
-			return nil
-		}
-		return []reportPlanEvalPreviewItem{filtered[0]}
-	}
-	out := make([]reportPlanEvalPreviewItem, 0, len(filtered))
-	for _, item := range filtered {
-		if item.RunFolder == runFolder {
-			out = append(out, item)
-		}
-	}
-	return out
-}
-
-func filterReportPreviewRuns(items []reportPlanRunPreviewItem, group, runFolder string) []reportPlanRunPreviewItem {
-	filtered := make([]reportPlanRunPreviewItem, 0, len(items))
-	for _, item := range items {
-		if group != "" && item.RunFolder != group && !strings.HasSuffix(item.RunFolder, "/"+group) {
-			continue
-		}
-		filtered = append(filtered, item)
-	}
-	if runFolder == "" {
-		return filtered
-	}
-	if runFolder == "latest" {
-		if len(filtered) == 0 {
-			return nil
-		}
-		return []reportPlanRunPreviewItem{filtered[0]}
-	}
-	out := make([]reportPlanRunPreviewItem, 0, len(filtered))
-	for _, item := range filtered {
-		if item.RunFolder == runFolder {
-			out = append(out, item)
-		}
-	}
-	return out
 }
 
 type reportPlanWidgetLocation struct {
@@ -2915,6 +2515,7 @@ func registerReportPlanManagementTools(
 			"source": { "type": "string" },
 			"path": { "type": "string", "description": "Dot-notation path into the source JSON. For collection widgets (table, chart, cards, pivot) this should resolve to an array. For stat / alert widgets the renderer applies filter first and then resolves path against the matched row, so when filter is set, path must be a bare field name on the row (e.g. \"balance\"), NOT \"0.balance\". Use a leading numeric index only when there is no filter and you intend to pick by position." },
 			"filter": { "type": "string", "description": "Narrows an array source to matching rows. Format: \"key=value\" (string equality). For stat / alert widgets, filter is the right way to pick one row by name — it narrows the array to a single row that path resolves against. For collection widgets, filter narrows the array passed to the renderer (table rows, chart points, etc.)." },
+			"query": { "type": "string", "description": "JSONata expression evaluated against the source JSON before path/filter/widget rendering. Use for report-time transforms like $sum(rows.amount), rows[status='paid'], or $sort(rows, function($l, $r) { $l.created_at < $r.created_at })[0]. If query returns the final scalar/array, leave path empty or '$'." },
 			"title": { "type": "string" },
 			"description": { "type": "string" },
 			"height": { "type": "integer" },
@@ -2965,14 +2566,6 @@ func registerReportPlanManagementTools(
 			"series": { "type": "array", "items": { "type": "string" } },
 			"seriesColors": { "type": "array", "items": { "type": "string" } },
 			"stacked": { "type": "boolean" },
-			"costsScope": { "type": "string", "enum": ["phase", "execution", "evaluation", "all"] },
-			"costsView": { "type": "string", "enum": ["summary", "stage-breakdown", "run-table", "step-table", "model-table"] },
-			"costsMetric": { "type": "string", "enum": ["cost", "total_tokens", "input_tokens", "output_tokens", "llm_calls"] },
-			"evalsView": { "type": "string", "enum": ["summary", "run-chart", "run-table", "step-table"] },
-			"evalsMetric": { "type": "string", "enum": ["score_percentage", "total_score"] },
-			"runsView": { "type": "string", "enum": ["summary", "duration-chart", "status-chart", "table"] },
-			"runFolder": { "type": "string" },
-			"group": { "type": "string" },
 			"layout": {
 				"type": "object",
 				"properties": {
@@ -2992,7 +2585,7 @@ func registerReportPlanManagementTools(
 			"section_heading": { "type": "string" },
 			"row_id": { "type": "string" },
 			"widget_id": { "type": "string" },
-			"kind": { "type": "string", "enum": ["text", "markdown", "table", "cards", "chart", "stat", "alert", "pivot", "costs", "evals", "runs"] },
+			"kind": { "type": "string", "enum": ["text", "markdown", "table", "cards", "chart", "stat", "alert", "pivot"] },
 			"index": { "type": "integer" },
 			"config": %s
 		},
@@ -3004,7 +2597,7 @@ func registerReportPlanManagementTools(
 	mcpAgent.RegisterCustomTool(
 		"upsert_report_widget",
 		"Create or update one report widget in reports/report_plan.json. If widget_id exists, this merges the provided config into the existing widget. If widget_id is omitted, it creates a new widget in the target section; pass row_id to insert into an existing row entry.\n\n"+
-			"Supported widget kinds: text, markdown (formatted text/markdown body), table, cards (record tiles with title/subtitle/description/image fields — set cardTitleField etc.), chart (bar/line/area/pie), stat (KPI tile + delta + sparkline), alert (severity callout), pivot (rows × cols × aggregate), costs / evals / runs (workflow-API-driven; source/path are ignored).\n\n"+
+			"Supported widget kinds: text, markdown (formatted text/markdown body), table, cards (record tiles with title/subtitle/description/image fields — set cardTitleField etc.), chart (bar/line/area/pie), stat (KPI tile + delta + sparkline), alert (severity callout), pivot (rows × cols × aggregate).\n\n"+
 			"Chart configuration: single-series uses xAxis + yAxis (or relies on canonical {label,value} keys). For multi-series — overlaying multiple lines/bars on the same axes — set `series: [\"field_a\", \"field_b\", ...]` and `xAxis` (each row in the source contributes one x-tick; each series field becomes one plotted line/bar). Optional: `seriesColors` (hex parallel to series), `stacked: true` for bar/area to stack instead of group. Tooltip and legend render automatically.\n\n"+
 			"Per-widget grid layout: when the parent section has section.layout.columns set, pass `layout: { span: N, minWidth: 320 }` in config to span N grid columns. Use set_section_layout to enable grid mode on a section, and set_report_theme to swap the chart palette report-wide.",
 		upsertParams,

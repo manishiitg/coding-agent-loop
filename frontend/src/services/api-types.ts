@@ -1432,15 +1432,9 @@ import type {
 // consuming field, so these are independently useful where callsites need
 // to name an enum (function args, switch exhaustiveness checks, etc.). They
 // must mirror the Go enum tags; if these drift, callsites will break.
-export type ReportWidgetKind = 'text' | 'markdown' | 'chart' | 'table' | 'cards' | 'stat' | 'alert' | 'pivot' | 'costs' | 'evals' | 'runs';
+export type ReportWidgetKind = 'text' | 'markdown' | 'chart' | 'table' | 'cards' | 'stat' | 'alert' | 'pivot';
 export type ReportAlertSeverity = 'info' | 'warning' | 'error' | 'success';
 export type ReportPivotAggregate = 'sum' | 'avg' | 'count' | 'min' | 'max' | 'first';
-export type ReportCostsScope = 'phase' | 'execution' | 'evaluation' | 'all';
-export type ReportCostsView = 'summary' | 'stage-breakdown' | 'run-table' | 'step-table' | 'model-table';
-export type ReportCostsMetric = 'cost' | 'total_tokens' | 'input_tokens' | 'output_tokens' | 'llm_calls';
-export type ReportEvalsView = 'summary' | 'run-chart' | 'run-table' | 'step-table';
-export type ReportEvalsMetric = 'score_percentage' | 'total_score';
-export type ReportRunsView = 'summary' | 'duration-chart' | 'status-chart' | 'table';
 export type ReportFormatterName =
   | 'currency-inr'
   | 'currency-usd'
@@ -1464,12 +1458,12 @@ export type ReportWidgetLayout = ReportPlanDocumentWidgetLayout;
 export type ReportSectionLayout = ReportPlanDocumentSectionLayout;
 
 // Narrowed widget type. The parser always sets `source` and `path` to a
-// string (possibly empty for costs/evals/runs widgets), so callsites can
-// rely on those being defined — the schema makes them optional because Go's
+// string, so callsites can rely on those being defined — the schema makes them optional because Go's
 // omitempty allows them to be absent on the wire.
 export type ReportWidget = ReportPlanDocumentWidget & {
   source: string;
   path: string;
+  query?: string;
 };
 
 // Narrowed row — widgets is a ReportWidget[] (with source/path defined),

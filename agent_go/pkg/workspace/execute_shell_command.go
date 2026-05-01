@@ -63,6 +63,26 @@ type ExecuteShellCommandParams struct {
 	ExtraEnv         map[string]string  `json:"extra_env,omitempty"`
 }
 
+var shellCommandSecretReplacements = []struct {
+	pattern     *regexp.Regexp
+	replacement string
+}{
+	{regexp.MustCompile(`(?i)AIza[0-9A-Za-z_-]{20,}`), "[REDACTED]"},
+	{regexp.MustCompile(`(?i)sk-api-[0-9A-Za-z_-]{20,}`), "[REDACTED]"},
+	{regexp.MustCompile(`(?i)sk_[0-9A-Za-z]{20,}`), "[REDACTED]"},
+	{regexp.MustCompile(`(?i)sk-[0-9A-Za-z_-]{20,}`), "[REDACTED]"},
+	{regexp.MustCompile(`(?i)(Bearer\s+)[0-9A-Za-z._~+/=-]{20,}`), `${1}[REDACTED]`},
+	{regexp.MustCompile(`(?i)((?:api[_-]?key|token|secret|authorization)\s*[:=]\s*["']?)[^"'\s,}]{8,}`), `${1}[REDACTED]`},
+}
+
+func redactShellCommandForLog(command string) string {
+	redacted := command
+	for _, replacement := range shellCommandSecretReplacements {
+		redacted = replacement.pattern.ReplaceAllString(redacted, replacement.replacement)
+	}
+	return redacted
+}
+
 // ExecuteShellCommand executes a shell command using the REST API: POST /api/execute
 func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCommandParams) (ShellCommandResult, error) {
 	// Debug: log ExtraEnv keys, MCP_API_URL value, and client pointer for identity tracking
@@ -106,7 +126,7 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	// command, where a real invocation would appear.
 	cmdTrimmed := strings.TrimSpace(params.Command)
 	if containsAgentBrowserInvocation(cmdTrimmed) {
-		log.Printf("[SHELL] Blocked agent-browser CLI call. Command: %s", params.Command)
+		log.Printf("[SHELL] Blocked agent-browser CLI call. Command: %s", redactShellCommandForLog(params.Command))
 
 		// Context-aware error: guide LLM to the correct browser tool
 		browserMode := ""
@@ -135,6 +155,7 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			params.ExtraEnv["GEMINI_PROJECT_DIR"] = geminiProjectDirPath(sessionCfg.GeminiProjectDirID)
 		}
 	}
+	redactedCommandForLog := redactShellCommandForLog(params.Command)
 
 	// Set default working directory:
 	// Priority: param > session config > client field > ExtraEnv > empty (workspace root)
@@ -167,7 +188,7 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			ReadPaths:         readPaths,
 			BlockedWritePaths: sessionCfg.BlockedWritePaths,
 		}
-		log.Printf("[FOLDER_GUARD_RESOLVE] SessionConfig: session=%s WritePaths=%v ReadPaths=%v BlockedWritePaths=%v cmd=%s", sessionID, sessionCfg.WritePaths, readPaths, sessionCfg.BlockedWritePaths, params.Command)
+		log.Printf("[FOLDER_GUARD_RESOLVE] SessionConfig: session=%s WritePaths=%v ReadPaths=%v BlockedWritePaths=%v cmd=%s", sessionID, sessionCfg.WritePaths, readPaths, sessionCfg.BlockedWritePaths, redactedCommandForLog)
 	} else if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
 		// Context System 1: chat/plan/prototype mode
 		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
@@ -180,7 +201,7 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			WritePaths: allowedWrites,
 			ReadPaths:  readPaths,
 		}
-		log.Printf("[FOLDER_GUARD_RESOLVE] System1 (chat/plan/prototype): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, allowedWrites, readPaths, params.Command)
+		log.Printf("[FOLDER_GUARD_RESOLVE] System1 (chat/plan/prototype): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, allowedWrites, readPaths, redactedCommandForLog)
 	} else if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok && len(ctxWrites) > 0 {
 		// Context System 2: workflow orchestrator
 		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
@@ -193,14 +214,14 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			WritePaths: ctxWrites,
 			ReadPaths:  readPaths,
 		}
-		log.Printf("[FOLDER_GUARD_RESOLVE] System2 (workflow): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, ctxWrites, readPaths, params.Command)
+		log.Printf("[FOLDER_GUARD_RESOLVE] System2 (workflow): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, ctxWrites, readPaths, redactedCommandForLog)
 	} else if c.FolderGuard != nil && c.FolderGuard.Enabled {
 		// Client-level fallback — no session config, no context keys.
 		params.FolderGuard = c.FolderGuard
 		log.Printf("[FOLDER_GUARD_RESOLVE] FALLBACK to client-level guard: URL=%s ReadPaths=%v WritePaths=%v BlockedPaths=%v cmd=%s",
-			c.BaseURL, c.FolderGuard.ReadPaths, c.FolderGuard.WritePaths, c.FolderGuard.BlockedPaths, params.Command)
+			c.BaseURL, c.FolderGuard.ReadPaths, c.FolderGuard.WritePaths, c.FolderGuard.BlockedPaths, redactedCommandForLog)
 	} else {
-		log.Printf("[FOLDER_GUARD_RESOLVE] NO folder guard at all: URL=%s cmd=%s", c.BaseURL, params.Command)
+		log.Printf("[FOLDER_GUARD_RESOLVE] NO folder guard at all: URL=%s cmd=%s", c.BaseURL, redactedCommandForLog)
 	}
 
 	// Block absolute host paths when folder guard is active.
@@ -209,7 +230,7 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	// filesystem, so this check is needed here too as defense-in-depth.
 	if params.FolderGuard != nil && params.FolderGuard.Enabled {
 		if err := blockAbsoluteHostPaths(params.Command, params.FolderGuard); err != nil {
-			log.Printf("[FOLDER_GUARD] Blocked shell command with absolute host path: %s", params.Command)
+			log.Printf("[FOLDER_GUARD] Blocked shell command with absolute host path: %s", redactedCommandForLog)
 			return ShellCommandResult{}, err
 		}
 	}

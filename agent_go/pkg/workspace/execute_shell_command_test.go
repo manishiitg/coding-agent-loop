@@ -86,6 +86,24 @@ func TestRewriteGeminiRelativePaths_RewritesParentRelativePaths(t *testing.T) {
 	}
 }
 
+func TestRedactShellCommandForLog(t *testing.T) {
+	command := `python3 <<'PY'
+KEY = "sk-api-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+headers = {"Authorization": "Bearer abcdefghijklmnopqrstuvwxyz1234567890"}
+api_key = "AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+PY`
+
+	redacted := redactShellCommandForLog(command)
+	for _, forbidden := range []string{"sk-api-abcdefghijklmnopqrstuvwxyz", "Bearer abcdefghijklmnopqrstuvwxyz", "AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ"} {
+		if strings.Contains(redacted, forbidden) {
+			t.Fatalf("expected secret fragment %q to be redacted from %q", forbidden, redacted)
+		}
+	}
+	if strings.Count(redacted, "[REDACTED]") < 3 {
+		t.Fatalf("expected multiple redactions, got %q", redacted)
+	}
+}
+
 func TestBlockAbsoluteHostPaths_DeniesAbsoluteWorkspacePathOutsideGuard(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
 

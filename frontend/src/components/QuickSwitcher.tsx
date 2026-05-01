@@ -5,6 +5,7 @@ import { useModeStore } from '../stores/useModeStore'
 import { useChatStore } from '../stores'
 import type { ChatTab } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
+import { useAppStore } from '../stores/useAppStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 
 interface QuickSwitcherProps {
@@ -33,6 +34,15 @@ interface ChatTabItem {
 type QuickSwitcherItem = WorkflowItem | ChatTabItem
 
 const EMPTY_CHAT_TABS: Record<string, ChatTab> = {}
+const EMPTY_WORKFLOW_PRESETS: Array<CustomPreset | PredefinedPreset> = []
+const EMPTY_RECENT_PRESET_ORDER: string[] = []
+
+const requestChatScrollToBottom = () => {
+  useChatStore.getState().setAutoScroll(true)
+  window.dispatchEvent(new CustomEvent('chat-scroll-to-bottom'))
+  setTimeout(() => window.dispatchEvent(new CustomEvent('chat-scroll-to-bottom')), 120)
+  setTimeout(() => window.dispatchEvent(new CustomEvent('chat-scroll-to-bottom')), 400)
+}
 
 export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   isOpen,
@@ -47,12 +57,12 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   const isWorkflowMode = selectedModeCategory === 'workflow'
   const isChatMode = selectedModeCategory === 'multi-agent'
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  // Scope chat-store subscriptions to chat mode — chatTabs gets a new
-  // reference on every streaming event, which would otherwise re-render this
-  // component (and recompute filteredItems) many times per second in
-  // workflow mode.
-  const activeTabId = useChatStore(state => (isChatMode ? state.activeTabId : null))
-  const chatTabs = useChatStore(state => (isChatMode ? state.chatTabs : EMPTY_CHAT_TABS))
+  // Subscribe only while open. chatTabs changes on streaming event updates, so
+  // keeping this inactive when the switcher is closed avoids background churn.
+  const activeTabId = useChatStore(state => (isOpen ? state.activeTabId : null))
+  const chatTabs = useChatStore(state => (isOpen ? state.chatTabs : EMPTY_CHAT_TABS))
+  const workflowPresets = useGlobalPresetStore(state => (isOpen ? state.workflowPresets : EMPTY_WORKFLOW_PRESETS))
+  const recentPresetOrder = useGlobalPresetStore(state => (isOpen ? state.recentPresetOrder : EMPTY_RECENT_PRESET_ORDER))
 
   // Track Shift key state to show "minimize" hint on selected item
   const [shiftHeld, setShiftHeld] = useState(false)
@@ -77,54 +87,44 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     }
   }, [isOpen])
 
-  // Build items list based on current mode.
-  // Workflow mode: workflow presets. Chat mode: chat tabs.
+  // Build a cross-mode list: normal chat tabs + workflow presets.
   const allItems = useMemo<QuickSwitcherItem[]>(() => {
     if (!isOpen) return []
 
-    if (isWorkflowMode) {
-      const { workflowPresets, recentPresetOrder } = useGlobalPresetStore.getState()
-      const items: QuickSwitcherItem[] = workflowPresets
-        .filter(p => p.selectedFolder?.filepath)
-        .map(p => ({
-          type: 'workflow' as const,
-          id: p.id,
-          label: p.label,
-          subtitle: p.selectedFolder!.filepath,
-          isActive: p.id === activePresetId,
-          preset: p
-        }))
+    const chatItems: ChatTabItem[] = Object.values(chatTabs)
+      .filter(tab => tab.metadata?.mode === 'multi-agent' && !tab.metadata?.isOrganizationAssistant)
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map(tab => ({
+        type: 'chat' as const,
+        id: `chat:${tab.tabId}`,
+        label: tab.name,
+        subtitle: `Chat · ${tab.isStreaming ? 'Streaming...' : tab.isCompleted ? 'Completed' : tab.sessionId ? 'Active' : 'New'}`,
+        isActive: isChatMode && tab.tabId === activeTabId,
+        tabId: tab.tabId
+      }))
 
-      items.sort((a, b) => {
-        const aIdx = recentPresetOrder.indexOf(a.id)
-        const bIdx = recentPresetOrder.indexOf(b.id)
-        if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx
-        if (aIdx !== -1) return -1
-        if (bIdx !== -1) return 1
-        return a.label.localeCompare(b.label)
-      })
+    const workflowItems: WorkflowItem[] = workflowPresets
+      .filter(p => p.selectedFolder?.filepath)
+      .map(p => ({
+        type: 'workflow' as const,
+        id: `workflow:${p.id}`,
+        label: p.label,
+        subtitle: `Workflow · ${p.selectedFolder!.filepath}`,
+        isActive: isWorkflowMode && p.id === activePresetId,
+        preset: p
+      }))
 
-      return items
-    }
+    workflowItems.sort((a, b) => {
+      const aIdx = recentPresetOrder.indexOf(a.preset.id)
+      const bIdx = recentPresetOrder.indexOf(b.preset.id)
+      if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx
+      if (aIdx !== -1) return -1
+      if (bIdx !== -1) return 1
+      return a.label.localeCompare(b.label)
+    })
 
-    if (isChatMode) {
-      const tabs = Object.values(chatTabs)
-        .filter(tab => tab.metadata?.mode === 'multi-agent' && !tab.metadata?.isOrganizationAssistant)
-        .sort((a, b) => a.createdAt - b.createdAt)
-        .map(tab => ({
-          type: 'chat' as const,
-          id: tab.tabId,
-          label: tab.name,
-          subtitle: tab.isStreaming ? 'Streaming...' : tab.isCompleted ? 'Completed' : tab.sessionId ? 'Active' : 'New',
-          isActive: tab.tabId === activeTabId,
-          tabId: tab.tabId
-        }))
-
-      return tabs
-    }
-
-    return []
-  }, [isOpen, isWorkflowMode, isChatMode, activePresetId, chatTabs, activeTabId])
+    return [...chatItems, ...workflowItems]
+  }, [isOpen, isWorkflowMode, isChatMode, activePresetId, chatTabs, activeTabId, workflowPresets, recentPresetOrder])
 
   // Filter and sort
   const filteredItems = useMemo<QuickSwitcherItem[]>(() => {
@@ -186,7 +186,12 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   const handleSelect = useCallback((item: QuickSwitcherItem, minimize = false) => {
     if (item.type === 'chat') {
       console.log(`%c[QuickSwitcher] Switching to chat tab: ${item.label} (${item.tabId})`, 'color: #FF9800; font-weight: bold')
+      useAppStore.getState().setShowWorkflowsOverview(false)
+      if (useModeStore.getState().selectedModeCategory !== 'multi-agent') {
+        useModeStore.getState().setModeCategory('multi-agent')
+      }
       useChatStore.getState().switchTab(item.tabId)
+      requestChatScrollToBottom()
       onClose()
       return
     }
@@ -196,6 +201,10 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     console.time('[QuickSwitcher] workflow-switch-total')
     const chatStore = useChatStore.getState()
     const presetStore = useGlobalPresetStore.getState()
+    useAppStore.getState().setShowWorkflowsOverview(false)
+    if (useModeStore.getState().selectedModeCategory !== 'workflow') {
+      useModeStore.getState().setModeCategory('workflow')
+    }
 
     if (minimize) {
       // Set ALL tabs of the OLD (current) preset to flat mode — they're going to background
@@ -210,7 +219,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
       // Set ALL tabs of the NEW preset to tree mode — they're coming to foreground
       Object.values(chatStore.chatTabs).forEach(tab => {
-        if (tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === item.id) {
+        if (tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === item.preset.id) {
           chatStore.setTabViewMode(tab.tabId, 'tree')
         }
       })
@@ -224,12 +233,12 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     const currentTab = updatedChatStore.activeTabId ? updatedChatStore.getTab(updatedChatStore.activeTabId) : null
     const hasValidTab = currentTab &&
       currentTab.metadata?.mode === 'workflow' &&
-      currentTab.metadata?.presetQueryId === item.id
+      currentTab.metadata?.presetQueryId === item.preset.id
 
     if (!hasValidTab) {
       // Find the most recent workflow tab for the new preset
       const presetTabs = Object.values(updatedChatStore.chatTabs)
-        .filter(tab => tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === item.id && (tab.sessionId || tab.isStreaming))
+        .filter(tab => tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === item.preset.id && (tab.sessionId || tab.isStreaming))
         .sort((a, b) => b.createdAt - a.createdAt)
 
       if (presetTabs.length > 0) {
@@ -242,6 +251,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     }
 
     console.timeEnd('[QuickSwitcher] workflow-switch-total')
+    requestChatScrollToBottom()
     onClose()
   }, [onClose])
 
@@ -267,12 +277,8 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
   if (!isOpen) return null
 
-  const placeholder = isWorkflowMode ? 'Switch workflow...' : 'Switch chat tab...'
-  const emptyText = (!isWorkflowMode && !isChatMode)
-    ? 'Quick switcher is only available in workflow or chat mode'
-    : isWorkflowMode
-      ? (query ? 'No matching workflows' : 'No workflow presets available')
-      : (query ? 'No matching chat tabs' : 'No chat tabs available')
+  const placeholder = 'Switch chat or workflow...'
+  const emptyText = query ? 'No matching chats or workflows' : 'No chats or workflow presets available'
   return (
     <div
       className="absolute inset-0 z-50 flex items-start justify-center pt-[20vh]"
@@ -355,7 +361,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           <div className="flex items-center gap-3">
             <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">↑↓</kbd> navigate</span>
             <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">↵</kbd> switch</span>
-            {isWorkflowMode && (
+            {filteredItems.some(item => item.type === 'workflow') && (
               <span><kbd className="px-1 py-0.5 bg-amber-200 dark:bg-amber-800 text-amber-700 dark:text-amber-300 rounded text-[10px]">⇧↵</kbd> switch &amp; minimize</span>
             )}
           </div>

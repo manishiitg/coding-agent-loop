@@ -10,6 +10,7 @@ Use these tools when you need a direct provider-backed capability instead of gen
 
 - ` + "`list_llm_capabilities(capability?, include_models?)`" + ` — Inspect which providers/models are supported and currently usable for ` + "`chat`" + `, ` + "`generate_image`" + `, ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, and ` + "`generate_music`" + `. Use this before choosing a provider when the user's request depends on provider capability, auth, pricing, or runtime availability.
 - ` + "`estimate_llm_cost(capability, provider, model_id?, characters?, seconds?, minutes?, count?)`" + ` — Estimate priced media generation/transcription costs before high-volume ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, or ` + "`generate_music`" + ` runs.
+- ` + "`set_provider_auth(provider, api_key?, region?, endpoint?, api_version?)`" + ` — Store provider auth in the encrypted workspace provider store. If the user provides an API key for Gemini/Vertex, MiniMax, ElevenLabs, Deepgram, or another managed provider, call this tool directly; do not paste the key into shell commands, scripts, curl calls, logs, or config files.
 - ` + "`generate_text_llm(user_message, tier)`" + ` — Generate text with one direct LLM call using the workspace tier config. ` + "`tier`" + ` must be ` + "`high`" + `, ` + "`medium`" + `, or ` + "`low`" + `.
 - ` + "`search_web_llm(query, provider, model_id)`" + ` — Run a live web search using a published search-capable model from ` + "`config/published-llms.json`" + `. Both ` + "`provider`" + ` and ` + "`model_id`" + ` are required and must match a published entry.
 - ` + "`image_gen(prompt, output_path, provider?)`" + ` — Generate images using ` + "`config/image-generation-config.json`" + ` or an explicit provider override. ` + "`output_path`" + ` is required and must be a workspace-relative destination chosen by the caller.
@@ -22,7 +23,10 @@ Use these tools when you need a direct provider-backed capability instead of gen
 - ` + "`read_video(filepath, query, provider?)`" + ` — Analyze a workspace video file using Kimi ` + "`kimi-k2.6`" + ` by default, or Z.AI Vision MCP ` + "`video_analysis`" + ` with ` + "`provider=\"z-ai\"`" + `. Kimi uploads to Moonshot file storage and references ` + "`ms://<file-id>`" + `; Z.AI uses ` + "`npx -y @z_ai/mcp-server@latest`" + ` with local temporary files.
 
 Provider setup rules:
+- Published LLM entries are for chat/text routing. Audio, video, image, and music providers are workspace tool capabilities; do not conclude they are unavailable just because they are absent from ` + "`config/published-llms.json`" + ` or a published-LLM list.
+- For audio and music generation, call ` + "`text_to_speech`" + ` or ` + "`generate_music`" + ` directly. Do not hand-roll provider HTTP calls through ` + "`execute_shell_command`" + ` unless the dedicated workspace tool is unavailable and the user explicitly asks for raw API debugging.
 - Keep provider auth in ` + "`config/provider-api-keys.json`" + ` using the ` + "`set_provider_auth`" + ` tool. Do not hand-edit the encrypted auth file.
+- Do not read, cat, grep, print, or manually edit ` + "`config/provider-api-keys.json`" + `; it is encrypted and not useful to inspect as plaintext.
 - Search provider routing comes from ` + "`config/published-llms.json`" + `.
 - Image generation defaults come from ` + "`config/image-generation-config.json`" + `.
 - Image analysis defaults come from ` + "`config/image-analysis-config.json`" + `.

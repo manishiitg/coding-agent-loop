@@ -102,7 +102,8 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 	// Backfill: send catch-up events the client hasn't seen yet
 	if sinceIndex >= 0 {
 		result := api.eventStore.GetEvents(sessionID, events.GetEventsOptions{
-			SinceIndex: sinceIndex,
+			SinceIndex:       sinceIndex,
+			IncludeStreaming: true,
 		})
 		if len(result.Events) > 0 {
 			msg := sseEventMessage{

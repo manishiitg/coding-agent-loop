@@ -71,6 +71,62 @@ func TestEventStoreTracksSessionOwner(t *testing.T) {
 	}
 }
 
+func TestGetEventsCanIncludeStreamingForSSEBackfill(t *testing.T) {
+	store := NewEventStore(10)
+	defer store.Stop()
+
+	now := time.Now()
+	sessionID := "session-streaming-backfill"
+	for _, eventType := range []string{
+		"user_message",
+		"streaming_start",
+		"streaming_chunk",
+		"streaming_end",
+		"tool_call_start",
+	} {
+		store.AddEvent(sessionID, Event{
+			ID:        eventType,
+			Type:      eventType,
+			Timestamp: now,
+			SessionID: sessionID,
+			Data: &pkgevents.AgentEvent{
+				Type:      pkgevents.EventType(eventType),
+				Timestamp: now,
+			},
+		})
+	}
+
+	defaultResult := store.GetEvents(sessionID, GetEventsOptions{SinceIndex: -1})
+	if got := eventTypes(defaultResult.Events); contains(got, "streaming_start") || contains(got, "streaming_chunk") {
+		t.Fatalf("default polling should hide streaming start/chunk, got %v", got)
+	}
+	if got := eventTypes(defaultResult.Events); !contains(got, "streaming_end") {
+		t.Fatalf("default polling should keep streaming_end recoverable, got %v", got)
+	}
+
+	backfillResult := store.GetEvents(sessionID, GetEventsOptions{SinceIndex: -1, IncludeStreaming: true})
+	if got := eventTypes(backfillResult.Events); !contains(got, "streaming_start") || !contains(got, "streaming_chunk") || !contains(got, "streaming_end") {
+		t.Fatalf("SSE backfill should include streaming lifecycle events, got %v", got)
+	}
+}
+
+func eventTypes(events []Event) []string {
+	types := make([]string, 0, len(events))
+	for _, event := range events {
+		types = append(types, event.Type)
+	}
+	return types
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestAddEventAssignsExecutionOwnership(t *testing.T) {
 	store := NewEventStore(10)
 	defer store.Stop()

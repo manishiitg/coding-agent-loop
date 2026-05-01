@@ -85,6 +85,13 @@ func ShouldShowEvent(eventType string) bool {
 	return !HIDDEN_EVENTS[eventType]
 }
 
+func shouldReturnEvent(eventType string, includeStreaming bool) bool {
+	if includeStreaming && (eventType == "streaming_start" || eventType == "streaming_chunk" || eventType == "streaming_end") {
+		return true
+	}
+	return ShouldShowEvent(eventType)
+}
+
 // Event represents a generic event that can be stored and retrieved
 // Both MCP agent and orchestrator events now use the same AgentEvent structure
 type Event struct {
@@ -672,9 +679,10 @@ func (es *EventStore) InitializeSession(sessionID string, baseIndex int) {
 
 // GetEventsOptions contains options for retrieving events
 type GetEventsOptions struct {
-	SinceIndex int // For forward polling: get events after this index
-	Limit      int // For pagination: maximum number of events to return (0 = no limit)
-	Offset     int // For pagination: skip this many events (used for backward pagination)
+	SinceIndex       int  // For forward polling: get events after this index
+	Limit            int  // For pagination: maximum number of events to return (0 = no limit)
+	Offset           int  // For pagination: skip this many events (used for backward pagination)
+	IncludeStreaming bool // Include streaming_start/chunk for SSE reconnect backfill only
 }
 
 // GetEventsResult contains the result of GetEvents call
@@ -739,7 +747,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		// Step 1: Filter the entire array first
 		filteredEvents := make([]Event, 0, len(events))
 		for _, event := range events {
-			if ShouldShowEvent(event.Type) {
+			if shouldReturnEvent(event.Type, opts.IncludeStreaming) {
 				filteredEvents = append(filteredEvents, event)
 			}
 		}
@@ -748,7 +756,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		// Use effectiveSinceIndex (relative to in-memory array)
 		filteredCountUpToSinceIndex := 0
 		for i := 0; i <= effectiveSinceIndex && i < len(events); i++ {
-			if ShouldShowEvent(events[i].Type) {
+			if shouldReturnEvent(events[i].Type, opts.IncludeStreaming) {
 				filteredCountUpToSinceIndex++
 			}
 		}
@@ -790,7 +798,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 					filteredCount := 0
 					actualLastIndex := -1
 					for i := 0; i < len(events); i++ {
-						if ShouldShowEvent(events[i].Type) {
+						if shouldReturnEvent(events[i].Type, opts.IncludeStreaming) {
 							filteredCount++
 							if filteredCount == nextFilteredPos+MaxPollingLimit {
 								actualLastIndex = i
@@ -815,7 +823,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		// Otherwise, offset would be wrong if some events are filtered out
 		eventsToPaginate := make([]Event, 0, len(events))
 		for _, event := range events {
-			if ShouldShowEvent(event.Type) {
+			if shouldReturnEvent(event.Type, opts.IncludeStreaming) {
 				eventsToPaginate = append(eventsToPaginate, event)
 			}
 		}
@@ -843,7 +851,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		// No specific mode: return all filtered events
 		filtered := make([]Event, 0, len(events))
 		for _, event := range events {
-			if ShouldShowEvent(event.Type) {
+			if shouldReturnEvent(event.Type, opts.IncludeStreaming) {
 				filtered = append(filtered, event)
 			}
 		}

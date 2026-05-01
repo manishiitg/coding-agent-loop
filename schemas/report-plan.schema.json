@@ -138,10 +138,7 @@
             "cards",
             "stat",
             "alert",
-            "pivot",
-            "costs",
-            "evals",
-            "runs"
+            "pivot"
           ]
         },
         "source": {
@@ -151,6 +148,9 @@
           "type": "string"
         },
         "filter": {
+          "type": "string"
+        },
+        "query": {
           "type": "string"
         },
         "title": {
@@ -361,66 +361,6 @@
         },
         "stacked": {
           "type": "boolean"
-        },
-        "costsScope": {
-          "type": "string",
-          "enum": [
-            "phase",
-            "execution",
-            "evaluation",
-            "all"
-          ]
-        },
-        "costsView": {
-          "type": "string",
-          "enum": [
-            "summary",
-            "stage-breakdown",
-            "run-table",
-            "step-table",
-            "model-table"
-          ]
-        },
-        "costsMetric": {
-          "type": "string",
-          "enum": [
-            "cost",
-            "total_tokens",
-            "input_tokens",
-            "output_tokens",
-            "llm_calls"
-          ]
-        },
-        "evalsView": {
-          "type": "string",
-          "enum": [
-            "summary",
-            "run-chart",
-            "run-table",
-            "step-table"
-          ]
-        },
-        "evalsMetric": {
-          "type": "string",
-          "enum": [
-            "score_percentage",
-            "total_score"
-          ]
-        },
-        "runsView": {
-          "type": "string",
-          "enum": [
-            "summary",
-            "duration-chart",
-            "status-chart",
-            "table"
-          ]
-        },
-        "runFolder": {
-          "type": "string"
-        },
-        "group": {
-          "type": "string"
         },
         "layout": {
           "$ref": "#/$defs/reportPlanDocumentWidgetLayout"

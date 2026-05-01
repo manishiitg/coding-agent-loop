@@ -876,7 +876,9 @@ func runServer(cmd *cobra.Command, args []string) {
 		"workspace": true, "workspace_basic": true, "workspace_browser": true,
 		"workspace_advanced": true, "workspace_git": true, "workspace_image": true,
 		"workspace_image_gen": true, "workspace_image_edit": true, "human": true,
-		"workflow": true,
+		"workflow": true, "workflow_creator": true,
+		"llm_config_tools": true, "secret_tools": true, "skill_tools": true,
+		"mcp_server_tools": true,
 	}
 	virtualToolCategories := map[string]bool{
 		"memory": true,

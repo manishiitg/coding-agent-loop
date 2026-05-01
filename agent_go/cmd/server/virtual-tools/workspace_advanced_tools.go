@@ -676,7 +676,7 @@ func createPublishedSearchLLM(ctx context.Context, workspaceURL string, requeste
 
 	llmCfg := llm.Config{
 		Provider:   provider,
-		ModelID:    publishedLLM.ModelID,
+		ModelID:    resolveRuntimeModelIDForVirtualTool(provider, publishedLLM.ModelID),
 		Context:    ctx,
 		APIKeys:    apiKeys,
 		MaxRetries: 3,
@@ -685,9 +685,10 @@ func createPublishedSearchLLM(ctx context.Context, workspaceURL string, requeste
 }
 
 func createLLMFromTierModel(ctx context.Context, model *TierModel, apiKeys *llm.ProviderAPIKeys) (llmtypes.Model, error) {
+	provider := llm.Provider(model.Provider)
 	llmCfg := llm.Config{
-		Provider:       llm.Provider(model.Provider),
-		ModelID:        model.ModelID,
+		Provider:       provider,
+		ModelID:        resolveRuntimeModelIDForVirtualTool(provider, model.ModelID),
 		Context:        ctx,
 		APIKeys:        apiKeys,
 		FallbackModels: formatTierFallbackModels(model),
@@ -695,6 +696,15 @@ func createLLMFromTierModel(ctx context.Context, model *TierModel, apiKeys *llm.
 	}
 
 	return llm.InitializeLLM(llmCfg)
+}
+
+func resolveRuntimeModelIDForVirtualTool(provider llm.Provider, modelID string) string {
+	normalizedProvider := strings.ToLower(strings.TrimSpace(string(provider)))
+	normalizedModelID := strings.ToLower(strings.TrimSpace(modelID))
+	if normalizedProvider == string(llm.ProviderMiniMaxCodingPlan) && normalizedModelID == "minimax" {
+		return "claude-sonnet-4-5"
+	}
+	return modelID
 }
 
 func formatTierFallbackModels(model *TierModel) []string {

@@ -40,11 +40,20 @@ type LLMAgentWrapper struct {
 
 func providerUsesNativeContextManagement(provider llm.Provider) bool {
 	switch strings.ToLower(strings.TrimSpace(string(provider))) {
-	case "claude-code", "gemini-cli", "codex-cli":
+	case "claude-code", "gemini-cli", "codex-cli", "kimi":
 		return true
 	default:
 		return false
 	}
+}
+
+func resolveRuntimeModelID(provider llm.Provider, modelID string) string {
+	normalizedProvider := strings.ToLower(strings.TrimSpace(string(provider)))
+	normalizedModelID := strings.ToLower(strings.TrimSpace(modelID))
+	if normalizedProvider == "minimax-coding-plan" && normalizedModelID == "minimax" {
+		return "claude-sonnet-4-5"
+	}
+	return modelID
 }
 
 // LLMAgentConfig holds configuration for the LLM agent wrapper
@@ -730,6 +739,7 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, trac
 	if err != nil {
 		return nil, fmt.Errorf("invalid LLM provider '%s': %w", config.Provider, err)
 	}
+	runtimeModelID := resolveRuntimeModelID(config.Provider, config.ModelID)
 
 	// Build fallback models list from unified Fallbacks structure
 	var fallbackModels []string
@@ -747,7 +757,7 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, trac
 		logger.Info(fmt.Sprintf("Using custom fallback models from config: %v", fallbackModels))
 	} else {
 		// Use default fallback models for the provider
-		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModelsForModel(llmProvider, config.ModelID)...)
+		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModelsForModel(llmProvider, runtimeModelID)...)
 		// Also add default cross-provider fallbacks
 		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llmProvider)
 		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
@@ -772,7 +782,7 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, trac
 	// Use the existing LLM provider system with detailed fallback models
 	llmConfig := llm.Config{
 		Provider:       llmProvider,
-		ModelID:        config.ModelID,
+		ModelID:        runtimeModelID,
 		Temperature:    config.Temperature,
 		TraceID:        traceID, // Pass the trace ID for proper span hierarchy
 		FallbackModels: fallbackModels,

@@ -25,7 +25,7 @@ func TestNormalizeImageProviderAndModelProviderAliasDefaultsModel(t *testing.T) 
 			name:      "codex alias",
 			provider:  "codex-cli",
 			modelID:   "codex-cli",
-			wantModel: "codex-cli",
+			wantModel: "gpt-5.4-mini",
 		},
 	}
 

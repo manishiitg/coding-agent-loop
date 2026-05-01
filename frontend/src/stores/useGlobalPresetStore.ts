@@ -75,6 +75,7 @@ interface GlobalPresetState {
 
   // Recently accessed preset IDs (most recent first) for quick switcher ordering
   recentPresetOrder: string[]
+  recentPresetAccessedAt: Record<string, number>
 
   // Actions for manifest management
   refreshPresets: () => Promise<void>
@@ -119,6 +120,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       selectedPresetFolder: null,
       currentQuery: '',
       recentPresetOrder: [],
+      recentPresetAccessedAt: {},
 
       // Manifest management actions
       refreshPresets: async () => {
@@ -561,7 +563,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             recentPresetOrder: [
               preset.id,
               ...state.recentPresetOrder.filter(id => id !== preset.id)
-            ].slice(0, 20)
+            ].slice(0, 20),
+            recentPresetAccessedAt: {
+              ...state.recentPresetAccessedAt,
+              [preset.id]: Date.now()
+            }
           }))
 
           return {
@@ -655,7 +661,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         currentPresetTools: state.currentPresetTools,
         selectedPresetFolder: state.selectedPresetFolder,
         currentQuery: state.currentQuery,
-        recentPresetOrder: state.recentPresetOrder
+        recentPresetOrder: state.recentPresetOrder,
+        recentPresetAccessedAt: state.recentPresetAccessedAt
       })
     }
   )

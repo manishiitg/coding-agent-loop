@@ -1066,6 +1066,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_plan")
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
+		tools = append(tools, "get_workflow_command_guidance") // /design-flow, /ready-to-optimize, and /review-* commands live in Builder mode.
 		tools = append(tools, kb...)
 
 	case "optimizer":

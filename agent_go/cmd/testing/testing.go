@@ -77,6 +77,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(maxTokensFlexibilityCmd)
 	TestingCmd.AddCommand(customToolsTestCmd)
 	TestingCmd.AddCommand(readImageTestCmd)
+	TestingCmd.AddCommand(readImageProvidersTestCmd)
 	TestingCmd.AddCommand(readSecureAccessTestCmd)
 	TestingCmd.AddCommand(workspaceDiffJSONTestCmd)
 	TestingCmd.AddCommand(shellSecurityTestCmd)

@@ -229,6 +229,7 @@ export interface ChatTab {
   viewMode: EventViewMode | 'detailed' | 'summary'
   config: ChatTabConfig  // Tab-specific configuration
   createdAt: number  // Timestamp for ordering
+  lastAccessedAt?: number  // Timestamp for MRU switchers
   lastViewedEventCount: number  // @deprecated - use lastViewedEventCounts instead
   lastViewedEventCounts: PerModeEventCounts  // Per-mode event counts for accurate badge calculation
   // Mode-specific metadata
@@ -1400,6 +1401,7 @@ export const useChatStore = create<ChatState>()(
           viewMode: normalizeEventViewMode(get().eventViewModePreference),
           config: defaultConfig, // Initialize with default config from global state
           createdAt: timestamp,
+          lastAccessedAt: timestamp,
           lastViewedEventCount: 0, // @deprecated - kept for backwards compat
           lastViewedEventCounts: { micro: 0 }, // Initialize all modes to 0
           metadata
@@ -1467,8 +1469,14 @@ export const useChatStore = create<ChatState>()(
             const events = state.tabEvents[newTab.sessionId] || []
             updates[tabId] = {
               ...newTab,
+              lastAccessedAt: Date.now(),
               lastViewedEventCount: events.length, // @deprecated - kept for compat
               lastViewedEventCounts: computePerModeCounts(events)
+            }
+          } else if (newTab) {
+            updates[tabId] = {
+              ...newTab,
+              lastAccessedAt: Date.now()
             }
           }
 
@@ -2163,6 +2171,7 @@ export const useChatStore = create<ChatState>()(
                 // - inputText (chat input text)
                 // - enableContextSummarization
                 createdAt: tab.createdAt, // Persist for ordering
+                lastAccessedAt: tab.lastAccessedAt || tab.createdAt,
                 lastViewedEventCount: 0, // @deprecated - Reset on reload
                 lastViewedEventCounts: { micro: 0 }, // Reset on reload
                 metadata: tab.metadata // Persist mode and phase info

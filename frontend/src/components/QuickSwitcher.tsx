@@ -19,6 +19,7 @@ interface WorkflowItem {
   label: string
   subtitle: string
   isActive: boolean
+  lastAccessedAt: number
   preset: CustomPreset | PredefinedPreset
 }
 
@@ -28,6 +29,7 @@ interface ChatTabItem {
   label: string
   subtitle: string
   isActive: boolean
+  lastAccessedAt: number
   tabId: string
 }
 
@@ -36,6 +38,7 @@ type QuickSwitcherItem = WorkflowItem | ChatTabItem
 const EMPTY_CHAT_TABS: Record<string, ChatTab> = {}
 const EMPTY_WORKFLOW_PRESETS: Array<CustomPreset | PredefinedPreset> = []
 const EMPTY_RECENT_PRESET_ORDER: string[] = []
+const EMPTY_RECENT_PRESET_ACCESSED_AT: Record<string, number> = {}
 
 const requestChatScrollToBottom = () => {
   useChatStore.getState().setAutoScroll(true)
@@ -63,6 +66,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   const chatTabs = useChatStore(state => (isOpen ? state.chatTabs : EMPTY_CHAT_TABS))
   const workflowPresets = useGlobalPresetStore(state => (isOpen ? state.workflowPresets : EMPTY_WORKFLOW_PRESETS))
   const recentPresetOrder = useGlobalPresetStore(state => (isOpen ? state.recentPresetOrder : EMPTY_RECENT_PRESET_ORDER))
+  const recentPresetAccessedAt = useGlobalPresetStore(state => (isOpen ? state.recentPresetAccessedAt : EMPTY_RECENT_PRESET_ACCESSED_AT))
 
   // Track Shift key state to show "minimize" hint on selected item
   const [shiftHeld, setShiftHeld] = useState(false)
@@ -100,6 +104,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
         label: tab.name,
         subtitle: `Chat · ${tab.isStreaming ? 'Streaming...' : tab.isCompleted ? 'Completed' : tab.sessionId ? 'Active' : 'New'}`,
         isActive: isChatMode && tab.tabId === activeTabId,
+        lastAccessedAt: tab.lastAccessedAt || tab.createdAt || 0,
         tabId: tab.tabId
       }))
 
@@ -111,6 +116,10 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
         label: p.label,
         subtitle: `Workflow · ${p.selectedFolder!.filepath}`,
         isActive: isWorkflowMode && p.id === activePresetId,
+        lastAccessedAt: recentPresetAccessedAt[p.id] || (() => {
+          const recentIndex = recentPresetOrder.indexOf(p.id)
+          return recentIndex >= 0 ? 1_000_000 - recentIndex : 0
+        })(),
         preset: p
       }))
 
@@ -123,8 +132,13 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       return a.label.localeCompare(b.label)
     })
 
-    return [...chatItems, ...workflowItems]
-  }, [isOpen, isWorkflowMode, isChatMode, activePresetId, chatTabs, activeTabId, workflowPresets, recentPresetOrder])
+    return [...chatItems, ...workflowItems].sort((a, b) => {
+      if (a.isActive !== b.isActive) return a.isActive ? -1 : 1
+      if (a.lastAccessedAt !== b.lastAccessedAt) return b.lastAccessedAt - a.lastAccessedAt
+      if (a.type !== b.type) return a.type === 'chat' ? -1 : 1
+      return a.label.localeCompare(b.label)
+    })
+  }, [isOpen, isWorkflowMode, isChatMode, activePresetId, chatTabs, activeTabId, workflowPresets, recentPresetOrder, recentPresetAccessedAt])
 
   // Filter and sort
   const filteredItems = useMemo<QuickSwitcherItem[]>(() => {

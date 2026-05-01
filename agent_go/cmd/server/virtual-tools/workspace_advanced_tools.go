@@ -72,6 +72,27 @@ func CreateWorkspaceAdvancedToolExecutorsWithUserID(userID string) map[string]fu
 	return executors
 }
 
+// CreateReadImageProviderTestExecutor creates a read_image executor for provider
+// matrix tests. It reads image bytes through the workspace API, but deliberately
+// bypasses config/image-analysis-config.json so the caller's context-injected
+// LLM config is the provider being tested.
+func CreateReadImageProviderTestExecutor(workspaceURL, userID string) func(ctx context.Context, args map[string]any) (string, error) {
+	if strings.TrimSpace(workspaceURL) == "" {
+		workspaceURL = getWorkspaceAPIURL()
+	}
+	clientOptions := []workspace.ClientOption{
+		workspace.WithFolderGuard(getDefaultFolderGuard()),
+		workspace.WithExtraEnv(getMCPExtraEnv()),
+	}
+	if strings.TrimSpace(userID) != "" {
+		clientOptions = append(clientOptions, workspace.WithUserID(userID))
+	}
+	client := workspace.NewClient(workspaceURL, clientOptions...)
+	executors := workspace.NewAdvancedExecutor(client)
+	baseExecutor := executors["read_image"]
+	return wrapReadImageWithLLM(baseExecutor, "")
+}
+
 // CreateWorkspaceAdvancedToolExecutorsWithSession creates workspace advanced tool executors
 // with an explicit user ID and session ID. The session ID is injected as MCP_SESSION_ID
 // env var so that code execution mode HTTP tool calls can include it for connection reuse

@@ -210,10 +210,10 @@ Image generation defaults live in ` + "`" + absConfig + `/image-generation-confi
 Image understanding for the ` + "`read_image`" + ` tool can be routed via ` + "`" + absConfig + `/image-analysis-config.json` + "`" + `.
 - Read: ` + "`execute_shell_command(command: \"cat " + absConfig + "/image-analysis-config.json\")`" + `
 - Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/image-analysis-config.json\")`" + `
-- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3-pro-preview\"},\"fallbacks\":[{\"provider\":\"minimax-coding-plan\",\"model_id\":\"claude-sonnet-4-5\"},{\"provider\":\"kimi\",\"model_id\":\"kimi-k2.6\"}]}`" + `
+- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3-pro-preview\"},\"fallbacks\":[{\"provider\":\"z-ai\",\"model_id\":\"glm-4.6v\"},{\"provider\":\"kimi\",\"model_id\":\"kimi-k2.6\"},{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"},{\"provider\":\"claude-code\",\"model_id\":\"claude-code\"}]}`" + `
 - If this file exists, ` + "`read_image`" + ` uses its ` + "`primary`" + ` and ordered ` + "`fallbacks`" + ` with workspace provider auth.
 - If this file does not exist, ` + "`read_image`" + ` falls back to the current chat model.
-- If you want to use MiniMax for image understanding, configure provider ` + "`minimax-coding-plan`" + `, not plain ` + "`minimax`" + `.
+- MiniMax coding-plan is not currently a supported ` + "`read_image`" + ` provider because the adapter does not receive image content reliably.
 - Kimi image understanding is supported via provider ` + "`kimi`" + ` with model ` + "`kimi-k2.6`" + `.
 - Codex CLI image understanding is supported via provider ` + "`codex-cli`" + ` by passing the local workspace image path to Codex CLI.
 - Claude Code image understanding is supported via provider ` + "`claude-code`" + ` by passing the local workspace image path to Claude Code CLI.

@@ -3133,6 +3133,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[GEMINI CLI] Code execution mode enforced for MCP tool access via bridge")
 		}
 
+		// Auto-enable code execution mode for Kimi Code provider.
+		// Kimi Code accesses MCP/custom tools through the same bridge contract:
+		// native bridge tools plus get_api_spec for HTTP endpoint discovery.
+		if req.Provider == "kimi" {
+			useCodeExecutionMode = true
+			log.Printf("[KIMI CODE] Code execution mode enforced for MCP tool access via bridge")
+		}
+
 		// Auto-enable code execution mode for codex-cli provider.
 		// Codex CLI accesses MCP tools via the pre-configured bridge,
 		// which requires code execution mode to expose per-tool API endpoints.
@@ -3142,11 +3150,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// In plan delegation mode, the orchestrator should NEVER use code execution mode
-		// UNLESS the provider is claude-code (which requires it for MCP bridge tool access).
+		// UNLESS the provider is a coding CLI provider (which requires it for MCP bridge tool access).
 		// The orchestrator only researches, plans, and delegates — it should not write/execute code itself.
 		// Sub-agents get their mode from the explicit tool_mode parameter on the delegate call.
 		if !isWorkflowPhase {
-			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "gemini-cli" && req.Provider != "codex-cli" {
+			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "gemini-cli" && req.Provider != "codex-cli" && req.Provider != "kimi" {
 				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
 				useCodeExecutionMode = false
 			}

@@ -186,7 +186,7 @@ Published LLM metadata lives in ` + "`" + absConfig + `/published-llms.json` + "
 - Update provider auth with the ` + "`set_provider_auth`" + ` tool.
 - Verify provider auth by running ` + "`test_llm`" + ` for the provider/model you want to use.
 - Prefer shell commands only for published LLM metadata in ` + "`" + absConfig + `/published-llms.json` + "`" + `. Use tools for provider-auth operations.
-- ` + "`search_web_llm`" + ` selects providers from ` + "`" + absConfig + `/published-llms.json` + "`" + `.
+- ` + "`search_web_llm`" + ` selects models from ` + "`" + absConfig + `/published-llms.json` + "`" + `. Its ` + "`provider`" + ` argument is required; ` + "`model_id`" + ` is optional and defaults to a working search-capable model for that provider.
 - Use ` + "`search_role`" + ` to control routing:
   - ` + "`\"primary\"`" + ` = preferred default search provider
   - ` + "`\"fallback\"`" + ` = backup search provider

@@ -289,8 +289,8 @@ func createSearchWebLLMExecutor(workspaceURL string) func(ctx context.Context, a
 		}
 
 		modelID := strings.TrimSpace(fmt.Sprintf("%v", args["model_id"]))
-		if modelID == "" || modelID == "<nil>" {
-			return "", fmt.Errorf("model_id is required")
+		if modelID == "<nil>" {
+			modelID = ""
 		}
 
 		llmModel, err := createPublishedSearchLLM(ctx, workspaceURL, provider, modelID)
@@ -389,6 +389,97 @@ func publishedSearchProviderSummary(entries []services.PublishedLLM) string {
 	return "Published search-capable providers: " + strings.Join(available, ", ")
 }
 
+func searchRoleRank(role string) int {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "primary":
+		return 0
+	case "", "default":
+		return 1
+	case "fallback":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func searchPriorityValue(priority *int) int {
+	if priority == nil {
+		return 1000
+	}
+	return *priority
+}
+
+func preferredSearchModelRank(provider, modelID string) int {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	switch provider {
+	case string(llm.ProviderCodexCLI):
+		switch modelID {
+		case "gpt-5.4-mini":
+			return 0
+		case "gpt-5.4":
+			return 1
+		case "gpt-5.3-codex-spark":
+			return 2
+		case "gpt-5.3-codex":
+			return 3
+		}
+	case string(llm.ProviderGeminiCLI):
+		if modelID == "auto" {
+			return 0
+		}
+	case string(llm.ProviderMiniMaxCodingPlan):
+		if modelID == "claude-sonnet-4-5" || modelID == "minimax" {
+			return 0
+		}
+	}
+	return 100
+}
+
+func searchModelAlias(provider, modelID string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	normalizedModelID := strings.ToLower(strings.TrimSpace(modelID))
+	if normalizedModelID == "" || normalizedModelID == provider {
+		switch provider {
+		case string(llm.ProviderCodexCLI):
+			return "gpt-5.4-mini"
+		case string(llm.ProviderGeminiCLI):
+			return "auto"
+		case string(llm.ProviderMiniMaxCodingPlan):
+			return "claude-sonnet-4-5"
+		}
+	}
+	return modelID
+}
+
+func sortPublishedSearchCandidates(candidates []services.PublishedLLM) {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left := candidates[i]
+		right := candidates[j]
+		leftRole := searchRoleRank(left.SearchRole)
+		rightRole := searchRoleRank(right.SearchRole)
+		if leftRole != rightRole {
+			return leftRole < rightRole
+		}
+		leftPriority := searchPriorityValue(left.SearchPriority)
+		rightPriority := searchPriorityValue(right.SearchPriority)
+		if leftPriority != rightPriority {
+			return leftPriority < rightPriority
+		}
+		leftModelRank := preferredSearchModelRank(left.Provider, left.ModelID)
+		rightModelRank := preferredSearchModelRank(right.Provider, right.ModelID)
+		if leftModelRank != rightModelRank {
+			return leftModelRank < rightModelRank
+		}
+		leftProvider := strings.ToLower(strings.TrimSpace(left.Provider))
+		rightProvider := strings.ToLower(strings.TrimSpace(right.Provider))
+		if leftProvider != rightProvider {
+			return leftProvider < rightProvider
+		}
+		return strings.ToLower(strings.TrimSpace(left.ModelID)) < strings.ToLower(strings.TrimSpace(right.ModelID))
+	})
+}
+
 func loadPublishedSearchProvider(ctx context.Context, workspaceURL string, apiKeys *llm.ProviderAPIKeys, requestedProvider, requestedModelID string) (*services.PublishedLLM, error) {
 	publishedLLMs, exists, err := services.LoadPublishedLLMs(ctx, workspaceURL)
 	if err != nil {
@@ -399,12 +490,36 @@ func loadPublishedSearchProvider(ctx context.Context, workspaceURL string, apiKe
 	}
 
 	requestedProvider = strings.ToLower(strings.TrimSpace(requestedProvider))
-	requestedModelID = strings.TrimSpace(requestedModelID)
 	if requestedProvider == "" {
 		return nil, fmt.Errorf("provider is required. %s", publishedSearchProviderSummary(publishedLLMs))
 	}
-	if requestedModelID == "" {
-		return nil, fmt.Errorf("model_id is required. %s", publishedSearchProviderSummary(publishedLLMs))
+	requestedModelID = strings.TrimSpace(searchModelAlias(requestedProvider, requestedModelID))
+
+	var candidates []services.PublishedLLM
+	for _, entry := range publishedLLMs {
+		provider := strings.ToLower(strings.TrimSpace(entry.Provider))
+		modelID := strings.TrimSpace(entry.ModelID)
+		if requestedProvider != "" && provider != requestedProvider {
+			continue
+		}
+		if requestedModelID != "" && !strings.EqualFold(modelID, requestedModelID) {
+			continue
+		}
+		if !isSearchCapablePublishedLLM(entry) {
+			continue
+		}
+		if !hasSearchProviderAuth(provider, apiKeys) {
+			continue
+		}
+		if !isSearchProviderAvailable(provider) {
+			continue
+		}
+		candidates = append(candidates, entry)
+	}
+	if len(candidates) > 0 {
+		sortPublishedSearchCandidates(candidates)
+		candidate := candidates[0]
+		return &candidate, nil
 	}
 
 	foundProvider := false
@@ -416,7 +531,7 @@ func loadPublishedSearchProvider(ctx context.Context, workspaceURL string, apiKe
 			continue
 		}
 		foundProvider = true
-		if !strings.EqualFold(modelID, requestedModelID) {
+		if requestedModelID != "" && !strings.EqualFold(modelID, requestedModelID) {
 			continue
 		}
 		foundModel = true
@@ -436,7 +551,13 @@ func loadPublishedSearchProvider(ctx context.Context, workspaceURL string, apiKe
 		return nil, fmt.Errorf("search_web_llm could not find requested provider %q in config/published-llms.json. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
 	}
 	if !foundModel {
+		if requestedModelID == "" {
+			return nil, fmt.Errorf("search_web_llm could not find a usable search-capable model under provider %q in config/published-llms.json. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
+		}
 		return nil, fmt.Errorf("search_web_llm could not find model %q under provider %q in config/published-llms.json. %s", requestedModelID, requestedProvider, publishedSearchProviderSummary(publishedLLMs))
+	}
+	if requestedModelID == "" {
+		return nil, fmt.Errorf("search_web_llm does not support published provider %q for search yet. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
 	}
 	return nil, fmt.Errorf("search_web_llm does not support published provider %q with model %q for search yet. %s", requestedProvider, requestedModelID, publishedSearchProviderSummary(publishedLLMs))
 }

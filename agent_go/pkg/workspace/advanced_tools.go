@@ -150,7 +150,7 @@ func searchWebLLMToolDef() llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "search_web_llm",
-			Description: "Search the web using a published search-capable model. Both provider and model_id are required and must match an entry in config/published-llms.json.",
+			Description: "Search the web using a published search-capable provider. Provider is required; model_id is optional and defaults to a working published model for that provider using search_role/search_priority.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -160,14 +160,14 @@ func searchWebLLMToolDef() llmtypes.Tool {
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Published provider to use for this search, e.g. gemini-cli, vertex, claude-code, codex-cli, or minimax-coding-plan. Must match an entry in config/published-llms.json.",
+						"description": "Required published provider, e.g. gemini-cli, vertex, claude-code, codex-cli, or minimax-coding-plan.",
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Published model_id to use for this search. Must match the provider's entry in config/published-llms.json.",
+						"description": "Optional published model_id override. If omitted, or if a provider alias such as codex-cli is passed, the tool selects a working model for the provider.",
 					},
 				},
-				"required": []string{"query", "provider", "model_id"},
+				"required": []string{"query", "provider"},
 			}),
 		},
 	}

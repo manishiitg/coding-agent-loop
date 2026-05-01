@@ -425,13 +425,12 @@ export const ModePresetBar: React.FC = () => {
 
   // Refresh presets when switching to workflow mode
   useEffect(() => {
-    if (selectedModeCategory === 'workflow') {
-      // Refresh presets to ensure workflow presets are loaded
+    if (selectedModeCategory === 'workflow' && workflowPresets.length === 0 && !presetsLoading) {
       refreshPresets().catch(error => {
         console.error('[ModePresetBar] Failed to refresh presets:', error)
       })
     }
-  }, [selectedModeCategory, refreshPresets])
+  }, [selectedModeCategory, workflowPresets.length, presetsLoading, refreshPresets])
 
   // Refresh presets when dropdown is opened for workflow mode
   const handlePresetDropdownToggle = useCallback(() => {

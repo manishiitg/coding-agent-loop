@@ -16,8 +16,8 @@ export function useSessionExecutionTree(sessionId?: string | null, enabled: bool
     refetchInterval: (query) => {
       if (getHttpStatus(query.state.error) === 404) return false
       const data = query.state.data
-      if (!data) return 2000
-      return data.summary.display_status === 'busy' ? 2000 : 5000
+      if (!data) return 3000
+      return data.summary.display_status === 'busy' ? 4000 : false
     },
     staleTime: 1000,
     retry: false,

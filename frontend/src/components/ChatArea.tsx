@@ -1834,6 +1834,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedModeCategory read from store directly inside callback to avoid stale setInterval closure
   }, [getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, getTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, activeSessionIds, processEventsResponse])
 
+  const handleSSEFallback = useCallback((sessionId: string) => {
+    logger.warn('ChatArea', `SSE failed for session ${sessionId}; starting polling fallback`)
+    startPolling(pollEvents)
+  }, [startPolling, pollEvents])
+
 
   
   // Start centralized active sessions polling when component mounts
@@ -2033,7 +2038,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       connectSSE(
         sid,
         (msg: SSEEventMessage) => handleSSEMessage(msg, sid),
-        (msg: SSEStatusMessage) => handleSSEStatus(msg, sid)
+        (msg: SSEStatusMessage) => handleSSEStatus(msg, sid),
+        () => handleSSEFallback(sid)
       )
     }
 
@@ -2058,7 +2064,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       stopPolling()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- sseConnections excluded to prevent infinite loop
-  }, [tabsWithActiveSessions, connectSSE, disconnectSSE, handleSSEMessage, handleSSEStatus, pollingInterval, startPolling, stopPolling, pollEvents])
+  }, [tabsWithActiveSessions, connectSSE, disconnectSSE, handleSSEMessage, handleSSEStatus, handleSSEFallback, pollingInterval, startPolling, stopPolling, pollEvents])
 
   // Cleanup polling and SSE on unmount
   useEffect(() => {
@@ -2462,7 +2468,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             connectSSE(
               sid,
               (msg: SSEEventMessage) => handleSSEMessage(msg, sid),
-              (msg: SSEStatusMessage) => handleSSEStatus(msg, sid)
+              (msg: SSEStatusMessage) => handleSSEStatus(msg, sid),
+              () => handleSSEFallback(sid)
             )
           }
         }

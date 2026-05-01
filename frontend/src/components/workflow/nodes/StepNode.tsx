@@ -36,7 +36,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const StepNode = memo(({ data, selected }: StepNodeProps) => {
-  const { id, title, status, stepIndex, changeType, isOrphan } = data
+  const { id, title, status, stepIndex, changeType, isOrphan, isEvaluationStep } = data
   
   // Check if this is a sub-agent (part of a routing step)
   const isSubAgent = useMemo(() => id.includes('-sub-agent-'), [id])
@@ -91,7 +91,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
             </div>
           ) : (
             <div className="flex items-center justify-center w-8 h-8 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-sm font-bold flex-shrink-0">
-              {stepIndex + 1}
+              {isEvaluationStep ? `E${stepIndex + 1}` : stepIndex + 1}
             </div>
           )}
           <div className="flex-1 min-w-0">
@@ -103,7 +103,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         {/* Second row: read-only metadata */}
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400">
-            Step {stepIndex + 1}
+            {isEvaluationStep ? `Evaluation ${stepIndex + 1}` : `Step ${stepIndex + 1}`}
           </span>
           <div className="flex-1" />
           {statusIcons[status]}

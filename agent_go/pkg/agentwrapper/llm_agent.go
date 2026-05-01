@@ -871,6 +871,49 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 
 		w.logger.Info(fmt.Sprintf("[CANCEL_DEBUG] AskWithHistory starting | history_msgs=%d", len(messages)))
 
+		var unregisterHTTPToolHook func()
+		if w.config.SessionID != "" {
+			unregisterHTTPToolHook = toolcalllog.RegisterHook(w.config.SessionID, toolcalllog.Hook{
+				OnStart: func(tc toolcalllog.StartedCall) {
+					if w.agent == nil {
+						return
+					}
+					ev := events.NewToolCallStartEventWithCorrelation(
+						1,
+						tc.Name,
+						events.ToolParams{Arguments: tc.ArgsJSON},
+						"http-bridge",
+						string(w.agent.TraceID),
+						string(w.agent.TraceID),
+					)
+					ev.ToolCallID = tc.ID
+					w.agent.EmitTypedEvent(ctx, ev)
+				},
+				OnEnd: func(tc toolcalllog.CompletedCall) {
+					if w.agent == nil {
+						return
+					}
+					duration := time.Duration(0)
+					if !tc.StartedAt.IsZero() {
+						duration = tc.CompletedAt.Sub(tc.StartedAt)
+					}
+					ev := events.NewToolCallEndEventWithTokenUsageAndModel(
+						1,
+						tc.Name,
+						tc.Result,
+						"http-bridge",
+						duration,
+						"",
+						0, 0, 0,
+						w.config.ModelID,
+					)
+					ev.ToolCallID = tc.ID
+					w.agent.EmitTypedEvent(ctx, ev)
+				},
+			})
+			defer unregisterHTTPToolHook()
+		}
+
 		// Execute the request with the agent
 		response, updatedMessages, err := w.agent.AskWithHistory(ctx, messages)
 

@@ -91,6 +91,10 @@ type SchedulerService struct {
 	// Schedule-to-user index for multi-agent schedules
 	userIndex   map[string]string // scheduleID → userID
 	userIndexMu sync.RWMutex
+
+	workflowManifestCacheMu        sync.Mutex
+	workflowManifestCacheExpiresAt time.Time
+	workflowManifestCache          []DiscoveredWorkflow
 }
 
 func (s *SchedulerService) logf(sctx *ScheduleContext, format string, args ...interface{}) {
@@ -110,6 +114,41 @@ func NewSchedulerService(api *StreamingAPI) *SchedulerService {
 		workspaceIndex: make(map[string]string),
 		userIndex:      make(map[string]string),
 	}
+}
+
+func (s *SchedulerService) DiscoverWorkflowManifestsCached(ctx context.Context, ttl time.Duration) ([]DiscoveredWorkflow, error) {
+	now := time.Now()
+
+	s.workflowManifestCacheMu.Lock()
+	if ttl > 0 && now.Before(s.workflowManifestCacheExpiresAt) && s.workflowManifestCache != nil {
+		cached := append([]DiscoveredWorkflow(nil), s.workflowManifestCache...)
+		s.workflowManifestCacheMu.Unlock()
+		return cached, nil
+	}
+	s.workflowManifestCacheMu.Unlock()
+
+	discovered, err := DiscoverWorkflowManifests(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	s.workflowManifestCacheMu.Lock()
+	s.workflowManifestCache = append([]DiscoveredWorkflow(nil), discovered...)
+	if ttl > 0 {
+		s.workflowManifestCacheExpiresAt = now.Add(ttl)
+	} else {
+		s.workflowManifestCacheExpiresAt = time.Time{}
+	}
+	s.workflowManifestCacheMu.Unlock()
+
+	return discovered, nil
+}
+
+func (s *SchedulerService) InvalidateWorkflowManifestCache() {
+	s.workflowManifestCacheMu.Lock()
+	s.workflowManifestCache = nil
+	s.workflowManifestCacheExpiresAt = time.Time{}
+	s.workflowManifestCacheMu.Unlock()
 }
 
 // Start scans all workspace folders for workflow.json manifests, loads enabled schedules,

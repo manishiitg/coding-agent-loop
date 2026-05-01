@@ -58,9 +58,11 @@ export interface PresetApplicationResult {
 interface GlobalPresetState {
   // File-backed workflow presets (from manifests)
   workflowPresets: CustomPreset[]
+  workflowPresetsLoaded: boolean
 
   loading: boolean
   error: string | null
+  refreshPromise: Promise<void> | null
 
   // Active preset tracking per mode category
   activePresetIds: Record<Exclude<ModeCategory, null>, string | null>
@@ -102,8 +104,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
     (set, get) => ({
       // Initial state
       workflowPresets: [],
+      workflowPresetsLoaded: false,
       loading: false,
       error: null,
+      refreshPromise: null,
       
       activePresetIds: {
         'workflow': null,
@@ -118,30 +122,42 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
 
       // Manifest management actions
       refreshPresets: async () => {
-        set({ loading: true, error: null })
-        try {
-          // Refresh workflow manifests and rebuild workflow presets
-          await useWorkflowManifestStore.getState().refreshWorkflows().catch(() => {})
-          const workflowPresets = buildWorkflowPresetsFromManifests()
-          const workflowPresetIds = new Set(workflowPresets.map(p => p.id))
-          set(state => ({
-            workflowPresets,
-            loading: false,
-            activePresetIds: {
-              ...state.activePresetIds,
-              workflow: state.activePresetIds.workflow && workflowPresetIds.has(state.activePresetIds.workflow)
-                ? state.activePresetIds.workflow
-                : null,
-            },
-            recentPresetOrder: state.recentPresetOrder.filter(id => workflowPresetIds.has(id)),
-          }))
-        } catch (error) {
-          console.error('[PRESET] Error refreshing presets:', error)
-          set({
-            error: error instanceof Error ? error.message : 'Failed to refresh presets',
-            loading: false
-          })
-        }
+        const existingPromise = get().refreshPromise
+        if (existingPromise) return existingPromise
+
+        const refreshPromise = (async () => {
+          set({ loading: true, error: null })
+          try {
+            // Refresh workflow manifests and rebuild workflow presets
+            await useWorkflowManifestStore.getState().refreshWorkflows().catch(() => {})
+            const workflowPresets = buildWorkflowPresetsFromManifests()
+            const workflowPresetIds = new Set(workflowPresets.map(p => p.id))
+            set(state => ({
+              workflowPresets,
+              workflowPresetsLoaded: true,
+              loading: false,
+              activePresetIds: {
+                ...state.activePresetIds,
+                workflow: state.activePresetIds.workflow && workflowPresetIds.has(state.activePresetIds.workflow)
+                  ? state.activePresetIds.workflow
+                  : null,
+              },
+              recentPresetOrder: state.recentPresetOrder.filter(id => workflowPresetIds.has(id)),
+            }))
+          } catch (error) {
+            console.error('[PRESET] Error refreshing presets:', error)
+            set({
+              error: error instanceof Error ? error.message : 'Failed to refresh presets',
+              workflowPresetsLoaded: true,
+              loading: false
+            })
+          } finally {
+            set({ refreshPromise: null })
+          }
+        })()
+
+        set({ refreshPromise })
+        return refreshPromise
       },
       
       savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames, browserMode) => {

@@ -347,6 +347,31 @@ type WorkflowSummary struct {
 	ActiveRunFolder string      `json:"active_run_folder,omitempty"`
 }
 
+type WorkflowOverviewRunFolderDetail struct {
+	Folder         RunFolderInfo      `json:"folder"`
+	TotalSteps     int                `json:"total_steps"`
+	CompletedSteps int                `json:"completed_steps"`
+	LastUpdated    *string            `json:"last_updated,omitempty"`
+	EvalScore      *int               `json:"eval_score,omitempty"`
+	EvalMaxScore   *int               `json:"eval_max_score,omitempty"`
+	CostUSD        *float64           `json:"cost_usd,omitempty"`
+	StartedAt      *string            `json:"started_at,omitempty"`
+	CompletedAt    *string            `json:"completed_at,omitempty"`
+	TriggeredBy    *string            `json:"triggered_by,omitempty"`
+	Status         string             `json:"status"`
+	Models         *RunMetadataModels `json:"models,omitempty"`
+}
+
+type WorkflowOverview struct {
+	WorkspacePath  string                            `json:"workspace_path"`
+	RunFolders     []WorkflowOverviewRunFolderDetail `json:"run_folders"`
+	EvalData       workflowEvaluationReportsResponse `json:"eval_data"`
+	LastUpdated    *string                           `json:"last_updated,omitempty"`
+	TotalRunCount  int                               `json:"total_run_count"`
+	ActiveRunPaths []string                          `json:"active_run_paths,omitempty"`
+	Error          string                            `json:"error,omitempty"`
+}
+
 // RunSummary is the minimal metadata for the most recent run folder.
 type RunSummary struct {
 	Folder         string  `json:"folder"`
@@ -524,6 +549,195 @@ func (api *StreamingAPI) handleGetWorkflowsSummary(w http.ResponseWriter, r *htt
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":   true,
 		"workflows": summaries,
+	})
+}
+
+// handleGetWorkflowsOverview returns richer overview rows for multiple workflows in one call.
+// GET /api/workflows/overview?workspace_paths=path1,path2,...
+func (api *StreamingAPI) handleGetWorkflowsOverview(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	pathsParam := r.URL.Query().Get("workspace_paths")
+	if pathsParam == "" {
+		http.Error(w, "workspace_paths parameter is required (comma-separated)", http.StatusBadRequest)
+		return
+	}
+
+	rawPaths := strings.Split(pathsParam, ",")
+	workspacePaths := make([]string, 0, len(rawPaths))
+	for _, raw := range rawPaths {
+		workspacePath := strings.TrimSpace(raw)
+		if workspacePath == "" || strings.Contains(workspacePath, "..") {
+			continue
+		}
+		workspacePaths = append(workspacePaths, workspacePath)
+	}
+
+	activeByWorkspace := map[string]map[string]struct{}{}
+	for _, exec := range api.listRunningWorkflowExecutions("") {
+		if exec.WorkspacePath == "" || exec.RunFolder == "" {
+			continue
+		}
+		if activeByWorkspace[exec.WorkspacePath] == nil {
+			activeByWorkspace[exec.WorkspacePath] = map[string]struct{}{}
+		}
+		activeByWorkspace[exec.WorkspacePath][exec.RunFolder] = struct{}{}
+	}
+
+	ctx := r.Context()
+	overviews := make([]WorkflowOverview, len(workspacePaths))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 5)
+
+	for i, wp := range workspacePaths {
+		wg.Add(1)
+		go func(idx int, workspacePath string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			overview := WorkflowOverview{WorkspacePath: workspacePath}
+			activeRunFolders := activeByWorkspace[workspacePath]
+			for activeRunFolder := range activeRunFolders {
+				overview.ActiveRunPaths = append(overview.ActiveRunPaths, activeRunFolder)
+			}
+			sort.Strings(overview.ActiveRunPaths)
+
+			folders, err := api.loadRunFoldersInternal(ctx, workspacePath)
+			if err != nil {
+				overview.Error = "failed to load run folders"
+				overviews[idx] = overview
+				return
+			}
+			overview.TotalRunCount = len(folders)
+
+			evalResp := loadWorkflowEvaluationReports(ctx, workspacePath, "")
+			overview.EvalData = evalResp
+			evalByFolder := make(map[string]EvaluationReportEntry, len(evalResp.Reports))
+			for _, entry := range evalResp.Reports {
+				evalByFolder[entry.RunFolder] = entry
+			}
+
+			costResp := loadWorkflowCosts(ctx, workspacePath)
+			costByFolder := make(map[string]workflowRunCostEntry, len(costResp.Runs))
+			for _, entry := range costResp.Runs {
+				costByFolder[entry.RunFolder] = entry
+			}
+
+			details := make([]WorkflowOverviewRunFolderDetail, 0, len(folders))
+			for _, folder := range folders {
+				detail := WorkflowOverviewRunFolderDetail{
+					Folder: folder,
+					Status: "unknown",
+				}
+
+				if metadata := folder.Metadata; metadata != nil {
+					detail.Status = metadata.Status
+					if metadata.TriggeredBy != "" {
+						triggeredBy := metadata.TriggeredBy
+						detail.TriggeredBy = &triggeredBy
+					}
+					if metadata.Models != nil {
+						detail.Models = metadata.Models
+					}
+					if !metadata.CreatedAt.IsZero() {
+						startedAt := metadata.CreatedAt.Format("2006-01-02T15:04:05Z07:00")
+						detail.StartedAt = &startedAt
+						detail.LastUpdated = &startedAt
+					}
+					if metadata.CompletedAt != nil && !metadata.CompletedAt.IsZero() {
+						completedAt := metadata.CompletedAt.Format("2006-01-02T15:04:05Z07:00")
+						detail.CompletedAt = &completedAt
+						detail.LastUpdated = &completedAt
+					}
+				}
+				if detail.Status == "running" {
+					if _, ok := activeRunFolders[folder.Name]; !ok {
+						detail.Status = "failed"
+					}
+				}
+
+				if folder.Progress != nil {
+					detail.CompletedSteps = len(folder.Progress.CompletedStepIndices)
+					detail.TotalSteps = folder.Progress.TotalSteps
+				}
+
+				if evalEntry, ok := evalByFolder[folder.Name]; ok {
+					score := evalEntry.Report.TotalScore
+					maxScore := evalEntry.Report.MaxPossibleScore
+					detail.EvalScore = &score
+					detail.EvalMaxScore = &maxScore
+				}
+
+				if runCosts, ok := costByFolder[folder.Name]; ok && runCosts.TokenUsage != nil {
+					var totalCost float64
+					for _, modelUsage := range runCosts.TokenUsage.ByModel {
+						if modelUsage != nil {
+							totalCost += modelUsage.TotalCost
+						}
+					}
+					if totalCost > 0 {
+						detail.CostUSD = &totalCost
+					}
+					if detail.StartedAt == nil && !runCosts.TokenUsage.CreatedAt.IsZero() {
+						startedAt := runCosts.TokenUsage.CreatedAt.Format("2006-01-02T15:04:05Z07:00")
+						detail.StartedAt = &startedAt
+						detail.LastUpdated = &startedAt
+					}
+					if detail.CompletedAt == nil && detail.Status == "completed" && !runCosts.TokenUsage.UpdatedAt.IsZero() {
+						completedAt := runCosts.TokenUsage.UpdatedAt.Format("2006-01-02T15:04:05Z07:00")
+						detail.CompletedAt = &completedAt
+						detail.LastUpdated = &completedAt
+					}
+				}
+
+				details = append(details, detail)
+				if detail.LastUpdated != nil && (overview.LastUpdated == nil || *detail.LastUpdated > *overview.LastUpdated) {
+					lastUpdated := *detail.LastUpdated
+					overview.LastUpdated = &lastUpdated
+				}
+			}
+
+			sort.Slice(details, func(i, j int) bool {
+				a := ""
+				b := ""
+				if details[i].StartedAt != nil {
+					a = *details[i].StartedAt
+				} else if details[i].LastUpdated != nil {
+					a = *details[i].LastUpdated
+				}
+				if details[j].StartedAt != nil {
+					b = *details[j].StartedAt
+				} else if details[j].LastUpdated != nil {
+					b = *details[j].LastUpdated
+				}
+				if a == "" && b == "" {
+					return details[i].Folder.Name < details[j].Folder.Name
+				}
+				if a == "" {
+					return false
+				}
+				if b == "" {
+					return true
+				}
+				return a > b
+			})
+
+			overview.RunFolders = details
+			overviews[idx] = overview
+		}(i, wp)
+	}
+
+	wg.Wait()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"workflows": overviews,
 	})
 }
 

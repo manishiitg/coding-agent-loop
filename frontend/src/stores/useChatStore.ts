@@ -495,7 +495,7 @@ interface ChatState extends StoreActions {
 
   // SSE connection management
   sseConnections: Record<string, SSEConnection>  // sessionId -> SSEConnection
-  connectSSE: (sessionId: string, onMessage: (msg: SSEEventMessage) => void, onStatus: (msg: SSEStatusMessage) => void) => void
+  connectSSE: (sessionId: string, onMessage: (msg: SSEEventMessage) => void, onStatus: (msg: SSEStatusMessage) => void, onError?: () => void) => void
   disconnectSSE: (sessionId: string) => void
   disconnectAllSSE: () => void
 
@@ -1188,13 +1188,14 @@ export const useChatStore = create<ChatState>()(
       },
 
       // SSE connection management
-      connectSSE: (sessionId, onMessage, onStatus) => {
+      connectSSE: (sessionId, onMessage, onStatus, onError) => {
         const state = get()
         // Close existing connection for this session if any
         if (state.sseConnections[sessionId]) {
           state.sseConnections[sessionId].close()
         }
-        const lastIndex = state.tabEventIndices[sessionId] ?? 0
+        const storedLastIndex = state.tabEventIndices[sessionId] ?? 0
+        const lastIndex = storedLastIndex < 0 ? 0 : storedLastIndex
         const conn = new SSEConnection(sessionId, lastIndex, {
           onMessage,
           onStatusUpdate: onStatus,
@@ -1207,6 +1208,7 @@ export const useChatStore = create<ChatState>()(
               delete conns[sessionId]
               return { sseConnections: conns }
             })
+            onError?.()
           },
           onOpen: () => {
             logger.debug('ChatStore', `SSE connected for session ${sessionId}`)

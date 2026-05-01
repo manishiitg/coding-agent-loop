@@ -8,6 +8,8 @@ func GetSpecialWorkspaceToolsInstructions() string {
 
 Use these tools when you need a direct provider-backed capability instead of general chat reasoning:
 
+- ` + "`list_llm_capabilities(capability?, include_models?)`" + ` — Inspect which providers/models are supported and currently usable for ` + "`chat`" + `, ` + "`generate_image`" + `, ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, and ` + "`generate_music`" + `. Use this before choosing a provider when the user's request depends on provider capability, auth, pricing, or runtime availability.
+- ` + "`estimate_llm_cost(capability, provider, model_id?, characters?, seconds?, minutes?, count?)`" + ` — Estimate priced media generation/transcription costs before high-volume ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, or ` + "`generate_music`" + ` runs.
 - ` + "`generate_text_llm(user_message, tier)`" + ` — Generate text with one direct LLM call using the workspace tier config. ` + "`tier`" + ` must be ` + "`high`" + `, ` + "`medium`" + `, or ` + "`low`" + `.
 - ` + "`search_web_llm(query, provider, model_id)`" + ` — Run a live web search using a published search-capable model from ` + "`config/published-llms.json`" + `. Both ` + "`provider`" + ` and ` + "`model_id`" + ` are required and must match a published entry.
 - ` + "`image_gen(prompt, output_path, provider?)`" + ` — Generate images using ` + "`config/image-generation-config.json`" + ` or an explicit provider override. ` + "`output_path`" + ` is required and must be a workspace-relative destination chosen by the caller.

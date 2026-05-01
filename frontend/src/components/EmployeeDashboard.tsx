@@ -18,10 +18,11 @@ import {
 } from 'recharts'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
-import type { DiscoveredWorkflow, Employee, EvaluationAggregate, EvaluationReportEntry, PhaseTokenUsageFile, TokenUsageFile, WorkflowPhaseDailyCostsEntry, WorkflowRunCostsEntry } from '../services/api-types'
+import type { Employee, EvaluationAggregate, EvaluationReportEntry, PhaseTokenUsageFile, TokenUsageFile, WorkflowPhaseDailyCostsEntry, WorkflowReviewDataResponse, WorkflowRunCostsEntry } from '../services/api-types'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import { ReportView } from './workflow/ReportViewer'
 import { useAppStore } from '../stores/useAppStore'
+import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 
 interface WorkflowSummary {
   id: string
@@ -59,6 +60,7 @@ interface SelectedWorkflowEntry {
 
 interface WorkflowReviewState {
   loading: boolean
+  reviewData: WorkflowReviewDataResponse | null
   evaluation: EvaluationReportEntry | null
   evaluations: EvaluationReportEntry[]
   evaluationAggregate: EvaluationAggregate | null
@@ -99,6 +101,7 @@ const StatusDot: React.FC<{ status: string }> = ({ status }) => {
 
 const EMPTY_REVIEW_STATE: WorkflowReviewState = {
   loading: false,
+  reviewData: null,
   evaluation: null,
   evaluations: [],
   evaluationAggregate: null,
@@ -214,6 +217,10 @@ const parseRunFolder = (runFolder: string): ParsedRun => {
 
 export const EmployeeDashboard: React.FC = () => {
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
+  const workflowPresets = useGlobalPresetStore(state => state.workflowPresets)
+  const workflowPresetsLoaded = useGlobalPresetStore(state => state.workflowPresetsLoaded)
+  const presetsLoading = useGlobalPresetStore(state => state.loading)
+  const refreshPresets = useGlobalPresetStore(state => state.refreshPresets)
   const [employees, setEmployees] = useState<Employee[]>([])
   const [employeeWorkflows, setEmployeeWorkflows] = useState<EmployeeWithWorkflows[]>([])
   const [loading, setLoading] = useState(true)
@@ -229,13 +236,12 @@ export const EmployeeDashboard: React.FC = () => {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [empResp, workflowResp] = await Promise.all([
+      const [empResp] = await Promise.all([
         agentApi.listEmployees(),
-        agentApi.listWorkflowManifests(),
       ])
       const schedulesResp = await schedulerApi.listJobs({ entity_type: 'workflow' }).catch(() => ({ jobs: [], total: 0, limit: 0, offset: 0 }))
 
-      const discoveredWorkflows = workflowResp.workflows || []
+      const discoveredWorkflows = workflowPresets
       const scheduleByWorkspace = new Map<string, { count: number; nextRunAt: string | null }>()
       for (const job of schedulesResp.jobs || []) {
         const workspacePath = job.workspace_path
@@ -260,19 +266,15 @@ export const EmployeeDashboard: React.FC = () => {
 
       // Build workflow summaries using the batch summary endpoint (single API call)
       const summaries: Map<string, WorkflowSummary> = new Map()
-      const allWorkspacePaths = discoveredWorkflows.map((wf: DiscoveredWorkflow) => wf.workspace_path)
+      const allWorkspacePaths = discoveredWorkflows.map(wf => wf.selectedFolder?.filepath).filter((path): path is string => Boolean(path))
 
-      // Fetch summaries + eval reports in parallel (2 calls instead of N*2)
-      const [summaryResp, evalResults] = await Promise.all([
+      // Fetch only lightweight workflow summaries for the dashboard list. Detailed
+      // evaluation data is loaded for the selected workflow via review-data below.
+      const summaryResp = await (
         allWorkspacePaths.length > 0
           ? agentApi.getWorkflowsSummary(allWorkspacePaths).catch(() => null)
-          : Promise.resolve(null),
-        Promise.all(
-          discoveredWorkflows.map((wf: DiscoveredWorkflow) =>
-            agentApi.getEvaluationReports(wf.workspace_path).catch(() => null).then(r => ({ wp: wf.workspace_path, data: r }))
-          )
-        ),
-      ])
+          : Promise.resolve(null)
+      )
 
       // Index summary results by workspace path
       const summaryByPath = new Map<string, WorkflowApiSummary>()
@@ -282,16 +284,10 @@ export const EmployeeDashboard: React.FC = () => {
         }
       }
 
-      // Index eval results by workspace path
-      const evalByPath = new Map<string, typeof evalResults[number]['data']>()
-      for (const er of evalResults) {
-        evalByPath.set(er.wp, er.data)
-      }
-
-      for (const workflow of discoveredWorkflows as DiscoveredWorkflow[]) {
-        const wp = workflow.workspace_path
+      for (const workflow of discoveredWorkflows) {
+        const wp = workflow.selectedFolder?.filepath
+        if (!wp) continue
         const ws = summaryByPath.get(wp)
-        const evalResp = evalByPath.get(wp)
         const sched = scheduleByWorkspace.get(wp)
 
         let latestStatus = ws?.latest_run?.status || 'unknown'
@@ -302,19 +298,14 @@ export const EmployeeDashboard: React.FC = () => {
           latestStatus = 'running'
         }
 
-        let evalPercent: number | null = null
-        if (evalResp?.success && evalResp.aggregate && evalResp.aggregate.max_possible_score > 0) {
-          evalPercent = Math.round((evalResp.aggregate.average_score / evalResp.aggregate.max_possible_score) * 100)
-        }
-
         summaries.set(wp, {
-          id: workflow.manifest.id || wp,
-          label: workflow.manifest.label || wp.split('/').pop() || wp,
+          id: workflow.id || wp,
+          label: workflow.label || wp.split('/').pop() || wp,
           latestStatus,
           totalRuns: ws?.total_runs || 0,
           lastActive,
           totalCost: null,
-          evalPercent,
+          evalPercent: null,
           workspacePath: wp,
           latestRunFolder,
           scheduleCount: sched?.count || 0,
@@ -369,15 +360,20 @@ export const EmployeeDashboard: React.FC = () => {
       console.error('Failed to load employee dashboard:', err)
     }
     setLoading(false)
-  }, [])
-
-  useEffect(() => { loadData() }, [loadData])
+  }, [workflowPresets])
 
   useEffect(() => {
-    if (showWorkflowsOverview) {
-      loadData()
+    if (!workflowPresetsLoaded && workflowPresets.length === 0) {
+      if (!presetsLoading) {
+        refreshPresets().catch(error => {
+          console.error('[EmployeeDashboard] Failed to refresh workflow presets:', error)
+        })
+      }
+      return
     }
-  }, [showWorkflowsOverview, loadData])
+    if (presetsLoading && workflowPresets.length === 0) return
+    loadData()
+  }, [showWorkflowsOverview, workflowPresetsLoaded, presetsLoading, workflowPresets.length, refreshPresets, loadData])
 
   const workflowEntries = useMemo<SelectedWorkflowEntry[]>(() => {
     return employeeWorkflows.flatMap(({ employee, workflows }) =>
@@ -451,6 +447,7 @@ export const EmployeeDashboard: React.FC = () => {
 
       setReviewState({
         loading: false,
+        reviewData,
         evaluation,
         evaluations,
         evaluationAggregate,
@@ -464,6 +461,7 @@ export const EmployeeDashboard: React.FC = () => {
     } catch (err) {
       setReviewState({
         loading: false,
+        reviewData: null,
         evaluation: null,
         evaluations: [],
         evaluationAggregate: null,
@@ -967,7 +965,7 @@ export const EmployeeDashboard: React.FC = () => {
                   </div>
                 ) : reviewTab === 'report' ? (
                   <div className="h-[calc(100vh-320px)] min-h-[400px]">
-                    <ReportView workspacePath={selectedWorkflow.workspacePath} />
+                    <ReportView workspacePath={selectedWorkflow.workspacePath} selectedRunFolder={selectedWorkflow.latestRunFolder} reviewData={reviewState.reviewData} />
                   </div>
                 ) : reviewTab === 'evaluation' ? (
                   currentEvalEntry ? (

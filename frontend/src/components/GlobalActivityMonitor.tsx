@@ -7,7 +7,7 @@ import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { restoreSession } from '../utils/sessionRestore'
 
-const ACTIVE_SESSION_POLL_MS = 8000
+const ACTIVITY_DETAILS_POLL_MS = 30000
 
 type RuntimeExecutionDetail = {
   label: string
@@ -311,15 +311,18 @@ export const GlobalActivityMonitor: React.FC = () => {
 
   useEffect(() => {
     const refresh = async () => {
-      const active = await getActiveSessions(true).catch(() => [])
+      const active = await getActiveSessions(false).catch(() => [])
       try {
         const response = await agentApi.listRunningWorkflows()
         const running = response.running || []
         setRunningWorkflowsBySession(Object.fromEntries(
           running.map(workflow => [workflow.session_id, workflow]),
         ))
+        const runningSessionIds = active
+          .filter(isActiveSession)
+          .map(session => session.session_id)
         const sessionIds = Array.from(new Set([
-          ...active.map(session => session.session_id),
+          ...runningSessionIds,
           ...running.map(workflow => workflow.session_id),
         ])).filter(Boolean).slice(0, 20)
         const treeResults = await Promise.allSettled(
@@ -349,7 +352,7 @@ export const GlobalActivityMonitor: React.FC = () => {
     refresh()
     const interval = window.setInterval(() => {
       refresh()
-    }, ACTIVE_SESSION_POLL_MS)
+    }, ACTIVITY_DETAILS_POLL_MS)
     return () => window.clearInterval(interval)
   }, [getActiveSessions])
 

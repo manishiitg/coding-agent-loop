@@ -654,14 +654,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     await rehydrateWorkflowTabs(restoredTabs)
 
-    const activeWorkflowTab = chatStore.activeTabId ? chatStore.chatTabs[chatStore.activeTabId] : null
-    const activeMatchesPreset =
-      activeWorkflowTab?.metadata?.mode === 'workflow' &&
-      activeWorkflowTab.metadata?.presetQueryId === presetId
     const streamingTab = restoredTabs.find(t => chatStore.getTabStreamingStatus(t.tabId))
-    const targetTab = activeMatchesPreset
-      ? activeWorkflowTab
-      : (builderTab || streamingTab || restoredTabs[0])
+    const targetTab = builderTab || streamingTab || restoredTabs[0]
     chatStore.switchTab(targetTab.tabId)
     setShowChatArea(true)
   }, [activeWorkflowPreset?.selectedFolder?.filepath, rehydrateWorkflowTabs, setShowChatArea])
@@ -1303,11 +1297,17 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             switchTab(defaultTabId)
             setShowChatArea(true)
           } else {
-            const streamingTab = existingWorkflowTabs.find(t => t.isStreaming || store.getTabStreamingStatus(t.tabId))
-            if (streamingTab) {
-              switchTab(streamingTab.tabId)
+            const builderTab = existingWorkflowTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
+            if (builderTab) {
+              switchTab(builderTab.tabId)
               setShowChatArea(true)
             } else {
+              const streamingTab = existingWorkflowTabs.find(t => t.isStreaming || store.getTabStreamingStatus(t.tabId))
+              if (streamingTab) {
+                switchTab(streamingTab.tabId)
+                setShowChatArea(true)
+                return
+              }
               const hasOnlyEmptyBuilderTabs = existingWorkflowTabs.every(tab =>
                 tab.metadata?.phaseId === 'workflow-builder' &&
                 !store.getTabStreamingStatus(tab.tabId) &&
@@ -1393,13 +1393,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         .sort((a, b) => b.createdAt - a.createdAt)
 
       if (newPresetTabs.length > 0) {
-        // Prefer a currently-streaming tab (e.g. execution running in background) over
-        // the most-recently-created tab. Without this, the default "Workflow Builder" tab
-        // created on initial mount (newer createdAt) would be selected even when execution
-        // is actively running, showing an empty builder instead of the execution chat.
+        // Prefer the builder tab when entering a preset; execution tabs remain available
+        // but should not steal focus just because they were last active.
+        const builderTab = newPresetTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
         const streamingTab = newPresetTabs.find(t => chatStore.getTabStreamingStatus(t.tabId))
-        const targetTab = streamingTab || newPresetTabs[0]
-        console.log(`[WorkflowLayout] Switching to tab: ${targetTab.tabId.slice(0,8)} (${newPresetTabs.length} tabs for preset, streaming=${!!streamingTab})`)
+        const targetTab = builderTab || streamingTab || newPresetTabs[0]
+        console.log(`[WorkflowLayout] Switching to tab: ${targetTab.tabId.slice(0,8)} (${newPresetTabs.length} tabs for preset, builder=${!!builderTab}, streaming=${!!streamingTab})`)
         chatStore.switchTab(targetTab.tabId)
         setShowChatArea(true)
 

@@ -29,6 +29,8 @@ import type {
   CompactContextRequest,
   CompactContextResponse,
   RunFoldersResponse,
+  RunFolderInfo,
+  RunMetadataModels,
   CreateRunFolderResponse,
   VariableGroupsResponse,
   VariablesManifest,
@@ -100,6 +102,34 @@ export type {
 type RuntimeConfig = {
   apiBaseUrl?: string
   workspaceApiBaseUrl?: string
+}
+
+export interface WorkflowOverviewRunFolderDetail {
+  folder: RunFolderInfo
+  total_steps: number
+  completed_steps: number
+  last_updated?: string
+  eval_score?: number
+  eval_max_score?: number
+  cost_usd?: number
+  started_at?: string
+  completed_at?: string
+  triggered_by?: string
+  status: string
+  models?: RunMetadataModels | null
+}
+
+export interface WorkflowOverviewBatchResponse {
+  success: boolean
+  workflows: Array<{
+    workspace_path: string
+    run_folders: WorkflowOverviewRunFolderDetail[]
+    eval_data: EvaluationReportsResponse
+    last_updated?: string
+    total_run_count: number
+    active_run_paths?: string[]
+    error?: string
+  }>
 }
 
 type AppWindow = Window & {
@@ -247,6 +277,44 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 })
+
+const DEDUPED_GET_REUSE_MS = 1000
+const dedupedGetRequests = new Map<string, { promise: Promise<unknown>; expiresAt: number }>()
+
+function dedupedGet<T>(key: string, request: () => Promise<T>): Promise<T> {
+  const now = Date.now()
+  const existing = dedupedGetRequests.get(key)
+  if (existing && (existing.expiresAt === 0 || existing.expiresAt > now)) {
+    return existing.promise as Promise<T>
+  }
+
+  let succeeded = false
+  const promise = request()
+    .then(result => {
+      succeeded = true
+      return result
+    })
+    .finally(() => {
+      const current = dedupedGetRequests.get(key)
+      if (!current || current.promise !== promise) return
+
+      if (!succeeded) {
+        dedupedGetRequests.delete(key)
+        return
+      }
+
+      current.expiresAt = Date.now() + DEDUPED_GET_REUSE_MS
+      window.setTimeout(() => {
+        const latest = dedupedGetRequests.get(key)
+        if (latest?.promise === promise && latest.expiresAt <= Date.now()) {
+          dedupedGetRequests.delete(key)
+        }
+      }, DEDUPED_GET_REUSE_MS + 50)
+    })
+
+  dedupedGetRequests.set(key, { promise, expiresAt: 0 })
+  return promise
+}
 
 export const workspaceApi = axios.create({
   baseURL: WORKSPACE_API_BASE_URL,
@@ -556,8 +624,13 @@ export const agentApi = {
     const params: Record<string, string> = {}
     if (presetQueryId) params.preset_query_id = presetQueryId
     if (workspacePath) params.workspace_path = workspacePath
-    const response = await api.get('/api/workflow/builder-session', { params })
-    return response.data
+    return dedupedGet(
+      `workflow-builder-session:${presetQueryId || ''}:${workspacePath || ''}`,
+      async () => {
+        const response = await api.get('/api/workflow/builder-session', { params })
+        return response.data
+      }
+    )
   },
 
   // Start a new agent query
@@ -1160,8 +1233,10 @@ export const agentApi = {
   // executeWorkflow removed - now using normal agent execution flow
 
   getWorkflowStatus: async (presetQueryId: string): Promise<WorkflowStatusResponse> => {
-    const response = await api.get(`/api/workflow/status?preset_query_id=${encodeURIComponent(presetQueryId)}`)
-    return response.data
+    return dedupedGet(`workflow-status:${presetQueryId}`, async () => {
+      const response = await api.get(`/api/workflow/status?preset_query_id=${encodeURIComponent(presetQueryId)}`)
+      return response.data
+    })
   },
 
   updateWorkflow: async (presetQueryId: string, workflowStatus?: string, selectedOptions?: WorkflowSelectedOptions | null, stepId?: string) => {
@@ -1192,10 +1267,12 @@ export const agentApi = {
 
   // Get available run folders for a workspace
   getRunFolders: async (workspacePath: string): Promise<RunFoldersResponse> => {
-    const response = await api.get('/api/workflow/run-folders', {
-      params: { workspace_path: workspacePath }
+    return dedupedGet(`workflow-run-folders:${workspacePath}`, async () => {
+      const response = await api.get('/api/workflow/run-folders', {
+        params: { workspace_path: workspacePath }
+      })
+      return response.data
     })
-    return response.data
   },
 
   // Create a new run folder (iteration)
@@ -1271,22 +1348,24 @@ export const agentApi = {
   },
 
   getWorkflowReviewData: async (workspacePath: string, runFolder?: string): Promise<WorkflowReviewDataResponse> => {
-    const response = await api.get('/api/workflow/review-data', {
-      params: { workspace_path: workspacePath, run_folder: runFolder || '' }
+    return dedupedGet(`workflow-review-data:${workspacePath}:${runFolder || ''}`, async () => {
+      const response = await api.get('/api/workflow/review-data', {
+        params: { workspace_path: workspacePath, run_folder: runFolder || '' }
+      })
+      return {
+        ...response.data,
+        costs: {
+          ...response.data?.costs,
+          runs: Array.isArray(response.data?.costs?.runs) ? response.data.costs.runs : [],
+          phase_daily_costs: Array.isArray(response.data?.costs?.phase_daily_costs) ? response.data.costs.phase_daily_costs : [],
+          run_daily_costs: Array.isArray(response.data?.costs?.run_daily_costs) ? response.data.costs.run_daily_costs : [],
+        },
+        evaluations: {
+          ...response.data?.evaluations,
+          reports: Array.isArray(response.data?.evaluations?.reports) ? response.data.evaluations.reports : [],
+        },
+      }
     })
-    return {
-      ...response.data,
-      costs: {
-        ...response.data?.costs,
-        runs: Array.isArray(response.data?.costs?.runs) ? response.data.costs.runs : [],
-        phase_daily_costs: Array.isArray(response.data?.costs?.phase_daily_costs) ? response.data.costs.phase_daily_costs : [],
-        run_daily_costs: Array.isArray(response.data?.costs?.run_daily_costs) ? response.data.costs.run_daily_costs : [],
-      },
-      evaluations: {
-        ...response.data?.evaluations,
-        reports: Array.isArray(response.data?.evaluations?.reports) ? response.data.evaluations.reports : [],
-      },
-    }
   },
 
   // Get content of a specific log file
@@ -1412,7 +1491,18 @@ export const agentApi = {
       active_run_folder?: string
     }>
   }> => {
-    const response = await api.get('/api/workflows/summary', {
+    const keyPaths = workspacePaths.join(',')
+    return dedupedGet(`workflows-summary:${keyPaths}`, async () => {
+      const response = await api.get('/api/workflows/summary', {
+        params: { workspace_paths: keyPaths }
+      })
+      return response.data
+    })
+  },
+
+  // Rich overview rows for multiple workflows in one backend call.
+  getWorkflowsOverview: async (workspacePaths: string[]): Promise<WorkflowOverviewBatchResponse> => {
+    const response = await api.get('/api/workflows/overview', {
       params: { workspace_paths: workspacePaths.join(',') }
     })
     return response.data
@@ -1570,8 +1660,10 @@ export const agentApi = {
 
   // Employee API
   listEmployees: async (): Promise<{ employees: import('./api-types').Employee[] }> => {
-    const response = await api.get('/api/employees')
-    return response.data
+    return dedupedGet('employees', async () => {
+      const response = await api.get('/api/employees')
+      return response.data
+    })
   },
 
   createEmployee: async (employee: { name: string; avatar_color?: string; description?: string }): Promise<import('./api-types').Employee> => {
@@ -1598,8 +1690,10 @@ export const agentApi = {
   // --- Workflow Manifest API (file-backed workflow definitions) ---
 
   listWorkflowManifests: async (): Promise<ListWorkflowManifestsResponse> => {
-    const response = await api.get('/api/workflows/manifests')
-    return response.data
+    return dedupedGet('workflow-manifests', async () => {
+      const response = await api.get('/api/workflows/manifests')
+      return response.data
+    })
   },
 
   getWorkflowManifest: async (workspacePath: string): Promise<GetWorkflowManifestResponse> => {

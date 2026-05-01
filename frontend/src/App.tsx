@@ -937,9 +937,11 @@ function App() {
           rememberedWorkflowTab.metadata?.presetQueryId === activePresetId
         const builderTab = workflowTabs.find(tab => tab.metadata?.phaseId === 'workflow-builder')
         const streamingTab = workflowTabs.find(tab => chatStore.getTabStreamingStatus(tab.tabId) || tab.isStreaming)
-        const targetWorkflowTab = hasValidActiveTab
-          ? activeTab
-          : (rememberedWorkflowTabMatchesPreset ? rememberedWorkflowTab : (builderTab || streamingTab || workflowTabs[0]))
+        const targetWorkflowTab = builderTab ||
+          (hasValidActiveTab ? activeTab : null) ||
+          (rememberedWorkflowTabMatchesPreset ? rememberedWorkflowTab : null) ||
+          streamingTab ||
+          workflowTabs[0]
 
         if (targetWorkflowTab) {
           if (!hasValidActiveTab || activeTabId !== targetWorkflowTab.tabId) {

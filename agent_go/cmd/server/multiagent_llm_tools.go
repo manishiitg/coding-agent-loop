@@ -892,6 +892,113 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 		return underlyingAgent.RegisterCustomTool(name, description, params, exec, "llm_config_tools")
 	}
 
+	if err := registerLLMCapabilityTools(registerTool); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func registerLLMCapabilityDiscoveryTools(registerTool func(string, string, map[string]interface{}, func(context.Context, map[string]interface{}) (string, error)) error) error {
+	if err := registerTool(
+		"list_llm_capabilities",
+		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Includes config files, auth requirements, CLI runtime availability, and static pricing metadata where available.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"capability": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional filter. Supported values: all, chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, generate_music.",
+				},
+				"include_models": map[string]interface{}{
+					"type":        "boolean",
+					"description": "When true, include full chat/text model id lists. Defaults to false because chat catalogs can be large.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			capability, _ := args["capability"].(string)
+			includeModels, _ := args["include_models"].(bool)
+			return prettyJSON(buildLLMCapabilities(ctx, capability, includeModels)), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"estimate_llm_cost",
+		"Estimate cost for priced generation/transcription capabilities using static pricing metadata. Supports generate_video, text_to_speech, speech_to_text, and generate_music.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"capability": map[string]interface{}{
+					"type":        "string",
+					"description": "Required. Supported values: generate_video, text_to_speech, speech_to_text, generate_music. Aliases: video, tts, stt, music.",
+				},
+				"provider": map[string]interface{}{
+					"type":        "string",
+					"description": "Required provider id, e.g. vertex, minimax, elevenlabs, deepgram.",
+				},
+				"model_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional model id. If omitted, provider default pricing is used where available.",
+				},
+				"characters": map[string]interface{}{
+					"type":        "number",
+					"description": "Text characters for character-metered TTS providers. For Gemini TTS this is converted to input tokens at roughly 4 chars/token.",
+				},
+				"seconds": map[string]interface{}{
+					"type":        "number",
+					"description": "Video seconds for generate_video, audio seconds for speech_to_text, or music seconds for ElevenLabs generate_music.",
+				},
+				"minutes": map[string]interface{}{
+					"type":        "number",
+					"description": "Audio minutes for speech_to_text or ElevenLabs generate_music.",
+				},
+				"count": map[string]interface{}{
+					"type":        "number",
+					"description": "Number of generated items/files. Defaults to 1.",
+				},
+				"with_audio": map[string]interface{}{
+					"type":        "boolean",
+					"description": "For video estimates. Defaults to true.",
+				},
+				"input_tokens": map[string]interface{}{
+					"type":        "number",
+					"description": "Input text token count for token-metered providers such as Gemini TTS.",
+				},
+				"output_audio_tokens": map[string]interface{}{
+					"type":        "number",
+					"description": "Output audio token count for token-metered providers such as Gemini TTS.",
+				},
+			},
+			"required": []string{"capability", "provider"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			estimate, err := estimateLLMCost(args)
+			if err != nil {
+				return "", err
+			}
+			return prettyJSON(estimate), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (api *StreamingAPI) registerWorkflowLLMDiscoveryTools(underlyingAgent *mcpagent.Agent) error {
+	if underlyingAgent == nil {
+		return fmt.Errorf("underlying agent is nil")
+	}
+	registerTool := func(name, description string, params map[string]interface{}, exec func(context.Context, map[string]interface{}) (string, error)) error {
+		return underlyingAgent.RegisterCustomTool(name, description, params, exec, "llm_config_tools")
+	}
+	return registerLLMCapabilityDiscoveryTools(registerTool)
+}
+
+func registerLLMCapabilityTools(registerTool func(string, string, map[string]interface{}, func(context.Context, map[string]interface{}) (string, error)) error) error {
 	if err := registerTool(
 		"list_llm_capabilities",
 		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Includes config files, auth requirements, CLI runtime availability, and static pricing metadata where available.",

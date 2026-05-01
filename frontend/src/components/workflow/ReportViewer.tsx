@@ -47,12 +47,15 @@ import type {
   RunFoldersResponse,
   TokenUsageFile,
   WorkflowCostsResponse,
+  WorkflowReviewDataResponse,
 } from '../../services/api-types'
 
 export const REPORT_PREVIEW_PREFERENCE_KEY = 'workflow_report_preview_preference'
 export const REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT = 'workflow-report-preview-preference-changed'
 const REPORT_SVG_EXPORT_SCALE = 2
-const REPORT_PNG_EXPORT_SCALE = 2
+const REPORT_PNG_EXPORT_SCALE = 1
+const REPORT_PNG_EXPORT_MAX_SIDE = 16000
+const REPORT_PNG_EXPORT_MAX_PIXELS = 64_000_000
 type ReportExportFormat = 'svg' | 'png'
 
 function utf8ToBase64(value: string): string {
@@ -149,17 +152,29 @@ function svgDataUrlToPngDataUrl(svgDataUrl: string, scale = REPORT_PNG_EXPORT_SC
     image.onload = () => {
       const sourceWidth = Math.max(1, image.naturalWidth || image.width)
       const sourceHeight = Math.max(1, image.naturalHeight || image.height)
+      const maxScale = Math.min(
+        scale,
+        REPORT_PNG_EXPORT_MAX_SIDE / sourceWidth,
+        REPORT_PNG_EXPORT_MAX_SIDE / sourceHeight,
+        Math.sqrt(REPORT_PNG_EXPORT_MAX_PIXELS / (sourceWidth * sourceHeight))
+      )
+      const safeScale = Math.max(0.1, maxScale)
       const canvas = document.createElement('canvas')
-      canvas.width = Math.ceil(sourceWidth * scale)
-      canvas.height = Math.ceil(sourceHeight * scale)
+      canvas.width = Math.ceil(sourceWidth * safeScale)
+      canvas.height = Math.ceil(sourceHeight * safeScale)
       const context = canvas.getContext('2d')
       if (!context) {
         reject(new Error('Could not create PNG export canvas'))
         return
       }
-      context.scale(scale, scale)
+      context.scale(safeScale, safeScale)
       context.drawImage(image, 0, 0, sourceWidth, sourceHeight)
-      resolve(canvas.toDataURL('image/png'))
+      const dataUrl = canvas.toDataURL('image/png')
+      if (!dataUrl.startsWith('data:image/png;base64,')) {
+        reject(new Error('Failed to create a valid PNG export'))
+        return
+      }
+      resolve(dataUrl)
     }
     image.onerror = () => reject(new Error('Failed to render SVG export as PNG'))
     image.src = svgDataUrl
@@ -447,6 +462,8 @@ interface ReportViewerProps {
 
 interface ReportViewProps {
   workspacePath: string
+  selectedRunFolder?: string | null
+  reviewData?: WorkflowReviewDataResponse | null
   /** Optional close/back handler; when omitted, no close button is rendered (used for canvas-mode). */
   onClose?: () => void
   mobilePreview?: boolean
@@ -509,7 +526,7 @@ export function ReportViewer({ workspacePath, isOpen, onClose }: ReportViewerPro
 
 // Inline content — renders the report plan directly without modal chrome. Used by the
 // workflow canvas when canvasViewMode === 'report'.
-export function ReportView({ workspacePath, onClose, mobilePreview = false }: ReportViewProps) {
+export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClose, mobilePreview = false }: ReportViewProps) {
   // Three explicit preview widths plus 'auto'. The internal name 'desktop' is
   // surfaced as "Laptop" in the UI to match the user's mental model — laptop
   // viewports are what fill the full max-width shell. 'auto' falls back to the
@@ -687,7 +704,11 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
       setEvalsError(null)
     }
 
-    agentApi.getWorkflowReviewData(workspacePath)
+    const reviewDataPromise = reviewData
+      ? Promise.resolve(reviewData)
+      : agentApi.getWorkflowReviewData(workspacePath, selectedRunFolder || undefined)
+
+    reviewDataPromise
       .then(async response => {
         if (cancelled) return
 
@@ -751,7 +772,7 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
     return () => {
       cancelled = true
     }
-  }, [workspacePath, hasCostsWidget, hasEvalsWidget, refreshNonce])
+  }, [workspacePath, selectedRunFolder, reviewData, hasCostsWidget, hasEvalsWidget, refreshNonce])
 
   useEffect(() => {
     if (!workspacePath || !hasRunsWidget) {

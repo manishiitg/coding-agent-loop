@@ -47,9 +47,9 @@ type ScheduledJobResponse struct {
 	// not registered on this machine because SCHEDULER_ALLOWED_WORKFLOWS /
 	// SCHEDULER_BLOCKED_WORKFLOWS (or the _USERS variants for multi-agent) gates
 	// it. Manual TriggerNow still works; the cron just won't fire automatically.
-	EnvFiltered         bool            `json:"env_filtered,omitempty"`
-	CreatedAt           string          `json:"created_at,omitempty"`
-	UpdatedAt           string          `json:"updated_at,omitempty"`
+	EnvFiltered bool   `json:"env_filtered,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
 }
 
 // CreateScheduleRequest is the request body for creating a schedule.
@@ -231,20 +231,24 @@ func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
 
 		enabledFilter := r.URL.Query().Get("enabled")
 
-		modeFilter := r.URL.Query().Get("mode") // "workflow", "multi-agent", or "" for all
-
-		// Discover all workflows and collect schedules
-		workflows, err := DiscoverWorkflowManifests(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		modeFilter := r.URL.Query().Get("mode")              // "workflow", "multi-agent", or "" for all
+		entityTypeFilter := r.URL.Query().Get("entity_type") // "workflow", "multi-agent", "chat", or "" for all
+		includeWorkflowJobs := entityTypeFilter == "" || entityTypeFilter == "workflow"
+		includeMultiAgentJobs := entityTypeFilter == "" || entityTypeFilter == "multi-agent"
 
 		var allJobs []ScheduledJobResponse
 		missedResolver := newWorkflowMissedStatusResolver(r.Context())
 		envFilter := loadSchedulerWorkflowFilter()
 
-		if modeFilter == "" || modeFilter == "workflow" || modeFilter == "workshop" {
+		if includeWorkflowJobs && (modeFilter == "" || modeFilter == "workflow" || modeFilter == "workshop") {
+			// Discover all workflows and collect schedules. This is workspace-API
+			// backed, so keep a short cache for repeated UI polling.
+			workflows, err := svc.DiscoverWorkflowManifestsCached(r.Context(), 5*time.Second)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
 			for _, dw := range workflows {
 				for _, sched := range dw.Manifest.Schedules {
 					if enabledFilter != "" {
@@ -265,7 +269,7 @@ func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
 		}
 
 		// Discover multi-agent schedules — filtered by current user
-		if modeFilter == "" || modeFilter == "multi-agent" {
+		if includeMultiAgentJobs && (modeFilter == "" || modeFilter == "multi-agent") {
 			currentUserID := GetUserIDFromContext(r.Context())
 			userIDFilter := r.URL.Query().Get("user_id")
 			if userIDFilter == "" {
@@ -440,6 +444,7 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		svc.InvalidateWorkflowManifestCache()
 
 		// Register in scheduler if enabled
 		if newSched.Enabled {
@@ -612,6 +617,7 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		svc.InvalidateWorkflowManifestCache()
 
 		if err := svc.ReloadSchedule(r.Context(), workspacePath, id); err != nil {
 			scheduleLogf("[SCHEDULER] Failed to reload schedule %s after update: %v", id, err)
@@ -657,6 +663,7 @@ func deleteScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 				http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
+			svc.InvalidateWorkflowManifestCache()
 		}
 
 		w.WriteHeader(http.StatusNoContent)
@@ -697,6 +704,7 @@ func enableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 				http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
+			svc.InvalidateWorkflowManifestCache()
 			if err := svc.ReloadSchedule(r.Context(), result.WorkspacePath, id); err != nil {
 				scheduleLogf("[SCHEDULER] Failed to reload schedule %s after enable: %v", id, err)
 			}
@@ -744,6 +752,7 @@ func disableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 				http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
+			svc.InvalidateWorkflowManifestCache()
 			missedResolver := newWorkflowMissedStatusResolver(r.Context())
 			sched := result.Manifest.Schedules[result.Index]
 			resp = buildJobResponse(result.WorkspacePath, result.Manifest, sched, state, missedResolver.get(result.WorkspacePath, sched), loadSchedulerWorkflowFilter())

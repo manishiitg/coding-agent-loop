@@ -12,6 +12,7 @@ WITH_WORKSPACE=false
 WITH_FRONTEND=false
 ONLY_FRONTEND=false
 UPDATE_MMX_CLI=false
+FRONTEND_BUILD_MODE=false
 POSITIONAL_ARGS=()
 
 for arg in "$@"; do
@@ -31,6 +32,9 @@ for arg in "$@"; do
         --only-frontend)
             ONLY_FRONTEND=true
             ;;
+        --build)
+            FRONTEND_BUILD_MODE=true
+            ;;
         --update)
             UPDATE_MMX_CLI=true
             ;;
@@ -43,14 +47,71 @@ done
 FRONTEND_PORT_EXPLICIT="${FRONTEND_PORT:-}"
 LOCALHOST_BASE_URL="${LOCALHOST_BASE_URL:-http://localhost}"
 FRONTEND_HOST="${FRONTEND_HOST:-}"
-FRONTEND_URL_HOST="${FRONTEND_URL_HOST:-localhost}"
+FRONTEND_BIND_HOST="${FRONTEND_HOST:-127.0.0.1}"
+FRONTEND_URL_HOST="${FRONTEND_URL_HOST:-127.0.0.1}"
 
 port_in_use() {
     lsof -nP -iTCP:"$1" -sTCP:LISTEN > /dev/null 2>&1
 }
 
+print_port_status() {
+    local port="$1"
+    local label="$2"
+
+    if [ -z "$port" ]; then
+        return 0
+    fi
+
+    if port_in_use "$port"; then
+        echo "⚠️  Port $port ($label) is still in use"
+        lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | sed 's/^/   /'
+    else
+        echo "✅ Port $port ($label) is free"
+    fi
+}
+
+print_stop_target() {
+    local label="$1"
+    local pid="$2"
+    local port="$3"
+
+    if [ -n "$port" ]; then
+        echo "🛑 Stopping $label (PID: $pid, port: $port)..."
+    else
+        echo "🛑 Stopping $label (PID: $pid)..."
+    fi
+}
+
+kill_process_tree() {
+    local root_pid="$1"
+    local label="${2:-process}"
+
+    if [ -z "$root_pid" ] || ! kill -0 "$root_pid" 2>/dev/null; then
+        return 0
+    fi
+
+    local child_pids
+    child_pids="$(pgrep -P "$root_pid" 2>/dev/null || true)"
+    for child_pid in $child_pids; do
+        kill_process_tree "$child_pid" "$label child"
+    done
+
+    kill "$root_pid" 2>/dev/null || true
+
+    local attempt
+    for attempt in $(seq 1 20); do
+        if ! kill -0 "$root_pid" 2>/dev/null; then
+            return 0
+        fi
+        sleep 0.1
+    done
+
+    echo "⚠️  $label (PID: $root_pid) did not stop after SIGTERM; forcing stop..."
+    kill -9 "$root_pid" 2>/dev/null || true
+}
+
 choose_frontend_port() {
-    local preferred="${1:-5173}"
+    local preferred="${1:-51733}"
     local port="$preferred"
 
     if [ -n "$FRONTEND_PORT_EXPLICIT" ]; then
@@ -60,7 +121,7 @@ choose_frontend_port() {
 
     while port_in_use "$port"; do
         port=$((port + 1))
-        if [ "$port" -gt 5299 ]; then
+        if [ "$port" -gt 51999 ]; then
             return 1
         fi
     done
@@ -110,7 +171,11 @@ if [ "$TEST_CONNECTIONS" = true ]; then
 fi
 
 if [ "$ONLY_FRONTEND" = true ]; then
-    echo "🎨 Starting frontend only (Vite + Electron) — no backend, no workspace"
+    if [ "$FRONTEND_BUILD_MODE" = true ]; then
+        echo "🎨 Starting frontend only (static build + Electron) — no backend, no workspace"
+    else
+        echo "🎨 Starting frontend only (Vite + Electron) — no backend, no workspace"
+    fi
     echo "========================================="
 
     cd "$SCRIPT_DIR" || {
@@ -118,16 +183,17 @@ if [ "$ONLY_FRONTEND" = true ]; then
         exit 1
     }
 
-    FRONTEND_PORT="$(choose_frontend_port "${FRONTEND_PORT:-5173}")" || {
-        echo "❌ Error: No free frontend port available in range 5173-5299"
+    FRONTEND_PORT="$(choose_frontend_port "${FRONTEND_PORT:-51733}")" || {
+        echo "❌ Error: No free frontend port available in range 51733-51999"
         exit 1
     }
-    if [ -z "$FRONTEND_PORT_EXPLICIT" ] && [ "$FRONTEND_PORT" != "5173" ]; then
-        echo "🔎 Frontend port 5173 is busy; using $FRONTEND_PORT"
+    if [ -z "$FRONTEND_PORT_EXPLICIT" ] && [ "$FRONTEND_PORT" != "51733" ]; then
+        echo "🔎 Frontend port 51733 is busy; using $FRONTEND_PORT"
     fi
     FRONTEND_URL="http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}"
     FRONTEND_DIR="${SCRIPT_DIR}/../frontend"
     DESKTOP_DIR="${SCRIPT_DIR}/../desktop"
+    ELECTRON_BIN="${DESKTOP_DIR}/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
     FRONTEND_RUNTIME_CONFIG_PATH="${SCRIPT_DIR}/../frontend/public/runtime-config.js"
 
     # Fall back to reading ports from the runtime-config.js written by a previous
@@ -167,7 +233,11 @@ if [ "$ONLY_FRONTEND" = true ]; then
 
     echo "🔧 Backend (expected running): $MCP_AGENT_SERVER_URL"
     echo "🔧 Workspace (expected running): $WORKSPACE_API_URL"
-    echo "🔧 Vite URL: $FRONTEND_URL"
+    if [ "$FRONTEND_BUILD_MODE" = true ]; then
+        echo "🔧 Static frontend URL: $FRONTEND_URL"
+    else
+        echo "🔧 Vite URL: $FRONTEND_URL"
+    fi
 
     mkdir -p logs
     mkdir -p "$(dirname "$FRONTEND_RUNTIME_CONFIG_PATH")"
@@ -198,9 +268,24 @@ EOF
         exit 1
     fi
 
-    echo "🚀 Vite Dev Session Started: $(date)" > "$FRONTEND_LOG_PATH"
+    if [ "$FRONTEND_BUILD_MODE" = true ]; then
+        echo "🔨 Building frontend..."
+        (
+            cd "$FRONTEND_DIR" || exit 1
+            npm run build
+        ) >> "$FRONTEND_LOG_PATH" 2>&1 || {
+            echo "❌ Error: Frontend build failed. Check logs: $FRONTEND_LOG_PATH"
+            tail -30 "$FRONTEND_LOG_PATH"
+            exit 1
+        }
+        echo "🚀 Vite Preview Session Started: $(date)" >> "$FRONTEND_LOG_PATH"
+    else
+        echo "🚀 Vite Dev Session Started: $(date)" > "$FRONTEND_LOG_PATH"
+    fi
     if [ "$BACKGROUND_MODE" = true ]; then
-        if [ -n "$FRONTEND_HOST" ]; then
+        if [ "$FRONTEND_BUILD_MODE" = true ]; then
+            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run preview -- --host \"$FRONTEND_BIND_HOST\" --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+        elif [ -n "$FRONTEND_HOST" ]; then
             nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --host \"$FRONTEND_HOST\" --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
         else
             nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
@@ -208,7 +293,9 @@ EOF
     else
         (
             cd "$FRONTEND_DIR" || exit 1
-            if [ -n "$FRONTEND_HOST" ]; then
+            if [ "$FRONTEND_BUILD_MODE" = true ]; then
+                exec npm run preview -- --host "$FRONTEND_BIND_HOST" --port "$FRONTEND_PORT" --strictPort
+            elif [ -n "$FRONTEND_HOST" ]; then
                 exec npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --strictPort
             else
                 exec npm run dev -- --port "$FRONTEND_PORT" --strictPort
@@ -216,7 +303,11 @@ EOF
         ) >> "$FRONTEND_LOG_PATH" 2>&1 &
     fi
     FRONTEND_PID=$!
-    echo "✅ Vite dev server started (PID: $FRONTEND_PID) — $FRONTEND_URL"
+    if [ "$FRONTEND_BUILD_MODE" = true ]; then
+        echo "✅ Static frontend server started (PID: $FRONTEND_PID) — $FRONTEND_URL"
+    else
+        echo "✅ Vite dev server started (PID: $FRONTEND_PID) — $FRONTEND_URL"
+    fi
 
     frontend_ready=false
     for attempt in $(seq 1 60); do
@@ -225,48 +316,63 @@ EOF
             break
         fi
         if ! kill -0 "$FRONTEND_PID" 2>/dev/null; then
-            echo "❌ Error: Vite dev server exited during startup. Check logs: $FRONTEND_LOG_PATH"
+            echo "❌ Error: Frontend server exited during startup. Check logs: $FRONTEND_LOG_PATH"
             tail -20 "$FRONTEND_LOG_PATH"
             exit 1
         fi
         sleep 1
     done
     if [ "$frontend_ready" != true ]; then
-        echo "❌ Error: Vite dev server did not become ready in time. Check logs: $FRONTEND_LOG_PATH"
+        echo "❌ Error: Frontend server did not become ready in time. Check logs: $FRONTEND_LOG_PATH"
         tail -20 "$FRONTEND_LOG_PATH"
-        kill "$FRONTEND_PID" 2>/dev/null
+        kill_process_tree "$FRONTEND_PID" "frontend server"
         exit 1
     fi
 
     if [ ! -f "${DESKTOP_DIR}/package.json" ]; then
         echo "❌ Error: desktop package.json not found: ${DESKTOP_DIR}/package.json"
-        kill "$FRONTEND_PID" 2>/dev/null
+        kill_process_tree "$FRONTEND_PID" "frontend server"
+        exit 1
+    fi
+    if [ ! -x "$ELECTRON_BIN" ]; then
+        echo "❌ Error: Electron binary not found or not executable: $ELECTRON_BIN"
+        kill_process_tree "$FRONTEND_PID" "frontend server"
+        print_port_status "$FRONTEND_PORT" "frontend"
         exit 1
     fi
 
     echo "🚀 Electron Session Started: $(date)" > "$ELECTRON_LOG_PATH"
     if [ "$BACKGROUND_MODE" = true ]; then
-        nohup bash -lc "cd \"$DESKTOP_DIR\" && DEV_URL=\"$FRONTEND_URL\" exec npm start" >> "$ELECTRON_LOG_PATH" 2>&1 &
+        nohup bash -lc "cd \"$DESKTOP_DIR\" && DEV_URL=\"$FRONTEND_URL\" exec \"$ELECTRON_BIN\" ." >> "$ELECTRON_LOG_PATH" 2>&1 &
     else
         (
             cd "$DESKTOP_DIR" || exit 1
-            DEV_URL="$FRONTEND_URL" exec npm start
+            DEV_URL="$FRONTEND_URL" exec "$ELECTRON_BIN" .
         ) >> "$ELECTRON_LOG_PATH" 2>&1 &
     fi
     ELECTRON_PID=$!
     echo "✅ Electron started (PID: $ELECTRON_PID)"
+    sleep 2
+    if ! kill -0 "$ELECTRON_PID" 2>/dev/null; then
+        echo "❌ Error: Electron exited immediately. Check logs: $ELECTRON_LOG_PATH"
+        tail -30 "$ELECTRON_LOG_PATH"
+        kill_process_tree "$FRONTEND_PID" "frontend server"
+        print_port_status "$FRONTEND_PORT" "frontend"
+        exit 1
+    fi
 
     cleanup_frontend_only() {
         if [ "$BACKGROUND_MODE" != true ]; then
             if [ -n "$ELECTRON_PID" ] && kill -0 "$ELECTRON_PID" 2>/dev/null; then
-                echo "🛑 Stopping Electron (PID: $ELECTRON_PID)..."
-                kill "$ELECTRON_PID" 2>/dev/null
+                print_stop_target "Electron" "$ELECTRON_PID"
+                kill_process_tree "$ELECTRON_PID" "Electron"
                 wait "$ELECTRON_PID" 2>/dev/null
             fi
             if [ -n "$FRONTEND_PID" ] && kill -0 "$FRONTEND_PID" 2>/dev/null; then
-                echo "🛑 Stopping Vite (PID: $FRONTEND_PID)..."
-                kill "$FRONTEND_PID" 2>/dev/null
+                print_stop_target "frontend server" "$FRONTEND_PID" "$FRONTEND_PORT"
+                kill_process_tree "$FRONTEND_PID" "frontend server"
                 wait "$FRONTEND_PID" 2>/dev/null
+                print_port_status "$FRONTEND_PORT" "frontend"
             fi
         fi
     }
@@ -276,7 +382,7 @@ EOF
     if [ "$BACKGROUND_MODE" = true ]; then
         echo ""
         echo "✅ Frontend services running in background:"
-        echo "   - Vite (PID: $FRONTEND_PID) — $FRONTEND_URL"
+        echo "   - Frontend server (PID: $FRONTEND_PID) — $FRONTEND_URL"
         echo "   - Electron (PID: $ELECTRON_PID)"
         echo "   Logs: $FRONTEND_LOG_PATH (vite), $ELECTRON_LOG_PATH (electron)"
         echo "🛑 To stop: kill $FRONTEND_PID $ELECTRON_PID"
@@ -285,12 +391,26 @@ EOF
 
     echo ""
     echo "✅ Frontend services running (foreground):"
-    echo "   - Vite (PID: $FRONTEND_PID) — $FRONTEND_URL"
+    echo "   - Frontend server (PID: $FRONTEND_PID) — $FRONTEND_URL"
     echo "   - Electron (PID: $ELECTRON_PID)"
     echo "   Backend expected at: $MCP_AGENT_SERVER_URL"
     echo "   Press Ctrl+C to stop."
     echo ""
-    wait "$FRONTEND_PID"
+    while true; do
+        if ! kill -0 "$FRONTEND_PID" 2>/dev/null; then
+            echo "❌ Frontend server exited. Check logs: $FRONTEND_LOG_PATH"
+            tail -20 "$FRONTEND_LOG_PATH"
+            exit 1
+        fi
+        if ! kill -0 "$ELECTRON_PID" 2>/dev/null; then
+            echo "❌ Electron exited. Check logs: $ELECTRON_LOG_PATH"
+            tail -30 "$ELECTRON_LOG_PATH"
+            kill_process_tree "$FRONTEND_PID" "frontend server"
+            print_port_status "$FRONTEND_PORT" "frontend"
+            exit 1
+        fi
+        sleep 1
+    done
     exit 0
 fi
 
@@ -449,12 +569,13 @@ FRONTEND_LOG_PATH=""
 ELECTRON_LOG_PATH=""
 FRONTEND_DIR="${SCRIPT_DIR}/../frontend"
 DESKTOP_DIR="${SCRIPT_DIR}/../desktop"
-FRONTEND_PORT="$(choose_frontend_port "${FRONTEND_PORT:-5173}")" || {
-    echo "❌ Error: No free frontend port available in range 5173-5299"
+ELECTRON_BIN="${DESKTOP_DIR}/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+FRONTEND_PORT="$(choose_frontend_port "${FRONTEND_PORT:-51733}")" || {
+    echo "❌ Error: No free frontend port available in range 51733-51999"
     exit 1
 }
-if [ -z "$FRONTEND_PORT_EXPLICIT" ] && [ "$FRONTEND_PORT" != "5173" ]; then
-    echo "🔎 Frontend port 5173 is busy; using $FRONTEND_PORT"
+if [ -z "$FRONTEND_PORT_EXPLICIT" ] && [ "$FRONTEND_PORT" != "51733" ]; then
+    echo "🔎 Frontend port 51733 is busy; using $FRONTEND_PORT"
 fi
 FRONTEND_URL="http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}"
 
@@ -711,33 +832,36 @@ LOG_ROTATE_PID=$!
 
 stop_native_workspace() {
     if [ -n "$WORKSPACE_PID" ] && kill -0 "$WORKSPACE_PID" 2>/dev/null; then
-        echo "🛑 Stopping native workspace server (PID: $WORKSPACE_PID)..."
-        kill "$WORKSPACE_PID" 2>/dev/null
+        print_stop_target "native workspace server" "$WORKSPACE_PID" "$WORKSPACE_PORT"
+        kill_process_tree "$WORKSPACE_PID" "native workspace server"
         wait "$WORKSPACE_PID" 2>/dev/null
+        print_port_status "$WORKSPACE_PORT" "workspace"
     fi
 }
 
 stop_electron() {
     if [ -n "$ELECTRON_PID" ] && kill -0 "$ELECTRON_PID" 2>/dev/null; then
-        echo "🛑 Stopping Electron (PID: $ELECTRON_PID)..."
-        kill "$ELECTRON_PID" 2>/dev/null
+        print_stop_target "Electron" "$ELECTRON_PID"
+        kill_process_tree "$ELECTRON_PID" "Electron"
         wait "$ELECTRON_PID" 2>/dev/null
     fi
 }
 
 stop_frontend_dev() {
     if [ -n "$FRONTEND_PID" ] && kill -0 "$FRONTEND_PID" 2>/dev/null; then
-        echo "🛑 Stopping Vite dev server (PID: $FRONTEND_PID)..."
-        kill "$FRONTEND_PID" 2>/dev/null
+        print_stop_target "frontend server" "$FRONTEND_PID" "$FRONTEND_PORT"
+        kill_process_tree "$FRONTEND_PID" "frontend server"
         wait "$FRONTEND_PID" 2>/dev/null
+        print_port_status "$FRONTEND_PORT" "frontend"
     fi
 }
 
 stop_agent_server() {
     if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-        echo "🛑 Stopping agent server (PID: $SERVER_PID)..."
-        kill "$SERVER_PID" 2>/dev/null
+        print_stop_target "agent server" "$SERVER_PID" "$AGENT_PORT"
+        kill_process_tree "$SERVER_PID" "agent server"
         wait "$SERVER_PID" 2>/dev/null
+        print_port_status "$AGENT_PORT" "agent"
     fi
 }
 
@@ -818,18 +942,18 @@ wait_for_frontend_health() {
     local attempt
     for attempt in $(seq 1 60); do
         if curl -fsS "$health_url" >/dev/null 2>&1; then
-            echo "✅ Vite dev server is ready at: $health_url"
+            echo "✅ Frontend server is ready at: $health_url"
             return 0
         fi
         if ! kill -0 "$FRONTEND_PID" 2>/dev/null; then
-            echo "❌ Error: Vite dev server exited during startup. Check logs: $FRONTEND_LOG_PATH"
+            echo "❌ Error: Frontend server exited during startup. Check logs: $FRONTEND_LOG_PATH"
             tail -20 "$FRONTEND_LOG_PATH"
             return 1
         fi
         sleep 1
     done
 
-    echo "❌ Error: Vite dev server did not become ready in time. Check logs: $FRONTEND_LOG_PATH"
+    echo "❌ Error: Frontend server did not become ready in time. Check logs: $FRONTEND_LOG_PATH"
     tail -20 "$FRONTEND_LOG_PATH"
     return 1
 }
@@ -854,18 +978,38 @@ start_frontend_dev() {
         return 1
     fi
 
-    echo "🚀 Starting Vite dev server..."
+    if [ "$FRONTEND_BUILD_MODE" = true ]; then
+        echo "🚀 Starting static frontend server..."
+    else
+        echo "🚀 Starting Vite dev server..."
+    fi
     echo "📝 Frontend log file: $FRONTEND_LOG_PATH"
-    echo "🌐 Vite URL: $FRONTEND_URL"
+    echo "🌐 Frontend URL: $FRONTEND_URL"
 
-    echo "🚀 Vite Dev Session Started: $(date)" > "$FRONTEND_LOG_PATH"
+    if [ "$FRONTEND_BUILD_MODE" = true ]; then
+        echo "🔨 Building frontend..."
+        echo "🔨 Frontend Build Session Started: $(date)" > "$FRONTEND_LOG_PATH"
+        (
+            cd "$FRONTEND_DIR" || exit 1
+            npm run build
+        ) >> "$FRONTEND_LOG_PATH" 2>&1 || {
+            echo "❌ Error: Frontend build failed. Check logs: $FRONTEND_LOG_PATH"
+            tail -30 "$FRONTEND_LOG_PATH"
+            return 1
+        }
+        echo "🚀 Vite Preview Session Started: $(date)" >> "$FRONTEND_LOG_PATH"
+    else
+        echo "🚀 Vite Dev Session Started: $(date)" > "$FRONTEND_LOG_PATH"
+    fi
     echo "=========================================" >> "$FRONTEND_LOG_PATH"
     echo "- Port: $FRONTEND_PORT" >> "$FRONTEND_LOG_PATH"
     echo "- URL: $FRONTEND_URL" >> "$FRONTEND_LOG_PATH"
     echo "=========================================" >> "$FRONTEND_LOG_PATH"
 
     if [ "$BACKGROUND_MODE" = true ]; then
-        if [ -n "$FRONTEND_HOST" ]; then
+        if [ "$FRONTEND_BUILD_MODE" = true ]; then
+            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run preview -- --host \"$FRONTEND_BIND_HOST\" --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+        elif [ -n "$FRONTEND_HOST" ]; then
             nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --host \"$FRONTEND_HOST\" --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
         else
             nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
@@ -873,7 +1017,9 @@ start_frontend_dev() {
     else
         (
             cd "$FRONTEND_DIR" || exit 1
-            if [ -n "$FRONTEND_HOST" ]; then
+            if [ "$FRONTEND_BUILD_MODE" = true ]; then
+                exec npm run preview -- --host "$FRONTEND_BIND_HOST" --port "$FRONTEND_PORT" --strictPort
+            elif [ -n "$FRONTEND_HOST" ]; then
                 exec npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --strictPort
             else
                 exec npm run dev -- --port "$FRONTEND_PORT" --strictPort
@@ -882,7 +1028,7 @@ start_frontend_dev() {
     fi
 
     FRONTEND_PID=$!
-    echo "✅ Vite dev server process started (PID: $FRONTEND_PID)"
+    echo "✅ Frontend server process started (PID: $FRONTEND_PID)"
     wait_for_frontend_health
 }
 
@@ -916,6 +1062,10 @@ start_electron() {
         echo "❌ Error: desktop package.json not found: ${DESKTOP_DIR}/package.json"
         return 1
     fi
+    if [ ! -x "$ELECTRON_BIN" ]; then
+        echo "❌ Error: Electron binary not found or not executable: $ELECTRON_BIN"
+        return 1
+    fi
 
     local dev_url="$FRONTEND_URL"
     echo "🚀 Starting Electron (DEV_URL=$dev_url)..."
@@ -927,16 +1077,22 @@ start_electron() {
     echo "=========================================" >> "$ELECTRON_LOG_PATH"
 
     if [ "$BACKGROUND_MODE" = true ]; then
-        nohup bash -lc "cd \"$DESKTOP_DIR\" && DEV_URL=\"$dev_url\" exec npm start" >> "$ELECTRON_LOG_PATH" 2>&1 &
+        nohup bash -lc "cd \"$DESKTOP_DIR\" && DEV_URL=\"$dev_url\" exec \"$ELECTRON_BIN\" ." >> "$ELECTRON_LOG_PATH" 2>&1 &
     else
         (
             cd "$DESKTOP_DIR" || exit 1
-            DEV_URL="$dev_url" exec npm start
+            DEV_URL="$dev_url" exec "$ELECTRON_BIN" .
         ) >> "$ELECTRON_LOG_PATH" 2>&1 &
     fi
 
     ELECTRON_PID=$!
     echo "✅ Electron process started (PID: $ELECTRON_PID)"
+    sleep 2
+    if ! kill -0 "$ELECTRON_PID" 2>/dev/null; then
+        echo "❌ Error: Electron exited immediately. Check logs: $ELECTRON_LOG_PATH"
+        tail -30 "$ELECTRON_LOG_PATH"
+        return 1
+    fi
 }
 
 # Start the server with enhanced logging and structured output LLM

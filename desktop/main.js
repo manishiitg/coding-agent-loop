@@ -651,6 +651,9 @@ function showErrorAndExit(message) {
 }
 
 function createWindow(initialUrl) {
+  const targetUrl = initialUrl || `http://127.0.0.1:${dynamicAgentPort}`;
+  console.log('[main] Creating main window for:', targetUrl);
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -663,6 +666,26 @@ function createWindow(initialUrl) {
   });
   
   console.log('[main] Initializing window handlers...');
+
+  mainWindow.webContents.on('did-start-loading', () => {
+    console.log('[main] Window started loading:', targetUrl);
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('[main] Window finished loading:', mainWindow?.webContents.getURL());
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error('[main] Window failed to load:', { errorCode, errorDescription, validatedURL });
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[main] Renderer process gone:', details);
+  });
+
+  mainWindow.webContents.on('unresponsive', () => {
+    console.error('[main] Window became unresponsive');
+  });
 
   // Handle new window requests (e.g. target="_blank" or window.open)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -695,9 +718,10 @@ function createWindow(initialUrl) {
     }
   });
 
-  mainWindow.loadURL(initialUrl || `http://127.0.0.1:${dynamicAgentPort}`);
+  mainWindow.loadURL(targetUrl);
   
   mainWindow.on('closed', () => {
+    console.log('[main] Main window closed');
     mainWindow = null;
   });
 }
@@ -745,13 +769,20 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  console.log('[main] window-all-closed; quitting app');
   app.quit();
 });
 
 app.on('before-quit', () => {
+  console.log('[main] before-quit');
   killChildren();
 });
 
 app.on('will-quit', () => {
+  console.log('[main] will-quit');
   killChildren();
+});
+
+app.on('quit', (_event, exitCode) => {
+  console.log('[main] quit with exit code:', exitCode);
 });

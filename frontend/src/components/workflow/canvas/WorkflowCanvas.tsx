@@ -7,7 +7,8 @@ import {
   useReactFlow,
   BackgroundVariant,
   ReactFlowProvider,
-  type NodeChange
+  type NodeChange,
+  type OnNodeDrag
 } from '@xyflow/react'
 import { Braces, Download, FileText, GitBranch, Laptop, Loader2, RefreshCw, Route, Settings, Smartphone, TabletSmartphone, X } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
@@ -25,8 +26,7 @@ import {
 } from '../ReportViewer'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
-import { useOutputPlanData } from '../hooks/useOutputPlanData'
-import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type WorkflowNodeData, type StepNodeData, type ConditionalNodeData, type WorkflowArtifactNodeData } from '../hooks/usePlanToFlow'
+import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type WorkflowNodeData, type StepNodeData, type ConditionalNodeData, type EvaluationStepNodeData } from '../hooks/usePlanToFlow'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkspaceState } from '../hooks/useWorkspaceState'
@@ -42,12 +42,18 @@ import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 // Duration to show highlights before clearing (in ms)
 const HIGHLIGHT_DURATION = 4000
 const SVG_EXPORT_SCALE = 3
-const PNG_EXPORT_SCALE = 2
+const PNG_EXPORT_SCALE = 1
+const PNG_EXPORT_MAX_SIDE = 16000
+const PNG_EXPORT_MAX_PIXELS = 64_000_000
 
 import type { ExecutionOptions } from '../../../services/api-types'
 
 type WorkflowPreviewMode = 'desktop' | 'tablet' | 'mobile'
 type WorkflowImageExportFormat = 'svg' | 'png' | 'jpeg'
+
+function isHorizontalWorkflowLayout(direction: 'LR' | 'TB'): boolean {
+  return direction === 'LR'
+}
 
 interface WorkflowCanvasProps {
   workspacePath: string | null
@@ -361,17 +367,29 @@ function svgDataUrlToPngDataUrl(svgDataUrl: string, scale = PNG_EXPORT_SCALE): P
     image.onload = () => {
       const sourceWidth = Math.max(1, image.naturalWidth || image.width)
       const sourceHeight = Math.max(1, image.naturalHeight || image.height)
+      const maxScale = Math.min(
+        scale,
+        PNG_EXPORT_MAX_SIDE / sourceWidth,
+        PNG_EXPORT_MAX_SIDE / sourceHeight,
+        Math.sqrt(PNG_EXPORT_MAX_PIXELS / (sourceWidth * sourceHeight))
+      )
+      const safeScale = Math.max(0.1, maxScale)
       const canvas = document.createElement('canvas')
-      canvas.width = Math.ceil(sourceWidth * scale)
-      canvas.height = Math.ceil(sourceHeight * scale)
+      canvas.width = Math.ceil(sourceWidth * safeScale)
+      canvas.height = Math.ceil(sourceHeight * safeScale)
       const context = canvas.getContext('2d')
       if (!context) {
         reject(new Error('Could not create PNG export canvas'))
         return
       }
-      context.scale(scale, scale)
+      context.scale(safeScale, safeScale)
       context.drawImage(image, 0, 0, sourceWidth, sourceHeight)
-      resolve(canvas.toDataURL('image/png'))
+      const dataUrl = canvas.toDataURL('image/png')
+      if (!dataUrl.startsWith('data:image/png;base64,')) {
+        reject(new Error('Failed to create a valid PNG export'))
+        return
+      }
+      resolve(dataUrl)
     }
     image.onerror = () => reject(new Error('Failed to render SVG export as PNG'))
     image.src = svgDataUrl
@@ -909,7 +927,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Get workflow mode, layout direction, and canvas view mode
   // Flow view is vertical-only.
-  const layoutDirection = 'TB' as const
+  const layoutDirection: 'LR' | 'TB' = 'TB'
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
@@ -1054,18 +1072,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [selectedRunFolder, workspacePath, highlightFile])
 
-  // Load workflow data for the main canvas and append eval/output artifacts to it.
+  // Load workflow data for the main canvas and append evaluation steps to it.
   const planData = usePlanData(workspacePath)
   const evalData = useEvaluationPlanData(workspacePath)
-  const outputData = useOutputPlanData(workspacePath)
 
   const plan = planData.plan
   const evaluationPlan = evalData.evaluationPlan
-  const outputPlan = outputData.outputPlan
   const refreshEvaluationPlan = evalData.refresh
-  const refreshOutputPlan = outputData.refresh
 
-  const loading = planData.loading || evalData.loading || outputData.loading
+  const loading = planData.loading || evalData.loading
   const error = planData.error
   const changes = planData.changes
 
@@ -1187,7 +1202,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     await Promise.all([
       loadPlanRefresh(),
       refreshEvaluationPlan(),
-      refreshOutputPlan(),
       refreshWorkspaceState()
     ])
 
@@ -1205,7 +1219,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
 
     console.log('[WorkflowCanvas] Refresh completed')
-  }, [workspacePath, loadPlanRefresh, refreshEvaluationPlan, refreshOutputPlan, refreshWorkspaceState, setViewport])
+  }, [workspacePath, loadPlanRefresh, refreshEvaluationPlan, refreshWorkspaceState, setViewport])
 
   // Workflow execution
   const {
@@ -1286,6 +1300,56 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Store current node positions before refresh (to preserve layout when saving from sidebar)
   const currentPositionsRef = React.useRef<Map<string, { x: number; y: number }>>(new Map())
   const currentOffsetsRef = React.useRef<Map<string, { parentId: string; dx: number; dy: number }>>(new Map())
+
+  const saveCurrentLayout = useCallback(async (currentNodes: WorkflowNode[]) => {
+    if (toolbarOnly || canvasViewMode !== 'flow') return
+
+    const layoutPath = getLayoutFilePath()
+    if (!layoutPath) return
+
+    const nodePositions: Record<string, { x: number; y: number }> = {}
+    const childOffsets: Record<string, { parentId: string; dx: number; dy: number }> = {}
+    const nodeById = new Map(currentNodes.map(node => [node.id, node]))
+
+    currentNodes.forEach(node => {
+      if (node.id === 'start' || node.id === 'variables') {
+        return
+      }
+      nodePositions[node.id] = { x: node.position.x, y: node.position.y }
+    })
+
+    childToParentRef.current.forEach((parentId, nodeId) => {
+      const childNode = nodeById.get(nodeId)
+      const parentNode = nodeById.get(parentId)
+      if (!childNode || !parentNode) {
+        return
+      }
+      childOffsets[nodeId] = {
+        parentId,
+        dx: childNode.position.x - parentNode.position.x,
+        dy: childNode.position.y - parentNode.position.y
+      }
+    })
+
+    const layout = {
+      version: '1.2',
+      updatedAt: new Date().toISOString(),
+      layoutDirection,
+      nodePositions,
+      childOffsets
+    }
+
+    try {
+      await agentApi.updatePlannerFile(
+        layoutPath,
+        JSON.stringify(layout, null, 2),
+        'Save workflow canvas layout'
+      )
+      console.log('[WorkflowCanvas] Saved custom layout:', Object.keys(nodePositions).length, 'positions')
+    } catch (error) {
+      console.error('[WorkflowCanvas] Failed to save custom layout:', error)
+    }
+  }, [canvasViewMode, getLayoutFilePath, layoutDirection, toolbarOnly])
 
   // Build node groups: map parent nodes to their child nodes (validation, learning, evaluation, sub-agents)
   const buildNodeGroups = useCallback((currentNodes: WorkflowNode[]) => {
@@ -1501,6 +1565,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   }, [onNodesChangeBase, setNodes])
 
+  const onNodeDragStop = useCallback<OnNodeDrag<WorkflowNode>>(() => {
+    // Let React Flow apply the final position first, then persist the current graph.
+    window.setTimeout(() => {
+      void saveCurrentLayout(nodesRef.current)
+    }, 0)
+  }, [saveCurrentLayout])
+
   // Single reusable function to focus/position a node at the top-left of the screen
   const focusNode = useCallback((
     nodeId: string,
@@ -1574,56 +1645,57 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       return planFlow
     }
 
-    const addonConfigs: WorkflowArtifactNodeData[] = [
-      {
-        id: 'workflow-evaluation-artifact',
-        title: 'Evaluation',
-        description: 'Review the workflow run with evaluation steps.',
-        kind: 'evaluation',
-        configured: !!(evaluationPlan?.steps && evaluationPlan.steps.length > 0),
-        detail: evaluationPlan?.steps?.length
-          ? `${evaluationPlan.steps.length} step${evaluationPlan.steps.length === 1 ? '' : 's'} configured`
-          : 'Configure in workflow builder chat'
-      },
-      {
-        id: 'workflow-output-artifact',
-        title: 'Final Report',
-        description: 'Generate the markdown summary report for each group run.',
-        kind: 'output',
-        configured: !!outputPlan?.step,
-        detail: outputPlan?.step?.title || 'Configure in workflow builder chat'
+    const evaluationSteps = evaluationPlan?.steps ?? []
+    if (evaluationSteps.length === 0) {
+      return { nodes, edges }
+    }
+
+    const evalNodeIds = evaluationSteps.map((step, index) => `workflow-evaluation-step-${step.id || index}`)
+    const isHorizontal = isHorizontalWorkflowLayout(layoutDirection)
+    const stepGap = isHorizontal ? 360 : 190
+
+    evaluationSteps.forEach((step, index) => {
+      const nodeId = evalNodeIds[index]
+      const position = isHorizontal
+        ? { x: endNode.position.x + ((index + 1) * stepGap), y: endNode.position.y }
+        : { x: endNode.position.x - 100, y: endNode.position.y + ((index + 1) * stepGap) }
+
+      const data: EvaluationStepNodeData = {
+        id: nodeId,
+        title: step.title || `Evaluation step ${index + 1}`,
+        description: step.description,
+        success_criteria: step.success_criteria,
+        status: 'pending',
+        stepIndex: index,
+        step,
+        workspacePath,
+        selectedRunFolder: selectedRunFolder ?? undefined,
+        isEvaluationStep: true
       }
-    ]
-
-    const artifactBaseX = endNode.position.x
-    const artifactBaseY = endNode.position.y + 170
-
-    addonConfigs.forEach((config, index) => {
-      const position = { x: artifactBaseX + (index * 260) - 130, y: artifactBaseY }
 
       nodes.push({
-        id: config.id,
-        type: 'workflow-artifact',
+        id: nodeId,
+        type: 'step',
         position,
-        data: config,
+        data,
         draggable: true
       })
 
+      const source = index === 0 ? 'end' : evalNodeIds[index - 1]
       edges.push({
-        id: `end-to-${config.id}`,
-        source: 'end',
-        target: config.id,
+        id: `${source}-to-${nodeId}`,
+        source,
+        target: nodeId,
         type: 'smoothstep',
         style: {
-          stroke: config.kind === 'evaluation' ? '#0ea5e9' : '#f59e0b',
-          strokeWidth: 2,
-          strokeDasharray: '6 4'
+          stroke: '#6b7280',
+          strokeWidth: 2
         }
       })
     })
 
     return { nodes, edges }
-  }, [planFlow, evaluationPlan, outputPlan])
+  }, [planFlow, evaluationPlan, layoutDirection, workspacePath, selectedRunFolder])
 
   const { nodes: initialNodes, edges: initialEdges } = augmentedFlow
 
@@ -1774,8 +1846,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Update nodes when plan changes (only if nodes actually changed)
   React.useEffect(() => {
-    // Skip node/edge updates when canvas is hidden (toolbarOnly or plan mode) — no React Flow to update
-    if (toolbarOnly) return
+    // Skip node/edge updates when the flow canvas is hidden. The saved layout
+    // only applies to React Flow; report/toolbar-only views should not fetch it.
+    if (toolbarOnly || canvasViewMode !== 'flow') return
 
     // Compare by reference first (fast path)
     if (prevNodesRef.current === initialNodes && prevEdgesRef.current === initialEdges) {
@@ -2398,9 +2471,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
+          onNodeDragStop={onNodeDragStop}
           panOnDrag
           panOnScroll
-          nodesDraggable={false}
+          nodesDraggable
           nodesConnectable={false}
           nodesFocusable={false}
           elementsSelectable={false}

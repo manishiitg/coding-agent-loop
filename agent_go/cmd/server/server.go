@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -795,6 +796,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// API routes
 	apiRouter := router.PathPrefix("/api").Subrouter()
+	apiRouter.Use(api.apiRequestLogMiddleware)
 
 	// Authentication API routes (public - no auth required, handled by AuthMiddleware)
 	apiRouter.HandleFunc("/auth/register", api.handleRegister).Methods("POST", "OPTIONS")
@@ -1209,6 +1211,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Manifest-backed workflow API routes (file-backed workflow definitions)
 	apiRouter.HandleFunc("/workflows/summary", api.handleGetWorkflowsSummary).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/overview", api.handleGetWorkflowsOverview).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifests", api.handleListWorkflowManifests).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", api.handleGetWorkflowManifest).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", api.handleCreateWorkflowManifest).Methods("POST", "OPTIONS")
@@ -1550,6 +1553,84 @@ func (api *StreamingAPI) corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+var apiRequestsInFlight int64
+
+type statusCapturingResponseWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (w *statusCapturingResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusCapturingResponseWriter) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(data)
+	w.bytes += n
+	return n, err
+}
+
+func (w *statusCapturingResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *statusCapturingResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (api *StreamingAPI) apiRequestLogMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !shouldLogAPIRequests() {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		start := time.Now()
+		inFlight := atomic.AddInt64(&apiRequestsInFlight, 1)
+		recorder := &statusCapturingResponseWriter{ResponseWriter: w}
+
+		log.Printf("[API] --> %s %s in_flight=%d", r.Method, requestLogPath(r), inFlight)
+		defer func() {
+			remaining := atomic.AddInt64(&apiRequestsInFlight, -1)
+			status := recorder.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			log.Printf("[API] <-- %s %s status=%d bytes=%d duration=%s in_flight=%d",
+				r.Method,
+				requestLogPath(r),
+				status,
+				recorder.bytes,
+				time.Since(start).Round(time.Millisecond),
+				remaining,
+			)
+		}()
+
+		next.ServeHTTP(recorder, r)
+	})
+}
+
+func shouldLogAPIRequests() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("API_REQUEST_LOG")))
+	return value != "false" && value != "0" && value != "off"
+}
+
+func requestLogPath(r *http.Request) string {
+	if r.URL.RawQuery == "" {
+		return r.URL.Path
+	}
+	return r.URL.Path + "?" + r.URL.RawQuery
 }
 
 // Health check endpoint
@@ -3980,6 +4061,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				logfWithContext(queryLogCtx, "[SKILL TOOLS] Registered multi-agent skill tools")
+			}
+			if isWorkflowPhase {
+				if err := api.registerWorkflowLLMDiscoveryTools(underlyingAgent); err != nil {
+					logfWithContext(queryLogCtx, "[LLM TOOLS] Failed to register workflow LLM discovery tools: %v", err)
+					sendError(fmt.Sprintf("Failed to register workflow LLM discovery tools: %v", err), true)
+					return
+				}
+				logfWithContext(queryLogCtx, "[LLM TOOLS] Registered workflow LLM discovery tools")
 			}
 			if isMultiAgentChat {
 				if err := api.registerMultiAgentMCPServerTools(underlyingAgent); err != nil {
@@ -7107,6 +7196,11 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		})
 	}
 
+	if isScheduledWorkflowSession(sessionID) {
+		log.Printf("[BG AGENT] Suppressing batched synthetic turn for scheduled workflow session %s (%d completions)", sessionID, len(emittedIDs))
+		return
+	}
+
 	api.executeSyntheticTurn(sessionID, syntheticMsg)
 }
 
@@ -7259,10 +7353,19 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		"status":   string(snap.Status),
 	})
 
+	if isScheduledWorkflowSession(sessionID) {
+		log.Printf("[BG AGENT] Suppressing synthetic turn for scheduled workflow session %s agent %s", sessionID, agentID)
+		return
+	}
+
 	// Trigger a synthetic turn using the stored QueryRequest
 	// Called synchronously so handleQuery sets session busy before returning,
 	// preventing concurrent synthetic turns for the same session.
 	api.executeSyntheticTurn(sessionID, syntheticMsg)
+}
+
+func isScheduledWorkflowSession(sessionID string) bool {
+	return strings.HasPrefix(sessionID, "schedule-cron--")
 }
 
 // executeSyntheticTurn drives the stored agent directly with a synthetic message.

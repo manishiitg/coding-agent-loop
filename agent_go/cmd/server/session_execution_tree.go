@@ -310,6 +310,7 @@ func (api *StreamingAPI) addEventDerivedExecutionNodes(sessionID, rootID, sessio
 		return
 	}
 	var lastMainEventAt *time.Time
+	correlationStartNodes := map[string]string{}
 	for _, event := range api.eventStore.GetAllEventsRaw(sessionID) {
 		executionID := strings.TrimSpace(event.ExecutionID)
 		if executionID == "" || executionID == rootID {
@@ -360,6 +361,15 @@ func (api *StreamingAPI) addEventDerivedExecutionNodes(sessionID, rootID, sessio
 		}
 
 		status, completed, failed := eventDerivedExecutionStatus(event, payload)
+		correlationID := firstSessionExecutionString(
+			stringValue(payload["correlation_id"]),
+			stringValue(payload["workflow_step_id"]),
+		)
+		if correlationID != "" && !completed {
+			if _, exists := correlationStartNodes[correlationID]; !exists {
+				correlationStartNodes[correlationID] = executionID
+			}
+		}
 		if completed {
 			node.Status = status
 			completedAt := event.Timestamp
@@ -367,6 +377,19 @@ func (api *StreamingAPI) addEventDerivedExecutionNodes(sessionID, rootID, sessio
 			if failed {
 				if errText := firstSessionExecutionString(stringValue(payload["error"]), event.Error); errText != "" {
 					node.Error = errText
+				}
+			}
+			if correlationID != "" {
+				if startExecutionID := correlationStartNodes[correlationID]; startExecutionID != "" && startExecutionID != executionID {
+					if startNode := nodes[startExecutionID]; startNode != nil && startNode.Source == "event_stream" && startNode.Status == trackedExecutionStatusRunning {
+						startNode.Status = status
+						startNode.CompletedAt = &completedAt
+						if failed {
+							if errText := firstSessionExecutionString(stringValue(payload["error"]), event.Error); errText != "" {
+								startNode.Error = errText
+							}
+						}
+					}
 				}
 			}
 		}

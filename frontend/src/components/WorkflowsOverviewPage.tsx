@@ -8,7 +8,7 @@ import EvaluationPopup from './workflow/EvaluationPopup'
 import CostsPopup from './workflow/CostsPopup'
 import { EmployeeDashboard } from './EmployeeDashboard'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
-import type { RunFolderInfo, EvaluationReportsResponse, EvaluationReportEntry, RunMetadataModels } from '../services/api-types'
+import type { RunFolderInfo, EvaluationReportsResponse, RunMetadataModels } from '../services/api-types'
 
 interface RunFolderDetail {
   folder: RunFolderInfo
@@ -111,95 +111,55 @@ function useWorkflowRows() {
     }))
     setRows(initialRows)
 
-    const updated = await Promise.all(
-      initialRows.map(async (row) => {
-        if (!row.workspacePath) {
-          return { ...row, loading: false, error: 'No workspace path' }
-        }
+    const workspacePaths = initialRows
+      .map(row => row.workspacePath)
+      .filter((path): path is string => Boolean(path))
 
-        try {
-          const [wsState, evalResp] = await Promise.all([
-            agentApi.loadWorkspaceState(row.workspacePath).catch(() => null),
-            agentApi.getEvaluationReports(row.workspacePath).catch(() => null),
-          ])
+    let overviewByPath = new Map<string, Awaited<ReturnType<typeof agentApi.getWorkflowsOverview>>['workflows'][number]>()
+    try {
+      const overviewResp = workspacePaths.length > 0
+        ? await agentApi.getWorkflowsOverview(workspacePaths)
+        : { success: true, workflows: [] }
+      overviewByPath = new Map((overviewResp.workflows || []).map(row => [row.workspace_path, row]))
+    } catch {
+      overviewByPath = new Map()
+    }
 
-          const folders = wsState?.data?.run_folders || []
+    const updated = initialRows.map((row) => {
+      if (!row.workspacePath) {
+        return { ...row, loading: false, error: 'No workspace path' }
+      }
 
-          const evalByFolder: Record<string, EvaluationReportEntry> = {}
-          if (evalResp?.success && evalResp.reports) {
-            for (const entry of evalResp.reports) {
-              evalByFolder[entry.run_folder] = entry
-            }
-          }
+      const overview = overviewByPath.get(row.workspacePath)
+      if (!overview) {
+        return { ...row, loading: false, error: 'Failed to load' }
+      }
 
-          // Build set of truly running run folders from in-memory registry
-          const activeRunFolders = new Set<string>()
-          if (wsState?.data?.active_executions) {
-            for (const exec of wsState.data.active_executions) {
-              if (exec.run_folder) activeRunFolders.add(exec.run_folder)
-            }
-          }
+      const runFolderDetails: RunFolderDetail[] = (overview.run_folders || []).map(detail => ({
+        folder: detail.folder,
+        totalSteps: detail.total_steps || 0,
+        completedSteps: detail.completed_steps || 0,
+        lastUpdated: detail.last_updated || null,
+        evalScore: detail.eval_score ?? null,
+        evalMaxScore: detail.eval_max_score ?? null,
+        costUsd: detail.cost_usd ?? null,
+        startedAt: detail.started_at || null,
+        completedAt: detail.completed_at || null,
+        triggeredBy: detail.triggered_by || null,
+        status: detail.status || 'unknown',
+        models: detail.models || null,
+      }))
 
-          let latestTime = ''
-          const runFolderDetails: RunFolderDetail[] = folders.map(f => {
-            const totalSteps = 0
-            const completedSteps = 0
-            const lastUp: string | null = null
-
-            const meta = f.metadata
-            let status = meta?.status || 'unknown'
-            // Reconcile: if metadata says "running" but not in active executions, it's stale
-            if (status === 'running' && !activeRunFolders.has(f.name)) {
-              status = 'failed'
-            }
-
-            const evalEntry = evalByFolder[f.name]
-            let evalScore: number | null = null
-            let evalMaxScore: number | null = null
-            if (evalEntry) {
-              evalScore = evalEntry.report.total_score
-              evalMaxScore = evalEntry.report.max_possible_score
-            }
-
-            return {
-              folder: f,
-              totalSteps,
-              completedSteps,
-              lastUpdated: lastUp,
-              evalScore,
-              evalMaxScore,
-              costUsd: null,
-              startedAt: meta?.created_at || null,
-              completedAt: meta?.completed_at || null,
-              triggeredBy: meta?.triggered_by || null,
-              status,
-              models: meta?.models || null,
-            }
-          })
-
-          // Sort by created_at (metadata) first, then lastUpdated as fallback — most recent first
-          runFolderDetails.sort((a, b) => {
-            const aTime = a.startedAt || a.lastUpdated || ''
-            const bTime = b.startedAt || b.lastUpdated || ''
-            if (!aTime && !bTime) return 0
-            if (!aTime) return 1
-            if (!bTime) return -1
-            return bTime.localeCompare(aTime)
-          })
-
-          return {
-            ...row,
-            loading: false,
-            runFolders: runFolderDetails,
-            evalData: evalResp,
-            lastUpdated: latestTime || null,
-            totalRunCount: folders.length,
-          }
-        } catch {
-          return { ...row, loading: false, error: 'Failed to load' }
-        }
-      })
-    )
+      return {
+        ...row,
+        loading: false,
+        error: overview.error || null,
+        runFolders: runFolderDetails,
+        evalData: overview.eval_data || null,
+        lastUpdated: overview.last_updated || null,
+        totalRunCount: overview.total_run_count || runFolderDetails.length,
+      }
+    })
 
     updated.sort((a, b) => {
       if (!a.lastUpdated && !b.lastUpdated) return 0
@@ -210,40 +170,6 @@ function useWorkflowRows() {
 
     setRows(updated)
     setLoading(false)
-
-    // Fetch costs lazily per workspace
-    for (const row of updated) {
-      if (!row.workspacePath || row.runFolders.length === 0) continue
-      const wp = row.workspacePath
-      agentApi.getCosts(wp)
-        .then(costResp => {
-          if (!costResp.success) return
-
-          const costByRunFolder = new Map(
-            (costResp.runs || []).map(entry => [entry.run_folder, entry])
-          )
-
-          for (const rf of row.runFolders) {
-            const runCosts = costByRunFolder.get(rf.folder.name)
-            if (!runCosts?.token_usage) continue
-
-            let sum = 0
-            for (const model of Object.values(runCosts.token_usage.by_model)) {
-              sum += model.total_cost_usd || 0
-            }
-            rf.costUsd = sum > 0 ? sum : null
-            if (!rf.startedAt && runCosts.token_usage.created_at) {
-              rf.startedAt = runCosts.token_usage.created_at
-            }
-            if (!rf.completedAt && rf.status === 'completed' && runCosts.token_usage.updated_at) {
-              rf.completedAt = runCosts.token_usage.updated_at
-            }
-          }
-
-          setRows(prev => [...prev])
-        })
-        .catch(() => {})
-    }
   }, [getPresetsForMode])
 
   return { rows, loading, loadData }

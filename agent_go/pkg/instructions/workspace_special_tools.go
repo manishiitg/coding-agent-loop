@@ -24,8 +24,7 @@ Use these tools when you need a direct provider-backed capability instead of gen
 
 Provider setup rules:
 - Published LLM entries are for chat/text routing. Audio, video, image, and music providers are workspace tool capabilities; do not conclude they are unavailable just because they are absent from ` + "`config/published-llms.json`" + ` or a published-LLM list.
-- In native coding-agent bridge sessions, workspace tools may not appear in the provider's native callable tool list. They are discoverable through ` + "`get_api_spec`" + ` under ` + "`server_name=\"workspace_advanced\"`" + `; check that server before saying a workspace capability is unavailable.
-- For audio and music generation, use ` + "`text_to_speech`" + ` or ` + "`generate_music`" + ` directly when they are exposed as callable tools. In coding-agent bridge sessions, call ` + "`get_api_spec(server_name=\"workspace_advanced\", tool_name=\"generate_music\")`" + ` or ` + "`get_api_spec(server_name=\"workspace_advanced\", tool_name=\"text_to_speech\")`" + ` and then call the documented HTTP endpoint. Do not hand-roll provider HTTP calls through ` + "`execute_shell_command`" + ` unless the dedicated workspace tool is unavailable and the user explicitly asks for raw API debugging.
+- For audio and music generation, call ` + "`text_to_speech`" + ` or ` + "`generate_music`" + ` directly. Do not hand-roll provider HTTP calls through ` + "`execute_shell_command`" + ` unless the dedicated workspace tool is unavailable and the user explicitly asks for raw API debugging.
 - Keep provider auth in ` + "`config/provider-api-keys.json`" + ` using the ` + "`set_provider_auth`" + ` tool. Do not hand-edit the encrypted auth file.
 - Do not read, cat, grep, print, or manually edit ` + "`config/provider-api-keys.json`" + `; it is encrypted and not useful to inspect as plaintext.
 - Search provider routing comes from ` + "`config/published-llms.json`" + `.

@@ -499,15 +499,18 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 					string(llm.ProviderMiniMaxCodingPlan): {"claude-sonnet-4-5", "claude-opus-4-6", "claude-haiku-4-5-20251001"},
 					string(llm.ProviderZAI):               {"glm-4.6v", "glm-5v-turbo"},
 					string(llm.ProviderKimi):              {"kimi-k2.6"},
+					string(llm.ProviderCodexCLI):          {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
 				},
 				map[string]string{
 					string(llm.ProviderVertex):            "gemini-3-pro-preview",
 					string(llm.ProviderMiniMaxCodingPlan): "claude-sonnet-4-5",
 					string(llm.ProviderZAI):               "glm-4.6v",
 					string(llm.ProviderKimi):              "kimi-k2.6",
+					string(llm.ProviderCodexCLI):          "codex-cli",
 				},
 				map[string][]string{
 					string(llm.ProviderMiniMaxCodingPlan): {"Use minimax-coding-plan, not plain minimax, for image understanding."},
+					string(llm.ProviderCodexCLI):          {"Uses the local workspace image path because Codex CLI does not consume base64 ImageContent through the adapter."},
 				},
 			),
 		}

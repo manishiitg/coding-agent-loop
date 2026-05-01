@@ -1392,18 +1392,31 @@ func wrapReadImageWithLLM(
 		log.Printf("[READ_IMAGE_DEBUG] LLM client created (provider=%s, model=%s), making GenerateContent call",
 			provider, modelID)
 
-		// Step 4: Make the LLM call with the image + query
+		// Step 4: Make the LLM call with the image + query.
+		// Codex CLI does not consume ImageContent through the adapter today, but
+		// it can inspect local files when given the workspace path directly.
+		parts := []llmtypes.ContentPart{
+			llmtypes.TextContent{Text: imageData.Query},
+			llmtypes.ImageContent{
+				SourceType: "base64",
+				MediaType:  imageData.MimeType,
+				Data:       imageData.Data,
+			},
+		}
+		if strings.EqualFold(provider, string(llm.ProviderCodexCLI)) {
+			absoluteImagePath := workspaceAbsolutePath(normalizeWorkspaceDocumentPath(imageData.Filepath))
+			if _, statErr := os.Stat(absoluteImagePath); statErr != nil {
+				return "", fmt.Errorf("codex-cli image analysis requires a readable local workspace file at %q: %w", absoluteImagePath, statErr)
+			}
+			parts = []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: fmt.Sprintf("Inspect the local image file at this workspace path:\n%s\n\nQuestion: %s", absoluteImagePath, imageData.Query)},
+			}
+		}
+
 		messages := []llmtypes.MessageContent{
 			{
-				Role: llmtypes.ChatMessageTypeHuman,
-				Parts: []llmtypes.ContentPart{
-					llmtypes.TextContent{Text: imageData.Query},
-					llmtypes.ImageContent{
-						SourceType: "base64",
-						MediaType:  imageData.MimeType,
-						Data:       imageData.Data,
-					},
-				},
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: parts,
 			},
 		}
 

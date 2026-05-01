@@ -54,6 +54,32 @@ func TestNormalizeImageAnalysisProviderAndModelKimiDefault(t *testing.T) {
 	}
 }
 
+func TestNormalizeImageAnalysisProviderAndModelCodexDefault(t *testing.T) {
+	provider, modelID, err := normalizeImageAnalysisProviderAndModel("codex-cli", "")
+	if err != nil {
+		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
+	}
+	if provider != "codex-cli" {
+		t.Fatalf("provider = %q, want codex-cli", provider)
+	}
+	if modelID != "codex-cli" {
+		t.Fatalf("modelID = %q, want codex-cli", modelID)
+	}
+}
+
+func TestNormalizeImageAnalysisProviderAndModelInfersCodexFromModel(t *testing.T) {
+	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "gpt-5.4-mini")
+	if err != nil {
+		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
+	}
+	if provider != "codex-cli" {
+		t.Fatalf("provider = %q, want codex-cli", provider)
+	}
+	if modelID != "gpt-5.4-mini" {
+		t.Fatalf("modelID = %q, want gpt-5.4-mini", modelID)
+	}
+}
+
 func TestNormalizeImageAnalysisProviderAndModelInfersKimiFromVisionModel(t *testing.T) {
 	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "kimi-k2.6")
 	if err != nil {

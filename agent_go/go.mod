@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/PaesslerAG/jsonpath v0.1.1
+	github.com/blues/jsonata-go v1.5.4
 	github.com/go-co-op/gocron/v2 v2.19.1
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0

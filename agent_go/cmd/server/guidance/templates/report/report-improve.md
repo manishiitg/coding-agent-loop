@@ -18,6 +18,21 @@ Then call get_report_plan yourself and also sample the underlying db/*.json sour
 4. **Formatting**: any number/date/currency fields that should have a format preset? Any tables with too many columns that could benefit from hide_columns?
 5. **Density**: any charts with >10 points that need top_n? Any tables without default_sort that would be hard to scan?
 6. **Rendered reality check**: based on the preview, what actually looks broken, cramped, misleading, empty, or visually weak even if the JSON is technically valid?
+7. **In-widget transforms (JSONata `query`)**: prefer a `query:` JSONata expression over reading from pre-flattened helper files (`*_rows.json`, `*_summary.json`) or from a workflow `step-generate-report` flatten step. The pipeline order is `source → query → path → filter → render`, so when `query` returns the final array/scalar, leave `path` empty (or `$`). Use this to **collapse derived db files** back to their canonical sources.
+
+   Common patterns:
+   - filter rows: `query: rows[status='OPEN']`
+   - filter + project: `query: rows[status='OPEN'].{symbol: symbol, pnl: pnl}`
+   - aggregate: `query: $sum(rows[status='paid'].amount)` (stat widget, format: `currency-usd`)
+   - top-N sort: `query: $sort(rows, function($l, $r) { $l.pnl < $r.pnl })[[0..9]]`
+   - count: `query: $count(rows[status='OPEN'])`
+   - group + sum: `query: rows{strategy: $sum(pnl)}`
+
+   When proposing migrations, look for these smells and recommend collapsing:
+   - a db file that obviously mirrors another db file but pre-grouped/pre-sorted (e.g. `per_strategy_rows.json` derived from `all_trades.json`)
+   - a `step-generate-report` (or similarly named "flatten data") step whose only job is producing those helper files
+   - any widget whose `source` is a `*_rows.json` / `*_summary.json` / `flat_*.json` — almost always replaceable by `source` = canonical db file + `query`
+   Once every widget that reads a helper file has been migrated to `query` against the canonical source, flag the helper file and the flatten step as removable (Builder-mode change — surface as a deferred improvement, don't delete from Reporting mode).
 
 Show ALL proposed changes as a diff (before/after snippets per widget) before editing. Ask whether to apply all, some, or none. Don't edit report_plan.json until I confirm.
 

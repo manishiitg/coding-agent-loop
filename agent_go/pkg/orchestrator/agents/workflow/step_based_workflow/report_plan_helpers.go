@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	jsonata "github.com/blues/jsonata-go"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
@@ -1227,6 +1228,18 @@ func validateReportPlan(
 				continue
 			}
 
+			// Suggest `query:` when the source filename looks like a
+			// pre-flattened helper (`*_rows.json`, `*_summary.json`,
+			// `flat_*.json`). These almost always duplicate a canonical db
+			// file and can be collapsed with an in-widget JSONata query.
+			if base := filepath.Base(w.Source); reportPlanLooksLikeFlattenArtifact(base) {
+				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+					Severity: "warning", Section: section.Heading, Line: w.LineNum, Widget: locator,
+					Message: fmt.Sprintf("source %s looks like a pre-flattened helper file; consider collapsing it into a JSONata `query:` against the canonical db source.", w.Source),
+					Hint:    "Replace `source: db/foo_rows.json` + flatten step with `source: db/foo.json` + `query: rows[…]` (or `$sum(rows.amount)`, `$sort(rows, …)[[0..9]]`, etc.). Removes the flatten step and one db artifact.",
+				})
+			}
+
 			// 3. Resolve dot-path.
 			resolved, ok := resolveReportPlanPath(data, w.Path)
 			if !ok {
@@ -1900,6 +1913,39 @@ func buildReportPlanParsedDump(sections []reportPlanSection) []reportPlanParsedS
 	return out
 }
 
+// reportPlanLooksLikeFlattenArtifact heuristically flags filenames that are
+// almost always pre-flattened helpers derived from a canonical source — the
+// validator suggests collapsing them via an in-widget JSONata query.
+func reportPlanLooksLikeFlattenArtifact(base string) bool {
+	lower := strings.ToLower(base)
+	if !strings.HasSuffix(lower, ".json") {
+		return false
+	}
+	stem := strings.TrimSuffix(lower, ".json")
+	if strings.HasSuffix(stem, "_rows") || strings.HasSuffix(stem, "_summary") || strings.HasSuffix(stem, "_summary_rows") {
+		return true
+	}
+	if strings.HasPrefix(stem, "flat_") || strings.HasPrefix(stem, "flattened_") {
+		return true
+	}
+	return false
+}
+
+// evalReportPlanQuery evaluates a JSONata expression against the raw source
+// JSON, mirroring the browser pipeline (source → query → path → filter →
+// render). Returns the transformed value or an error.
+func evalReportPlanQuery(query string, raw interface{}) (interface{}, error) {
+	expr, err := jsonata.Compile(query)
+	if err != nil {
+		return nil, fmt.Errorf("compile: %w", err)
+	}
+	result, err := expr.Eval(raw)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate: %w", err)
+	}
+	return result, nil
+}
+
 func reportPlanFirstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {
@@ -2017,6 +2063,18 @@ func buildReportPlanWidgetPreview(
 		out.Reason = readErr
 		out.Summary = readErr
 		return out
+	}
+
+	if q := strings.TrimSpace(w.Fields["query"]); q != "" {
+		transformed, qErr := evalReportPlanQuery(q, raw)
+		if qErr != nil {
+			out.Visible = false
+			out.RenderState = "error"
+			out.Reason = fmt.Sprintf("query failed: %v", qErr)
+			out.Summary = out.Reason
+			return out
+		}
+		raw = transformed
 	}
 
 	if !reportPlanEvaluateShowIf(raw, reportPlanFirstNonEmpty(w.Fields["show_if"], w.Fields["showif"])) {

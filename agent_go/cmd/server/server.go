@@ -2431,16 +2431,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 		}
 
-		// Auto-determine execution mode from browser selection (overrides manifest setting):
-		// - Browser active → learn_code mode (no code execution)
-		// - No browser → code_exec mode
-		// NOTE: Per-agent code execution override for claude-code/gemini-cli providers happens at the agent layer.
+		// Workflow execution now always uses code execution mode. Browser access is
+		// exposed as a tool/capability and must not disable the get_api_spec/API bridge.
+		useCodeExecutionMode = true
 		if workflowBrowserMode != "" && workflowBrowserMode != "none" {
-			useCodeExecutionMode = false
-			log.Printf("[LEARN_CODE] Learn code mode auto-enabled based on browser_mode=%s", workflowBrowserMode)
+			log.Printf("[CODE_EXECUTION] Code execution mode enabled with browser_mode=%s", workflowBrowserMode)
 		} else {
-			useCodeExecutionMode = true
-			log.Printf("[CODE_EXECUTION] Code execution mode auto-enabled (no browser selected)")
+			log.Printf("[CODE_EXECUTION] Code execution mode enabled")
 		}
 
 		// Inject merged API keys (env + workspace) into LLM config for workflow execution.
@@ -3107,14 +3104,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 		}
 
-		// Auto-determine execution mode from browser selection:
-		// - Browser active (not none/empty) → learn_code mode (no code execution)
-		// - No browser → code_exec mode (agent calls tools via HTTP code)
+		// Multi-agent chat now always uses code execution mode. Browser access is
+		// exposed as a tool/capability and must not disable the get_api_spec/API bridge.
+		useCodeExecutionMode = true
 		if req.BrowserMode != "" && req.BrowserMode != "none" {
-			log.Printf("[LEARN_CODE] Learn code mode auto-enabled based on browser_mode=%s", req.BrowserMode)
+			log.Printf("[CODE_EXECUTION] Code execution mode enabled with browser_mode=%s", req.BrowserMode)
 		} else {
-			useCodeExecutionMode = true
-			log.Printf("[CODE_EXECUTION] Code execution mode auto-enabled (no browser selected)")
+			log.Printf("[CODE_EXECUTION] Code execution mode enabled")
 		}
 
 		// Auto-enable code execution mode for claude-code provider.
@@ -3147,17 +3143,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if req.Provider == "codex-cli" {
 			useCodeExecutionMode = true
 			log.Printf("[CODEX CLI] Code execution mode enforced for MCP tool access via bridge")
-		}
-
-		// In plan delegation mode, the orchestrator should NEVER use code execution mode
-		// UNLESS the provider is a coding CLI provider (which requires it for MCP bridge tool access).
-		// The orchestrator only researches, plans, and delegates — it should not write/execute code itself.
-		// Sub-agents get their mode from the explicit tool_mode parameter on the delegate call.
-		if !isWorkflowPhase {
-			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "gemini-cli" && req.Provider != "codex-cli" && req.Provider != "kimi" {
-				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
-				useCodeExecutionMode = false
-			}
 		}
 
 		// In plan delegation mode, orchestrator uses Main tier model (falls back to High if Main not set)

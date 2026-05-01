@@ -155,6 +155,26 @@ func defaultImageModelForProvider(provider string) string {
 	}
 }
 
+func normalizeImageModelAlias(provider, modelID string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	normalizedModelID := strings.ToLower(strings.TrimSpace(modelID))
+	if normalizedModelID == "" || normalizedModelID == provider {
+		return defaultImageModelForProvider(provider)
+	}
+	return strings.TrimSpace(modelID)
+}
+
+func isSupportedImageModel(provider, modelID string) bool {
+	models := imageProviderModels[strings.ToLower(strings.TrimSpace(provider))]
+	normalizedModelID := strings.ToLower(strings.TrimSpace(modelID))
+	for _, model := range models {
+		if strings.ToLower(strings.TrimSpace(model)) == normalizedModelID {
+			return true
+		}
+	}
+	return false
+}
+
 func defaultImageAnalysisModelForProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "minimax-coding-plan":
@@ -206,12 +226,13 @@ func normalizeImageProviderAndModel(provider, modelID string) (string, string, e
 	if provider == "" {
 		provider = defaultImageGenProvider
 	}
-	if modelID == "" {
-		modelID = defaultImageModelForProvider(provider)
-	}
+	modelID = normalizeImageModelAlias(provider, modelID)
 
 	switch provider {
 	case "vertex", "minimax-coding-plan", "codex-cli":
+		if !isSupportedImageModel(provider, modelID) {
+			return "", "", fmt.Errorf("unsupported image generation model %q for provider %q. %s", modelID, provider, imageModelsSummaryForProvider(provider))
+		}
 		return provider, modelID, nil
 	default:
 		return "", "", fmt.Errorf("unsupported image generation provider %q. %s", provider, supportedImageProviderSummary())

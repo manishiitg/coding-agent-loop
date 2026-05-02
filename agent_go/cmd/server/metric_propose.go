@@ -2,7 +2,10 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"path"
+	"sort"
 	"strings"
 )
 
@@ -31,9 +34,17 @@ type ProposeMetricInput struct {
 }
 
 // ProposeMetricOutput is what the tool returns to the proposer LLM.
+//
+// Warnings are non-blocking advisories — most commonly that the eval
+// step's most recent run does not currently emit the structured-output
+// field this metric will read, so the metric will return NO VALUE on the
+// next snapshot until the eval Python is updated. Surfaced so the agent
+// can either update the eval in the same session or accept that the metric
+// won't resolve until then.
 type ProposeMetricOutput struct {
-	MetricID string `json:"metric_id,omitempty"`
-	Status   string `json:"status"` // "added"
+	MetricID string   `json:"metric_id,omitempty"`
+	Status   string   `json:"status"` // "added"
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ProposeMetric is the system entrypoint for defining a new metric. To
@@ -64,6 +75,15 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 	if err := ValidateMetric(&candidate); err != nil {
 		return nil, fmt.Errorf("invalid metric: %w", err)
 	}
+
+	// Cross-file validation: a metric is just an eval value extracted in a
+	// specific format, so the metric/eval contract has to hold at write time.
+	// Hard errors block creation; warnings flow through to the caller so the
+	// agent can decide.
+	if err := checkEvalStepReferenceExists(ctx, workspacePath, &candidate.Source); err != nil {
+		return nil, err
+	}
+	warnings := dryResolveWarnings(ctx, workspacePath, &candidate.Source)
 
 	file, exists, err := ReadMetricsFile(ctx, workspacePath)
 	if err != nil {
@@ -101,7 +121,130 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 	return &ProposeMetricOutput{
 		MetricID: candidate.ID,
 		Status:   "added",
+		Warnings: warnings,
 	}, nil
+}
+
+// checkEvalStepReferenceExists returns a hard error when source.type=eval_step
+// and source.id does not match any step in evaluation/evaluation_plan.json.
+// No-op for telemetry source. The eval plan being absent is also a no-op
+// (validating against a missing file would block any metric creation in
+// workflows that haven't authored eval yet — same reason ValidateMetricsFile
+// doesn't require the eval plan to exist).
+func checkEvalStepReferenceExists(ctx context.Context, workspacePath string, src *MetricSource) error {
+	if src == nil || src.Type != MetricSourceEvalStep {
+		return nil
+	}
+	stepID := strings.TrimSpace(src.ID)
+	if stepID == "" {
+		return nil // ValidateMetric already enforces this
+	}
+	planPath := path.Join(strings.Trim(workspacePath, "/"), "evaluation", "evaluation_plan.json")
+	content, exists, err := readFileFromWorkspace(ctx, planPath)
+	if err != nil {
+		return nil // can't read → don't block; metric creation is the wrong place to surface IO issues
+	}
+	if !exists || strings.TrimSpace(content) == "" {
+		return nil // no eval plan yet — accept the metric and let the agent author the eval next
+	}
+	type evalPlanStubStep struct {
+		ID string `json:"id"`
+	}
+	type evalPlanStub struct {
+		Steps     []evalPlanStubStep `json:"steps"`
+		EvalSteps []evalPlanStubStep `json:"eval_steps"`
+	}
+	var plan evalPlanStub
+	if err := json.Unmarshal([]byte(content), &plan); err != nil {
+		return nil // unparseable plan; not the metric tool's job to validate
+	}
+	all := append([]evalPlanStubStep{}, plan.Steps...)
+	all = append(all, plan.EvalSteps...)
+	for _, s := range all {
+		if strings.TrimSpace(s.ID) == stepID {
+			return nil
+		}
+	}
+	available := make([]string, 0, len(all))
+	for _, s := range all {
+		if id := strings.TrimSpace(s.ID); id != "" {
+			available = append(available, id)
+		}
+	}
+	sort.Strings(available)
+	if len(available) == 0 {
+		return fmt.Errorf("source.id %q not found — evaluation/evaluation_plan.json has no steps yet", stepID)
+	}
+	return fmt.Errorf("source.id %q does not exist in evaluation/evaluation_plan.json. Available step ids: [%s]", stepID, strings.Join(available, ", "))
+}
+
+// dryResolveWarnings returns non-blocking warnings about the metric/eval
+// contract. Specifically, when source.type=eval_step + source.field is a
+// structured-output key (not "" / "score" / "max_score"), this checks the
+// most recent published evaluation_report.json for the targeted step and
+// warns if that step's output does NOT currently include the named field.
+//
+// The metric is still accepted — the eval Python may simply need to be
+// updated to emit the field. Surfacing the warning at creation time is
+// strictly better than waiting for the next run's resolve_error.
+func dryResolveWarnings(ctx context.Context, workspacePath string, src *MetricSource) []string {
+	if src == nil || src.Type != MetricSourceEvalStep {
+		return nil
+	}
+	field := strings.TrimSpace(src.Field)
+	switch field {
+	case "", "score", "max_score":
+		return nil // top-level shortcuts — always resolve cleanly against any eval report
+	}
+	stepID := strings.TrimSpace(src.ID)
+	if stepID == "" {
+		return nil
+	}
+
+	reports, err := readAllEvaluationReportsFromScores(ctx, workspacePath)
+	if err != nil || len(reports) == 0 {
+		return nil
+	}
+	// Pick the most recent report by GeneratedAt (lexicographic ISO ordering).
+	var latestKey string
+	var latestReport EvaluationReport
+	for k, r := range reports {
+		if latestKey == "" || r.GeneratedAt > latestReport.GeneratedAt {
+			latestKey = k
+			latestReport = r
+		}
+	}
+	for _, step := range latestReport.StepScores {
+		if step.StepID != stepID {
+			continue
+		}
+		if step.OutputContent == nil || !step.OutputContent.IsJSON {
+			return []string{
+				fmt.Sprintf("Eval step %q (latest report: %s) emits no structured JSON output. The metric's field=%q will return NO VALUE until the eval Python is updated to emit a JSON object containing %q. Alternative: change field to \"\" (percent score) or \"score\" (raw score).", stepID, latestKey, field, field),
+			}
+		}
+		obj, ok := step.OutputContent.Content.(map[string]interface{})
+		if !ok {
+			return []string{
+				fmt.Sprintf("Eval step %q output is %T, not an object — field=%q lookups won't resolve.", stepID, step.OutputContent.Content, field),
+			}
+		}
+		if _, present := obj[field]; !present {
+			keys := make([]string, 0, len(obj))
+			for k := range obj {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			return []string{
+				fmt.Sprintf("Eval step %q (latest report: %s) does not currently emit field %q. Available fields in its output: [%s]. Either update the eval Python to emit %q, or change the metric's field to one of the available keys / a top-level shortcut.", stepID, latestKey, field, strings.Join(keys, ", "), field),
+			}
+		}
+		return nil // field present — clean
+	}
+	// Step exists in the plan (we already verified) but no report yet.
+	return []string{
+		fmt.Sprintf("No published eval report found for step %q yet. Cannot dry-resolve field=%q until the next eval run produces a report.", stepID, field),
+	}
 }
 
 // trimAndDedupe drops empty entries and duplicates while preserving order.

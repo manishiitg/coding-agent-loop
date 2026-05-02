@@ -58,7 +58,28 @@ Propose improvements in these categories. Tag each suggestion with which dimensi
    - **code_exec** with **execution_tier=high** is for eval steps that genuinely need semantic depth: nuanced quality judgments, multi-faceted critique, identifying subtle reasoning errors. High tier on a structural check is wasted spend.
    Common mistakes to flag: (a) a deterministic check stuck on code_exec/high — should be learn_code, (b) a nuanced semantic eval on tier=low — verdicts will be noisy, recommend bumping the tier, (c) declared_execution_mode mismatch with declared_execution_mode_reason that doesn't justify it. Propose the right (tier, execution_mode) pair per step with a one-line rationale per change. The user has to confirm before edits land — these changes shift cost, so name the cost change.
 
-Show ALL proposed changes as a diff (before/after snippets per eval step) before editing. Ask whether to apply all, some, or none. Don't edit evaluation/evaluation_plan.json until I confirm.
+PASS 3.5 — METRIC IMPACT ANALYSIS (mandatory for every eval change)
+A metric is just an eval value extracted in a specific format — `source.id` points at an eval step, `source.field` reads from its output. So **any change to an eval step ripples through every metric pointing at it.** Before proposing any eval change, walk through the impact. For each proposed eval change, classify it and list the paired metric actions:
+
+- **Step ID rename** (eval-sc10-nifty-baseline → eval-nifty-outperformance, say). Every metric with `source.id` matching the old id breaks. Paired action: for each affected metric, retire it (citing the eval rename in `reason`) and propose a fresh metric with the new id. The trajectory chart starts a new line — that's correct, the rubric changed.
+- **Step removal**. Every metric with that `source.id` becomes unresolvable. Paired action: retire each affected metric.
+- **Structured-output schema change** (eval Python emits new / renamed / removed keys). For each metric whose `source.field` matches a removed/renamed key, retire+propose with the corrected field — or update the metric definition to use `field=""` / `field="score"` if the structured field is no longer needed. For NEW keys the eval now emits, suggest whether they're worth promoting to metrics.
+- **Scoring logic change** (e.g. threshold moves from 60% to 70%, or a new dimension joins the score). The metric id stays valid but value semantics shift. Paired action: a `decisions.jsonl` rubric-change entry (Pass 4 already does this), and the trajectory chart should break the line at that timestamp. If the scoring change is large enough that pre/post values aren't comparable, propose retire+propose for affected metrics so the new metric tracks the new rubric cleanly.
+- **No metric impact** (e.g. polishing the description, fixing a typo in reasoning). Note this explicitly: "no metrics affected — pure eval-side cleanup."
+
+For each proposed eval change, output a block like:
+```
+Proposed change: <one-line summary of the eval edit>
+Metric impact: <one-line classification>
+Paired metric actions:
+  - retire metric_id_1 (reason: <eval change>)
+    propose new metric: <new_id> (...)
+  - <or "none — pure eval-side change">
+```
+
+If any proposed eval change is "step rename" or "structured-output schema change" but the user hasn't yet been shown the metric_id ripple, STOP and surface them before showing the diff. Eval changes that silently break metrics are the failure mode — making the linkage explicit is the whole point of this pass.
+
+Show ALL proposed changes as a diff (before/after snippets per eval step) before editing. Ask whether to apply all, some, or none. **Apply eval edits and the paired metric retire/propose calls together** — never apply an eval change first and leave metrics dangling. Don't edit evaluation/evaluation_plan.json until I confirm.
 
 PASS 4 — RECORD THE CHANGE (every eval edit)
 After applying any change to evaluation/evaluation_plan.json:

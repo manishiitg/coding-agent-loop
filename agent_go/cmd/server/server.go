@@ -879,6 +879,11 @@ func runServer(cmd *cobra.Command, args []string) {
 		"workflow": true, "workflow_creator": true,
 		"llm_config_tools": true, "secret_tools": true, "skill_tools": true,
 		"mcp_server_tools": true,
+		// Tools registered by guidance.RegisterGuidanceTool — namespaced as
+		// "auto_improvement" in the tool index. Without this entry, the LLM's
+		// curl call to /tools/mcp/auto_improvement/get_workflow_command_guidance
+		// falls through to MCP-server lookup and returns "server not configured".
+		"auto_improvement": true,
 	}
 	virtualToolCategories := map[string]bool{
 		"memory": true,
@@ -1190,6 +1195,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/eval-trajectory", api.handleGetEvalTrajectory).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/decisions", api.handleGetDecisionsFeed).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/metrics", api.handleGetMetrics).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/metrics-history", api.handleGetMetricsHistory).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/experiments", api.handleGetExperiments).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/builder-doc", api.handleGetBuilderDoc).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/framework-health", api.handleGetFrameworkHealth).Methods("GET", "OPTIONS")
@@ -2484,6 +2490,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[SKILLS] Applied %d skills to workflow orchestrator: %v", len(selectedSkills), selectedSkills)
 		}
 
+		// Wire post-run metric snapshotting for any workflow that defines
+		// planning/metrics.json. No-op when the file is absent, so this is safe
+		// to set unconditionally for every workflow run.
+		workflowOrchestrator.SetRunCompletedHook(SnapshotRunMetrics)
+
 		// Merge global secrets with user-supplied secrets, then set on orchestrator
 		allSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 		if len(allSecrets) > 0 {
@@ -3106,45 +3117,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 		}
 
-		// Multi-agent chat now always uses code execution mode. Browser access is
-		// exposed as a tool/capability and must not disable the get_api_spec/API bridge.
+		// Multi-agent chat / generic agent always runs in code-execution mode
+		// regardless of provider. Tool-search and simple-agent paths have been
+		// retired. Provider-specific CLI handling (CLI prompt template, native
+		// context, api-bridge tool mapping) is decided separately via
+		// common.IsCLIProvider further down the request lifecycle.
 		useCodeExecutionMode = true
 		if req.BrowserMode != "" && req.BrowserMode != "none" {
 			log.Printf("[CODE_EXECUTION] Code execution mode enabled with browser_mode=%s", req.BrowserMode)
 		} else {
-			log.Printf("[CODE_EXECUTION] Code execution mode enabled")
-		}
-
-		// Auto-enable code execution mode for claude-code provider.
-		// Claude Code accesses MCP tools via the HTTP bridge (mcpbridge stdio binary),
-		// which requires code execution mode to expose per-tool API endpoints.
-		if req.Provider == "claude-code" {
-			useCodeExecutionMode = true
-			log.Printf("[CLAUDE CODE FAMILY] Code execution mode enforced for MCP tool access via bridge")
-		}
-
-		// Auto-enable code execution mode for gemini-cli provider.
-		// Gemini CLI accesses MCP tools via the pre-configured bridge,
-		// which requires code execution mode to expose per-tool API endpoints.
-		if req.Provider == "gemini-cli" {
-			useCodeExecutionMode = true
-			log.Printf("[GEMINI CLI] Code execution mode enforced for MCP tool access via bridge")
-		}
-
-		// Auto-enable code execution mode for Kimi Code provider.
-		// Kimi Code accesses MCP/custom tools through the same bridge contract:
-		// native bridge tools plus get_api_spec for HTTP endpoint discovery.
-		if req.Provider == "kimi" {
-			useCodeExecutionMode = true
-			log.Printf("[KIMI CODE] Code execution mode enforced for MCP tool access via bridge")
-		}
-
-		// Auto-enable code execution mode for codex-cli provider.
-		// Codex CLI accesses MCP tools via the pre-configured bridge,
-		// which requires code execution mode to expose per-tool API endpoints.
-		if req.Provider == "codex-cli" {
-			useCodeExecutionMode = true
-			log.Printf("[CODEX CLI] Code execution mode enforced for MCP tool access via bridge")
+			log.Printf("[CODE_EXECUTION] Code execution mode enabled (always on)")
 		}
 
 		// In plan delegation mode, orchestrator uses Main tier model (falls back to High if Main not set)
@@ -4219,7 +4201,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Add CLI-specific tool mapping for providers that use the api-bridge.
 			// These providers can only call mcp__api-bridge__* tools directly;
 			// delegation/memory tools must be called via curl through execute_shell_command.
-			if req.Provider == "claude-code" || req.Provider == "gemini-cli" || req.Provider == "codex-cli" {
+			if common.IsCLIProvider(req.Provider) {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
 				log.Printf("[CLI PROVIDER] Added custom tool HTTP API mapping for %s", req.Provider)
 			}
@@ -4347,12 +4329,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if req.ExecutionOptions != nil {
 					phaseEnabledGroupNames = req.ExecutionOptions.EnabledGroupNames
 				}
-				// Determine execution mode from the DB preset's resolved provider (finalProvider).
-				// CLI providers (claude-code, gemini-cli, codex-cli) use code execution mode;
-				// all others default to tool search mode for the workshop agent.
-				// This mirrors the logic in interactive_workshop_manager.go:730-732.
-				phaseIsCodeExec := finalProvider == "claude-code" || finalProvider == "gemini-cli" || finalProvider == "codex-cli"
-				log.Printf("[WORKFLOW_PHASE] Mode detection: finalProvider=%q, isCodeExec=%v", finalProvider, phaseIsCodeExec)
+				// All workshop agents now run in code-execution mode regardless of
+				// provider — there is no longer a tool-search / simple-agent path.
+				// Provider-specific CLI handling (prompt template, api-bridge tool
+				// mapping, native context) is decided separately via
+				// common.IsCLIProvider.
+				phaseIsCodeExec := true
+				log.Printf("[WORKFLOW_PHASE] Mode detection: finalProvider=%q, isCodeExec=%v (always true)", finalProvider, phaseIsCodeExec)
 				phaseTemplateVars := map[string]string{
 					"Objective":           phaseObjective,
 					"WorkspacePath":       phaseWorkspacePath,

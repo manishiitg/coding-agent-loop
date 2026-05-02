@@ -1396,6 +1396,10 @@ export const agentApi = {
     const response = await api.get('/api/workflow/metrics', { params: { workspace_path: workspacePath } })
     return response.data
   },
+  getMetricsHistory: async (workspacePath: string): Promise<{ success: boolean; rows: any[]; error?: string }> => {
+    const response = await api.get('/api/workflow/metrics-history', { params: { workspace_path: workspacePath } })
+    return { ...response.data, rows: Array.isArray(response.data?.rows) ? response.data.rows : [] }
+  },
   getAutoImprovementDecisions: async (workspacePath: string): Promise<{ success: boolean; decisions: any[]; error?: string }> => {
     const response = await api.get('/api/workflow/decisions', { params: { workspace_path: workspacePath } })
     return { ...response.data, decisions: Array.isArray(response.data?.decisions) ? response.data.decisions : [] }

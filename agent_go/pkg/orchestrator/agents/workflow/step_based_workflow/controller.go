@@ -28,6 +28,21 @@ type SubAgentNotifier interface {
 	OnSubAgentComplete(agentID, name, result string, err error)
 }
 
+// RunCompletedHook is invoked once per group after a workflow run finishes
+// successfully (post finalizeRunMetadata, pre BatchGroupEndEvent emission).
+// Implemented by the server layer to perform post-run side-effects without
+// the orchestrator package needing to import server-side code (which would
+// be a cycle).
+//
+// Currently used to snapshot per-run metric values into
+// runs/<runFolder>/metrics_snapshot.json and append rows to
+// db/metrics_history.jsonl. The hook MUST swallow its own errors — a failure
+// here must never fail an otherwise-successful run.
+//
+// Status is currently always "completed"; failed runs intentionally do not
+// invoke the hook because partial metric values are misleading.
+type RunCompletedHook func(ctx context.Context, workspacePath, runFolder, status string)
+
 // compositeSubAgentNotifier calls multiple notifiers in sequence.
 type compositeSubAgentNotifier struct {
 	notifiers []SubAgentNotifier
@@ -134,6 +149,10 @@ type StepBasedWorkflowOrchestrator struct {
 	workshopSessionCtx        context.Context
 	workshopStepRegistry      *WorkshopStepRegistry
 	workshopExecutionNotifier WorkshopExecutionNotifier
+
+	// runCompletedHook fires after a successful run finalizes. See RunCompletedHook.
+	// Optional; nil means no post-run side-effects.
+	runCompletedHook RunCompletedHook
 }
 
 // SetSubAgentNotifier sets the notifier called on todo task sub-agent start/completion.
@@ -157,6 +176,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetWorkshopExecutionContext(sessionCt
 // so controller-managed background tasks keep the frontend polling/notification state updated.
 func (hcpo *StepBasedWorkflowOrchestrator) SetWorkshopExecutionNotifier(n WorkshopExecutionNotifier) {
 	hcpo.workshopExecutionNotifier = n
+}
+
+// SetRunCompletedHook registers a post-run callback. The hook fires once per
+// group after a successful run, before the BatchGroupEnd event is emitted.
+// Pass nil to clear. See RunCompletedHook for the contract.
+func (hcpo *StepBasedWorkflowOrchestrator) SetRunCompletedHook(h RunCompletedHook) {
+	hcpo.runCompletedHook = h
 }
 
 // NewStepBasedWorkflowOrchestrator creates a new human-controlled todo planner orchestrator
@@ -1358,22 +1384,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetSelectedRunFolder(folder string) {
 	hcpo.SetIterationFolder(folder)
 }
 
-// requiresCodeExecutionForProvider checks if the given LLM config uses a CLI-based provider
-// (claude-code or gemini-cli) that requires code execution mode to access tools via the HTTP bridge.
-// Phase agents normally disable code execution mode, but these providers need it enabled.
+// requiresCodeExecutionForProvider checks if the given LLM config uses a
+// CLI-based provider that requires code-execution mode to access tools via
+// the HTTP bridge. Phase agents normally disable code-exec mode, but these
+// providers need it enabled. Source of truth: pkg/common.IsCLIProvider.
 func requiresCodeExecutionForProvider(config *AgentLLMConfig) bool {
 	if config == nil {
 		return false
 	}
-	return config.Provider == "claude-code" || config.Provider == "kimi" || config.Provider == "gemini-cli" || config.Provider == "codex-cli"
+	return common.IsCLIProvider(config.Provider)
 }
 
-// isCliProviderForPrompt checks if the given provider is a CLI-based provider (claude-code, gemini-cli, or codex-cli)
-// that should use the normal (non-code-execution) prompt template.
-// CLI providers have their own tool-calling capabilities and don't need code execution prompt instructions,
-// even though code execution mode is technically enabled for HTTP bridge/tool routing.
+// isCliProviderForPrompt checks if the given provider is a CLI runtime
+// (claude-code, gemini-cli, codex-cli, kimi). CLI providers have their own
+// tool-calling capabilities and use a different prompt template than the
+// generic code-execution one, even though every agent now runs in
+// code-execution mode for HTTP-bridge tool routing.
 func isCliProviderForPrompt(provider string) bool {
-	return provider == "claude-code" || provider == "kimi" || provider == "gemini-cli" || provider == "codex-cli"
+	return common.IsCLIProvider(provider)
 }
 
 // preSavePromptsJSON saves a prompts.json file before agent execution so get_step_prompts works in real time.

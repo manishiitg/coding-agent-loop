@@ -118,45 +118,45 @@ const formatTs = (ts: string) => {
   return d.toLocaleString()
 }
 
-const VERDICT_DOT: Record<string, string> = {
-  kept: '#16a34a',
-  reverted: '#dc2626',
-  inconclusive: '#d97706',
-  extend: '#2563eb',
+// MetricSnapshotRow is one row from db/metrics_history.jsonl, written by the
+// post-run snapshot hook (see agent_go/cmd/server/metrics_snapshot.go).
+interface MetricSnapshotRow {
+  run_folder: string
+  completed_at: string
+  metric_id: string
+  value: number
+  has_value: boolean
+  resolve_error?: string
+  threshold_kind?: string
+  threshold_value?: number
+  passed?: boolean
 }
 
 interface TrajectoryPanelProps {
   metrics: Metric[]
-  experiments: Experiment[]
-  decisions: Decision[]
+  history: MetricSnapshotRow[]
 }
 
 interface TrajectoryPoint {
-  t: number              // ms since epoch — concluded_at OR started_at fallback
-  value: number          // post_mean for finished, baseline_mean for unfinished
-  experiment: Experiment
-  isProjected: boolean   // true if we're plotting baseline (no post_mean yet)
+  t: number              // ms since epoch — completed_at of the run
+  value: number          // metric value for that run
+  runFolder: string      // for tooltip
+  passed?: boolean       // pass/fail vs threshold; undefined when not evaluable
 }
 
-const buildSeries = (metricId: string, experiments: Experiment[]): TrajectoryPoint[] => {
+const buildSeries = (metricId: string, history: MetricSnapshotRow[]): TrajectoryPoint[] => {
   const points: TrajectoryPoint[] = []
-  for (const exp of experiments) {
-    if (!exp.target_metrics.includes(metricId)) continue
-    const post = exp.conclusion?.evidence?.post_mean?.[metricId]
-    const baseline = exp.baseline?.mean?.[metricId]
-    const tStr = exp.concluded_at || exp.started_at
-    const t = tStr ? Date.parse(tStr) : NaN
+  for (const row of history) {
+    if (row.metric_id !== metricId) continue
+    if (!row.has_value) continue
+    const t = Date.parse(row.completed_at)
     if (!Number.isFinite(t)) continue
-    if (typeof post === 'number') {
-      points.push({ t, value: post, experiment: exp, isProjected: false })
-    } else if (typeof baseline === 'number') {
-      points.push({ t, value: baseline, experiment: exp, isProjected: true })
-    }
+    points.push({ t, value: row.value, runFolder: row.run_folder, passed: row.passed })
   }
   return points.sort((a, b) => a.t - b.t)
 }
 
-const TrajectoryChart: React.FC<{ metric: Metric; series: TrajectoryPoint[]; decisions: Decision[] }> = ({ metric, series, decisions }) => {
+const TrajectoryChart: React.FC<{ metric: Metric; series: TrajectoryPoint[] }> = ({ metric, series }) => {
   const W = 640, H = 180
   const padL = 56, padR = 16, padT = 12, padB = 28
   const innerW = W - padL - padR
@@ -166,7 +166,7 @@ const TrajectoryChart: React.FC<{ metric: Metric; series: TrajectoryPoint[]; dec
     return (
       <div className="border rounded-md p-3 text-xs text-muted-foreground">
         <div className="font-medium text-foreground">{metric.id}</div>
-        No experiments have targeted this metric yet.
+        No runs have produced a value for this metric yet.
       </div>
     )
   }
@@ -202,14 +202,6 @@ const TrajectoryChart: React.FC<{ metric: Metric; series: TrajectoryPoint[]; dec
     return v.toFixed(3)
   }
   const formatX = (t: number) => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-
-  // Decision markers: vertical ticks at each decision tied to one of the
-  // experiments shown (so we don't clutter the chart with unrelated decisions).
-  const expIds = new Set(series.map((p) => p.experiment.id))
-  const decisionMarkers = decisions
-    .filter((d) => d.linked_experiment_id && expIds.has(d.linked_experiment_id))
-    .map((d) => ({ t: Date.parse(d.ts), source: d.source, trigger: d.trigger }))
-    .filter((d) => Number.isFinite(d.t) && d.t >= tMin && d.t <= tMax)
 
   // Reference lines: target / floor / ceiling.
   const refLines: { v: number; label: string; color: string }[] = []
@@ -256,65 +248,58 @@ const TrajectoryChart: React.FC<{ metric: Metric; series: TrajectoryPoint[]; dec
             <text x={padL + innerW - 4} y={yOf(r.v) - 3} textAnchor="end" fontSize={9} fill={r.color}>{r.label}</text>
           </g>
         ))}
-        {/* decision markers */}
-        {decisionMarkers.map((d, i) => (
-          <line key={`dec-${i}`} x1={xOf(d.t)} y1={padT} x2={xOf(d.t)} y2={padT + innerH} stroke={d.source === 'user' ? '#10b981' : d.source === 'agent' ? '#6366f1' : '#9ca3af'} strokeOpacity={0.4} strokeDasharray="2 2">
-            <title>{`${d.source} · ${d.trigger} · ${new Date(d.t).toLocaleString()}`}</title>
-          </line>
-        ))}
         {/* trajectory line */}
         <path d={path} fill="none" stroke="#7c3aed" strokeOpacity={0.7} strokeWidth={1.5} />
         {/* points */}
         {series.map((p, i) => {
-          const verdict = p.experiment.conclusion?.verdict || ''
-          const fill = p.isProjected ? '#9ca3af' : (VERDICT_DOT[verdict] || '#6b7280')
+          const fill = p.passed === true ? '#16a34a' : p.passed === false ? '#dc2626' : '#6b7280'
           return (
             <circle
               key={`pt-${i}`}
               cx={xOf(p.t)}
               cy={yOf(p.value)}
-              r={p.isProjected ? 3 : 4.5}
+              r={4.5}
               fill={fill}
               stroke="white"
               strokeWidth={1}
-              fillOpacity={p.isProjected ? 0.5 : 1}
             >
-              <title>{`${p.experiment.id}\n${p.experiment.hypothesis}\nvalue=${formatY(p.value)}${p.isProjected ? ' (baseline — no post-mean yet)' : ''}\nverdict=${verdict || '—'}\n${new Date(p.t).toLocaleString()}`}</title>
+              <title>{`${p.runFolder}\nvalue=${formatY(p.value)}\n${p.passed === true ? 'pass' : p.passed === false ? 'fail' : 'no threshold'}\n${new Date(p.t).toLocaleString()}`}</title>
             </circle>
           )
         })}
       </svg>
       <div className="flex flex-wrap items-center gap-3 mt-1 text-[10px] text-muted-foreground">
-        <span>verdict:</span>
-        {(['kept', 'reverted', 'inconclusive', 'extend'] as const).map((v) => (
-          <span key={v} className="inline-flex items-center gap-1">
-            <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: VERDICT_DOT[v] }} />
-            {v}
-          </span>
-        ))}
         <span className="inline-flex items-center gap-1">
-          <span className="inline-block w-2 h-2 rounded-full bg-gray-400 opacity-50" />
-          baseline (no post-mean yet)
+          <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#16a34a' }} />
+          pass
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#dc2626' }} />
+          fail
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#6b7280' }} />
+          no threshold
         </span>
       </div>
     </div>
   )
 }
 
-const TrajectoryPanel: React.FC<TrajectoryPanelProps> = ({ metrics, experiments, decisions }) => {
+const TrajectoryPanel: React.FC<TrajectoryPanelProps> = ({ metrics, history }) => {
   if (metrics.length === 0) {
     return <p className="text-sm text-muted-foreground">No metrics defined yet — define metrics to see their trajectories.</p>
   }
-  if (experiments.length === 0) {
-    return <p className="text-sm text-muted-foreground">No experiments yet — once experiments run, this view plots their post-means against the metric reference lines.</p>
+  if (history.length === 0) {
+    return <p className="text-sm text-muted-foreground">No metric history yet — once a workflow run completes, this view plots one point per run from <code>db/metrics_history.jsonl</code>.</p>
   }
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
-        Each point is one experiment's post-mean for the metric, plotted at <code>concluded_at</code> (or <code>started_at</code> if still running). Color = verdict. Dashed horizontal lines mark target / floor / ceiling. Vertical ticks mark linked decisions.
+        Each point is one workflow run's metric value, plotted at <code>completed_at</code>. Color = pass/fail vs threshold. Dashed horizontal lines mark target / floor / ceiling.
       </p>
       {metrics.map((m) => (
-        <TrajectoryChart key={m.id} metric={m} series={buildSeries(m.id, experiments)} decisions={decisions} />
+        <TrajectoryChart key={m.id} metric={m} series={buildSeries(m.id, history)} />
       ))}
     </div>
   )
@@ -387,6 +372,7 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
   const [activeExperiments, setActiveExperiments] = useState<Experiment[]>([])
   const [historyExperiments, setHistoryExperiments] = useState<Experiment[]>([])
   const [decisions, setDecisions] = useState<Decision[]>([])
+  const [metricsHistory, setMetricsHistory] = useState<MetricSnapshotRow[]>([])
   const [expandedExperiment, setExpandedExperiment] = useState<string | null>(null)
   const [expandedHistory, setExpandedHistory] = useState<string | null>(null)
   const [decisionFilter, setDecisionFilter] = useState<'all' | 'agent' | 'user' | 'system'>('all')
@@ -409,11 +395,12 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
     setLoading(true)
     setError(null)
     try {
-      const [m, e, d, h] = await Promise.all([
+      const [m, e, d, h, mh] = await Promise.all([
         agentApi.getAutoImprovementMetrics(workspacePath).catch((err) => ({ success: false, error: String(err), file: undefined })),
         agentApi.getAutoImprovementExperiments(workspacePath, true).catch((err) => ({ success: false, active: [], history: [], error: String(err) })),
         agentApi.getAutoImprovementDecisions(workspacePath).catch((err) => ({ success: false, decisions: [], error: String(err) })),
         agentApi.getFrameworkHealth(workspacePath).catch((err) => ({ success: false, error: String(err), soul_exists: false, objective_ok: false, success_criteria_ok: false, declared_criteria: [], uncovered_criteria: [], unanchored_metrics: [], telemetry_metrics: [] })),
+        agentApi.getMetricsHistory(workspacePath).catch((err) => ({ success: false, rows: [], error: String(err) })),
       ])
       if (m.success && m.file) {
         setMetrics(Array.isArray(m.file.metrics) ? m.file.metrics : [])
@@ -442,7 +429,12 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
       } else {
         setFrameworkHealth(null)
       }
-      const errs = [m.error, e.error, d.error, h.error].filter(Boolean)
+      if (mh.success) {
+        setMetricsHistory(Array.isArray(mh.rows) ? mh.rows : [])
+      } else {
+        setMetricsHistory([])
+      }
+      const errs = [m.error, e.error, d.error, h.error, mh.error].filter(Boolean)
       if (errs.length > 0) setError(errs.join('; '))
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err))
@@ -797,8 +789,7 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
             {tab === 'trajectory' && (
               <TrajectoryPanel
                 metrics={metrics}
-                experiments={[...activeExperiments, ...historyExperiments]}
-                decisions={decisions}
+                history={metricsHistory}
               />
             )}
 

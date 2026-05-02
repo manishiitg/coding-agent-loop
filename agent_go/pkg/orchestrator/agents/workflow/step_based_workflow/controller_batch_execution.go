@@ -410,6 +410,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		result.CompletedGroups++
 		result.CompletedGroupNames = append(result.CompletedGroupNames, group.Name)
 		hcpo.finalizeRunMetadata(ctx, runFolder, "completed", groupStartTime, groupStartTime.Add(groupDuration))
+		if hcpo.runCompletedHook != nil {
+			// Hook is responsible for swallowing its own errors.
+			hcpo.runCompletedHook(ctx, hcpo.GetWorkspacePath(), runFolder, "completed")
+		}
 		hcpo.emitBatchGroupEndEvent(ctx, group.Name, groupIndex, totalGroups, true, "", groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
 
 		// Auto-evaluation: Run scoring for this group if evaluation_plan.json exists

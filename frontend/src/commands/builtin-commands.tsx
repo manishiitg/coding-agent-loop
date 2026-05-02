@@ -103,7 +103,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'reporting'],
+    requiredWorkshopMode: ['builder', 'optimizer', 'reporting'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()

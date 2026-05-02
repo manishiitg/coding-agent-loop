@@ -657,9 +657,10 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		return "", fmt.Errorf("failed to create/update todo list: %w", err)
 	}
 
-	// Emit orchestrator completion events
+	// Emit the workflow completion event. Do not also emit unified_completion here:
+	// the workflow step/agent end events already carry the result text, and rendering
+	// both events causes duplicate final output in the UI.
 	wo.EmitOrchestratorEnd(ctx, objective, planningResult, "completed", "", "workflow_execution")
-	wo.EmitUnifiedCompletionEvent(ctx, "workflow", "workflow", objective, planningResult, "completed", 1)
 
 	return planningResult, nil
 }

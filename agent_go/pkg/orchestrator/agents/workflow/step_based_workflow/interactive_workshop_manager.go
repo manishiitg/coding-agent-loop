@@ -1012,7 +1012,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	}
 
 	// Report tools — manage reports/report_plan.json and validate/preview against real db/ + KB sources.
-	// Available in builder/reporting modes; optimizer/run redirect dashboard edits to builder/report authoring.
+	// Available in builder/optimizer/reporting modes. Run mode stays read-only.
 	report := []string{
 		"get_report_plan", "upsert_report_widget", "remove_report_widget", "move_report_widget", "toggle_report_widget",
 		"set_report_theme", "set_section_layout",
@@ -1070,9 +1070,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	case "optimizer":
 		// OPTIMIZE: run, eval, harden, repeat — make existing steps reliable.
-		// Report tools live in the dedicated 'reporting' mode; if a hardening
-		// pass changes a db/ schema that breaks a widget, switch to reporting
-		// to fix the widget there.
+		// Report tools are also available here so optimization can keep the live
+		// dashboard aligned with db/eval/run outputs without forcing a new session.
 		tools = append(tools, execution...)
 		tools = append(tools, stepConfig...)
 		tools = append(tools, planMod...)
@@ -1087,6 +1086,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, eval...)
+		tools = append(tools, report...)
 		tools = append(tools, kb...)
 		tools = append(tools, autoImprovement...)
 		tools = append(tools, "optimize_step")
@@ -1543,13 +1543,17 @@ The workflow has a live frontend report viewer at the top toolbar's "Report" tab
 ## Reporting — the frontend Report tab is already wired
 
 The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders the widget blocks defined there against `+"`db/*.json`"+`, `+"`knowledgebase/`"+` (graph + notes), and dedicated workflow APIs for built-in `+"`costs`"+` / `+"`evals`"+` / `+"`runs`"+` widgets. It is always available — there is NO "generate report" phase, no HTML/PDF artifact to produce, no step that writes a finished report.
-{{else}}
-## Reporting — switch to Builder mode to edit dashboards
+{{else if eq .WorkshopMode "optimizer"}}
+## Reporting — Optimizer can maintain the live dashboard
 
-The workflow has a live frontend report viewer at the top toolbar's "Report" tab, but this mode does not own report widget authoring. If the user asks to create dashboard widgets, themes, layouts, custom colors, or `+"`reports/report_plan.json`"+` edits, tell them to switch to Builder mode.
+The workflow has a live frontend report viewer at the top toolbar's "Report" tab. Optimizer mode can author and maintain report widgets when reporting needs to reflect optimization/evaluation/run evidence: creating dashboard widgets, themes, layouts, custom colors, and `+"`reports/report_plan.json`"+` edits. Keep report edits presentation-only unless the user also asked for workflow hardening/eval changes.
+{{else}}
+## Reporting — switch to Builder or Optimizer mode to edit dashboards
+
+The workflow has a live frontend report viewer at the top toolbar's "Report" tab, but this mode does not own report widget authoring. If the user asks to create dashboard widgets, themes, layouts, custom colors, or `+"`reports/report_plan.json`"+` edits, tell them to switch to Builder or Optimizer mode. Do not offer to draft or edit `+"`reports/report_plan.json`"+` via shell/direct file writes from this mode.
 {{end}}
 
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "reporting")}}
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "reporting")}}
 **When the user asks "create a report" / "build a reporting UI" / "show me X in a dashboard":**
 - The answer is almost always: **update `+"`reports/report_plan.json`"+` via the report-plan tools** — add, move, toggle, or remove widgets.
 - Do NOT add a step that generates HTML, markdown, or any other "rendered report" artifact.
@@ -1563,10 +1567,10 @@ The workflow has a live frontend report viewer at the top toolbar's "Report" tab
 **Report viewer auto-updates** when the user opens or switches to the Report tab — no rebuild step needed. After the agent updates `+"`report_plan.json`"+`, the user just clicks Report (or refreshes if they're already on it) to see the new widgets.
 {{end}}
 
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "reporting")}}
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "reporting")}}
 ### Report plan — reports/report_plan.json
 
-{{if eq .WorkshopMode "builder"}}You are in BUILDER mode. Alongside workflow structure, you own the live frontend report defined by `+"`reports/report_plan.json`"+` — designing widgets, picking themes/layouts, and (when needed) running individual workflow steps to populate the underlying `+"`db/`"+` data the widgets bind to. Keep dashboard edits separate from evaluation/optimization work; those still belong in Optimizer.{{else}}You are in REPORTING mode. Your scope is the live frontend report defined by `+"`reports/report_plan.json`"+` — designing widgets, picking themes/layouts, and (when needed) running individual workflow steps to populate the underlying `+"`db/`"+` data the widgets bind to. You do NOT change the workflow plan, step config, evaluations, or KB write rules — those belong in Builder/Optimizer.{{end}}
+{{if eq .WorkshopMode "builder"}}You are in BUILDER mode. Alongside workflow structure, you own the live frontend report defined by `+"`reports/report_plan.json`"+` — designing widgets, picking themes/layouts, and (when needed) running individual workflow steps to populate the underlying `+"`db/`"+` data the widgets bind to. Keep dashboard edits separate from evaluation/optimization work; those still belong in Optimizer.{{else if eq .WorkshopMode "optimizer"}}You are in OPTIMIZER mode. Alongside run/eval/hardening, you may maintain the live frontend report defined by `+"`reports/report_plan.json`"+` so dashboards stay aligned with optimized outputs, metrics, and evaluation evidence. Use report-plan tools for report edits; use optimizer tools only when the underlying workflow behavior or eval coverage actually needs to change.{{else}}You are in REPORTING mode. Your scope is the live frontend report defined by `+"`reports/report_plan.json`"+` — designing widgets, picking themes/layouts, and (when needed) running individual workflow steps to populate the underlying `+"`db/`"+` data the widgets bind to. You do NOT change the workflow plan, step config, evaluations, or KB write rules — those belong in Builder/Optimizer.{{end}}
 
 **The reporting toolchain:**
 - Before move/remove/toggle operations, call `+"`get_report_plan`"+` so you have stable section, entry, row, and widget IDs.
@@ -1584,6 +1588,7 @@ If a widget renders empty because the underlying `+"`db/`"+` file hasn't been po
 
 **What you do NOT do here:**
 {{if eq .WorkshopMode "builder"}}- No evaluation design, no `+"`optimize_step`"+`, no `+"`harden_workflow`"+`, no experiment proposals, and no learn_code/script-locking work as part of report authoring. If a report exposes a real workflow-quality problem, fix basic Builder-owned structure/config or switch to Optimizer for hardening/eval/experiments.
+{{else if eq .WorkshopMode "optimizer"}}- Do not use report work as a reason to make speculative workflow/eval changes. If the user asked only for dashboard/report changes, stay within report-plan tools plus read/preview/validation. If the report exposes a real workflow-quality issue, then use optimizer tools deliberately and explain the boundary.
 {{else}}
 - No `+"`update_step_config`"+`, no `+"`optimize_step`"+`, no `+"`harden_workflow`"+`, no plan or eval mutations. If the user asks to fix a step's behavior or change what a step writes to `+"`db/`"+`, tell them to switch to Builder or Optimizer.
 - No KB writes, no schedule changes, no skill imports.
@@ -1842,7 +1847,7 @@ For **structural changes** (add/remove/reorder steps), use `+"`replan_workflow_f
 
 ### When to redirect to another mode
 Optimizer is for the run/eval/harden loop. If the user asks about:
-- **Dashboard widgets, themes, layouts, custom colors** → switch to **Builder mode**. Builder owns `+"`reports/report_plan.json`"+` authoring.
+- **Dashboard widgets, themes, layouts, custom colors** → handle them here with the report-plan tools. Optimizer can maintain `+"`reports/report_plan.json`"+` when report changes need to reflect run/eval/metric evidence.
 - **Greenfield workflow design — adding new execution steps or defining a new workflow's structure from scratch** → switch to **Builder mode**. Optimizer hardens an existing structure.
 - **Evaluation coverage — drafting or improving `+"`evaluation/evaluation_plan.json`"+`** → handle it in Optimizer. Optimizer owns eval design, validation, scoring, and hardening.
 - **Just running the finished workflow / inspecting prior runs in plain English** → switch to **Run mode**, which is the user-friendly execution surface (also used over WhatsApp/Slack).
@@ -2494,6 +2499,7 @@ Rules:
   1. **Execute** (mode=workflow, default) — runs the orchestrator directly, no LLM involved. Fast, no messages needed.
   2. **Run** (mode=workshop, workshop_mode=runner) — LLM-driven execution with per-step notifications. Requires `+"`messages`"+` array (e.g. a single message: "Run the full workflow using run_full_workflow").
   3. **Optimize** (mode=workshop, workshop_mode=optimizer) — LLM-driven optimizer run. Requires `+"`messages`"+` array with exact group scope, `+"`runs/iteration-0`"+` evidence scope, active-experiment guards when metrics exist, and bounded stop conditions.
+- **Default mode rule**: choose `+"`mode=\"workflow\"`"+` unless the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule. Do not choose `+"`mode=\"workshop\"`"+` for normal recurring business runs.
 - `+"`messages`"+` is an ordered queue of strings sent to the workshop LLM one-by-one as user turns. The LLM completes all tool calls triggered by message N before message N+1 is sent.
 - **How to write messages:**
   - Write each message as a plain instruction, like you would type in chat: "Run the full workflow", "Generate the final report"
@@ -8014,7 +8020,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. The schedule will automatically run the workflow at the specified times. Use mode='workshop' with messages to drive execution via the LLM (with per-step notifications). For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, iteration-0 evidence scope, active-experiment guards when metrics are present, and bounded stop conditions so unattended runs cannot loop indefinitely.",
+		"Create a new cron schedule for this workflow. Default to mode='workflow' for normal recurring runs. Use mode='workshop' only when the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule; then messages are required. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, iteration-0 evidence scope, active-experiment guards when metrics are present, and bounded stop conditions so unattended runs cannot loop indefinitely.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8037,7 +8043,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Execution mode: 'workflow' (default, direct orchestrator) or 'workshop' (LLM-driven via workshop builder with per-step notifications).",
+					"description": "Execution mode. Use 'workflow' by default. Use 'workshop' only when explicitly scheduling builder/workshop/optimizer/evaluation/hardening work.",
 					"enum":        []string{"workflow", "workshop"},
 				},
 				"messages": map[string]interface{}{
@@ -8047,7 +8053,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Workshop builder mode to use when mode='workshop'. Defaults to 'run'. Use 'optimizer' to run with optimization (generate learnings, analyze steps).",
+					"description": "Only set when mode='workshop'. Defaults to 'run'. Use 'optimizer' for scheduled improvement/hardening loops that generate learnings and analyze steps.",
 					"enum":        []string{"run", "optimizer"},
 				},
 			},
@@ -8108,6 +8114,87 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register create_schedule tool: %v", err))
 	}
 
+	// Tool: create_calendar_schedule — Create dated one-time runs for content calendars
+	if err := mcpAgent.RegisterCustomTool(
+		"create_calendar_schedule",
+		"Create a dated calendar schedule for this workflow, such as a full-month Instagram content calendar. Use this when the user provides specific dates/times instead of a repeating cron pattern. Default to mode='workflow' for normal content runs; use mode='workshop' only when explicitly scheduling builder/workshop/optimizer/evaluation/hardening work.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name":        map[string]interface{}{"type": "string", "description": "Display name for the calendar schedule."},
+				"timezone":    map[string]interface{}{"type": "string", "description": "Required IANA timezone (e.g. 'UTC', 'America/New_York', 'Asia/Kolkata')."},
+				"group_names": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Required variable group names to run."},
+				"calendar_items": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"date":        map[string]interface{}{"type": "string", "description": "YYYY-MM-DD in the schedule timezone."},
+							"time":        map[string]interface{}{"type": "string", "description": "HH:MM in the schedule timezone."},
+							"description": map[string]interface{}{"type": "string", "description": "Optional note for this item."},
+							"messages":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional per-item workshop messages."},
+						},
+						"required": []string{"date", "time"},
+					},
+				},
+				"mode":          map[string]interface{}{"type": "string", "description": "Use 'workflow' by default. Use 'workshop' only for builder/optimizer/evaluation/hardening calendars.", "enum": []string{"workflow", "workshop"}},
+				"messages":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional default workshop messages for all items when mode='workshop'."},
+				"workshop_mode": map[string]interface{}{"type": "string", "description": "Only set when mode='workshop'.", "enum": []string{"run", "optimizer"}},
+			},
+			"required": []string{"name", "timezone", "calendar_items", "group_names"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.schedulerFuncs == nil || iwm.schedulerFuncs.CreateCalendarSchedule == nil {
+				return "Calendar schedule management not available in this session.", nil
+			}
+			name, _ := args["name"].(string)
+			timezone, _ := args["timezone"].(string)
+			if name == "" {
+				return "name is required.", nil
+			}
+			if err := validateWorkshopScheduleTimezone(timezone); err != nil {
+				return err.Error(), nil
+			}
+			rawItems, ok := args["calendar_items"]
+			if !ok || rawItems == nil {
+				return "calendar_items is required.", nil
+			}
+			calendarItemsJSON, err := json.Marshal(rawItems)
+			if err != nil {
+				return "", err
+			}
+			var groupNames []string
+			if raw, ok := args["group_names"]; ok && raw != nil {
+				if arr, ok := raw.([]interface{}); ok {
+					for _, v := range arr {
+						if s, ok := v.(string); ok {
+							groupNames = append(groupNames, s)
+						}
+					}
+				}
+			}
+			if len(groupNames) == 0 {
+				return "group_names is required. Read variables.json and provide at least one explicit group_name.", nil
+			}
+			mode, _ := args["mode"].(string)
+			var messages []string
+			if raw, ok := args["messages"]; ok && raw != nil {
+				if arr, ok := raw.([]interface{}); ok {
+					for _, v := range arr {
+						if s, ok := v.(string); ok {
+							messages = append(messages, s)
+						}
+					}
+				}
+			}
+			workshopMode, _ := args["workshop_mode"].(string)
+			return iwm.schedulerFuncs.CreateCalendarSchedule(ctx, iwm.schedulerWorkspacePath, name, timezone, groupNames, string(calendarItemsJSON), mode, messages, workshopMode)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register create_calendar_schedule tool: %v", err))
+	}
+
 	// Tool: update_schedule — Update a schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"update_schedule",
@@ -8142,7 +8229,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Execution mode: 'workflow' (default, direct orchestrator) or 'workshop' (LLM-driven via workshop builder).",
+					"description": "Execution mode. Keep or use 'workflow' for normal recurring runs. Use 'workshop' only when explicitly scheduling builder/workshop/optimizer/evaluation/hardening work.",
 					"enum":        []string{"workflow", "workshop"},
 				},
 				"messages": map[string]interface{}{

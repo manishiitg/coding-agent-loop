@@ -14,6 +14,7 @@ import { formatEventMemoryBytes, getEventMemoryStats, hasEventMemoryPressure, ty
 interface QuickSwitcherProps {
   isOpen: boolean
   onClose: () => void
+  initialQuery?: string
 }
 
 interface WorkflowItem {
@@ -161,7 +162,8 @@ const requestChatScrollToBottom = () => {
 
 export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   isOpen,
-  onClose
+  onClose,
+  initialQuery = '',
 }) => {
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -217,12 +219,12 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   // Reset state on open.
   useEffect(() => {
     if (isOpen) {
-      setQuery('')
+      setQuery(initialQuery)
       setSelectedIndex(0)
       void useChatStore.getState().getActiveSessions(true)
       setTimeout(() => searchInputRef.current?.focus(), 50)
     }
-  }, [isOpen])
+  }, [isOpen, initialQuery])
 
   // Build a cross-mode command center: active work + chats + workflows + retained events.
   const allItems = useMemo<QuickSwitcherItem[]>(() => {

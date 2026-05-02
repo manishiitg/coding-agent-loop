@@ -241,6 +241,18 @@ func IsNativeWorkspace() bool {
 	return os.Getenv("NATIVE_WORKSPACE") == "true"
 }
 
+// IsCLIProvider reports whether provider is backed by a local CLI/runtime
+// instead of a normal HTTP LLM API. These providers need CLI-specific prompt
+// guidance and HTTP bridge tool routing.
+func IsCLIProvider(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "claude-code", "gemini-cli", "codex-cli", "kimi":
+		return true
+	default:
+		return false
+	}
+}
+
 // QuoteShellArg quotes a shell argument if it contains special characters
 func QuoteShellArg(arg string) string {
 	if strings.ContainsAny(arg, " \t\n()[]{}|&;'\"\\$<>*?!") {

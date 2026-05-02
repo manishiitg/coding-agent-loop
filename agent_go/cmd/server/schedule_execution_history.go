@@ -125,6 +125,9 @@ func ComputeWorkflowScheduleMissedStatus(sched WorkflowSchedule, tracker *Workfl
 	if !sched.Enabled || tracker == nil {
 		return WorkflowScheduleMissedStatus{}
 	}
+	if scheduleTypeOrDefault(sched.ScheduleType) != "cron" {
+		return WorkflowScheduleMissedStatus{}
+	}
 
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	schedule, err := parser.Parse(sched.CronExpression)

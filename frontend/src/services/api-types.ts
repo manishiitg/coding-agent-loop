@@ -1788,6 +1788,8 @@ export interface ScheduledJob {
   workshop_mode?: 'runner' | 'optimizer'  // workshop builder mode (default: runner)
   query?: string  // message to execute (multi-agent mode)
   user_id?: string  // user context (multi-agent mode)
+  schedule_type?: 'cron' | 'calendar'
+  calendar_items?: CalendarScheduleItem[]
   cron_expression: string
   timezone: string
   enabled: boolean
@@ -1815,9 +1817,12 @@ export interface CreateScheduledJobRequest {
   description?: string
   entity_type: 'workflow' | 'chat'
   preset_query_id: string
+  workspace_path?: string
   trigger_payload?: Record<string, unknown>
   group_names?: string[]  // undefined/empty = all groups
-  cron_expression: string
+  schedule_type?: 'cron' | 'calendar'
+  calendar_items?: CalendarScheduleItem[]
+  cron_expression?: string
   timezone?: string
   enabled?: boolean
 }
@@ -1828,9 +1833,20 @@ export interface UpdateScheduledJobRequest {
   trigger_payload?: Record<string, unknown>
   group_names?: string[]       // undefined = don't change; [] = run all groups; [...] = specific groups
   set_group_names?: boolean    // must be true to actually update group_names
+  schedule_type?: 'cron' | 'calendar'
+  calendar_items?: CalendarScheduleItem[]
   cron_expression?: string
   timezone?: string
   enabled?: boolean
+}
+
+export interface CalendarScheduleItem {
+  id?: string
+  date: string
+  time: string
+  description?: string
+  trigger_payload?: Record<string, unknown>
+  messages?: string[]
 }
 
 export interface ListScheduledJobsResponse {

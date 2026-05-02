@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -53,7 +54,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 			Type: "function",
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "create_workflow_schedule",
-				Description: "Create a new cron schedule on a workflow. The schedule will fire at the specified cron times and run the workflow's group(s). Use mode='workshop' with messages to drive runs via the LLM-driven workshop builder; use mode='multi-agent' with a query to drive runs via a multi-agent chat session. Default mode is 'workflow' (direct orchestrator).",
+				Description: "Create a new cron schedule on a workflow. Default to mode='workflow' (direct orchestrator) for normal recurring runs. Use mode='workshop' only when the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule and provide messages. Use mode='multi-agent' only for multi-agent chat schedules.",
 				Parameters: &llmtypes.Parameters{
 					Type: "object",
 					Properties: map[string]interface{}{
@@ -80,7 +81,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						},
 						"mode": map[string]interface{}{
 							"type":        "string",
-							"description": "Execution mode: 'workflow' (default, direct orchestrator), 'workshop' (LLM-driven via workshop builder), or 'multi-agent' (LLM-driven via multi-agent chat).",
+							"description": "Execution mode. Use 'workflow' by default. Use 'workshop' only when explicitly scheduling builder/workshop/optimizer/evaluation/hardening work. Use 'multi-agent' only for multi-agent chat schedules.",
 							"enum":        []string{"workflow", "workshop", "multi-agent"},
 						},
 						"messages": map[string]interface{}{
@@ -90,7 +91,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						},
 						"workshop_mode": map[string]interface{}{
 							"type":        "string",
-							"description": "Workshop builder mode when mode='workshop'. Defaults to 'run'. Use 'optimizer' for runs that also generate learnings.",
+							"description": "Only set when mode='workshop'. Defaults to 'run'. Use 'optimizer' for scheduled improvement/hardening loops that also generate learnings.",
 							"enum":        []string{"run", "optimizer"},
 						},
 					},
@@ -148,6 +149,65 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						},
 					},
 					Required: []string{"job_id"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: &llmtypes.FunctionDefinition{
+				Name:        "create_calendar_workflow_schedule",
+				Description: "Create a dated calendar schedule for a workflow, such as a full-month Instagram content calendar. Use this when the user provides specific dates/times instead of a repeating cron pattern. Defaults to mode='workflow'; use mode='workshop' only for explicit builder/optimizer/evaluation/hardening calendars.",
+				Parameters: &llmtypes.Parameters{
+					Type: "object",
+					Properties: map[string]interface{}{
+						"workflow_path": map[string]interface{}{
+							"type":        "string",
+							"description": "Workspace-relative workflow path (e.g. 'Workflow/instagram').",
+						},
+						"name": map[string]interface{}{
+							"type":        "string",
+							"description": "Display name for the calendar schedule.",
+						},
+						"timezone": map[string]interface{}{
+							"type":        "string",
+							"description": "Required IANA timezone (e.g. 'UTC', 'America/New_York', 'Asia/Kolkata').",
+						},
+						"calendar_items": map[string]interface{}{
+							"type": "array",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"date":        map[string]interface{}{"type": "string", "description": "Date as YYYY-MM-DD in the schedule timezone."},
+									"time":        map[string]interface{}{"type": "string", "description": "Time as HH:MM in the schedule timezone."},
+									"description": map[string]interface{}{"type": "string", "description": "Optional note for this calendar item."},
+									"messages":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional per-item workshop messages. Only used with mode='workshop'."},
+								},
+								"required": []string{"date", "time"},
+							},
+							"description": "Dated one-time run items for the month.",
+						},
+						"group_names": map[string]interface{}{
+							"type":        "array",
+							"items":       map[string]interface{}{"type": "string"},
+							"description": "Variable group names to run. Required.",
+						},
+						"mode": map[string]interface{}{
+							"type":        "string",
+							"description": "Use 'workflow' by default. Use 'workshop' only for explicit builder/optimizer/evaluation/hardening calendars.",
+							"enum":        []string{"workflow", "workshop"},
+						},
+						"messages": map[string]interface{}{
+							"type":        "array",
+							"items":       map[string]interface{}{"type": "string"},
+							"description": "Optional default workshop messages for all items when mode='workshop'.",
+						},
+						"workshop_mode": map[string]interface{}{
+							"type":        "string",
+							"description": "Only set when mode='workshop'.",
+							"enum":        []string{"run", "optimizer"},
+						},
+					},
+					Required: []string{"workflow_path", "name", "timezone", "calendar_items", "group_names"},
 				},
 			},
 		},
@@ -266,6 +326,37 @@ func createWorkflowScheduleExecutors(api *StreamingAPI, currentUserID string) ma
 				return "group_names is required for mode='workflow' or 'workshop'. Read variables.json and provide at least one group.", nil
 			}
 			return cb.CreateSchedule(ctx, workflowPath, name, cronExpr, timezone, groupNames, mode, messages, workshopMode)
+		},
+
+		"create_calendar_workflow_schedule": func(ctx context.Context, args map[string]interface{}) (string, error) {
+			workflowPath, _ := args["workflow_path"].(string)
+			name, _ := args["name"].(string)
+			timezone, _ := args["timezone"].(string)
+			if workflowPath == "" || name == "" {
+				return "workflow_path and name are required.", nil
+			}
+			if err := ValidateScheduleTimezone(timezone); err != nil {
+				return err.Error(), nil
+			}
+			groupNames := stringSlice(args["group_names"])
+			if len(groupNames) == 0 {
+				return "group_names is required. Read variables.json and provide at least one group.", nil
+			}
+			rawItems, ok := args["calendar_items"]
+			if !ok || rawItems == nil {
+				return "calendar_items is required.", nil
+			}
+			calendarItemsJSON, err := json.Marshal(rawItems)
+			if err != nil {
+				return "", err
+			}
+			mode, _ := args["mode"].(string)
+			messages := stringSlice(args["messages"])
+			workshopMode, _ := args["workshop_mode"].(string)
+			if mode == "workshop" && len(messages) == 0 {
+				return "messages is required when mode='workshop' unless each calendar item provides messages.", nil
+			}
+			return cb.CreateCalendarSchedule(ctx, workflowPath, name, timezone, groupNames, string(calendarItemsJSON), mode, messages, workshopMode)
 		},
 
 		"update_workflow_schedule": func(ctx context.Context, args map[string]interface{}) (string, error) {

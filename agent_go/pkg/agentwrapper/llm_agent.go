@@ -47,6 +47,128 @@ func providerUsesNativeContextManagement(provider llm.Provider) bool {
 	}
 }
 
+func providerNeedsPlainTextHistory(provider llm.Provider) bool {
+	switch strings.ToLower(strings.TrimSpace(string(provider))) {
+	case "claude-code", "gemini-cli", "codex-cli", "kimi":
+		return true
+	default:
+		return false
+	}
+}
+
+func sanitizeHistoryForPlainTextProvider(messages []llmtypes.MessageContent) []llmtypes.MessageContent {
+	sanitized := make([]llmtypes.MessageContent, 0, len(messages)+2)
+	for _, msg := range messages {
+		normalized := normalizeMessageForPlainTextProvider(msg)
+		if len(sanitized) > 0 &&
+			sanitized[len(sanitized)-1].Role == llmtypes.ChatMessageTypeHuman &&
+			normalized.Role == llmtypes.ChatMessageTypeHuman {
+			sanitized = append(sanitized, llmtypes.MessageContent{
+				Role:  llmtypes.ChatMessageTypeAI,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "[Previous request was interrupted before a response was generated.]"}},
+			})
+		}
+		sanitized = append(sanitized, normalized)
+	}
+	return sanitized
+}
+
+func normalizeMessageForPlainTextProvider(msg llmtypes.MessageContent) llmtypes.MessageContent {
+	if msg.Role == llmtypes.ChatMessageTypeTool {
+		return llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeAI,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: plainTextFromParts("[Previous tool result]", msg.Parts)}},
+		}
+	}
+
+	parts := make([]llmtypes.ContentPart, 0, len(msg.Parts))
+	for _, part := range msg.Parts {
+		switch p := part.(type) {
+		case llmtypes.TextContent:
+			if p.Text != "" {
+				parts = append(parts, p)
+			}
+		case llmtypes.ToolCall:
+			parts = append(parts, llmtypes.TextContent{Text: summarizeToolCall(p)})
+		case *llmtypes.ToolCall:
+			if p != nil {
+				parts = append(parts, llmtypes.TextContent{Text: summarizeToolCall(*p)})
+			}
+		case llmtypes.ToolCallResponse:
+			parts = append(parts, llmtypes.TextContent{Text: summarizeToolCallResponse(p)})
+		case *llmtypes.ToolCallResponse:
+			if p != nil {
+				parts = append(parts, llmtypes.TextContent{Text: summarizeToolCallResponse(*p)})
+			}
+		default:
+			parts = append(parts, part)
+		}
+	}
+
+	if len(parts) == 0 {
+		parts = []llmtypes.ContentPart{llmtypes.TextContent{Text: "[Empty prior message omitted by history sanitizer.]"}}
+	}
+
+	return llmtypes.MessageContent{
+		Role:  msg.Role,
+		Parts: parts,
+	}
+}
+
+func plainTextFromParts(prefix string, parts []llmtypes.ContentPart) string {
+	var sb strings.Builder
+	sb.WriteString(prefix)
+	for _, part := range parts {
+		switch p := part.(type) {
+		case llmtypes.TextContent:
+			if p.Text != "" {
+				sb.WriteString(": ")
+				sb.WriteString(truncateForHistory(p.Text, 5000))
+			}
+		case llmtypes.ToolCallResponse:
+			sb.WriteString(": ")
+			sb.WriteString(summarizeToolCallResponse(p))
+		case *llmtypes.ToolCallResponse:
+			if p != nil {
+				sb.WriteString(": ")
+				sb.WriteString(summarizeToolCallResponse(*p))
+			}
+		}
+	}
+	return sb.String()
+}
+
+func summarizeToolCall(tc llmtypes.ToolCall) string {
+	name := ""
+	args := ""
+	if tc.FunctionCall != nil {
+		name = tc.FunctionCall.Name
+		args = tc.FunctionCall.Arguments
+	}
+	if name == "" {
+		name = "unknown_tool"
+	}
+	if args != "" {
+		return fmt.Sprintf("[Previous tool call: %s(%s)]", name, truncateForHistory(args, 2000))
+	}
+	return fmt.Sprintf("[Previous tool call: %s]", name)
+}
+
+func summarizeToolCallResponse(resp llmtypes.ToolCallResponse) string {
+	name := resp.Name
+	if name == "" {
+		name = "unknown_tool"
+	}
+	return fmt.Sprintf("[Previous tool result: %s -> %s]", name, truncateForHistory(resp.Content, 5000))
+}
+
+func truncateForHistory(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "...[truncated]"
+}
+
 func resolveRuntimeModelID(provider llm.Provider, modelID string) string {
 	normalizedProvider := strings.ToLower(strings.TrimSpace(string(provider)))
 	normalizedModelID := strings.ToLower(strings.TrimSpace(modelID))
@@ -578,6 +700,9 @@ func (w *LLMAgentWrapper) InvokeWithHistory(ctx context.Context, messages []llmt
 	}
 
 	// Execute the request with message history
+	if providerNeedsPlainTextHistory(w.config.Provider) {
+		messages = sanitizeHistoryForPlainTextProvider(messages)
+	}
 	response, updatedMessages, err := w.agent.AskWithHistory(timeoutCtx, messages)
 	duration := time.Since(startTime)
 
@@ -907,6 +1032,12 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 
 		// Get conversation history and execute
 		messages := w.GetHistory()
+		if providerNeedsPlainTextHistory(w.config.Provider) {
+			before := len(messages)
+			messages = sanitizeHistoryForPlainTextProvider(messages)
+			w.logger.Info(fmt.Sprintf("[CANCEL_DEBUG] Sanitized CLI history before AskWithHistory | provider=%s msgs_before=%d msgs_after=%d",
+				w.config.Provider, before, len(messages)))
+		}
 
 		w.logger.Info(fmt.Sprintf("[CANCEL_DEBUG] AskWithHistory starting | history_msgs=%d", len(messages)))
 

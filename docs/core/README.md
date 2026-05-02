@@ -24,6 +24,7 @@ These docs describe platform subsystems that cut across workflow and multi-agent
 - `mcp_bridge_layer.md`
 - `mcp_session_id_propagation.md`
 - `multi_user_authentication.md`
+- `native_workspace_mode.md`
 - `oauth.md`
 - `session_and_tool_binding.md`
 - `secrets.md`

@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import cronstrue from 'cronstrue'
-import { X, Clock, Play, Trash2, Save, ChevronDown, ChevronUp, ExternalLink, AlertTriangle } from 'lucide-react'
+import { X, Clock, Play, Trash2, Save, ChevronDown, ChevronUp, ExternalLink, AlertTriangle, CalendarDays, Plus, Minus } from 'lucide-react'
 import { schedulerApi } from '../api/scheduler'
 import { agentApi } from '../services/api'
-import type { ScheduledJob, CreateScheduledJobRequest, VariableGroup, SchedulerConfig } from '../services/api-types'
+import type { CalendarScheduleItem, ScheduledJob, CreateScheduledJobRequest, VariableGroup, SchedulerConfig } from '../services/api-types'
 import ModalPortal from './ui/ModalPortal'
 
 const LOCAL_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -32,6 +32,23 @@ const QUICK_PICKS = [
   { label: 'Monthly', value: '0 9 1 * *' },
 ]
 
+type ScheduleType = 'cron' | 'calendar'
+
+function defaultCalendarItem(): CalendarScheduleItem {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  return {
+    date: d.toISOString().slice(0, 10),
+    time: '09:00',
+    description: '',
+  }
+}
+
+function monthLabel(dateKey: string): string {
+  const d = dateKey ? new Date(`${dateKey}T00:00:00`) : new Date()
+  return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+}
+
 const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
   presetQueryId,
   presetLabel,
@@ -44,6 +61,8 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
   const [isSaving, setIsSaving] = useState(false)
   const [isTriggering, setIsTriggering] = useState(false)
   const [cronExpr, setCronExpr] = useState('0 9 * * 1')
+  const [scheduleType, setScheduleType] = useState<ScheduleType>('cron')
+  const [calendarItems, setCalendarItems] = useState<CalendarScheduleItem[]>([defaultCalendarItem()])
   const [jobName, setJobName] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -61,6 +80,31 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
 
   const allGroupsSelected = availableGroups.length > 0 && selectedGroupIds.length === availableGroups.length
   const hasGroupSelection = availableGroups.length === 0 || selectedGroupIds.length > 0
+  const hasValidCalendarItems = calendarItems.length > 0 && calendarItems.every((item) => item.date && item.time)
+  const canSaveSchedule = jobName.trim() && hasGroupSelection && (
+    scheduleType === 'cron' ? isValidCron : hasValidCalendarItems
+  )
+  const previewMonthKey = calendarItems.find((item) => item.date)?.date || new Date().toISOString().slice(0, 10)
+  const calendarPreview = useMemo(() => {
+    const base = new Date(`${previewMonthKey}T00:00:00`)
+    const year = base.getFullYear()
+    const month = base.getMonth()
+    const first = new Date(year, month, 1)
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+    const offset = first.getDay()
+    const byDate = calendarItems.reduce<Record<string, CalendarScheduleItem[]>>((acc, item) => {
+      if (!item.date) return acc
+      acc[item.date] = [...(acc[item.date] || []), item].sort((a, b) => (a.time || '').localeCompare(b.time || ''))
+      return acc
+    }, {})
+    const cells: Array<{ key: string; day?: number; date?: string; items: CalendarScheduleItem[] }> = []
+    for (let i = 0; i < offset; i += 1) cells.push({ key: `empty-${i}`, items: [] })
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      cells.push({ key: date, day, date, items: byDate[date] || [] })
+    }
+    return cells
+  }, [calendarItems, previewMonthKey])
 
   // Load existing schedule and variable groups
   useEffect(() => {
@@ -75,7 +119,10 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
         const job = resp.jobs.find((j) => j.preset_query_id === presetQueryId) ?? null
         setExistingJob(job)
         if (job) {
-          setCronExpr(job.cron_expression)
+          const loadedType = job.schedule_type === 'calendar' ? 'calendar' : 'cron'
+          setScheduleType(loadedType)
+          setCronExpr(job.cron_expression || '0 9 * * 1')
+          setCalendarItems(job.calendar_items?.length ? job.calendar_items : [defaultCalendarItem()])
           setJobName(job.name)
           setSelectedGroupIds(job.group_names?.length ? job.group_names : [])
         } else {
@@ -116,15 +163,29 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
     })
   }
 
+  const updateCalendarItem = (index: number, patch: Partial<CalendarScheduleItem>) => {
+    setCalendarItems((items) => items.map((item, i) => i === index ? { ...item, ...patch } : item))
+  }
+
+  const addCalendarItem = () => {
+    setCalendarItems((items) => [...items, defaultCalendarItem()])
+  }
+
+  const removeCalendarItem = (index: number) => {
+    setCalendarItems((items) => items.length <= 1 ? items : items.filter((_, i) => i !== index))
+  }
+
   const handleSave = async () => {
-    if (!presetQueryId || !isValidCron || !hasGroupSelection) return
+    if (!presetQueryId || !canSaveSchedule) return
     setIsSaving(true)
     setError(null)
     const groupIds = selectedGroupIds
     try {
       if (existingJob) {
         const updated = await schedulerApi.updateJob(existingJob.id, {
-          cron_expression: cronExpr,
+          schedule_type: scheduleType,
+          cron_expression: scheduleType === 'cron' ? cronExpr : undefined,
+          calendar_items: scheduleType === 'calendar' ? calendarItems : undefined,
           timezone: LOCAL_TIMEZONE,
           name: jobName,
           enabled: true,
@@ -137,7 +198,10 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
           name: jobName,
           entity_type: schedulerEntityType,
           preset_query_id: presetQueryId,
-          cron_expression: cronExpr,
+          workspace_path: workspacePath,
+          schedule_type: scheduleType,
+          cron_expression: scheduleType === 'cron' ? cronExpr : undefined,
+          calendar_items: scheduleType === 'calendar' ? calendarItems : undefined,
           timezone: LOCAL_TIMEZONE,
           enabled: true,
           group_names: groupIds,
@@ -319,61 +383,205 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
                 </div>
               )}
 
-              {/* Cron expression */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
-                    Schedule (cron)
-                  </label>
-                  <a
-                    href="https://crontab.guru/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-0.5 text-xs text-amber-500 hover:text-amber-600 dark:text-amber-400"
+              {/* Schedule type */}
+              {entityType === 'workflow' && (
+                <div className="grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-700/70">
+                  <button
+                    type="button"
+                    onClick={() => setScheduleType('cron')}
+                    className={`flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                      scheduleType === 'cron'
+                        ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-800 dark:text-gray-100'
+                        : 'text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-100'
+                    }`}
                   >
-                    crontab.guru
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
+                    <Clock className="h-3.5 w-3.5" />
+                    Repeating
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleType('calendar')}
+                    className={`flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                      scheduleType === 'calendar'
+                        ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-800 dark:text-gray-100'
+                        : 'text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-100'
+                    }`}
+                  >
+                    <CalendarDays className="h-3.5 w-3.5" />
+                    Calendar
+                  </button>
                 </div>
-                <input
-                  type="text"
-                  value={cronExpr}
-                  onChange={(e) => setCronExpr(e.target.value)}
-                  placeholder="0 2 * * *"
-                  className={`w-full text-sm font-mono px-2 py-1.5 border rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 ${
-                    isValidCron
-                      ? 'border-gray-300 dark:border-gray-600'
-                      : 'border-red-400 dark:border-red-500'
-                  }`}
-                />
-                {cronExpr && (
-                  <p className={`mt-1 text-xs ${isValidCron ? 'text-gray-500 dark:text-gray-400' : 'text-red-500'}`}>
-                    {isValidCron ? `📅 ${cronDescription}` : 'Invalid cron expression'}
-                  </p>
-                )}
-              </div>
+              )}
 
-              {/* Quick picks */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Quick picks
-                </label>
-                <div className="flex flex-wrap gap-1">
-                  {QUICK_PICKS.map((p) => (
-                    <button
-                      key={p.value}
-                      onClick={() => setCronExpr(p.value)}
-                      className={`text-xs px-2 py-0.5 rounded border transition-colors ${
-                        cronExpr === p.value
-                          ? 'bg-amber-100 border-amber-400 text-amber-700 dark:bg-amber-900/30 dark:border-amber-500 dark:text-amber-300'
-                          : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+              {scheduleType === 'cron' ? (
+                <>
+                  {/* Cron expression */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                        Schedule (cron)
+                      </label>
+                      <a
+                        href="https://crontab.guru/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-0.5 text-xs text-amber-500 hover:text-amber-600 dark:text-amber-400"
+                      >
+                        crontab.guru
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                    <input
+                      type="text"
+                      value={cronExpr}
+                      onChange={(e) => setCronExpr(e.target.value)}
+                      placeholder="0 2 * * *"
+                      className={`w-full text-sm font-mono px-2 py-1.5 border rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 ${
+                        isValidCron
+                          ? 'border-gray-300 dark:border-gray-600'
+                          : 'border-red-400 dark:border-red-500'
                       }`}
+                    />
+                    {cronExpr && (
+                      <p className={`mt-1 text-xs ${isValidCron ? 'text-gray-500 dark:text-gray-400' : 'text-red-500'}`}>
+                        {isValidCron ? `Calendar: ${cronDescription}` : 'Invalid cron expression'}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Quick picks */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Quick picks
+                    </label>
+                    <div className="flex flex-wrap gap-1">
+                      {QUICK_PICKS.map((p) => (
+                        <button
+                          key={p.value}
+                          type="button"
+                          onClick={() => setCronExpr(p.value)}
+                          className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                            cronExpr === p.value
+                              ? 'bg-amber-100 border-amber-400 text-amber-700 dark:bg-amber-900/30 dark:border-amber-500 dark:text-amber-300'
+                              : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                      Calendar items
+                    </label>
+                    <button
+                      type="button"
+                      onClick={addCalendarItem}
+                      className="flex items-center gap-1 rounded border border-gray-300 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                     >
-                      {p.label}
+                      <Plus className="h-3 w-3" />
+                      Add
                     </button>
-                  ))}
+                  </div>
+                  <div className="space-y-2">
+                    {calendarItems.map((item, index) => (
+                      <div key={item.id || index} className="rounded-lg border border-gray-200 p-2 dark:border-gray-700">
+                        <div className="grid grid-cols-[1fr_88px_28px] gap-1.5">
+                          <input
+                            type="date"
+                            value={item.date}
+                            onChange={(e) => updateCalendarItem(index, { date: e.target.value })}
+                            className="min-w-0 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                          />
+                          <input
+                            type="time"
+                            value={item.time}
+                            onChange={(e) => updateCalendarItem(index, { time: e.target.value })}
+                            className="min-w-0 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeCalendarItem(index)}
+                            disabled={calendarItems.length <= 1}
+                            className="flex items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-red-500 disabled:opacity-40 dark:hover:bg-gray-700"
+                            title="Remove item"
+                          >
+                            <Minus className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={item.description || ''}
+                          onChange={(e) => updateCalendarItem(index, { description: e.target.value })}
+                          placeholder="Optional note"
+                          className="mt-1.5 w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  {!hasValidCalendarItems && (
+                    <p className="mt-1 text-xs text-red-500">Add at least one item with date and time.</p>
+                  )}
+
+                  <div className="rounded-lg border border-gray-200 p-2 dark:border-gray-700">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                        {monthLabel(previewMonthKey)}
+                      </span>
+                      <span className="text-xs text-gray-400 dark:text-gray-500">
+                        {calendarItems.length} item{calendarItems.length === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-medium text-gray-400 dark:text-gray-500">
+                      {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => (
+                        <div key={`${day}-${index}`}>{day}</div>
+                      ))}
+                    </div>
+                    <div className="mt-1 grid grid-cols-7 gap-1">
+                      {calendarPreview.map((cell) => (
+                        <div
+                          key={cell.key}
+                          className={`min-h-[46px] rounded-md border p-1 text-left ${
+                            cell.day
+                              ? cell.items.length
+                                ? 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30'
+                                : 'border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800'
+                              : 'border-transparent'
+                          }`}
+                        >
+                          {cell.day && (
+                            <>
+                              <div className="text-[10px] font-medium text-gray-500 dark:text-gray-400">
+                                {cell.day}
+                              </div>
+                              <div className="mt-0.5 space-y-0.5">
+                                {cell.items.slice(0, 2).map((item, itemIndex) => (
+                                  <div
+                                    key={`${cell.date}-${item.time}-${itemIndex}`}
+                                    className="truncate rounded bg-amber-200/80 px-1 py-0.5 text-[9px] leading-none text-amber-900 dark:bg-amber-800/70 dark:text-amber-100"
+                                    title={`${item.time}${item.description ? ` - ${item.description}` : ''}`}
+                                  >
+                                    {item.time}
+                                  </div>
+                                ))}
+                                {cell.items.length > 2 && (
+                                  <div className="text-[9px] leading-none text-amber-700 dark:text-amber-300">
+                                    +{cell.items.length - 2}
+                                  </div>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Timezone info */}
               <p className="text-xs text-gray-400 dark:text-gray-500">
@@ -444,7 +652,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
             <div className="flex-1" />
             <button
               onClick={handleSave}
-              disabled={isSaving || !isValidCron || !jobName.trim() || !hasGroupSelection}
+              disabled={isSaving || !canSaveSchedule}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-amber-500 hover:bg-amber-600 text-white rounded-md disabled:opacity-50 transition-colors"
             >
               <Save className="w-3 h-3" />

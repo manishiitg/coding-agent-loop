@@ -78,7 +78,7 @@ type SchedulerService struct {
 	api       *StreamingAPI
 	scheduler gocron.Scheduler
 	mu        sync.Mutex
-	jobIDs    map[string]uuid.UUID // scheduleID → gocron job UUID
+	jobIDs    map[string][]uuid.UUID // scheduleID → gocron job UUIDs
 
 	// In-memory runtime state per schedule (survives within server lifetime, reset on restart)
 	runtimeStates   map[string]*ScheduleRuntimeState
@@ -109,7 +109,7 @@ func (s *SchedulerService) sessionLogf(sctx *ScheduleContext, sessionID string, 
 func NewSchedulerService(api *StreamingAPI) *SchedulerService {
 	return &SchedulerService{
 		api:            api,
-		jobIDs:         make(map[string]uuid.UUID),
+		jobIDs:         make(map[string][]uuid.UUID),
 		runtimeStates:  make(map[string]*ScheduleRuntimeState),
 		workspaceIndex: make(map[string]string),
 		userIndex:      make(map[string]string),
@@ -412,10 +412,12 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 
 	sched := sctx.Schedule
 
-	// Remove existing gocron job if any
-	if existingID, ok := s.jobIDs[sched.ID]; ok {
-		if err := s.scheduler.RemoveJob(existingID); err != nil {
-			s.logf(sctx, "[SCHEDULER] Warning: failed to remove old gocron job for %s: %v", sched.ID, err)
+	// Remove existing gocron jobs if any.
+	if existingIDs, ok := s.jobIDs[sched.ID]; ok {
+		for _, existingID := range existingIDs {
+			if err := s.scheduler.RemoveJob(existingID); err != nil {
+				s.logf(sctx, "[SCHEDULER] Warning: failed to remove old gocron job for %s: %v", sched.ID, err)
+			}
 		}
 		delete(s.jobIDs, sched.ID)
 	}
@@ -441,24 +443,41 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 		}
 	}
 
-	// Build cron expression with an explicit timezone prefix. gocron defaults
-	// unprefixed cron jobs to time.Local, which makes UTC schedules fire in the
-	// server timezone while next_run_at is calculated as UTC.
-	cronExpr := buildScheduleCronExpression(sched.CronExpression, sched.Timezone)
+	scheduleType := scheduleTypeOrDefault(sched.ScheduleType)
+	var nextRun *time.Time
 
-	sctxCopy := *sctx
-	gocronJob, err := s.scheduler.NewJob(
-		gocron.CronJob(cronExpr, false),
-		gocron.NewTask(func() {
-			s.triggerSchedule(&sctxCopy)
-		}),
-		gocron.WithSingletonMode(gocron.LimitModeReschedule),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create gocron job: %w", err)
+	if scheduleType == "calendar" {
+		jobIDs, calendarNextRun, err := s.loadCalendarScheduleJobs(sctx)
+		if err != nil {
+			return err
+		}
+		if len(jobIDs) == 0 {
+			s.logf(sctx, "[SCHEDULER] Calendar schedule %s (%s) has no future items; not registering jobs", sched.ID, sched.Name)
+		} else {
+			s.jobIDs[sched.ID] = jobIDs
+		}
+		nextRun = calendarNextRun
+	} else {
+		// Build cron expression with an explicit timezone prefix. gocron defaults
+		// unprefixed cron jobs to time.Local, which makes UTC schedules fire in the
+		// server timezone while next_run_at is calculated as UTC.
+		cronExpr := buildScheduleCronExpression(sched.CronExpression, sched.Timezone)
+
+		sctxCopy := *sctx
+		gocronJob, err := s.scheduler.NewJob(
+			gocron.CronJob(cronExpr, false),
+			gocron.NewTask(func() {
+				s.triggerSchedule(&sctxCopy)
+			}),
+			gocron.WithSingletonMode(gocron.LimitModeReschedule),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create gocron job: %w", err)
+		}
+
+		s.jobIDs[sched.ID] = []uuid.UUID{gocronJob.ID()}
+		nextRun = getNextRunTime(sched.CronExpression, sched.Timezone)
 	}
-
-	s.jobIDs[sched.ID] = gocronJob.ID()
 
 	// Update workspace index
 	s.workspaceIndexMu.Lock()
@@ -479,7 +498,6 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	}
 
 	// Initialize runtime state with next run
-	nextRun := getNextRunTime(sched.CronExpression, sched.Timezone)
 	state := s.getOrCreateRuntimeState(sched.ID)
 	state.NextRunAt = nextRun
 
@@ -487,9 +505,46 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	if nextRun != nil {
 		nextRunStr = nextRun.Format(time.RFC3339)
 	}
-	s.logf(sctx, "[SCHEDULER] Registered schedule %s (%s) cron=%q timezone=%s next_run=%s",
-		sched.ID, sched.Name, sched.CronExpression, sched.Timezone, nextRunStr)
+	s.logf(sctx, "[SCHEDULER] Registered schedule %s (%s) type=%s cron=%q timezone=%s next_run=%s",
+		sched.ID, sched.Name, scheduleType, sched.CronExpression, sched.Timezone, nextRunStr)
 	return nil
+}
+
+func (s *SchedulerService) loadCalendarScheduleJobs(sctx *ScheduleContext) ([]uuid.UUID, *time.Time, error) {
+	now := time.Now().UTC()
+	jobIDs := []uuid.UUID{}
+	var nextRun *time.Time
+
+	for _, item := range sctx.Schedule.CalendarItems {
+		runAt, err := calendarItemRunTime(sctx.Schedule, item)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !runAt.After(now) {
+			continue
+		}
+		if nextRun == nil || runAt.Before(*nextRun) {
+			runAtCopy := runAt
+			nextRun = &runAtCopy
+		}
+
+		itemCopy := item
+		sctxCopy := *sctx
+		sctxCopy.Schedule = scheduleWithCalendarItem(sctx.Schedule, itemCopy)
+		gocronJob, err := s.scheduler.NewJob(
+			gocron.OneTimeJob(gocron.OneTimeJobStartDateTime(runAt)),
+			gocron.NewTask(func() {
+				s.triggerSchedule(&sctxCopy)
+			}),
+			gocron.WithSingletonMode(gocron.LimitModeReschedule),
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create calendar job for %s at %s: %w", sctx.Schedule.ID, runAt.Format(time.RFC3339), err)
+		}
+		jobIDs = append(jobIDs, gocronJob.ID())
+	}
+
+	return jobIDs, nextRun, nil
 }
 
 // ReloadSchedule reloads a schedule from its manifest after it's been updated.
@@ -531,9 +586,11 @@ func (s *SchedulerService) RemoveJob(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if existingID, ok := s.jobIDs[id]; ok {
-		if err := s.scheduler.RemoveJob(existingID); err != nil {
-			return fmt.Errorf("failed to remove gocron job: %w", err)
+	if existingIDs, ok := s.jobIDs[id]; ok {
+		for _, existingID := range existingIDs {
+			if err := s.scheduler.RemoveJob(existingID); err != nil {
+				return fmt.Errorf("failed to remove gocron job: %w", err)
+			}
 		}
 		delete(s.jobIDs, id)
 	}
@@ -1465,6 +1522,52 @@ func getNextRunTime(cronExpr string, timezone string) *time.Time {
 
 func buildScheduleCronExpression(cronExpr string, timezone string) string {
 	return fmt.Sprintf("CRON_TZ=%s %s", scheduleTimezoneOrDefault(timezone), cronExpr)
+}
+
+func scheduleTypeOrDefault(scheduleType string) string {
+	if scheduleType == "" {
+		return "cron"
+	}
+	return scheduleType
+}
+
+func calendarItemRunTime(sched WorkflowSchedule, item CalendarScheduleItem) (time.Time, error) {
+	loc, err := time.LoadLocation(scheduleTimezoneOrDefault(sched.Timezone))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid timezone %q: %w", sched.Timezone, err)
+	}
+	if item.Date == "" || item.Time == "" {
+		return time.Time{}, fmt.Errorf("calendar item date and time are required")
+	}
+	local, err := time.ParseInLocation("2006-01-02 15:04", item.Date+" "+item.Time, loc)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid calendar item %q %q: expected date YYYY-MM-DD and time HH:MM", item.Date, item.Time)
+	}
+	return local.UTC(), nil
+}
+
+func getNextRunTimeForCalendar(sched WorkflowSchedule) *time.Time {
+	now := time.Now().UTC()
+	var next *time.Time
+	for _, item := range sched.CalendarItems {
+		runAt, err := calendarItemRunTime(sched, item)
+		if err != nil || !runAt.After(now) {
+			continue
+		}
+		if next == nil || runAt.Before(*next) {
+			runAtCopy := runAt
+			next = &runAtCopy
+		}
+	}
+	return next
+}
+
+func scheduleWithCalendarItem(sched WorkflowSchedule, item CalendarScheduleItem) WorkflowSchedule {
+	sched.TriggerPayload = item.TriggerPayload
+	if len(item.Messages) > 0 {
+		sched.Messages = item.Messages
+	}
+	return sched
 }
 
 func ValidateScheduleTimezone(timezone string) error {

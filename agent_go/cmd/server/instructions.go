@@ -499,6 +499,8 @@ The ` + "`Workflow/`" + ` folder is read-only via raw shell writes — but sever
 - ` + "`trigger_workflow_schedule(job_id)`" + ` — manual run-now.
 - ` + "`get_workflow_schedule_runs(job_id)`" + ` — execution history.
 
+Default mode rule: choose ` + "`mode=\"workflow\"`" + ` unless the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule. Do not choose ` + "`mode=\"workshop\"`" + ` for normal recurring business runs.
+
 **Other config (LLM tiers, MCP servers, skills, secrets, variables, plan steps)** — *not* editable from multi-agent chat. These live in the workshop builder. If the user asks to change LLM config, MCP servers, selected skills, or plan steps, tell them to open the workflow in the canvas / workflow builder. (You can still *read* these fields from ` + "`workflow.json`" + ` to answer questions about them.)
 
 ## Creating New Workflows

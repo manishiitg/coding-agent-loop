@@ -5,7 +5,7 @@
 [![Dependency Scan](https://github.com/manishiitg/mcp-agent-builder-go/workflows/Dependency%20Scan/badge.svg)](https://github.com/manishiitg/mcp-agent-builder-go/actions)
 [![Go Version](https://img.shields.io/badge/Go-1.24.4-blue.svg)](https://golang.org/)
 [![React](https://img.shields.io/badge/React-19.1.1-blue.svg)](https://reactjs.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](#license--architecture-foundations)
 
 **AgentForge** is a multi-model agent platform for building, orchestrating, and scheduling AI workflows across coding tools, chat channels, browser automation, and human approvals.
 
@@ -60,9 +60,9 @@ AgentForge is built for teams that want more than a chat box:
 
 ## ⚡ Platform Overview
 
-At the core of AgentForge is the **[workflow system](docs/workflow/README.md)**, a directed acyclic graph (DAG) engine managed through a **[React Flow Canvas](docs/workflow/react_flow_workflow_canvas.md)**.
+At the core of AgentForge is the **[workflow system](docs/workflow/README.md)**, a directed step-based workflow runtime managed through the visual workflow builder.
 
-Design complex workflows visually, then run them with a 7-phase execution pipeline and 13 specialized node types for planning, routing, evaluation, loops, human input, and execution settings.
+Design complex workflows visually, refine them through the interactive builder, then run them with step-level configuration, tiered LLM selection, deterministic pre-validation, evaluation runs, scheduling, cost tracking, and persistent run data.
 
 ### 🧠 Learning, Validation, and Observability
 Move beyond static prompts with built-in optimization, validation, and run visibility.
@@ -71,13 +71,17 @@ Move beyond static prompts with built-in optimization, validation, and run visib
 - **[Deterministic Pre-Validation](docs/workflow/pre_validation_guide.md):** A high-speed, code-based validation layer that uses JSON schemas and consistency rules to verify artifacts with zero token cost and absolute precision.
 - **[Evaluation & Benchmarking](docs/workflow/evaluation_system.md):** A dedicated testing suite that executes workflows in isolated environments to generate performance, cost, and accuracy metrics—essential for production readiness.
 - **[Continuous Observability](docs/workflow/workflow_monitoring.md):** Execution logs, costs, evaluation reports, learnings, and run history across workflow, run-folder, and scheduled-run views.
+- **[Cost and Log Measurement](docs/workflow/cost_and_log_measurement.md):** Token usage, model cost, and execution logs are tracked across workflow phases, runs, steps, and models.
+- **[Persistent Stores](docs/workflow/persistent_stores_design.md):** Workflows can persist structured run data for reports, knowledgebase updates, and follow-up analysis.
 - **[Swarm Delegation](docs/multiagent/sub_agent_delegation.md):** Empower your primary agent to dynamically spawn independent sub-agents, parallelizing complex research, coding, or data extraction tasks across a distributed swarm.
 - **[Task Orchestration](docs/workflow/todo-task-step-type.md):** Intelligent sub-task routing that manages state, dependencies, and context windows automatically.
 
 ### 🛡️ Security and Guardrails
 Deploy with deterministic controls designed for strict environments.
-- **[Zero-Trust Workspace (FolderGuard)](docs/core/multi_user_authentication.md):** Strict per-user filesystem isolation utilizing Linux namespaces. Agents operate in sandboxed environments, preventing cross-tenant data contamination.
-- **[Restricted Configuration Mode](docs/core/env-api-key-defaults.md):** Lock down the entire UI. Force the engine to route through environment-injected API keys (`LLM_CONFIG_LOCKED`), guaranteeing secrets never touch the browser.
+- **[FolderGuard](docs/core/folder_guard_system.md):** Runtime read/write validation wraps workspace tools so agents only touch the folders each mode or step is allowed to access.
+- **[Multi-User Authentication & Workspace Isolation](docs/core/multi_user_authentication.md):** Per-user workspace isolation, user-scoped paths, and sandboxed shell execution protect users from cross-tenant contamination.
+- **[Secrets](docs/core/secrets.md):** Securely inject credentials into agent queries, workflow steps, and delegated agents without exposing them in chat history or logs.
+- **[Restricted Configuration Mode](docs/core/env-api-key-defaults.md):** Optionally lock provider/model configuration so the server uses environment-injected API keys (`LLM_CONFIG_LOCKED`) and secrets never reach the browser.
 - **[Secure MCP OAuth](docs/core/oauth.md):** Seamless, auto-discovering OAuth 2.0 flows for connecting enterprise MCP servers safely.
 
 ### 👁️ Automation, Connectors, and Browser Control
@@ -85,7 +89,9 @@ Connect agents to real systems and communication channels.
 - **[Google Workspace (GWS)](docs/core/google_workspace_integration.md):** Native CLI injection grants agents deterministic, scoped access to Gmail, Drive, Calendar, Docs, and Sheets.
 - **[Vercel Agent-Browser](https://github.com/vercel-labs/agent-browser):** High-level browser automation engine used for complex web interactions, DOM analysis, and visual grounding.
 - **[Browser System](docs/core/browser.md):** Covers browser session management, runtime limits, and browser integration patterns across providers.
-- **[Bot Connectors](docs/core/bot_connector_system.md):** Expose your specialized agent swarms directly to Slack, Discord, or custom webhooks.
+- **[Bot Connectors](docs/core/bot_connector_system.md):** Expose specialized agent sessions through Slack, WhatsApp, the web simulator, and custom connector surfaces.
+- **[Workflow Scheduling](docs/workflow/workflow_scheduling.md):** Run workflows on recurring schedules with history, routing, and run-state tracking.
+- **[Native Workspace Mode](docs/core/native_workspace_mode.md):** Run workspace operations directly against local folders when native execution is preferred over containerized workspace mode.
 
 ### 🤝 Human-in-the-Loop Operations
 Keep operators involved when workflows need approval, intervention, or additional input.
@@ -98,17 +104,15 @@ Keep operators involved when workflows need approval, intervention, or additiona
 
 ---
 
-### 🧩 Supported Providers and Models
+### 🧩 LLM Configuration and Providers
 
-AgentForge is provider-agnostic, so you can combine different models across different workflow steps:
+AgentForge is provider-agnostic. Users configure published LLMs in the UI, then assign them to chat sessions, workflow phases, and workflow tiers.
 
-*   **OpenAI**: GPT-4o, GPT-4-turbo, and the O1 series.
-*   **Anthropic**: Full support for the Claude 3.5 & 4 series (Sonnet, Opus, Haiku).
-*   **Google Gemini**: Integration via Vertex AI or Google AI Studio (Flash, Pro, Ultra).
-*   **AWS Bedrock**: Enterprise-grade access to Llama, Claude, and Mistral models.
-*   **Azure AI Foundry**: Optimized support for Azure OpenAI, including specialized **Responses API** routing for agentic models like `gpt-5.2-codex`.
-*   **MiniMax**: Support for high-performance MiniMax models.
-*   **OpenRouter**: Unified access to 200+ open-source and frontier models with a single API key.
+- **[LLM Configuration & Resilience](docs/core/llm_configuration_and_resilience.md):** Published LLMs carry provider, model, API key, temperature, and model-specific options; the backend does not require provider keys at startup in the default mode.
+- **[Tiered LLM Allocation](docs/workflow/tiered_llm_allocation.md):** Workflow steps can use tiered model selection, with separate phase LLM configuration for planning, builder, evaluation, and debugging-style phase work.
+- **[Azure AI Foundry](docs/core/azure_foundry_integration.md):** Azure OpenAI and Responses API routing are supported for newer agentic model deployments.
+- **[Environment-Based Defaults](docs/core/env-api-key-defaults.md):** Optional defaults and locked server-side configuration are available for managed deployments.
+- Providers include OpenAI-compatible endpoints, Anthropic, Google Gemini/Vertex, AWS Bedrock, Azure AI Foundry, MiniMax, OpenRouter, and local/CLI-backed agent integrations.
 
 #### 🛠️ Local CLI Agents
 Bring your existing CLI-based coding agents into the visual orchestrator via the **[MCP Bridge Layer](docs/core/mcp_bridge_layer.md)**:
@@ -269,7 +273,7 @@ cd agent_go && go test ./...
 
 ## 📄 License & Architecture Foundations
 
-Licensed under the MIT License - see the [LICENSE](LICENSE) file.
+Licensed under the MIT License.
 
 **Built Upon:**
 - **[Model Context Protocol (MCP)](https://modelcontextprotocol.io/):** The universal standard for AI tool integration.

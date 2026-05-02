@@ -203,7 +203,7 @@ export function extractWorkflowInfo(events: PollingEvent[]): WorkflowEventInfo {
 /**
  * Check if events contain workflow completion events.
  *
- * Note: Only workflow_end and unified_completion indicate true workflow completion.
+ * Note: Only workflow-level end events indicate true workflow completion.
  * agent_end and conversation_end are NOT completion events as workflows have multiple
  * agent calls and each agent has its own conversation.
  *

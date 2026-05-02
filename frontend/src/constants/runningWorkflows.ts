@@ -68,7 +68,7 @@ export const STORAGE_KEYS = {
  */
 export const EVENT_TYPES = {
   /** Events that indicate workflow completion */
-  COMPLETION: ['workflow_end', 'unified_completion'] as const,
+  COMPLETION: ['workflow_end', 'orchestrator_end', 'batch_execution_end'] as const,
   /** Events that indicate workflow errors (fatal) */
   ERROR: ['orchestrator_error', 'workflow_error'] as const,
   /** Important events that should always be retained during cleanup */

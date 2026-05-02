@@ -46,13 +46,13 @@ type WorkflowManifest struct {
 
 // WorkflowCapabilities stores workflow-wide agent and tool configuration.
 type WorkflowCapabilities struct {
-	SelectedServers           []string                  `json:"selected_servers"`
-	SelectedTools             []string                  `json:"selected_tools"`
-	SelectedSkills            []string                  `json:"selected_skills"`
-	SelectedSecrets           []string                  `json:"selected_secrets"`
-	SelectedGlobalSecretNames *[]string                 `json:"selected_global_secret_names"` // nil = all, [] = none
-	BrowserMode               string                    `json:"browser_mode"`
-	UseCodeExecutionMode      bool                      `json:"use_code_execution_mode"`
+	SelectedServers           []string                       `json:"selected_servers"`
+	SelectedTools             []string                       `json:"selected_tools"`
+	SelectedSkills            []string                       `json:"selected_skills"`
+	SelectedSecrets           []string                       `json:"selected_secrets"`
+	SelectedGlobalSecretNames *[]string                      `json:"selected_global_secret_names"` // nil = all, [] = none
+	BrowserMode               string                         `json:"browser_mode"`
+	UseCodeExecutionMode      bool                           `json:"use_code_execution_mode"`
 	LLMConfig                 *workflowtypes.PresetLLMConfig `json:"llm_config,omitempty"`
 }
 
@@ -73,20 +73,31 @@ type WorkflowOwnership struct {
 	EmployeeID *string `json:"employee_id"`
 }
 
-// WorkflowSchedule represents a cron schedule stored in the manifest.
+// WorkflowSchedule represents a cron or calendar schedule stored in the manifest.
 type WorkflowSchedule struct {
-	ID             string          `json:"id"`
-	Name           string          `json:"name"`
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	Description    string                 `json:"description,omitempty"`
+	ScheduleType   string                 `json:"schedule_type,omitempty"` // "cron" (default) or "calendar"
+	CronExpression string                 `json:"cron_expression"`
+	Timezone       string                 `json:"timezone"`
+	Enabled        bool                   `json:"enabled"`
+	TriggerPayload json.RawMessage        `json:"trigger_payload,omitempty"`
+	CalendarItems  []CalendarScheduleItem `json:"calendar_items,omitempty"`
+	GroupNames     []string               `json:"group_names,omitempty"`
+	Mode           string                 `json:"mode,omitempty"`          // "workflow" (default/orchestrator), "workshop" (LLM-driven), or "multi-agent"
+	Messages       []string               `json:"messages,omitempty"`      // Predefined message queue for workshop mode (sent one-by-one)
+	WorkshopMode   string                 `json:"workshop_mode,omitempty"` // Workshop builder mode for scheduled runs: "run" (default) or "optimizer" (legacy "ask"/"runner"/"debugger" auto-migrated to "run")
+	Query          string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
+}
+
+type CalendarScheduleItem struct {
+	ID             string          `json:"id,omitempty"`
+	Date           string          `json:"date"` // YYYY-MM-DD in schedule timezone
+	Time           string          `json:"time"` // HH:MM in schedule timezone
 	Description    string          `json:"description,omitempty"`
-	CronExpression string          `json:"cron_expression"`
-	Timezone       string          `json:"timezone"`
-	Enabled        bool            `json:"enabled"`
 	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
-	GroupNames     []string        `json:"group_names,omitempty"`
-	Mode           string          `json:"mode,omitempty"`          // "workflow" (default/orchestrator), "workshop" (LLM-driven), or "multi-agent"
-	Messages       []string        `json:"messages,omitempty"`      // Predefined message queue for workshop mode (sent one-by-one)
-	WorkshopMode   string          `json:"workshop_mode,omitempty"` // Workshop builder mode for scheduled runs: "run" (default) or "optimizer" (legacy "ask"/"runner"/"debugger" auto-migrated to "run")
-	Query          string          `json:"query,omitempty"`         // Message to execute (multi-agent mode)
+	Messages       []string        `json:"messages,omitempty"`
 }
 
 // --- Validation ---
@@ -125,8 +136,11 @@ func ValidateManifest(m *WorkflowManifest) error {
 		if sched.ID == "" {
 			return fmt.Errorf("schedules[%d].id is required", i)
 		}
-		if sched.CronExpression == "" {
+		if scheduleTypeOrDefault(sched.ScheduleType) == "cron" && sched.CronExpression == "" {
 			return fmt.Errorf("schedules[%d].cron_expression is required", i)
+		}
+		if scheduleTypeOrDefault(sched.ScheduleType) == "calendar" && len(sched.CalendarItems) == 0 {
+			return fmt.Errorf("schedules[%d].calendar_items is required for calendar schedules", i)
 		}
 		// group_names required for workflow/workshop modes, not for multi-agent
 		if sched.Mode != "multi-agent" && len(normalizeScheduleGroupNames(sched.GroupNames)) == 0 {

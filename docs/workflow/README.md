@@ -13,23 +13,22 @@ These docs cover workflow design, execution, and workflow-scoped runtime behavio
 ## Files
 
 - `auto_improvement_framework.md` — measurable, auditable, overridable workflow improvement: types, metrics, experiment loop, oversight modes
-- `cost_and_log_measurement.md`
-- `evaluation_system.md`
-- `how_workflows_work.md`
-- `human_feedback_system.md`
-- `iteration_run_folder_architecture.md`
-- `learn_code_flow.md`
-- `learning_architecture.md`
-- `pre_validation_guide.md`
-- `prompt-fixes-2026-03-24.md`
-- `runtime_mcp_overrides.md`
-- `step_config_format_specification.md`
-- `tiered_llm_allocation.md`
-- `todo-task-step-type.md`
-- `tool_filtering_system.md`
-- `workflow_manifest_architecture.md`
-- `workflow_builder_interactive.md`
-- `workflow_builder_commands_and_tools.md`
-- `workflow_monitoring.md`
-- `workflow_scheduling.md`
-- `workflow_shell_working_directory.md`
+- `browser_automation.md` — durable selector and browser-discovery guidance for workflow browser steps
+- `cost_and_log_measurement.md` — token usage, cost files, phase/run aggregation, and log storage
+- `evaluation_system.md` — workflow evaluation runs, eval step execution, and scoring reports
+- `human_feedback_system.md` — human-in-the-loop requests, UI responses, and Slack notification fallback
+- `iteration_run_folder_architecture.md` — run folder layout and iteration/run isolation
+- `learn_code_flow.md` — learn-code and code-execution modes
+- `learning_architecture.md` — global workflow skill, step-level learning metadata, and saved scripts
+- `persistent_stores_design.md` — workflow `db/`, report views, knowledgebase updates, and structured persistent outputs
+- `pre_validation_guide.md` — deterministic pre-validation schemas and consistency checks
+- `step_config_format_specification.md` — `step_config.json` schema and step-level runtime configuration
+- `tiered_llm_allocation.md` — tiered model selection and phase LLM allocation
+- `todo-task-step-type.md` — todo-task orchestration step behavior
+- `tool_filtering_system.md` — workflow tool filtering and runtime tool availability
+- `workflow_builder_commands_and_tools.md` — builder slash commands, privileged tools, and audit flows
+- `workflow_builder_interactive.md` — workflow phase chat and interactive builder internals
+- `workflow_manifest_architecture.md` — manifest format, cleaning rules, and workspace state
+- `workflow_monitoring.md` — run history, costs, reports, and monitoring surfaces
+- `workflow_scheduling.md` — scheduled workflow execution, routing, and history
+- `workflow_shell_working_directory.md` — shell working directories and FolderGuard scope during workflow runs

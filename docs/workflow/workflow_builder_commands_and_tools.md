@@ -190,9 +190,9 @@ In addition to the always-available base tools:
 
 ---
 
-## Reporting Mode
+## Reporting Surface
 
-Focused surface for the live report — widgets, themes, layouts. When the underlying `db/` data is missing, individual steps can be re-run to populate it. No plan/config mutations, no optimizer-level hardening.
+Report authoring is available in Builder and Optimizer. Builder can design the report alongside workflow structure; Optimizer can keep the report aligned with run/eval/metric evidence. The legacy Reporting mode remains for compatibility.
 
 ### Slash Commands
 
@@ -208,7 +208,7 @@ In addition to the always-available base tools:
 |---|---|
 | Execution | `execute_step`, `query_step`, `stop_step`, `stop_all_executions`, `list_executions`, `run_in_background`, `run_full_workflow`, `debug_step` |
 | Review (read-only) | `review_plan`, `review_workflow_results`, `review_workflow_timing`, `review_workflow_costs` |
-| Reporting | `get_reporting_capabilities`, `validate_report_plan`, `preview_report_render`, plus the report-widget mutation tools (e.g. `move_report_widget` and the widget add/update set) |
+| Reporting | `get_report_plan`, `upsert_report_widget`, `remove_report_widget`, `move_report_widget`, `toggle_report_widget`, `set_report_theme`, `set_section_layout`, `validate_report_plan`, `preview_report_render` |
 
 ---
 

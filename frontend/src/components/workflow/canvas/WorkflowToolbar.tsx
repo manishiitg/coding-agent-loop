@@ -14,7 +14,7 @@ import {
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { useChatStore } from '../../../stores/useChatStore'
-import type { VariablesManifest } from '../../../services/api-types'
+import type { ActiveSessionInfo, VariablesManifest } from '../../../services/api-types'
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
@@ -38,6 +38,17 @@ import {
 const EXECUTION_PHASE_ID = 'execution'
 const EVAL_EXECUTION_PHASE_ID = 'evaluation-execution'
 
+const isActiveRuntimeSession = (session?: ActiveSessionInfo | null): boolean => {
+  if (!session) return false
+  const status = (session.status || '').toLowerCase()
+  return status === 'running' ||
+    status === 'paused' ||
+    status === 'waiting' ||
+    status === 'waiting_feedback' ||
+    status === 'idle' ||
+    session.has_running_background_agents === true ||
+    (session.running_background_agent_count ?? 0) > 0
+}
 
 interface WorkflowToolbarProps {
   status: WorkflowExecutionStatus
@@ -199,6 +210,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   const {
     activeWorkflowTab,
+    activeWorkflowRuntimeSession,
     setTabStreaming,
     setTabHasRunningBgAgents,
   } = useChatStore(useShallow(state => {
@@ -208,16 +220,23 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       activeTab.metadata?.presetQueryId === presetQueryId
         ? activeTab
         : null
+    const activeWorkflowRuntimeSession = state.activeSessionsCache.find(session => {
+      if (presetQueryId && session.preset_query_id === presetQueryId) return true
+      if (workspacePath && session.workspace_path === workspacePath) return true
+      return false
+    })
 
     return {
       activeWorkflowTab,
+      activeWorkflowRuntimeSession,
       setTabStreaming: state.setTabStreaming,
       setTabHasRunningBgAgents: state.setTabHasRunningBgAgents,
     }
   }))
-  const activeWorkflowSessionId = activeWorkflowTab?.sessionId ?? null
+  const activeWorkflowSessionId = activeWorkflowTab?.sessionId ?? activeWorkflowRuntimeSession?.session_id ?? null
   const { data: activeWorkflowExecutionTree } = useSessionExecutionTree(activeWorkflowSessionId, !!activeWorkflowSessionId)
-  const backendWorkflowDisplayStatus = activeWorkflowExecutionTree?.summary.display_status ?? null
+  const runtimeDisplayStatus = isActiveRuntimeSession(activeWorkflowRuntimeSession) ? 'busy' : null
+  const backendWorkflowDisplayStatus = runtimeDisplayStatus ?? activeWorkflowExecutionTree?.summary.display_status ?? null
 
   // Load saved settings when preset changes
   useEffect(() => {

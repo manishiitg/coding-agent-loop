@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, ChevronDown, Clock, Loader2 } from 'lucide-react'
+import { AlertCircle, Clock, Loader2 } from 'lucide-react'
 import type { ActiveSessionInfo, RunningWorkflowInfo, SessionExecutionTreeNode } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
@@ -167,6 +167,10 @@ function compactHeaderLabel(
 
 function countLabel(count: number, singular: string, plural = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : plural}`
+}
+
+function shortWorkflowHeaderName(name: string): string {
+  return name.trim().slice(0, 5) || 'flow'
 }
 
 function hasWorkflowIdentity(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo): boolean {
@@ -393,20 +397,6 @@ export const GlobalActivityMonitor: React.FC = () => {
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [open])
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
-      if (event.key.toLowerCase() !== 'i') return
-
-      event.preventDefault()
-      event.stopPropagation()
-      setOpen(value => !value)
-    }
-
-    document.addEventListener('keydown', onKeyDown, true)
-    return () => document.removeEventListener('keydown', onKeyDown, true)
-  }, [])
-
   const activeSessions = useMemo(() => {
     const bySession = new Map<string, ActiveSessionInfo>()
 
@@ -476,11 +466,29 @@ export const GlobalActivityMonitor: React.FC = () => {
     ? currentWorkflowPresetName
     : null
   const primaryTone = primarySession ? statusTone(primarySession, primaryWorkflow) : 'running'
+  const workflowHeaderNames = sortedSessions
+    .filter(isWorkflowSession)
+    .slice(0, 3)
+    .map(session => shortWorkflowHeaderName(workflowDisplayName(
+      session,
+      runningWorkflowsBySession[session.session_id],
+      selectedModeCategory === 'workflow' ? currentWorkflowPresetName : null,
+    )))
+  const workflowHeaderLabel = workflowHeaderNames.length > 0
+    ? `${workflowHeaderNames.join(' · ')}${workflowCount > workflowHeaderNames.length ? ` +${workflowCount - workflowHeaderNames.length}` : ''}`
+    : countLabel(workflowCount, 'workflow')
   const headerLabel = inputCount > 0
-    ? `${countLabel(inputCount, 'needs input', 'need input')} · ${countLabel(visibleSessions.length, 'active')}`
+    ? `${workflowHeaderLabel}${chatCount > 0 ? ` · ${countLabel(chatCount, 'chat')}` : ''} · ${countLabel(inputCount, 'needs input', 'need input')}`
     : workflowCount > 0
-      ? `${countLabel(workflowCount, 'workflow')}${chatCount > 0 ? ` · ${countLabel(chatCount, 'chat')}` : ''}`
+      ? `${workflowHeaderLabel}${chatCount > 0 ? ` · ${countLabel(chatCount, 'chat')}` : ''}`
       : countLabel(visibleSessions.length, 'active')
+
+  const openActiveWorkInQuickSwitcher = useCallback(() => {
+    setOpen(false)
+    window.dispatchEvent(new CustomEvent('open-quick-switcher', {
+      detail: { query: '@active ' },
+    }))
+  }, [])
 
   const handleOpenSession = useCallback(async (session: ActiveSessionInfo) => {
     const chatStore = useChatStore.getState()
@@ -573,11 +581,10 @@ export const GlobalActivityMonitor: React.FC = () => {
     <div ref={containerRef} className="relative">
       <button
         type="button"
-        onClick={() => setOpen(value => !value)}
+        onClick={openActiveWorkInQuickSwitcher}
         className="relative flex items-center gap-2 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-700/50 dark:bg-blue-900/20 dark:text-blue-200 dark:hover:bg-blue-900/35"
-        aria-expanded={open}
-        aria-label="Open running work activity"
-        title="Active work is also searchable in Ctrl+K"
+        aria-label="Open active work in command center"
+        title="Open active work in Ctrl+K"
       >
         <span className={`h-2 w-2 rounded-full ${statusDotClasses(primaryTone)}`} />
         {primaryTone === 'needs-input' ? (
@@ -590,10 +597,9 @@ export const GlobalActivityMonitor: React.FC = () => {
             ? compactHeaderLabel(primarySession, primaryTab, primaryWorkflow, primaryWorkflowFallbackName)
             : headerLabel}
         </span>
-        <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {open && (
+      {false && open && (
         <div className="absolute right-0 top-full mt-2 w-[460px] max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900 z-50 overflow-hidden">
           <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center justify-between gap-3">

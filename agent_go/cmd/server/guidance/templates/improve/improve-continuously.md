@@ -91,7 +91,7 @@ DIRECT MODE (when metrics.json is empty):
 
 ALWAYS:
 - improve the evaluation plan when objective/success-criteria coverage is weak or misleading (this is exempt from the experiment gate — eval definition isn't a workflow change)
-- do not edit reports/report_plan.json from this optimizer schedule. If report layout or widgets need changes, log that follow-up and tell the user to switch to Builder mode.
+- report layout/widgets may be maintained from Optimizer when report quality is part of the requested recurring job or when prior builder/improve.md / builder/review.md entries explicitly queue report work. Use report-plan tools (`get_report_plan`, `upsert_report_widget`, `validate_report_plan`, `preview_report_render`), not shell/direct file writes.
 - update builder/improve.md with: timestamp, mode used, evidence reviewed, what was opened (experiment_id) or applied, what was deferred and why, remaining gaps, next hypotheses{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 - if schedules were updated, include the schedule ids, old cadence/group scope, new cadence/group scope, and why the change was made in builder/improve.md
 - when this scheduled fire applies a change that addresses a finding from builder/review.md or a queued proposal in builder/improve.md, follow the resolution-discipline rules in the system prompt: scan for matching `F-...` / `I-...` ids, append `**[RESOLVED YYYY-MM-DD — <how>]**` markers inline after the original entries, and include `linked_review_finding` / `linked_improve_entry` in the experiment payload (EXPERIMENT MODE) or the builder/decisions.jsonl entry (DIRECT MODE).

@@ -4832,7 +4832,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered evaluation validation tool in %s", workflowPhaseID)
 					}
 
-					if phaseTemplateVars["WorkshopMode"] == "builder" || phaseTemplateVars["WorkshopMode"] == "reporting" {
+					if phaseTemplateVars["WorkshopMode"] == "builder" || phaseTemplateVars["WorkshopMode"] == "optimizer" || phaseTemplateVars["WorkshopMode"] == "reporting" {
 						// Reporting tools: JSON report-plan read/write tools plus validation and
 						// preview against real db/*.json / knowledgebase/*.json sources. The renderer
 						// silently drops bad widgets, so validation stays in the loop.
@@ -8488,6 +8488,55 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				nextRunStr = nextRun.Format(time.RFC3339)
 			}
 			return fmt.Sprintf("Schedule created and activated.\n- **ID**: `%s`\n- **Name**: %s\n- **Cron**: `%s`\n- **Timezone**: %s\n- **Next Run**: %s", newSched.ID, name, cronExpr, timezone, nextRunStr), nil
+		},
+		CreateCalendarSchedule: func(ctx context.Context, workspacePath, name, timezone string, groupNames []string, calendarItemsJSON string, mode string, messages []string, workshopMode string) (string, error) {
+			if err := ValidateScheduleTimezone(timezone); err != nil {
+				return "", err
+			}
+			var calendarItems []CalendarScheduleItem
+			if err := json.Unmarshal([]byte(calendarItemsJSON), &calendarItems); err != nil {
+				return "", fmt.Errorf("invalid calendar_items JSON: %w", err)
+			}
+			calendarItems = normalizeCalendarScheduleItems(calendarItems)
+			if err := validateScheduleRequest("calendar", "", calendarItems); err != nil {
+				return "", err
+			}
+			manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
+			if err != nil || !found {
+				return "", fmt.Errorf("workflow manifest not found at %s", workspacePath)
+			}
+			groupNames, err = validateScheduleGroupNamesForWorkspace(ctx, workspacePath, groupNames)
+			if err != nil {
+				return "", err
+			}
+			newSched := WorkflowSchedule{
+				ID:            generateScheduleID(),
+				Name:          name,
+				ScheduleType:  "calendar",
+				Timezone:      timezone,
+				CalendarItems: calendarItems,
+				GroupNames:    groupNames,
+				Enabled:       true,
+				Mode:          mode,
+				Messages:      messages,
+				WorkshopMode:  workshopMode,
+			}
+			manifest.Schedules = append(manifest.Schedules, newSched)
+			if err := WriteWorkflowManifest(ctx, workspacePath, manifest); err != nil {
+				return "", fmt.Errorf("failed to write manifest: %w", err)
+			}
+			if api.scheduler != nil {
+				sctx := buildScheduleContext(workspacePath, manifest, newSched)
+				if err := api.scheduler.LoadSchedule(sctx); err != nil {
+					return fmt.Sprintf("Calendar schedule created (ID: %s) but failed to activate: %v", newSched.ID, err), nil
+				}
+			}
+			nextRun := getNextRunTimeForCalendar(newSched)
+			nextRunStr := "unknown"
+			if nextRun != nil {
+				nextRunStr = nextRun.Format(time.RFC3339)
+			}
+			return fmt.Sprintf("Calendar schedule created and activated.\n- **ID**: `%s`\n- **Name**: %s\n- **Items**: %d\n- **Timezone**: %s\n- **Next Run**: %s", newSched.ID, name, len(calendarItems), timezone, nextRunStr), nil
 		},
 		UpdateSchedule: func(ctx context.Context, jobID, name, cronExpr, timezone string, groupNames []string, setGroupNames bool, enabled *bool, mode string, messages []string, workshopMode string) (string, error) {
 			if cronExpr != "" {

@@ -598,6 +598,7 @@ function App() {
   const [contentCopied, setContentCopied] = useState(false)
   const [slackCopied, setSlackCopied] = useState(false)
   const [showQuickSwitcher, setShowQuickSwitcher] = useState(false)
+  const [quickSwitcherInitialQuery, setQuickSwitcherInitialQuery] = useState('')
   const markdownContentRef = useRef<HTMLDivElement>(null)
   
   // Ref to prevent duplicate default tab creation (React StrictMode runs effects twice)
@@ -605,6 +606,17 @@ function App() {
 
   
   const { clearActivePreset, applyPreset, getActivePreset } = useGlobalPresetStore()
+
+  useEffect(() => {
+    const handleOpenQuickSwitcher = (event: Event) => {
+      const detail = (event as CustomEvent<{ query?: string }>).detail
+      setQuickSwitcherInitialQuery(detail?.query || '')
+      setShowQuickSwitcher(true)
+    }
+
+    window.addEventListener('open-quick-switcher', handleOpenQuickSwitcher)
+    return () => window.removeEventListener('open-quick-switcher', handleOpenQuickSwitcher)
+  }, [])
 
   // Initialize editedContent when entering edit mode
   useEffect(() => {
@@ -1215,6 +1227,7 @@ function App() {
       // Ctrl/Cmd + K for the global quick switcher
       if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
         event.preventDefault()
+        setQuickSwitcherInitialQuery('')
         setShowQuickSwitcher(prev => !prev)
         return
       }
@@ -1289,6 +1302,7 @@ function App() {
             <QuickSwitcher
               isOpen={showQuickSwitcher}
               onClose={() => setShowQuickSwitcher(false)}
+              initialQuery={quickSwitcherInitialQuery}
             />
 
             {/* Global Mode & Preset Bar - only above middle content area, not sidebars */}

@@ -69,7 +69,7 @@ var allKinds = map[string]kindMeta{
 	"improve-workflow":        {Group: "improve", Description: "Unified plan + KB + learnings improvement (EXPERIMENT MODE when metrics defined)", Modes: []string{"optimizer"}},
 	"improve-eval":            {Group: "improve", Description: "Evaluation plan changes (rubric edits gated against active experiments)", Modes: []string{"optimizer"}},
 	"improve-continuously":    {Group: "improve", Description: "Set up recurring run + optimizer schedules", Modes: []string{"optimizer"}},
-	"report-improve":          {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"builder", "reporting"}},
+	"report-improve":          {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"builder", "optimizer", "reporting"}},
 
 	// Experiment lifecycle
 	"propose-experiment": {Group: "experiment", Description: "Focused experiment opener: pick metric(s), formulate hypothesis, call propose_experiment", Modes: []string{"optimizer"}},

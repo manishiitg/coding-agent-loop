@@ -1816,18 +1816,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
 
   // Synthetic Turn Ready Event (shown when a background task has completed and results are being processed)
   if (event.type === 'synthetic_turn_ready') {
-    return (
-      <CompactWrapper compact={compact}>
-        <div className={`bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
-          <div className="flex items-center gap-2">
-            <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-            <span className={`${compact ? 'text-xs' : 'text-sm'} text-blue-700 dark:text-blue-300`}>
-              Processing results...
-            </span>
-          </div>
-        </div>
-      </CompactWrapper>
-    )
+    return null
   }
 
   // Learn Code Script Execution Event

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,34 +16,36 @@ import (
 // ScheduledJobResponse is the API response for a scheduled job.
 // Designed to be backward-compatible with the old DB-based ScheduledJob shape.
 type ScheduledJobResponse struct {
-	ID                  string          `json:"id"`
-	Name                string          `json:"name"`
-	Description         string          `json:"description"`
-	EntityType          string          `json:"entity_type"` // "workflow" or "multi-agent"
-	WorkspacePath       string          `json:"workspace_path"`
-	WorkflowID          string          `json:"workflow_id,omitempty"`
-	WorkflowLabel       string          `json:"workflow_label,omitempty"`
-	PresetQueryID       string          `json:"preset_query_id,omitempty"` // empty — kept for frontend compat
-	TriggerPayload      json.RawMessage `json:"trigger_payload,omitempty"`
-	GroupNames          []string        `json:"group_names,omitempty"`
-	Mode                string          `json:"mode,omitempty"`          // "workflow", "workshop", or "multi-agent"
-	Messages            []string        `json:"messages,omitempty"`      // Predefined messages for workshop mode
-	WorkshopMode        string          `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
-	Query               string          `json:"query,omitempty"`         // Message to execute (multi-agent mode)
-	UserID              string          `json:"user_id,omitempty"`       // User context (multi-agent mode)
-	CronExpression      string          `json:"cron_expression"`
-	Timezone            string          `json:"timezone"`
-	Enabled             bool            `json:"enabled"`
-	LastRunAt           *time.Time      `json:"last_run_at,omitempty"`
-	NextRunAt           *time.Time      `json:"next_run_at,omitempty"`
-	LastSessionID       string          `json:"last_session_id,omitempty"`
-	LastStatus          string          `json:"last_status,omitempty"`
-	LastError           string          `json:"last_error,omitempty"`
-	LastDurationMs      *int64          `json:"last_duration_ms,omitempty"`
-	RunCount            int             `json:"run_count"`
-	ConsecutiveFailures int             `json:"consecutive_failures"`
-	MissedRunCount      int             `json:"missed_run_count,omitempty"`
-	LatestMissedRunAt   *time.Time      `json:"latest_missed_run_at,omitempty"`
+	ID                  string                 `json:"id"`
+	Name                string                 `json:"name"`
+	Description         string                 `json:"description"`
+	EntityType          string                 `json:"entity_type"` // "workflow" or "multi-agent"
+	WorkspacePath       string                 `json:"workspace_path"`
+	WorkflowID          string                 `json:"workflow_id,omitempty"`
+	WorkflowLabel       string                 `json:"workflow_label,omitempty"`
+	PresetQueryID       string                 `json:"preset_query_id,omitempty"` // empty — kept for frontend compat
+	TriggerPayload      json.RawMessage        `json:"trigger_payload,omitempty"`
+	GroupNames          []string               `json:"group_names,omitempty"`
+	Mode                string                 `json:"mode,omitempty"`          // "workflow", "workshop", or "multi-agent"
+	Messages            []string               `json:"messages,omitempty"`      // Predefined messages for workshop mode
+	WorkshopMode        string                 `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
+	Query               string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
+	UserID              string                 `json:"user_id,omitempty"`       // User context (multi-agent mode)
+	ScheduleType        string                 `json:"schedule_type,omitempty"`
+	CalendarItems       []CalendarScheduleItem `json:"calendar_items,omitempty"`
+	CronExpression      string                 `json:"cron_expression"`
+	Timezone            string                 `json:"timezone"`
+	Enabled             bool                   `json:"enabled"`
+	LastRunAt           *time.Time             `json:"last_run_at,omitempty"`
+	NextRunAt           *time.Time             `json:"next_run_at,omitempty"`
+	LastSessionID       string                 `json:"last_session_id,omitempty"`
+	LastStatus          string                 `json:"last_status,omitempty"`
+	LastError           string                 `json:"last_error,omitempty"`
+	LastDurationMs      *int64                 `json:"last_duration_ms,omitempty"`
+	RunCount            int                    `json:"run_count"`
+	ConsecutiveFailures int                    `json:"consecutive_failures"`
+	MissedRunCount      int                    `json:"missed_run_count,omitempty"`
+	LatestMissedRunAt   *time.Time             `json:"latest_missed_run_at,omitempty"`
 	// EnvFiltered means the schedule lives in the workflow file but the cron is
 	// not registered on this machine because SCHEDULER_ALLOWED_WORKFLOWS /
 	// SCHEDULER_BLOCKED_WORKFLOWS (or the _USERS variants for multi-agent) gates
@@ -54,33 +57,37 @@ type ScheduledJobResponse struct {
 
 // CreateScheduleRequest is the request body for creating a schedule.
 type CreateScheduleRequest struct {
-	WorkspacePath  string          `json:"workspace_path"` // Required for workflow/workshop mode
-	Name           string          `json:"name"`
-	Description    string          `json:"description,omitempty"`
-	CronExpression string          `json:"cron_expression"`
-	Timezone       string          `json:"timezone"`
-	Enabled        bool            `json:"enabled"`
-	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
-	GroupNames     []string        `json:"group_names,omitempty"`
-	Mode           string          `json:"mode,omitempty"`          // "workflow" (default), "workshop", or "multi-agent"
-	Messages       []string        `json:"messages,omitempty"`      // Predefined messages for workshop mode
-	WorkshopMode   string          `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
-	Query          string          `json:"query,omitempty"`         // Message to execute (multi-agent mode)
+	WorkspacePath  string                 `json:"workspace_path"` // Required for workflow/workshop mode
+	Name           string                 `json:"name"`
+	Description    string                 `json:"description,omitempty"`
+	ScheduleType   string                 `json:"schedule_type,omitempty"`
+	CronExpression string                 `json:"cron_expression"`
+	Timezone       string                 `json:"timezone"`
+	CalendarItems  []CalendarScheduleItem `json:"calendar_items,omitempty"`
+	Enabled        bool                   `json:"enabled"`
+	TriggerPayload json.RawMessage        `json:"trigger_payload,omitempty"`
+	GroupNames     []string               `json:"group_names,omitempty"`
+	Mode           string                 `json:"mode,omitempty"`          // "workflow" (default), "workshop", or "multi-agent"
+	Messages       []string               `json:"messages,omitempty"`      // Predefined messages for workshop mode
+	WorkshopMode   string                 `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
+	Query          string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
 }
 
 // UpdateScheduleRequest is the request body for updating a schedule.
 type UpdateScheduleRequest struct {
-	Name           string          `json:"name,omitempty"`
-	Description    string          `json:"description,omitempty"`
-	CronExpression string          `json:"cron_expression,omitempty"`
-	Timezone       string          `json:"timezone,omitempty"`
-	Enabled        *bool           `json:"enabled,omitempty"`
-	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
-	GroupNames     []string        `json:"group_names,omitempty"`
-	Mode           string          `json:"mode,omitempty"`          // "workflow", "workshop", or "multi-agent"
-	Messages       []string        `json:"messages,omitempty"`      // Predefined messages for workshop mode
-	WorkshopMode   string          `json:"workshop_mode,omitempty"` // builder, optimizer, runner, debugger
-	Query          string          `json:"query,omitempty"`         // Message to execute (multi-agent mode)
+	Name           string                 `json:"name,omitempty"`
+	Description    string                 `json:"description,omitempty"`
+	ScheduleType   string                 `json:"schedule_type,omitempty"`
+	CronExpression string                 `json:"cron_expression,omitempty"`
+	Timezone       string                 `json:"timezone,omitempty"`
+	CalendarItems  []CalendarScheduleItem `json:"calendar_items,omitempty"`
+	Enabled        *bool                  `json:"enabled,omitempty"`
+	TriggerPayload json.RawMessage        `json:"trigger_payload,omitempty"`
+	GroupNames     []string               `json:"group_names,omitempty"`
+	Mode           string                 `json:"mode,omitempty"`          // "workflow", "workshop", or "multi-agent"
+	Messages       []string               `json:"messages,omitempty"`      // Predefined messages for workshop mode
+	WorkshopMode   string                 `json:"workshop_mode,omitempty"` // builder, optimizer, runner, debugger
+	Query          string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
 }
 
 // buildJobResponse combines manifest schedule + runtime state into an API response.
@@ -103,6 +110,8 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 		Mode:                sched.Mode,
 		Messages:            sched.Messages,
 		WorkshopMode:        sched.WorkshopMode,
+		ScheduleType:        scheduleTypeOrDefault(sched.ScheduleType),
+		CalendarItems:       sched.CalendarItems,
 		CronExpression:      sched.CronExpression,
 		Timezone:            sched.Timezone,
 		Enabled:             sched.Enabled,
@@ -136,6 +145,8 @@ func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state Sch
 		Mode:                "multi-agent",
 		Query:               sched.Query,
 		UserID:              userID,
+		ScheduleType:        scheduleTypeOrDefault(sched.ScheduleType),
+		CalendarItems:       sched.CalendarItems,
 		CronExpression:      sched.CronExpression,
 		Timezone:            sched.Timezone,
 		Enabled:             sched.Enabled,
@@ -149,6 +160,56 @@ func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state Sch
 		ConsecutiveFailures: state.ConsecutiveFailures,
 		EnvFiltered:         envFiltered,
 	}
+}
+
+func validateScheduleRequest(scheduleType string, cronExpr string, calendarItems []CalendarScheduleItem) error {
+	switch scheduleType {
+	case "cron":
+		if strings.TrimSpace(cronExpr) == "" {
+			return errBadRequest("cron_expression is required for cron schedules")
+		}
+		return ValidateCronExpression(cronExpr)
+	case "calendar":
+		if len(calendarItems) == 0 {
+			return errBadRequest("calendar_items is required for calendar schedules")
+		}
+		for i, item := range calendarItems {
+			if strings.TrimSpace(item.Date) == "" || strings.TrimSpace(item.Time) == "" {
+				return errBadRequest("calendar_items[%d].date and time are required", i)
+			}
+			if _, err := time.Parse("2006-01-02", item.Date); err != nil {
+				return errBadRequest("calendar_items[%d].date must be YYYY-MM-DD", i)
+			}
+			if _, err := time.Parse("15:04", item.Time); err != nil {
+				return errBadRequest("calendar_items[%d].time must be HH:MM", i)
+			}
+		}
+		return nil
+	default:
+		return errBadRequest("schedule_type must be 'cron' or 'calendar'")
+	}
+}
+
+func normalizeCalendarScheduleItems(items []CalendarScheduleItem) []CalendarScheduleItem {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]CalendarScheduleItem, 0, len(items))
+	for _, item := range items {
+		if item.ID == "" {
+			item.ID = uuid.New().String()
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+type badRequestError string
+
+func (e badRequestError) Error() string { return string(e) }
+
+func errBadRequest(format string, args ...interface{}) error {
+	return badRequestError(fmt.Sprintf(format, args...))
 }
 
 type workflowMissedStatusResolver struct {
@@ -346,17 +407,21 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			return
 		}
 
-		if err := ValidateCronExpression(req.CronExpression); err != nil {
+		if err := ValidateScheduleTimezone(req.Timezone); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := ValidateScheduleTimezone(req.Timezone); err != nil {
+		if err := validateScheduleRequest(scheduleTypeOrDefault(req.ScheduleType), req.CronExpression, req.CalendarItems); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		// Multi-agent schedule creation
 		if req.Mode == "multi-agent" {
+			if scheduleTypeOrDefault(req.ScheduleType) != "cron" {
+				http.Error(w, "multi-agent schedules only support schedule_type='cron'", http.StatusBadRequest)
+				return
+			}
 			userID := GetUserIDFromContext(r.Context())
 			if strings.TrimSpace(req.Query) == "" {
 				http.Error(w, "query is required for multi-agent schedules", http.StatusBadRequest)
@@ -373,8 +438,10 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 				ID:             uuid.New().String(),
 				Name:           req.Name,
 				Description:    req.Description,
+				ScheduleType:   scheduleTypeOrDefault(req.ScheduleType),
 				CronExpression: req.CronExpression,
 				Timezone:       req.Timezone,
+				CalendarItems:  normalizeCalendarScheduleItems(req.CalendarItems),
 				Enabled:        req.Enabled,
 				Mode:           "multi-agent",
 				Query:          req.Query,
@@ -426,8 +493,10 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			ID:             uuid.New().String(),
 			Name:           req.Name,
 			Description:    req.Description,
+			ScheduleType:   scheduleTypeOrDefault(req.ScheduleType),
 			CronExpression: req.CronExpression,
 			Timezone:       req.Timezone,
+			CalendarItems:  normalizeCalendarScheduleItems(req.CalendarItems),
 			Enabled:        req.Enabled,
 			TriggerPayload: req.TriggerPayload,
 			GroupNames:     req.GroupNames,
@@ -506,12 +575,6 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			return
 		}
 
-		if req.CronExpression != "" {
-			if err := ValidateCronExpression(req.CronExpression); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-		}
 		if req.Timezone != "" {
 			if err := ValidateScheduleTimezone(req.Timezone); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -533,6 +596,13 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			if req.Description != "" {
 				sched.Description = req.Description
 			}
+			if req.ScheduleType != "" {
+				if scheduleTypeOrDefault(req.ScheduleType) != "cron" {
+					http.Error(w, "multi-agent schedules only support schedule_type='cron'", http.StatusBadRequest)
+					return
+				}
+				sched.ScheduleType = req.ScheduleType
+			}
 			if req.CronExpression != "" {
 				sched.CronExpression = req.CronExpression
 			}
@@ -544,6 +614,10 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			}
 			if req.Query != "" {
 				sched.Query = req.Query
+			}
+			if err := validateScheduleRequest(scheduleTypeOrDefault(sched.ScheduleType), sched.CronExpression, sched.CalendarItems); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
 			}
 
 			if err := WriteMultiAgentSchedules(r.Context(), result.UserID, result.ScheduleFile); err != nil {
@@ -575,11 +649,17 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		if req.Description != "" {
 			sched.Description = req.Description
 		}
+		if req.ScheduleType != "" {
+			sched.ScheduleType = req.ScheduleType
+		}
 		if req.CronExpression != "" {
 			sched.CronExpression = req.CronExpression
 		}
 		if req.Timezone != "" {
 			sched.Timezone = req.Timezone
+		}
+		if req.CalendarItems != nil {
+			sched.CalendarItems = normalizeCalendarScheduleItems(req.CalendarItems)
 		}
 		if req.Enabled != nil {
 			sched.Enabled = *req.Enabled
@@ -610,6 +690,10 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			return
 		}
 		sched.GroupNames = validGroupNames
+		if err := validateScheduleRequest(scheduleTypeOrDefault(sched.ScheduleType), sched.CronExpression, sched.CalendarItems); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		if err := WriteWorkflowManifest(r.Context(), workspacePath, manifest); err != nil {
 			http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)

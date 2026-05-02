@@ -4,7 +4,7 @@ import cronstrue from 'cronstrue'
 import {
   X, Play, Trash2, Clock, CheckCircle, XCircle, Minus, Loader,
   Terminal, Pause, Calendar, ClipboardCheck, AlertTriangle,
-  ChevronDown, ChevronRight, RefreshCw, Square, Radio, Search, FileText, MessageSquare, Workflow
+  ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Square, Radio, Search, FileText, MessageSquare, Workflow
 } from 'lucide-react'
 import { schedulerApi } from '../../api/scheduler'
 import { agentApi } from '../../services/api'
@@ -26,7 +26,7 @@ interface WorkflowScheduleRunsPanelProps {
 
 type ActivePopup = 'costs' | 'logs' | 'eval' | 'report' | 'live' | null
 type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
-type SchedulePanelView = 'overview' | 'workflows'
+type SchedulePanelView = 'overview' | 'calendar' | 'workflows'
 
 interface JobPopupState {
   jobId: string
@@ -86,6 +86,92 @@ function getMostRelevantRunFolder(folders: RunFolderInfo[]): string {
 
       return b.name.localeCompare(a.name)
     })[0]?.name ?? ''
+}
+
+function parseCronField(field: string, min: number, max: number, normalize?: (n: number) => number): number[] | null {
+  const values = new Set<number>()
+  const addValue = (n: number) => {
+    const value = normalize ? normalize(n) : n
+    if (value >= min && value <= max) values.add(value)
+  }
+
+  for (const rawPart of field.split(',')) {
+    const part = rawPart.trim()
+    if (!part) return null
+    const [rangePart, stepPart] = part.split('/')
+    const step = stepPart ? Number(stepPart) : 1
+    if (!Number.isInteger(step) || step <= 0) return null
+
+    let start: number
+    let end: number
+    if (rangePart === '*') {
+      start = min
+      end = max
+    } else if (rangePart.includes('-')) {
+      const [a, b] = rangePart.split('-').map(Number)
+      if (!Number.isInteger(a) || !Number.isInteger(b)) return null
+      start = a
+      end = b
+    } else {
+      const single = Number(rangePart)
+      if (!Number.isInteger(single)) return null
+      start = single
+      end = single
+    }
+
+    if (start > end) return null
+    for (let n = start; n <= end; n += step) addValue(n)
+  }
+
+  return [...values].sort((a, b) => a - b)
+}
+
+function isWildcardCronField(field: string): boolean {
+  return field.trim() === '*'
+}
+
+function expandCronForMonth(job: ScheduledJob, year: number, month: number): Array<{ date: string; time: string }> {
+  if (!job.cron_expression) return []
+  const parts = job.cron_expression.trim().split(/\s+/)
+  if (parts.length !== 5) return []
+
+  const minutes = parseCronField(parts[0], 0, 59)
+  const hours = parseCronField(parts[1], 0, 23)
+  const dom = parseCronField(parts[2], 1, 31)
+  const months = parseCronField(parts[3], 1, 12)
+  const dow = parseCronField(parts[4], 0, 6, n => n === 7 ? 0 : n)
+  if (!minutes || !hours || !dom || !months || !dow) return []
+
+  const monthNumber = month + 1
+  if (!months.includes(monthNumber)) return []
+
+  const domWildcard = isWildcardCronField(parts[2])
+  const dowWildcard = isWildcardCronField(parts[4])
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const out: Array<{ date: string; time: string }> = []
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const d = new Date(year, month, day)
+    const domMatches = dom.includes(day)
+    const dowMatches = dow.includes(d.getDay())
+    const dayMatches = domWildcard && dowWildcard
+      ? true
+      : domWildcard
+        ? dowMatches
+        : dowWildcard
+          ? domMatches
+          : domMatches || dowMatches
+    if (!dayMatches) continue
+
+    const date = `${year}-${String(monthNumber).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    for (const hour of hours) {
+      for (const minute of minutes) {
+        out.push({ date, time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` })
+      }
+    }
+  }
+
+  return out.slice(0, 250)
 }
 
 function describeCron(expr: string): string {
@@ -352,6 +438,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [error, setError] = useState<string | null>(null)
   const [expandedJobIds, setExpandedJobIds] = useState<string[]>([])
   const [activeView, setActiveView] = useState<SchedulePanelView>('workflows')
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date())
   const [activeFilter, setActiveFilter] = useState<JobFilter>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedWorkflowFilter, setSelectedWorkflowFilter] = useState('all')
@@ -669,6 +756,58 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         return haystack.includes(normalizedSearch)
       })
   }, [jobs, activeFilter, normalizedSearch, presetMap, selectedWorkflowFilter])
+
+  const monthlyCalendar = useMemo(() => {
+    const year = calendarMonth.getFullYear()
+    const month = calendarMonth.getMonth()
+    const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`
+    const byDate: Record<string, Array<{ job: ScheduledJob; time: string; label: string; note?: string }>> = {}
+
+    jobs.forEach((job) => {
+      const workflowMeta = getWorkflowFilterMeta(job, presetMap)
+      const label = workflowMeta.workflowLabel || job.name
+
+      if (job.schedule_type === 'calendar' && job.calendar_items?.length) {
+        job.calendar_items.forEach((item) => {
+          if (!item.date?.startsWith(monthKey)) return
+          byDate[item.date] = [
+            ...(byDate[item.date] || []),
+            { job, time: item.time, label, note: item.description || job.name },
+          ]
+        })
+        return
+      }
+
+      expandCronForMonth(job, year, month).forEach((occurrence) => {
+        byDate[occurrence.date] = [
+          ...(byDate[occurrence.date] || []),
+          {
+            job,
+            time: occurrence.time,
+            label,
+            note: `${job.name}${job.timezone ? ` (${job.timezone})` : ''}`,
+          },
+        ]
+      })
+    })
+
+    Object.values(byDate).forEach(items => items.sort((a, b) => a.time.localeCompare(b.time)))
+
+    const first = new Date(year, month, 1)
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+    const cells: Array<{ key: string; day?: number; date?: string; items: Array<{ job: ScheduledJob; time: string; label: string; note?: string }> }> = []
+    for (let i = 0; i < first.getDay(); i += 1) cells.push({ key: `empty-${i}`, items: [] })
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      cells.push({ key: date, day, date, items: byDate[date] || [] })
+    }
+
+    return {
+      label: calendarMonth.toLocaleDateString([], { month: 'long', year: 'numeric' }),
+      cells,
+      total: Object.values(byDate).reduce((sum, items) => sum + items.length, 0),
+    }
+  }, [calendarMonth, jobs, presetMap])
 
   useEffect(() => {
     if (!hasRunningJob) return
@@ -1087,6 +1226,16 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   >
                     All Workflows
                   </button>
+                  <button
+                    onClick={() => setActiveView('calendar')}
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                      activeView === 'calendar'
+                        ? 'bg-foreground text-background'
+                        : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                    }`}
+                  >
+                    Month Calendar
+                  </button>
                   {workflowOptions.map((option) => (
                     <button
                       key={option.value}
@@ -1109,7 +1258,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 <div className="text-xs text-muted-foreground">
                   {activeView === 'overview'
                     ? 'Summary and schedule health'
-                    : `${filteredJobs.length} workflow${filteredJobs.length !== 1 ? 's' : ''} shown`}
+                    : activeView === 'calendar'
+                      ? `${monthlyCalendar.total} scheduled item${monthlyCalendar.total === 1 ? '' : 's'} this month`
+                      : `${filteredJobs.length} workflow${filteredJobs.length !== 1 ? 's' : ''} shown`}
                 </div>
               </div>
             </div>
@@ -1312,6 +1463,83 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                     })}
                   </div>
                 )}
+              </div>
+            </div>
+          ) : activeView === 'calendar' ? (
+            <div className="px-5 py-4 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  onClick={() => setCalendarMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+                  className="rounded-md border border-border p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <div className="text-center">
+                  <div className="text-sm font-semibold text-foreground">{monthlyCalendar.label}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {monthlyCalendar.total} scheduled item{monthlyCalendar.total === 1 ? '' : 's'}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setCalendarMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+                  className="rounded-md border border-border p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-border bg-background p-3">
+                <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-medium text-muted-foreground">
+                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                    <div key={day} className="rounded-md bg-muted/40 py-1">{day}</div>
+                  ))}
+                </div>
+                <div className="mt-1 grid grid-cols-7 gap-1">
+                  {monthlyCalendar.cells.map((cell) => (
+                    <div
+                      key={cell.key}
+                      className={`min-h-[112px] rounded-lg border p-2 ${
+                        cell.day
+                          ? cell.items.length
+                            ? 'border-amber-500/30 bg-card shadow-[inset_0_0_0_1px_rgba(245,158,11,0.08)]'
+                            : 'border-border bg-card/70'
+                          : 'border-transparent'
+                      }`}
+                    >
+                      {cell.day && (
+                        <>
+                          <div className="mb-1 flex items-center justify-between">
+                            <span className="text-xs font-medium text-foreground">{cell.day}</span>
+                            {cell.items.length > 0 && (
+                              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-300">
+                                {cell.items.length}
+                              </span>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            {cell.items.slice(0, 4).map((item, index) => (
+                              <button
+                                key={`${cell.date}-${item.job.id}-${index}`}
+                                onClick={() => {
+                                  setExpandedJobIds(prev => prev.includes(item.job.id) ? prev : [...prev, item.job.id])
+                                  setActiveView('workflows')
+                                }}
+                                className="block w-full truncate rounded-md border border-border bg-muted/40 px-1.5 py-1 text-left text-[11px] leading-tight text-foreground hover:border-amber-500/30 hover:bg-muted"
+                                title={`${item.time} ${item.label} - ${item.note || ''}`}
+                              >
+                                <span className="font-medium text-amber-600 dark:text-amber-300">{item.time}</span>
+                                <span className="ml-1">{item.label}</span>
+                              </button>
+                            ))}
+                            {cell.items.length > 4 && (
+                              <div className="text-[11px] text-muted-foreground">+{cell.items.length - 4} more</div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           ) : (

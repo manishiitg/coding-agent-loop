@@ -68,12 +68,6 @@ func RecordMeasurement(ctx context.Context, workspacePath, runFolder string) err
 			if m == nil {
 				continue
 			}
-			// Delayed sources: enqueue rather than block. v1 simply skips them
-			// here; the pending-evaluation queue lands in a follow-up.
-			if m.EvaluableAtLag != "" || m.Source.Type == MetricSourceDelayedGroundTruth {
-				allResolved = false
-				continue
-			}
 			v, ok, err := ResolveMetricValue(ctx, workspacePath, runFolder, m)
 			if err != nil {
 				continue

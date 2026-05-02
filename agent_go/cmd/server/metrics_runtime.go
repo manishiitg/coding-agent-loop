@@ -20,7 +20,6 @@ import (
 // =====================================================================
 
 var metricIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
-var metricLagPattern = regexp.MustCompile(`^\d+[smhdw]$`)
 
 // workflowMetricsPath returns the canonical path to <workflow>/planning/metrics.json.
 //
@@ -128,15 +127,12 @@ func ValidateMetric(m *Metric) error {
 	if err := validateMetricSource(&m.Source); err != nil {
 		return fmt.Errorf("source: %w", err)
 	}
-	if m.EvaluableAtLag != "" && !metricLagPattern.MatchString(m.EvaluableAtLag) {
-		return fmt.Errorf("evaluable_at_lag %q must match ^\\d+[smhdw]$", m.EvaluableAtLag)
-	}
 	return nil
 }
 
 // validSourceTypesHint is the canonical list returned in error messages so
 // agents don't have to brute-force the enum by trial-and-error.
-const validSourceTypesHint = `valid source.type values: "eval_step" (requires id), "telemetry" (requires field), "delayed_ground_truth" (requires joined_via). Wrap any external feed (third-party APIs, broker queries, monitoring tools) in a Python eval step — that keeps one mechanism for all metrics.`
+const validSourceTypesHint = `valid source.type values: "eval_step" (requires id), "telemetry" (requires field). For external feeds, schema checks, lineage, or delayed outcomes, write a Python eval step and use source.type=eval_step.`
 
 func validateMetricSource(s *MetricSource) error {
 	switch s.Type {
@@ -147,10 +143,6 @@ func validateMetricSource(s *MetricSource) error {
 	case MetricSourceTelemetry:
 		if strings.TrimSpace(s.Field) == "" {
 			return fmt.Errorf("source.type=telemetry requires field (dotted path, e.g. run.total_cost_usd). %s", validSourceTypesHint)
-		}
-	case MetricSourceDelayedGroundTruth:
-		if strings.TrimSpace(s.JoinedVia) == "" {
-			return fmt.Errorf("source.type=delayed_ground_truth requires joined_via (join key linking predictions to ground truth). %s", validSourceTypesHint)
 		}
 	default:
 		return fmt.Errorf("invalid source.type %q. %s", s.Type, validSourceTypesHint)
@@ -186,9 +178,6 @@ func ResolveMetricValue(ctx context.Context, workspacePath, runFolder string, m 
 		return resolveFromEvalStep(ctx, workspacePath, runFolder, m.Source.ID, m.Source.Field)
 	case MetricSourceTelemetry:
 		return resolveFromTelemetry(ctx, workspacePath, runFolder, m.Source.Field)
-	case MetricSourceDelayedGroundTruth:
-		// Not yet available; the experiment loop must enqueue these for later.
-		return 0, false, nil
 	default:
 		return 0, false, fmt.Errorf("unsupported metric source type %q", m.Source.Type)
 	}

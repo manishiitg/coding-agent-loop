@@ -108,17 +108,15 @@ const (
 type MetricSourceType string
 
 const (
-	MetricSourceEvalStep           MetricSourceType = "eval_step"
-	MetricSourceTelemetry          MetricSourceType = "telemetry"
-	MetricSourceDelayedGroundTruth MetricSourceType = "delayed_ground_truth"
+	MetricSourceEvalStep  MetricSourceType = "eval_step"
+	MetricSourceTelemetry MetricSourceType = "telemetry"
 )
 
 // MetricSource describes how a metric's value is resolved per run.
 type MetricSource struct {
-	Type      MetricSourceType `json:"type"`
-	ID        string           `json:"id,omitempty"`
-	Field     string           `json:"field,omitempty"`
-	JoinedVia string           `json:"joined_via,omitempty"`
+	Type  MetricSourceType `json:"type"`
+	ID    string           `json:"id,omitempty"`
+	Field string           `json:"field,omitempty"`
 }
 
 // Metric is one entry in metrics.json::metrics[].
@@ -132,7 +130,6 @@ type Metric struct {
 	Floor          *float64        `json:"floor,omitempty"`
 	Ceiling        *float64        `json:"ceiling,omitempty"`
 	Source         MetricSource    `json:"source"`
-	EvaluableAtLag string          `json:"evaluable_at_lag,omitempty"`
 	Parent         string          `json:"parent,omitempty"`
 	Version        int             `json:"version,omitempty"`
 	// LinkedSuccessCriteria traces this metric to one or more entries in the

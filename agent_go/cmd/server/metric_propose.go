@@ -46,7 +46,6 @@ type ProposeMetricInput struct {
 	Floor                 *float64        `json:"floor,omitempty"`
 	Ceiling               *float64        `json:"ceiling,omitempty"`
 	Source                MetricSource    `json:"source,omitempty"`
-	EvaluableAtLag        string          `json:"evaluable_at_lag,omitempty"`
 	Parent                string          `json:"parent,omitempty"`
 	LinkedSuccessCriteria []string        `json:"linked_success_criteria,omitempty"`
 	AmendExisting         *AmendRequest   `json:"amend_existing,omitempty"`
@@ -128,7 +127,6 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 		Floor:                 input.Floor,
 		Ceiling:               input.Ceiling,
 		Source:                input.Source,
-		EvaluableAtLag:        input.EvaluableAtLag,
 		Parent:                input.Parent,
 		LinkedSuccessCriteria: trimAndDedupe(input.LinkedSuccessCriteria),
 	}

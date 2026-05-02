@@ -29,7 +29,7 @@ func RegisterProposeExperimentTool(agent *mcpagent.Agent, workspacePath, trigger
 	desc := "Open an experiment to test a hypothesis about the workflow. " +
 		"Pre-registers the hypothesis, captures a baseline from recent run history, snapshots world_state, " +
 		"applies the intervention atomically with a revertable diff, and starts a measurement window. " +
-		"The next runs (or runs after evaluable_at_lag elapses for delayed metrics) populate measurement.values; " +
+		"The next runs populate measurement.values; " +
 		"when target_runs is reached, the system computes the verdict and the evaluator agent narrates it via conclude_experiment. " +
 		"Do NOT use this tool to read state or to apply unconditional fixes — open an experiment ONLY when you have a falsifiable hypothesis " +
 		"about how the change will move a declared metric. Returns { experiment_id, status, decisions_entry_id }."
@@ -145,18 +145,13 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 			"ceiling":   map[string]interface{}{"type": "number", "description": "Required when mode=slo + direction=lower_better."},
 			"source": map[string]interface{}{
 				"type":        "object",
-				"description": "Where each run's metric value comes from. Each type has different required sub-fields — see below. Pick exactly one type:\n  • eval_step — value is the score (or a structured-output field) of a named eval step (must exist in evaluation/evaluation_plan.json). REQUIRES `id`. Example: { type: \"eval_step\", id: \"eval-data-accuracy\" }\n  • telemetry — value is read from run telemetry (cost, latency, etc.). REQUIRES `field`. Example: { type: \"telemetry\", field: \"run.total_cost_usd\" }\n  • delayed_ground_truth — predictions joined with later ground truth (forecast, lead conversion). REQUIRES `joined_via`. Pair with `evaluable_at_lag`.\nFor external feeds (third-party APIs, broker queries, monitoring tools), write an eval step whose Python makes the call and emits the value, then point the metric at that eval step.\nDo NOT invent other type values like \"db\" or \"manual\" or \"json_file\" — they will fail validation.",
+				"description": "Where each run's metric value comes from. Pick exactly one type:\n  • eval_step — value is the score (or a structured-output field) of a named eval step (must exist in evaluation/evaluation_plan.json). REQUIRES `id`. Example: { type: \"eval_step\", id: \"eval-data-accuracy\" }\n  • telemetry — value is read from run telemetry (cost, latency, etc.). REQUIRES `field`. Example: { type: \"telemetry\", field: \"run.total_cost_usd\" }\nFor external feeds, schema checks, lineage, or delayed-outcome attribution, write an eval step whose Python does the work and emits the value, then point the metric at that eval step (eval_step is the canonical funnel for any non-telemetry metric).\nDo NOT invent other type values like \"db\" or \"manual\" or \"json_file\" — they will fail validation.",
 				"properties": map[string]interface{}{
-					"type":       map[string]interface{}{"type": "string", "enum": []string{"eval_step", "telemetry", "delayed_ground_truth"}, "description": "Source kind. Three valid values, listed in the parent description."},
-					"id":         map[string]interface{}{"type": "string", "description": "REQUIRED when type=eval_step. The eval step id from evaluation/evaluation_plan.json. When set together with `field`, the metric reads that field from the eval step's structured JSON output (in OutputContent); when `field` is empty, the metric reads the eval step's percent score."},
-					"field":      map[string]interface{}{"type": "string", "description": "REQUIRED when type=telemetry or type=external. Optional when type=eval_step (then it's a field key into the eval step's JSON output). For type=telemetry, the wired field names today are `run.total_cost_usd` (sum of model costs for the run, in USD) and `run.duration_seconds` (wall-clock seconds the run took). Other telemetry field names will silently return no value."},
-					"joined_via": map[string]interface{}{"type": "string", "description": "REQUIRED when type=delayed_ground_truth. The join key linking predictions to their later ground truth (e.g. prediction_id)."},
+					"type":  map[string]interface{}{"type": "string", "enum": []string{"eval_step", "telemetry"}, "description": "Source kind. Two valid values, listed in the parent description."},
+					"id":    map[string]interface{}{"type": "string", "description": "REQUIRED when type=eval_step. The eval step id from evaluation/evaluation_plan.json. When set together with `field`, the metric reads that field from the eval step's structured JSON output (in OutputContent); when `field` is empty, the metric reads the eval step's percent score."},
+					"field": map[string]interface{}{"type": "string", "description": "REQUIRED when type=telemetry. Optional when type=eval_step (then it's a field key into the eval step's JSON output). For type=telemetry, the wired field names today are `run.total_cost_usd` (sum of model costs for the run, in USD) and `run.duration_seconds` (wall-clock seconds the run took). Other telemetry field names will silently return no value."},
 				},
 				"required": []string{"type"},
-			},
-			"evaluable_at_lag": map[string]interface{}{
-				"type":        "string",
-				"description": "Optional. Duration like 30d / 12h / 90s. Forces the experiment loop to wait for this lag before resolving the value.",
 			},
 			"parent": map[string]interface{}{"type": "string"},
 			"linked_success_criteria": map[string]interface{}{

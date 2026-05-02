@@ -120,31 +120,112 @@ Bring your existing CLI-based coding agents into the visual orchestrator via the
 
 ## 🚀 Quick Start (Local Development)
 
-### 1. Initialize Workspace
+### 1. Prerequisites
+
+- Go 1.24+
+- Node.js 20+ and npm
+- Optional local tools depending on what you enable: Claude Code, Gemini CLI, Codex-compatible CLIs, browser tooling, AWS/GCP CLIs, etc.
+
+### 2. Clone and Configure
+
 ```bash
 git clone https://github.com/manishiitg/mcp-agent-builder-go.git
 cd mcp-agent-builder-go
 cp agent_go/env.example agent_go/.env
 ```
 
-### 2. Configure Cognitive Engines (`agent_go/.env`)
-```bash
-# Power your swarms (Configure at least one)
-OPENAI_API_KEY=your_openai_key
-ANTHROPIC_API_KEY=your_anthropic_key
+Edit `agent_go/.env` for local app/runtime settings if needed. LLM providers and API keys are configured from the app UI after startup, not by editing the README examples into `.env`.
 
-# Optional: Enable Enterprise Lockdown Mode
-LLM_CONFIG_LOCKED=true
-SUPPORTED_LLM_PROVIDERS=openai,anthropic
+Install dependencies:
+
+```bash
+cd frontend
+npm ci
+
+cd ../agent_go
+go mod download
 ```
 
-### 3. Ignite the Platform
-```bash
-# Spin up the Visual Canvas, Execution API, Planner, and Vector DB
-docker-compose up -d
+### 3. Run Everything Locally
 
-# Open the command center
-open http://localhost:5173
+Start the backend, workspace API, frontend, and Electron with one command from `agent_go/`:
+
+```bash
+cd agent_go
+./run_server_with_logging.sh --with-workspace --with-frontend
+```
+
+Default local ports:
+
+| Service | Default URL |
+| --- | --- |
+| Agent API | `http://localhost:18743` |
+| Workspace API | `http://localhost:18744` |
+| Frontend | `http://127.0.0.1:51733` |
+
+The runner prefers these ports. If a port is already occupied, it picks the next available port and prints the final URL. Logs are written to `agent_go/logs/`.
+
+### 4. Frontend-Only Development
+
+Use this when the backend and workspace API are already running:
+
+```bash
+cd agent_go
+./run_server_with_logging.sh --only-frontend
+```
+
+This starts Vite plus Electron. It reads `AGENT_PORT` and `WORKSPACE_PORT` from `frontend/public/runtime-config.js` when that file already exists.
+
+### 5. Frontend Build Mode
+
+Use this to run the frontend like a production static build, without Vite hot reload:
+
+```bash
+cd agent_go
+./run_server_with_logging.sh --only-frontend --build
+```
+
+This builds `frontend/`, serves the static output on the frontend port, and launches Electron against that static server.
+
+You can override ports explicitly:
+
+```bash
+AGENT_PORT=18743 WORKSPACE_PORT=18744 FRONTEND_PORT=51733 ./run_server_with_logging.sh --only-frontend --build
+```
+
+### 6. Stop and Restart Cleanly
+
+When the runner is in the foreground, press `Ctrl+C`. The script stops child processes and prints which ports were released.
+
+If startup says a port is still busy, inspect it:
+
+```bash
+lsof -nP -iTCP:51733 -sTCP:LISTEN
+lsof -nP -iTCP:18743 -sTCP:LISTEN
+lsof -nP -iTCP:18744 -sTCP:LISTEN
+```
+
+### 7. Debug Local API Traffic
+
+Backend request logs are written under `agent_go/logs/`. The server logs API start/end lines, including status code and duration, which is useful when the frontend appears stuck or too many requests are firing at once.
+
+Useful checks:
+
+```bash
+curl -fsS http://localhost:18743/api/health
+curl -fsS http://localhost:18744/api/health
+```
+
+### 8. Validation Commands
+
+```bash
+# Backend compile check
+cd agent_go
+go test ./cmd/server -run '^$'
+
+# Frontend type check
+cd frontend
+./node_modules/.bin/tsc -b
 ```
 
 ---

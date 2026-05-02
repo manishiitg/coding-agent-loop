@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { Layers, MessageSquare, Search } from 'lucide-react'
+import { Activity, Database, Layers, MessageSquare, Search } from 'lucide-react'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useChatStore } from '../stores'
@@ -7,6 +7,9 @@ import type { ChatTab } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useAppStore } from '../stores/useAppStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
+import type { ActiveSessionInfo, PollingEvent } from '../services/api-types'
+import { restoreSession } from '../utils/sessionRestore'
+import { formatEventMemoryBytes, getEventMemoryStats, hasEventMemoryPressure, type EventMemoryStats } from '../utils/eventMemory'
 
 interface QuickSwitcherProps {
   isOpen: boolean
@@ -21,6 +24,8 @@ interface WorkflowItem {
   isActive: boolean
   lastAccessedAt: number
   preset: CustomPreset | PredefinedPreset
+  eventStats?: EventMemoryStats
+  activeSession?: ActiveSessionInfo
 }
 
 interface ChatTabItem {
@@ -31,14 +36,121 @@ interface ChatTabItem {
   isActive: boolean
   lastAccessedAt: number
   tabId: string
+  eventStats?: EventMemoryStats
+  activeSession?: ActiveSessionInfo
 }
 
-type QuickSwitcherItem = WorkflowItem | ChatTabItem
+interface ActiveWorkItem {
+  type: 'active'
+  id: string
+  label: string
+  subtitle: string
+  isActive: boolean
+  lastAccessedAt: number
+  session: ActiveSessionInfo
+  tabId?: string
+  mode: 'workflow' | 'multi-agent'
+  eventStats?: EventMemoryStats
+}
+
+interface EventMemoryItem {
+  type: 'events'
+  id: string
+  label: string
+  subtitle: string
+  isActive: boolean
+  lastAccessedAt: number
+  sessionId: string
+  tabIds: string[]
+  mode: 'workflow' | 'multi-agent' | undefined
+  stats: EventMemoryStats
+}
+
+type QuickSwitcherItem = WorkflowItem | ChatTabItem | ActiveWorkItem | EventMemoryItem
 
 const EMPTY_CHAT_TABS: Record<string, ChatTab> = {}
+const EMPTY_TAB_EVENTS: Record<string, PollingEvent[]> = {}
+const EMPTY_ACTIVE_SESSIONS: ActiveSessionInfo[] = []
 const EMPTY_WORKFLOW_PRESETS: Array<CustomPreset | PredefinedPreset> = []
 const EMPTY_RECENT_PRESET_ORDER: string[] = []
 const EMPTY_RECENT_PRESET_ACCESSED_AT: Record<string, number> = {}
+
+const isWorkflowSession = (session: ActiveSessionInfo): boolean => {
+  return session.agent_mode === 'workflow' ||
+    !!session.workflow_name ||
+    !!session.workflow_label ||
+    !!session.workspace_path ||
+    !!session.preset_query_id
+}
+
+const isVisibleActiveSession = (session: ActiveSessionInfo): boolean => {
+  const status = (session.status || '').toLowerCase()
+  return status === 'running' ||
+    status === 'paused' ||
+    status === 'waiting' ||
+    status === 'waiting_feedback' ||
+    status === 'idle' ||
+    !!session.needs_user_input ||
+    session.has_running_background_agents === true ||
+    (session.running_background_agent_count ?? 0) > 0
+}
+
+const activeSessionLabel = (session: ActiveSessionInfo): string => {
+  if (isWorkflowSession(session)) {
+    return session.workflow_label ||
+      session.workflow_name ||
+      session.preset_name ||
+      session.workspace_path?.split('/').filter(Boolean).pop() ||
+      session.title ||
+      'Workflow'
+  }
+  return session.title || session.query || 'Chat'
+}
+
+const activeSessionStatusLabel = (session: ActiveSessionInfo): string => {
+  if (session.needs_user_input) return 'waiting for input'
+  const bgCount = session.running_background_agent_count ?? 0
+  if (bgCount > 0) return `${bgCount} bg agent${bgCount === 1 ? '' : 's'}`
+  if (session.has_running_background_agents) return 'bg agents running'
+  return (session.status || 'active').replace(/_/g, ' ')
+}
+
+const sessionShortId = (sessionId: string): string => sessionId.slice(0, 8)
+
+const findTabForSession = (tabs: Record<string, ChatTab>, sessionId: string): ChatTab | undefined => {
+  return Object.values(tabs).find(tab => tab.sessionId === sessionId)
+}
+
+const itemTypeRank = (item: QuickSwitcherItem): number => {
+  if (item.type === 'active') return 0
+  if (item.type === 'chat') return 1
+  if (item.type === 'workflow') return 2
+  return 3
+}
+
+const itemEventStats = (item: QuickSwitcherItem): EventMemoryStats | undefined => {
+  return item.type === 'events' ? item.stats : item.eventStats
+}
+
+const itemActiveSession = (item: QuickSwitcherItem): ActiveSessionInfo | undefined => {
+  if (item.type === 'active') return item.session
+  if (item.type === 'events') return undefined
+  return item.activeSession
+}
+
+const eventStatsSuffix = (stats?: EventMemoryStats): string => {
+  if (!stats || stats.eventCount === 0) return ''
+  const largest = stats.largestEventType
+    ? ` · largest ${stats.largestEventType} (${formatEventMemoryBytes(stats.largestEventBytes)})`
+    : ''
+  return ` · ${stats.eventCount.toLocaleString()} events · ${formatEventMemoryBytes(stats.sizeBytes)}${largest}`
+}
+
+const activeSessionSuffix = (session?: ActiveSessionInfo): string => {
+  if (!session) return ''
+  const current = session.current_execution_name ? ` · ${session.current_execution_name}` : ''
+  return ` · active: ${activeSessionStatusLabel(session)}${current} · ${sessionShortId(session.session_id)}`
+}
 
 const requestChatScrollToBottom = () => {
   useChatStore.getState().setAutoScroll(true)
@@ -64,9 +176,29 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   // keeping this inactive when the switcher is closed avoids background churn.
   const activeTabId = useChatStore(state => (isOpen ? state.activeTabId : null))
   const chatTabs = useChatStore(state => (isOpen ? state.chatTabs : EMPTY_CHAT_TABS))
+  const tabEvents = useChatStore(state => (isOpen ? state.tabEvents : EMPTY_TAB_EVENTS))
+  const activeSessions = useChatStore(state => (isOpen ? state.activeSessionsCache : EMPTY_ACTIVE_SESSIONS))
   const workflowPresets = useGlobalPresetStore(state => (isOpen ? state.workflowPresets : EMPTY_WORKFLOW_PRESETS))
   const recentPresetOrder = useGlobalPresetStore(state => (isOpen ? state.recentPresetOrder : EMPTY_RECENT_PRESET_ORDER))
   const recentPresetAccessedAt = useGlobalPresetStore(state => (isOpen ? state.recentPresetAccessedAt : EMPTY_RECENT_PRESET_ACCESSED_AT))
+  const totalEventStats = useMemo(() => {
+    let eventCount = 0
+    let sizeBytes = 0
+    let largestEventBytes = 0
+    let largestEventType = ''
+
+    for (const events of Object.values(tabEvents)) {
+      const stats = getEventMemoryStats(events)
+      eventCount += stats.eventCount
+      sizeBytes += stats.sizeBytes
+      if (stats.largestEventBytes > largestEventBytes) {
+        largestEventBytes = stats.largestEventBytes
+        largestEventType = stats.largestEventType
+      }
+    }
+
+    return { eventCount, sizeBytes, largestEventBytes, largestEventType } satisfies EventMemoryStats
+  }, [tabEvents])
 
   // Track Shift key state to show "minimize" hint on selected item
   const [shiftHeld, setShiftHeld] = useState(false)
@@ -87,41 +219,131 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     if (isOpen) {
       setQuery('')
       setSelectedIndex(0)
+      void useChatStore.getState().getActiveSessions(true)
       setTimeout(() => searchInputRef.current?.focus(), 50)
     }
   }, [isOpen])
 
-  // Build a cross-mode list: normal chat tabs + workflow presets.
+  // Build a cross-mode command center: active work + chats + workflows + retained events.
   const allItems = useMemo<QuickSwitcherItem[]>(() => {
     if (!isOpen) return []
+
+    const allTabs = Object.values(chatTabs)
+    const tabsBySession = allTabs.reduce<Record<string, ChatTab[]>>((acc, tab) => {
+      if (!tab.sessionId) return acc
+      if (!acc[tab.sessionId]) acc[tab.sessionId] = []
+      acc[tab.sessionId].push(tab)
+      return acc
+    }, {})
+
+    const eventStatsBySession = Object.entries(tabEvents).reduce<Record<string, EventMemoryStats>>((acc, [sessionId, events]) => {
+      const stats = getEventMemoryStats(events)
+      if (stats.eventCount > 0) acc[sessionId] = stats
+      return acc
+    }, {})
+    const visibleActiveSessions = activeSessions.filter(isVisibleActiveSession)
 
     const chatItems: ChatTabItem[] = Object.values(chatTabs)
       .filter(tab => tab.metadata?.mode === 'multi-agent' && !tab.metadata?.isOrganizationAssistant)
       .sort((a, b) => a.createdAt - b.createdAt)
-      .map(tab => ({
-        type: 'chat' as const,
-        id: `chat:${tab.tabId}`,
-        label: tab.name,
-        subtitle: `Chat · ${tab.isStreaming ? 'Streaming...' : tab.isCompleted ? 'Completed' : tab.sessionId ? 'Active' : 'New'}`,
-        isActive: isChatMode && tab.tabId === activeTabId,
-        lastAccessedAt: tab.lastAccessedAt || tab.createdAt || 0,
-        tabId: tab.tabId
-      }))
+      .map(tab => {
+        const eventStats = tab.sessionId ? eventStatsBySession[tab.sessionId] : undefined
+        const activeSession = tab.sessionId ? visibleActiveSessions.find(session => session.session_id === tab.sessionId) : undefined
+        return {
+          type: 'chat' as const,
+          id: `chat:${tab.tabId}`,
+          label: tab.name,
+          subtitle: `Chat · ${tab.isStreaming ? 'Streaming...' : tab.isCompleted ? 'Completed' : tab.sessionId ? 'Active' : 'New'}${activeSessionSuffix(activeSession)}${eventStatsSuffix(eventStats)}`,
+          isActive: isChatMode && tab.tabId === activeTabId,
+          lastAccessedAt: tab.lastAccessedAt || tab.createdAt || 0,
+          tabId: tab.tabId,
+          eventStats,
+          activeSession,
+        }
+      })
 
     const workflowItems: WorkflowItem[] = workflowPresets
       .filter(p => p.selectedFolder?.filepath)
-      .map(p => ({
-        type: 'workflow' as const,
-        id: `workflow:${p.id}`,
-        label: p.label,
-        subtitle: `Workflow · ${p.selectedFolder!.filepath}`,
-        isActive: isWorkflowMode && p.id === activePresetId,
-        lastAccessedAt: recentPresetAccessedAt[p.id] || (() => {
-          const recentIndex = recentPresetOrder.indexOf(p.id)
-          return recentIndex >= 0 ? 1_000_000 - recentIndex : 0
-        })(),
-        preset: p
-      }))
+      .map(p => {
+        const presetEvents = allTabs
+          .filter(tab => tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === p.id && tab.sessionId)
+          .flatMap(tab => tabEvents[tab.sessionId!] || [])
+        const eventStats = presetEvents.length > 0 ? getEventMemoryStats(presetEvents) : undefined
+        const activeSession = visibleActiveSessions.find(session => {
+          if (!isWorkflowSession(session)) return false
+          if (session.preset_query_id === p.id) return true
+          const tab = findTabForSession(chatTabs, session.session_id)
+          return tab?.metadata?.presetQueryId === p.id
+        })
+        return {
+          type: 'workflow' as const,
+          id: `workflow:${p.id}`,
+          label: p.label,
+          subtitle: `Workflow · ${p.selectedFolder!.filepath}${activeSessionSuffix(activeSession)}${eventStatsSuffix(eventStats)}`,
+          isActive: isWorkflowMode && p.id === activePresetId,
+          lastAccessedAt: recentPresetAccessedAt[p.id] || (() => {
+            const recentIndex = recentPresetOrder.indexOf(p.id)
+            return recentIndex >= 0 ? 1_000_000 - recentIndex : 0
+          })(),
+          preset: p,
+          eventStats,
+          activeSession,
+        }
+      })
+
+    const activeItems: ActiveWorkItem[] = activeSessions
+      .filter(isVisibleActiveSession)
+      .filter(session => {
+        const tab = findTabForSession(chatTabs, session.session_id)
+        if (tab && !tab.metadata?.isOrganizationAssistant) return false
+        if (isWorkflowSession(session) && session.preset_query_id && workflowPresets.some(preset => preset.id === session.preset_query_id)) return false
+        return true
+      })
+      .map(session => {
+        const tab = findTabForSession(chatTabs, session.session_id)
+        const workflow = isWorkflowSession(session)
+        const status = activeSessionStatusLabel(session)
+        const current = session.current_execution_name ? ` · ${session.current_execution_name}` : ''
+        const eventStats = eventStatsBySession[session.session_id]
+        return {
+          type: 'active' as const,
+          id: `active:${session.session_id}`,
+          label: activeSessionLabel(session),
+          subtitle: `${workflow ? 'Active workflow' : 'Active chat'} · ${status}${current} · ${sessionShortId(session.session_id)}${eventStatsSuffix(eventStats)}`,
+          isActive: !!tab && tab.tabId === activeTabId,
+          lastAccessedAt: tab?.lastAccessedAt || tab?.createdAt || Date.parse(session.last_activity || session.created_at || '') || 0,
+          session,
+          tabId: tab?.tabId,
+          mode: workflow ? 'workflow' : 'multi-agent',
+          eventStats,
+        }
+      })
+
+    const eventItems: EventMemoryItem[] = Object.entries(tabEvents)
+      .map<EventMemoryItem | null>(([sessionId, events]) => {
+        const stats = getEventMemoryStats(events)
+        if (stats.eventCount === 0) return null
+        const tabs = tabsBySession[sessionId] || []
+        if (tabs.length > 0) return null
+        const primaryTab = tabs[0]
+        const tabNames = tabs.map(tab => tab.name).filter(Boolean)
+        const largest = stats.largestEventType
+          ? ` · largest ${stats.largestEventType} (${formatEventMemoryBytes(stats.largestEventBytes)})`
+          : ''
+        return {
+          type: 'events' as const,
+          id: `events:${sessionId}`,
+          label: `Orphan events: ${tabNames.length > 0 ? tabNames.join(', ') : sessionShortId(sessionId)}`,
+          subtitle: `${stats.eventCount.toLocaleString()} events · ${formatEventMemoryBytes(stats.sizeBytes)}${largest}`,
+          isActive: tabs.some(tab => tab.tabId === activeTabId),
+          lastAccessedAt: Math.max(0, ...tabs.map(tab => tab.lastAccessedAt || tab.createdAt || 0)),
+          sessionId,
+          tabIds: tabs.map(tab => tab.tabId),
+          mode: primaryTab?.metadata?.mode,
+          stats,
+        } satisfies EventMemoryItem
+      })
+      .filter((item): item is EventMemoryItem => item !== null)
 
     workflowItems.sort((a, b) => {
       const aIdx = recentPresetOrder.indexOf(a.preset.id)
@@ -132,20 +354,35 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       return a.label.localeCompare(b.label)
     })
 
-    return [...chatItems, ...workflowItems].sort((a, b) => {
+    return [...activeItems, ...chatItems, ...workflowItems, ...eventItems].sort((a, b) => {
       if (a.isActive !== b.isActive) return a.isActive ? -1 : 1
       if (a.lastAccessedAt !== b.lastAccessedAt) return b.lastAccessedAt - a.lastAccessedAt
-      if (a.type !== b.type) return a.type === 'chat' ? -1 : 1
+      if (a.type !== b.type) return itemTypeRank(a) - itemTypeRank(b)
       return a.label.localeCompare(b.label)
     })
-  }, [isOpen, isWorkflowMode, isChatMode, activePresetId, chatTabs, activeTabId, workflowPresets, recentPresetOrder, recentPresetAccessedAt])
+  }, [isOpen, isWorkflowMode, isChatMode, activePresetId, chatTabs, tabEvents, activeSessions, activeTabId, workflowPresets, recentPresetOrder, recentPresetAccessedAt])
 
   // Filter and sort
   const filteredItems = useMemo<QuickSwitcherItem[]>(() => {
-    if (!query.trim()) return allItems
+    const rawQuery = query.toLowerCase().trim()
+    if (!rawQuery) return allItems
 
-    const q = query.toLowerCase().trim()
-    const filtered = allItems.filter(item =>
+    const scopeMatch = rawQuery.match(/^@(active|events|workflows?|chats?|tabs)\s*/)
+    const scope = scopeMatch?.[1] || null
+    const q = scopeMatch ? rawQuery.slice(scopeMatch[0].length).trim() : rawQuery
+    const scoped = scope
+      ? allItems.filter(item => {
+          if (scope === 'active') return !!itemActiveSession(item)
+          if (scope === 'events') return item.type === 'events' || !!itemEventStats(item)
+          if (scope === 'workflow' || scope === 'workflows') return item.type === 'workflow'
+          if (scope === 'chat' || scope === 'chats') return item.type === 'chat'
+          return item.type === 'chat' || item.type === 'workflow'
+        })
+      : allItems
+
+    if (!q) return scoped
+
+    const filtered = scoped.filter(item =>
       item.label.toLowerCase().includes(q) ||
       item.subtitle.toLowerCase().includes(q)
     )
@@ -195,9 +432,62 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     }
   }, [selectedIndex])
 
+  // Switch to a workflow, chat tab, active session, or retained-event owner.
+  const switchToTab = useCallback((tab: ChatTab) => {
+    useAppStore.getState().setShowWorkflowsOverview(false)
+    const tabMode = tab.metadata?.mode || 'multi-agent'
+    if (useModeStore.getState().selectedModeCategory !== tabMode) {
+      useModeStore.getState().setModeCategory(tabMode)
+    }
+    useChatStore.getState().switchTab(tab.tabId)
+    if (tabMode === 'workflow') {
+      useWorkflowStore.getState().setShowChatArea(true)
+    }
+    requestChatScrollToBottom()
+  }, [])
+
   // Switch to a workflow or chat tab. When `minimize` is true (workflow only),
   // the old workflow's tabs are set to flat layout.
-  const handleSelect = useCallback((item: QuickSwitcherItem, minimize = false) => {
+  const handleSelect = useCallback(async (item: QuickSwitcherItem, minimize = false) => {
+    if (item.type === 'active') {
+      const chatStore = useChatStore.getState()
+      const existingTab = item.tabId ? chatStore.getTab(item.tabId) : findTabForSession(chatStore.chatTabs, item.session.session_id)
+      if (existingTab) {
+        switchToTab(existingTab)
+        onClose()
+        return
+      }
+
+      if (item.mode === 'workflow' && item.session.preset_query_id) {
+        const preset = useGlobalPresetStore.getState().workflowPresets.find(p => p.id === item.session.preset_query_id)
+        useAppStore.getState().setShowWorkflowsOverview(false)
+        useModeStore.getState().setModeCategory('workflow')
+        if (preset) useGlobalPresetStore.getState().applyPreset(preset, 'workflow')
+        useWorkflowStore.getState().setShowChatArea(true)
+        onClose()
+        return
+      }
+
+      const restoredTabId = await restoreSession(item.session.session_id, {
+        title: item.label,
+        source: 'quick-switcher',
+      })
+      const restoredTab = useChatStore.getState().getTab(restoredTabId)
+      if (restoredTab) switchToTab(restoredTab)
+      onClose()
+      return
+    }
+
+    if (item.type === 'events') {
+      const chatStore = useChatStore.getState()
+      const tab = item.tabIds.map(tabId => chatStore.getTab(tabId)).find(Boolean)
+      if (tab) {
+        switchToTab(tab)
+      }
+      onClose()
+      return
+    }
+
     if (item.type === 'chat') {
       console.log(`%c[QuickSwitcher] Switching to chat tab: ${item.label} (${item.tabId})`, 'color: #FF9800; font-weight: bold')
       useAppStore.getState().setShowWorkflowsOverview(false)
@@ -267,7 +557,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     console.timeEnd('[QuickSwitcher] workflow-switch-total')
     requestChatScrollToBottom()
     onClose()
-  }, [onClose])
+  }, [onClose, switchToTab])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
@@ -281,7 +571,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       if (filteredItems.length > 0 && selectedIndex >= 0 && selectedIndex < filteredItems.length) {
         // Shift+Enter: switch AND put the old workflow in flat mode.
         // Plain Enter: switch normally.
-        handleSelect(filteredItems[selectedIndex], e.shiftKey)
+        void handleSelect(filteredItems[selectedIndex], e.shiftKey)
       }
     } else if (e.key === 'Escape') {
       e.preventDefault()
@@ -291,8 +581,8 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
   if (!isOpen) return null
 
-  const placeholder = 'Switch chat or workflow...'
-  const emptyText = query ? 'No matching chats or workflows' : 'No chats or workflow presets available'
+  const placeholder = 'Search workflows, chats, active work, or events...'
+  const emptyText = query ? 'No matching items' : 'No switchable items available'
   return (
     <div
       className="absolute inset-0 z-50 flex items-start justify-center pt-[20vh]"
@@ -303,7 +593,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
       {/* Dialog */}
       <div
-        className="relative w-full max-w-md bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl overflow-hidden text-gray-900 dark:text-gray-100"
+        className="relative w-[min(46rem,calc(100vw-2rem))] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl overflow-hidden text-gray-900 dark:text-gray-100"
         onClick={e => e.stopPropagation()}
       >
         {/* Search input */}
@@ -324,7 +614,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
         </div>
 
         {/* Item list */}
-        <div ref={listRef} className="overflow-y-auto max-h-72">
+        <div ref={listRef} className="overflow-y-auto max-h-[48vh]">
           {filteredItems.length === 0 ? (
             <div className="px-4 py-8 text-center text-muted-foreground text-sm">
               {emptyText}
@@ -332,7 +622,16 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           ) : (
             filteredItems.map((item, index) => {
               const isSelected = index === selectedIndex
-              const ItemIcon = item.type === 'workflow' ? Layers : MessageSquare
+              const ItemIcon = item.type === 'workflow'
+                ? Layers
+                : item.type === 'active'
+                  ? Activity
+                  : item.type === 'events'
+                    ? Database
+                    : MessageSquare
+              const stats = itemEventStats(item)
+              const activeSession = itemActiveSession(item)
+              const itemIsPressure = !!stats && hasEventMemoryPressure(stats)
               return (
                 <div
                   key={item.id}
@@ -342,17 +641,30 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
                       : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
                   }`}
                   onMouseEnter={() => setSelectedIndex(index)}
-                  onMouseDown={e => { e.preventDefault(); handleSelect(item, e.shiftKey) }}
+                  onMouseDown={e => { e.preventDefault(); void handleSelect(item, e.shiftKey) }}
                 >
-                  <ItemIcon className={`w-4 h-4 flex-shrink-0 ${item.isActive ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'}`} />
+                  <ItemIcon className={`w-4 h-4 flex-shrink-0 ${item.isActive ? 'text-blue-500' : itemIsPressure ? 'text-amber-500' : 'text-gray-400 dark:text-gray-500'}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className={`text-sm font-medium truncate ${item.isActive ? 'text-blue-600 dark:text-blue-400' : 'text-gray-900 dark:text-gray-100'}`}>
                         {item.label}
                       </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-300 font-medium flex-shrink-0">
+                        {item.type === 'active' ? 'active' : item.type}
+                      </span>
+                      {activeSession && item.type !== 'active' && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-medium flex-shrink-0">
+                          active
+                        </span>
+                      )}
                       {item.isActive && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 font-medium flex-shrink-0">
-                          active
+                          current
+                        </span>
+                      )}
+                      {itemIsPressure && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-medium flex-shrink-0">
+                          high
                         </span>
                       )}
                     </div>
@@ -371,15 +683,31 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 text-[11px] text-gray-400 dark:text-gray-500 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">↑↓</kbd> navigate</span>
-            <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">↵</kbd> switch</span>
-            {filteredItems.some(item => item.type === 'workflow') && (
-              <span><kbd className="px-1 py-0.5 bg-amber-200 dark:bg-amber-800 text-amber-700 dark:text-amber-300 rounded text-[10px]">⇧↵</kbd> switch &amp; minimize</span>
-            )}
+        <div className="border-t border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/50">
+          <div className="flex items-center justify-between gap-3 px-4 py-2 text-[11px] text-gray-500 dark:text-gray-400">
+            <div className="min-w-0 truncate">
+              Events retained: <span className="font-medium text-gray-700 dark:text-gray-200">{totalEventStats.eventCount.toLocaleString()}</span>
+              <span className="mx-1.5 text-gray-300 dark:text-gray-600">·</span>
+              Memory: <span className="font-medium text-gray-700 dark:text-gray-200">{formatEventMemoryBytes(totalEventStats.sizeBytes)}</span>
+              {totalEventStats.largestEventBytes > 0 && (
+                <>
+                  <span className="mx-1.5 text-gray-300 dark:text-gray-600">·</span>
+                  <span className="truncate">largest {totalEventStats.largestEventType || 'n/a'} ({formatEventMemoryBytes(totalEventStats.largestEventBytes)})</span>
+                </>
+              )}
+            </div>
+            <span className="hidden sm:inline flex-shrink-0">@active @events @workflows @chats</span>
           </div>
-          <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">esc</kbd> close</span>
+          <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700 text-[11px] text-gray-400 dark:text-gray-500 flex items-center justify-between">
+            <div className="flex items-center gap-3 min-w-0">
+              <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">↑↓</kbd> navigate</span>
+              <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">↵</kbd> switch</span>
+              {filteredItems.some(item => item.type === 'workflow') && (
+                <span><kbd className="px-1 py-0.5 bg-amber-200 dark:bg-amber-800 text-amber-700 dark:text-amber-300 rounded text-[10px]">⇧↵</kbd> switch &amp; minimize</span>
+              )}
+            </div>
+            <span className="flex-shrink-0"><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">esc</kbd> close</span>
+          </div>
         </div>
       </div>
     </div>

@@ -577,7 +577,7 @@ export const GlobalActivityMonitor: React.FC = () => {
         className="relative flex items-center gap-2 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-700/50 dark:bg-blue-900/20 dark:text-blue-200 dark:hover:bg-blue-900/35"
         aria-expanded={open}
         aria-label="Open running work activity"
-        title="Active work (Ctrl+I)"
+        title="Active work is also searchable in Ctrl+K"
       >
         <span className={`h-2 w-2 rounded-full ${statusDotClasses(primaryTone)}`} />
         {primaryTone === 'needs-input' ? (
@@ -603,7 +603,7 @@ export const GlobalActivityMonitor: React.FC = () => {
               </div>
             </div>
             <div className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-              {inputCount > 0 ? `${inputCount} waiting for input` : 'Click any row to switch to it'}
+              {inputCount > 0 ? `${inputCount} waiting for input` : 'Click any row to switch to it'} · also in Ctrl+K
             </div>
           </div>
 

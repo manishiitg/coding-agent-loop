@@ -49,10 +49,6 @@ interface Metric {
   floor?: number
   ceiling?: number
   source: { type: string; id?: string; field?: string }
-  evaluable_at_lag?: string
-  parent?: string
-  version?: number
-  linked_success_criteria?: string[]
 }
 
 interface Experiment {
@@ -368,7 +364,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [metrics, setMetrics] = useState<Metric[]>([])
-  const [activeMode, setActiveMode] = useState<string>('')
   const [activeExperiments, setActiveExperiments] = useState<Experiment[]>([])
   const [historyExperiments, setHistoryExperiments] = useState<Experiment[]>([])
   const [decisions, setDecisions] = useState<Decision[]>([])
@@ -384,10 +379,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
     soul_exists: boolean
     objective_ok: boolean
     success_criteria_ok: boolean
-    declared_criteria: string[]
-    uncovered_criteria: string[]
-    unanchored_metrics: string[]
-    telemetry_metrics: string[]
   } | null>(null)
 
   const refresh = useCallback(async () => {
@@ -399,15 +390,13 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
         agentApi.getAutoImprovementMetrics(workspacePath).catch((err) => ({ success: false, error: String(err), file: undefined })),
         agentApi.getAutoImprovementExperiments(workspacePath, true).catch((err) => ({ success: false, active: [], history: [], error: String(err) })),
         agentApi.getAutoImprovementDecisions(workspacePath).catch((err) => ({ success: false, decisions: [], error: String(err) })),
-        agentApi.getFrameworkHealth(workspacePath).catch((err) => ({ success: false, error: String(err), soul_exists: false, objective_ok: false, success_criteria_ok: false, declared_criteria: [], uncovered_criteria: [], unanchored_metrics: [], telemetry_metrics: [] })),
+        agentApi.getFrameworkHealth(workspacePath).catch((err) => ({ success: false, error: String(err), soul_exists: false, objective_ok: false, success_criteria_ok: false })),
         agentApi.getMetricsHistory(workspacePath).catch((err) => ({ success: false, rows: [], error: String(err) })),
       ])
       if (m.success && m.file) {
         setMetrics(Array.isArray(m.file.metrics) ? m.file.metrics : [])
-        setActiveMode(m.file.active_mode || '')
       } else {
         setMetrics([])
-        setActiveMode('')
       }
       if (e.success) {
         setActiveExperiments(Array.isArray(e.active) ? e.active : [])
@@ -421,10 +410,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
           soul_exists: !!h.soul_exists,
           objective_ok: !!h.objective_ok,
           success_criteria_ok: !!h.success_criteria_ok,
-          declared_criteria: Array.isArray(h.declared_criteria) ? h.declared_criteria : [],
-          uncovered_criteria: Array.isArray(h.uncovered_criteria) ? h.uncovered_criteria : [],
-          unanchored_metrics: Array.isArray(h.unanchored_metrics) ? h.unanchored_metrics : [],
-          telemetry_metrics: Array.isArray(h.telemetry_metrics) ? h.telemetry_metrics : [],
         })
       } else {
         setFrameworkHealth(null)
@@ -491,11 +476,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
             <div className="flex items-center gap-2">
               <Beaker className="w-5 h-5 text-purple-600" />
               <h2 className="text-lg font-semibold">Auto-improvement framework</h2>
-              {activeMode && (
-                <span className="ml-3 inline-flex items-center px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
-                  active mode: {activeMode}
-                </span>
-              )}
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -554,12 +534,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
               if (!frameworkHealth.objective_ok) issues.push({ kind: 'critical', msg: 'soul.md ## Objective is empty or still a TODO placeholder.' })
               if (!frameworkHealth.success_criteria_ok) issues.push({ kind: 'critical', msg: 'soul.md ## Success Criteria is empty — without it, metrics have no north star to verdict against.' })
             }
-            if (frameworkHealth.uncovered_criteria.length > 0) {
-              issues.push({ kind: 'warning', msg: `${frameworkHealth.uncovered_criteria.length} success criterion${frameworkHealth.uncovered_criteria.length === 1 ? '' : 'a'} have no metric pointing at them — invisible to the experiment loop.` })
-            }
-            if (frameworkHealth.unanchored_metrics.length > 0) {
-              issues.push({ kind: 'warning', msg: `${frameworkHealth.unanchored_metrics.length} metric${frameworkHealth.unanchored_metrics.length === 1 ? '' : 's'} have no linked_success_criteria (excluding telemetry SLOs) — verdicts on these don't reflect user-facing success.` })
-            }
             if (issues.length === 0) return null
             const hasCritical = issues.some((i) => i.kind === 'critical')
             return (
@@ -568,31 +542,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                 <ul className="list-disc list-inside space-y-0.5">
                   {issues.map((i, n) => <li key={n}>{i.msg}</li>)}
                 </ul>
-                {(frameworkHealth.uncovered_criteria.length > 0 || frameworkHealth.unanchored_metrics.length > 0) && (
-                  <details className="mt-1">
-                    <summary className="cursor-pointer text-[11px] opacity-80">details</summary>
-                    {frameworkHealth.uncovered_criteria.length > 0 && (
-                      <div className="mt-1">
-                        <span className="font-medium">Uncovered criteria:</span>
-                        <ul className="list-disc list-inside text-[11px] mt-0.5">
-                          {frameworkHealth.uncovered_criteria.map((c, n) => <li key={n}>{c}</li>)}
-                        </ul>
-                      </div>
-                    )}
-                    {frameworkHealth.unanchored_metrics.length > 0 && (
-                      <div className="mt-1">
-                        <span className="font-medium">Unanchored metrics:</span>{' '}
-                        <code className="text-[11px]">{frameworkHealth.unanchored_metrics.join(', ')}</code>
-                      </div>
-                    )}
-                    {frameworkHealth.telemetry_metrics.length > 0 && (
-                      <div className="mt-1 opacity-75">
-                        <span className="font-medium">Telemetry SLOs (unanchored by design):</span>{' '}
-                        <code className="text-[11px]">{frameworkHealth.telemetry_metrics.join(', ')}</code>
-                      </div>
-                    )}
-                  </details>
-                )}
               </div>
             )
           })()}
@@ -746,9 +695,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                           <th className="text-left py-2 px-2">mode</th>
                           <th className="text-left py-2 px-2">target / floor / ceiling</th>
                           <th className="text-left py-2 px-2">source</th>
-                          <th className="text-left py-2 px-2">success criteria</th>
-                          <th className="text-left py-2 px-2">lag</th>
-                          <th className="text-left py-2 px-2">v</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -760,23 +706,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                             <td className="py-2 px-2 text-xs">{m.mode}</td>
                             <td className="py-2 px-2 text-xs">{m.target ?? m.floor ?? m.ceiling ?? '—'}</td>
                             <td className="py-2 px-2 text-xs">{m.source.type}{m.source.id && `:${m.source.id}`}{m.source.field && `:${m.source.field}`}</td>
-                            <td className="py-2 px-2 text-xs">
-                              {m.linked_success_criteria && m.linked_success_criteria.length > 0 ? (
-                                <span className="inline-flex flex-wrap gap-1">
-                                  {m.linked_success_criteria.map((sc, i) => (
-                                    <span key={i} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300" title={sc}>
-                                      {sc.length > 32 ? sc.slice(0, 30) + '…' : sc}
-                                    </span>
-                                  ))}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300" title="No linked success criteria — telemetry / auxiliary metric. Verdicts on this metric do not directly reflect user-facing success.">
-                                  unanchored
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-2 px-2 text-xs">{m.evaluable_at_lag || '—'}</td>
-                            <td className="py-2 px-2 text-xs">{m.version || 1}</td>
                           </tr>
                         ))}
                       </tbody>

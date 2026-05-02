@@ -29,7 +29,7 @@ func RegisterProposeExperimentTool(agent *mcpagent.Agent, workspacePath, trigger
 	desc := "Open an experiment to test a hypothesis about the workflow. " +
 		"Pre-registers the hypothesis, captures a baseline from recent run history, snapshots world_state, " +
 		"applies the intervention atomically with a revertable diff, and starts a measurement window. " +
-		"The next runs (or runs after evaluable_at_lag elapses for delayed metrics) populate measurement.values; " +
+		"The next runs populate measurement.values; " +
 		"when target_runs is reached, the system computes the verdict and the evaluator agent narrates it via conclude_experiment. " +
 		"Do NOT use this tool to read state or to apply unconditional fixes — open an experiment ONLY when you have a falsifiable hypothesis " +
 		"about how the change will move a declared metric. Returns { experiment_id, status, decisions_entry_id }."
@@ -122,13 +122,10 @@ func RegisterProposeExperimentTool(agent *mcpagent.Agent, workspacePath, trigger
 // RegisterProposeMetricTool exposes propose_metric to the proposer LLM.
 func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
 	desc := "Privileged write path for <workflow>/planning/metrics.json (which is folder-guarded against shell writes). " +
-		"Three modes:\n" +
-		"  1. Define a new metric — supply id + unit + direction + mode + source.\n" +
-		"  2. Amend an existing metric — supply the new definition + amend_existing={id, reason}; the prior definition archives, version bumps, the trajectory line breaks at the transition.\n" +
-		"  3. Set active_mode only — supply just `active_mode` (omit the metric fields). For dual-mode workflows declared in improve.md (e.g. explore/exploit cycles); the value lives at the top of metrics.json so steps can branch on it via the variable resolver.\n" +
-		"You may also pass `active_mode` alongside a metric definition to do both in one call. " +
+		"Defines a new metric: supply id + unit + direction + mode + source. " +
+		"Metrics are append-only by id. To change a metric's meaning, retire the old one (retire_metric) and create a new one with a different id. " +
 		"Use this BEFORE proposing experiments that target a metric that does not yet exist. " +
-		"Returns { metric_id, version, status, active_mode }."
+		"Returns { metric_id, status }."
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -145,41 +142,16 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 			"ceiling":   map[string]interface{}{"type": "number", "description": "Required when mode=slo + direction=lower_better."},
 			"source": map[string]interface{}{
 				"type":        "object",
-				"description": "Where each run's metric value comes from. Each type has different required sub-fields — see below. Pick exactly one type:\n  • eval_step — value is the score of a named eval step (must exist in evaluation/evaluation_plan.json). REQUIRES `id`. Example: { type: \"eval_step\", id: \"eval-data-accuracy\" }\n  • telemetry — value is read from run telemetry (cost, latency, etc.). REQUIRES `field`. Example: { type: \"telemetry\", field: \"run.total_cost_usd\" }\n  • external — value is supplied by an external feed (human approval, downstream signal). REQUIRES `field`. Example: { type: \"external\", field: \"feedback.approved_pct\" }\n  • delayed_ground_truth — predictions joined with later ground truth (forecast, lead conversion). REQUIRES `joined_via`. Pair with `evaluable_at_lag`.\n  • lineage — value derived from data lineage (data-pipeline workflows). No required sub-fields beyond type.\n  • schema_check — value derived from schema-validity checks. No required sub-fields beyond type.\nDo NOT invent other type values like \"db\" or \"manual\" or \"json_file\" — they will fail validation.",
+				"description": "Where each run's metric value comes from. Pick exactly one type:\n  • eval_step — value is the score (or a structured-output field) of a named eval step (must exist in evaluation/evaluation_plan.json). REQUIRES `id`. Example: { type: \"eval_step\", id: \"eval-data-accuracy\" }\n  • telemetry — value is read from run telemetry (cost, latency, etc.). REQUIRES `field`. Example: { type: \"telemetry\", field: \"run.total_cost_usd\" }\nFor external feeds, schema checks, lineage, or delayed-outcome attribution, write an eval step whose Python does the work and emits the value, then point the metric at that eval step (eval_step is the canonical funnel for any non-telemetry metric).\nDo NOT invent other type values like \"db\" or \"manual\" or \"json_file\" — they will fail validation.",
 				"properties": map[string]interface{}{
-					"type":       map[string]interface{}{"type": "string", "enum": []string{"eval_step", "telemetry", "external", "delayed_ground_truth", "lineage", "schema_check"}, "description": "Source kind. Six valid values, listed in the parent description."},
-					"id":         map[string]interface{}{"type": "string", "description": "REQUIRED when type=eval_step. The eval step id from evaluation/evaluation_plan.json. When set together with `field`, the metric reads that field from the eval step's structured JSON output (in OutputContent); when `field` is empty, the metric reads the eval step's percent score."},
-					"field":      map[string]interface{}{"type": "string", "description": "REQUIRED when type=telemetry or type=external. Optional when type=eval_step (then it's a field key into the eval step's JSON output). For type=telemetry, the wired field names today are `run.total_cost_usd` (sum of model costs for the run, in USD) and `run.duration_seconds` (wall-clock seconds the run took). Other telemetry field names will silently return no value."},
-					"joined_via": map[string]interface{}{"type": "string", "description": "REQUIRED when type=delayed_ground_truth. The join key linking predictions to their later ground truth (e.g. prediction_id)."},
+					"type":  map[string]interface{}{"type": "string", "enum": []string{"eval_step", "telemetry"}, "description": "Source kind. Two valid values, listed in the parent description."},
+					"id":    map[string]interface{}{"type": "string", "description": "REQUIRED when type=eval_step. The eval step id from evaluation/evaluation_plan.json. When set together with `field`, the metric reads that field from the eval step's structured JSON output (in OutputContent); when `field` is empty, the metric reads the eval step's percent score."},
+					"field": map[string]interface{}{"type": "string", "description": "REQUIRED when type=telemetry. Optional when type=eval_step (then it's a field key into the eval step's JSON output). For type=telemetry, six wired field names — three scopes × two measurements each:\n  • run.total_cost_usd — execution cost only (workflow steps)\n  • run.duration_seconds — execution wall-clock seconds (workflow only)\n  • eval.total_cost_usd — evaluation cost only (eval scoring + eval Python)\n  • eval.duration_seconds — evaluation wall-clock seconds\n  • total.cost_usd — execution + evaluation cost combined\n  • total.duration_seconds — execution + evaluation duration combined (sequential, so ~ end-to-end wall-clock)\nUnknown telemetry field names silently return no value."},
 				},
 				"required": []string{"type"},
 			},
-			"evaluable_at_lag": map[string]interface{}{
-				"type":        "string",
-				"description": "Optional. Duration like 30d / 12h / 90s. Forces the experiment loop to wait for this lag before resolving the value.",
-			},
-			"parent": map[string]interface{}{"type": "string"},
-			"linked_success_criteria": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "REQUIRED for outcome metrics; optional for telemetry. The success_criteria entries (or their indices/short labels) from planning/plan.json that this metric operationalizes. The framework cannot enforce alignment between metric movement and user-facing success on its own — this field is the trace. Example: [\"Email reply rate ≥ 30%\"] or [\"sc-0\", \"sc-2\"]. Leave empty only for purely auxiliary metrics like cost_per_run / run_duration_seconds (telemetry SLOs that don't operationalize a plan-level criterion). Empty for outcome metrics is allowed but flagged in the UI as an unanchored metric.",
-			},
-			"amend_existing": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"id":     map[string]interface{}{"type": "string"},
-					"reason": map[string]interface{}{"type": "string"},
-				},
-				"required": []string{"id", "reason"},
-			},
-			"active_mode": map[string]interface{}{
-				"type":        "string",
-				"description": "Optional. For dual-mode workflows (declared in improve.md as explore/exploit, train/serve, etc.) — sets the runtime mode. Steps can read this via the variable resolver to branch behavior. Pass alone (without metric fields) to update only the mode; pass alongside a metric definition to do both in one write.",
-			},
 		},
-		// No top-level required: either supply a metric definition (id+unit+direction+mode+source)
-		// OR active_mode alone. The handler enforces the choice and reports a clear error if neither
-		// is supplied.
+		"required": []string{"id", "unit", "direction", "mode", "source"},
 	}
 
 	handler := func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -202,6 +174,52 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 	if err := agent.RegisterCustomTool("propose_metric", desc, params, handler, "auto_improvement"); err != nil {
 		if logger != nil {
 			logger.Warn(fmt.Sprintf("Failed to register propose_metric: %v", err))
+		}
+	}
+}
+
+// RegisterRetireMetricTool exposes retire_metric to the proposer LLM.
+// Soft-deletes a metric: removes it from the active metrics array and moves
+// it to the archive with an archived_reason. The metric stops being
+// collected on future runs; existing rows in db/metrics_history.jsonl that
+// reference its id remain (the archive entry preserves what they meant).
+func RegisterRetireMetricTool(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
+	desc := "Retire a metric defined in planning/metrics.json. Soft delete: " +
+		"removes the metric from the active list and moves the prior definition to " +
+		"metrics.json::archive[] with the supplied reason. Subsequent runs skip the " +
+		"metric in the snapshot pipeline. Past db/metrics_history.jsonl rows are " +
+		"preserved as-is — the archive entry is the audit trail for what those " +
+		"historical values represented. Use this when a metric is superseded, " +
+		"deprecated, or no longer relevant. Returns { metric_id, version, status }."
+	params := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id":     map[string]interface{}{"type": "string", "description": "The metric id (kebab.dot) to retire. Must currently exist in metrics.json::metrics[]."},
+			"reason": map[string]interface{}{"type": "string", "description": "Why the metric is being retired. Stored in metrics.json::archive[].archived_reason for traceability. Required."},
+		},
+		"required": []string{"id", "reason"},
+	}
+
+	handler := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		raw, err := json.Marshal(args)
+		if err != nil {
+			return "", err
+		}
+		var input RetireMetricInput
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return fmt.Sprintf("invalid arguments for retire_metric: %v", err), nil
+		}
+		out, err := RetireMetric(ctx, workspacePath, triggerSource, input)
+		if err != nil {
+			return fmt.Sprintf("retire_metric failed: %v", err), nil
+		}
+		body, _ := json.MarshalIndent(out, "", "  ")
+		return string(body), nil
+	}
+
+	if err := agent.RegisterCustomTool("retire_metric", desc, params, handler, "auto_improvement"); err != nil {
+		if logger != nil {
+			logger.Warn(fmt.Sprintf("Failed to register retire_metric: %v", err))
 		}
 	}
 }
@@ -271,4 +289,5 @@ func RegisterConcludeExperimentTool(agent *mcpagent.Agent, workspacePath string,
 func RegisterAutoImprovementProposerTools(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
 	RegisterProposeExperimentTool(agent, workspacePath, triggerSource, logger)
 	RegisterProposeMetricTool(agent, workspacePath, triggerSource, logger)
+	RegisterRetireMetricTool(agent, workspacePath, triggerSource, logger)
 }

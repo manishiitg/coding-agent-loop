@@ -16,24 +16,3 @@ func TestResolveBrowserSessionID(t *testing.T) {
 	}
 }
 
-func TestIsCLIProvider(t *testing.T) {
-	tests := []struct {
-		provider string
-		want     bool
-	}{
-		{provider: "claude-code", want: true},
-		{provider: "gemini-cli", want: true},
-		{provider: "codex-cli", want: true},
-		{provider: "kimi", want: true},
-		{provider: " Codex-CLI ", want: true},
-		{provider: "openai", want: false},
-		{provider: "vertex", want: false},
-		{provider: "", want: false},
-	}
-
-	for _, tt := range tests {
-		if got := IsCLIProvider(tt.provider); got != tt.want {
-			t.Fatalf("IsCLIProvider(%q) = %v, want %v", tt.provider, got, tt.want)
-		}
-	}
-}

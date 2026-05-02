@@ -108,64 +108,37 @@ const (
 type MetricSourceType string
 
 const (
-	MetricSourceEvalStep           MetricSourceType = "eval_step"
-	MetricSourceTelemetry          MetricSourceType = "telemetry"
-	MetricSourceExternal           MetricSourceType = "external"
-	MetricSourceDelayedGroundTruth MetricSourceType = "delayed_ground_truth"
-	MetricSourceLineage            MetricSourceType = "lineage"
-	MetricSourceSchemaCheck        MetricSourceType = "schema_check"
+	MetricSourceEvalStep  MetricSourceType = "eval_step"
+	MetricSourceTelemetry MetricSourceType = "telemetry"
 )
 
 // MetricSource describes how a metric's value is resolved per run.
 type MetricSource struct {
-	Type      MetricSourceType `json:"type"`
-	ID        string           `json:"id,omitempty"`
-	Field     string           `json:"field,omitempty"`
-	JoinedVia string           `json:"joined_via,omitempty"`
+	Type  MetricSourceType `json:"type"`
+	ID    string           `json:"id,omitempty"`
+	Field string           `json:"field,omitempty"`
 }
 
 // Metric is one entry in metrics.json::metrics[].
+//
+// Minimal model: id + threshold + a pointer to where the value lives.
+// Every metric is append-only by id; to change a metric's meaning, retire
+// the old one (retire_metric) and create a new one with a new id.
 type Metric struct {
-	ID             string          `json:"id"`
-	Label          string          `json:"label,omitempty"`
-	Unit           string          `json:"unit"`
-	Direction      MetricDirection `json:"direction"`
-	Mode           MetricMode      `json:"mode"`
-	Target         *float64        `json:"target,omitempty"`
-	Floor          *float64        `json:"floor,omitempty"`
-	Ceiling        *float64        `json:"ceiling,omitempty"`
-	Source         MetricSource    `json:"source"`
-	EvaluableAtLag string          `json:"evaluable_at_lag,omitempty"`
-	Parent         string          `json:"parent,omitempty"`
-	Version        int             `json:"version,omitempty"`
-	// LinkedSuccessCriteria traces this metric to one or more entries in the
-	// plan's success_criteria. Closes the Goodhart loop: an experiment moves a
-	// metric, the metric operationalizes a criterion, the criterion is the
-	// outcome the workflow is meant to achieve. Empty means the metric is
-	// auxiliary (telemetry like cost/duration), not tied to a user-facing
-	// outcome — surfaced as a warning in the UI but not blocked.
-	LinkedSuccessCriteria []string `json:"linked_success_criteria,omitempty"`
-}
-
-// MetricArchiveEntry preserves prior versions of amended metrics.
-type MetricArchiveEntry struct {
-	ID             string `json:"id"`
-	Version        int    `json:"version"`
-	ArchivedAt     string `json:"archived_at"`
-	ArchivedReason string `json:"archived_reason"`
-	Definition     Metric `json:"definition"`
+	ID        string          `json:"id"`
+	Label     string          `json:"label,omitempty"`
+	Unit      string          `json:"unit"`
+	Direction MetricDirection `json:"direction"`
+	Mode      MetricMode      `json:"mode"`
+	Target    *float64        `json:"target,omitempty"`
+	Floor     *float64        `json:"floor,omitempty"`
+	Ceiling   *float64        `json:"ceiling,omitempty"`
+	Source    MetricSource    `json:"source"`
 }
 
 // MetricsFile is the shape of <workflow>/planning/metrics.json.
-//
-// `ActiveMode` is the runtime state for dual-mode workflows (e.g. Twitter
-// explore/exploit cycles). When the workflow's improve.md declares dual mode,
-// the active value lives here so steps can branch on it via the variable
-// resolver. Workflows that don't declare dual mode leave this empty.
 type MetricsFile struct {
-	Metrics    []Metric             `json:"metrics"`
-	Archive    []MetricArchiveEntry `json:"archive,omitempty"`
-	ActiveMode string               `json:"active_mode,omitempty"`
+	Metrics []Metric `json:"metrics"`
 }
 
 // ExperimentStatus — the experiment state machine.

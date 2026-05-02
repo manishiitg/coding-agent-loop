@@ -60,14 +60,48 @@ The framework was built against seven concrete workflow shapes. Six of seven are
 
 Today, a workflow's success is described in a free-form `success_criteria` string. The framework keeps that string for high-level intent but adds a structured layer: a `planning/metrics.json` file that defines each metric the workflow is held to. The file lives under `planning/` so the existing FolderGuard `BlockedWritePaths` makes it tool-only by construction — agents can only write metrics through the privileged `propose_metric` tool, which validates against the framework schema and version-archives prior definitions on amend.
 
+### The mental model
+
+The framework collapses to three things, and **every metric value comes from one of two places**:
+
+```
+EVAL STEPS                         TELEMETRY
+(Python scripts that score          (engine-recorded run data:
+ the run's outputs)                  cost, duration)
+        │                                   │
+        │  produce: score + structured      │  produces: cost_usd,
+        │  output (any field)               │  duration_seconds
+        ▼                                   ▼
+                  METRICS
+        (a curated subset, with:
+         - direction, mode, threshold
+         - tracked over time, plotted
+           as a per-run trend)
+```
+
+> **Eval is where you compute or decide things. Metrics are the eval values you've decided are worth watching over time. Telemetry is the engine reporting on itself.**
+
+Per-run metric snapshots are written automatically at the tail of every evaluation execution — both the auto-eval that fires after a workflow run completes, and standalone eval triggered from the builder. After eval scores `evaluation_report.json` for the run, the framework reads `planning/metrics.json`, resolves each metric's value from those scores, and writes:
+
+- `runs/<runFolder>/metrics_snapshot.json` — the full per-run snapshot
+- `db/metrics_history.jsonl` — append-only cross-run time series consumed by the Trajectory tab
+
+**To test the metric pipeline without running the full workflow**, trigger an eval-only execution from the builder against an existing run folder. The eval pipeline will rescore that run, the snapshot will fire at the tail, and you'll see new rows appear in `db/metrics_history.jsonl`.
+
+Practical implications:
+
+- **Not every eval step is a metric.** An eval step might just be a structural check (e.g. "are required artifacts present?"). It produces a score; if no metric points at it, it isn't tracked as a time series.
+- **One eval step can feed multiple metrics.** A single eval Python can emit a structured JSON output with many fields, and you can declare separate metrics pulling each field as its own trend line.
+- **A metric without an eval (or telemetry) is impossible.** To track a new value over time, you write/extend an eval step first; the metric is a thin wrapper on top.
+- **Telemetry is the only non-eval source.** It exists because cost/duration are intrinsic to the engine, not produced by user scripts. For *anything else* that might feel like it lives outside the run — third-party APIs, schema validation, data-lineage checks, delayed outcomes attributed back to the run that made the prediction — write a Python eval step. The eval pipeline gives you sandboxing, secrets, retries, logging, and zero-cost fast-path execution for free.
+
 A metric carries:
 
 - A unique identifier (e.g. `audit.accuracy`).
 - A unit (`percent`, `usd`, `seconds`).
 - A direction — higher better, or lower better.
 - A mode — drive *toward* a target, or stay above a *floor* / below a *ceiling*.
-- A source — where the value comes from each run: an eval step, telemetry, an external feed, or delayed ground truth.
-- Optionally, an evaluation lag for outcome metrics that don't materialize immediately (a 30-day prediction can only be scored 30 days later).
+- A source — `eval_step` (with the step's id, and optionally a structured-output field name) or `telemetry` (with a field like `run.total_cost_usd`).
 
 Metrics can be grouped under a parent for navigation in the UI. There is **no rolled-up "main metric" percentage** — that path produces fictions, especially when metrics have different units or directions. Every metric is shown independently.
 

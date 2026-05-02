@@ -61,50 +61,36 @@ func RecordMeasurement(ctx context.Context, workspacePath, runFolder string) err
 		if e.Measurement.Values == nil {
 			e.Measurement.Values = map[string][]float64{}
 		}
-		appendedAny := false
-		allResolved := true
 		for _, mid := range e.TargetMetrics {
 			m := FindMetric(metricsFile, mid)
 			if m == nil {
 				continue
 			}
-			// Delayed sources: enqueue rather than block. v1 simply skips them
-			// here; the pending-evaluation queue lands in a follow-up.
-			if m.EvaluableAtLag != "" || m.Source.Type == MetricSourceDelayedGroundTruth {
-				allResolved = false
-				continue
-			}
 			v, ok, err := ResolveMetricValue(ctx, workspacePath, runFolder, m)
-			if err != nil {
-				continue
-			}
-			if !ok {
-				allResolved = false
+			if err != nil || !ok {
 				continue
 			}
 			e.Measurement.Values[mid] = append(e.Measurement.Values[mid], v)
-			appendedAny = true
 		}
-		_ = allResolved // reserved for the pending-eval queue logic later
 
-		// Only record this run's contribution and bump the counter if at least
-		// one metric resolved. Runs where every metric was delayed/unavailable
-		// don't count toward target_runs.
-		if appendedAny {
-			e.Measurement.CompletedRuns++
-			e.Measurement.ContributedRuns = append(e.Measurement.ContributedRuns, runFolder)
-			mutated = true
+		// Always count this run toward target_runs — even if no metric
+		// resolved (e.g., the run failed and produced no scores). This stops
+		// experiments from hanging forever when runs fail; with the value
+		// arrays just shorter, the verdict logic will most likely come back
+		// as "inconclusive" rather than the experiment getting stuck.
+		e.Measurement.CompletedRuns++
+		e.Measurement.ContributedRuns = append(e.Measurement.ContributedRuns, runFolder)
+		mutated = true
 
-			// Verdict trigger: fire EXACTLY when crossing the threshold, not
-			// every subsequent run. Without this guard, an experiment that
-			// gets extended past target_runs (or naturally accrues more runs
-			// while in "measuring") would re-compute the verdict on every
-			// subsequent run.
-			if e.Measurement.CompletedRuns == e.Measurement.TargetRuns && e.Measurement.TargetRuns > 0 {
-				ComputeVerdict(e, cfg, metricsFile)
-				e.Status = ExpStatusEvaluating
-				transitionedToEvaluating = append(transitionedToEvaluating, e.ID)
-			}
+		// Verdict trigger: fire when at or past the threshold. Use >= rather
+		// than == so failed-run advances (which can push completed_runs past
+		// target_runs in a single batch) still trigger the verdict. The
+		// outer-loop status check above prevents re-firing on subsequent
+		// runs once we transition to ExpStatusEvaluating.
+		if e.Measurement.CompletedRuns >= e.Measurement.TargetRuns && e.Measurement.TargetRuns > 0 {
+			ComputeVerdict(e, cfg, metricsFile)
+			e.Status = ExpStatusEvaluating
+			transitionedToEvaluating = append(transitionedToEvaluating, e.ID)
 		}
 	}
 
@@ -274,7 +260,10 @@ func metricIsOutcome(metricsFile *MetricsFile, metricID string) bool {
 	if m == nil {
 		return true
 	}
-	return len(m.LinkedSuccessCriteria) > 0
+	// Telemetry metrics (cost / duration) are auxiliary; everything else is
+	// treated as an outcome since the linked_success_criteria trace was
+	// removed in the metric-model simplification.
+	return m.Source.Type != MetricSourceTelemetry
 }
 
 // combineVerdictsWeighted resolves per-metric verdicts into one overall

@@ -2490,12 +2490,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[SKILLS] Applied %d skills to workflow orchestrator: %v", len(selectedSkills), selectedSkills)
 		}
 
-		// Wire post-run metric snapshotting for any workflow that defines
-		// planning/metrics.json. No-op when the file is absent, so this is safe
-		// to set unconditionally for every workflow run.
-		workflowOrchestrator.SetRunCompletedHook(SnapshotRunMetrics)
-
-		// Merge global secrets with user-supplied secrets, then set on orchestrator
+// Merge global secrets with user-supplied secrets, then set on orchestrator
 		allSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 		if len(allSecrets) > 0 {
 			entries := make([]orchestrator.SecretEntry, len(allSecrets))

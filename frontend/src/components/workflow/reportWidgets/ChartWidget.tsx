@@ -33,15 +33,6 @@ export function ChartWidget({ value, widget }: { value: unknown; widget: ReportW
     return pts
   }, [value, widget])
 
-  if (points.length === 0) return null
-
-  const chartType = widget.chartType ?? 'bar'
-  const showValues = widget.showValues === true
-  const heightPx = widget.height ?? 288 // h-72 default
-  const minHeightPx = Math.min(isCompact ? 180 : 220, heightPx)
-  const chartFrameStyle = { width: '100%', height: `clamp(${minHeightPx}px, ${isCompact ? 34 : 42}vh, ${heightPx}px)` }
-
-  const palette = resolvePalette(widget, theme)
   // For semantic coloring, assign each distinct colorBy value a stable index into
   // the palette so unmapped values still get consistent (not random) colors.
   const distinctIndex = useMemo(() => {
@@ -56,6 +47,20 @@ export function ChartWidget({ value, widget }: { value: unknown; widget: ReportW
     }
     return out
   }, [points, widget.colorBy])
+
+  // Stable, unique gradient ids per widget instance. Recharts re-renders would
+  // re-create random ids and break the reference, so useId() is required here.
+  const gradPrefix = useId().replace(/:/g, '')
+
+  if (points.length === 0) return null
+
+  const chartType = widget.chartType ?? 'bar'
+  const showValues = widget.showValues === true
+  const heightPx = widget.height ?? 288 // h-72 default
+  const minHeightPx = Math.min(isCompact ? 180 : 220, heightPx)
+  const chartFrameStyle = { width: '100%', height: `clamp(${minHeightPx}px, ${isCompact ? 34 : 42}vh, ${heightPx}px)` }
+
+  const palette = resolvePalette(widget, theme)
   const colorForPoint = (p: (typeof points)[number], fallbackIndex: number): string => {
     if (widget.colorBy) {
       const raw = (p as unknown as Record<string, unknown>)[widget.colorBy]
@@ -121,9 +126,6 @@ export function ChartWidget({ value, widget }: { value: unknown; widget: ReportW
   // Single-series fallback — palette[0] for line/area; bar supports per-Cell.
   const singleSeriesColor = palette[0]
 
-  // Stable, unique gradient ids per widget instance. Recharts re-renders would
-  // re-create random ids and break the reference, so useId() is required here.
-  const gradPrefix = useId().replace(/:/g, '')
   const axisTick = { fontSize: 11, fill: 'hsl(var(--muted-foreground))' }
   const gridStroke = 'hsl(var(--border))'
   const axisLine = { stroke: gridStroke, opacity: 0.65 }

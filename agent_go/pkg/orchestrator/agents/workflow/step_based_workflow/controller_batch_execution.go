@@ -399,6 +399,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 				result.Error = err.Error() // Capture first failure reason
 			}
 			hcpo.finalizeRunMetadata(ctx, runFolder, "failed", groupStartTime, groupStartTime.Add(groupDuration))
+			// Count this failed run toward any active experiments so a broken
+			// intervention can't hang an experiment forever (the verdict logic
+			// will most likely return "inconclusive" if too many runs failed).
+			hcpo.markExperimentRunFailure(ctx, runFolder)
 			hcpo.emitBatchGroupEndEvent(ctx, group.Name, groupIndex, totalGroups, false, err.Error(), groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
 
 			// Check if we should stop on first failure
@@ -410,10 +414,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		result.CompletedGroups++
 		result.CompletedGroupNames = append(result.CompletedGroupNames, group.Name)
 		hcpo.finalizeRunMetadata(ctx, runFolder, "completed", groupStartTime, groupStartTime.Add(groupDuration))
-		if hcpo.runCompletedHook != nil {
-			// Hook is responsible for swallowing its own errors.
-			hcpo.runCompletedHook(ctx, hcpo.GetWorkspacePath(), runFolder, "completed")
-		}
 		hcpo.emitBatchGroupEndEvent(ctx, group.Name, groupIndex, totalGroups, true, "", groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
 
 		// Auto-evaluation: Run scoring for this group if evaluation_plan.json exists
@@ -435,6 +435,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			// (design doc §2) is a live frontend view, produced on demand by the user
 			// opening the report panel.
 		}
+
 
 		// If single step mode was active, stop batch execution after this group
 		// Single step mode should only run one group, not continue to additional groups

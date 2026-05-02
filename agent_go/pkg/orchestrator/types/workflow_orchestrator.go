@@ -148,10 +148,6 @@ type WorkflowOrchestrator struct {
 	// extraSubAgentNotifier is an additional notifier set by the server layer (e.g. for bgAgentRegistry).
 	// It is reserved for execution paths that need extra sub-agent notifications.
 	extraSubAgentNotifier step_based_workflow.SubAgentNotifier
-
-	// runCompletedHook is a server-side post-run callback (e.g. metric snapshotting).
-	// When non-nil, propagated to the inner step-based controller at construction time.
-	runCompletedHook step_based_workflow.RunCompletedHook
 }
 
 // SetToolCallQueryFunc sets the function for querying live tool calls from the event store.
@@ -164,14 +160,6 @@ func (wo *WorkflowOrchestrator) SetToolCallQueryFunc(fn step_based_workflow.Tool
 // Used by server.go to hook bgAgentRegistry for synthetic turn notifications.
 func (wo *WorkflowOrchestrator) SetExtraSubAgentNotifier(n step_based_workflow.SubAgentNotifier) {
 	wo.extraSubAgentNotifier = n
-}
-
-// SetRunCompletedHook sets a post-run callback propagated to the inner
-// step-based controller at construction time. Used by server.go to wire in
-// metric snapshotting (server.SnapshotRunMetrics) without the orchestrator
-// package having to import server.
-func (wo *WorkflowOrchestrator) SetRunCompletedHook(h step_based_workflow.RunCompletedHook) {
-	wo.runCompletedHook = h
 }
 
 // SetVirtualPlan sets a synthetic plan for the workflow (used by Task Agent mode)
@@ -528,12 +516,7 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 	todoPlannerAgent.SetLockKnowledgebase(wo.lockKnowledgebase)
 	todoPlannerAgent.SetKBShape(wo.kbShape)
 
-	// Propagate post-run hook (e.g. metric snapshotting wired by server.go).
-	if wo.runCompletedHook != nil {
-		todoPlannerAgent.SetRunCompletedHook(wo.runCompletedHook)
-	}
-
-	// Pass execution options if set
+// Pass execution options if set
 	// CRITICAL: Execution options are required for evaluation execution
 	if wo.executionOptions == nil {
 		wo.GetLogger().Error("❌ Execution options is NIL - evaluation execution requires execution options", nil)
@@ -639,12 +622,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 	todoPlannerAgent.SetLockKnowledgebase(wo.lockKnowledgebase)
 	todoPlannerAgent.SetKBShape(wo.kbShape)
 
-	// Propagate post-run hook (e.g. metric snapshotting wired by server.go).
-	if wo.runCompletedHook != nil {
-		todoPlannerAgent.SetRunCompletedHook(wo.runCompletedHook)
-	}
-
-	// Pass execution options from WorkflowOrchestrator to the todo planner if set
+// Pass execution options from WorkflowOrchestrator to the todo planner if set
 	if wo.executionOptions != nil {
 		todoPlannerAgent.SetExecutionOptions(wo.executionOptions)
 		wo.GetLogger().Info(fmt.Sprintf("📋 Passed execution options to todo planner: run_mode=%s, strategy=%s",

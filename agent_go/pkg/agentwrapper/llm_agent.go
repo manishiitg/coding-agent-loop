@@ -17,6 +17,7 @@ import (
 	"github.com/manishiitg/mcpagent/observability"
 	"github.com/manishiitg/mcpagent/toolcalllog"
 
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	agentlogger "mcp-agent-builder-go/agent_go/pkg/logger"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -39,12 +40,7 @@ type LLMAgentWrapper struct {
 }
 
 func providerUsesNativeContextManagement(provider llm.Provider) bool {
-	switch strings.ToLower(strings.TrimSpace(string(provider))) {
-	case "claude-code", "gemini-cli", "codex-cli", "kimi":
-		return true
-	default:
-		return false
-	}
+	return common.IsCLIProvider(string(provider))
 }
 
 func providerNeedsPlainTextHistory(provider llm.Provider) bool {

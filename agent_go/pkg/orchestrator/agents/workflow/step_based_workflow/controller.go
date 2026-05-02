@@ -43,6 +43,20 @@ type SubAgentNotifier interface {
 // invoke the hook because partial metric values are misleading.
 type RunCompletedHook func(ctx context.Context, workspacePath, runFolder, status string)
 
+// defaultRunCompletedHook is the package-level fallback applied to every
+// orchestrator constructed via NewStepBasedWorkflowOrchestrator. Set once at
+// server startup via SetDefaultRunCompletedHook so callers don't have to
+// thread SetRunCompletedHook through every internal construction site
+// (planning_exports.go has three; types/workflow_orchestrator.go has two).
+var defaultRunCompletedHook RunCompletedHook
+
+// SetDefaultRunCompletedHook registers the hook applied to all subsequently
+// constructed orchestrators. Safe to call once during server startup;
+// per-instance SetRunCompletedHook still overrides this default.
+func SetDefaultRunCompletedHook(h RunCompletedHook) {
+	defaultRunCompletedHook = h
+}
+
 // compositeSubAgentNotifier calls multiple notifiers in sequence.
 type compositeSubAgentNotifier struct {
 	notifiers []SubAgentNotifier
@@ -251,6 +265,7 @@ func NewStepBasedWorkflowOrchestrator(
 		workflowID:       fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
 		presetPhaseLLM:   presetPhaseLLM,
 		useKnowledgebase: useKnowledgebase,
+		runCompletedHook: defaultRunCompletedHook, // package-level default; per-instance setter still overrides.
 	}
 
 	// Set up tiered LLM allocation mode

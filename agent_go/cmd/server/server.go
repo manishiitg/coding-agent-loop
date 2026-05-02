@@ -533,6 +533,12 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	log.Printf("[SERVER DEBUG] Using MCP config file: %s", config.MCPConfigPath)
 
+	// Wire post-run metric snapshotting at the package level so every
+	// orchestrator instance picks it up automatically — covers all internal
+	// construction sites (planning_exports.go, types/workflow_orchestrator.go).
+	// No-op when a workflow has no planning/metrics.json.
+	todo_creation_human.SetDefaultRunCompletedHook(SnapshotRunMetrics)
+
 	// Load .env file for environment variables (OPENAI_API_KEY, etc.)
 	// Only load if not already loaded
 	if os.Getenv("MCP_ENV_LOADED") == "" {

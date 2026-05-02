@@ -275,15 +275,18 @@ func mapKeys(m map[string]interface{}) []string {
 }
 
 // resolveFromTelemetry reads the named field out of this run's telemetry
-// payload. Two fields are wired today:
+// payload. Six fields are wired:
 //
-//   run.total_cost_usd   — sum of TotalCost across all models in the run's
-//                          execution-scope TokenUsageFile.
-//   run.duration_seconds — UpdatedAt - CreatedAt of the run's execution-scope
-//                          TokenUsageFile, in seconds. Approximate wall-clock
-//                          time the runtime took to finish the run.
+//   run.total_cost_usd   — execution-scope cost (workflow steps).
+//   run.duration_seconds — execution-scope wall-clock seconds.
+//   eval.total_cost_usd  — evaluation-scope cost (eval scoring + eval Python).
+//   eval.duration_seconds — evaluation-scope wall-clock seconds.
+//   total.cost_usd       — execution + evaluation cost combined.
+//   total.duration_seconds — execution + evaluation duration combined
+//                            (per-scope duration summed; eval runs after exec
+//                            so this approximates end-to-end wall-clock).
 //
-// Other field names return (0, false, nil) so a workflow that declares an
+// Unknown field names return (0, false, nil) so a workflow that declares an
 // unsupported telemetry metric just doesn't progress for that metric — no
 // crash, no silent zero.
 func resolveFromTelemetry(ctx context.Context, workspacePath, runFolder, field string) (float64, bool, error) {
@@ -292,34 +295,45 @@ func resolveFromTelemetry(ctx context.Context, workspacePath, runFolder, field s
 		return 0, false, fmt.Errorf("telemetry source field is empty")
 	}
 
-	tokenFile, ok, err := readRunTokenUsage(ctx, workspacePath, runFolder)
-	if err != nil {
-		return 0, false, err
-	}
-	if !ok || tokenFile == nil {
-		return 0, false, nil
-	}
-
 	switch field {
 	case "run.total_cost_usd":
-		var total float64
-		for _, m := range tokenFile.ByModel {
-			if m == nil {
-				continue
-			}
-			total += m.TotalCost
-		}
-		return total, true, nil
-
+		return tokenFileCostUSD(ctx, workspacePath, runFolder, orchestrator.CostScopeExecution)
 	case "run.duration_seconds":
-		if tokenFile.CreatedAt.IsZero() || tokenFile.UpdatedAt.IsZero() {
+		return tokenFileDurationSeconds(ctx, workspacePath, runFolder, orchestrator.CostScopeExecution)
+
+	case "eval.total_cost_usd":
+		return tokenFileCostUSD(ctx, workspacePath, runFolder, orchestrator.CostScopeEvaluation)
+	case "eval.duration_seconds":
+		return tokenFileDurationSeconds(ctx, workspacePath, runFolder, orchestrator.CostScopeEvaluation)
+
+	case "total.cost_usd":
+		runCost, runOK, err := tokenFileCostUSD(ctx, workspacePath, runFolder, orchestrator.CostScopeExecution)
+		if err != nil {
+			return 0, false, err
+		}
+		evalCost, evalOK, err := tokenFileCostUSD(ctx, workspacePath, runFolder, orchestrator.CostScopeEvaluation)
+		if err != nil {
+			return 0, false, err
+		}
+		// Available if either scope reported a value; missing scopes contribute zero.
+		if !runOK && !evalOK {
 			return 0, false, nil
 		}
-		dur := tokenFile.UpdatedAt.Sub(tokenFile.CreatedAt).Seconds()
-		if dur < 0 {
-			dur = 0
+		return runCost + evalCost, true, nil
+
+	case "total.duration_seconds":
+		runDur, runOK, err := tokenFileDurationSeconds(ctx, workspacePath, runFolder, orchestrator.CostScopeExecution)
+		if err != nil {
+			return 0, false, err
 		}
-		return dur, true, nil
+		evalDur, evalOK, err := tokenFileDurationSeconds(ctx, workspacePath, runFolder, orchestrator.CostScopeEvaluation)
+		if err != nil {
+			return 0, false, err
+		}
+		if !runOK && !evalOK {
+			return 0, false, nil
+		}
+		return runDur + evalDur, true, nil
 
 	default:
 		// Unknown telemetry field: not an error, just unavailable. Recognized
@@ -328,12 +342,45 @@ func resolveFromTelemetry(ctx context.Context, workspacePath, runFolder, field s
 	}
 }
 
-// readRunTokenUsage looks up this run's execution-scope TokenUsageFile by
-// scanning the workspace's cost storage. Returns (nil, false, nil) when no
-// entry is found — common for runs that haven't finished yet or workflows
-// that didn't track costs.
-func readRunTokenUsage(ctx context.Context, workspacePath, runFolder string) (*orchestrator.TokenUsageFile, bool, error) {
-	all, err := readAllRunTokenUsageFromCosts(ctx, workspacePath, orchestrator.CostScopeExecution)
+// tokenFileCostUSD sums TotalCost across all models in the named scope's
+// TokenUsageFile for runFolder. Returns (0, false, nil) when no token file
+// is found — common for workflows that didn't track costs in that scope.
+func tokenFileCostUSD(ctx context.Context, workspacePath, runFolder string, scope orchestrator.CostScope) (float64, bool, error) {
+	tokenFile, ok, err := readRunTokenUsageForScope(ctx, workspacePath, runFolder, scope)
+	if err != nil || !ok || tokenFile == nil {
+		return 0, false, err
+	}
+	var total float64
+	for _, m := range tokenFile.ByModel {
+		if m == nil {
+			continue
+		}
+		total += m.TotalCost
+	}
+	return total, true, nil
+}
+
+// tokenFileDurationSeconds returns UpdatedAt - CreatedAt of the named scope's
+// TokenUsageFile, in seconds.
+func tokenFileDurationSeconds(ctx context.Context, workspacePath, runFolder string, scope orchestrator.CostScope) (float64, bool, error) {
+	tokenFile, ok, err := readRunTokenUsageForScope(ctx, workspacePath, runFolder, scope)
+	if err != nil || !ok || tokenFile == nil {
+		return 0, false, err
+	}
+	if tokenFile.CreatedAt.IsZero() || tokenFile.UpdatedAt.IsZero() {
+		return 0, false, nil
+	}
+	dur := tokenFile.UpdatedAt.Sub(tokenFile.CreatedAt).Seconds()
+	if dur < 0 {
+		dur = 0
+	}
+	return dur, true, nil
+}
+
+// readRunTokenUsageForScope looks up this run's TokenUsageFile in the given
+// cost scope. Returns (nil, false, nil) when no entry is found.
+func readRunTokenUsageForScope(ctx context.Context, workspacePath, runFolder string, scope orchestrator.CostScope) (*orchestrator.TokenUsageFile, bool, error) {
+	all, err := readAllRunTokenUsageFromCosts(ctx, workspacePath, scope)
 	if err != nil {
 		return nil, false, err
 	}

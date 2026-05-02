@@ -201,17 +201,23 @@ func resolveFromEvalStep(ctx context.Context, workspacePath, runFolder, stepID, 
 			continue
 		}
 
-		// Mode 1 — no field, return the step's percent score.
-		if strings.TrimSpace(field) == "" {
+		// Top-level shortcuts so a metric can target step.Score / step.MaxScore
+		// directly without requiring the eval to emit structured output.
+		switch strings.TrimSpace(field) {
+		case "":
 			if step.MaxScore <= 0 {
 				return float64(step.Score), true, nil
 			}
 			return (float64(step.Score) / float64(step.MaxScore)) * 100.0, true, nil
+		case "score":
+			return float64(step.Score), true, nil
+		case "max_score":
+			return float64(step.MaxScore), true, nil
 		}
 
-		// Mode 2 — field-keyed lookup into the eval step's structured JSON output.
+		// Otherwise: field-keyed lookup into the eval step's structured JSON output.
 		if step.OutputContent == nil {
-			return 0, false, fmt.Errorf("eval step %q produced no OutputContent; cannot read field %q", stepID, field)
+			return 0, false, fmt.Errorf("eval step %q produced no OutputContent; cannot read field %q (set field=\"score\" for the raw score, or drop the field for the percent score)", stepID, field)
 		}
 		if !step.OutputContent.IsJSON {
 			return 0, false, fmt.Errorf("eval step %q output is not JSON; cannot read field %q", stepID, field)

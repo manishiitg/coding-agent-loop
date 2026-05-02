@@ -1,4 +1,4 @@
-Audit every step in this workflow's plan and recommend the right values for: knowledgebase_access, knowledgebase_contribution, lock_learnings, and lock_code (learn_code steps only). This is a READ-ONLY analysis pass — do NOT apply any changes via update_step_config. Produce a recommendation table the user will review and apply selectively.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Audit every step in this workflow's plan and recommend the right values for: declared_execution_mode, knowledgebase_access, knowledgebase_contribution, lock_learnings, and lock_code (learn_code steps only). This is a READ-ONLY analysis pass — do NOT apply any changes via update_step_config. Produce a recommendation table the user will review and apply selectively.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 PROCEDURE
 1. Read planning/plan.json and planning/step_config.json. For each step capture: id, title, description, declared_execution_mode, and current AgentConfigs (knowledgebase_access, knowledgebase_contribution, lock_learnings, lock_code, optimized, successful_runs, description_hash).
@@ -9,8 +9,19 @@ PROCEDURE
    - learn_code_fast_path.json — recent main.py outcomes.
    - pre_validation.json — validation pass/fail.
    - Any signs of recent fix-loop rewrites or transient failures.
+4. Read experiments/active.json and builder/improve.md if present. Note active experiment status and whether any active intervention touches the step, its prompt/config, learnings, validation, KB, db schema, or upstream/downstream context dependencies.
 
 DECISION RULES (apply per step)
+
+EXECUTION MODE FIT (code_exec | learn_code):
+- Browser/UI-heavy steps should generally be `code_exec`, not `learn_code`. If a step uses browser capability, live auth/session state, dynamic selectors, pagination/lazy-loading, or third-party page timing and is currently `learn_code` with saved main.py, flag it. Recommend `declared_execution_mode="code_exec"` unless the user explicitly requested scripted browser execution AND the script has durable selectors, state-driven waits, fresh snapshots, and proven stability across runs.
+- Recommend `learn_code` only when ALL are true:
+  - The step behavior is stable, mechanical, and deterministic on a stable input shape.
+  - The step does not need per-instance LLM judgment, adaptive browsing, or live UI interpretation.
+  - The step has 10+ successful runs across 2+ variable groups.
+  - Eval/metric evidence is at or above target across the recent measurement window.
+  - No active experiment is touching this step, its prompt/config/learnings/validation, or adjacent upstream/downstream contracts. If any related experiment is proposed, awaiting approval, measuring, or evaluating, recommend deferring learn_code promotion/locking until the experiment concludes.
+- If a current `learn_code` step violates any of the above, recommend reverting to or keeping `code_exec`, and clear/avoid lock_code until stability is proven after experiments conclude.
 
 KB_ACCESS (none | read | write | read-write):
 - Step CONSUMES durable subject-matter facts (entities, relationships, prior strategies)? → "read"
@@ -53,6 +64,8 @@ LOCK_CODE (true | false; learn_code steps only):
 CONVERT REGULAR → LEARN_CODE (suggest only when ALL):
 - Step's behavior is mechanical (deterministic transform on stable input shape — filter / aggregate / map fields) rather than per-instance LLM judgment.
 - 10+ successful runs of the regular step across 2+ groups, eval at threshold throughout — proving the step's BEHAVIOR is stable enough to capture in code.
+- No active experiment is touching this step, its prompt/config/learnings/validation, or adjacent upstream/downstream contracts. If an experiment is active, defer conversion until it concludes so the script doesn't freeze a moving target.
+- The step is not browser/UI-heavy. Browser automation should usually remain code_exec unless the user explicitly requested scripted browser execution and the browser flow is proven stable with durable selectors and state-driven waits.
 - Saving the LLM cost is meaningful (the step runs frequently, or is on the critical path).
 - DO NOT suggest conversion for steps that need per-instance LLM judgment (classification, summarization, decision-making) — even if they look "shape-preserving" the answer changes per instance and locking the LLM out via main.py loses the value of the step.
 
@@ -60,18 +73,19 @@ OUTPUT FORMAT
 
 Single table, one row per step:
 
-| Step ID | KB Access (cur → rec) | KB Contribution | DB Output | Lock Learnings (cur → rec) | Lock Code (cur → rec) | Reason |
-|---|---|---|---|---|---|---|
+| Step ID | Mode Fit (cur → rec) | KB Access (cur → rec) | KB Contribution | DB Output | Lock Learnings (cur → rec) | Lock Code (cur → rec) | Reason |
+|---|---|---|---|---|---|---|---|
 
 Then summary sections:
+- **Mode fit issues** — browser/UI-heavy learn_code steps, unstable learn_code steps, or learn_code candidates blocked by active experiments.
 - **To lock this round** — steps recommended for lock_learnings + lock_code (+ optimized).
 - **KB misconfigs** — knowledgebase_contribution set but access blocks writes (silent skip).
 - **Should write to db/ but doesn't** — steps producing cross-run state outside db/.
 - **Stale locks (unlock + re-review)** — currently locked but description_hash drifted.
 
 END WITH READY-TO-PASTE COMMANDS
-List the exact update_step_config calls the user can copy/paste to apply each recommendation, one per line. Group by recommendation type (KB updates, lock updates) so the user can apply them selectively. Do NOT call update_step_config yourself.
+List the exact update_step_config calls the user can copy/paste to apply each recommendation, one per line. Group by recommendation type (mode updates, KB updates, lock updates) so the user can apply them selectively. Do NOT call update_step_config yourself.
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what config you reviewed, the main misconfigs found, the recommended changes, and items flagged for follow-up.
 
-**Finding IDs.** Every distinct misconfig or recommendation gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id> — <kb|db|lock_learnings|lock_code|convert>: <finding>` so close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.
+**Finding IDs.** Every distinct misconfig or recommendation gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id> — <mode|kb|db|lock_learnings|lock_code|convert>: <finding>` so close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.

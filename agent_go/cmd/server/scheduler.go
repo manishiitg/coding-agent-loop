@@ -51,25 +51,6 @@ type ScheduleRuntimeState struct {
 	LastDurationMs      *int64     `json:"last_duration_ms,omitempty"`
 	RunCount            int        `json:"run_count"`
 	ConsecutiveFailures int        `json:"consecutive_failures"`
-	// BrowserMode of the currently-running invocation. Set when LastStatus
-	// transitions to "running"; used to prevent concurrent CDP-mode schedules
-	// (which would share one Chrome and interfere via cookies/profile/tabs).
-	BrowserMode string `json:"-"`
-}
-
-// findRunningCDPSchedule returns the schedule ID of any other schedule whose
-// runtime state shows it is currently running with browser_mode=cdp, or "" if
-// none. Caller must hold runtimeStatesMu (read or write).
-func (s *SchedulerService) findRunningCDPScheduleLocked(excludeSchedID string) string {
-	for id, st := range s.runtimeStates {
-		if id == excludeSchedID || st.LastStatus != "running" {
-			continue
-		}
-		if st.BrowserMode == "cdp" {
-			return id
-		}
-	}
-	return ""
 }
 
 // SchedulerService manages cron job execution using gocron.
@@ -731,25 +712,13 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 
 	// Prevent concurrent runs — check and mark atomically under the write lock
 	startTime := time.Now().UTC()
-	browserMode := manifest.Capabilities.BrowserMode
 	s.runtimeStatesMu.Lock()
 	state := s.getRuntimeStateLocked(scheduleID)
 	if state.LastStatus == "running" {
 		s.runtimeStatesMu.Unlock()
 		return "", fmt.Errorf("job is already running (session: %s)", state.LastSessionID)
 	}
-	if browserMode == "cdp" {
-		if other := s.findRunningCDPScheduleLocked(scheduleID); other != "" {
-			msg := fmt.Sprintf("Skipped: another CDP schedule (%s) is using the shared browser", other)
-			state.LastStatus = "error"
-			state.LastError = msg
-			state.LastRunAt = &startTime
-			s.runtimeStatesMu.Unlock()
-			return "", fmt.Errorf("%s", msg)
-		}
-	}
 	state.LastStatus = "running"
-	state.BrowserMode = browserMode
 	state.LastRunAt = &startTime
 	state.LastError = ""
 	s.runtimeStatesMu.Unlock()
@@ -791,25 +760,13 @@ func (s *SchedulerService) TriggerMultiAgentNow(userID string, scheduleID string
 	}
 
 	startTime := time.Now().UTC()
-	browserMode := f.Capabilities.BrowserMode
 	s.runtimeStatesMu.Lock()
 	state := s.getRuntimeStateLocked(scheduleID)
 	if state.LastStatus == "running" {
 		s.runtimeStatesMu.Unlock()
 		return "", fmt.Errorf("job is already running (session: %s)", state.LastSessionID)
 	}
-	if browserMode == "cdp" {
-		if other := s.findRunningCDPScheduleLocked(scheduleID); other != "" {
-			msg := fmt.Sprintf("Skipped: another CDP schedule (%s) is using the shared browser", other)
-			state.LastStatus = "error"
-			state.LastError = msg
-			state.LastRunAt = &startTime
-			s.runtimeStatesMu.Unlock()
-			return "", fmt.Errorf("%s", msg)
-		}
-	}
 	state.LastStatus = "running"
-	state.BrowserMode = browserMode
 	state.LastRunAt = &startTime
 	state.LastError = ""
 	s.runtimeStatesMu.Unlock()
@@ -975,19 +932,7 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 		s.sessionLogf(freshCtx, state.LastSessionID, "[SCHEDULER] ⏭️ Schedule %s is already running (session: %s), skipping", schedID, state.LastSessionID)
 		return
 	}
-	if freshCtx.Capabilities.BrowserMode == "cdp" {
-		if other := s.findRunningCDPScheduleLocked(schedID); other != "" {
-			msg := fmt.Sprintf("Skipped: another CDP schedule (%s) is using the shared browser", other)
-			state.LastStatus = "error"
-			state.LastError = msg
-			state.LastRunAt = &startTime
-			s.runtimeStatesMu.Unlock()
-			s.logf(freshCtx, "[SCHEDULER] ⏭️ %s (%s) skipped — %s", schedID, freshCtx.Schedule.Name, msg)
-			return
-		}
-	}
 	state.LastStatus = "running"
-	state.BrowserMode = freshCtx.Capabilities.BrowserMode
 	state.LastRunAt = &startTime
 	state.LastError = ""
 	s.runtimeStatesMu.Unlock()

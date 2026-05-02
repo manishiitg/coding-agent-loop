@@ -190,7 +190,7 @@ func GetAgentBrowserQuickStartInstructions() string {
 
 Call agent_browser via HTTP API:
 
-` + "```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# Basic workflow\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"search query\"])\nbrowser(\"press\", [\"Enter\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # re-snapshot after each interaction\nbrowser(\"screenshot\", [\"page.png\"])\n\n# If open/click/snapshot keep failing with CDP errors — reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears all state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```" + `
+`+"```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# Basic workflow\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"search query\"])\nbrowser(\"press\", [\"Enter\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # re-snapshot after each interaction\nbrowser(\"screenshot\", [\"page.png\"])\n\n# If open/click/snapshot keep failing with CDP errors — reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears all state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```"+`
 
 Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 
@@ -205,18 +205,23 @@ func GetCdpBrowserInstructions() string {
 
 You have the `+"`agent_browser`"+` tool controlling the **user's real Chrome browser** via Chrome DevTools Protocol.
 
-Call agent_browser via HTTP API. Always include `+"`--cdp %[1]s`"+` in args:
+Call agent_browser via HTTP API. Always include `+"`--cdp %[1]s`"+` in args.
 
-`+"```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": [\"--cdp\", \"%[1]s\"] + (args or []), \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"text\"])\nsnap = browser(\"snapshot\", [\"-i\"])  # re-snapshot after each interaction\n```"+`
+In shared CDP mode, browser actions require an explicit tab choice first. If you have not selected a tab yet, list tabs, then either select an existing tab or create a labeled workflow tab:
+
+`+"```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": [\"--cdp\", \"%[1]s\"] + (args or []), \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# First choose a tab. Listing tabs is always allowed.\nprint(browser(\"tab\", []))\n\n# Select an existing tab by id/label, or create a new labeled tab for this workflow.\nbrowser(\"tab\", [\"t1\"])\n# browser(\"tab\", [\"new\", \"--label\", \"my-workflow-tab\", \"https://example.com\"])\n\nsnap = browser(\"snapshot\", [\"-i\"])\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"text\"])\nsnap = browser(\"snapshot\", [\"-i\"])  # re-snapshot after each interaction\n```"+`
 
 Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 
 ### CDP-Specific Behaviors
 - The user can **see everything you do** in their browser — actions are visible in real-time
 - The browser may have **existing cookies, login sessions, and tabs** — leverage authenticated sessions without re-logging in
+- You must choose a tab with `+"`browser(\"tab\", ...)`"+` before using open, snapshot, click, fill, eval, or other page actions
+- If you create a new tab, use a stable label: `+"`browser(\"tab\", [\"new\", \"--label\", \"<workflow-label>\", \"https://target.example\"])`"+`
 - **Do NOT call close** unless the user asks — it will close their browser tab
 - Sessions **persist across tool calls** — you don't need to re-open pages between interactions
 - If a site requires login and the user is already logged in, navigate directly to the target page
+- Python/browser code must call this HTTP `+"`agent_browser`"+` tool. Do not connect directly to CDP or use Playwright `+"`connect_over_cdp`"+` for actions unless the task explicitly requires raw CDP and you target a specific tab.
 
 ### Advanced: Direct CDP WebSocket Access
 For operations that need more control (targeting specific tabs, running complex JS, inspecting DOM):
@@ -230,11 +235,11 @@ For detailed usage, read: execute_shell_command(command="cat %[3]s")`, cdpURL, h
 func GetHeadlessBrowserInstructions() string {
 	return fmt.Sprintf(`## Browser Automation (Headless Container Browser)
 
-You have the ` + "`agent_browser`" + ` tool controlling a **headless Chromium browser** inside a container.
+You have the `+"`agent_browser`"+` tool controlling a **headless Chromium browser** inside a container.
 
 Call agent_browser via HTTP API:
 
-` + "```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"search query\"])\nbrowser(\"press\", [\"Enter\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # re-snapshot after each interaction\n\n# If commands keep failing with CDP errors — reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears all state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```" + `
+`+"```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"search query\"])\nbrowser(\"press\", [\"Enter\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # re-snapshot after each interaction\n\n# If commands keep failing with CDP errors — reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears all state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```"+`
 
 Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 

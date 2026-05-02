@@ -14,7 +14,6 @@ import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig, AgentLLMConfig, AgentLLMFallback, LLMProvider } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
 import { useModeStore } from '../stores/useModeStore';
-import { useCapabilitiesStore } from '../stores/useCapabilitiesStore';
 import { useMCPStore } from '../stores/useMCPStore';
 import { agentApi, getApiBaseUrl } from '../services/api';
 import LLMSelectionDropdown from './LLMSelectionDropdown';
@@ -76,7 +75,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   } | null>(null);
   const [showDeleteWorkflowConfirm, setShowDeleteWorkflowConfirm] = useState(false);
   const [deletingWorkflow, setDeletingWorkflow] = useState(false);
-  const isLocalMode = useCapabilitiesStore(state => state.capabilities?.local_mode ?? false);
   const toolList = useMCPStore(state => state.toolList);
 
   // Playwright MCP availability: check if 'playwright' server exists in toolList
@@ -780,22 +778,20 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         </div>
                       </label>
 
-                      {/* CDP (local mode only) */}
-                      {isLocalMode && (
-                        <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                          browserMode === 'cdp'
-                            ? 'border-green-500 dark:border-green-500 bg-green-50 dark:bg-green-950/40'
-                            : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800/40'
-                        }`}>
-                          <input type="radio" name="presetBrowserMode" checked={browserMode === 'cdp'} onChange={() => setBrowserMode('cdp')} className="mt-0.5 w-4 h-4 text-green-500 accent-green-500" />
-                          <div className="flex-1">
-                            <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Connect to Local Chrome (CDP)</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                              Agent connects to your real Chrome browser so you can watch it navigate in real-time.
-                            </div>
+                      {/* CDP */}
+                      <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        browserMode === 'cdp'
+                          ? 'border-green-500 dark:border-green-500 bg-green-50 dark:bg-green-950/40'
+                          : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800/40'
+                      }`}>
+                        <input type="radio" name="presetBrowserMode" checked={browserMode === 'cdp'} onChange={() => setBrowserMode('cdp')} className="mt-0.5 w-4 h-4 text-green-500 accent-green-500" />
+                        <div className="flex-1">
+                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Connect to Local Chrome (CDP)</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                            Agent connects to your real Chrome browser so you can watch it navigate in real-time.
                           </div>
-                        </label>
-                      )}
+                        </div>
+                      </label>
 
                       {/* Playwright MCP */}
                       <label className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${

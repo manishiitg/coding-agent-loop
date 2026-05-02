@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -929,6 +931,346 @@ func (w *WhatsAppService) activeSlug(chatJID string) string {
 	return w.activeRoutes[chatJID]
 }
 
+type whatsappWorkflowCandidate struct {
+	Number        int
+	ID            string
+	Label         string
+	WorkspacePath string
+	Slug          string
+	WorkshopMode  string
+}
+
+type whatsappWorkflowManifest struct {
+	ID            string `json:"id"`
+	Label         string `json:"label"`
+	ExecutionDefs struct {
+		WorkshopMode string `json:"workshop_mode"`
+	} `json:"execution_defaults"`
+}
+
+type whatsappDocumentListResponse struct {
+	Success bool               `json:"success"`
+	Data    []whatsappDocument `json:"data"`
+}
+
+type whatsappDocument struct {
+	FilePath string             `json:"filepath"`
+	Type     string             `json:"type,omitempty"`
+	Children []whatsappDocument `json:"children,omitempty"`
+}
+
+func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJID string, owner *WhatsAppOwner, info types.MessageInfo) bool {
+	cmd, arg, ok := parseWhatsAppWorkflowCommand(text)
+	if !ok {
+		return false
+	}
+	_ = w.sendReaction(ctx, chatJID, info.Sender, info.ID, "👀")
+
+	switch cmd {
+	case "list", "workflows":
+		candidates, err := w.discoverWorkflowCandidates(ctx, owner)
+		if err != nil {
+			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Couldn't list workflows: %v", err))
+			return true
+		}
+		w.sendWorkflowCommandReply(ctx, chatJID, formatWhatsAppWorkflowList(candidates))
+		return true
+
+	case "switch":
+		if strings.TrimSpace(arg) == "" {
+			w.sendWorkflowCommandReply(ctx, chatJID, "Usage: @switch 3 or @switch instagram. Type @list to see workflow numbers.")
+			return true
+		}
+		candidates, err := w.discoverWorkflowCandidates(ctx, owner)
+		if err != nil {
+			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Couldn't switch workflow: %v", err))
+			return true
+		}
+		candidate, matches := matchWhatsAppWorkflowCandidate(candidates, arg)
+		if candidate == nil {
+			if len(matches) > 1 {
+				w.sendWorkflowCommandReply(ctx, chatJID, formatWhatsAppWorkflowMatches(matches))
+			} else {
+				w.sendWorkflowCommandReply(ctx, chatJID, "I couldn't find that workflow. Type @list, then use @switch <number> or @switch <name>.")
+			}
+			return true
+		}
+		slug := w.ensureWorkflowRoute(ctx, *candidate)
+		w.setActiveSlug(chatJID, slug)
+		w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Activated %s for this chat. Send messages normally now.\n\nDeactivate with @deactivate, @off, or @%s deactivate.", candidate.Label, slug))
+		return true
+
+	case "status":
+		active := w.activeSlug(chatJID)
+		if active == "" {
+			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow. Type @list, then @switch <number> or @switch <name>.")
+			return true
+		}
+		route := w.resolveSlugRoute(active)
+		if route == nil {
+			w.clearActiveSlug(chatJID)
+			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow. The previous route no longer exists. Type @list to choose one.")
+			return true
+		}
+		label := active
+		if candidate := w.findWorkflowCandidateByRoute(ctx, owner, *route); candidate != nil {
+			label = candidate.Label
+		}
+		w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Active workflow: %s (@%s).\nDeactivate with @deactivate, @off, or @%s deactivate.", label, active, active))
+		return true
+
+	case "deactivate", "deactive", "off", "stop":
+		active := w.activeSlug(chatJID)
+		w.clearActiveSlug(chatJID)
+		if active != "" {
+			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Deactivated @%s. Plain WhatsApp messages will use the default chat again.", active))
+		} else {
+			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow was set. Type @list to choose one.")
+		}
+		return true
+	}
+
+	return false
+}
+
+func parseWhatsAppWorkflowCommand(text string) (cmd, arg string, ok bool) {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return "", "", false
+	}
+	first := strings.ToLower(strings.TrimPrefix(fields[0], "@"))
+	switch first {
+	case "list", "workflows", "workflow-list":
+		return "list", strings.TrimSpace(strings.Join(fields[1:], " ")), true
+	case "switch", "sw", "select", "siwthc":
+		return "switch", strings.TrimSpace(strings.Join(fields[1:], " ")), true
+	case "status":
+		return "status", strings.TrimSpace(strings.Join(fields[1:], " ")), true
+	case "deactivate", "deactive", "off", "stop":
+		return first, strings.TrimSpace(strings.Join(fields[1:], " ")), true
+	default:
+		return "", "", false
+	}
+}
+
+func (w *WhatsAppService) sendWorkflowCommandReply(ctx context.Context, chatJID, message string) {
+	if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: chatJID}, message); err != nil {
+		log.Printf("[WHATSAPP] Failed to send workflow command reply: %v", err)
+	}
+}
+
+func (w *WhatsAppService) discoverWorkflowCandidates(ctx context.Context, owner *WhatsAppOwner) ([]whatsappWorkflowCandidate, error) {
+	if owner == nil {
+		return nil, fmt.Errorf("pairing has no workspace-user owner")
+	}
+	wsClient := workspace.NewClient(workspaceAPIURL(), workspace.WithUserID(owner.UserID))
+	maxDepth := 2
+	list, err := wsClient.ListWorkspaceFiles(ctx, workspace.ListWorkspaceFilesParams{Folder: "Workflow", MaxDepth: &maxDepth})
+	if err != nil {
+		return nil, err
+	}
+	var resp whatsappDocumentListResponse
+	if err := json.Unmarshal(list.Raw, &resp); err != nil {
+		return nil, fmt.Errorf("parse workflow list: %w", err)
+	}
+	var manifestPaths []string
+	var walkDocs func([]whatsappDocument)
+	walkDocs = func(docs []whatsappDocument) {
+		for _, doc := range docs {
+			if strings.HasSuffix(doc.FilePath, "/workflow.json") {
+				manifestPaths = append(manifestPaths, doc.FilePath)
+			}
+			if len(doc.Children) > 0 {
+				walkDocs(doc.Children)
+			}
+		}
+	}
+	walkDocs(resp.Data)
+	sort.Strings(manifestPaths)
+
+	candidates := make([]whatsappWorkflowCandidate, 0, len(manifestPaths))
+	for _, manifestPath := range manifestPaths {
+		content, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: manifestPath})
+		if err != nil {
+			log.Printf("[WHATSAPP] Failed to read workflow manifest %s: %v", manifestPath, err)
+			continue
+		}
+		var manifest whatsappWorkflowManifest
+		if err := json.Unmarshal([]byte(content.Content), &manifest); err != nil {
+			log.Printf("[WHATSAPP] Failed to parse workflow manifest %s: %v", manifestPath, err)
+			continue
+		}
+		workspacePath := strings.TrimSuffix(manifestPath, "/workflow.json")
+		label := strings.TrimSpace(manifest.Label)
+		if label == "" {
+			label = filepath.Base(workspacePath)
+		}
+		id := strings.TrimSpace(manifest.ID)
+		if id == "" {
+			id = slugifyWhatsAppWorkflow(label)
+		}
+		candidates = append(candidates, whatsappWorkflowCandidate{
+			ID:            id,
+			Label:         label,
+			WorkspacePath: workspacePath,
+			Slug:          slugifyWhatsAppWorkflow(label),
+			WorkshopMode:  strings.TrimSpace(manifest.ExecutionDefs.WorkshopMode),
+		})
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return strings.ToLower(candidates[i].Label) < strings.ToLower(candidates[j].Label)
+	})
+	for i := range candidates {
+		candidates[i].Number = i + 1
+	}
+	return candidates, nil
+}
+
+func formatWhatsAppWorkflowList(candidates []whatsappWorkflowCandidate) string {
+	if len(candidates) == 0 {
+		return "No workflows found."
+	}
+	const maxList = 25
+	var sb strings.Builder
+	sb.WriteString("Workflows:\n")
+	for i, c := range candidates {
+		if i >= maxList {
+			sb.WriteString(fmt.Sprintf("\n...and %d more. Use @switch <name> for workflows not shown.", len(candidates)-maxList))
+			break
+		}
+		sb.WriteString(fmt.Sprintf("%d. %s\n", c.Number, c.Label))
+	}
+	sb.WriteString("\nSwitch with @switch 3 or @switch instagram.\nStatus: @status\nDeactivate: @deactivate or @off")
+	return strings.TrimSpace(sb.String())
+}
+
+func formatWhatsAppWorkflowMatches(candidates []whatsappWorkflowCandidate) string {
+	var sb strings.Builder
+	sb.WriteString("Multiple workflows matched. Pick one:\n")
+	for _, c := range candidates {
+		sb.WriteString(fmt.Sprintf("%d. %s\n", c.Number, c.Label))
+	}
+	sb.WriteString("\nUse @switch <number>.")
+	return strings.TrimSpace(sb.String())
+}
+
+func matchWhatsAppWorkflowCandidate(candidates []whatsappWorkflowCandidate, query string) (*whatsappWorkflowCandidate, []whatsappWorkflowCandidate) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return nil, nil
+	}
+	if n, err := strconv.Atoi(q); err == nil {
+		for i := range candidates {
+			if candidates[i].Number == n {
+				return &candidates[i], nil
+			}
+		}
+		return nil, nil
+	}
+	qSlug := slugifyWhatsAppWorkflow(q)
+	for i := range candidates {
+		c := candidates[i]
+		if strings.EqualFold(c.Label, query) || strings.EqualFold(c.ID, query) || c.Slug == qSlug || strings.EqualFold(filepath.Base(c.WorkspacePath), query) {
+			return &candidates[i], nil
+		}
+	}
+	var matches []whatsappWorkflowCandidate
+	for _, c := range candidates {
+		haystack := strings.ToLower(strings.Join([]string{c.Label, c.ID, c.Slug, filepath.Base(c.WorkspacePath)}, " "))
+		if strings.Contains(haystack, q) || strings.Contains(haystack, qSlug) {
+			matches = append(matches, c)
+		}
+	}
+	if len(matches) == 1 {
+		return &matches[0], matches
+	}
+	return nil, matches
+}
+
+func (w *WhatsAppService) findWorkflowCandidateByRoute(ctx context.Context, owner *WhatsAppOwner, route ChannelRoute) *whatsappWorkflowCandidate {
+	candidates, err := w.discoverWorkflowCandidates(ctx, owner)
+	if err != nil {
+		return nil
+	}
+	for i := range candidates {
+		if candidates[i].ID == route.WorkflowID || candidates[i].WorkspacePath == route.WorkspacePath {
+			return &candidates[i]
+		}
+	}
+	return nil
+}
+
+func (w *WhatsAppService) ensureWorkflowRoute(ctx context.Context, candidate whatsappWorkflowCandidate) string {
+	slug := candidate.Slug
+	if slug == "" {
+		slug = slugifyWhatsAppWorkflow(candidate.Label)
+	}
+	if slug == "" {
+		slug = "workflow"
+	}
+	route := ChannelRoute{WorkflowID: candidate.ID, WorkspacePath: candidate.WorkspacePath, WorkshopMode: candidate.WorkshopMode}
+
+	w.routingMu.Lock()
+	if w.routing == nil {
+		w.routing = make(WhatsAppRouting)
+	}
+	finalSlug := slug
+	if existing, ok := w.routing[finalSlug]; ok && existing.WorkflowID != candidate.ID {
+		suffix := strings.TrimPrefix(candidate.ID, "wf_")
+		suffix = slugifyWhatsAppWorkflow(suffix)
+		if suffix == "" || suffix == finalSlug {
+			suffix = "workflow"
+		}
+		finalSlug = slug + "-" + suffix
+	}
+	w.routing[finalSlug] = route
+	if err := w.persistRoutingLocked(ctx); err != nil {
+		log.Printf("[WHATSAPP] Failed to persist auto workflow route @%s: %v", finalSlug, err)
+	}
+	w.routingMu.Unlock()
+	return finalSlug
+}
+
+func (w *WhatsAppService) persistRoutingLocked(ctx context.Context) error {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return fmt.Errorf("whatsapp: meta store not open")
+	}
+	raw, err := json.Marshal(w.routing)
+	if err != nil {
+		return fmt.Errorf("whatsapp: marshal routing: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO whatsapp_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		metaKeyRouting, string(raw),
+	); err != nil {
+		return fmt.Errorf("whatsapp: persist routing: %w", err)
+	}
+	return nil
+}
+
+func slugifyWhatsAppWorkflow(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash && b.Len() > 0 {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
 const whatsappActiveRouteHintInterval = 30 * time.Minute
 
 func whatsappActiveRouteHintKey(chatJID, slug string) string {
@@ -1210,6 +1552,10 @@ func (w *WhatsAppService) handleIncomingMessage(evt *events.Message) {
 	chatJID := info.Chat.String()
 	senderUser := info.Sender.User
 	senderName := info.PushName
+
+	if handled := w.handleWorkflowCommand(context.Background(), text, chatJID, owner, info); handled {
+		return
+	}
 
 	// @<slug> workflow routing. If the first token looks like "@foo", look
 	// up "foo" in the routing map; on a hit we activate that workflow for

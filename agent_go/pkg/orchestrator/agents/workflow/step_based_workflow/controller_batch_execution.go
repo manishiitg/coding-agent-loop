@@ -410,10 +410,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		result.CompletedGroups++
 		result.CompletedGroupNames = append(result.CompletedGroupNames, group.Name)
 		hcpo.finalizeRunMetadata(ctx, runFolder, "completed", groupStartTime, groupStartTime.Add(groupDuration))
-		if hcpo.runCompletedHook != nil {
-			// Hook is responsible for swallowing its own errors.
-			hcpo.runCompletedHook(ctx, hcpo.GetWorkspacePath(), runFolder, "completed")
-		}
 		hcpo.emitBatchGroupEndEvent(ctx, group.Name, groupIndex, totalGroups, true, "", groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
 
 		// Auto-evaluation: Run scoring for this group if evaluation_plan.json exists
@@ -434,6 +430,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			// Report generation is no longer a post-group step — the dynamic report
 			// (design doc §2) is a live frontend view, produced on demand by the user
 			// opening the report panel.
+		}
+
+		// Post-eval hook: fires AFTER MaybeRunAutoEvaluation so eval-sourced metrics
+		// can read the scores written to scores/evaluation/<group>/<date>.json.
+		// Skipped on the failure path above — partial metric values are misleading.
+		if hcpo.runCompletedHook != nil {
+			// Hook is responsible for swallowing its own errors.
+			hcpo.runCompletedHook(ctx, hcpo.GetWorkspacePath(), runFolder, "completed")
 		}
 
 		// If single step mode was active, stop batch execution after this group

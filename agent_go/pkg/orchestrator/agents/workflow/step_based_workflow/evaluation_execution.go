@@ -467,5 +467,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) MaybeRunAutoEvaluation(ctx context.Co
 		return fmt.Errorf("auto-evaluation failed: %w", err)
 	}
 
+	// Snapshot per-run metric values now that eval scores are on disk.
+	// No-op when planning/metrics.json is absent. All errors are swallowed
+	// inside snapshotRunMetrics so they cannot fail this pipeline.
+	hcpo.snapshotRunMetrics(ctx, targetRunFolder)
+
 	return nil
 }

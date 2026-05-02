@@ -399,6 +399,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 				result.Error = err.Error() // Capture first failure reason
 			}
 			hcpo.finalizeRunMetadata(ctx, runFolder, "failed", groupStartTime, groupStartTime.Add(groupDuration))
+			// Count this failed run toward any active experiments so a broken
+			// intervention can't hang an experiment forever (the verdict logic
+			// will most likely return "inconclusive" if too many runs failed).
+			hcpo.markExperimentRunFailure(ctx, runFolder)
 			hcpo.emitBatchGroupEndEvent(ctx, group.Name, groupIndex, totalGroups, false, err.Error(), groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
 
 			// Check if we should stop on first failure

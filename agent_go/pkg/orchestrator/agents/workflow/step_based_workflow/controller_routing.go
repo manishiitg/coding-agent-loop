@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	baseevents "github.com/manishiitg/mcpagent/events"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	baseevents "github.com/manishiitg/mcpagent/events"
 )
 
 // executeRoutingStep executes a routing step by:
@@ -111,11 +111,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, step.GetID(), executionStepPath)
 		executionResultFilePath := fmt.Sprintf("%s/routing-execution.json", executionLogsFolderPath)
 		executionResponse := map[string]interface{}{
-			"step_index":      stepIndex + 1,
-			"step_path":       executionStepPath,
-			"routing_step_id": step.GetID(),
+			"step_index":       stepIndex + 1,
+			"step_path":        executionStepPath,
+			"routing_step_id":  step.GetID(),
 			"execution_result": executionResult,
-			"timestamp":       time.Now().Format(time.RFC3339),
+			"timestamp":        time.Now().Format(time.RFC3339),
 		}
 		executionJSON, err := json.MarshalIndent(executionResponse, "", "  ")
 		if err != nil {
@@ -251,6 +251,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		var err error
 		routingResponse, err = conditionalAgent.EvaluateRouting(ctx, executionResult, conditionContext, routingStep.RoutingQuestion, routingStep.Routes, stepIndex, 0, agentConfigUseCodeExecutionMode(conditionalAgent.GetConfig()), variableNames, variableValues)
 		if err != nil {
+			if isWorkflowCancellationErr(ctx, err) {
+				hcpo.GetLogger().Info(fmt.Sprintf("Routing step %d cancelled while evaluating route", stepIndex+1))
+				return "", "", context.Canceled
+			}
 			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate routing step %d: %v", stepIndex+1, err), nil)
 			hcpo.EmitOrchestratorAgentError(ctx, "conditional", "routing-step-evaluation", fmt.Sprintf("Evaluate routing: %s", routingStep.RoutingQuestion), err.Error(), stepIndex, 0)
 			return "", "", fmt.Errorf("failed to evaluate routing step: %w", err)

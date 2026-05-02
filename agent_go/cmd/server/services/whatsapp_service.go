@@ -1038,6 +1038,9 @@ func parseWhatsAppWorkflowCommand(text string) (cmd, arg string, ok bool) {
 	if len(fields) == 0 {
 		return "", "", false
 	}
+	if !strings.HasPrefix(fields[0], "@") {
+		return "", "", false
+	}
 	first := strings.ToLower(strings.TrimPrefix(fields[0], "@"))
 	switch first {
 	case "list", "workflows", "workflow-list":
@@ -1088,8 +1091,15 @@ func (w *WhatsAppService) discoverWorkflowCandidates(ctx context.Context, owner 
 	walkDocs(resp.Data)
 	sort.Strings(manifestPaths)
 
+	seenManifestPaths := make(map[string]bool, len(manifestPaths))
+	seenWorkflowKeys := make(map[string]bool, len(manifestPaths))
 	candidates := make([]whatsappWorkflowCandidate, 0, len(manifestPaths))
 	for _, manifestPath := range manifestPaths {
+		manifestPath = filepath.ToSlash(strings.TrimSpace(manifestPath))
+		if manifestPath == "" || seenManifestPaths[manifestPath] {
+			continue
+		}
+		seenManifestPaths[manifestPath] = true
 		content, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: manifestPath})
 		if err != nil {
 			log.Printf("[WHATSAPP] Failed to read workflow manifest %s: %v", manifestPath, err)
@@ -1109,6 +1119,14 @@ func (w *WhatsAppService) discoverWorkflowCandidates(ctx context.Context, owner 
 		if id == "" {
 			id = slugifyWhatsAppWorkflow(label)
 		}
+		workflowKey := strings.ToLower(strings.TrimSpace(id))
+		if workflowKey == "" {
+			workflowKey = strings.ToLower(strings.TrimSpace(workspacePath))
+		}
+		if seenWorkflowKeys[workflowKey] {
+			continue
+		}
+		seenWorkflowKeys[workflowKey] = true
 		candidates = append(candidates, whatsappWorkflowCandidate{
 			ID:            id,
 			Label:         label,
@@ -1326,6 +1344,13 @@ func parseWhatsAppSlugPrefix(text string) (slug string, rest string, ok bool) {
 		return strings.ToLower(strings.TrimSpace(trimmed[1:])), "", true
 	}
 	return strings.ToLower(strings.TrimSpace(trimmed[1:firstSpace])), strings.TrimSpace(trimmed[firstSpace+1:]), true
+}
+
+func unknownWhatsAppWorkflowCommandMessage(slug string) string {
+	if slug = strings.TrimSpace(slug); slug != "" {
+		return fmt.Sprintf("I don't know @%s.\n\nCommands:\n@list - show workflows\n@switch <number or name> - activate a workflow\n@status - show active workflow\n@deactivate or @off - clear active workflow", slug)
+	}
+	return "Commands:\n@list - show workflows\n@switch <number or name> - activate a workflow\n@status - show active workflow\n@deactivate or @off - clear active workflow"
 }
 
 // GetOwner returns the currently-bound owner, or nil when unclaimed.
@@ -1585,6 +1610,13 @@ func (w *WhatsAppService) handleIncomingMessage(evt *events.Message) {
 				}
 				return
 			}
+		}
+		if rest == "" && !hasDownloadableWhatsAppMedia(evt.Message) {
+			_ = w.sendReaction(context.Background(), chatJID, info.Sender, info.ID, "👀")
+			if _, err := w.SendThreadMessage(context.Background(), ThreadID{Platform: "whatsapp", ChannelID: chatJID}, unknownWhatsAppWorkflowCommandMessage(slugToken)); err != nil {
+				log.Printf("[WHATSAPP] Failed to send unknown @ command help for @%s: %v", slugToken, err)
+			}
+			return
 		}
 	}
 

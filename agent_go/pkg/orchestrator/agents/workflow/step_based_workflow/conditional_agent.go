@@ -241,6 +241,9 @@ func (hctpca *WorkflowConditionalAgent) EvaluateRouting(ctx context.Context, exe
 	)
 
 	if err != nil {
+		if isWorkflowCancellationErr(ctx, err) {
+			return nil, context.Canceled
+		}
 		if recovered := recoverRoutingResponseFromText(err, routes); recovered != nil {
 			return recovered, nil
 		}

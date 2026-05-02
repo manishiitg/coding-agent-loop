@@ -6414,13 +6414,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: review_step_code — background agent that checks if saved scripts match step descriptions
 	if err := mcpAgent.RegisterCustomTool(
 		"review_step_code",
-		"Start a background agent that compares each step's saved main.py script with its current description to detect drift. Over time, descriptions get updated but scripts don't — this tool finds where they've gone out of sync. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",
+		"Start a background agent that compares saved main.py scripts with current descriptions to detect drift. Reviews workflow steps, evaluation steps, and the reserved __evaluation_scoring__ script. Over time, descriptions get updated but scripts don't — this tool finds where they've gone out of sync. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"step_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional step ID to review (e.g., 'update-bank-balance'). If omitted, reviews ALL learn_code steps.",
+					"description": "Optional workflow step ID, evaluation step ID, or \"__evaluation_scoring__\" to review. If omitted, reviews all saved main.py scripts across workflow, evaluation, and scoring code.",
 				},
 				"focus": map[string]interface{}{
 					"type":        "string",
@@ -6523,7 +6523,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if stepID != "" {
 				stepInfo = fmt.Sprintf("\nStep: %s", stepID)
 			} else {
-				stepInfo = "\nScope: all learn_code steps"
+				stepInfo = "\nScope: all saved main.py scripts across workflow, evaluation, and scoring"
 			}
 			focusInfo := ""
 			if focus != "" {
@@ -11597,53 +11597,59 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 
 	workflowObjective, _ := iwm.controller.ResolveWorkflowObjective(ctx)
 
-	// Collect steps to review — either a specific step or all learn_code steps
+	// Collect saved code to review — either a specific step/scoring agent or all
+	// saved main.py scripts across workflow, evaluation, and scoring code.
 	allSteps := collectAllSteps(iwm.controller.approvedPlan.Steps)
-	stepConfigs, _ := iwm.controller.ReadStepConfigs(ctx)
-	stepConfigMap := map[string]*StepConfig{}
+	stepConfigs, _ := iwm.controller.ReadStepConfigsFromSubdir(ctx, "planning")
+	workflowStepConfigMap := map[string]*StepConfig{}
 	for i := range stepConfigs {
-		stepConfigMap[stepConfigs[i].ID] = &stepConfigs[i]
+		workflowStepConfigMap[stepConfigs[i].ID] = &stepConfigs[i]
+	}
+	evalStepConfigs, _ := iwm.controller.ReadStepConfigsFromSubdir(ctx, "evaluation")
+	evalStepConfigMap := map[string]*StepConfig{}
+	for i := range evalStepConfigs {
+		evalStepConfigMap[evalStepConfigs[i].ID] = &evalStepConfigs[i]
+	}
+	evalPlanExists, evalPlan, evalPlanErr := iwm.controller.checkExistingEvaluationPlan(ctx, "evaluation/evaluation_plan.json")
+	if evalPlanErr != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to read evaluation/evaluation_plan.json for review_step_code: %v", evalPlanErr))
 	}
 
 	var stepsToReview strings.Builder
 	reviewCount := 0
 
-	for _, info := range allSteps {
-		sid := info.Step.GetID()
-
-		// Filter to specific step if requested
+	appendCodeReviewTarget := func(scope string, sid string, title string, description string, validation *ValidationSchema, sc *StepConfig) {
 		if stepID != "" && sid != stepID {
-			continue
+			return
 		}
-
-		// Only review learn_code steps (they have saved scripts)
-		sc := stepConfigMap[sid]
-		if sc == nil || sc.AgentConfigs == nil || !isScriptedExecutionModeConfig(sc.AgentConfigs) {
-			if stepID != "" {
-				// Explicitly requested non-learn_code step
-				stepsToReview.WriteString(fmt.Sprintf("### %s\n- **Status**: NOT_LEARN_CODE — this step does not use saved scripts\n\n", sid))
-				reviewCount++
-			}
-			continue
-		}
-
-		// Read saved main.py from learnings
 		scriptRelPath := fmt.Sprintf("learnings/%s/main.py", sid)
 		scriptContent, scriptErr := iwm.controller.ReadWorkspaceFile(ctx, scriptRelPath)
+		hasSavedScript := scriptErr == nil && strings.TrimSpace(scriptContent) != ""
+		isScriptedConfig := sc != nil && sc.AgentConfigs != nil && isScriptedExecutionModeConfig(sc.AgentConfigs)
 
-		// Read step description
-		description := info.Step.GetDescription()
+		if !hasSavedScript && !isScriptedConfig {
+			if stepID != "" {
+				stepsToReview.WriteString(fmt.Sprintf("### %s\n- **Scope**: %s\n- **Status**: NO_SAVED_CODE — this target is not configured for saved code and no learnings/%s/main.py exists\n\n", sid, scope, sid))
+				reviewCount++
+			}
+			return
+		}
 
-		// Read validation schema if available
 		validationSchema := ""
-		if sc.ValidationSchema != nil {
+		if validation != nil {
+			if schemaBytes, jsonErr := json.Marshal(validation); jsonErr == nil {
+				validationSchema = string(schemaBytes)
+			}
+		}
+		if validationSchema == "" && sc != nil && sc.ValidationSchema != nil {
 			if schemaBytes, jsonErr := json.Marshal(sc.ValidationSchema); jsonErr == nil {
 				validationSchema = string(schemaBytes)
 			}
 		}
 
 		stepsToReview.WriteString(fmt.Sprintf("---\n### Step: %s\n", sid))
-		stepsToReview.WriteString(fmt.Sprintf("**Title**: %s\n", info.Step.GetTitle()))
+		stepsToReview.WriteString(fmt.Sprintf("**Scope**: %s\n", scope))
+		stepsToReview.WriteString(fmt.Sprintf("**Title**: %s\n", title))
 		stepsToReview.WriteString(fmt.Sprintf("\n**Description**:\n%s\n", description))
 
 		if validationSchema != "" {
@@ -11667,14 +11673,39 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 		reviewCount++
 	}
 
+	for _, info := range allSteps {
+		sid := info.Step.GetID()
+		appendCodeReviewTarget("workflow", sid, info.Step.GetTitle(), info.Step.GetDescription(), info.Step.GetValidationSchema(), workflowStepConfigMap[sid])
+	}
+
+	if evalPlanExists && evalPlan != nil {
+		for _, evalStep := range evalPlan.Steps {
+			if evalStep == nil {
+				continue
+			}
+			appendCodeReviewTarget("evaluation", evalStep.ID, evalStep.Title, evalStep.Description, evalStep.PreValidation, evalStepConfigMap[evalStep.ID])
+		}
+	}
+
+	scoringConfig := evalStepConfigMap[EvaluationScoringStepID]
+	appendCodeReviewTarget(
+		"evaluation_scoring",
+		EvaluationScoringStepID,
+		"Final Evaluation Scoring Agent",
+		"Aggregates evaluation step outputs into the final evaluation report and scores the workflow against the evaluation plan.",
+		nil,
+		scoringConfig,
+	)
+
 	if reviewCount == 0 {
-		return "No learn_code steps found to review.", nil
+		return "No saved main.py scripts found to review across workflow steps, evaluation steps, or evaluation scoring.", nil
 	}
 
 	// Set up read-only folder guard
 	readPaths := []string{
 		workspacePath,
 		fmt.Sprintf("%s/planning", workspacePath),
+		fmt.Sprintf("%s/evaluation", workspacePath),
 		fmt.Sprintf("%s/learnings", workspacePath),
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})

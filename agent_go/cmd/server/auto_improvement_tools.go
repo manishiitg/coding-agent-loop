@@ -125,7 +125,8 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 		"Defines a new metric: supply id + unit + direction + mode + source. " +
 		"Metrics are append-only by id. To change a metric's meaning, retire the old one (retire_metric) and create a new one with a different id. " +
 		"Use this BEFORE proposing experiments that target a metric that does not yet exist. " +
-		"Returns { metric_id, status }."
+		"\n\nBEFORE PROPOSING — sanity-check the source: read db/metrics_history.jsonl for the latest snapshot rows of each existing metric. Any row with has_value=false carries a resolve_error explaining why. The most common gotcha is field=\"some_name\" when the eval step's report has no structured output_content — for flat eval reports (score/max_score only), use field=\"\" (percent score), field=\"score\", or field=\"max_score\". Anything else requires the eval Python to emit structured JSON output containing that key." +
+		"\n\nReturns { metric_id, status }."
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -184,13 +185,20 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 // collected on future runs; existing rows in db/metrics_history.jsonl that
 // reference its id remain (the archive entry preserves what they meant).
 func RegisterRetireMetricTool(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
-	desc := "Retire a metric defined in planning/metrics.json. Soft delete: " +
-		"removes the metric from the active list and moves the prior definition to " +
-		"metrics.json::archive[] with the supplied reason. Subsequent runs skip the " +
-		"metric in the snapshot pipeline. Past db/metrics_history.jsonl rows are " +
-		"preserved as-is — the archive entry is the audit trail for what those " +
-		"historical values represented. Use this when a metric is superseded, " +
-		"deprecated, or no longer relevant. Returns { metric_id, version, status }."
+	desc := "Retire a metric defined in planning/metrics.json. Removes the " +
+		"metric from the active list. Subsequent runs skip the metric in the " +
+		"snapshot pipeline. Past db/metrics_history.jsonl rows are preserved " +
+		"as-is — the decision-log entry created by this call is the audit " +
+		"trail for what those historical values represented." +
+		"\n\nCommon use cases: (1) the metric is broken — its latest snapshot " +
+		"rows in db/metrics_history.jsonl all show resolve_error (e.g. wrong " +
+		"`field` for the eval step). Retire it and propose a new metric with " +
+		"a different id and a corrected definition. (2) the metric is no " +
+		"longer relevant. (3) the metric is being replaced by a better-defined " +
+		"alternative. Always pass a reason that cites the resolve_error or " +
+		"superseding metric — the decision log is the only trace future readers " +
+		"have for why historical rows under this id should be interpreted." +
+		"\n\nReturns { metric_id, status }."
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{

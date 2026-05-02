@@ -695,7 +695,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 	// virtual tool — without these, the LLM has to guess MCP server/tool names when writing main.py.
 	actualProvider := config.LLMConfig.Primary.Provider
 	isLearnCode := isScriptedExecutionModeConfig(stepConfig)
-	if actualProvider == "claude-code" || actualProvider == "kimi" || actualProvider == "gemini-cli" || actualProvider == "codex-cli" {
+	if common.IsCLIProvider(actualProvider) {
 		config.UseCodeExecutionMode = true
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for CLI provider '%s' - MCP tools accessed via HTTP bridge", actualProvider))
 	} else if isLearnCode {
@@ -1590,7 +1590,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	// Rule 2: Step config if explicitly set
 	// Rule 3: Non-CLI providers default to false
 	conditionalProvider := config.LLMConfig.Primary.Provider
-	if conditionalProvider == "claude-code" || conditionalProvider == "kimi" || conditionalProvider == "gemini-cli" || conditionalProvider == "codex-cli" {
+	if common.IsCLIProvider(conditionalProvider) {
 		config.UseCodeExecutionMode = true
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for conditional agent CLI provider '%s'", conditionalProvider))
 	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
@@ -1848,7 +1848,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 
 	// Enable code execution mode for CLI providers (claude-code, gemini-cli) that need HTTP bridge for tool routing
 	// Non-CLI providers use simple agent mode (no code execution)
-	isCodeExecutionMode := llmConfig.Primary.Provider == "claude-code" || llmConfig.Primary.Provider == "kimi" || llmConfig.Primary.Provider == "gemini-cli" || llmConfig.Primary.Provider == "codex-cli"
+	isCodeExecutionMode := common.IsCLIProvider(llmConfig.Primary.Provider)
 	config.UseCodeExecutionMode = isCodeExecutionMode
 	if isCodeExecutionMode {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Todo task orchestrator: code execution mode enabled for CLI provider '%s'", llmConfig.Primary.Provider))

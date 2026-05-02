@@ -187,11 +187,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) snapshotRunMetrics(ctx context.Contex
 
 // resolveMetricValueFromStep mutates row with the metric's value (and
 // HasValue / ResolveError as appropriate) given an eval step and an
-// optional structured-output field name.
+// optional field name.
+//
+// Field interpretation:
+//
+//	field == ""        → return the step's percent score (Score/MaxScore*100).
+//	field == "score"   → return the step's raw score (Score).
+//	field == "max_score" → return the step's max score (MaxScore).
+//	any other value    → look up the key in OutputContent.Content (the eval
+//	                     step's structured JSON output, when present).
+//
+// Most evaluation pipelines today emit only flat reports (score, max_score,
+// reasoning, evidence), so structured-field lookups will commonly fail with
+// a clear resolve_error pointing the user at the gap.
 func resolveMetricValueFromStep(row *metricSnapshotRow, step *evalStepForSnapshot, field string) {
 	field = strings.TrimSpace(field)
-	if field == "" {
-		// Mode 1 — percent score.
+	switch field {
+	case "":
 		if step.MaxScore <= 0 {
 			row.Value = float64(step.Score)
 		} else {
@@ -199,11 +211,19 @@ func resolveMetricValueFromStep(row *metricSnapshotRow, step *evalStepForSnapsho
 		}
 		row.HasValue = true
 		return
+	case "score":
+		row.Value = float64(step.Score)
+		row.HasValue = true
+		return
+	case "max_score":
+		row.Value = float64(step.MaxScore)
+		row.HasValue = true
+		return
 	}
 
-	// Mode 2 — field lookup in structured output.
+	// Structured-output field lookup.
 	if step.OutputContent == nil {
-		row.ResolveError = fmt.Sprintf("eval step %q has no structured output (field=%q)", step.StepID, field)
+		row.ResolveError = fmt.Sprintf("eval step %q has no structured output (field=%q). Either drop `field` to read percent score, set field=\"score\" for raw score, or update the eval step to emit a structured JSON output containing %q.", step.StepID, field, field)
 		return
 	}
 	if !step.OutputContent.IsJSON || step.OutputContent.Content == nil {

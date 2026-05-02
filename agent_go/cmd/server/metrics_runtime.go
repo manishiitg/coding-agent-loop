@@ -136,7 +136,7 @@ func ValidateMetric(m *Metric) error {
 
 // validSourceTypesHint is the canonical list returned in error messages so
 // agents don't have to brute-force the enum by trial-and-error.
-const validSourceTypesHint = `valid source.type values: "eval_step" (requires id), "telemetry" (requires field), "external" (requires field), "delayed_ground_truth" (requires joined_via)`
+const validSourceTypesHint = `valid source.type values: "eval_step" (requires id), "telemetry" (requires field), "delayed_ground_truth" (requires joined_via). Wrap any external feed (third-party APIs, broker queries, monitoring tools) in a Python eval step — that keeps one mechanism for all metrics.`
 
 func validateMetricSource(s *MetricSource) error {
 	switch s.Type {
@@ -147,10 +147,6 @@ func validateMetricSource(s *MetricSource) error {
 	case MetricSourceTelemetry:
 		if strings.TrimSpace(s.Field) == "" {
 			return fmt.Errorf("source.type=telemetry requires field (dotted path, e.g. run.total_cost_usd). %s", validSourceTypesHint)
-		}
-	case MetricSourceExternal:
-		if strings.TrimSpace(s.Field) == "" {
-			return fmt.Errorf("source.type=external requires field (dotted path into the external feed). %s", validSourceTypesHint)
 		}
 	case MetricSourceDelayedGroundTruth:
 		if strings.TrimSpace(s.JoinedVia) == "" {
@@ -190,7 +186,7 @@ func ResolveMetricValue(ctx context.Context, workspacePath, runFolder string, m 
 		return resolveFromEvalStep(ctx, workspacePath, runFolder, m.Source.ID, m.Source.Field)
 	case MetricSourceTelemetry:
 		return resolveFromTelemetry(ctx, workspacePath, runFolder, m.Source.Field)
-	case MetricSourceExternal, MetricSourceDelayedGroundTruth:
+	case MetricSourceDelayedGroundTruth:
 		// Not yet available; the experiment loop must enqueue these for later.
 		return 0, false, nil
 	default:

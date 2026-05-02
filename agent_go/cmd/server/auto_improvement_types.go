@@ -110,7 +110,6 @@ type MetricSourceType string
 const (
 	MetricSourceEvalStep           MetricSourceType = "eval_step"
 	MetricSourceTelemetry          MetricSourceType = "telemetry"
-	MetricSourceExternal           MetricSourceType = "external"
 	MetricSourceDelayedGroundTruth MetricSourceType = "delayed_ground_truth"
 )
 

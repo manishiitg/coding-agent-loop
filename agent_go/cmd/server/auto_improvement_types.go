@@ -112,7 +112,6 @@ const (
 	MetricSourceTelemetry          MetricSourceType = "telemetry"
 	MetricSourceExternal           MetricSourceType = "external"
 	MetricSourceDelayedGroundTruth MetricSourceType = "delayed_ground_truth"
-	MetricSourceLineage            MetricSourceType = "lineage"
 )
 
 // MetricSource describes how a metric's value is resolved per run.

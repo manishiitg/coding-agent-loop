@@ -36,7 +36,8 @@
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["eval_step", "telemetry", "external", "delayed_ground_truth", "lineage", "schema_check"]
+          "enum": ["eval_step", "telemetry"],
+          "description": "Two source types: eval_step (value computed by a Python eval step) or telemetry (engine-recorded run data like cost or duration). For external feeds, schema validation, lineage, or delayed-outcome attribution, write a Python eval step that does the work and use type=eval_step."
         },
         "id": {
           "type": "string",
@@ -44,11 +45,7 @@
         },
         "field": {
           "type": "string",
-          "description": "For type=telemetry or external, the dotted path to the value within the run's telemetry payload or external feed."
-        },
-        "joined_via": {
-          "type": "string",
-          "description": "For type=delayed_ground_truth, the join key linking predictions to their later ground truth (e.g., prediction_id)."
+          "description": "For type=telemetry, the dotted path to the value (e.g., run.total_cost_usd). For type=eval_step, optional field key into the step's structured JSON output (omit to read the step's percent score)."
         }
       }
     },
@@ -86,11 +83,6 @@
           "description": "Required when mode=slo and direction=lower_better."
         },
         "source": { "$ref": "#/$defs/MetricSource" },
-        "evaluable_at_lag": {
-          "type": "string",
-          "pattern": "^\\d+[smhdw]$",
-          "description": "Duration before the metric value is available (e.g., 30d, 12h). Forces the experiment loop to use the pending-evaluation queue for this metric."
-        },
         "parent": {
           "type": "string",
           "description": "Optional id of a parent metric for grouping in UI. NO weighted rollup."
@@ -623,10 +615,6 @@
         "floor": { "type": "number" },
         "ceiling": { "type": "number" },
         "source": { "$ref": "#/$defs/MetricSource" },
-        "evaluable_at_lag": {
-          "type": "string",
-          "pattern": "^\\d+[smhdw]$"
-        },
         "parent": { "type": "string" },
         "amend_existing": {
           "type": "object",

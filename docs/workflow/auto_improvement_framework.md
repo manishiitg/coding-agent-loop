@@ -66,8 +66,7 @@ A metric carries:
 - A unit (`percent`, `usd`, `seconds`).
 - A direction — higher better, or lower better.
 - A mode — drive *toward* a target, or stay above a *floor* / below a *ceiling*.
-- A source — where the value comes from each run: an eval step, telemetry, an external feed, or delayed ground truth.
-- Optionally, an evaluation lag for outcome metrics that don't materialize immediately (a 30-day prediction can only be scored 30 days later).
+- A source — where the value comes from each run. Two kinds: an **eval step** (a Python script the eval pipeline runs and scores) or **telemetry** (engine-recorded run data like cost or duration). For external feeds, schema checks, lineage, or delayed-outcome attribution, write a Python eval step that does the work and use `eval_step` — the eval pipeline is the single canonical extension point.
 
 Metrics can be grouped under a parent for navigation in the UI. There is **no rolled-up "main metric" percentage** — that path produces fictions, especially when metrics have different units or directions. Every metric is shown independently.
 

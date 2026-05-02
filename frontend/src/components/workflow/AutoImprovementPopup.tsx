@@ -49,7 +49,6 @@ interface Metric {
   floor?: number
   ceiling?: number
   source: { type: string; id?: string; field?: string }
-  evaluable_at_lag?: string
   parent?: string
   version?: number
   linked_success_criteria?: string[]
@@ -747,7 +746,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                           <th className="text-left py-2 px-2">target / floor / ceiling</th>
                           <th className="text-left py-2 px-2">source</th>
                           <th className="text-left py-2 px-2">success criteria</th>
-                          <th className="text-left py-2 px-2">lag</th>
                           <th className="text-left py-2 px-2">v</th>
                         </tr>
                       </thead>
@@ -775,7 +773,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                                 </span>
                               )}
                             </td>
-                            <td className="py-2 px-2 text-xs">{m.evaluable_at_lag || '—'}</td>
                             <td className="py-2 px-2 text-xs">{m.version || 1}</td>
                           </tr>
                         ))}

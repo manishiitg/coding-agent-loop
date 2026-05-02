@@ -218,15 +218,13 @@ func (api *StreamingAPI) handleGetExperiments(w http.ResponseWriter, r *http.Req
 // One stop shop for "is the framework wired correctly?": soul preconditions,
 // success-criteria coverage by metrics, and the unanchored-metric set.
 type FrameworkHealthResponse struct {
-	Success           bool     `json:"success"`
-	SoulExists        bool     `json:"soul_exists"`
-	ObjectiveOK       bool     `json:"objective_ok"`
-	SuccessCriteriaOK bool     `json:"success_criteria_ok"`
-	Objective         string   `json:"objective,omitempty"`
-	SuccessCriteria   string   `json:"success_criteria,omitempty"`
-	UnanchoredMetrics []string `json:"unanchored_metrics"` // metric ids with empty linked_success_criteria (excluding telemetry SLOs)
-	TelemetryMetrics  []string `json:"telemetry_metrics"`  // unanchored metrics that are explicit telemetry SLOs (cost / duration), surfaced separately
-	Error             string   `json:"error,omitempty"`
+	Success           bool   `json:"success"`
+	SoulExists        bool   `json:"soul_exists"`
+	ObjectiveOK       bool   `json:"objective_ok"`
+	SuccessCriteriaOK bool   `json:"success_criteria_ok"`
+	Objective         string `json:"objective,omitempty"`
+	SuccessCriteria   string `json:"success_criteria,omitempty"`
+	Error             string `json:"error,omitempty"`
 }
 
 // handleGetFrameworkHealth surfaces the cross-check between soul.md and
@@ -252,42 +250,13 @@ func (api *StreamingAPI) handleGetFrameworkHealth(w http.ResponseWriter, r *http
 		SuccessCriteriaOK: pre.SuccessCriteriaOK,
 		Objective:         pre.Objective,
 		SuccessCriteria:   pre.SuccessCriteria,
-		UnanchoredMetrics: []string{},
-		TelemetryMetrics:  []string{},
-	}
-
-	metricsFile, exists, err := ReadMetricsFile(r.Context(), workspacePath)
-	if err != nil {
-		writeAIJSON(w, FrameworkHealthResponse{Success: false, Error: err.Error()})
-		return
-	}
-	if !exists || metricsFile == nil {
-		writeAIJSON(w, resp)
-		return
-	}
-
-	// Surface metrics whose authors didn't link them to a success criterion.
-	// The criterion-coverage check (parsing soul.md and string-matching) was
-	// removed — the markdown-vs-canonical-label mismatch produced more false
-	// positives than signal. Reading metrics + criteria side-by-side is the
-	// human-judgment way; the framework no longer tries to enforce it.
-	for _, m := range metricsFile.Metrics {
-		if len(m.LinkedSuccessCriteria) == 0 {
-			if isTelemetryMetric(m) {
-				resp.TelemetryMetrics = append(resp.TelemetryMetrics, m.ID)
-			} else {
-				resp.UnanchoredMetrics = append(resp.UnanchoredMetrics, m.ID)
-			}
-		}
 	}
 	writeAIJSON(w, resp)
 }
 
 // isTelemetryMetric returns true for the universal telemetry SLOs
 // (cost_per_run, run_duration_seconds) and any metric sourced from
-// telemetry. These are unanchored by design — surfaced separately from
-// "user forgot to link" unanchored metrics so the operator can read the
-// distinction at a glance.
+// telemetry.
 func isTelemetryMetric(m Metric) bool {
 	if m.Source.Type == MetricSourceTelemetry {
 		return true

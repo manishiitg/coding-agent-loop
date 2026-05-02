@@ -122,13 +122,10 @@ func RegisterProposeExperimentTool(agent *mcpagent.Agent, workspacePath, trigger
 // RegisterProposeMetricTool exposes propose_metric to the proposer LLM.
 func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
 	desc := "Privileged write path for <workflow>/planning/metrics.json (which is folder-guarded against shell writes). " +
-		"Three modes:\n" +
-		"  1. Define a new metric — supply id + unit + direction + mode + source.\n" +
-		"  2. Amend an existing metric — supply the new definition + amend_existing={id, reason}; the prior definition archives, version bumps, the trajectory line breaks at the transition.\n" +
-		"  3. Set active_mode only — supply just `active_mode` (omit the metric fields). For dual-mode workflows declared in improve.md (e.g. explore/exploit cycles); the value lives at the top of metrics.json so steps can branch on it via the variable resolver.\n" +
-		"You may also pass `active_mode` alongside a metric definition to do both in one call. " +
+		"Defines a new metric: supply id + unit + direction + mode + source. " +
+		"Metrics are append-only by id. To change a metric's meaning, retire the old one (retire_metric) and create a new one with a different id. " +
 		"Use this BEFORE proposing experiments that target a metric that does not yet exist. " +
-		"Returns { metric_id, version, status, active_mode }."
+		"Returns { metric_id, status }."
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -153,28 +150,8 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 				},
 				"required": []string{"type"},
 			},
-			"parent": map[string]interface{}{"type": "string"},
-			"linked_success_criteria": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "REQUIRED for outcome metrics; optional for telemetry. The success_criteria entries (or their indices/short labels) from planning/plan.json that this metric operationalizes. The framework cannot enforce alignment between metric movement and user-facing success on its own — this field is the trace. Example: [\"Email reply rate ≥ 30%\"] or [\"sc-0\", \"sc-2\"]. Leave empty only for purely auxiliary metrics like cost_per_run / run_duration_seconds (telemetry SLOs that don't operationalize a plan-level criterion). Empty for outcome metrics is allowed but flagged in the UI as an unanchored metric.",
-			},
-			"amend_existing": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"id":     map[string]interface{}{"type": "string"},
-					"reason": map[string]interface{}{"type": "string"},
-				},
-				"required": []string{"id", "reason"},
-			},
-			"active_mode": map[string]interface{}{
-				"type":        "string",
-				"description": "Optional. For dual-mode workflows (declared in improve.md as explore/exploit, train/serve, etc.) — sets the runtime mode. Steps can read this via the variable resolver to branch behavior. Pass alone (without metric fields) to update only the mode; pass alongside a metric definition to do both in one write.",
-			},
 		},
-		// No top-level required: either supply a metric definition (id+unit+direction+mode+source)
-		// OR active_mode alone. The handler enforces the choice and reports a clear error if neither
-		// is supplied.
+		"required": []string{"id", "unit", "direction", "mode", "source"},
 	}
 
 	handler := func(ctx context.Context, args map[string]interface{}) (string, error) {

@@ -268,7 +268,10 @@ func metricIsOutcome(metricsFile *MetricsFile, metricID string) bool {
 	if m == nil {
 		return true
 	}
-	return len(m.LinkedSuccessCriteria) > 0
+	// Telemetry metrics (cost / duration) are auxiliary; everything else is
+	// treated as an outcome since the linked_success_criteria trace was
+	// removed in the metric-model simplification.
+	return m.Source.Type != MetricSourceTelemetry
 }
 
 // combineVerdictsWeighted resolves per-metric verdicts into one overall

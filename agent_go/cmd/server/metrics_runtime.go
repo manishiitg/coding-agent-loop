@@ -82,15 +82,6 @@ func ValidateMetricsFile(file *MetricsFile) error {
 		}
 		seen[id] = struct{}{}
 	}
-	// Parent links (used for grouping only) must resolve within the same file.
-	for _, m := range file.Metrics {
-		if m.Parent == "" {
-			continue
-		}
-		if _, ok := seen[m.Parent]; !ok {
-			return fmt.Errorf("metric %q: parent %q not found", m.ID, m.Parent)
-		}
-	}
 	return nil
 }
 

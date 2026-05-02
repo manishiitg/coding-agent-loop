@@ -1392,7 +1392,7 @@ export const agentApi = {
 
   // Auto-improvement framework API.
   // See docs/workflow/auto_improvement_framework.md.
-  getAutoImprovementMetrics: async (workspacePath: string): Promise<{ success: boolean; file?: { metrics: any[]; archive?: any[]; active_mode?: string }; error?: string }> => {
+  getAutoImprovementMetrics: async (workspacePath: string): Promise<{ success: boolean; file?: { metrics: any[] }; error?: string }> => {
     const response = await api.get('/api/workflow/metrics', { params: { workspace_path: workspacePath } })
     return response.data
   },

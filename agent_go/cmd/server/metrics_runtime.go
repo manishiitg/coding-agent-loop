@@ -136,7 +136,7 @@ func ValidateMetric(m *Metric) error {
 
 // validSourceTypesHint is the canonical list returned in error messages so
 // agents don't have to brute-force the enum by trial-and-error.
-const validSourceTypesHint = `valid source.type values: "eval_step" (requires id), "telemetry" (requires field), "external" (requires field), "delayed_ground_truth" (requires joined_via), "lineage" (no required sub-fields), "schema_check" (no required sub-fields)`
+const validSourceTypesHint = `valid source.type values: "eval_step" (requires id), "telemetry" (requires field), "external" (requires field), "delayed_ground_truth" (requires joined_via), "lineage" (no required sub-fields)`
 
 func validateMetricSource(s *MetricSource) error {
 	switch s.Type {
@@ -156,7 +156,7 @@ func validateMetricSource(s *MetricSource) error {
 		if strings.TrimSpace(s.JoinedVia) == "" {
 			return fmt.Errorf("source.type=delayed_ground_truth requires joined_via (join key linking predictions to ground truth). %s", validSourceTypesHint)
 		}
-	case MetricSourceLineage, MetricSourceSchemaCheck:
+	case MetricSourceLineage:
 		// no required fields beyond type
 	default:
 		return fmt.Errorf("invalid source.type %q. %s", s.Type, validSourceTypesHint)
@@ -195,8 +195,8 @@ func ResolveMetricValue(ctx context.Context, workspacePath, runFolder string, m 
 	case MetricSourceExternal, MetricSourceDelayedGroundTruth:
 		// Not yet available; the experiment loop must enqueue these for later.
 		return 0, false, nil
-	case MetricSourceLineage, MetricSourceSchemaCheck:
-		// Phase-2 stub; lineage/schema sources land with the data-pipeline workflows.
+	case MetricSourceLineage:
+		// Phase-2 stub; lineage source lands with the data-pipeline workflows.
 		return 0, false, nil
 	default:
 		return 0, false, fmt.Errorf("unsupported metric source type %q", m.Source.Type)

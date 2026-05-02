@@ -81,6 +81,13 @@ EVAL STEPS                         TELEMETRY
 
 > **Eval is where you compute or decide things. Metrics are the eval values you've decided are worth watching over time. Telemetry is the engine reporting on itself.**
 
+Per-run metric snapshots are written automatically at the tail of every evaluation execution — both the auto-eval that fires after a workflow run completes, and standalone eval triggered from the builder. After eval scores `evaluation_report.json` for the run, the framework reads `planning/metrics.json`, resolves each metric's value from those scores, and writes:
+
+- `runs/<runFolder>/metrics_snapshot.json` — the full per-run snapshot
+- `db/metrics_history.jsonl` — append-only cross-run time series consumed by the Trajectory tab
+
+**To test the metric pipeline without running the full workflow**, trigger an eval-only execution from the builder against an existing run folder. The eval pipeline will rescore that run, the snapshot will fire at the tail, and you'll see new rows appear in `db/metrics_history.jsonl`.
+
 Practical implications:
 
 - **Not every eval step is a metric.** An eval step might just be a structural check (e.g. "are required artifacts present?"). It produces a score; if no metric points at it, it isn't tracked as a time series.

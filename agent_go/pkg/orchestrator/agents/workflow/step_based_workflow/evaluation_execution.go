@@ -153,6 +153,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Evaluation complete. Total Score: %d/%d (%.1f%%)",
 		report.TotalScore, report.MaxPossibleScore, report.ScorePercentage))
 
+	// Snapshot per-run metric values now that the evaluation_report.json has
+	// been published to evaluation/runs/<originalTarget>/. This fires for both
+	// workflow-run-triggered eval (via MaybeRunAutoEvaluation) and standalone
+	// eval (triggered from the builder), since both flow through here.
+	// No-op when planning/metrics.json is absent.
+	hcpo.snapshotRunMetrics(ctx, originalTarget)
+
 	return fmt.Sprintf("Evaluation complete. Score: %d/%d (%.1f%%)", report.TotalScore, report.MaxPossibleScore, report.ScorePercentage), nil
 }
 
@@ -460,17 +467,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) MaybeRunAutoEvaluation(ctx context.Co
 
 	hcpo.GetLogger().Info(fmt.Sprintf("📊 Starting auto-evaluation for run folder: %s", targetRunFolder))
 
-	// Call the same evaluation process as manual evaluation
-	// This executes evaluation steps and scores them
+	// Call the same evaluation process as manual evaluation. ExecuteEvaluationOnly
+	// also snapshots per-run metric values at its tail, so any caller (this auto
+	// path, builder-triggered eval-only) gets the snapshot for free.
 	_, err = hcpo.ExecuteEvaluationOnly(ctx, hcpo.GetObjective(), hcpo.GetWorkspacePath(), targetRunFolder)
 	if err != nil {
 		return fmt.Errorf("auto-evaluation failed: %w", err)
 	}
-
-	// Snapshot per-run metric values now that eval scores are on disk.
-	// No-op when planning/metrics.json is absent. All errors are swallowed
-	// inside snapshotRunMetrics so they cannot fail this pipeline.
-	hcpo.snapshotRunMetrics(ctx, targetRunFolder)
 
 	return nil
 }

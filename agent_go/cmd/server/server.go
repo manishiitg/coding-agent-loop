@@ -533,12 +533,6 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	log.Printf("[SERVER DEBUG] Using MCP config file: %s", config.MCPConfigPath)
 
-	// Wire post-run metric snapshotting at the package level so every
-	// orchestrator instance picks it up automatically — covers all internal
-	// construction sites (planning_exports.go, types/workflow_orchestrator.go).
-	// No-op when a workflow has no planning/metrics.json.
-	todo_creation_human.SetDefaultRunCompletedHook(SnapshotRunMetrics)
-
 	// Load .env file for environment variables (OPENAI_API_KEY, etc.)
 	// Only load if not already loaded
 	if os.Getenv("MCP_ENV_LOADED") == "" {
@@ -2496,12 +2490,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[SKILLS] Applied %d skills to workflow orchestrator: %v", len(selectedSkills), selectedSkills)
 		}
 
-		// Wire post-run metric snapshotting for any workflow that defines
-		// planning/metrics.json. No-op when the file is absent, so this is safe
-		// to set unconditionally for every workflow run.
-		workflowOrchestrator.SetRunCompletedHook(SnapshotRunMetrics)
-
-		// Merge global secrets with user-supplied secrets, then set on orchestrator
+// Merge global secrets with user-supplied secrets, then set on orchestrator
 		allSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 		if len(allSecrets) > 0 {
 			entries := make([]orchestrator.SecretEntry, len(allSecrets))

@@ -432,13 +432,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			// opening the report panel.
 		}
 
-		// Post-eval hook: fires AFTER MaybeRunAutoEvaluation so eval-sourced metrics
-		// can read the scores written to scores/evaluation/<group>/<date>.json.
-		// Skipped on the failure path above — partial metric values are misleading.
-		if hcpo.runCompletedHook != nil {
-			// Hook is responsible for swallowing its own errors.
-			hcpo.runCompletedHook(ctx, hcpo.GetWorkspacePath(), runFolder, "completed")
-		}
 
 		// If single step mode was active, stop batch execution after this group
 		// Single step mode should only run one group, not continue to additional groups

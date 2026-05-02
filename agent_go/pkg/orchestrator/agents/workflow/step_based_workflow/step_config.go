@@ -129,6 +129,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepConfigs(ctx context.Context) 
 	return ReadStepConfigs(ctx, hcpo.BaseOrchestrator, workspacePath, runWorkspacePath, configSubdir)
 }
 
+// ReadStepConfigsFromSubdir reads the workspace-default step_config.json from
+// a specific subdirectory such as "planning" or "evaluation". It intentionally
+// bypasses run-specific configs because workshop config edits should update the
+// durable workspace config, not a selected run's snapshot.
+func (hcpo *StepBasedWorkflowOrchestrator) ReadStepConfigsFromSubdir(ctx context.Context, configSubdir string) ([]StepConfig, error) {
+	workspacePath := hcpo.GetWorkspacePath()
+	if configSubdir == "" {
+		configSubdir = "planning"
+	}
+	return ReadStepConfigs(ctx, hcpo.BaseOrchestrator, workspacePath, workspacePath, configSubdir)
+}
+
 // WriteStepConfigs writes step_config.json to the workspace in object format
 // Format: { "steps": [{ "id": "...", "agent_configs": {...} }] }
 // Uses the orchestrator's WriteWorkspaceFile method
@@ -140,7 +152,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) WriteStepConfigs(ctx context.Context,
 	if hcpo.isEvaluationMode {
 		configSubdir = "evaluation"
 	}
+	return hcpo.WriteStepConfigsToSubdir(ctx, configSubdir, configs)
+}
 
+// WriteStepConfigsToSubdir writes step_config.json into a specific config
+// subdirectory such as "planning" or "evaluation".
+func (hcpo *StepBasedWorkflowOrchestrator) WriteStepConfigsToSubdir(ctx context.Context, configSubdir string, configs []StepConfig) error {
+	if configSubdir == "" {
+		configSubdir = "planning"
+	}
 	// Use relative path only - WriteWorkspaceFile auto-prepends workspacePath
 	configPath := filepath.Join(configSubdir, "step_config.json")
 

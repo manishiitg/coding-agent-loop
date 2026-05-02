@@ -81,9 +81,10 @@ var allKinds = map[string]kindMeta{
 // tmplData is the typed context passed to every guidance template. New
 // fields require updating the markdown templates that consume them.
 type tmplData struct {
-	Focus     string
-	Iteration string
-	RunFolder string
+	Focus        string
+	Iteration    string
+	RunFolder    string
+	WorkshopMode string
 }
 
 // renderKind loads templates/<group>/<kind>.md, renders it with the supplied
@@ -221,9 +222,10 @@ func RegisterGuidanceTool(agent *mcpagent.Agent, currentMode string, logger logg
 		}
 
 		text, err := renderKind(kind, tmplData{
-			Focus:     strings.TrimSpace(focus),
-			Iteration: strings.TrimSpace(iteration),
-			RunFolder: strings.TrimSpace(runFolder),
+			Focus:        strings.TrimSpace(focus),
+			Iteration:    strings.TrimSpace(iteration),
+			RunFolder:    strings.TrimSpace(runFolder),
+			WorkshopMode: strings.TrimSpace(currentMode),
 		})
 		if err != nil {
 			return fmt.Sprintf("error rendering guidance for %q: %v", kind, err), nil

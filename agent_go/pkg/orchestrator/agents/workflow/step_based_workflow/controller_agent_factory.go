@@ -2339,12 +2339,43 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 	}
 }
 
-// selectEvaluationScoringLLM selects the LLM config for evaluation scoring agents
-// Uses Tier 2 (Medium) — scoring is analysis, not generation.
-func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orchestrator.LLMConfig, error) {
+// selectEvaluationScoringLLM selects the LLM config for evaluation scoring agents.
+// Defaults to Tier 2 (Medium), but evaluation/step_config.json can override the
+// reserved __evaluation_scoring__ step with execution_llm or execution_tier.
+func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM(scoringOverride *AgentConfigs) (*orchestrator.LLMConfig, error) {
 	if hcpo.tierResolver == nil {
 		return nil, fmt.Errorf("selectEvaluationScoringLLM: tier resolver is nil — tiered mode is required")
 	}
+
+	if scoringOverride != nil && scoringOverride.ExecutionLLM != nil && scoringOverride.ExecutionLLM.Provider != "" && scoringOverride.ExecutionLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Using evaluation scoring ExecutionLLM from %s: %s/%s",
+			EvaluationScoringStepID, scoringOverride.ExecutionLLM.Provider, scoringOverride.ExecutionLLM.ModelID))
+		return &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: scoringOverride.ExecutionLLM.Provider,
+				ModelID:  scoringOverride.ExecutionLLM.ModelID,
+			},
+			Fallbacks: convertAgentFallbacks(scoringOverride.ExecutionLLM.Fallbacks),
+			APIKeys:   hcpo.GetAPIKeys(),
+		}, nil
+	}
+
+	if scoringOverride != nil {
+		if fixedTier, ok := ParseTierOverride(scoringOverride.ExecutionTier); ok {
+			llmConfig := hcpo.tierResolver.ResolveTier(fixedTier)
+			if llmConfig == nil {
+				return nil, fmt.Errorf("selectEvaluationScoringLLM: tier resolver returned nil for %s", NormalizeTierOverride(scoringOverride.ExecutionTier))
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ Using evaluation scoring execution_tier=%s from %s: %s/%s",
+				NormalizeTierOverride(scoringOverride.ExecutionTier), EvaluationScoringStepID, llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+			return llmConfig, nil
+		}
+		if strings.TrimSpace(scoringOverride.ExecutionTier) != "" {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Invalid evaluation scoring execution_tier=%q in %s — defaulting to Tier 2 (Medium)",
+				scoringOverride.ExecutionTier, EvaluationScoringStepID))
+		}
+	}
+
 	llmConfig := hcpo.tierResolver.ResolveTier(TierMedium)
 	if llmConfig == nil {
 		return nil, fmt.Errorf("selectEvaluationScoringLLM: tier resolver returned nil for Tier 2 (Medium)")
@@ -2366,8 +2397,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orches
 func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx context.Context, phase string, evaluationPlan *EvaluationPlan, stepInputs []EvaluationStepInput, evalReportFolder string) (*EvaluationReport, error) {
 	agentName := "evaluation-scoring-agent"
 
+	// Look up scoring overrides from evaluation/step_config.json under the reserved
+	// EvaluationScoringStepID. ReadStepConfigs already routes to the evaluation/
+	// subdir because isEvaluationMode is set by the time scoring runs.
+	stepConfigs, cfgErr := hcpo.ReadStepConfigs(ctx)
+	if cfgErr != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read evaluation/step_config.json for scoring overrides: %v", cfgErr))
+	}
+	scoringOverride := MatchStepConfigByID(EvaluationScoringStepID, stepConfigs)
+
 	// Select LLM config
-	llmConfig, err := hcpo.selectEvaluationScoringLLM()
+	llmConfig, err := hcpo.selectEvaluationScoringLLM(scoringOverride)
 	if err != nil {
 		return nil, err
 	}
@@ -2382,14 +2422,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 	})
 	config.UseCodeExecutionMode = autoCodeExec
 
-	// Look up scoring overrides from evaluation/step_config.json under the reserved
-	// EvaluationScoringStepID. ReadStepConfigs already routes to the evaluation/
-	// subdir because isEvaluationMode is set by the time scoring runs.
-	stepConfigs, cfgErr := hcpo.ReadStepConfigs(ctx)
-	if cfgErr != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read evaluation/step_config.json for scoring overrides: %v", cfgErr))
-	}
-	scoringOverride := MatchStepConfigByID(EvaluationScoringStepID, stepConfigs)
 	if scoringOverride != nil && scoringOverride.UseCodeExecutionMode != nil {
 		override := *scoringOverride.UseCodeExecutionMode
 		// CLI providers can't drop code-exec mode — they have no other tool path.

@@ -89,7 +89,7 @@ func TestSetupExecutionFolderGuardHonorsLearningsAndKBNone(t *testing.T) {
 	base.SetWorkspacePath("Workflow/testing")
 
 	hcpo := &StepBasedWorkflowOrchestrator{
-		BaseOrchestrator: base,
+		BaseOrchestrator:  base,
 		selectedRunFolder: "iteration-0/test-group",
 	}
 
@@ -147,7 +147,7 @@ func TestSetupExecutionFolderGuardAddsOnlyConfiguredStores(t *testing.T) {
 	base.SetWorkspacePath("Workflow/testing")
 
 	hcpo := &StepBasedWorkflowOrchestrator{
-		BaseOrchestrator: base,
+		BaseOrchestrator:  base,
 		selectedRunFolder: "iteration-0/test-group",
 	}
 
@@ -340,6 +340,96 @@ func TestSelectExecutionLLM_UsesFixedExecutionTier(t *testing.T) {
 	}
 	if llm.Primary.ModelID != "tier-2" {
 		t.Fatalf("expected tier-2 model for fixed medium execution_tier, got %q", llm.Primary.ModelID)
+	}
+}
+
+func TestSelectEvaluationScoringLLM_UsesFixedExecutionTier(t *testing.T) {
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(),
+		nil,
+		orchestrator.OrchestratorTypeWorkflow,
+		"",
+		0,
+		"",
+		nil,
+		nil,
+		false,
+		&orchestrator.LLMConfig{},
+		1,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+
+	hcpo := &StepBasedWorkflowOrchestrator{
+		BaseOrchestrator: base,
+		tierResolver: NewTierResolver(&TieredLLMConfig{
+			Tier1: &AgentLLMConfig{Provider: "openai", ModelID: "tier-1"},
+			Tier2: &AgentLLMConfig{Provider: "openai", ModelID: "tier-2"},
+			Tier3: &AgentLLMConfig{Provider: "openai", ModelID: "tier-3"},
+		}, nil),
+	}
+
+	llm, err := hcpo.selectEvaluationScoringLLM(&AgentConfigs{ExecutionTier: "high"})
+	if err != nil {
+		t.Fatalf("selectEvaluationScoringLLM returned error: %v", err)
+	}
+	if llm == nil {
+		t.Fatal("expected scoring llm config, got nil")
+	}
+	if llm.Primary.ModelID != "tier-1" {
+		t.Fatalf("expected tier-1 model for fixed high scoring execution_tier, got %q", llm.Primary.ModelID)
+	}
+}
+
+func TestSelectEvaluationScoringLLM_ExactLLMBeatsExecutionTier(t *testing.T) {
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(),
+		nil,
+		orchestrator.OrchestratorTypeWorkflow,
+		"",
+		0,
+		"",
+		nil,
+		nil,
+		false,
+		&orchestrator.LLMConfig{},
+		1,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+
+	hcpo := &StepBasedWorkflowOrchestrator{
+		BaseOrchestrator: base,
+		tierResolver: NewTierResolver(&TieredLLMConfig{
+			Tier1: &AgentLLMConfig{Provider: "openai", ModelID: "tier-1"},
+			Tier2: &AgentLLMConfig{Provider: "openai", ModelID: "tier-2"},
+			Tier3: &AgentLLMConfig{Provider: "openai", ModelID: "tier-3"},
+		}, nil),
+	}
+
+	llm, err := hcpo.selectEvaluationScoringLLM(&AgentConfigs{
+		ExecutionTier: "high",
+		ExecutionLLM: &AgentLLMConfig{
+			Provider: "anthropic",
+			ModelID:  "exact-scoring-model",
+		},
+	})
+	if err != nil {
+		t.Fatalf("selectEvaluationScoringLLM returned error: %v", err)
+	}
+	if llm == nil {
+		t.Fatal("expected scoring llm config, got nil")
+	}
+	if llm.Primary.ModelID != "exact-scoring-model" {
+		t.Fatalf("expected exact scoring model to beat execution_tier, got %q", llm.Primary.ModelID)
 	}
 }
 

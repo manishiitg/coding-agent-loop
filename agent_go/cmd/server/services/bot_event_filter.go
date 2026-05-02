@@ -34,6 +34,7 @@ type BotEventFilter struct {
 
 	mu                 sync.Mutex
 	delegationNames    map[string]string // correlationID -> instruction (sub-agent name)
+	startedAgents      map[string]bool   // correlationID/name keys already announced as started
 	pendingDelegations int
 	awaitingInput      bool   // set on any blocking event, cleared externally
 	completionReceived bool   // set when unified_completion, agent_end, or conversation_end arrives
@@ -56,6 +57,7 @@ func NewBotEventFilter(connector BotConnector, threadID ThreadID, sessionID, app
 		appBaseURL:      strings.TrimSuffix(appBaseURL, "/"),
 		userID:          userID,
 		delegationNames: make(map[string]string),
+		startedAgents:   make(map[string]bool),
 	}
 }
 
@@ -182,6 +184,13 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 	}
 
 	switch event.Type {
+	case "orchestrator_agent_start":
+		msg := f.formatOrchestratorAgentStart(event)
+		if msg != "" {
+			f.sendMessage(ctx, msg)
+			return true
+		}
+
 	case "delegation_start":
 		f.trackDelegationName(event)
 		f.mu.Lock()
@@ -389,6 +398,74 @@ func (f *BotEventFilter) trackDelegationName(event BotEventData) {
 		f.delegationNames[corrID] = name
 		f.mu.Unlock()
 	}
+}
+
+// formatOrchestratorAgentStart formats workflow sub-agent starts for bot connectors.
+// It intentionally skips the main chat/builder agent and internal helper agents so
+// WhatsApp/Slack get step-level breadcrumbs without tool-call noise.
+func (f *BotEventFilter) formatOrchestratorAgentStart(event BotEventData) string {
+	if event.Data == nil || event.Data.Data == nil {
+		return ""
+	}
+
+	start, ok := event.Data.Data.(*orchestrator_events.OrchestratorAgentStartEvent)
+	if !ok {
+		return ""
+	}
+
+	agentType := strings.ToLower(strings.TrimSpace(start.AgentType))
+	agentName := strings.TrimSpace(start.AgentName)
+	if agentName == "" {
+		return ""
+	}
+
+	// Skip normal builder/chat turns and internal helper agents. Completion
+	// notifications for these still arrive through llm_generation_end when useful.
+	if agentName == "Full Workflow Execution" ||
+		strings.Contains(agentType, "chat") ||
+		strings.Contains(agentName, "chat-agent") ||
+		strings.Contains(agentType, "learning") ||
+		strings.Contains(agentType, "validation") ||
+		strings.Contains(agentType, "organizer") {
+		return ""
+	}
+
+	// Prefer actual workflow step starts. These are the events users need to
+	// distinguish from workflow-builder chat replies.
+	if !strings.Contains(agentType, "step") &&
+		!strings.Contains(agentType, "execution") &&
+		!strings.Contains(agentType, "conditional") &&
+		!strings.Contains(agentType, "routing") {
+		return ""
+	}
+
+	displayName := strings.TrimSpace(strings.TrimPrefix(agentName, "Step:"))
+	if displayName == "" {
+		displayName = agentName
+	}
+	displayName = strings.TrimSpace(displayName)
+
+	key := event.Data.CorrelationID
+	if key == "" {
+		key = agentType + ":" + displayName
+	}
+	f.mu.Lock()
+	if f.startedAgents[key] {
+		f.mu.Unlock()
+		return ""
+	}
+	f.startedAgents[key] = true
+	f.lastActivity = fmt.Sprintf("Step started: %s", displayName)
+	f.mu.Unlock()
+
+	group := strings.TrimSpace(start.InputData["group_name"])
+	if group == "" {
+		group = strings.TrimSpace(start.InputData["GroupName"])
+	}
+	if group != "" {
+		return fmt.Sprintf("Step started (%s): running now [%s].", displayName, group)
+	}
+	return fmt.Sprintf("Step started (%s): running now.", displayName)
 }
 
 // formatUnifiedCompletion formats a unified_completion event.

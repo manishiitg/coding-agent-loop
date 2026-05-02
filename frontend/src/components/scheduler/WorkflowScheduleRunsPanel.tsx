@@ -28,6 +28,15 @@ type ActivePopup = 'costs' | 'logs' | 'eval' | 'report' | 'live' | null
 type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
 type SchedulePanelView = 'overview' | 'calendar' | 'workflows'
 
+type CalendarEntry = {
+  job: ScheduledJob
+  time: string
+  label: string
+  note?: string
+  sourceTime?: string
+  timezone?: string
+}
+
 interface JobPopupState {
   jobId: string
   jobName: string
@@ -172,6 +181,68 @@ function expandCronForMonth(job: ScheduledJob, year: number, month: number): Arr
   }
 
   return out.slice(0, 250)
+}
+
+function dateKeyFromLocalDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function formatLocalTimeFromDate(date: Date): string {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+function formatLocalDayLabel(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number)
+  return new Date(year, (month || 1) - 1, day || 1).toLocaleDateString([], {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
+function timeZoneOffsetMs(date: Date, timeZone: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).formatToParts(date)
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
+    const asUTC = Date.UTC(
+      Number(values.year),
+      Number(values.month) - 1,
+      Number(values.day),
+      Number(values.hour),
+      Number(values.minute),
+      Number(values.second),
+    )
+    return asUTC - date.getTime()
+  } catch {
+    return 0
+  }
+}
+
+function scheduledDateTimeInLocal(dateKey: string, time: string, timeZone?: string): Date {
+  const [year, month, day] = dateKey.split('-').map(Number)
+  const [hour, minute] = time.split(':').map(Number)
+  if (!timeZone) {
+    return new Date(year, (month || 1) - 1, day || 1, hour || 0, minute || 0)
+  }
+
+  const guess = new Date(Date.UTC(year, (month || 1) - 1, day || 1, hour || 0, minute || 0))
+  const first = new Date(guess.getTime() - timeZoneOffsetMs(guess, timeZone))
+  const second = new Date(guess.getTime() - timeZoneOffsetMs(first, timeZone))
+  return second
+}
+
+function addMonths(date: Date, delta: number): Date {
+  return new Date(date.getFullYear(), date.getMonth() + delta, 1)
 }
 
 function describeCron(expr: string): string {
@@ -439,6 +510,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [expandedJobIds, setExpandedJobIds] = useState<string[]>([])
   const [activeView, setActiveView] = useState<SchedulePanelView>('workflows')
   const [calendarMonth, setCalendarMonth] = useState(() => new Date())
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null)
   const [activeFilter, setActiveFilter] = useState<JobFilter>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedWorkflowFilter, setSelectedWorkflowFilter] = useState('all')
@@ -761,33 +833,53 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     const year = calendarMonth.getFullYear()
     const month = calendarMonth.getMonth()
     const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`
-    const byDate: Record<string, Array<{ job: ScheduledJob; time: string; label: string; note?: string }>> = {}
+    const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    const byDate: Record<string, CalendarEntry[]> = {}
 
     jobs.forEach((job) => {
       const workflowMeta = getWorkflowFilterMeta(job, presetMap)
       const label = workflowMeta.workflowLabel || job.name
+      const jobTimezone = job.timezone || localTimeZone
 
       if (job.schedule_type === 'calendar' && job.calendar_items?.length) {
         job.calendar_items.forEach((item) => {
-          if (!item.date?.startsWith(monthKey)) return
-          byDate[item.date] = [
-            ...(byDate[item.date] || []),
-            { job, time: item.time, label, note: item.description || job.name },
+          if (!item.date || !item.time) return
+          const localDate = scheduledDateTimeInLocal(item.date, item.time, jobTimezone)
+          const localDateKey = dateKeyFromLocalDate(localDate)
+          if (!localDateKey.startsWith(monthKey)) return
+          byDate[localDateKey] = [
+            ...(byDate[localDateKey] || []),
+            {
+              job,
+              time: formatLocalTimeFromDate(localDate),
+              label,
+              note: item.description || job.name,
+              sourceTime: item.time,
+              timezone: jobTimezone,
+            },
           ]
         })
         return
       }
 
-      expandCronForMonth(job, year, month).forEach((occurrence) => {
-        byDate[occurrence.date] = [
-          ...(byDate[occurrence.date] || []),
-          {
-            job,
-            time: occurrence.time,
-            label,
-            note: `${job.name}${job.timezone ? ` (${job.timezone})` : ''}`,
-          },
-        ]
+      const monthsToExpand = [addMonths(calendarMonth, -1), calendarMonth, addMonths(calendarMonth, 1)]
+      monthsToExpand.forEach((sourceMonth) => {
+        expandCronForMonth(job, sourceMonth.getFullYear(), sourceMonth.getMonth()).forEach((occurrence) => {
+          const localDate = scheduledDateTimeInLocal(occurrence.date, occurrence.time, jobTimezone)
+          const localDateKey = dateKeyFromLocalDate(localDate)
+          if (!localDateKey.startsWith(monthKey)) return
+          byDate[localDateKey] = [
+            ...(byDate[localDateKey] || []),
+            {
+              job,
+              time: formatLocalTimeFromDate(localDate),
+              label,
+              note: `${job.name}${jobTimezone !== localTimeZone ? ` (${jobTimezone})` : ''}`,
+              sourceTime: occurrence.time,
+              timezone: jobTimezone,
+            },
+          ]
+        })
       })
     })
 
@@ -795,7 +887,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
     const first = new Date(year, month, 1)
     const daysInMonth = new Date(year, month + 1, 0).getDate()
-    const cells: Array<{ key: string; day?: number; date?: string; items: Array<{ job: ScheduledJob; time: string; label: string; note?: string }> }> = []
+    const cells: Array<{ key: string; day?: number; date?: string; items: CalendarEntry[] }> = []
     for (let i = 0; i < first.getDay(); i += 1) cells.push({ key: `empty-${i}`, items: [] })
     for (let day = 1; day <= daysInMonth; day += 1) {
       const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
@@ -804,10 +896,16 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
     return {
       label: calendarMonth.toLocaleDateString([], { month: 'long', year: 'numeric' }),
+      localTimeZone,
       cells,
       total: Object.values(byDate).reduce((sum, items) => sum + items.length, 0),
     }
   }, [calendarMonth, jobs, presetMap])
+
+  const selectedCalendarCell = useMemo(
+    () => monthlyCalendar.cells.find(cell => cell.date === selectedCalendarDate),
+    [monthlyCalendar.cells, selectedCalendarDate],
+  )
 
   useEffect(() => {
     if (!hasRunningJob) return
@@ -1477,7 +1575,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 <div className="text-center">
                   <div className="text-sm font-semibold text-foreground">{monthlyCalendar.label}</div>
                   <div className="text-xs text-muted-foreground">
-                    {monthlyCalendar.total} scheduled item{monthlyCalendar.total === 1 ? '' : 's'}
+                    {monthlyCalendar.total} scheduled item{monthlyCalendar.total === 1 ? '' : 's'} · local time ({monthlyCalendar.localTimeZone})
                   </div>
                 </div>
                 <button
@@ -1498,11 +1596,25 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   {monthlyCalendar.cells.map((cell) => (
                     <div
                       key={cell.key}
-                      className={`min-h-[112px] rounded-lg border p-2 ${
+                      onClick={() => cell.date && setSelectedCalendarDate(cell.date)}
+                      role={cell.date ? 'button' : undefined}
+                      tabIndex={cell.date ? 0 : undefined}
+                      onKeyDown={(event) => {
+                        if (!cell.date) return
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          setSelectedCalendarDate(cell.date)
+                        }
+                      }}
+                      className={`min-h-[112px] rounded-lg border p-2 text-left transition-colors ${
                         cell.day
                           ? cell.items.length
-                            ? 'border-amber-500/30 bg-card shadow-[inset_0_0_0_1px_rgba(245,158,11,0.08)]'
-                            : 'border-border bg-card/70'
+                            ? selectedCalendarDate === cell.date
+                              ? 'border-amber-500 bg-amber-500/10 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.16)]'
+                              : 'border-amber-500/30 bg-card shadow-[inset_0_0_0_1px_rgba(245,158,11,0.08)] hover:border-amber-500/60 hover:bg-amber-500/5'
+                            : selectedCalendarDate === cell.date
+                              ? 'border-amber-500/60 bg-amber-500/5'
+                              : 'border-border bg-card/70 hover:border-amber-500/40 hover:bg-card'
                           : 'border-transparent'
                       }`}
                     >
@@ -1520,7 +1632,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                             {cell.items.slice(0, 4).map((item, index) => (
                               <button
                                 key={`${cell.date}-${item.job.id}-${index}`}
-                                onClick={() => {
+                                onClick={(event) => {
+                                  event.stopPropagation()
                                   setExpandedJobIds(prev => prev.includes(item.job.id) ? prev : [...prev, item.job.id])
                                   setActiveView('workflows')
                                 }}
@@ -1532,7 +1645,16 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                               </button>
                             ))}
                             {cell.items.length > 4 && (
-                              <div className="text-[11px] text-muted-foreground">+{cell.items.length - 4} more</div>
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  if (cell.date) setSelectedCalendarDate(cell.date)
+                                }}
+                                className="rounded px-1 text-left text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                              >
+                                +{cell.items.length - 4} more
+                              </button>
                             )}
                           </div>
                         </>
@@ -1541,6 +1663,61 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   ))}
                 </div>
               </div>
+
+              {selectedCalendarDate && (
+                <div className="rounded-xl border border-border bg-card">
+                  <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+                    <div>
+                      <div className="text-sm font-semibold text-foreground">{formatLocalDayLabel(selectedCalendarDate)}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {(selectedCalendarCell?.items.length ?? 0)} scheduled item{(selectedCalendarCell?.items.length ?? 0) === 1 ? '' : 's'} · local time
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCalendarDate(null)}
+                      className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      aria-label="Close day detail"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="max-h-72 overflow-y-auto p-3">
+                    {selectedCalendarCell?.items.length ? (
+                      <div className="space-y-2">
+                        {selectedCalendarCell.items.map((item, index) => (
+                          <button
+                            key={`${selectedCalendarDate}-${item.job.id}-${index}`}
+                            type="button"
+                            onClick={() => {
+                              setExpandedJobIds(prev => prev.includes(item.job.id) ? prev : [...prev, item.job.id])
+                              setActiveView('workflows')
+                            }}
+                            className="flex w-full items-start gap-3 rounded-lg border border-border bg-background px-3 py-2 text-left hover:border-amber-500/40 hover:bg-muted/40"
+                          >
+                            <div className="min-w-14 rounded-md bg-amber-500/10 px-2 py-1 text-center text-xs font-semibold text-amber-600 dark:text-amber-300">
+                              {item.time}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-medium text-foreground">{item.label}</div>
+                              <div className="mt-0.5 truncate text-xs text-muted-foreground">{item.note || item.job.name}</div>
+                              {item.timezone && item.timezone !== monthlyCalendar.localTimeZone && (
+                                <div className="mt-1 text-[11px] text-muted-foreground">
+                                  Source: {item.sourceTime} {item.timezone}
+                                </div>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                        No schedules on this day.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <>

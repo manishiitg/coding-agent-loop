@@ -1043,7 +1043,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	// question, decides whether to answer it from its own context or ask the
 	// user, and resolves the workflow via submit_human_answer.
 	virtualtools.SetChatInjector(func(ctx context.Context, sessionID, userID, message string) error {
-		botManager.PrepareSyntheticTurn(sessionID)
 		api.executeSyntheticTurn(sessionID, message)
 		return nil
 	})
@@ -7382,6 +7381,9 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 		log.Printf("[BG AGENT] Session %s is stopped/inactive, suppressing synthetic turn", sessionID)
 		return
 	}
+	if api.botManager != nil {
+		api.botManager.PrepareSyntheticTurn(sessionID)
+	}
 	// Get stored agent for this session
 	api.sessionAgentsMux.RLock()
 	llmAgent, ok := api.sessionAgents[sessionID]
@@ -8464,8 +8466,8 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			if err := ValidateCronExpression(cronExpr); err != nil {
 				return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
 			}
-			if timezone == "" {
-				timezone = "UTC"
+			if err := ValidateScheduleTimezone(timezone); err != nil {
+				return "", err
 			}
 			manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
 			if err != nil || !found {
@@ -8508,6 +8510,11 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			if cronExpr != "" {
 				if err := ValidateCronExpression(cronExpr); err != nil {
 					return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
+				}
+			}
+			if timezone != "" {
+				if err := ValidateScheduleTimezone(timezone); err != nil {
+					return "", err
 				}
 			}
 			workspacePath, manifest, idx, err := findScheduleByID(ctx, jobID)

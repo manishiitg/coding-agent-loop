@@ -1174,6 +1174,13 @@ func (w *WhatsAppService) handleIncomingMessage(evt *events.Message) {
 		log.Printf("[WHATSAPP] skip: status broadcast")
 		return
 	}
+	if !w.isSelfChat(info.Chat) {
+		// This connector is paired to the owner's personal WhatsApp account.
+		// Inbound DMs from contacts are regular human conversations with the
+		// owner, not bot chats. Only the Message Yourself thread is accepted.
+		log.Printf("[WHATSAPP] skip: inbound non-self DM %s from %s", info.Chat.String(), info.Sender.String())
+		return
+	}
 
 	text := extractWhatsAppText(evt.Message)
 	if text == "" {

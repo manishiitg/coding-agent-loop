@@ -24,24 +24,41 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   hideInput?: boolean
   compact?: boolean
 }>(({ onNewChat, hideHeader, hideInput, compact }, ref) => {
-  // Only pass tabId if the active tab belongs to workflow mode AND the current preset,
-  // so we never bleed another preset's or mode's content into WorkflowLayout.
+  // Only pass tabId if the active tab belongs to workflow mode AND the current preset.
+  // Legacy/restored builder tabs may not have presetQueryId, so allow those only when
+  // there is no exact tab for the active preset; otherwise they disappear from the UI.
   const currentPresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const workflowTabId = useChatStore(state => {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : null
     if (tab?.metadata?.mode !== 'workflow') return undefined
-    // Strict match only. Untagged tabs are treated as orphans so they cannot bleed
-    // into whichever workflow happens to be active.
-    if (tab.metadata?.presetQueryId !== currentPresetId) return undefined
-    return tabId
+    const tabPresetId = tab.metadata?.presetQueryId
+    if (tabPresetId === currentPresetId) return tabId
+    if (!tabPresetId && tab.metadata?.phaseId === 'workflow-builder') {
+      const hasExactPresetTab = Object.values(state.chatTabs).some(candidate =>
+        candidate.metadata?.mode === 'workflow' &&
+        candidate.metadata?.presetQueryId === currentPresetId &&
+        (candidate.sessionId || candidate.isStreaming)
+      )
+      if (!hasExactPresetTab) return tabId
+    }
+    return undefined
   })
   const activePhaseId = useChatStore(state => {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : null
     if (tab?.metadata?.mode !== 'workflow') return undefined
-    if (tab.metadata?.presetQueryId !== currentPresetId) return undefined
-    return tab?.metadata?.phaseId
+    const tabPresetId = tab.metadata?.presetQueryId
+    if (tabPresetId === currentPresetId) return tab?.metadata?.phaseId
+    if (!tabPresetId && tab.metadata?.phaseId === 'workflow-builder') {
+      const hasExactPresetTab = Object.values(state.chatTabs).some(candidate =>
+        candidate.metadata?.mode === 'workflow' &&
+        candidate.metadata?.presetQueryId === currentPresetId &&
+        (candidate.sessionId || candidate.isStreaming)
+      )
+      if (!hasExactPresetTab) return tab?.metadata?.phaseId
+    }
+    return undefined
   })
 
   // Show chat input for chat-compatible phases

@@ -8028,7 +8028,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"timezone": map[string]interface{}{
 					"type":        "string",
-					"description": "IANA timezone (e.g., 'America/New_York', 'Asia/Kolkata'). Defaults to 'UTC'.",
+					"description": "Required IANA timezone (e.g. 'UTC', 'America/New_York', 'Asia/Kolkata'). Do not use abbreviations like EST, PST, or IST.",
 				},
 				"group_names": map[string]interface{}{
 					"type":        "array",
@@ -8051,7 +8051,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"enum":        []string{"run", "optimizer"},
 				},
 			},
-			"required": []string{"name", "cron_expression", "group_names"},
+			"required": []string{"name", "cron_expression", "timezone", "group_names"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			if iwm.schedulerFuncs == nil {
@@ -8091,6 +8091,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if cronExpr == "" {
 				return "cron_expression is required.", nil
 			}
+			if err := validateWorkshopScheduleTimezone(timezone); err != nil {
+				return err.Error(), nil
+			}
 			if len(groupNames) == 0 {
 				return "group_names is required. Read variables.json and provide at least one explicit group_name, e.g. ['group-1'].", nil
 			}
@@ -8126,7 +8129,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"timezone": map[string]interface{}{
 					"type":        "string",
-					"description": "New IANA timezone.",
+					"description": "New IANA timezone (e.g. 'UTC', 'America/New_York', 'Asia/Kolkata'). Do not use abbreviations like EST, PST, or IST.",
 				},
 				"group_names": map[string]interface{}{
 					"type":        "array",
@@ -8166,6 +8169,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			name, _ := args["name"].(string)
 			cronExpr, _ := args["cron_expression"].(string)
 			timezone, _ := args["timezone"].(string)
+			if timezone != "" {
+				if err := validateWorkshopScheduleTimezone(timezone); err != nil {
+					return err.Error(), nil
+				}
+			}
 			var groupNames []string
 			setGroupNames := false
 			if raw, ok := args["group_names"]; ok && raw != nil {
@@ -11922,6 +11930,19 @@ func (agent *WorkflowBackgroundTaskAgent) Execute(ctx context.Context, templateV
 	}
 
 	return result, updatedHistory, nil
+}
+
+func validateWorkshopScheduleTimezone(timezone string) error {
+	if timezone == "" {
+		return fmt.Errorf("timezone is required; use an IANA timezone like UTC, Asia/Kolkata, or America/New_York")
+	}
+	if timezone != "UTC" && !strings.Contains(timezone, "/") {
+		return fmt.Errorf("invalid timezone %q: use an IANA timezone like UTC, Asia/Kolkata, or America/New_York; abbreviations like EST, PST, or IST are not accepted", timezone)
+	}
+	if _, err := time.LoadLocation(timezone); err != nil {
+		return fmt.Errorf("invalid timezone %q: use an IANA timezone like UTC, Asia/Kolkata, or America/New_York", timezone)
+	}
+	return nil
 }
 
 // runBackgroundTodoTaskAgent runs a todo task orchestrator as a background agent.

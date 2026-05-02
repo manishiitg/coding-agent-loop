@@ -5,6 +5,8 @@ import { agentApi } from '../services/api'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
+import { useRunningWorkflowsStore } from '../stores/useRunningWorkflowsStore'
+import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { restoreSession } from '../utils/sessionRestore'
 
 const ACTIVITY_DETAILS_POLL_MS = 30000
@@ -101,11 +103,13 @@ function relativeTime(value?: string): string {
 
 function headerStatusLabel(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo): string {
   if (session.needs_user_input) return 'needs input'
+  const hasBackgroundAgents = session.has_running_background_agents === true || (session.running_background_agent_count ?? 0) > 0
   const status = normalizedStatus(workflow?.status || session.status)
   if (status === 'paused') return 'paused'
   if (status === 'idle') return 'idle'
+  if ((status === 'waiting' || status === 'waiting_feedback') && hasBackgroundAgents) return 'waiting for background agents'
   if (status === 'waiting' || status === 'waiting_feedback') return 'waiting'
-  if (status === 'completed' && (session.running_background_agent_count ?? 0) > 0) return 'background running'
+  if ((status === 'completed' || status === 'idle') && hasBackgroundAgents) return 'background running'
   return status || 'running'
 }
 
@@ -114,7 +118,7 @@ function statusTone(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo):
   if (status === 'needs input') return 'needs-input'
   if (status === 'idle' || status === 'waiting') return 'idle'
   if (status === 'paused') return 'paused'
-  if (status === 'background running') return 'background'
+  if (status === 'background running' || status === 'waiting for background agents') return 'background'
   return 'running'
 }
 
@@ -158,7 +162,7 @@ function compactHeaderLabel(
 ): string {
   const title = shortText(displaySessionTitle(session, tab, workflow, fallbackWorkflowName), 28)
   const status = headerStatusLabel(session, workflow)
-  return status === 'running' || status === 'background running' ? title : `${title} · ${status}`
+  return status === 'running' ? title : `${title} · ${status}`
 }
 
 function countLabel(count: number, singular: string, plural = `${singular}s`): string {
@@ -292,6 +296,26 @@ function sessionFromRunningWorkflow(workflow: RunningWorkflowInfo): ActiveSessio
     query: workflowFallbackName(workflow),
     title: workflowFallbackName(workflow),
   }
+}
+
+function normalizeWorkspacePath(path?: string): string {
+  return (path || '').replace(/\/+$/, '')
+}
+
+function findWorkflowPresetId(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo): string | null {
+  const presetId = session.preset_query_id || workflow?.preset_query_id
+  const presetStore = useGlobalPresetStore.getState()
+
+  if (presetId && presetStore.workflowPresets.some(preset => preset.id === presetId)) {
+    return presetId
+  }
+
+  const workspacePath = normalizeWorkspacePath(workflow?.workspace_path || session.workspace_path)
+  if (!workspacePath) return null
+
+  return presetStore.workflowPresets.find(preset =>
+    normalizeWorkspacePath(preset.selectedFolder?.filepath) === workspacePath
+  )?.id ?? null
 }
 
 export const GlobalActivityMonitor: React.FC = () => {
@@ -462,17 +486,72 @@ export const GlobalActivityMonitor: React.FC = () => {
     const chatStore = useChatStore.getState()
     const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === session.session_id)
 
+    if (isWorkflowSession(session)) {
+      const workflowInfo = runningWorkflowsBySession[session.session_id]
+      const presetId = findWorkflowPresetId(session, workflowInfo)
+      const isActive = isActiveSession(session)
+
+      useRunningWorkflowsStore.getState().setIsRestoringWorkflow(true)
+      try {
+        if (presetId) {
+          useGlobalPresetStore.getState().setActivePreset('workflow', presetId)
+        }
+        useModeStore.getState().setModeCategory('workflow')
+
+        if (
+          existingTab?.metadata?.mode === 'workflow' &&
+          existingTab.metadata?.phaseId === 'workflow-builder' &&
+          existingTab.name !== 'Workflow Builder'
+        ) {
+          await chatStore.closeTab(existingTab.tabId, false)
+        }
+
+        const latestChatStore = useChatStore.getState()
+        const builderTab = Object.values(latestChatStore.chatTabs).find(tab =>
+          tab.metadata?.mode === 'workflow' &&
+          tab.metadata?.phaseId === 'workflow-builder' &&
+          (presetId ? tab.metadata?.presetQueryId === presetId : tab.sessionId === session.session_id)
+        )
+
+        const tabId = builderTab?.tabId ?? await latestChatStore.createChatTab('Workflow Builder', {
+          mode: 'workflow',
+          phaseId: 'workflow-builder',
+          phaseName: 'Workflow Builder',
+          presetQueryId: presetId || session.preset_query_id || workflowInfo?.preset_query_id,
+        }, session.session_id)
+
+        if (builderTab?.sessionId !== session.session_id) {
+          latestChatStore.updateTabSessionId(tabId, session.session_id)
+        }
+
+        try {
+          const response = await agentApi.getSessionEvents(session.session_id, -1)
+          latestChatStore.setTabEvents(session.session_id, response.events || [])
+          latestChatStore.setTabLastEventIndex(
+            session.session_id,
+            response.last_processed_index ?? (response.events?.length ? response.events.length - 1 : -1),
+          )
+          latestChatStore.setTabStreaming(tabId, isActive || response.session_status === 'running')
+          latestChatStore.setTabCompleted(tabId, !isActive && response.session_status !== 'running')
+        } catch {
+          latestChatStore.setTabStreaming(tabId, isActive)
+          latestChatStore.setTabCompleted(tabId, !isActive)
+        }
+
+        useWorkflowStore.getState().setShowChatArea(true)
+        latestChatStore.switchTab(tabId)
+      } finally {
+        useRunningWorkflowsStore.getState().setIsRestoringWorkflow(false)
+        setOpen(false)
+      }
+      return
+    }
+
     if (existingTab) {
       if (existingTab.metadata?.mode === 'workflow' || existingTab.metadata?.mode === 'multi-agent') {
         useModeStore.getState().setModeCategory(existingTab.metadata.mode)
       }
       chatStore.switchTab(existingTab.tabId)
-      setOpen(false)
-      return
-    }
-
-    if (isWorkflowSession(session)) {
-      useModeStore.getState().setModeCategory('workflow')
       setOpen(false)
       return
     }
@@ -538,6 +617,12 @@ export const GlobalActivityMonitor: React.FC = () => {
               const isActiveTab = !!tab && tab.tabId === activeTabId
               const workflow = isWorkflowSession(session)
               const bgCount = session.running_background_agent_count ?? 0
+              const hasBgAgents = session.has_running_background_agents === true || bgCount > 0
+              const bgAgentLabel = hasBgAgents
+                ? bgCount > 0
+                  ? `${bgCount} bg agent${bgCount === 1 ? '' : 's'}`
+                  : 'bg agents running'
+                : null
               const age = relativeTime(session.waiting_since || session.last_activity)
               const tone = statusTone(session, workflowInfo)
               const executionInfo = currentExecutionBySession[session.session_id]
@@ -552,7 +637,7 @@ export const GlobalActivityMonitor: React.FC = () => {
               const secondaryLine = joinCompactParts([
                 showActiveWork ? activeWorkName : null,
                 activeWorkStatus,
-                bgCount > 0 ? `${bgCount} bg agent${bgCount === 1 ? '' : 's'}` : null,
+                bgAgentLabel,
                 session.waiting_message ? shortText(session.waiting_message, 64) : null,
               ])
 
@@ -589,7 +674,7 @@ export const GlobalActivityMonitor: React.FC = () => {
                       {secondaryLine && (
                         <div
                           className={`mt-0.5 truncate text-[11px] ${session.needs_user_input ? 'text-amber-700 dark:text-amber-200' : statusTextClasses(tone)}`}
-                          title={joinCompactParts([activeWork || headerStatusLabel(session, workflowInfo), activeWorkStatus, bgCount > 0 ? `${bgCount} background agent${bgCount === 1 ? '' : 's'}` : null, session.waiting_message])}
+                          title={joinCompactParts([activeWork || headerStatusLabel(session, workflowInfo), activeWorkStatus, bgAgentLabel, session.waiting_message])}
                         >
                           {shortText(secondaryLine, 100)}
                         </div>

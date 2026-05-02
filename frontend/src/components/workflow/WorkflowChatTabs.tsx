@@ -134,7 +134,12 @@ export const WorkflowChatTabs: React.FC = () => {
       tab.metadata?.mode === 'workflow' &&
       tab.metadata.presetQueryId === activePresetId
     )
-    return matched.sort((a, b) => a.createdAt - b.createdAt)
+    const visible = matched.length > 0 ? matched : allTabs.filter(tab =>
+      tab.metadata?.mode === 'workflow' &&
+      tab.metadata?.phaseId === 'workflow-builder' &&
+      !tab.metadata?.presetQueryId
+    )
+    return visible.sort((a, b) => a.createdAt - b.createdAt)
   }, [chatTabs, activePresetId])
 
   // Skip auto-close on initial mount

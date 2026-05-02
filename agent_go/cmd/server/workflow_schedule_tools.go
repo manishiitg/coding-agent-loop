@@ -71,7 +71,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						},
 						"timezone": map[string]interface{}{
 							"type":        "string",
-							"description": "IANA timezone (e.g. 'America/New_York', 'Asia/Kolkata'). Defaults to 'UTC'.",
+							"description": "Required IANA timezone (e.g. 'UTC', 'America/New_York', 'Asia/Kolkata'). Do not use abbreviations like EST, PST, or IST.",
 						},
 						"group_names": map[string]interface{}{
 							"type":        "array",
@@ -94,7 +94,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 							"enum":        []string{"run", "optimizer"},
 						},
 					},
-					Required: []string{"workflow_path", "name", "cron_expression"},
+					Required: []string{"workflow_path", "name", "cron_expression", "timezone"},
 				},
 			},
 		},
@@ -120,7 +120,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						},
 						"timezone": map[string]interface{}{
 							"type":        "string",
-							"description": "New IANA timezone.",
+							"description": "New IANA timezone (e.g. 'UTC', 'America/New_York', 'Asia/Kolkata'). Do not use abbreviations like EST, PST, or IST.",
 						},
 						"group_names": map[string]interface{}{
 							"type":        "array",
@@ -251,6 +251,9 @@ func createWorkflowScheduleExecutors(api *StreamingAPI, currentUserID string) ma
 				return "workflow_path, name, and cron_expression are required.", nil
 			}
 			timezone, _ := args["timezone"].(string)
+			if err := ValidateScheduleTimezone(timezone); err != nil {
+				return err.Error(), nil
+			}
 			groupNames := stringSlice(args["group_names"])
 			mode, _ := args["mode"].(string)
 			messages := stringSlice(args["messages"])
@@ -273,6 +276,11 @@ func createWorkflowScheduleExecutors(api *StreamingAPI, currentUserID string) ma
 			name, _ := args["name"].(string)
 			cronExpr, _ := args["cron_expression"].(string)
 			timezone, _ := args["timezone"].(string)
+			if timezone != "" {
+				if err := ValidateScheduleTimezone(timezone); err != nil {
+					return err.Error(), nil
+				}
+			}
 			mode, _ := args["mode"].(string)
 			workshopMode, _ := args["workshop_mode"].(string)
 
@@ -340,12 +348,12 @@ func createWorkflowScheduleExecutors(api *StreamingAPI, currentUserID string) ma
 }
 
 type globalScheduleEntry struct {
-	source       string // "Workflow/<path>" or "user:<id>"
-	mode         string
-	sched        WorkflowSchedule
-	nextRun      *time.Time
-	lastStatus   string
-	lastRunAt    *time.Time
+	source     string // "Workflow/<path>" or "user:<id>"
+	mode       string
+	sched      WorkflowSchedule
+	nextRun    *time.Time
+	lastStatus string
+	lastRunAt  *time.Time
 }
 
 // formatGlobalSchedules aggregates all workflow-manifest schedules and the

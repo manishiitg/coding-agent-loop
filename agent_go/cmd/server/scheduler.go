@@ -441,11 +441,10 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 		}
 	}
 
-	// Build cron expression with timezone prefix
-	cronExpr := sched.CronExpression
-	if sched.Timezone != "" && sched.Timezone != "UTC" {
-		cronExpr = fmt.Sprintf("CRON_TZ=%s %s", sched.Timezone, sched.CronExpression)
-	}
+	// Build cron expression with an explicit timezone prefix. gocron defaults
+	// unprefixed cron jobs to time.Local, which makes UTC schedules fire in the
+	// server timezone while next_run_at is calculated as UTC.
+	cronExpr := buildScheduleCronExpression(sched.CronExpression, sched.Timezone)
 
 	sctxCopy := *sctx
 	gocronJob, err := s.scheduler.NewJob(
@@ -1449,7 +1448,7 @@ func findScheduleByID(ctx context.Context, scheduleID string) (string, *Workflow
 
 // getNextRunTime calculates the next scheduled run time.
 func getNextRunTime(cronExpr string, timezone string) *time.Time {
-	loc, err := time.LoadLocation(timezone)
+	loc, err := time.LoadLocation(scheduleTimezoneOrDefault(timezone))
 	if err != nil {
 		loc = time.UTC
 	}
@@ -1462,6 +1461,23 @@ func getNextRunTime(cronExpr string, timezone string) *time.Time {
 
 	next := schedule.Next(time.Now().In(loc)).UTC()
 	return &next
+}
+
+func buildScheduleCronExpression(cronExpr string, timezone string) string {
+	return fmt.Sprintf("CRON_TZ=%s %s", scheduleTimezoneOrDefault(timezone), cronExpr)
+}
+
+func ValidateScheduleTimezone(timezone string) error {
+	if timezone == "" {
+		return fmt.Errorf("timezone is required; use an IANA timezone like UTC, Asia/Kolkata, or America/New_York")
+	}
+	if timezone != "UTC" && !strings.Contains(timezone, "/") {
+		return fmt.Errorf("invalid timezone %q: use an IANA timezone like UTC, Asia/Kolkata, or America/New_York; abbreviations like EST, PST, or IST are not accepted", timezone)
+	}
+	if _, err := time.LoadLocation(timezone); err != nil {
+		return fmt.Errorf("invalid timezone %q: use an IANA timezone like UTC, Asia/Kolkata, or America/New_York", timezone)
+	}
+	return nil
 }
 
 // ValidateCronExpression validates a 5-field cron expression.

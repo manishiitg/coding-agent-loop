@@ -222,6 +222,115 @@ func (s *WorkshopChatSession) resolveGroupFolderName(ctx context.Context, groupN
 	return groupName
 }
 
+func workflowRunValidationVariableValues(ctx context.Context, session *WorkshopChatSession, groupName string) map[string]string {
+	if session == nil || session.controller == nil {
+		return nil
+	}
+	manifest, err := readVariablesFromFile(ctx, session.controller.GetWorkspacePath(), func(ctx context.Context, path string) (string, error) {
+		return session.controller.ReadWorkspaceFile(ctx, path)
+	})
+	if err != nil || manifest == nil {
+		manifest = session.controller.variablesManifest
+	}
+	if manifest == nil {
+		return nil
+	}
+	for _, group := range manifest.Groups {
+		if group.Name == groupName || session.controller.sanitizeDisplayNameForFolder(group.Name) == groupName {
+			return MergeGroupWithDefaults(manifest, group.Values)
+		}
+	}
+	return MergeGroupWithDefaults(manifest, nil)
+}
+
+func routeScopedValidationSteps(steps []PlanStep, variableValues map[string]string, humanInputs map[string]string) []PlanStep {
+	for i, step := range steps {
+		routingStep, ok := step.(*RoutingPlanStep)
+		if !ok || len(routingStep.Routes) == 0 {
+			continue
+		}
+		route := inferValidationRoute(routingStep, variableValues, humanInputs)
+		if route == nil || strings.EqualFold(route.NextStepID, "end") {
+			continue
+		}
+		start := planStepIndexByID(steps, route.NextStepID)
+		if start < 0 || start <= i {
+			continue
+		}
+		end := routeSegmentEndIndex(steps, start)
+		if end < start {
+			end = len(steps) - 1
+		}
+		scoped := make([]PlanStep, 0, i+1+end-start+1)
+		scoped = append(scoped, steps[:i+1]...)
+		scoped = append(scoped, steps[start:end+1]...)
+		return scoped
+	}
+	return steps
+}
+
+func inferValidationRoute(step *RoutingPlanStep, variableValues map[string]string, humanInputs map[string]string) *RoutingRoute {
+	if step == nil {
+		return nil
+	}
+	if humanInputs != nil {
+		if raw := strings.TrimSpace(humanInputs[step.GetID()]); raw != "" {
+			normalized := strings.ToLower(raw)
+			for i := range step.Routes {
+				route := &step.Routes[i]
+				if strings.ToLower(route.RouteID) == normalized || strings.ToLower(route.RouteName) == normalized {
+					return route
+				}
+			}
+		}
+	}
+	for i := range step.Routes {
+		route := &step.Routes[i]
+		condition := strings.ToLower(route.Condition)
+		for name, value := range variableValues {
+			if value == "" {
+				continue
+			}
+			varToken := "$var_" + strings.ToLower(name)
+			if strings.Contains(condition, varToken) &&
+				strings.Contains(condition, "equals") &&
+				strings.Contains(condition, `"`+strings.ToLower(value)+`"`) {
+				return route
+			}
+		}
+	}
+	return nil
+}
+
+func planStepIndexByID(steps []PlanStep, stepID string) int {
+	for i, step := range steps {
+		if step.GetID() == stepID {
+			return i
+		}
+	}
+	return -1
+}
+
+func routeSegmentEndIndex(steps []PlanStep, start int) int {
+	for i := start; i < len(steps); i++ {
+		routingStep, ok := steps[i].(*RoutingPlanStep)
+		if !ok || len(routingStep.Routes) == 0 {
+			continue
+		}
+		allEnd := true
+		for _, route := range routingStep.Routes {
+			if !strings.EqualFold(strings.TrimSpace(route.NextStepID), "end") {
+				allEnd = false
+				break
+			}
+		}
+		if allEnd {
+			return i
+		}
+	}
+	return len(steps) - 1
+}
+
 // MainSessionID returns the owning chat session ID for this workshop session.
 func (s *WorkshopChatSession) MainSessionID() string {
 	return s.mainSessionID
@@ -1205,15 +1314,20 @@ func RegisterRunFullWorkflowTool(
 				}
 			}
 
-			// Validate: if plan has human_input steps, human_inputs must cover them all.
-			// Also warn about routing steps that accept human_inputs for user intent.
+			// Validate: if the selected route has human_input steps, human_inputs must cover them.
+			// Route-scoped validation matters for workflows like Upwork where one plan contains
+			// bid/search/profile branches; a search run must not be forced to answer bid approval.
 			if err := session.controller.LoadPlanForWorkshop(ctx); err != nil {
 				return fmt.Sprintf("Failed to load plan: %v", err), nil
 			}
 			if session.controller.approvedPlan != nil {
 				var missingSteps []string
 				var routingStepHints []string
-				for _, step := range session.controller.approvedPlan.Steps {
+				validationSteps := session.controller.approvedPlan.Steps
+				if variableValues := workflowRunValidationVariableValues(ctx, session, groupName); len(variableValues) > 0 {
+					validationSteps = routeScopedValidationSteps(session.controller.approvedPlan.Steps, variableValues, humanInputs)
+				}
+				for _, step := range validationSteps {
 					if step.StepType() == StepTypeHumanInput {
 						stepID := step.GetID()
 						if _, ok := humanInputs[stepID]; !ok {

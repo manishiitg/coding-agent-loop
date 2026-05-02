@@ -350,11 +350,9 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if req.Timezone != "" {
-			if _, err := time.LoadLocation(req.Timezone); err != nil {
-				http.Error(w, "invalid timezone", http.StatusBadRequest)
-				return
-			}
+		if err := ValidateScheduleTimezone(req.Timezone); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 
 		// Multi-agent schedule creation
@@ -515,8 +513,8 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			}
 		}
 		if req.Timezone != "" {
-			if _, err := time.LoadLocation(req.Timezone); err != nil {
-				http.Error(w, "invalid timezone", http.StatusBadRequest)
+			if err := ValidateScheduleTimezone(req.Timezone); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 		}

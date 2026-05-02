@@ -1518,6 +1518,11 @@ func createImageAnalysisLLM(ctx context.Context, workspaceURL string) (llmtypes.
 			}
 			return nil, "", "", fmt.Errorf("image analysis config requires a valid configured provider/model with matching auth")
 		}
+
+		if model, provider, modelID, ok := createWorkspaceDefaultImageAnalysisLLM(ctx, apiKeys); ok {
+			log.Printf("[READ_IMAGE_DEBUG] Using workspace-auth image analysis default (provider=%s, model=%s) because no per-call LLM config was available yet", provider, modelID)
+			return model, provider, modelID, nil
+		}
 	}
 
 	llmConfigRaw := ctx.Value(mcpagent.ToolExecutionLLMConfigKey)
@@ -1536,6 +1541,81 @@ func createImageAnalysisLLM(ctx context.Context, workspaceURL string) (llmtypes.
 		return nil, "", "", err
 	}
 	return model, llmConfig.Provider, llmConfig.ModelID, nil
+}
+
+func createWorkspaceDefaultImageAnalysisLLM(ctx context.Context, apiKeys *llm.ProviderAPIKeys) (llmtypes.Model, string, string, bool) {
+	apiKeys = imageAnalysisAPIKeysWithEnv(apiKeys)
+	candidates := []services.ImageGenerationModelConfig{
+		{Provider: string(llm.ProviderVertex), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderVertex))},
+		{Provider: string(llm.ProviderZAI), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderZAI))},
+		{Provider: string(llm.ProviderKimi), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderKimi))},
+	}
+
+	for _, candidate := range candidates {
+		provider, modelID, err := normalizeImageAnalysisProviderAndModel(candidate.Provider, candidate.ModelID)
+		if err != nil {
+			continue
+		}
+		if !hasWorkspaceDefaultImageAnalysisAuth(provider, apiKeys) {
+			continue
+		}
+		model, err := llm.InitializeLLM(llm.Config{
+			Provider: llm.Provider(provider),
+			ModelID:  modelID,
+			Context:  ctx,
+			APIKeys:  apiKeys,
+		})
+		if err == nil {
+			return model, provider, modelID, true
+		}
+		log.Printf("[READ_IMAGE_DEBUG] Failed to initialize workspace-auth image analysis default %s/%s: %v", provider, modelID, err)
+	}
+
+	return nil, "", "", false
+}
+
+func imageAnalysisAPIKeysWithEnv(apiKeys *llm.ProviderAPIKeys) *llm.ProviderAPIKeys {
+	merged := &llm.ProviderAPIKeys{}
+	if apiKeys != nil {
+		*merged = *apiKeys
+	}
+
+	if merged.Vertex == nil {
+		if value := firstNonEmptyEnv("VERTEX_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY"); value != "" {
+			merged.Vertex = &value
+		}
+	}
+	if merged.ZAI == nil {
+		if value := firstNonEmptyEnv("Z_AI_API_KEY", "ZAI_API_KEY"); value != "" {
+			merged.ZAI = &value
+		}
+	}
+	if merged.Kimi == nil {
+		if value := firstNonEmptyEnv("KIMI_API_KEY", "MOONSHOT_API_KEY"); value != "" {
+			merged.Kimi = &value
+		}
+	}
+	return merged
+}
+
+func hasWorkspaceDefaultImageAnalysisAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
+	if hasImageAnalysisProviderAuth(provider, apiKeys) {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), string(llm.ProviderVertex)) {
+		return strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")) != "" ||
+			strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_PROJECT")) != ""
+	}
+	return false
+}
+
+func firstNonEmptyEnv(names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // createLLMFromConfig creates an LLM model instance using multi-llm-provider-go

@@ -218,17 +218,15 @@ func (api *StreamingAPI) handleGetExperiments(w http.ResponseWriter, r *http.Req
 // One stop shop for "is the framework wired correctly?": soul preconditions,
 // success-criteria coverage by metrics, and the unanchored-metric set.
 type FrameworkHealthResponse struct {
-	Success                bool     `json:"success"`
-	SoulExists             bool     `json:"soul_exists"`
-	ObjectiveOK            bool     `json:"objective_ok"`
-	SuccessCriteriaOK      bool     `json:"success_criteria_ok"`
-	Objective              string   `json:"objective,omitempty"`
-	SuccessCriteria        string   `json:"success_criteria,omitempty"`
-	DeclaredCriteria       []string `json:"declared_criteria"`        // parsed bullet/line entries from the success criteria section
-	UncoveredCriteria      []string `json:"uncovered_criteria"`       // declared criteria with NO metric pointing at them
-	UnanchoredMetrics      []string `json:"unanchored_metrics"`       // metric ids with empty linked_success_criteria (excluding telemetry SLOs)
-	TelemetryMetrics       []string `json:"telemetry_metrics"`        // unanchored metrics that are explicit telemetry SLOs (cost / duration), surfaced separately
-	Error                  string   `json:"error,omitempty"`
+	Success           bool     `json:"success"`
+	SoulExists        bool     `json:"soul_exists"`
+	ObjectiveOK       bool     `json:"objective_ok"`
+	SuccessCriteriaOK bool     `json:"success_criteria_ok"`
+	Objective         string   `json:"objective,omitempty"`
+	SuccessCriteria   string   `json:"success_criteria,omitempty"`
+	UnanchoredMetrics []string `json:"unanchored_metrics"` // metric ids with empty linked_success_criteria (excluding telemetry SLOs)
+	TelemetryMetrics  []string `json:"telemetry_metrics"`  // unanchored metrics that are explicit telemetry SLOs (cost / duration), surfaced separately
+	Error             string   `json:"error,omitempty"`
 }
 
 // handleGetFrameworkHealth surfaces the cross-check between soul.md and
@@ -254,14 +252,9 @@ func (api *StreamingAPI) handleGetFrameworkHealth(w http.ResponseWriter, r *http
 		SuccessCriteriaOK: pre.SuccessCriteriaOK,
 		Objective:         pre.Objective,
 		SuccessCriteria:   pre.SuccessCriteria,
-		DeclaredCriteria:  []string{},
-		UncoveredCriteria: []string{},
 		UnanchoredMetrics: []string{},
 		TelemetryMetrics:  []string{},
 	}
-
-	criteria := parseSuccessCriteria(pre.SuccessCriteria)
-	resp.DeclaredCriteria = criteria
 
 	metricsFile, exists, err := ReadMetricsFile(r.Context(), workspacePath)
 	if err != nil {
@@ -269,18 +262,16 @@ func (api *StreamingAPI) handleGetFrameworkHealth(w http.ResponseWriter, r *http
 		return
 	}
 	if !exists || metricsFile == nil {
-		// No metrics yet — every declared criterion is uncovered.
-		resp.UncoveredCriteria = append(resp.UncoveredCriteria, criteria...)
 		writeAIJSON(w, resp)
 		return
 	}
 
-	// Index linked_success_criteria across all metrics.
-	covered := map[string]struct{}{}
+	// Surface metrics whose authors didn't link them to a success criterion.
+	// The criterion-coverage check (parsing soul.md and string-matching) was
+	// removed — the markdown-vs-canonical-label mismatch produced more false
+	// positives than signal. Reading metrics + criteria side-by-side is the
+	// human-judgment way; the framework no longer tries to enforce it.
 	for _, m := range metricsFile.Metrics {
-		for _, sc := range m.LinkedSuccessCriteria {
-			covered[strings.ToLower(strings.TrimSpace(sc))] = struct{}{}
-		}
 		if len(m.LinkedSuccessCriteria) == 0 {
 			if isTelemetryMetric(m) {
 				resp.TelemetryMetrics = append(resp.TelemetryMetrics, m.ID)
@@ -289,55 +280,7 @@ func (api *StreamingAPI) handleGetFrameworkHealth(w http.ResponseWriter, r *http
 			}
 		}
 	}
-	for _, c := range criteria {
-		key := strings.ToLower(strings.TrimSpace(c))
-		if _, ok := covered[key]; !ok {
-			resp.UncoveredCriteria = append(resp.UncoveredCriteria, c)
-		}
-	}
 	writeAIJSON(w, resp)
-}
-
-// parseSuccessCriteria splits the "## Success Criteria" body into discrete
-// criterion lines. Accepts both bullet-list ("- foo", "* foo", "1. foo")
-// and prose-paragraph forms (one criterion per non-blank line). Leading
-// markers are stripped; surrounding whitespace is trimmed.
-func parseSuccessCriteria(body string) []string {
-	if strings.TrimSpace(body) == "" {
-		return nil
-	}
-	out := make([]string, 0)
-	for _, raw := range strings.Split(body, "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
-		}
-		// Strip common bullet/numbered-list prefixes.
-		line = stripListMarker(line)
-		if line == "" {
-			continue
-		}
-		out = append(out, line)
-	}
-	return out
-}
-
-func stripListMarker(s string) string {
-	// "- foo" / "* foo" / "+ foo"
-	if len(s) >= 2 && (s[0] == '-' || s[0] == '*' || s[0] == '+') && s[1] == ' ' {
-		return strings.TrimSpace(s[2:])
-	}
-	// "1. foo" / "12) foo"
-	for i := 0; i < len(s); i++ {
-		if s[i] >= '0' && s[i] <= '9' {
-			continue
-		}
-		if i > 0 && (s[i] == '.' || s[i] == ')') && i+1 < len(s) && s[i+1] == ' ' {
-			return strings.TrimSpace(s[i+2:])
-		}
-		break
-	}
-	return s
 }
 
 // isTelemetryMetric returns true for the universal telemetry SLOs

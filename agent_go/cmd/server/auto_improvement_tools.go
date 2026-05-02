@@ -201,6 +201,52 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 	}
 }
 
+// RegisterRetireMetricTool exposes retire_metric to the proposer LLM.
+// Soft-deletes a metric: removes it from the active metrics array and moves
+// it to the archive with an archived_reason. The metric stops being
+// collected on future runs; existing rows in db/metrics_history.jsonl that
+// reference its id remain (the archive entry preserves what they meant).
+func RegisterRetireMetricTool(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
+	desc := "Retire a metric defined in planning/metrics.json. Soft delete: " +
+		"removes the metric from the active list and moves the prior definition to " +
+		"metrics.json::archive[] with the supplied reason. Subsequent runs skip the " +
+		"metric in the snapshot pipeline. Past db/metrics_history.jsonl rows are " +
+		"preserved as-is — the archive entry is the audit trail for what those " +
+		"historical values represented. Use this when a metric is superseded, " +
+		"deprecated, or no longer relevant. Returns { metric_id, version, status }."
+	params := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id":     map[string]interface{}{"type": "string", "description": "The metric id (kebab.dot) to retire. Must currently exist in metrics.json::metrics[]."},
+			"reason": map[string]interface{}{"type": "string", "description": "Why the metric is being retired. Stored in metrics.json::archive[].archived_reason for traceability. Required."},
+		},
+		"required": []string{"id", "reason"},
+	}
+
+	handler := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		raw, err := json.Marshal(args)
+		if err != nil {
+			return "", err
+		}
+		var input RetireMetricInput
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return fmt.Sprintf("invalid arguments for retire_metric: %v", err), nil
+		}
+		out, err := RetireMetric(ctx, workspacePath, triggerSource, input)
+		if err != nil {
+			return fmt.Sprintf("retire_metric failed: %v", err), nil
+		}
+		body, _ := json.MarshalIndent(out, "", "  ")
+		return string(body), nil
+	}
+
+	if err := agent.RegisterCustomTool("retire_metric", desc, params, handler, "auto_improvement"); err != nil {
+		if logger != nil {
+			logger.Warn(fmt.Sprintf("Failed to register retire_metric: %v", err))
+		}
+	}
+}
+
 // RegisterConcludeExperimentTool exposes conclude_experiment to the EVALUATOR
 // agent only. The evaluator must be a separate, narrow-scope agent with no
 // other tools (this is the proposer ≠ evaluator guardrail).
@@ -266,4 +312,5 @@ func RegisterConcludeExperimentTool(agent *mcpagent.Agent, workspacePath string,
 func RegisterAutoImprovementProposerTools(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
 	RegisterProposeExperimentTool(agent, workspacePath, triggerSource, logger)
 	RegisterProposeMetricTool(agent, workspacePath, triggerSource, logger)
+	RegisterRetireMetricTool(agent, workspacePath, triggerSource, logger)
 }

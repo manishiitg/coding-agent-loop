@@ -252,3 +252,92 @@ func max1(v int) int {
 	}
 	return v
 }
+
+// =====================================================================
+// retire_metric — soft delete that moves a metric from active to archive.
+// =====================================================================
+
+// RetireMetricInput is the tool payload for retire_metric.
+type RetireMetricInput struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
+
+// RetireMetricOutput is what the tool returns to the proposer LLM.
+type RetireMetricOutput struct {
+	MetricID string `json:"metric_id"`
+	Version  int    `json:"version"`
+	Status   string `json:"status"` // "retired"
+}
+
+// RetireMetric removes a metric from metrics.json::metrics[] and appends its
+// current definition to metrics.json::archive[] with archived_reason. The
+// metric is no longer collected on subsequent runs (snapshotter skips it
+// silently — the archive is kept for traceability of past history rows).
+//
+// Hard-delete is intentionally NOT supported: prior history rows in
+// db/metrics_history.jsonl reference the metric id, so the archive entry
+// preserves what those past values represented.
+func RetireMetric(ctx context.Context, workspacePath, trigger string, input RetireMetricInput) (*RetireMetricOutput, error) {
+	if strings.TrimSpace(input.ID) == "" {
+		return nil, fmt.Errorf("retire_metric: id is required")
+	}
+	if strings.TrimSpace(input.Reason) == "" {
+		return nil, fmt.Errorf("retire_metric: reason is required (audit trail)")
+	}
+
+	file, exists, err := ReadMetricsFile(ctx, workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	if !exists || file == nil {
+		return nil, fmt.Errorf("retire_metric: planning/metrics.json not found")
+	}
+
+	idx := -1
+	for i := range file.Metrics {
+		if file.Metrics[i].ID == input.ID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil, fmt.Errorf("retire_metric: metric id %q not found in active metrics", input.ID)
+	}
+	prior := file.Metrics[idx]
+
+	// Move to archive.
+	file.Archive = append(file.Archive, MetricArchiveEntry{
+		ID:             prior.ID,
+		Version:        max1(prior.Version),
+		ArchivedAt:     nowUTC(),
+		ArchivedReason: "retired: " + input.Reason,
+		Definition:     prior,
+	})
+	// Remove from active.
+	file.Metrics = append(file.Metrics[:idx], file.Metrics[idx+1:]...)
+
+	if err := ValidateMetricsFile(file); err != nil {
+		return nil, fmt.Errorf("metrics.json validation: %w", err)
+	}
+	if err := WriteMetricsFile(ctx, workspacePath, file); err != nil {
+		return nil, fmt.Errorf("write metrics.json: %w", err)
+	}
+
+	dec := DecisionEntry{
+		Source:         DecisionSourceAgent,
+		Trigger:        trigger,
+		Rationale:      fmt.Sprintf("metric retired: %s — %s", prior.ID, input.Reason),
+		AppliedChanges: []string{"planning/metrics.json"},
+		TargetMetrics:  []string{prior.ID},
+	}
+	if _, err := AppendDecisionEntry(ctx, workspacePath, dec); err != nil {
+		return nil, fmt.Errorf("append decision: %w", err)
+	}
+
+	return &RetireMetricOutput{
+		MetricID: prior.ID,
+		Version:  max1(prior.Version),
+		Status:   "retired",
+	}, nil
+}

@@ -383,8 +383,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
     soul_exists: boolean
     objective_ok: boolean
     success_criteria_ok: boolean
-    declared_criteria: string[]
-    uncovered_criteria: string[]
     unanchored_metrics: string[]
     telemetry_metrics: string[]
   } | null>(null)
@@ -398,7 +396,7 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
         agentApi.getAutoImprovementMetrics(workspacePath).catch((err) => ({ success: false, error: String(err), file: undefined })),
         agentApi.getAutoImprovementExperiments(workspacePath, true).catch((err) => ({ success: false, active: [], history: [], error: String(err) })),
         agentApi.getAutoImprovementDecisions(workspacePath).catch((err) => ({ success: false, decisions: [], error: String(err) })),
-        agentApi.getFrameworkHealth(workspacePath).catch((err) => ({ success: false, error: String(err), soul_exists: false, objective_ok: false, success_criteria_ok: false, declared_criteria: [], uncovered_criteria: [], unanchored_metrics: [], telemetry_metrics: [] })),
+        agentApi.getFrameworkHealth(workspacePath).catch((err) => ({ success: false, error: String(err), soul_exists: false, objective_ok: false, success_criteria_ok: false, unanchored_metrics: [], telemetry_metrics: [] })),
         agentApi.getMetricsHistory(workspacePath).catch((err) => ({ success: false, rows: [], error: String(err) })),
       ])
       if (m.success && m.file) {
@@ -420,8 +418,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
           soul_exists: !!h.soul_exists,
           objective_ok: !!h.objective_ok,
           success_criteria_ok: !!h.success_criteria_ok,
-          declared_criteria: Array.isArray(h.declared_criteria) ? h.declared_criteria : [],
-          uncovered_criteria: Array.isArray(h.uncovered_criteria) ? h.uncovered_criteria : [],
           unanchored_metrics: Array.isArray(h.unanchored_metrics) ? h.unanchored_metrics : [],
           telemetry_metrics: Array.isArray(h.telemetry_metrics) ? h.telemetry_metrics : [],
         })
@@ -553,9 +549,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
               if (!frameworkHealth.objective_ok) issues.push({ kind: 'critical', msg: 'soul.md ## Objective is empty or still a TODO placeholder.' })
               if (!frameworkHealth.success_criteria_ok) issues.push({ kind: 'critical', msg: 'soul.md ## Success Criteria is empty — without it, metrics have no north star to verdict against.' })
             }
-            if (frameworkHealth.uncovered_criteria.length > 0) {
-              issues.push({ kind: 'warning', msg: `${frameworkHealth.uncovered_criteria.length} success criterion${frameworkHealth.uncovered_criteria.length === 1 ? '' : 'a'} have no metric pointing at them — invisible to the experiment loop.` })
-            }
             if (frameworkHealth.unanchored_metrics.length > 0) {
               issues.push({ kind: 'warning', msg: `${frameworkHealth.unanchored_metrics.length} metric${frameworkHealth.unanchored_metrics.length === 1 ? '' : 's'} have no linked_success_criteria (excluding telemetry SLOs) — verdicts on these don't reflect user-facing success.` })
             }
@@ -567,17 +560,9 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                 <ul className="list-disc list-inside space-y-0.5">
                   {issues.map((i, n) => <li key={n}>{i.msg}</li>)}
                 </ul>
-                {(frameworkHealth.uncovered_criteria.length > 0 || frameworkHealth.unanchored_metrics.length > 0) && (
+                {(frameworkHealth.unanchored_metrics.length > 0 || frameworkHealth.telemetry_metrics.length > 0) && (
                   <details className="mt-1">
                     <summary className="cursor-pointer text-[11px] opacity-80">details</summary>
-                    {frameworkHealth.uncovered_criteria.length > 0 && (
-                      <div className="mt-1">
-                        <span className="font-medium">Uncovered criteria:</span>
-                        <ul className="list-disc list-inside text-[11px] mt-0.5">
-                          {frameworkHealth.uncovered_criteria.map((c, n) => <li key={n}>{c}</li>)}
-                        </ul>
-                      </div>
-                    )}
                     {frameworkHealth.unanchored_metrics.length > 0 && (
                       <div className="mt-1">
                         <span className="font-medium">Unanchored metrics:</span>{' '}

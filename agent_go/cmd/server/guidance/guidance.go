@@ -5,13 +5,13 @@
 //
 // The same prose is reachable from three contexts:
 //
-//   1. A user typed a slash command. The slash command's frontend onSubmit
-//      collapses to one line: "Call get_workflow_command_guidance(kind=<name>,
-//      ...) and follow the returned instructions."
-//   2. A user described the same intent in chat ("help me improve this
-//      workflow"). The agent recognizes the intent and calls the tool.
-//   3. A scheduled fire (e.g. /improve-continuously's recurring optimizer
-//      message) calls the tool to get the same canonical flow.
+//  1. A user typed a slash command. The slash command's frontend onSubmit
+//     collapses to one line: "Call get_workflow_command_guidance(kind=<name>,
+//     ...) and follow the returned instructions."
+//  2. A user described the same intent in chat ("help me improve this
+//     workflow"). The agent recognizes the intent and calls the tool.
+//  3. A scheduled fire (e.g. /improve-continuously's recurring optimizer
+//     message) calls the tool to get the same canonical flow.
 //
 // One source of truth, three callers.
 package guidance
@@ -30,7 +30,7 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
-//go:embed templates/builder/*.md templates/review/*.md templates/improve/*.md templates/experiment/*.md
+//go:embed templates/builder/*.md templates/review/*.md templates/improve/*.md templates/experiment/*.md templates/report/*.md
 var templatesFS embed.FS
 
 // kindMeta captures everything we know about a guided flow at registration
@@ -53,8 +53,8 @@ type kindMeta struct {
 // the caller's mode and tells the agent to suggest a mode switch.
 var allKinds = map[string]kindMeta{
 	// Builder-mode audits
-	"design-flow":           {Group: "builder", Description: "Inspect context dependency / handoff design between steps", Modes: []string{"builder"}},
-	"ready-to-optimize":     {Group: "builder", Description: "Pre-optimizer readiness checklist (objective, success criteria, runs, validation, etc.)", Modes: []string{"builder"}},
+	"design-flow":       {Group: "builder", Description: "Inspect context dependency / handoff design between steps", Modes: []string{"builder"}},
+	"ready-to-optimize": {Group: "builder", Description: "Pre-optimizer readiness checklist (objective, success criteria, runs, validation, etc.)", Modes: []string{"builder"}},
 
 	// Reviews — recommend, don't apply; appends to builder/review.md
 	"review-plan":           {Group: "review", Description: "Comprehensive plan audit: structure (review_plan tool) + per-step description quality + todo_task orchestrator quality", Modes: []string{"builder", "optimizer", "run"}},
@@ -69,7 +69,7 @@ var allKinds = map[string]kindMeta{
 	"improve-workflow":        {Group: "improve", Description: "Unified plan + KB + learnings improvement (EXPERIMENT MODE when metrics defined)", Modes: []string{"optimizer"}},
 	"improve-eval":            {Group: "improve", Description: "Evaluation plan changes (rubric edits gated against active experiments)", Modes: []string{"optimizer"}},
 	"improve-continuously":    {Group: "improve", Description: "Set up recurring run + optimizer schedules", Modes: []string{"optimizer"}},
-	"improve-report":          {Group: "improve", Description: "Report layout / color / density improvements", Modes: []string{"reporting"}},
+	"report-improve":          {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"builder", "reporting"}},
 
 	// Experiment lifecycle
 	"propose-experiment": {Group: "experiment", Description: "Focused experiment opener: pick metric(s), formulate hypothesis, call propose_experiment", Modes: []string{"optimizer"}},
@@ -140,7 +140,11 @@ func kindEnum() []string {
 // kindEnumWithDescriptions formats the kind list for the tool description so
 // the agent can see, in one place, every guided flow available to it.
 func kindEnumWithDescriptions() string {
-	type row struct{ k string; d string; modes []string }
+	type row struct {
+		k     string
+		d     string
+		modes []string
+	}
 	rows := make([]row, 0, len(allKinds))
 	for k, v := range allKinds {
 		rows = append(rows, row{k: k, d: v.Description, modes: v.Modes})

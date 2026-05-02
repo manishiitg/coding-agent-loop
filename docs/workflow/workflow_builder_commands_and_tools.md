@@ -198,7 +198,7 @@ Focused surface for the live report — widgets, themes, layouts. When the under
 
 | Slash Command | Purpose |
 |---|---|
-| `/improve-report` | Validate `reports/report_plan.json` and propose layout/color/density improvements based on a rendered preview. Visualization-only; no framework gating. |
+| `/report-improve` | Validate `reports/report_plan.json` and propose layout/color/density improvements based on a rendered preview. Visualization-only; no framework gating. |
 
 ### Tools
 
@@ -232,7 +232,7 @@ kind: "design-flow" | "ready-to-optimize" |
       "review-plan" | "review-goal-alignment" | "review-speed" | "review-cost" |
       "review-config" | "review-code" |
       "improve-setup-framework" | "improve-workflow" | "improve-eval" |
-      "improve-continuously" | "improve-report" |
+      "improve-continuously" | "report-improve" |
       "propose-experiment" |
       "exp-abort" | "exp-extend" | "exp-conclude"
 
@@ -1056,7 +1056,7 @@ Summarize:
 - the exact optimizer schedule message you configured
 ````
 
-#### `improve-report` (`improve/improve-report.md`)
+#### `report-improve` (`report/report-improve.md`)
 
 ````text
 Review and improve reports/report_plan.json in two passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your report-plan findings and applied decisions when you finish.{{if .Focus}}
@@ -1092,7 +1092,7 @@ Each new entry that records a *proposed but not-yet-applied* report change gets 
 
 CLOSE-OUT EDITS — read this carefully.
 
-Reporting findings rarely live in builder/review.md (the /review-* commands focus on plan/eval/cost/speed, not report layout). But if you can find a matching finding (e.g. user previously flagged "the funnel chart is unreadable" and that landed in review.md), apply close-out the same way the other /improve-* commands do:
+Reporting findings rarely live in builder/review.md (the /review-* commands focus on plan/eval/cost/speed, not report layout). But if you can find a matching finding (e.g. user previously flagged "the funnel chart is unreadable" and that landed in review.md), apply close-out the same way the other improvement commands do:
 
 1. **Edit builder/review.md** to append, on its own line immediately after each matched finding:
    ```
@@ -1101,7 +1101,7 @@ Reporting findings rarely live in builder/review.md (the /review-* commands focu
 
 2. **Append a builder/decisions.jsonl entry** for the report change (use `diff_patch_workspace_file`):
    ```json
-   {"id":"<short-id>","ts":"<ISO-8601 UTC>","source":"agent","trigger":"improve-report","applied_changes":["reports/report_plan.json"],"rationale":"<one-line>","linked_review_finding":["F-..."]}
+   {"id":"<short-id>","ts":"<ISO-8601 UTC>","source":"agent","trigger":"report-improve","applied_changes":["reports/report_plan.json"],"rationale":"<one-line>","linked_review_finding":["F-..."]}
    ```
    `linked_review_finding` is omitted when no matching finding exists. This decision-trail is what makes report-layout changes auditable alongside plan/eval changes.
 

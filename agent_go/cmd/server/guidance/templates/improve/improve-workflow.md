@@ -77,7 +77,7 @@ Before finishing, update builder/improve.md with:
 - evidence reviewed
 - mode (direct vs experiment) and any experiment ids opened
 - workflow changes applied (or, in experiment mode, queued behind experiments)
-- eval changes touched and report follow-ups deferred to Reporting mode, if any
+- eval changes touched and report follow-ups deferred to Builder mode, if any
 - what improved
 - remaining gaps
 - next hypotheses

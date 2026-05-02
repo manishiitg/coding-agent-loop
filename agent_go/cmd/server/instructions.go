@@ -408,7 +408,7 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
     - improve-workflow         → unified plan + KB + learnings improvement
     - improve-eval             → evaluation_plan changes
     - improve-continuously     → set up cron schedules
-    - improve-report           → report layout/color improvements
+    - report-improve           → report layout/color improvements
 
   Experiments:
     - propose-experiment       → focused experiment opener

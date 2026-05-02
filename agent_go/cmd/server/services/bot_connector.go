@@ -35,7 +35,7 @@ type ChannelRoute struct {
 	WorkflowID    string `json:"workflow_id"`
 	WorkspacePath string `json:"workspace_path"`
 	// WorkshopMode overrides whatever is set in the workflow manifest. Valid:
-	// "builder" | "optimizer" | "ask" | "run". Empty means "use manifest value".
+	// "builder" | "optimizer" | "run". Empty means "use workflow default".
 	WorkshopMode string `json:"workshop_mode,omitempty"`
 }
 
@@ -1144,6 +1144,16 @@ func (m *BotConversationManager) resetActiveForNewTurn(active *activeBotSession)
 	if filter != nil {
 		filter.ResetForNewTurn()
 	}
+}
+
+// PrepareSyntheticTurn clears one-shot completion state before a workflow
+// auto-notification is injected back into an active bot session.
+func (m *BotConversationManager) PrepareSyntheticTurn(sessionID string) {
+	active := m.findActiveBySessionID(sessionID)
+	if active == nil {
+		return
+	}
+	m.resetActiveForNewTurn(active)
 }
 
 // findActiveBySessionID returns the active bot session whose SessionID matches,

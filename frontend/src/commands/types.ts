@@ -2,17 +2,15 @@ import type { ReactNode } from 'react'
 import type { ModeCategory } from '../stores/useModeStore'
 import type { ExecutionOptions } from '../services/api-types'
 
-// Four workshop modes:
-//   - 'builder'   — design the workflow plan, step config, evaluation plan
+// Visible workshop modes:
+//   - 'builder'   — design the workflow plan, step config, and live report
 //   - 'optimizer' — run / eval / harden existing steps until reliable
 //   - 'run'       — execute and inspect; no plan / config changes
-//   - 'reporting' — author the live report (widgets, themes, layouts) and run
-//                   individual steps to populate db/ data when needed
 //
 // Historical: 'eval' and 'output' modes folded into 'builder' in an earlier
-// migration; 'ask' (formerly 'debugger') folded into 'run'. 'reporting' was
-// later split back out of builder/optimizer once the report-plan toolchain
-// outgrew sharing space with the workflow-design surface.
+// migration; 'ask' (formerly 'debugger') folded into 'run'. 'reporting' is
+// still accepted for backend compatibility but the UI maps report authoring to
+// Builder.
 export type WorkshopMode = 'builder' | 'optimizer' | 'run' | 'reporting'
 
 export interface CommandContext {

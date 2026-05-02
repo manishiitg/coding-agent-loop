@@ -3,21 +3,22 @@ import type { WorkflowPhase, ExecutionOptions, VariablesManifest, EvaluationPlan
 import type { WorkshopMode } from '../commands/types'
 import type { AgentConfigs } from '../utils/stepConfigMatching'
 
-// Migrate any persisted legacy workshop mode values to the current 4-mode set
-// (builder / optimizer / run / reporting). Older personas fold in:
+// Migrate any persisted legacy workshop mode values to the current visible
+// 3-mode set (builder / optimizer / run). Older personas fold in:
 //   'eval' / 'output'                      → 'builder'
 //   'ask' / 'debugger' / 'runner'          → 'run'
+//   'reporting'                            → 'builder'
 //   anything else / unrecognized           → 'builder'
-// 'reporting' is a new mode (split out of builder/optimizer once the
-// report-plan toolchain outgrew sharing space). Returns the input unchanged
-// when it's already a valid 4-mode value.
+// Reporting authoring is now merged into Builder to avoid session resets when
+// switching between workflow design and dashboard edits.
 function migrateWorkshopMode(raw: unknown): WorkshopMode {
   switch (raw) {
     case 'builder':
     case 'optimizer':
     case 'run':
-    case 'reporting':
       return raw
+    case 'reporting':
+      return 'builder'
     case 'eval':
     case 'output':
       return 'builder'

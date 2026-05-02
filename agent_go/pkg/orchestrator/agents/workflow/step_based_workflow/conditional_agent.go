@@ -2,13 +2,14 @@ package step_based_workflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -240,9 +241,46 @@ func (hctpca *WorkflowConditionalAgent) EvaluateRouting(ctx context.Context, exe
 	)
 
 	if err != nil {
+		if recovered := recoverRoutingResponseFromText(err, routes); recovered != nil {
+			return recovered, nil
+		}
 		return nil, fmt.Errorf("routing evaluation failed: %w", err)
 	}
 	return &result, nil
+}
+
+func recoverRoutingResponseFromText(err error, routes []RoutingRoute) *RoutingResponse {
+	var nonStructured *agents.NonStructuredResponseError
+	if !errors.As(err, &nonStructured) {
+		return nil
+	}
+
+	answer := strings.TrimSpace(nonStructured.TextResponse)
+	answer = strings.Trim(answer, "`\"'")
+	if answer == "" {
+		return nil
+	}
+
+	for _, route := range routes {
+		if strings.EqualFold(answer, route.RouteID) || strings.EqualFold(answer, route.RouteName) {
+			return &RoutingResponse{
+				SelectedRouteID: route.RouteID,
+				Reasoning:       answer,
+			}
+		}
+	}
+
+	lowered := strings.ToLower(answer)
+	for _, route := range routes {
+		if strings.Contains(lowered, strings.ToLower(route.RouteID)) || strings.Contains(lowered, strings.ToLower(route.RouteName)) {
+			return &RoutingResponse{
+				SelectedRouteID: route.RouteID,
+				Reasoning:       answer,
+			}
+		}
+	}
+
+	return nil
 }
 
 func (hctpca *WorkflowConditionalAgent) routingSystemPromptProcessor(templateVars map[string]string) string {

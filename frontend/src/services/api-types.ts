@@ -1032,7 +1032,8 @@ export interface ExecutionOptions {
   enable_knowledgebase?: boolean;  // Enable knowledgebase (default: true)
   enable_context_summarization?: boolean;  // Enable context summarization (default: true)
 
-  // Workshop mode override — four modes after the reporting split.
+  // Workshop mode override. Reporting remains accepted for backend compatibility,
+  // but the visible UI maps report authoring to builder.
   workshop_mode?: 'builder' | 'optimizer' | 'run' | 'reporting';
 }
 

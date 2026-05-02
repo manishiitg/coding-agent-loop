@@ -98,16 +98,16 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'improve-report',
+    command: 'report-improve',
     description: 'Validate reports/report_plan.json and suggest layout/color improvements',
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'reporting',
+    requiredWorkshopMode: ['builder', 'reporting'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-report", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      ctx.onSubmit(`Call get_workflow_command_guidance(kind="report-improve", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
     }
   },
   {

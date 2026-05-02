@@ -1012,7 +1012,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	}
 
 	// Report tools — manage reports/report_plan.json and validate/preview against real db/ + KB sources.
-	// Available only in reporting mode; builder/optimizer/run redirect dashboard edits there.
+	// Available in builder/reporting modes; optimizer/run redirect dashboard edits to builder/report authoring.
 	report := []string{
 		"get_report_plan", "upsert_report_widget", "remove_report_widget", "move_report_widget", "toggle_report_widget",
 		"set_report_theme", "set_section_layout",
@@ -1049,11 +1049,9 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	switch mode {
 	case "builder":
-		// BUILDER: design the workflow plan and basic step config. Evaluation,
-		// learn_code migration, and hardening live in optimizer mode.
-		// Report widgets moved out into the dedicated 'reporting' mode so the
-		// builder agent can focus on the workflow's structure without getting
-		// distracted by chart/widget tweaks.
+		// BUILDER: design the workflow plan, basic step config, and live report
+		// dashboard. Evaluation, learn_code migration, and hardening live in
+		// optimizer mode.
 		tools = append(tools, execution...)
 		tools = append(tools, "update_step_config")
 		tools = append(tools, planMod...)
@@ -1067,6 +1065,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, "get_workflow_command_guidance") // /design-flow, /ready-to-optimize, and /review-* commands live in Builder mode.
+		tools = append(tools, report...)
 		tools = append(tools, kb...)
 
 	case "optimizer":
@@ -1122,7 +1121,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, report...)
-		tools = append(tools, "get_workflow_command_guidance") // /improve-report lives in this mode
+		tools = append(tools, "get_workflow_command_guidance") // /report-improve lives in this mode
 
 	default:
 		// Unknown mode — allow everything (no restriction)
@@ -1537,20 +1536,20 @@ When you call `+"`"+`run_full_workflow`+"`"+` for a multi-group workflow, **defa
 **If the user is ambiguous** ("run the workflow"), default to sequential per-group and tell them: "I'm running groups one at a time so any failures isolate cleanly. Say 'run in parallel' if you'd rather fan out."
 
 {{if eq .WorkshopMode "builder"}}
-## Reporting — switch to Reporting mode to edit dashboards
+## Reporting — Builder owns the live dashboard
 
-The workflow has a live frontend report viewer at the top toolbar's "Report" tab, but Builder mode does not own report widget authoring. If the user asks to create dashboard widgets, themes, layouts, custom colors, or `+"`reports/report_plan.json`"+` edits, tell them to switch to Reporting mode. Do not try to update the report plan from Builder mode.
+The workflow has a live frontend report viewer at the top toolbar's "Report" tab. Builder mode owns report widget authoring: creating dashboard widgets, themes, layouts, custom colors, and `+"`reports/report_plan.json`"+` edits. Keep report edits presentation-only: do not use dashboard work as a reason to change evaluation, hardening, experiments, or learn_code settings.
 {{else if eq .WorkshopMode "reporting"}}
 ## Reporting — the frontend Report tab is already wired
 
 The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders the widget blocks defined there against `+"`db/*.json`"+`, `+"`knowledgebase/`"+` (graph + notes), and dedicated workflow APIs for built-in `+"`costs`"+` / `+"`evals`"+` / `+"`runs`"+` widgets. It is always available — there is NO "generate report" phase, no HTML/PDF artifact to produce, no step that writes a finished report.
 {{else}}
-## Reporting — switch to Reporting mode to edit dashboards
+## Reporting — switch to Builder mode to edit dashboards
 
-The workflow has a live frontend report viewer at the top toolbar's "Report" tab, but this mode does not own report widget authoring. If the user asks to create dashboard widgets, themes, layouts, custom colors, or `+"`reports/report_plan.json`"+` edits, tell them to switch to Reporting mode.
+The workflow has a live frontend report viewer at the top toolbar's "Report" tab, but this mode does not own report widget authoring. If the user asks to create dashboard widgets, themes, layouts, custom colors, or `+"`reports/report_plan.json`"+` edits, tell them to switch to Builder mode.
 {{end}}
 
-{{if eq .WorkshopMode "reporting"}}
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "reporting")}}
 **When the user asks "create a report" / "build a reporting UI" / "show me X in a dashboard":**
 - The answer is almost always: **update `+"`reports/report_plan.json`"+` via the report-plan tools** — add, move, toggle, or remove widgets.
 - Do NOT add a step that generates HTML, markdown, or any other "rendered report" artifact.
@@ -1564,10 +1563,10 @@ The workflow has a live frontend report viewer at the top toolbar's "Report" tab
 **Report viewer auto-updates** when the user opens or switches to the Report tab — no rebuild step needed. After the agent updates `+"`report_plan.json`"+`, the user just clicks Report (or refreshes if they're already on it) to see the new widgets.
 {{end}}
 
-{{if eq .WorkshopMode "reporting"}}
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "reporting")}}
 ### Report plan — reports/report_plan.json
 
-You are in REPORTING mode. Your scope is the live frontend report defined by `+"`reports/report_plan.json`"+` — designing widgets, picking themes/layouts, and (when needed) running individual workflow steps to populate the underlying `+"`db/`"+` data the widgets bind to. You do NOT change the workflow plan, step config, evaluations, or KB write rules — those belong in Builder/Optimizer.
+{{if eq .WorkshopMode "builder"}}You are in BUILDER mode. Alongside workflow structure, you own the live frontend report defined by `+"`reports/report_plan.json`"+` — designing widgets, picking themes/layouts, and (when needed) running individual workflow steps to populate the underlying `+"`db/`"+` data the widgets bind to. Keep dashboard edits separate from evaluation/optimization work; those still belong in Optimizer.{{else}}You are in REPORTING mode. Your scope is the live frontend report defined by `+"`reports/report_plan.json`"+` — designing widgets, picking themes/layouts, and (when needed) running individual workflow steps to populate the underlying `+"`db/`"+` data the widgets bind to. You do NOT change the workflow plan, step config, evaluations, or KB write rules — those belong in Builder/Optimizer.{{end}}
 
 **The reporting toolchain:**
 - Before move/remove/toggle operations, call `+"`get_report_plan`"+` so you have stable section, entry, row, and widget IDs.
@@ -1580,12 +1579,15 @@ You are in REPORTING mode. Your scope is the live frontend report defined by `+"
 **When data is missing — running steps from this mode:**
 If a widget renders empty because the underlying `+"`db/`"+` file hasn't been populated yet, you have `+"`execute_step`"+` and `+"`run_full_workflow`"+` available. Use them to make the data exist:
 - For a single missing source, run only the step(s) that write it: `+"`execute_step(step_id, group_name)`"+`.
-- For a fresh workflow with no runs yet, `+"`run_full_workflow(group_name=\"...\", disable_eval=true)`"+` is the right fallback for report data. Reporting mode does not own eval refreshes; omit `+"`disable_eval=true`"+` only when the user explicitly asks to refresh eval-backed widgets.
+- For a fresh workflow with no runs yet, `+"`run_full_workflow(group_name=\"...\", disable_eval=true)`"+` is the right fallback for report data. Report authoring does not own eval refreshes; omit `+"`disable_eval=true`"+` only when the user explicitly asks to refresh eval-backed widgets.
 - Diagnose first with `+"`review_workflow_results`"+` and `+"`get_report_plan`"+` — don't run steps blindly. The widget might be pointing at the wrong path or filter, in which case the fix is in the plan, not in the data.
 
 **What you do NOT do here:**
+{{if eq .WorkshopMode "builder"}}- No evaluation design, no `+"`optimize_step`"+`, no `+"`harden_workflow`"+`, no experiment proposals, and no learn_code/script-locking work as part of report authoring. If a report exposes a real workflow-quality problem, fix basic Builder-owned structure/config or switch to Optimizer for hardening/eval/experiments.
+{{else}}
 - No `+"`update_step_config`"+`, no `+"`optimize_step`"+`, no `+"`harden_workflow`"+`, no plan or eval mutations. If the user asks to fix a step's behavior or change what a step writes to `+"`db/`"+`, tell them to switch to Builder or Optimizer.
 - No KB writes, no schedule changes, no skill imports.
+{{end}}
 
 **Reporting workflow:**
 1. Clarify what the user wants to see.
@@ -1793,8 +1795,7 @@ Before moving to optimization, ensure the foundation is solid:
 5. When the plan is working end-to-end, suggest the user switch to **Optimizer mode** to add evaluation and harden it.
 
 ### When to redirect to another mode
-You only have plan/step/config/KB tools here. If the user asks about:
-- **Dashboard widgets, themes, layouts, custom colors** → switch to **Reporting mode**. You can't author `+"`reports/report_plan.json`"+` from Builder.
+You have plan/step/config/KB/report tools here. If the user asks about:
 - **Just running the finished workflow / inspecting prior runs in plain English** → switch to **Run mode**. Builder is for design; Run is the user-friendly execution surface (also used over WhatsApp/Slack).
 - **Hardening flaky steps, the run/eval/harden loop** → switch to **Optimizer mode** once the plan structure is working.
 
@@ -1841,7 +1842,7 @@ For **structural changes** (add/remove/reorder steps), use `+"`replan_workflow_f
 
 ### When to redirect to another mode
 Optimizer is for the run/eval/harden loop. If the user asks about:
-- **Dashboard widgets, themes, layouts, custom colors** → switch to **Reporting mode**. You don't have the report-plan tools here.
+- **Dashboard widgets, themes, layouts, custom colors** → switch to **Builder mode**. Builder owns `+"`reports/report_plan.json`"+` authoring.
 - **Greenfield workflow design — adding new execution steps or defining a new workflow's structure from scratch** → switch to **Builder mode**. Optimizer hardens an existing structure.
 - **Evaluation coverage — drafting or improving `+"`evaluation/evaluation_plan.json`"+`** → handle it in Optimizer. Optimizer owns eval design, validation, scoring, and hardening.
 - **Just running the finished workflow / inspecting prior runs in plain English** → switch to **Run mode**, which is the user-friendly execution surface (also used over WhatsApp/Slack).
@@ -1885,7 +1886,7 @@ The user here is usually **non-technical** — a stakeholder, a teammate, an end
 - **Show the report**: if the user asks to "see the dashboard" or "show me the numbers", tell them to open the **Report tab**. The report is rendered live; you don't generate it.
 
 ### What's blocked here
-Plan / config / learnings / evaluation design / knowledgebase / report widgets. If the user wants to change *what the workflow does* or *what the dashboard looks like*, tell them which mode handles that — Builder for design changes, Optimizer for fixing flaky steps, Reporting for dashboard tweaks — and offer to switch when they're ready. Don't try to make those changes from Run.
+Plan / config / learnings / evaluation design / knowledgebase / report widgets. If the user wants to change *what the workflow does* or *what the dashboard looks like*, tell them which mode handles that — Builder for design and dashboard changes, Optimizer for fixing flaky steps — and offer to switch when they're ready. Don't try to make those changes from Run.
 
 ### When something fails
 - Don't paste stack traces. Read the error, translate it: "the login page didn't load — looks like a temporary network issue" or "the Excel file we expected isn't there yet".
@@ -2506,7 +2507,7 @@ Rules:
   - Tell the agent to skip or use defaults for anything unclear rather than pausing to ask
   - Never include open-ended questions or "let me know" style instructions
   - Bad: "Run the workflow and ask me which steps to optimize" — Good: "Review runs/iteration-0 for group-1, check active experiments, then choose optimize/harden/replan/propose_experiment using the scheduled decision model. Log no action if nothing is ready."
-- **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message around the exact recurring job. For `+"`/improve-continuously`"+`, the message should name the configured group_names, use only `+"`runs/iteration-0`"+` evidence for those groups, check active experiments before proposing more, and route report-layout work to Reporting mode.
+- **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message around the exact recurring job. For `+"`/improve-continuously`"+`, the message should name the configured group_names, use only `+"`runs/iteration-0`"+` evidence for those groups, check active experiments before proposing more, and route report-layout work to Builder mode.
 - **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) use bounded evidence review, (2) open at most one experiment per fire in experiment mode, (3) avoid fresh workflow reruns unless verification is explicitly needed, (4) stop after recording what was applied, proposed, or deferred.
 
 {{end}}
@@ -3091,22 +3092,35 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				cancel:         cancel,
 			}
 			iwm.stepRegistry.Register(exec)
+			workflowSessionID := ""
 			if iwm.mainSessionID != "" {
-				if workflowSessionID := iwm.controller.GetMCPSessionID(); workflowSessionID != "" {
-					parentGroupName := resolvedGroupName
-					if parentGroupName == "" {
-						parentGroupName = groupName
-					}
+				parentGroupName := resolvedGroupName
+				if parentGroupName == "" {
+					parentGroupName = groupName
+				}
+				parentChat := &virtualtools.ParentChatContext{
+					SessionID:    iwm.mainSessionID,
+					WorkflowPath: iwm.controller.GetWorkspacePath(),
+					GroupName:    parentGroupName,
+					AgentID:      execID,
+				}
+				if workflowSessionID = iwm.controller.GetMCPSessionID(); workflowSessionID != "" {
 					virtualtools.RegisterParentChat(workflowSessionID, &virtualtools.ParentChatContext{
-						SessionID:    iwm.mainSessionID,
-						WorkflowPath: iwm.controller.GetWorkspacePath(),
-						GroupName:    parentGroupName,
-						AgentID:      execID,
+						SessionID:    parentChat.SessionID,
+						WorkflowPath: parentChat.WorkflowPath,
+						GroupName:    parentChat.GroupName,
+						AgentID:      parentChat.AgentID,
 					})
 				}
+				virtualtools.RegisterParentChat(agentSessionID, parentChat)
 			}
 
 			go func() {
+				if workflowSessionID != "" {
+					defer virtualtools.UnregisterParentChat(workflowSessionID)
+				}
+				defer virtualtools.UnregisterParentChat(agentSessionID)
+
 				var result string
 				var execErr error
 

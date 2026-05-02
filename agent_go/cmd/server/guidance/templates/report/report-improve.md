@@ -40,7 +40,7 @@ Reporting findings rarely live in builder/review.md (the /review-* commands focu
 
 2. **Append a builder/decisions.jsonl entry** for the report change (use `diff_patch_workspace_file`):
    ```json
-   {"id":"<short-id>","ts":"<ISO-8601 UTC>","source":"agent","trigger":"improve-report","applied_changes":["reports/report_plan.json"],"rationale":"<one-line>","linked_review_finding":["F-..."]}
+   {"id":"<short-id>","ts":"<ISO-8601 UTC>","source":"agent","trigger":"report-improve","applied_changes":["reports/report_plan.json"],"rationale":"<one-line>","linked_review_finding":["F-..."]}
    ```
    `linked_review_finding` is omitted when no matching finding exists. This decision-trail is what makes report-layout changes auditable alongside plan/eval changes.
 

@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, SlidersHorizontal, Bot, Building2, PanelRightOpen } from 'lucide-react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useShallow } from 'zustand/react/shallow'
+import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, SlidersHorizontal, Bot, Building2, PanelRightOpen, Database, X } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -21,6 +22,7 @@ import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { GlobalActivityMonitor } from './GlobalActivityMonitor'
+import { formatEventMemoryBytes, getEventMemoryStats, hasEventMemoryPressure, type EventMemoryStats } from '../utils/eventMemory'
 
 const getModeIcon = (category: string) => {
   switch (category) {
@@ -64,6 +66,177 @@ const MODE_PILLS = [
 const shortModelName = (modelId: string): string => {
   const name = modelId.split('/').pop() || modelId
   return name.length > 18 ? `${name.slice(0, 18)}…` : name
+}
+
+interface EventMemoryHeaderIndicatorProps {
+  workflowPresets: CustomPreset[]
+}
+
+interface EventMemorySessionSummary {
+  sessionId: string
+  stats: EventMemoryStats
+  tabIds: string[]
+  tabNames: string
+  label: string
+}
+
+const EventMemoryHeaderIndicator: React.FC<EventMemoryHeaderIndicatorProps> = ({ workflowPresets }) => {
+  const [open, setOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement | null>(null)
+  const { chatTabs, tabEvents, closeTab, clearTabEvents } = useChatStore(useShallow(state => ({
+    chatTabs: state.chatTabs,
+    tabEvents: state.tabEvents,
+    closeTab: state.closeTab,
+    clearTabEvents: state.clearTabEvents,
+  })))
+
+  const presetLabelById = useMemo(() => {
+    return new Map(workflowPresets.map(preset => [preset.id, preset.label]))
+  }, [workflowPresets])
+
+  const summary = useMemo(() => {
+    const tabs = Object.values(chatTabs)
+    const tabsBySession = new Map<string, typeof tabs>()
+    for (const tab of tabs) {
+      if (!tab.sessionId) continue
+      tabsBySession.set(tab.sessionId, [...(tabsBySession.get(tab.sessionId) || []), tab])
+    }
+
+    let totalEvents = 0
+    let totalBytes = 0
+    const sessions: EventMemorySessionSummary[] = []
+
+    for (const [sessionId, events] of Object.entries(tabEvents)) {
+      const stats = getEventMemoryStats(events)
+      if (stats.eventCount === 0) continue
+
+      totalEvents += stats.eventCount
+      totalBytes += stats.sizeBytes
+
+      const sessionTabs = tabsBySession.get(sessionId) || []
+      const labels = sessionTabs.map(tab => {
+        const presetLabel = tab.metadata?.presetQueryId ? presetLabelById.get(tab.metadata.presetQueryId) : undefined
+        const scheduleLabel = tab.metadata?.scheduledJobName
+        return [tab.name, scheduleLabel || presetLabel].filter(Boolean).join(' · ')
+      })
+      const tabNames = labels.length > 0 ? labels.join(', ') : '(orphan events)'
+      const firstTab = sessionTabs[0]
+      const modeLabel = firstTab?.metadata?.isScheduledRun
+        ? 'Schedule'
+        : firstTab?.metadata?.mode === 'workflow'
+          ? 'Workflow'
+          : firstTab?.metadata?.mode === 'multi-agent'
+            ? 'Chat'
+            : 'Session'
+
+      sessions.push({
+        sessionId,
+        stats,
+        tabIds: sessionTabs.map(tab => tab.tabId),
+        tabNames,
+        label: `${modeLabel}: ${tabNames}`,
+      })
+    }
+
+    sessions.sort((a, b) => b.stats.sizeBytes - a.stats.sizeBytes || b.stats.eventCount - a.stats.eventCount)
+
+    return { totalEvents, totalBytes, sessions }
+  }, [chatTabs, presetLabelById, tabEvents])
+
+  useEffect(() => {
+    if (!open) return
+    const onMouseDown = (event: MouseEvent) => {
+      if (!dropdownRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [open])
+
+  if (summary.totalEvents === 0) return null
+
+  const pressure = summary.totalEvents > 5000 || summary.totalBytes > 5 * 1024 * 1024 || summary.sessions.some(session => hasEventMemoryPressure(session.stats))
+
+  const closeSessionTabs = async (session: EventMemorySessionSummary) => {
+    if (session.tabIds.length === 0) {
+      clearTabEvents(session.sessionId)
+      return
+    }
+    await Promise.all(session.tabIds.map(tabId => closeTab(tabId)))
+  }
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        type="button"
+        onClick={() => setOpen(current => !current)}
+        className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+          pressure
+            ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-200 dark:hover:bg-amber-900/45'
+            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200'
+        }`}
+        title="Retained frontend events"
+      >
+        <Database className="h-4 w-4" />
+        <span className="whitespace-nowrap">
+          Events {summary.totalEvents.toLocaleString()} / {formatEventMemoryBytes(summary.totalBytes)}
+        </span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-2 w-[32rem] max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800">
+          <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2 dark:border-gray-700">
+            <div>
+              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">Retained events</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                {summary.totalEvents.toLocaleString()} events across {summary.sessions.length} session{summary.sessions.length === 1 ? '' : 's'}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:!bg-gray-700 dark:hover:text-gray-200"
+              aria-label="Close retained events panel"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="max-h-96 overflow-y-auto p-2">
+            {summary.sessions.slice(0, 10).map(session => {
+              const sessionPressure = hasEventMemoryPressure(session.stats)
+              return (
+                <div
+                  key={session.sessionId}
+                  className="flex items-center gap-3 rounded-md bg-gray-50 px-2 py-2 hover:bg-gray-100 dark:!bg-gray-900/70 dark:hover:!bg-gray-700/60"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-gray-800 dark:!text-gray-100" title={session.label}>
+                      {session.label}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-500 dark:!text-gray-400">
+                      <span>{session.sessionId.slice(0, 8)}</span>
+                      <span>{session.stats.eventCount.toLocaleString()} events</span>
+                      <span className={sessionPressure ? 'font-semibold text-amber-700 dark:text-amber-300' : ''}>
+                        {formatEventMemoryBytes(session.stats.sizeBytes)}
+                      </span>
+                      <span>largest {session.stats.largestEventType || 'n/a'} ({formatEventMemoryBytes(session.stats.largestEventBytes)})</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => closeSessionTabs(session)}
+                    className="shrink-0 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:!border-gray-600 dark:!bg-gray-800 dark:!text-gray-300 dark:hover:!bg-gray-700 dark:hover:!text-gray-100"
+                  >
+                    {session.tabIds.length > 0 ? `Close ${session.tabIds.length > 1 ? 'tabs' : 'tab'}` : 'Clear'}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -678,6 +851,7 @@ export const ModePresetBar: React.FC = () => {
           <TooltipProvider delayDuration={400}>
             <div className="flex items-center gap-3">
               <GlobalActivityMonitor />
+              <EventMemoryHeaderIndicator workflowPresets={workflowPresets} />
 
               <Tooltip>
                 <TooltipTrigger asChild>

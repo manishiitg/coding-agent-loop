@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -17,6 +19,8 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+
+	"mcp-agent-builder-go/agent_go/pkg/workspace"
 )
 
 // Slack state is persisted as two small JSON files under <workspace-docs>/config/:
@@ -1125,44 +1129,57 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 	// ts here and then return, the app_mention event (which arrives with the
 	// same ts) will hit the cache and be dropped, so the message goes nowhere.
 	if s.botUserID != "" && strings.Contains(ev.Text, fmt.Sprintf("<@%s>", s.botUserID)) {
+		s.handleSlackBotMessage(ev.User, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, s.stripMention(ev.Text), ev.Message, true, true)
 		return
 	}
 
-	// Dedup: skip if we've already seen this message timestamp
-	if s.isDuplicateMessage(ev.TimeStamp) {
+	s.handleSlackBotMessage(ev.User, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.Text, ev.Message, true, false)
+}
+
+func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messageTS, text string, msg *slack.Msg, isThreadReply, isMention bool) {
+	if s.messageHandler == nil {
 		return
 	}
+
+	if s.isDuplicateMessage(messageTS) {
+		return
+	}
+
+	userEmail := s.resolveUserEmail(userID)
+	text = s.appendSlackFileContext(context.Background(), text, msg, channelID, userEmail)
 
 	// Route thread replies to the bot manager. Add :eyes: ack reaction just
 	// like @mention flow so follow-ups get the same "seen + working" feedback.
 	// If the manager ends up ignoring the message (no prior session), the
 	// reaction will linger briefly but Slack lets users read it as "noticed."
-	if s.messageHandler != nil {
-		if s.client != nil {
-			if err := s.client.AddReaction("eyes", slack.ItemRef{Channel: ev.Channel, Timestamp: ev.TimeStamp}); err != nil {
-				log.Printf("[SLACK_BOT] Failed to add ack reaction on thread reply: %v", err)
-			}
+	if s.client != nil {
+		if err := s.client.AddReaction("eyes", slack.ItemRef{Channel: channelID, Timestamp: messageTS}); err != nil {
+			log.Printf("[SLACK_BOT] Failed to add ack reaction: %v", err)
 		}
-		s.messageHandler(BotIncomingMessage{
-			Platform:      "slack",
-			UserID:        ev.User,
-			UserEmail:     s.resolveUserEmail(ev.User),
-			ChannelID:     ev.Channel,
-			ThreadTS:      ev.ThreadTimeStamp,
-			Text:          ev.Text,
-			MessageTS:     ev.TimeStamp,
-			Timestamp:     time.Now(),
-			IsThreadReply: true,
-		})
-		// Don't return — also try the feedback path below, since the message handler
-		// will silently ignore if this isn't a bot session thread
+	}
+	s.messageHandler(BotIncomingMessage{
+		Platform:      "slack",
+		UserID:        userID,
+		UserName:      userID,
+		UserEmail:     userEmail,
+		ChannelID:     channelID,
+		ThreadTS:      threadTS,
+		Text:          text,
+		MessageTS:     messageTS,
+		Timestamp:     time.Now(),
+		IsThreadReply: isThreadReply,
+		IsMention:     isMention,
+	})
+
+	if isMention {
+		return
 	}
 
 	// Get unique ID from thread (for feedback responses)
 	uniqueID, err := s.GetUniqueIDFromThread(
 		context.Background(),
-		ev.ThreadTimeStamp,
-		ev.Channel,
+		threadTS,
+		channelID,
 	)
 	if err != nil {
 		// Not a feedback thread — this is normal for bot session threads
@@ -1176,7 +1193,7 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 		return
 	}
 
-	if err := notificationManager.ReceiveNotification(uniqueID, ev.Text, "slack"); err != nil {
+	if err := notificationManager.ReceiveNotification(uniqueID, text, "slack"); err != nil {
 		log.Printf("[SLACK_SOCKET] Failed to submit feedback via notification manager: %v", err)
 		return
 	}
@@ -1608,6 +1625,161 @@ func (s *SlackService) resolveUserEmail(userID string) string {
 		return ""
 	}
 	return user.Profile.Email
+}
+
+func (s *SlackService) resolveSlackChannelWorkflow(channelID string) *ChannelRoute {
+	content, exists, err := readWorkspaceFile(context.Background(), workspaceAPIURL(), "config/bot-connectors.json")
+	if err != nil || !exists || content == "" {
+		return nil
+	}
+	var raw map[string]struct {
+		AllowedChannels string `json:"allowed_channels"`
+	}
+	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+		return nil
+	}
+	slackCfg, ok := raw["slack"]
+	if !ok || slackCfg.AllowedChannels == "" || slackCfg.AllowedChannels == "[]" || slackCfg.AllowedChannels == "{}" {
+		return nil
+	}
+	var routes map[string]ChannelRoute
+	if err := json.Unmarshal([]byte(slackCfg.AllowedChannels), &routes); err != nil {
+		return nil
+	}
+	if route, ok := routes[channelID]; ok && route.WorkflowID != "" {
+		return &route
+	}
+	return nil
+}
+
+func slackUserChatUploadFolder(userID string) string {
+	safeUserID := sanitizeWhatsAppFileName(userID)
+	if safeUserID == "" {
+		safeUserID = "default"
+	}
+	return filepath.ToSlash(filepath.Join("_users", safeUserID, "chat_history", "uploads", "slack", time.Now().Format("2006-01-02")))
+}
+
+func slackWorkflowUploadFolder(route *ChannelRoute) string {
+	if route == nil || strings.TrimSpace(route.WorkspacePath) == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Join(route.WorkspacePath, "incoming", "slack", time.Now().Format("2006-01-02")))
+}
+
+func (s *SlackService) appendSlackFileContext(ctx context.Context, text string, msg *slack.Msg, channelID, userEmail string) string {
+	if msg == nil || len(msg.Files) == 0 || s.client == nil {
+		return text
+	}
+
+	workspaceUserID := emailToUserID(userEmail)
+	if workspaceUserID == "" {
+		workspaceUserID = channelID
+	}
+	route := s.resolveSlackChannelWorkflow(channelID)
+	folderPath := slackWorkflowUploadFolder(route)
+	if folderPath == "" {
+		folderPath = slackUserChatUploadFolder(workspaceUserID)
+	}
+
+	wsClient := workspace.NewClient(workspaceAPIURL(), workspace.WithUserID(workspaceUserID))
+	var saved []whatsappDownloadedMedia
+	var failures []string
+	const maxSlackUploadBytes = 10 * 1024 * 1024
+
+	for _, f := range msg.Files {
+		if f.ID == "" && f.URLPrivate == "" && f.URLPrivateDownload == "" {
+			continue
+		}
+		if f.Size > maxSlackUploadBytes {
+			failures = append(failures, fmt.Sprintf("%s: file is %.1fMB; Slack bot uploads are limited to 10MB", f.Name, float64(f.Size)/(1024*1024)))
+			continue
+		}
+
+		fileInfo := &f
+		if f.ID != "" {
+			if info, _, _, err := s.client.GetFileInfoContext(ctx, f.ID, 0, 0); err == nil && info != nil {
+				fileInfo = info
+			}
+		}
+		downloadURL := fileInfo.URLPrivateDownload
+		if downloadURL == "" {
+			downloadURL = fileInfo.URLPrivate
+		}
+		if downloadURL == "" {
+			failures = append(failures, fmt.Sprintf("%s: no private download URL", fileInfo.Name))
+			continue
+		}
+
+		var buf bytes.Buffer
+		downloadCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		err := s.client.GetFileContext(downloadCtx, downloadURL, &buf)
+		cancel()
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: download failed: %v", fileInfo.Name, err))
+			continue
+		}
+		if buf.Len() > maxSlackUploadBytes {
+			failures = append(failures, fmt.Sprintf("%s: file is %.1fMB; Slack bot uploads are limited to 10MB", fileInfo.Name, float64(buf.Len())/(1024*1024)))
+			continue
+		}
+
+		fileName := sanitizeWhatsAppFileName(fileInfo.Name)
+		if fileName == "" {
+			fileName = sanitizeWhatsAppFileName(fileInfo.Title)
+		}
+		if fileName == "" {
+			ext := extensionForWhatsAppMedia(fileInfo.Mimetype, ".bin")
+			fileName = fmt.Sprintf("slack-file-%s%s", sanitizeWhatsAppFileName(fileInfo.ID), ext)
+		}
+
+		filePath, err := wsClient.UploadBinary(ctx, folderPath, fileName, buf.Bytes())
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: upload failed: %v", fileName, err))
+			continue
+		}
+		kind := fileInfo.Filetype
+		if kind == "" {
+			kind = "file"
+		}
+		mimeType := fileInfo.Mimetype
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+		saved = append(saved, whatsappDownloadedMedia{
+			Kind:      kind,
+			FileName:  fileName,
+			FilePath:  filePath,
+			MimeType:  mimeType,
+			SizeBytes: buf.Len(),
+		})
+	}
+
+	if len(saved) == 0 && len(failures) == 0 {
+		return text
+	}
+	var sb strings.Builder
+	if strings.TrimSpace(text) != "" {
+		sb.WriteString(strings.TrimSpace(text))
+		sb.WriteString("\n\n")
+	}
+	for i, media := range saved {
+		if i == 0 {
+			sb.WriteString("Slack upload received:\n")
+		}
+		sb.WriteString(fmt.Sprintf("- File: %s\n", media.FilePath))
+		sb.WriteString(fmt.Sprintf("  Original name: %s\n", media.FileName))
+		sb.WriteString(fmt.Sprintf("  Type: %s\n", media.Kind))
+		sb.WriteString(fmt.Sprintf("  MIME type: %s\n", media.MimeType))
+		sb.WriteString(fmt.Sprintf("  Size: %d bytes\n", media.SizeBytes))
+	}
+	for _, failure := range failures {
+		sb.WriteString(fmt.Sprintf("- Upload issue: %s\n", failure))
+	}
+	if len(saved) > 0 {
+		sb.WriteString("\nUse the uploaded file path above when reading or analyzing the attachment.")
+	}
+	return sb.String()
 }
 
 // --- SlackFormatter implements MessageFormatter ---

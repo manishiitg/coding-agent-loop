@@ -7,6 +7,7 @@ import {
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
+import ModalPortal from '../ui/ModalPortal'
 import { agentApi } from '../../services/api'
 import { useLLMStore } from '../../stores'
 import type { SlackConfig, SlackConfigRequest, SlackTestResponse, SimulatorThreadInfo, DiscoveredWorkflow, ChannelRoute } from '../../services/api-types'
@@ -17,6 +18,13 @@ interface BotConnectorModalProps {
 }
 
 type Section = 'slack' | 'whatsapp' | 'simulate'
+type WorkflowRouteMode = 'builder' | 'optimizer' | 'run'
+
+const normalizeWorkflowRouteMode = (mode?: string): WorkflowRouteMode => {
+  if (mode === 'builder' || mode === 'optimizer' || mode === 'run') return mode
+  if (mode === 'ask') return 'run'
+  return 'run'
+}
 
 // Shape of GET /api/whatsapp/status. enabled = connector started at server
 // startup; paired = device identity stored; connected = live WS.
@@ -77,7 +85,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
   // Routing editor state — a plain array (rather than an object keyed by slug)
   // so new/empty rows can coexist without slug collisions while the user types.
   // Converted to object shape on save.
-  type WaRouteRow = { slug: string; workflow_id: string; workshop_mode: string }
+  type WaRouteRow = { slug: string; workflow_id: string; workshop_mode: WorkflowRouteMode }
   const [waRoutes, setWaRoutes] = useState<WaRouteRow[]>([])
   const [waRoutesOriginal, setWaRoutesOriginal] = useState<WaRouteRow[]>([])
   const [waRoutesSaving, setWaRoutesSaving] = useState(false)
@@ -226,7 +234,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
       const rows = Object.entries(data.routing || {}).map(([slug, r]) => ({
         slug,
         workflow_id: r.workflow_id,
-        workshop_mode: r.workshop_mode || '',
+        workshop_mode: normalizeWorkflowRouteMode(r.workshop_mode),
       }))
       setWaRoutes(rows)
       setWaRoutesOriginal(rows)
@@ -362,14 +370,14 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
         payload[slug] = {
           workflow_id: row.workflow_id,
           workspace_path: wf?.workspace_path || '',
-          workshop_mode: row.workshop_mode || undefined,
+          workshop_mode: row.workshop_mode,
         }
       }
       const data = await agentApi.updateWhatsAppRouting(payload)
       const rows = Object.entries(data.routing || {}).map(([slug, r]) => ({
         slug,
         workflow_id: r.workflow_id,
-        workshop_mode: r.workshop_mode || '',
+        workshop_mode: normalizeWorkflowRouteMode(r.workshop_mode),
       }))
       setWaRoutes(rows)
       setWaRoutesOriginal(rows)
@@ -493,8 +501,9 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
   const isSimulate = activeSection === 'simulate'
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className={`bg-background border border-border rounded-lg shadow-xl w-full flex flex-col ${isSimulate ? 'max-w-5xl h-[85vh]' : 'max-w-3xl max-h-[90vh]'}`}>
+    <ModalPortal>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
+      <div className={`bg-background border border-border rounded-lg shadow-xl w-full flex flex-col overflow-hidden ${isSimulate ? 'max-w-5xl h-[calc(100dvh-1rem)] sm:h-[85vh]' : 'max-w-4xl max-h-[calc(100dvh-1rem)] sm:max-h-[90vh]'}`}>
 
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
@@ -1064,16 +1073,14 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                               value={row.workshop_mode}
                               onChange={e => {
                                 const next = [...waRoutes]
-                                next[idx] = { ...row, workshop_mode: e.target.value }
+                                next[idx] = { ...row, workshop_mode: normalizeWorkflowRouteMode(e.target.value) }
                                 setWaRoutes(next)
                               }}
                               className="w-24 px-2 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
                             >
-                              <option value="">manifest</option>
-                              <option value="run">run</option>
-                              <option value="builder">builder</option>
-                              <option value="optimizer">optimizer</option>
-                              <option value="ask">ask</option>
+                              <option value="run">Run</option>
+                              <option value="optimizer">Optimize</option>
+                              <option value="builder">Builder</option>
                             </select>
                             <button
                               onClick={() => {
@@ -1091,7 +1098,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                       </div>
                     )}
                     <button
-                      onClick={() => setWaRoutes([...waRoutes, { slug: '', workflow_id: '', workshop_mode: '' }])}
+                      onClick={() => setWaRoutes([...waRoutes, { slug: '', workflow_id: '', workshop_mode: 'run' }])}
                       className="mt-2 px-2 py-1 text-xs text-muted-foreground hover:text-foreground border border-dashed border-border rounded flex items-center gap-1 transition-colors"
                     >
                       <Plus className="w-3 h-3" /> Add route
@@ -1275,5 +1282,6 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }

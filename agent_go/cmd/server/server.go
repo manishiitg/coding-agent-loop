@@ -1043,6 +1043,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// question, decides whether to answer it from its own context or ask the
 	// user, and resolves the workflow via submit_human_answer.
 	virtualtools.SetChatInjector(func(ctx context.Context, sessionID, userID, message string) error {
+		botManager.PrepareSyntheticTurn(sessionID)
 		api.executeSyntheticTurn(sessionID, message)
 		return nil
 	})
@@ -4849,7 +4850,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered evaluation validation tool in %s", workflowPhaseID)
 					}
 
-					if phaseTemplateVars["WorkshopMode"] == "reporting" {
+					if phaseTemplateVars["WorkshopMode"] == "builder" || phaseTemplateVars["WorkshopMode"] == "reporting" {
 						// Reporting tools: JSON report-plan read/write tools plus validation and
 						// preview against real db/*.json / knowledgebase/*.json sources. The renderer
 						// silently drops bad widgets, so validation stays in the loop.

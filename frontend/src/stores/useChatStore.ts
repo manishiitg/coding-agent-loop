@@ -65,6 +65,51 @@ const incrementPerModeCounts = (
 }
 // Event memory management constants - use shared constants
 const MAX_EVENTS = MAX_EVENTS_TO_PROCESS
+const MAX_RETAINED_EVENT_TEXT_CHARS = 200_000
+
+const truncateRetainedText = (value: string, fieldName: string): string => {
+  if (value.length <= MAX_RETAINED_EVENT_TEXT_CHARS) return value
+
+  const headChars = Math.floor(MAX_RETAINED_EVENT_TEXT_CHARS * 0.6)
+  const tailChars = MAX_RETAINED_EVENT_TEXT_CHARS - headChars
+  const omitted = value.length - MAX_RETAINED_EVENT_TEXT_CHARS
+  return `${value.slice(0, headChars)}\n\n[Truncated ${omitted.toLocaleString()} chars from ${fieldName} to keep the UI responsive. Load older events or inspect backend logs for the full payload.]\n\n${value.slice(-tailChars)}`
+}
+
+const trimLargeRetainedEventFields = (event: PollingEvent): PollingEvent => {
+  const agentEvent = event.data as { data?: Record<string, unknown> } | undefined
+  const payload = agentEvent?.data
+  if (!payload || typeof payload !== 'object') return event
+
+  const updates: Record<string, string> = {}
+  if (typeof payload.content === 'string' && payload.content.length > MAX_RETAINED_EVENT_TEXT_CHARS) {
+    updates.content = truncateRetainedText(payload.content, 'content')
+  }
+  if (typeof payload.result === 'string' && payload.result.length > MAX_RETAINED_EVENT_TEXT_CHARS) {
+    updates.result = truncateRetainedText(payload.result, 'result')
+  }
+
+  if (Object.keys(updates).length === 0) return event
+
+  return {
+    ...event,
+    data: {
+      ...agentEvent,
+      data: {
+        ...payload,
+        ...updates,
+        metadata: {
+          ...((payload.metadata && typeof payload.metadata === 'object') ? payload.metadata as Record<string, unknown> : {}),
+          frontend_retained_payload_truncated: true,
+        },
+      },
+    },
+  }
+}
+
+const trimLargeRetainedEvents = (events: PollingEvent[]): PollingEvent[] => {
+  return events.map(trimLargeRetainedEventFields)
+}
 
 // Persistent event ID index — avoids O(n) Set rebuild on every addTabEvents call.
 // Lives outside zustand state so mutating it doesn't trigger re-renders.
@@ -320,7 +365,7 @@ const cleanupOldEvents = (events: PollingEvent[]): PollingEvent[] => {
   const keepRegular = budget > 0 ? regular.slice(-budget) : []
   
   // Combine and sort by timestamp
-  return [...trimmedImportant, ...keepRegular].sort(compareEventsChronologically)
+  return trimLargeRetainedEvents([...trimmedImportant, ...keepRegular].sort(compareEventsChronologically))
 }
 
 interface ChatState extends StoreActions {
@@ -646,7 +691,7 @@ export const useChatStore = create<ChatState>()(
       addTabEvent: (sessionId: string, event: PollingEvent) => {
         set((state) => {
           const currentEvents = state.tabEvents[sessionId] || []
-          const newEvents = [...currentEvents, event]
+          const newEvents = [...currentEvents, trimLargeRetainedEventFields(event)]
           
           // Trigger cleanup if threshold exceeded
           let finalEvents = newEvents
@@ -695,7 +740,7 @@ export const useChatStore = create<ChatState>()(
             }
             idSet!.add(event.id)
             return true
-          })
+          }).map(trimLargeRetainedEventFields)
 
           // PERF: Skip state update entirely when no new events — avoids creating a new
           // array reference which would cascade re-renders through ChatArea → EventHierarchy.
@@ -805,15 +850,16 @@ export const useChatStore = create<ChatState>()(
 
       setTabEvents: (sessionId: string, events: PollingEvent[]) => {
         console.log('[WF_DEBUG] setTabEvents CALLED', { sessionId, newCount: events.length, existingCount: get().tabEvents[sessionId]?.length ?? 0, stack: new Error().stack?.split('\n').slice(1, 4).map(s => s.trim()) })
+        const retainedEvents = trimLargeRetainedEvents(events)
         // Rebuild the persistent ID index for this session
-        tabEventIdSets.set(sessionId, new Set(events.map(e => e.id).filter(Boolean) as string[]))
+        tabEventIdSets.set(sessionId, new Set(retainedEvents.map(e => e.id).filter(Boolean) as string[]))
 
         set((state) => {
           // Trigger cleanup if threshold exceeded
-          let finalEvents = events
-          if (events.length >= CLEANUP_THRESHOLD) {
-            logger.debug('Memory', `Cleaning up events for session ${sessionId}: ${events.length} -> ${MAX_EVENTS}`)
-            finalEvents = cleanupOldEvents(events)
+          let finalEvents = retainedEvents
+          if (retainedEvents.length >= CLEANUP_THRESHOLD) {
+            logger.debug('Memory', `Cleaning up events for session ${sessionId}: ${retainedEvents.length} -> ${MAX_EVENTS}`)
+            finalEvents = cleanupOldEvents(retainedEvents)
           }
 
           // Also update lastViewedEventCounts for the tab owning this session

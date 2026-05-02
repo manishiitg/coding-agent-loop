@@ -42,15 +42,12 @@ function WorkshopModeToggle() {
     })
   }
 
-  // Four modes — builder / optimizer / run / reporting. Reporting was split
-  // out of builder + optimizer once the report-plan toolchain (theme, custom
-  // colors, layouts, multiple widget kinds) outgrew sharing space with the
-  // workflow-design surface.
+  // Three visible modes. Report authoring is folded into Builder so users do
+  // not need a separate underlying model session just to edit the dashboard.
   const builderModes = [
-    { id: 'builder' as const, label: 'Builder', title: 'Builder', description: 'Design the workflow plan, step config, and evaluation plan. The structural design surface.' },
+    { id: 'builder' as const, label: 'Builder', title: 'Builder', description: 'Design the workflow plan, step config, and live report dashboard.' },
     { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize', description: 'Harden existing steps — run, evaluate, fix, repeat until reliable.' },
     { id: 'run' as const, label: 'Run', title: 'Run', description: 'Execute the finished workflow or inspect prior runs, eval reports, KB, and learnings. No plan/config changes.' },
-    { id: 'reporting' as const, label: 'Reporting', title: 'Reporting', description: 'Author the live report — widgets, themes, layouts, custom colors. Can run individual steps to populate db/ data when widgets render empty. No plan/config changes.' },
   ]
 
   return (

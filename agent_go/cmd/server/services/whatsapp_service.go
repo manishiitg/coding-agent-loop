@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"mime"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,8 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
+
+	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	// Pure-Go SQLite driver (registered as "sqlite"). SQLite is an exception
 	// to the project's "no-database, workspace-file only" convention — see
@@ -86,6 +89,16 @@ type WhatsAppService struct {
 	// the whatsapp_meta table.
 	routingMu sync.RWMutex
 	routing   WhatsAppRouting
+
+	// activeRoutes remembers the workflow slug currently selected for each
+	// WhatsApp chat. Once a user sends "@slug message", later plain messages
+	// in the same chat continue to route to that workflow until they send
+	// "@slug deactivate".
+	activeRoutesMu sync.RWMutex
+	activeRoutes   map[string]string
+	// activeRouteHints throttles the "Active workflow..." reminder so it does
+	// not get appended to every bot reply in an active WhatsApp workflow chat.
+	activeRouteHints map[string]time.Time
 
 	// Owner binds the paired WhatsApp account to a specific workspace user.
 	// Every incoming message stamps this user's email + ID so the bot manager
@@ -156,6 +169,7 @@ func (w *WhatsAppService) StartListening(ctx context.Context) error {
 	}
 	w.loadOwner(ctx)
 	w.loadRouting(ctx)
+	w.loadActiveRoutes(ctx)
 
 	// Name shown in the paired phone's "Linked Devices" list. Keep this close
 	// to a normal browser name; arbitrary app names are more likely to be
@@ -409,10 +423,22 @@ const metaKeyOwner = "owner"
 // incoming messages to specific workflows via an @<slug> prefix.
 const metaKeyRouting = "routing"
 
+// metaKeyActiveRouting holds the JSON map of WhatsApp chat JID → active slug.
+const metaKeyActiveRouting = "active_routing"
+
 // WhatsAppRouting is the full slug → ChannelRoute map persisted to the meta
 // table. A nil / empty map means "no routing — all messages go to the
 // default multi-agent chat flow".
 type WhatsAppRouting map[string]ChannelRoute
+
+type whatsappDownloadedMedia struct {
+	Kind      string
+	FileName  string
+	FilePath  string
+	MimeType  string
+	Caption   string
+	SizeBytes int
+}
 
 // openMetaStore opens the lightweight metadata connection and ensures the
 // whatsapp_meta table exists. Called from StartListening after sqlstore has
@@ -511,6 +537,54 @@ func (w *WhatsAppService) loadRouting(ctx context.Context) {
 	log.Printf("[WHATSAPP] Loaded %d workflow route(s)", len(m))
 }
 
+// loadActiveRoutes pulls the chat → active slug map from whatsapp_meta.
+// Missing row means no chat has pinned a workflow yet.
+func (w *WhatsAppService) loadActiveRoutes(ctx context.Context) {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return
+	}
+	var raw string
+	err := db.QueryRowContext(ctx, `SELECT value FROM whatsapp_meta WHERE key = ?`, metaKeyActiveRouting).Scan(&raw)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("[WHATSAPP] Failed to read active routing row: %v", err)
+		}
+		return
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		log.Printf("[WHATSAPP] Failed to parse active routing row: %v (ignoring)", err)
+		return
+	}
+	w.activeRoutesMu.Lock()
+	w.activeRoutes = m
+	w.activeRoutesMu.Unlock()
+	log.Printf("[WHATSAPP] Loaded %d active workflow route(s)", len(m))
+}
+
+func (w *WhatsAppService) persistActiveRoutesLocked(ctx context.Context) error {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return fmt.Errorf("whatsapp: meta store not open")
+	}
+	raw, err := json.Marshal(w.activeRoutes)
+	if err != nil {
+		return fmt.Errorf("whatsapp: marshal active routing: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO whatsapp_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		metaKeyActiveRouting, string(raw),
+	); err != nil {
+		return fmt.Errorf("whatsapp: persist active routing: %w", err)
+	}
+	return nil
+}
+
 // GetRouting returns a copy of the slug → workflow map. Safe for UI display.
 func (w *WhatsAppService) GetRouting() WhatsAppRouting {
 	w.routingMu.RLock()
@@ -560,6 +634,17 @@ func (w *WhatsAppService) SetRouting(routing WhatsAppRouting) error {
 	w.routingMu.Lock()
 	w.routing = cleaned
 	w.routingMu.Unlock()
+
+	w.activeRoutesMu.Lock()
+	for chatJID, slug := range w.activeRoutes {
+		if _, ok := cleaned[slug]; !ok {
+			delete(w.activeRoutes, chatJID)
+		}
+	}
+	if err := w.persistActiveRoutesLocked(context.Background()); err != nil {
+		log.Printf("[WHATSAPP] Failed to prune active workflow routes: %v", err)
+	}
+	w.activeRoutesMu.Unlock()
 	log.Printf("[WHATSAPP] Saved %d workflow route(s)", len(cleaned))
 	return nil
 }
@@ -597,6 +682,308 @@ func (w *WhatsAppService) resolveSlugRoute(slug string) *ChannelRoute {
 		return &r
 	}
 	return nil
+}
+
+func sanitizeWhatsAppFileName(name string) string {
+	name = filepath.Base(strings.TrimSpace(name))
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return ""
+	}
+	name = regexp.MustCompile(`[^A-Za-z0-9._-]+`).ReplaceAllString(name, "-")
+	name = strings.Trim(name, ".-")
+	if name == "" {
+		return ""
+	}
+	if len(name) > 120 {
+		ext := filepath.Ext(name)
+		base := strings.TrimSuffix(name, ext)
+		if len(ext) > 16 {
+			ext = ""
+		}
+		if maxBase := 120 - len(ext); len(base) > maxBase {
+			base = base[:maxBase]
+		}
+		name = base + ext
+	}
+	return name
+}
+
+func extensionForWhatsAppMedia(mimeType, fallback string) string {
+	if exts, err := mime.ExtensionsByType(mimeType); err == nil && len(exts) > 0 {
+		return exts[0]
+	}
+	switch mimeType {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	case "application/pdf":
+		return ".pdf"
+	case "video/mp4":
+		return ".mp4"
+	case "audio/ogg":
+		return ".ogg"
+	case "audio/mpeg":
+		return ".mp3"
+	default:
+		return fallback
+	}
+}
+
+func (w *WhatsAppService) downloadIncomingMedia(ctx context.Context, msg *waProto.Message, owner *WhatsAppOwner, messageID, folderPath string) (*whatsappDownloadedMedia, error) {
+	if msg == nil || owner == nil {
+		return nil, nil
+	}
+
+	w.mu.RLock()
+	client := w.client
+	w.mu.RUnlock()
+	if client == nil {
+		return nil, fmt.Errorf("whatsapp: client not initialised")
+	}
+
+	var (
+		downloadable whatsmeow.DownloadableMessage
+		kind         string
+		fileName     string
+		mimeType     string
+		caption      string
+		sizeBytes    uint64
+		fallbackExt  = ".bin"
+	)
+
+	switch {
+	case msg.ImageMessage != nil:
+		downloadable = msg.ImageMessage
+		kind = "image"
+		mimeType = msg.ImageMessage.GetMimetype()
+		caption = msg.ImageMessage.GetCaption()
+		sizeBytes = msg.ImageMessage.GetFileLength()
+		fallbackExt = ".jpg"
+	case msg.DocumentMessage != nil:
+		downloadable = msg.DocumentMessage
+		kind = "document"
+		mimeType = msg.DocumentMessage.GetMimetype()
+		caption = msg.DocumentMessage.GetCaption()
+		fileName = msg.DocumentMessage.GetFileName()
+		sizeBytes = msg.DocumentMessage.GetFileLength()
+		fallbackExt = ".pdf"
+	case msg.VideoMessage != nil:
+		downloadable = msg.VideoMessage
+		kind = "video"
+		mimeType = msg.VideoMessage.GetMimetype()
+		caption = msg.VideoMessage.GetCaption()
+		sizeBytes = msg.VideoMessage.GetFileLength()
+		fallbackExt = ".mp4"
+	case msg.AudioMessage != nil:
+		downloadable = msg.AudioMessage
+		kind = "audio"
+		mimeType = msg.AudioMessage.GetMimetype()
+		sizeBytes = msg.AudioMessage.GetFileLength()
+		fallbackExt = ".ogg"
+	default:
+		return nil, nil
+	}
+
+	const maxWhatsAppUploadBytes = 10 * 1024 * 1024
+	if sizeBytes > maxWhatsAppUploadBytes {
+		return nil, fmt.Errorf("file is %.1fMB; WhatsApp bot uploads are limited to 10MB", float64(sizeBytes)/(1024*1024))
+	}
+
+	downloadCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	data, err := client.Download(downloadCtx, downloadable)
+	if err != nil {
+		return nil, fmt.Errorf("download %s: %w", kind, err)
+	}
+	if len(data) > maxWhatsAppUploadBytes {
+		return nil, fmt.Errorf("file is %.1fMB; WhatsApp bot uploads are limited to 10MB", float64(len(data))/(1024*1024))
+	}
+
+	fileName = sanitizeWhatsAppFileName(fileName)
+	if fileName == "" {
+		ext := extensionForWhatsAppMedia(mimeType, fallbackExt)
+		stableID := sanitizeWhatsAppFileName(messageID)
+		if stableID == "" {
+			stableID = fmt.Sprintf("%d", time.Now().UnixNano())
+		}
+		fileName = fmt.Sprintf("whatsapp-%s-%s%s", kind, stableID, ext)
+	}
+
+	if strings.TrimSpace(folderPath) == "" {
+		folderPath = whatsappUserChatUploadFolder(owner.UserID)
+	}
+	wsClient := workspace.NewClient(workspaceAPIURL(), workspace.WithUserID(owner.UserID))
+	filePath, err := wsClient.UploadBinary(ctx, folderPath, fileName, data)
+	if err != nil {
+		return nil, fmt.Errorf("upload %s to workspace: %w", kind, err)
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	return &whatsappDownloadedMedia{
+		Kind:      kind,
+		FileName:  fileName,
+		FilePath:  filePath,
+		MimeType:  mimeType,
+		Caption:   strings.TrimSpace(caption),
+		SizeBytes: len(data),
+	}, nil
+}
+
+func appendWhatsAppMediaContext(text string, media *whatsappDownloadedMedia) string {
+	if media == nil {
+		return text
+	}
+	var sb strings.Builder
+	if strings.TrimSpace(text) != "" {
+		sb.WriteString(strings.TrimSpace(text))
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("WhatsApp upload received:\n")
+	sb.WriteString(fmt.Sprintf("- Type: %s\n", media.Kind))
+	sb.WriteString(fmt.Sprintf("- File: %s\n", media.FilePath))
+	sb.WriteString(fmt.Sprintf("- Original name: %s\n", media.FileName))
+	sb.WriteString(fmt.Sprintf("- MIME type: %s\n", media.MimeType))
+	sb.WriteString(fmt.Sprintf("- Size: %d bytes", media.SizeBytes))
+	if media.Caption != "" && !strings.Contains(text, media.Caption) {
+		sb.WriteString("\n- Caption: ")
+		sb.WriteString(media.Caption)
+	}
+	sb.WriteString("\n\nUse the uploaded file path above when reading or analyzing the attachment.")
+	return sb.String()
+}
+
+func extractWhatsAppMediaCaption(m *waProto.Message) string {
+	if m == nil {
+		return ""
+	}
+	switch {
+	case m.ImageMessage != nil:
+		return strings.TrimSpace(m.ImageMessage.GetCaption())
+	case m.DocumentMessage != nil:
+		return strings.TrimSpace(m.DocumentMessage.GetCaption())
+	case m.VideoMessage != nil:
+		return strings.TrimSpace(m.VideoMessage.GetCaption())
+	default:
+		return ""
+	}
+}
+
+func hasDownloadableWhatsAppMedia(m *waProto.Message) bool {
+	return m != nil && (m.ImageMessage != nil || m.DocumentMessage != nil || m.VideoMessage != nil || m.AudioMessage != nil)
+}
+
+func whatsappUserChatUploadFolder(userID string) string {
+	safeUserID := sanitizeWhatsAppFileName(userID)
+	if safeUserID == "" {
+		safeUserID = "default"
+	}
+	return filepath.ToSlash(filepath.Join("_users", safeUserID, "chat_history", "uploads", "whatsapp", time.Now().Format("2006-01-02")))
+}
+
+func whatsappWorkflowUploadFolder(route *ChannelRoute) string {
+	if route == nil || strings.TrimSpace(route.WorkspacePath) == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Join(route.WorkspacePath, "incoming", "whatsapp", time.Now().Format("2006-01-02")))
+}
+
+func (w *WhatsAppService) setActiveSlug(chatJID, slug string) {
+	if chatJID == "" || slug == "" {
+		return
+	}
+	w.activeRoutesMu.Lock()
+	if w.activeRoutes == nil {
+		w.activeRoutes = make(map[string]string)
+	}
+	w.activeRoutes[chatJID] = strings.ToLower(slug)
+	if err := w.persistActiveRoutesLocked(context.Background()); err != nil {
+		log.Printf("[WHATSAPP] Failed to save active workflow @%s for %s: %v", slug, chatJID, err)
+	}
+	w.activeRoutesMu.Unlock()
+}
+
+func (w *WhatsAppService) clearActiveSlug(chatJID string) {
+	if chatJID == "" {
+		return
+	}
+	w.activeRoutesMu.Lock()
+	if w.activeRoutes != nil {
+		delete(w.activeRoutes, chatJID)
+	}
+	if err := w.persistActiveRoutesLocked(context.Background()); err != nil {
+		log.Printf("[WHATSAPP] Failed to clear active workflow for %s: %v", chatJID, err)
+	}
+	w.activeRoutesMu.Unlock()
+}
+
+func (w *WhatsAppService) activeSlug(chatJID string) string {
+	w.activeRoutesMu.RLock()
+	defer w.activeRoutesMu.RUnlock()
+	if w.activeRoutes == nil {
+		return ""
+	}
+	return w.activeRoutes[chatJID]
+}
+
+const whatsappActiveRouteHintInterval = 30 * time.Minute
+
+func whatsappActiveRouteHintKey(chatJID, slug string) string {
+	return chatJID + "\x00" + strings.ToLower(strings.TrimSpace(slug))
+}
+
+func (w *WhatsAppService) markActiveRouteHintSent(chatJID, slug string) {
+	if chatJID == "" || slug == "" {
+		return
+	}
+	w.activeRoutesMu.Lock()
+	if w.activeRouteHints == nil {
+		w.activeRouteHints = make(map[string]time.Time)
+	}
+	w.activeRouteHints[whatsappActiveRouteHintKey(chatJID, slug)] = time.Now()
+	w.activeRoutesMu.Unlock()
+}
+
+func (w *WhatsAppService) shouldSendActiveRouteHint(chatJID, slug string) bool {
+	if chatJID == "" || slug == "" {
+		return false
+	}
+	key := whatsappActiveRouteHintKey(chatJID, slug)
+	now := time.Now()
+	w.activeRoutesMu.Lock()
+	defer w.activeRoutesMu.Unlock()
+	if w.activeRouteHints == nil {
+		w.activeRouteHints = make(map[string]time.Time)
+	}
+	if last, ok := w.activeRouteHints[key]; ok && now.Sub(last) < whatsappActiveRouteHintInterval {
+		return false
+	}
+	w.activeRouteHints[key] = now
+	return true
+}
+
+func isWhatsAppDeactivateCommand(text string) bool {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "deactivate", "deactive", "off", "stop":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseWhatsAppSlugPrefix(text string) (slug string, rest string, ok bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "@") {
+		return "", text, false
+	}
+	firstSpace := strings.IndexAny(trimmed, " \t\n")
+	if firstSpace < 0 {
+		return strings.ToLower(strings.TrimSpace(trimmed[1:])), "", true
+	}
+	return strings.ToLower(strings.TrimSpace(trimmed[1:firstSpace])), strings.TrimSpace(trimmed[firstSpace+1:]), true
 }
 
 // GetOwner returns the currently-bound owner, or nil when unclaimed.
@@ -790,33 +1177,7 @@ func (w *WhatsAppService) handleIncomingMessage(evt *events.Message) {
 
 	text := extractWhatsAppText(evt.Message)
 	if text == "" {
-		// Help diagnose silent drops — common for non-text messages (media,
-		// reactions, receipts) that still fire Message events.
-		msgType := "<nil>"
-		if evt.Message != nil {
-			switch {
-			case evt.Message.Conversation != nil:
-				msgType = "conversation-empty"
-			case evt.Message.ExtendedTextMessage != nil:
-				msgType = "extended-text-empty"
-			case evt.Message.ImageMessage != nil:
-				msgType = "image"
-			case evt.Message.AudioMessage != nil:
-				msgType = "audio"
-			case evt.Message.VideoMessage != nil:
-				msgType = "video"
-			case evt.Message.DocumentMessage != nil:
-				msgType = "document"
-			case evt.Message.ReactionMessage != nil:
-				msgType = "reaction"
-			case evt.Message.ProtocolMessage != nil:
-				msgType = "protocol"
-			default:
-				msgType = "other"
-			}
-		}
-		log.Printf("[WHATSAPP] skip: no text body (payload=%s)", msgType)
-		return
+		text = extractWhatsAppMediaCaption(evt.Message)
 	}
 
 	w.mu.RLock()
@@ -844,30 +1205,86 @@ func (w *WhatsAppService) handleIncomingMessage(evt *events.Message) {
 	senderName := info.PushName
 
 	// @<slug> workflow routing. If the first token looks like "@foo", look
-	// up "foo" in the routing map; on a hit we strip the @foo (plus one
-	// trailing space) and set PresetWorkflow so the bot manager routes the
-	// rest of the message to the mapped workflow. No match → leave the text
-	// intact and fall through to default multi-agent chat, so the agent can
-	// see the typed mention and say "I don't know @foo".
+	// up "foo" in the routing map; on a hit we activate that workflow for
+	// this WhatsApp chat, strip the prefix, and route the rest of the message
+	// there. Later plain messages in the same chat continue to use that route
+	// until the user sends "@foo deactivate".
 	var presetRoute *ChannelRoute
 	routedSlug := ""
-	if trimmed := strings.TrimSpace(text); strings.HasPrefix(trimmed, "@") {
-		firstSpace := strings.IndexAny(trimmed, " \t\n")
-		var slugToken string
-		if firstSpace < 0 {
-			slugToken = trimmed[1:]
-		} else {
-			slugToken = trimmed[1:firstSpace]
-		}
+	if slugToken, rest, ok := parseWhatsAppSlugPrefix(text); ok {
 		if route := w.resolveSlugRoute(slugToken); route != nil {
+			if isWhatsAppDeactivateCommand(rest) {
+				w.clearActiveSlug(chatJID)
+				_ = w.sendReaction(context.Background(), chatJID, info.Sender, info.ID, "👀")
+				if _, err := w.SendThreadMessage(context.Background(), ThreadID{Platform: "whatsapp", ChannelID: chatJID}, fmt.Sprintf("Deactivated @%s. Plain WhatsApp messages will use the default chat again.", slugToken)); err != nil {
+					log.Printf("[WHATSAPP] Failed to send deactivate acknowledgement for @%s: %v", slugToken, err)
+				}
+				return
+			}
+			w.setActiveSlug(chatJID, slugToken)
 			presetRoute = route
 			routedSlug = slugToken
-			if firstSpace < 0 {
-				text = ""
-			} else {
-				text = strings.TrimSpace(trimmed[firstSpace+1:])
+			text = rest
+			if text == "" && !hasDownloadableWhatsAppMedia(evt.Message) {
+				_ = w.sendReaction(context.Background(), chatJID, info.Sender, info.ID, "👀")
+				if _, err := w.SendThreadMessage(context.Background(), ThreadID{Platform: "whatsapp", ChannelID: chatJID}, fmt.Sprintf("Activated @%s for this chat. Send your next message normally. Type @%s deactivate to turn this off.", slugToken, slugToken)); err != nil {
+					log.Printf("[WHATSAPP] Failed to send activation acknowledgement for @%s: %v", slugToken, err)
+				}
+				return
 			}
 		}
+	}
+
+	if presetRoute == nil {
+		activeSlug := w.activeSlug(chatJID)
+		if activeSlug != "" {
+			if route := w.resolveSlugRoute(activeSlug); route != nil {
+				presetRoute = route
+				routedSlug = activeSlug
+			} else {
+				w.clearActiveSlug(chatJID)
+			}
+		}
+	}
+
+	media, mediaErr := w.downloadIncomingMedia(context.Background(), evt.Message, owner, info.ID, whatsappWorkflowUploadFolder(presetRoute))
+	if mediaErr != nil {
+		log.Printf("[WHATSAPP] Failed to ingest media from %s: %v", info.Sender.User, mediaErr)
+		_ = w.sendReaction(context.Background(), chatJID, info.Sender, info.ID, "⚠️")
+		if _, err := w.SendThreadMessage(context.Background(), ThreadID{Platform: "whatsapp", ChannelID: chatJID}, fmt.Sprintf("I couldn't process that WhatsApp attachment: %v", mediaErr)); err != nil {
+			log.Printf("[WHATSAPP] Failed to send media error acknowledgement: %v", err)
+		}
+		return
+	}
+	text = appendWhatsAppMediaContext(text, media)
+	if text == "" {
+		// Help diagnose silent drops — common for non-text messages (media,
+		// reactions, receipts) that still fire Message events.
+		msgType := "<nil>"
+		if evt.Message != nil {
+			switch {
+			case evt.Message.Conversation != nil:
+				msgType = "conversation-empty"
+			case evt.Message.ExtendedTextMessage != nil:
+				msgType = "extended-text-empty"
+			case evt.Message.ImageMessage != nil:
+				msgType = "image"
+			case evt.Message.AudioMessage != nil:
+				msgType = "audio"
+			case evt.Message.VideoMessage != nil:
+				msgType = "video"
+			case evt.Message.DocumentMessage != nil:
+				msgType = "document"
+			case evt.Message.ReactionMessage != nil:
+				msgType = "reaction"
+			case evt.Message.ProtocolMessage != nil:
+				msgType = "protocol"
+			default:
+				msgType = "other"
+			}
+		}
+		log.Printf("[WHATSAPP] skip: no text body or supported media (payload=%s)", msgType)
+		return
 	}
 
 	if routedSlug != "" {
@@ -943,6 +1360,19 @@ func (w *WhatsAppService) SendThreadMessage(ctx context.Context, threadID Thread
 	// standard markdown — the formatter is the safety net that normalises.
 	formatter := WhatsAppFormatter{}
 	message = formatter.FormatMessage(message)
+
+	if activeSlug := w.activeSlug(threadID.ChannelID); activeSlug != "" {
+		if w.resolveSlugRoute(activeSlug) != nil {
+			deactivateHint := fmt.Sprintf("@%s deactivate", activeSlug)
+			if strings.Contains(strings.ToLower(message), strings.ToLower(deactivateHint)) {
+				w.markActiveRouteHintSent(threadID.ChannelID, activeSlug)
+			} else if w.shouldSendActiveRouteHint(threadID.ChannelID, activeSlug) {
+				message = strings.TrimSpace(message) + fmt.Sprintf("\n\nActive workflow: @%s. Type %s to turn this off.", activeSlug, deactivateHint)
+			}
+		} else {
+			w.clearActiveSlug(threadID.ChannelID)
+		}
+	}
 
 	if w.selfChatPrefix != "" && w.isSelfChat(jid) {
 		message = w.selfChatPrefix + message

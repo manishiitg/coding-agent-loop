@@ -104,6 +104,48 @@ PY`
 	}
 }
 
+func TestDetectRawChromeCDPAccessInHeredoc(t *testing.T) {
+	command := `python3 <<'PY'
+import websocket
+tab_id = "abc"
+ws = websocket.create_connection(
+    f"ws://localhost:9222/devtools/page/{tab_id}",
+    header=["Host: localhost"],
+)
+PY`
+
+	if got := detectRawChromeCDPAccess(command); got == "" {
+		t.Fatal("expected raw CDP access to be detected inside heredoc")
+	}
+}
+
+func TestDetectRawChromeCDPAccessIgnoresUnrelatedWebSocket(t *testing.T) {
+	command := `python3 <<'PY'
+import websocket
+ws = websocket.create_connection("wss://example.com/events")
+PY`
+
+	if got := detectRawChromeCDPAccess(command); got != "" {
+		t.Fatalf("expected unrelated websocket to pass, got %q", got)
+	}
+}
+
+func TestExecuteShellCommand_BlocksRawChromeCDPAccess(t *testing.T) {
+	client := NewClient("http://127.0.0.1:1")
+	result, err := client.ExecuteShellCommand(context.Background(), ExecuteShellCommandParams{
+		Command: `python3 -c 'import urllib.request; print(urllib.request.urlopen("http://localhost:9222/json/list").read())'`,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteShellCommand returned Go error: %v", err)
+	}
+	if result.ExitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", result.ExitCode)
+	}
+	if !strings.Contains(result.Stderr, "Raw Chrome CDP access") || !strings.Contains(result.Stderr, "agent_browser") {
+		t.Fatalf("expected actionable raw CDP error, got %q", result.Stderr)
+	}
+}
+
 func TestBlockAbsoluteHostPaths_DeniesAbsoluteWorkspacePathOutsideGuard(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
 

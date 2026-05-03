@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 var (
@@ -61,6 +63,15 @@ func clearCDPTabSelectionsForPort(port int) {
 }
 
 func cdpOwnerID(workflowSessionID, agentSessionID, session string) string {
+	for _, candidate := range []string{agentSessionID, workflowSessionID} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if resolved := common.ResolveBrowserSessionID(candidate, "default"); resolved != "" && resolved != "default" {
+			return resolved
+		}
+	}
 	for _, candidate := range []string{workflowSessionID, agentSessionID, session} {
 		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
 			return trimmed
@@ -75,7 +86,7 @@ func parseTabSelection(args []string) (tab string, clear bool, err error) {
 	}
 
 	switch args[0] {
-	case "list":
+	case "list", "ls":
 		return "", false, nil
 	case "new":
 		for i := 1; i < len(args)-1; i++ {
@@ -99,6 +110,26 @@ func parseTabSelection(args []string) (tab string, clear bool, err error) {
 		}
 		return strings.TrimSpace(args[0]), false, nil
 	}
+}
+
+func extractInlineCDPTab(args []string) (tab string, cleaned []string, err error) {
+	cleaned = make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "tab", "--tab":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", nil, fmt.Errorf("CDP shared-browser command requires %s <tab-id-or-label>", args[i])
+			}
+			if tab != "" {
+				return "", nil, fmt.Errorf("CDP shared-browser command includes multiple tab selections; include exactly one")
+			}
+			tab = strings.TrimSpace(args[i+1])
+			i++
+		default:
+			cleaned = append(cleaned, args[i])
+		}
+	}
+	return tab, cleaned, nil
 }
 
 func stringArgs(raw interface{}) []string {

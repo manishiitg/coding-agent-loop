@@ -1042,6 +1042,27 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Wire startSessionInternal after api is created (closure captures api)
 	botManager.SetStartSessionFunc(api.startSessionInternal)
 	botManager.SetFollowUpFunc(api.sendFollowUpInternal)
+	botManager.SetRunningWorkflowsFunc(func(userID string) []slackservice.BotRunningWorkflow {
+		running := api.listRunningWorkflowExecutions(userID)
+		out := make([]slackservice.BotRunningWorkflow, 0, len(running))
+		for _, wf := range running {
+			label := strings.TrimSpace(wf.PresetName)
+			if label == "" && wf.WorkspacePath != "" {
+				label = workflowNameFromWorkspacePath(wf.WorkspacePath)
+			}
+			out = append(out, slackservice.BotRunningWorkflow{
+				WorkflowLabel:    label,
+				WorkspacePath:    wf.WorkspacePath,
+				Status:           wf.Status,
+				CurrentStepTitle: wf.CurrentStepTitle,
+				PhaseName:        wf.PhaseName,
+				Title:            wf.Title,
+				SessionID:        wf.SessionID,
+				StartedAt:        wf.StartedAt,
+			})
+		}
+		return out
+	})
 	// Install a chat injector so workflows launched from a builder chat session
 	// can route human_input questions back as a synthetic turn on that session
 	// (instead of the blocking popup UI). The builder agent receives the
@@ -2490,7 +2511,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[SKILLS] Applied %d skills to workflow orchestrator: %v", len(selectedSkills), selectedSkills)
 		}
 
-// Merge global secrets with user-supplied secrets, then set on orchestrator
+		// Merge global secrets with user-supplied secrets, then set on orchestrator
 		allSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 		if len(allSecrets) > 0 {
 			entries := make([]orchestrator.SecretEntry, len(allSecrets))
@@ -2526,6 +2547,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Track HTTP session ID on the orchestrator so MCP sessions can be closed on stop
 		workflowOrchestrator.SetHTTPSessionID(sessionID)
+
+		if workflowBrowserMode != "" && workflowBrowserMode != "none" {
+			workflowOrchestrator.SetBrowserMode(workflowBrowserMode)
+			log.Printf("[WORKFLOW] Set browser mode on orchestrator: %s", workflowBrowserMode)
+		}
 
 		// Propagate CDP port for browser mode detection in execution agents
 		// getCdpPort already checks req.BrowserMode == "cdp" and defaults to 9222
@@ -4767,7 +4793,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						// AUTO-NOTIFICATIONs: one for each todo sub-agent AND one for the exec-* completion.
 						// The workshopExecutionBgNotifier below is the single source of auto-notifications.
 						//
-						// Wire workshop execution notifier so execute_step/run_in_background/optimize_step/harden_workflow
+						// Wire workshop execution notifier so execute_step/run_in_background/harden_workflow
 						// register in bgAgentRegistry (keeps frontend polling alive while background executions run).
 						workshopSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{
 							api:           api,
@@ -4931,9 +4957,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered reorganize_knowledgebase in %s", workflowPhaseID)
 						todo_creation_human.RegisterConsolidateKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered consolidate_knowledgebase in %s", workflowPhaseID)
-						// Auto-improvement framework — proposer-side tools (optimizer mode).
-						RegisterAutoImprovementProposerTools(underlyingAgent, phaseWorkspacePath, "improve-workflow", api.logger)
-						log.Printf("[WORKFLOW_PHASE] Registered auto-improvement proposer tools in %s", workflowPhaseID)
+						// Auto-improvement framework — proposer-side tools. These
+						// mutate planning/metrics.json and experiments/, so keep
+						// them in Optimizer mode only.
+						if phaseTemplateVars["WorkshopMode"] == "optimizer" {
+							RegisterAutoImprovementProposerTools(underlyingAgent, phaseWorkspacePath, "improve-workflow", api.logger)
+							log.Printf("[WORKFLOW_PHASE] Registered auto-improvement proposer tools in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
+						} else {
+							log.Printf("[WORKFLOW_PHASE] Skipped auto-improvement proposer tools in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
+						}
 						// Guided-flow text for every workflow slash command, returned via
 						// get_workflow_command_guidance(kind=...). Available across modes;
 						// per-kind mode validation lives in the tool itself.

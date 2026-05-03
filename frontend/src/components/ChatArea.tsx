@@ -1262,7 +1262,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       if (event.type === 'streaming_start') {
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
         const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
-        // Workshop background agents (execute_step, optimize_step, generate_learnings) use
+        // Workshop background agents (execute_step, harden_workflow, generate_learnings) use
         // workshop-* correlation IDs. Drop their streaming events — they render in EventDisplay cards.
         const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
         if (isDelegationStreaming) {
@@ -2200,6 +2200,21 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         : undefined
     )
     executionOptionsRef.current = effectiveExecutionOptions
+
+    if (
+      selectedModeCategory === 'workflow' &&
+      !options?.isAutoNotification &&
+      currentTab?.metadata?.phaseId &&
+      isChatCompatiblePhase(currentTab.metadata.phaseId)
+    ) {
+      window.dispatchEvent(new CustomEvent('workflow-chat-user-started', {
+        detail: {
+          tabId: currentTab.tabId,
+          presetQueryId: currentTab.metadata?.presetQueryId,
+          phaseId: currentTab.metadata?.phaseId,
+        },
+      }))
+    }
 
     // Build file context — read preset fresh from store to avoid stale closure
     // when switching between workflows (the closure's activeWorkflowPreset may lag behind)

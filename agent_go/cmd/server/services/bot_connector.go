@@ -173,6 +173,23 @@ type DecryptedSecret struct {
 // Used by bot sessions to retrieve server-side stored secrets.
 type UserSecretsLoaderFunc func(ctx context.Context, userID string) ([]DecryptedSecret, error)
 
+// BotRunningWorkflow is the minimal workflow-run view needed for bot status
+// replies. The server layer maps this from its execution tracker.
+type BotRunningWorkflow struct {
+	WorkflowLabel     string
+	WorkspacePath     string
+	Status            string
+	CurrentStepTitle  string
+	PhaseName         string
+	Title             string
+	SessionID         string
+	StartedAt         time.Time
+	BackgroundAgents  int
+	HasBackgroundWork bool
+}
+
+type RunningWorkflowsFunc func(userID string) []BotRunningWorkflow
+
 // BotConversationManager is the platform-agnostic orchestrator for bot sessions.
 // Bot conversations are unified with regular chat sessions: each Slack thread
 // / DM / web-simulator tab maps to a chat session folder with a BotMetadata
@@ -186,11 +203,12 @@ type BotConversationManager struct {
 	eventSubscriber BotEventSubscriber
 
 	// Function references set by server layer (to avoid import cycles)
-	startSession    SessionStartFunc
-	followUpSession SessionFollowUpFunc
-	loadUserSecrets UserSecretsLoaderFunc
-	mcpConfigPath   string
-	workspaceURL    string
+	startSession     SessionStartFunc
+	followUpSession  SessionFollowUpFunc
+	loadUserSecrets  UserSecretsLoaderFunc
+	runningWorkflows RunningWorkflowsFunc
+	mcpConfigPath    string
+	workspaceURL     string
 }
 
 // activeBotSession tracks an in-progress bot conversation. In the unified
@@ -272,6 +290,11 @@ func (m *BotConversationManager) SetStartSessionFunc(fn SessionStartFunc) {
 // SetFollowUpFunc sets the function used to inject follow-up messages into running sessions
 func (m *BotConversationManager) SetFollowUpFunc(fn SessionFollowUpFunc) {
 	m.followUpSession = fn
+}
+
+// SetRunningWorkflowsFunc sets the server-backed running workflow snapshot used by status commands.
+func (m *BotConversationManager) SetRunningWorkflowsFunc(fn RunningWorkflowsFunc) {
+	m.runningWorkflows = fn
 }
 
 // SetUserSecretsLoader sets the function used to load decrypted user secrets for bot sessions
@@ -606,11 +629,19 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	active.mu.Lock()
 	status := active.Status
 	awaiting := active.awaitingUserInput
+	blockingEventType := active.blockingEventType
 	lastActivity := active.LastActivity
 	oldSessionID := active.SessionID
 	oldUserID := active.UserID
 	oldThreadID := active.ThreadID
 	active.mu.Unlock()
+
+	if !supportsThreads && isSessionStatusCommand(msg.Text) {
+		if connector := m.GetConnector(active.Platform); connector != nil {
+			connector.SendThreadMessage(context.Background(), active.ThreadID, m.formatThreadlessStatusReply(oldUserID, status, awaiting, blockingEventType))
+		}
+		return
+	}
 
 	// Thread-less platforms (WhatsApp, Telegram) use a 1-hour inactivity
 	// window to decide whether this message continues the prior
@@ -867,6 +898,107 @@ func isSessionEndCommand(text string) bool {
 		return true
 	}
 	return false
+}
+
+func isSessionStatusCommand(text string) bool {
+	normalized := botNormalizeText(text)
+	return normalized == "status"
+}
+
+func (m *BotConversationManager) formatThreadlessStatusReply(userID, status string, awaiting bool, blockingEventType string) string {
+	if m.runningWorkflows != nil {
+		if workflows := m.runningWorkflows(userID); len(workflows) > 0 {
+			return formatRunningWorkflowsStatus(workflows)
+		}
+	}
+	return formatThreadlessSessionStatus(status, awaiting, blockingEventType)
+}
+
+func formatRunningWorkflowsStatus(workflows []BotRunningWorkflow) string {
+	var sb strings.Builder
+	count := len(workflows)
+	if count == 1 {
+		sb.WriteString("1 workflow running")
+	} else {
+		sb.WriteString(fmt.Sprintf("%d workflows running", count))
+	}
+	for i, wf := range workflows {
+		if i >= 6 {
+			sb.WriteString(fmt.Sprintf("\n+%d more", count-i))
+			break
+		}
+		label := strings.TrimSpace(wf.WorkflowLabel)
+		if label == "" && wf.WorkspacePath != "" {
+			label = strings.TrimPrefix(wf.WorkspacePath, "Workflow/")
+		}
+		if label == "" {
+			label = "workflow"
+		}
+		detail := strings.TrimSpace(wf.CurrentStepTitle)
+		if detail == "" {
+			detail = strings.TrimSpace(wf.PhaseName)
+		}
+		if detail == "" {
+			detail = strings.TrimSpace(wf.Title)
+		}
+		if detail == "" {
+			detail = strings.TrimSpace(wf.Status)
+		}
+		if detail == "" {
+			detail = "running"
+		}
+		sb.WriteString(fmt.Sprintf("\n%d. %s - %s", i+1, label, detail))
+		if !wf.StartedAt.IsZero() {
+			sb.WriteString(fmt.Sprintf(" (%s)", shortElapsed(time.Since(wf.StartedAt))))
+		}
+		if wf.BackgroundAgents > 0 {
+			sb.WriteString(fmt.Sprintf(", %d bg agent", wf.BackgroundAgents))
+			if wf.BackgroundAgents != 1 {
+				sb.WriteString("s")
+			}
+		} else if wf.HasBackgroundWork {
+			sb.WriteString(", bg work")
+		}
+	}
+	return sb.String()
+}
+
+func formatThreadlessSessionStatus(status string, awaiting bool, blockingEventType string) string {
+	if awaiting {
+		if blockingEventType != "" {
+			return fmt.Sprintf("Session waiting for input (%s).", blockingEventType)
+		}
+		return "Session waiting for input."
+	}
+	switch status {
+	case chathistory.BotSessionStatusRunning, chathistory.BotSessionStatusAwaitingPlanApproval:
+		return "Session running."
+	case chathistory.BotSessionStatusCompleted:
+		return "Session completed."
+	case chathistory.BotSessionStatusFailed:
+		return "Session failed."
+	default:
+		if strings.TrimSpace(status) == "" {
+			return "No active session."
+		}
+		return fmt.Sprintf("Session status: %s.", status)
+	}
+}
+
+func shortElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours())/24)
+	}
 }
 
 // SyncMessageResult is the synchronous result of HandleMessageSync

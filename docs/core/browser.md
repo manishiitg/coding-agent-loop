@@ -122,6 +122,38 @@ By default, browser-based MCP servers (like `playwright` or `agent-browser`) run
 1. **Launch Chrome with Remote Debugging**: You start Chrome on your host with a specific port (default `9222`).
 2. **Connection String**: The agent is given a CDP URL (e.g., `http://host.docker.internal:9222`).
 3. **Connectivity Check**: The frontend verifies the connection before starting the session.
+4. **Shared browser session**: In CDP mode, `agent_browser` commands are remapped to a shared raw agent-browser session per CDP port, e.g. `shared-cdp-9222`. This lets multiple workflows reuse the same Chrome while still forcing each command to name the tab it intends to use.
+
+### Shared CDP Tabs
+
+Native agent-browser tracks an active tab per `--session`. In a shared workflow environment that is too implicit: whichever workflow last selected a tab can influence the next page action. The project wrapper therefore requires every CDP page action to include an inline tab argument.
+
+Allowed page action forms:
+
+```json
+{"command": "open", "args": ["tab", "profile", "https://example.com"], "session": "workflow_a"}
+{"command": "snapshot", "args": ["tab", "profile", "-i"], "session": "workflow_a"}
+{"command": "click", "args": ["--tab", "profile", "@e1"], "session": "workflow_a"}
+{"command": "eval", "args": ["tab", "profile", "document.title"], "session": "workflow_a"}
+```
+
+If a CDP page action omits the tab, the tool returns an error with the current tab list. The LLM is expected to choose an existing tab or create a labeled tab, then retry the command.
+
+Tab management commands:
+
+```json
+{"command": "tab", "args": [], "session": "workflow_a"}
+{"command": "tab", "args": ["new", "--label", "profile", "https://example.com"], "session": "workflow_a"}
+{"command": "tab", "args": ["profile"], "session": "workflow_a"}
+```
+
+Operational rules:
+
+- List tabs first and reuse an existing suitable tab by URL/title whenever possible.
+- Create one stable labeled tab only when no current tab matches the task.
+- Do not close user tabs unless explicitly requested.
+- Do not rely on "latest tab" or session active-tab state for page actions.
+- The wrapper serializes `select tab -> action` with a per-CDP-port mutex. Two page commands on the same CDP port do not interleave; different CDP ports are independent.
 
 ### Configuration
 
@@ -165,6 +197,8 @@ xattr -cr /path/to/Chrome-CDP.app
 
 - **Connection Refused**: Ensure Chrome is running with `--remote-debugging-port=9222`. Check no other process uses port 9222 (`lsof -i :9222`). Close all other Chrome instances first.
 - **Agent sees a blank page**: CDP only allows one connection per tab. If DevTools "Inspect" window is open for that tab, the agent's tools may be blocked.
+- **Missing tab error**: In shared CDP mode, retry with `["tab", "<tab-id-or-label>", ...]` or `["--tab", "<tab-id-or-label>", ...]` in `args`. The error includes the current tab list.
+- **Wrong tab acted on**: Check for direct CDP code or shell scripts that bypass `agent_browser`. Raw CDP scripts must use `/json/list`, connect to the chosen target, and avoid navigation/actions plus `Target.createTarget` / `Target.closeTarget` unless disposable raw-CDP control is explicitly required and the user accepts that it bypasses shared-browser locking.
 
 ---
 

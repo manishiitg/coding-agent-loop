@@ -99,7 +99,7 @@ Each new entry that records a *proposed but not-yet-applied* eval change gets a 
 
 CLOSE-OUT EDITS — read this carefully.
 
-Before applying eval changes in this run, scan builder/review.md for findings that the change addresses (most likely from /review-goal-alignment, but /review-plan can also surface "no validation_schema / weak measurement" findings that map to eval). The match is by intent, not exact wording. Collect the matching `F-YYYY-MM-DD-NNN` ids before you apply.
+Before applying eval changes in this run, scan builder/review.md for findings that the change addresses (for example from /review-plan, /review-config, or /review-code findings that surface weak measurement or broken eval contracts). The match is by intent, not exact wording. Collect the matching `F-YYYY-MM-DD-NNN` ids before you apply.
 
 After each eval change is applied:
 

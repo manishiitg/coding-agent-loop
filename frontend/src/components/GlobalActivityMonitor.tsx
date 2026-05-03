@@ -573,6 +573,14 @@ export const GlobalActivityMonitor: React.FC = () => {
     setOpen(false)
   }, [currentWorkflowPresetName, runningWorkflowsBySession])
 
+  const handleHeaderClick = useCallback(() => {
+    if (visibleSessions.length === 1 && primarySession) {
+      void handleOpenSession(primarySession)
+      return
+    }
+    openActiveWorkInQuickSwitcher()
+  }, [handleOpenSession, openActiveWorkInQuickSwitcher, primarySession, visibleSessions.length])
+
   if (visibleSessions.length === 0) {
     return null
   }
@@ -581,10 +589,10 @@ export const GlobalActivityMonitor: React.FC = () => {
     <div ref={containerRef} className="relative">
       <button
         type="button"
-        onClick={openActiveWorkInQuickSwitcher}
+        onClick={handleHeaderClick}
         className="relative flex items-center gap-2 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-700/50 dark:bg-blue-900/20 dark:text-blue-200 dark:hover:bg-blue-900/35"
-        aria-label="Open active work in command center"
-        title="Open active work in Ctrl+K"
+        aria-label={visibleSessions.length === 1 ? 'Open active work' : 'Open active work in command center'}
+        title={visibleSessions.length === 1 ? 'Open active work' : 'Open active work in Ctrl+K'}
       >
         <span className={`h-2 w-2 rounded-full ${statusDotClasses(primaryTone)}`} />
         {primaryTone === 'needs-input' ? (

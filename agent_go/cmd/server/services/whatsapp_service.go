@@ -978,7 +978,12 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 
 	case "switch":
 		if strings.TrimSpace(arg) == "" {
-			w.sendWorkflowCommandReply(ctx, chatJID, "Usage: @switch 3 or @switch instagram. Type @list to see workflow numbers.")
+			w.sendWorkflowCommandReply(ctx, chatJID, "Use: @switch 3 [run|optimize|builder]")
+			return true
+		}
+		workflowQuery, mode, modeErr := parseWhatsAppSwitchArg(arg)
+		if modeErr != nil {
+			w.sendWorkflowCommandReply(ctx, chatJID, modeErr.Error())
 			return true
 		}
 		candidates, err := w.discoverWorkflowCandidates(ctx, owner)
@@ -986,46 +991,46 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Couldn't switch workflow: %v", err))
 			return true
 		}
-		candidate, matches := matchWhatsAppWorkflowCandidate(candidates, arg)
+		candidate, matches := matchWhatsAppWorkflowCandidate(candidates, workflowQuery)
 		if candidate == nil {
 			if len(matches) > 1 {
 				w.sendWorkflowCommandReply(ctx, chatJID, formatWhatsAppWorkflowMatches(matches))
 			} else {
-				w.sendWorkflowCommandReply(ctx, chatJID, "I couldn't find that workflow. Type @list, then use @switch <number> or @switch <name>.")
+				w.sendWorkflowCommandReply(ctx, chatJID, "Not found. Use @list, then @switch <number>.")
 			}
 			return true
 		}
-		slug := w.ensureWorkflowRoute(ctx, *candidate)
+		slug := w.ensureWorkflowRoute(ctx, *candidate, mode)
 		w.setActiveSlug(chatJID, slug)
-		w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Activated %s for this chat. Send messages normally now.\n\nDeactivate with @deactivate, @off, or @%s deactivate.", candidate.Label, slug))
+		w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Using %s (%s). Off: @off", candidate.Label, formatWhatsAppRouteMode(mode)))
 		return true
 
 	case "status":
 		active := w.activeSlug(chatJID)
 		if active == "" {
-			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow. Type @list, then @switch <number> or @switch <name>.")
+			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow. Use @list.")
 			return true
 		}
 		route := w.resolveSlugRoute(active)
 		if route == nil {
 			w.clearActiveSlug(chatJID)
-			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow. The previous route no longer exists. Type @list to choose one.")
+			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow. Use @list.")
 			return true
 		}
 		label := active
 		if candidate := w.findWorkflowCandidateByRoute(ctx, owner, *route); candidate != nil {
 			label = candidate.Label
 		}
-		w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Active workflow: %s (@%s).\nDeactivate with @deactivate, @off, or @%s deactivate.", label, active, active))
+		w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Using %s (@%s, %s). Off: @off", label, active, formatWhatsAppRouteMode(route.WorkshopMode)))
 		return true
 
 	case "deactivate", "deactive", "off", "stop":
 		active := w.activeSlug(chatJID)
 		w.clearActiveSlug(chatJID)
 		if active != "" {
-			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Deactivated @%s. Plain WhatsApp messages will use the default chat again.", active))
+			w.sendWorkflowCommandReply(ctx, chatJID, "Workflow off. Default chat active.")
 		} else {
-			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow was set. Type @list to choose one.")
+			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow.")
 		}
 		return true
 	}
@@ -1053,6 +1058,59 @@ func parseWhatsAppWorkflowCommand(text string) (cmd, arg string, ok bool) {
 		return first, strings.TrimSpace(strings.Join(fields[1:], " ")), true
 	default:
 		return "", "", false
+	}
+}
+
+func parseWhatsAppSwitchArg(arg string) (workflowQuery, mode string, err error) {
+	fields := strings.Fields(strings.TrimSpace(arg))
+	if len(fields) == 0 {
+		return "", "", fmt.Errorf("Use: @switch <workflow> [run|optimize|builder]")
+	}
+	mode = "run"
+	if len(fields) > 1 {
+		if parsedMode, ok := normalizeWhatsAppRouteMode(fields[len(fields)-1]); ok {
+			mode = parsedMode
+			fields = fields[:len(fields)-1]
+		} else if looksLikeWhatsAppRouteMode(fields[len(fields)-1]) {
+			return "", "", fmt.Errorf("Unknown mode %q. Use run, optimize, or builder.", fields[len(fields)-1])
+		}
+	}
+	workflowQuery = strings.TrimSpace(strings.Join(fields, " "))
+	if workflowQuery == "" {
+		return "", "", fmt.Errorf("Use: @switch <workflow> [run|optimize|builder]")
+	}
+	return workflowQuery, mode, nil
+}
+
+func normalizeWhatsAppRouteMode(raw string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "run", "r":
+		return "run", true
+	case "optimize", "optimizer", "optimise", "optimiser", "opt":
+		return "optimizer", true
+	case "builder", "build", "b":
+		return "builder", true
+	default:
+		return "", false
+	}
+}
+
+func looksLikeWhatsAppRouteMode(raw string) bool {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	return strings.HasPrefix("run", s) ||
+		strings.HasPrefix("optimize", s) ||
+		strings.HasPrefix("optimizer", s) ||
+		strings.HasPrefix("builder", s)
+}
+
+func formatWhatsAppRouteMode(mode string) string {
+	switch mode {
+	case "optimizer":
+		return "optimize"
+	case "builder":
+		return "builder"
+	default:
+		return "run"
 	}
 }
 
@@ -1159,7 +1217,7 @@ func formatWhatsAppWorkflowList(candidates []whatsappWorkflowCandidate) string {
 		}
 		sb.WriteString(fmt.Sprintf("%d. %s\n", c.Number, c.Label))
 	}
-	sb.WriteString("\nSwitch with @switch 3 or @switch instagram.\nStatus: @status\nDeactivate: @deactivate or @off")
+	sb.WriteString("\n@switch 3 [run|optimize|builder]\n@status | @off")
 	return strings.TrimSpace(sb.String())
 }
 
@@ -1219,7 +1277,7 @@ func (w *WhatsAppService) findWorkflowCandidateByRoute(ctx context.Context, owne
 	return nil
 }
 
-func (w *WhatsAppService) ensureWorkflowRoute(ctx context.Context, candidate whatsappWorkflowCandidate) string {
+func (w *WhatsAppService) ensureWorkflowRoute(ctx context.Context, candidate whatsappWorkflowCandidate, mode string) string {
 	slug := candidate.Slug
 	if slug == "" {
 		slug = slugifyWhatsAppWorkflow(candidate.Label)
@@ -1227,7 +1285,12 @@ func (w *WhatsAppService) ensureWorkflowRoute(ctx context.Context, candidate wha
 	if slug == "" {
 		slug = "workflow"
 	}
-	route := ChannelRoute{WorkflowID: candidate.ID, WorkspacePath: candidate.WorkspacePath, WorkshopMode: candidate.WorkshopMode}
+	if normalized, ok := normalizeWhatsAppRouteMode(mode); ok {
+		mode = normalized
+	} else {
+		mode = "run"
+	}
+	route := ChannelRoute{WorkflowID: candidate.ID, WorkspacePath: candidate.WorkspacePath, WorkshopMode: mode}
 
 	w.routingMu.Lock()
 	if w.routing == nil {
@@ -1348,9 +1411,9 @@ func parseWhatsAppSlugPrefix(text string) (slug string, rest string, ok bool) {
 
 func unknownWhatsAppWorkflowCommandMessage(slug string) string {
 	if slug = strings.TrimSpace(slug); slug != "" {
-		return fmt.Sprintf("I don't know @%s.\n\nCommands:\n@list - show workflows\n@switch <number or name> - activate a workflow\n@status - show active workflow\n@deactivate or @off - clear active workflow", slug)
+		return fmt.Sprintf("Unknown @%s. Try @list, @switch <number>, @status, or @off.", slug)
 	}
-	return "Commands:\n@list - show workflows\n@switch <number or name> - activate a workflow\n@status - show active workflow\n@deactivate or @off - clear active workflow"
+	return "Commands: @list, @switch <number> [mode], @status, @off"
 }
 
 // GetOwner returns the currently-bound owner, or nil when unclaimed.
@@ -1752,7 +1815,7 @@ func (w *WhatsAppService) SendThreadMessage(ctx context.Context, threadID Thread
 			if strings.Contains(strings.ToLower(message), strings.ToLower(deactivateHint)) {
 				w.markActiveRouteHintSent(threadID.ChannelID, activeSlug)
 			} else if w.shouldSendActiveRouteHint(threadID.ChannelID, activeSlug) {
-				message = strings.TrimSpace(message) + fmt.Sprintf("\n\nActive workflow: @%s. Type %s to turn this off.", activeSlug, deactivateHint)
+				message = strings.TrimSpace(message) + fmt.Sprintf("\n\n[%s active | @off]", activeSlug)
 			}
 		} else {
 			w.clearActiveSlug(threadID.ChannelID)

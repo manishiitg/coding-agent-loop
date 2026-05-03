@@ -390,7 +390,7 @@ Use when you have a falsifiable hypothesis: "change X will move metric Y by Z." 
 
 Returns the canonical guided-flow text for any workflow slash command. Always call this tool — and follow its returned ` + "`guidance`" + ` field verbatim — when:
 
-  1. The user invokes a slash command (` + "`/improve-workflow`" + `, ` + "`/propose-experiment`" + `, ` + "`/review-goal-alignment`" + `, ` + "`/exp-abort`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
+  1. The user invokes a slash command (` + "`/improve-workflow`" + `, ` + "`/propose-experiment`" + `, ` + "`/review-plan`" + `, ` + "`/exp-abort`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
   2. The user describes the same intent in plain chat ("help me improve this workflow", "review whether the goal is being met", "abort the active experiment"). Recognize the intent, pick the matching kind, and call the tool. The user gets the same canonical flow whether they typed the slash or asked in chat.
   3. You're running on a schedule (e.g. ` + "`/improve-continuously`" + `'s scheduled improve message). The schedule message names the kind to call.
 
@@ -402,11 +402,11 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
   Reviews (recommend, don't apply; appends to ` + "`builder/review.md`" + `):
     - review-plan            → comprehensive plan audit (structure + per-step descriptions + todo_task orchestrators)
-    - review-goal-alignment  → goal-vs-outcome alignment (workflow + eval)
     - review-speed           → latency analysis
     - review-cost            → cost analysis
     - review-config          → per-step KB/db/lock recommendations
     - review-code            → saved main.py vs step descriptions (drift + browser + dynamism)
+    - review-sync            → plan-changelog-to-artifact sync audit
 
   Improvements (AI proposes; framework gates when metrics defined):
     - improve-setup-framework  → one-time framework bootstrap

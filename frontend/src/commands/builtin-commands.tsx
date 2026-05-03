@@ -43,20 +43,6 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'review-goal-alignment',
-    description: 'Goal-vs-outcome alignment: does a real run achieve the objective, are success_criteria met, does eval measure them',
-    icon: <CheckCircle className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-goal-alignment", focus=${JSON.stringify(focus)}, run_folder=${JSON.stringify(runFolder || '')}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
-    }
-  },
-  {
     command: 'review-speed',
     description: 'Review workflow latency and how to make it faster',
     icon: <Minimize2 className="w-4 h-4" />,
@@ -95,6 +81,19 @@ export const builtinCommands: CommandDefinition[] = [
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
       ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-config", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+    }
+  },
+  {
+    command: 'review-sync',
+    description: 'Check whether plan changes were propagated to learnings, code, KB, db, reports, and eval',
+    icon: <RefreshCw className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-sync", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
     }
   },
   {

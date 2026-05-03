@@ -1182,7 +1182,9 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 	// Intercept step completion events to send progress notifications
 	if event.Type == orchestrator_events.OrchestratorAgentEnd {
 		if endEvent, ok := event.Data.(*orchestrator_events.OrchestratorAgentEndEvent); ok {
-			// Only notify for execution agent completions (not learning, validation, etc.)
+			// Only track execution agent completions (not learning, validation, etc.).
+			// The original orchestrator_agent_end event is already forwarded above;
+			// do not also emit a synthetic unified completion for the same step.
 			agentType := endEvent.AgentType
 			if agentType == "todo_planner_execution" || agentType == "conditional" || agentType == "todo_task_orchestrator" {
 				stepName := endEvent.AgentName
@@ -1208,21 +1210,6 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 					progressExec.Err = fmt.Errorf("%s", result)
 				}
 				b.session.StepRegistry.Register(progressExec)
-
-				// Notify so backgroundCompletionLoop picks it up
-				if b.session.executionNotifier != nil {
-					b.session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
-						ID:                progressID,
-						ParentExecutionID: b.parentID,
-						Name:              fmt.Sprintf("step-%s", stepName),
-						Cancel:            nil,
-					})
-					if endEvent.Success {
-						b.session.executionNotifier.OnExecutionComplete(progressID, fmt.Sprintf("step-%s", stepName), truncateResult(result, 500), nil, nil)
-					} else {
-						b.session.executionNotifier.OnExecutionComplete(progressID, fmt.Sprintf("step-%s", stepName), "", nil, fmt.Errorf("%s", truncateResult(result, 500)))
-					}
-				}
 
 				if b.logger != nil {
 					b.logger.Info(fmt.Sprintf("📊 [WORKFLOW_PROGRESS] Step %d '%s' %s", endEvent.StepIndex, stepName, status))

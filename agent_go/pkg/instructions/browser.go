@@ -95,8 +95,8 @@ func GetBrowserUploadInstructions() string {
 When a website has a file upload input (e.g. file picker, drag-and-drop zone), use these tools to upload workspace files:
 
 ### Using agent_browser (Headless/CDP mode)
-1. Snapshot to find the file input: agent_browser(command="snapshot", args=["-i"])
-2. Upload using the ref: agent_browser(command="upload", args=["@ref", "Downloads/report.pdf"])
+1. In CDP mode, list/select a tab and include it inline on each page action: agent_browser(command="snapshot", args=["tab", "t1", "-i"])
+2. Upload using the ref. In CDP mode include the tab inline: agent_browser(command="upload", args=["tab", "t1", "@ref", "Downloads/report.pdf"])
 
 ### Using browser_file_upload (Playwright mode)
 1. First use browser_snapshot to find the file input element
@@ -207,26 +207,30 @@ You have the `+"`agent_browser`"+` tool controlling the **user's real Chrome bro
 
 Call agent_browser via HTTP API. Always include `+"`--cdp %[1]s`"+` in args.
 
-In shared CDP mode, browser actions require an explicit tab choice first. If you have not selected a tab yet, list tabs, then either select an existing tab or create a labeled workflow tab:
+In shared CDP mode, every browser action must include an explicit tab in that command's args. Always list tabs and reuse an existing suitable tab when possible. Select a tab whose URL/title already matches the target site, workflow, or task. Only create a new labeled workflow tab if no existing tab is suitable:
 
-`+"```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": [\"--cdp\", \"%[1]s\"] + (args or []), \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# First choose a tab. Listing tabs is always allowed.\nprint(browser(\"tab\", []))\n\n# Select an existing tab by id/label, or create a new labeled tab for this workflow.\nbrowser(\"tab\", [\"t1\"])\n# browser(\"tab\", [\"new\", \"--label\", \"my-workflow-tab\", \"https://example.com\"])\n\nsnap = browser(\"snapshot\", [\"-i\"])\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"text\"])\nsnap = browser(\"snapshot\", [\"-i\"])  # re-snapshot after each interaction\n```"+`
+`+"```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": [\"--cdp\", \"%[1]s\"] + (args or []), \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# First list tabs. Listing tabs is always allowed and should be done before new tabs.\ntabs = browser(\"tab\", [])\nprint(tabs)\n\n# Use the chosen tab inline on every page action. The tab token is removed before the action runs.\nsnap = browser(\"snapshot\", [\"tab\", \"t1\", \"-i\"])\nbrowser(\"click\", [\"tab\", \"t1\", \"@e1\"])\nbrowser(\"fill\", [\"tab\", \"t1\", \"@e2\", \"text\"])\n\n# Only if no existing tab is suitable, create a stable labeled workflow tab.\n# browser(\"tab\", [\"new\", \"--label\", \"my-workflow-tab\", \"https://example.com\"])\nsnap = browser(\"snapshot\", [\"tab\", \"my-workflow-tab\", \"-i\"])  # re-snapshot after each interaction\n```"+`
 
 Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 
 ### CDP-Specific Behaviors
 - The user can **see everything you do** in their browser — actions are visible in real-time
 - The browser may have **existing cookies, login sessions, and tabs** — leverage authenticated sessions without re-logging in
-- You must choose a tab with `+"`browser(\"tab\", ...)`"+` before using open, snapshot, click, fill, eval, or other page actions
-- If you create a new tab, use a stable label: `+"`browser(\"tab\", [\"new\", \"--label\", \"<workflow-label>\", \"https://target.example\"])`"+`
+- You must include `+"`[\"tab\", \"<tab-id-or-label>\", ...]`"+` or `+"`[\"--tab\", \"<tab-id-or-label>\", ...]`"+` in every open, snapshot, click, fill, eval, wait, screenshot, or other page-action command
+- Always call `+"`browser(\"tab\", [])`"+` first and reuse an existing tab when its URL/title matches the target domain or workflow
+- If no existing tab is suitable, create one new tab with a stable label: `+"`browser(\"tab\", [\"new\", \"--label\", \"<workflow-label>\", \"https://target.example\"])`"+`
+- Do not create throwaway tabs for routine navigation. Keep a workflow's labeled tab open and navigate within it across steps/runs.
 - **Do NOT call close** unless the user asks — it will close their browser tab
 - Sessions **persist across tool calls** — you don't need to re-open pages between interactions
 - If a site requires login and the user is already logged in, navigate directly to the target page
 - Python/browser code must call this HTTP `+"`agent_browser`"+` tool. Do not connect directly to CDP or use Playwright `+"`connect_over_cdp`"+` for actions unless the task explicitly requires raw CDP and you target a specific tab.
 
 ### Advanced: Direct CDP WebSocket Access
-For operations that need more control (targeting specific tabs, running complex JS, inspecting DOM):
-`+"```python\nimport json, websocket\n\n# 1. List open tabs\nimport requests\ntabs = requests.get('%[1]s/json/list', headers={'Host': 'localhost'}).json()\nfor t in tabs:\n    print(f\"{t['id']}: {t['title']} - {t['url']}\")\n\n# 2. Connect to a specific tab (use suppress_origin=True)\ntarget_id = tabs[0]['id']\nws = websocket.create_connection(\n    f'ws://%[2]s:9222/devtools/page/{target_id}',\n    header=['Host: localhost'], suppress_origin=True\n)\n\n# 3. Run JS on the page\nws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': 'document.title', 'returnByValue': True}}))\nresult = json.loads(ws.recv())\nprint(result['result']['result']['value'])\nws.close()\n```"+`
-**Rules for direct CDP:** Always use `+"`Host: localhost`"+` header and `+"`suppress_origin=True`"+` for WebSocket. Prefer agent_browser for standard navigation/interaction — use direct CDP only when you need tab-level control or complex JS evaluation.
+Prefer `+"`agent_browser eval`"+` with an inline tab for complex JavaScript. It uses the shared CDP command lock and prevents another workflow from changing the active tab mid-action.
+
+Use direct CDP WebSocket access only for read-only diagnostics that cannot be done through `+"`agent_browser`"+`:
+`+"```python\nimport json, websocket\n\n# 1. List open tabs and reuse a matching tab if possible\nimport requests\ntabs = requests.get('%[1]s/json/list', headers={'Host': 'localhost'}).json()\nfor t in tabs:\n    print(f\"{t['id']}: {t['title']} - {t['url']}\")\n\n# 2. Connect to a specific tab (use suppress_origin=True)\ntarget_id = next((t['id'] for t in tabs if 'x.com' in t.get('url', '')), tabs[0]['id'])\nws = websocket.create_connection(\n    f'ws://%[2]s:9222/devtools/page/{target_id}',\n    header=['Host: localhost'], suppress_origin=True\n)\n\n# 3. Run JS on the page\nws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': 'document.title', 'returnByValue': True}}))\nresult = json.loads(ws.recv())\nprint(result['result']['result']['value'])\nws.close()\n```"+`
+**Rules for direct CDP:** Always use `+"`Host: localhost`"+` header and `+"`suppress_origin=True`"+` for WebSocket. Reuse existing targets from `+"`/json/list`"+`. Direct CDP bypasses the `+"`agent_browser`"+` tab lock, so do not use it for navigation, clicking, filling, scrolling, uploads, or multi-page loops. Do not call `+"`window.location`"+`, `+"`element.click()`"+`, `+"`Target.createTarget`"+`, `+"`/json/new`"+`, `+"`Target.closeTarget`"+`, or `+"`/json/close`"+` unless the task explicitly requires disposable raw-CDP control and the user accepts that it bypasses shared-browser locking.
 
 For detailed usage, read: execute_shell_command(command="cat %[3]s")`, cdpURL, host, agentBrowserSkillPath())
 }

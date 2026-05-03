@@ -682,7 +682,7 @@ func (f *BotEventFilter) describeToolCall(event BotEventData) string {
 		return "Working with media"
 	case name == "execute_step" || name == "create_plan" ||
 		strings.HasPrefix(name, "add_") || strings.HasPrefix(name, "update_") || strings.HasPrefix(name, "delete_") ||
-		name == "optimize_step" || name == "debug_step" || name == "query_step" || name == "analyze_step" ||
+		name == "debug_step" || name == "query_step" || name == "analyze_step" ||
 		name == "cleanup_orphan_step_configs":
 		return "Updating the workflow"
 	case name == "save_memory" || name == "recall_memory" || name == "enrich_memory":

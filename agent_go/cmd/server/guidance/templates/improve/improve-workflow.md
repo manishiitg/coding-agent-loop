@@ -11,7 +11,7 @@ You should be uncomfortable with how obvious-in-retrospect a change feels after 
 SETUP
 1. Read soul/soul.md to extract the objective and success criteria — north star for every decision.
 2. Read evaluation/evaluation_plan.json so you understand what the eval is measuring.
-3. Read variables.json to get the enabled group names.
+3. Read variables/variables.json to get the enabled group names.
 4. **Framework precheck.** Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first to write the Workflow Profile and bootstrap metrics." If the profile declares business-context accumulation or a frozen/ratchet plan and <workflow>/planning/metrics.json is empty, also redirect. Plain mutable+exploratory workflows may proceed without metrics.
 5. **Framework mode.** Read <workflow>/planning/metrics.json. If it has at least one entry, you are in **EXPERIMENT MODE** for this command run: instead of applying changes directly via harden_workflow / replan_workflow_from_results, package the intended changes as experiments via propose_experiment so they're gated behind measurement and auto-revertible. If metrics.json is empty (or missing), you are in **DIRECT MODE**: harden / replan apply changes immediately. Note this choice in the final report.
 6. Use `iteration-0` as the starting evidence set for this command run. Optimizer tools operate on `iteration-0`; do not inspect an older selected iteration as the basis for fixes.
@@ -29,11 +29,12 @@ This is the primary signal in EXPERIMENT MODE and the most undervalued one in DI
 6. List 3–5 candidate changes ranked by expected business impact. Each candidate must name the FILES it would touch (plan/step descriptions, knowledgebase/notes/, learnings/, validation rules, prompts) and be defensible by something specific in iteration-0 run outputs ("posts 7, 12, 19 in iteration-0/group-a all scored <0.3 and all share <pattern>"), not by abstract reasoning. A single candidate may span multiple file kinds — that's fine if they share one underlying belief.
 
 PHASE 2 — STRUCTURAL DIAGNOSIS (complement, not primary)
-1. Call optimize_workflow({{if .Focus}}focus="{{.Focus}}"{{end}}).
+1. Call review_plan({{if .Focus}}focus="{{.Focus}}"{{end}}).
+   - Capture the returned execution_id and wait/query until it completes before continuing.
 2. Read the result and classify findings as Structural (missing steps, wrong ordering, broken context flow, wrong step type) vs Non-structural (weak prompts, weak validation, reliability gaps).
 3. If a MATERIAL structural problem appears and you have real run evidence, call replan_workflow_from_results({{if .Focus}}focus="{{.Focus}}"{{end}}) ONCE before continuing. This tool always reads iteration-0; do not pass an iteration.
 4. Do not thrash the plan. At most one structural replan per command run.
-5. **Reconcile Phase 1 and Phase 2.** If output review surfaced something optimize_workflow missed (likely, because optimize_workflow looks at code-shape, not outputs), trust the output review.
+5. **Reconcile Phase 1 and Phase 2.** If output review surfaced something review_plan missed (likely, because review_plan looks at plan decisions more than business output patterns), trust the output review.
 
 PHASE 3 — PER-GROUP REVIEW → APPLY CHANGES
 Repeat the following for each enabled group, sequentially.
@@ -67,7 +68,7 @@ FINAL REPORT
 Summarize:
 - Mode used (DIRECT or EXPERIMENT) and why
 - Output-review findings (Phase 1) — what patterns in run outputs surfaced
-- Structural diagnosis (Phase 2) — what optimize_workflow added or contradicted
+- Structural diagnosis (Phase 2) — what review_plan added or contradicted
 - Whether replan_workflow_from_results was used, and why
 - Per-group: evidence reviewed, harden changes (DIRECT) or experiment_ids opened with their hypotheses (EXPERIMENT)
 - Which success criteria are now better satisfied (DIRECT), or which experiments are now measuring against which criteria (EXPERIMENT)

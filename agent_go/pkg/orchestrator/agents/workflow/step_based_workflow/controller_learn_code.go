@@ -70,11 +70,11 @@ type LearnCodeMetadata struct {
 	RelearnCount   int            `json:"relearn_count"` // how many times the LLM had to rewrite
 
 	// Rich run tracking (added for debugging & optimization decisions)
-	RecentRuns    []RunRecord          `json:"recent_runs,omitempty"`    // last N runs with full details (capped at 10)
-	GroupStats    map[string]GroupStat `json:"group_stats,omitempty"`    // per-group success/failure counts
-	DurationStats *DurationStats       `json:"duration_stats,omitempty"` // execution time statistics
-	LastFailure   *LastFailureInfo     `json:"last_failure,omitempty"`   // details of most recent failure
-	CurrentStreak *StreakInfo          `json:"current_streak,omitempty"` // consecutive success/failure streak
+	RecentRuns    []RunRecord          `json:"recent_runs,omitempty"`     // last N runs with full details (capped at 10)
+	GroupStats    map[string]GroupStat `json:"group_stats,omitempty"`     // per-group success/failure counts
+	DurationStats *DurationStats       `json:"duration_stats,omitempty"`  // execution time statistics
+	LastFailure   *LastFailureInfo     `json:"last_failure,omitempty"`    // details of most recent failure
+	CurrentStreak *StreakInfo          `json:"current_streak,omitempty"`  // consecutive success/failure streak
 	LockCodeStats *LockCodeStats       `json:"lock_code_stats,omitempty"` // failures while main.py is locked
 
 	// TODO: Auto lock_code tracking — auto-unlock when main.py changes (hash mismatch),
@@ -1455,9 +1455,10 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 	// the learn-code prompt teaches).
 	if hasBrowser {
 		sb.WriteString("**Browser automation — execution-mode tool call examples (Python):**\n")
-		sb.WriteString("- Snapshot: `call_mcp('playwright', 'browser_snapshot', {})` or `call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['-i'], 'session': 'main'})`\n")
-		sb.WriteString("- Click (via runtime-parsed ref — the literal `'abc123'` / `'@e1'` below are PLACEHOLDERS; the actual value must be parsed from the snapshot variable each run, NEVER hardcoded): `call_mcp('playwright', 'browser_click', {'ref': ref_parsed_from_snapshot})` or `call_mcp('workspace_browser', 'agent_browser', {'command': 'click', 'args': [ref_parsed_from_snapshot], 'session': 'main'})`\n")
-		sb.WriteString("- Click (via durable selector — preferred for readability when the tool accepts it): `call_mcp('playwright', 'browser_click', {'selector': '#panAdhaarUserId'})` or `agent_browser` `args=['[aria-label=\"Sign in\"]']`\n")
+		sb.WriteString("- CDP mode: every `agent_browser` page action must include an inline tab, e.g. `args=['tab', 't1', '-i']` for snapshot or `args=['tab', 't1', ref_parsed_from_snapshot]` for click. First call `agent_browser` with `command='tab', args=[]` to list tabs.\n")
+		sb.WriteString("- Snapshot: `call_mcp('playwright', 'browser_snapshot', {})` or, in CDP mode, `call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['tab', 't1', '-i'], 'session': 'main'})`\n")
+		sb.WriteString("- Click (via runtime-parsed ref — the literal `'abc123'` / `'@e1'` below are PLACEHOLDERS; the actual value must be parsed from the snapshot variable each run, NEVER hardcoded): `call_mcp('playwright', 'browser_click', {'ref': ref_parsed_from_snapshot})` or, in CDP mode, `call_mcp('workspace_browser', 'agent_browser', {'command': 'click', 'args': ['tab', 't1', ref_parsed_from_snapshot], 'session': 'main'})`\n")
+		sb.WriteString("- Click (via durable selector — preferred for readability when the tool accepts it): `call_mcp('playwright', 'browser_click', {'selector': '#panAdhaarUserId'})` or, in CDP mode, `agent_browser` `args=['tab', 't1', '[aria-label=\"Sign in\"]']`\n")
 		sb.WriteString("- Click (via Playwright locator API — most durable for multi-step flows): `call_mcp('playwright', 'browser_run_code', {'code': \"await page.getByRole('button', { name: 'Continue' }).click()\"})`\n")
 		sb.WriteString("- Always `get_api_spec` first to see exact parameter schemas. Do NOT guess parameter names.\n\n")
 	}

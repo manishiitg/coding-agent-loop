@@ -97,6 +97,53 @@ The probe JS body is identical across backends. Only the wrapper differs:
 | Playwright MCP | `call_mcp('playwright', 'browser_evaluate', {'function': '<JS>'})` |
 | agent-browser CLI | `agent-browser eval "<JS>"` — returns JSON on stdout; pipe to a file if large |
 
+## Shared CDP tab contract
+
+When a workflow uses `agent_browser` in CDP mode, it is controlling the user's real Chrome through a shared CDP port. Chrome tabs are global to that browser, so the workflow must not rely on agent-browser's "latest active tab" behavior. The project wrapper enforces an explicit tab on every page action.
+
+### Required flow
+
+1. List tabs first:
+   ```python
+   browser("tab", [])
+   ```
+2. Reuse an existing tab if its URL/title already matches the target site, workflow, or task.
+3. Create one stable labeled tab only when no existing tab is suitable:
+   ```python
+   browser("tab", ["new", "--label", "upwork-profile", "https://www.upwork.com/"])
+   ```
+4. Include the tab inline on every page action:
+   ```python
+   browser("open", ["tab", "upwork-profile", "https://www.upwork.com/freelancers/example"])
+   browser("snapshot", ["tab", "upwork-profile", "-i"])
+   browser("click", ["tab", "upwork-profile", "@e1"])
+   browser("fill", ["tab", "upwork-profile", "@e2", "search text"])
+   browser("eval", ["tab", "upwork-profile", "document.title"])
+   ```
+
+`["--tab", "<tab-id-or-label>", ...]` is also accepted.
+
+### Enforcement
+
+The MCP wrapper rejects CDP page actions that omit a tab. The error includes the current tab list and tells the agent to retry with either `["tab", "<tab-id-or-label>", ...]` or `["--tab", "<tab-id-or-label>", ...]`. `tab` and `reset` commands are exempt because they are used to inspect or repair tab state.
+
+The wrapper translates the inline tab into native agent-browser behavior by selecting the tab immediately before the command, then running the command under a per-CDP-port mutex. This keeps `select tab -> action` atomic enough to avoid interleaving with another workflow command on the same CDP port. Commands against different CDP ports do not share that lock.
+
+### Important distinction
+
+Native agent-browser uses a session-level active tab (`agent-browser --session ... tab t2`, then `agent-browser --session ... snapshot`). The inline tab form is this project's MCP wrapper API; it is intentionally stricter so the LLM chooses the tab on every browser action instead of inheriting whichever tab happened to be active.
+
+### Direct CDP scripts
+
+Raw CDP scripts can bypass the wrapper, so they must follow the same tab discipline manually:
+
+- Read existing targets from `/json/list`.
+- Reuse a matching target by URL/title when possible.
+- Prefer `agent_browser eval` with an inline tab for complex JavaScript because it uses the shared CDP command lock.
+- Treat direct CDP as read-only diagnostics by default. It bypasses the wrapper lock, so do not use it for navigation, clicking, filling, scrolling, uploads, or multi-page loops.
+- Do not call `window.location`, `element.click()`, `Target.createTarget`, `/json/new`, `Target.closeTarget`, or `/json/close` unless the task explicitly requires disposable raw-CDP control and the user accepts that it bypasses shared-browser locking.
+- If direct CDP is used for diagnostics, connect to the chosen target's WebSocket and close only the WebSocket client, not the Chrome tab.
+
 ## Site-access resilience
 
 Production sites often block Playwright-launched browsers. When `browser_navigate` returns "Permission Denied" / a blank page / a native `alert()` freeze, the agent should:

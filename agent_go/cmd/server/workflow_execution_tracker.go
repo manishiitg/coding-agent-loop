@@ -88,6 +88,8 @@ func inferTrackedExecutionKind(source, phaseID, name string, meta map[string]str
 	switch {
 	case strings.HasPrefix(lowerName, "step-"):
 		return "step"
+	case strings.Contains(lowerName, "full-workflow"):
+		return "full_workflow"
 	case strings.Contains(lowerName, "full workflow execution"):
 		return "full_workflow"
 	case strings.Contains(lowerName, "full evaluation"):
@@ -108,6 +110,23 @@ func inferTrackedExecutionKind(source, phaseID, name string, meta map[string]str
 	}
 
 	return "background_task"
+}
+
+func trackedExecutionAppearsInRunningWorkflowList(exec *TrackedWorkflowExecution) bool {
+	if exec == nil || exec.Status != trackedExecutionStatusRunning {
+		return false
+	}
+	if exec.Source == trackedExecutionSourceWorkflowRun {
+		return true
+	}
+	if exec.Source != trackedExecutionSourceWorkshopBackground {
+		return false
+	}
+	kind := normalizeTrackedExecutionKind(exec.Kind)
+	if kind == "" {
+		kind = inferTrackedExecutionKind(exec.Source, exec.PhaseID, exec.Name, exec.Metadata)
+	}
+	return kind == "full_workflow"
 }
 
 func trackedExecutionToActive(exec *TrackedWorkflowExecution) ActiveWorkflowExecution {
@@ -334,7 +353,7 @@ func (api *StreamingAPI) listRunningWorkflowExecutions(userID string) []ActiveWo
 
 	list := make([]ActiveWorkflowExecution, 0, len(api.trackedWorkflowExecutions))
 	for _, exec := range api.trackedWorkflowExecutions {
-		if exec == nil || exec.Source != trackedExecutionSourceWorkflowRun || exec.Status != trackedExecutionStatusRunning {
+		if !trackedExecutionAppearsInRunningWorkflowList(exec) {
 			continue
 		}
 		if userID != "" && exec.UserID != "" && exec.UserID != userID {
@@ -357,7 +376,7 @@ func (api *StreamingAPI) listRunningWorkflowExecutionsForWorkspace(workspacePath
 
 	list := make([]ActiveWorkflowExecution, 0, len(api.trackedWorkflowExecutions))
 	for _, exec := range api.trackedWorkflowExecutions {
-		if exec == nil || exec.Source != trackedExecutionSourceWorkflowRun || exec.Status != trackedExecutionStatusRunning {
+		if !trackedExecutionAppearsInRunningWorkflowList(exec) {
 			continue
 		}
 		if normalizedWorkspace != "" && exec.WorkspacePath != normalizedWorkspace {

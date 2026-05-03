@@ -225,7 +225,7 @@ const classifyPhase = (phase: string): StageBucket => {
   if (phase === 'evaluation_scoring' || phase.startsWith('evaluation')) return 'evaluation'
   if (phase.startsWith('kb_')) return 'knowledgebase'
   if (phase === 'conditional_evaluation' || phase === 'todo_task' || phase === 'routing' || phase.includes('routing')) return 'routing'
-  if (phase === 'harden_workflow' || phase === 'review_step_code' || phase === 'replan_workflow_from_results' || phase === 'optimize_step') return 'workshop'
+  if (phase === 'harden_workflow' || phase === 'review_step_code' || phase === 'replan_workflow_from_results') return 'workshop'
   return 'other'
 }
 
@@ -1869,7 +1869,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                                 else if (phase.includes('learning')) { phaseLabel = 'Learning' }
                                                 else if (phase.startsWith('kb_')) { phaseLabel = 'Knowledgebase' }
                                                 else if (phase === 'conditional_evaluation' || phase === 'todo_task') { phaseLabel = 'Routing' }
-                                                else if (phase === 'harden_workflow' || phase === 'review_step_code' || phase === 'replan_workflow_from_results' || phase === 'optimize_step') { phaseLabel = 'Workshop' }
+                                                else if (phase === 'harden_workflow' || phase === 'review_step_code' || phase === 'replan_workflow_from_results') { phaseLabel = 'Workshop' }
                                                 else if (phase === 'evaluation_scoring' || phase.startsWith('evaluation')) { phaseLabel = 'Evaluation' }
                                                 else { phaseLabel = phase }
 

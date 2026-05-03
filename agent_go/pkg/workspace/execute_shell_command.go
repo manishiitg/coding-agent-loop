@@ -146,6 +146,14 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		}, nil
 	}
 
+	if rawCDP := detectRawChromeCDPAccess(params.Command); rawCDP != "" {
+		log.Printf("[SHELL] Blocked raw Chrome CDP access via shell (%s). Command: %s", rawCDP, redactShellCommandForLog(params.Command))
+		return ShellCommandResult{
+			Stderr:   fmt.Sprintf("ERROR: Raw Chrome CDP access via execute_shell_command is blocked (%s).\n\nUse the agent_browser tool instead so shared-CDP tab selection and locking are enforced.\n\nAllowed replacements:\n  - List tabs: agent_browser(command=\"tab\", args=[], session=\"<session>\")\n  - Run JavaScript: agent_browser(command=\"eval\", args=[\"tab\", \"<tab-id-or-label>\", \"document.title\"], session=\"<session>\")\n  - Navigate: agent_browser(command=\"open\", args=[\"tab\", \"<tab-id-or-label>\", \"https://example.com\"], session=\"<session>\")\n\nDo not use ws://localhost:9222/devtools/page, http://localhost:9222/json/*, websocket.create_connection(...9222...), or direct CDP Target/Runtime calls from shell. Those bypass the shared browser lock and can interfere with other running workflows.", rawCDP),
+			ExitCode: 1,
+		}, nil
+	}
+
 	if sessionCfg != nil && sessionCfg.GeminiProjectDirID != "" {
 		params.Command = rewriteGeminiRelativePaths(params.Command, sessionCfg.GeminiProjectDirID)
 		if params.ExtraEnv == nil {
@@ -284,6 +292,89 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 // $(printf agent)-browser are out of scope.
 func containsAgentBrowserInvocation(cmd string) bool {
 	return strings.Contains(stripShellDataRegions(cmd), "agent-browser")
+}
+
+// detectRawChromeCDPAccess reports shell commands/scripts that talk directly to
+// Chrome's remote debugging endpoint. Unlike containsAgentBrowserInvocation, this
+// intentionally inspects heredoc/script bodies because Python raw-CDP bypasses
+// usually live there.
+func detectRawChromeCDPAccess(cmd string) string {
+	lower := strings.ToLower(cmd)
+	checks := []struct {
+		name     string
+		patterns []string
+	}{
+		{
+			name: "DevTools WebSocket page endpoint",
+			patterns: []string{
+				"ws://localhost:9222/devtools/page",
+				"ws://127.0.0.1:9222/devtools/page",
+				"ws://host.docker.internal:9222/devtools/page",
+				"/devtools/page/",
+			},
+		},
+		{
+			name: "Chrome /json target endpoint",
+			patterns: []string{
+				"http://localhost:9222/json/",
+				"http://127.0.0.1:9222/json/",
+				"http://host.docker.internal:9222/json/",
+				"localhost:9222/json/",
+				"127.0.0.1:9222/json/",
+				"host.docker.internal:9222/json/",
+			},
+		},
+		{
+			name: "raw CDP WebSocket connection",
+			patterns: []string{
+				"websocket.create_connection",
+				"create_connection(",
+				"new websocket(",
+			},
+		},
+		{
+			name: "Chrome CDP method call",
+			patterns: []string{
+				"target.createtarget",
+				"target.closetarget",
+				"runtime.evaluate",
+				"page.navigate",
+				"input.dispatchmouseevent",
+				"input.dispatchkeyevent",
+			},
+		},
+		{
+			name: "workflow CDP URL variable",
+			patterns: []string{
+				"var_twitter_cdp_url",
+				"twitter_cdp_url",
+				"cdp_url",
+			},
+		},
+	}
+
+	hasCDPEndpoint := strings.Contains(lower, ":9222") ||
+		strings.Contains(lower, "/devtools/page") ||
+		strings.Contains(lower, "/json/list") ||
+		strings.Contains(lower, "/json/version") ||
+		strings.Contains(lower, "var_twitter_cdp_url") ||
+		strings.Contains(lower, "twitter_cdp_url") ||
+		strings.Contains(lower, "cdp_url")
+
+	for _, check := range checks {
+		for _, pattern := range check.patterns {
+			if !strings.Contains(lower, pattern) {
+				continue
+			}
+			if check.name == "raw CDP WebSocket connection" || check.name == "Chrome CDP method call" {
+				if !hasCDPEndpoint {
+					continue
+				}
+			}
+			return check.name
+		}
+	}
+	return ""
 }
 
 // heredocStartRe matches the start of a heredoc redirection and captures the delimiter.

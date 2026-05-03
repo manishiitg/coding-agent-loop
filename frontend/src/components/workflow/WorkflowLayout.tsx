@@ -705,6 +705,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [restoreOffer, restoreOfferKey])
 
   useEffect(() => {
+    const handleWorkflowChatUserStarted = (event: Event) => {
+      if (!restoreOffer) return
+      const detail = (event as CustomEvent<{ presetQueryId?: string }>).detail
+      if (detail?.presetQueryId && detail.presetQueryId !== restoreOffer.presetId) return
+
+      if (restoreOffer.kind === 'builder-history') {
+        handledRestoreOfferKeysRef.current.add(restoreOfferKey(restoreOffer.presetId, restoreOffer.session.session_id))
+      }
+      setRestoreOffer(null)
+    }
+
+    window.addEventListener('workflow-chat-user-started', handleWorkflowChatUserStarted)
+    return () => window.removeEventListener('workflow-chat-user-started', handleWorkflowChatUserStarted)
+  }, [restoreOffer, restoreOfferKey])
+
+  useEffect(() => {
     const syncReportPreviewPreference = () => {
       try {
         const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)

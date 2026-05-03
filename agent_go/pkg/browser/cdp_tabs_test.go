@@ -2,6 +2,8 @@ package browser
 
 import "testing"
 
+import "mcp-agent-builder-go/agent_go/pkg/common"
+
 func TestParseTabSelection(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -47,5 +49,60 @@ func TestStripCDPArgs(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("stripCDPArgs()[%d] = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestExtractInlineCDPTab(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantTab     string
+		wantCleaned []string
+		wantErr     bool
+	}{
+		{name: "tab prefix", args: []string{"tab", "t1", "-i"}, wantTab: "t1", wantCleaned: []string{"-i"}},
+		{name: "tab flag", args: []string{"--tab", "upwork", "https://example.com"}, wantTab: "upwork", wantCleaned: []string{"https://example.com"}},
+		{name: "missing tab", args: []string{"-i"}, wantCleaned: []string{"-i"}},
+		{name: "tab missing value", args: []string{"tab"}, wantErr: true},
+		{name: "multiple tabs", args: []string{"tab", "t1", "--tab", "t2"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotTab, gotCleaned, err := extractInlineCDPTab(tt.args)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gotTab != tt.wantTab {
+				t.Fatalf("tab = %q, want %q", gotTab, tt.wantTab)
+			}
+			if len(gotCleaned) != len(tt.wantCleaned) {
+				t.Fatalf("cleaned len = %d, want %d (%v)", len(gotCleaned), len(tt.wantCleaned), gotCleaned)
+			}
+			for i := range tt.wantCleaned {
+				if gotCleaned[i] != tt.wantCleaned[i] {
+					t.Fatalf("cleaned[%d] = %q, want %q", i, gotCleaned[i], tt.wantCleaned[i])
+				}
+			}
+		})
+	}
+}
+
+func TestCDPOwnerIDUsesStableBrowserSessionOverride(t *testing.T) {
+	agentSession := "agent-session-for-cdp-owner-test"
+	workflowSession := "workflow-session-for-cdp-owner-test"
+	browserSession := "workflow-browser-stable-owner"
+	common.SetSessionBrowserSessionID(agentSession, browserSession)
+	defer common.ClearSessionShellConfig(agentSession)
+
+	got := cdpOwnerID(workflowSession, agentSession, "shared-cdp-9222")
+	if got != browserSession {
+		t.Fatalf("cdpOwnerID() = %q, want %q", got, browserSession)
 	}
 }

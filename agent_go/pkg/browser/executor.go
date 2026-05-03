@@ -192,33 +192,25 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	// Add the command
 	cmdArgs = append(cmdArgs, command)
 
-	// Add command arguments if provided
-	// In CDP mode: intercept --cdp URL from agent and resolve host.docker.internal to IP
-	// If agent forgot --cdp in CDP mode, inject it as fallback
-	agentProvidedCdp := false
 	argsArray := stringArgs(args["args"])
 	tabArgs := stripCDPArgs(argsArray)
-	for i, argStr := range argsArray {
-		if argStr == "--cdp" && i+1 < len(argsArray) {
-			agentProvidedCdp = true
-			// Agent passed --cdp <url> — resolve to proper CDP URL
-			cdpURL := resolveCdpURL(e.CdpPort)
-			cmdArgs = append(cmdArgs, "--cdp", cdpURL)
-			log.Printf("[BROWSER] CDP: agent passed --cdp, resolved to %s", cdpURL)
-			// Skip the next arg (the URL value the agent passed)
-			continue
+	commandArgs := argsArray
+	inlineCDPTab := ""
+	if isCdpMode {
+		var inlineErr error
+		inlineCDPTab, commandArgs, inlineErr = extractInlineCDPTab(tabArgs)
+		if inlineErr != nil {
+			return "", inlineErr
 		}
-		// Skip the URL value after --cdp (already handled above)
-		if i > 0 && argsArray[i-1] == "--cdp" {
-			continue
-		}
+	}
+
+	for _, argStr := range commandArgs {
 		cmdArgs = append(cmdArgs, argStr)
 	}
-	// Fallback: if CDP mode but agent didn't pass --cdp, inject it
-	if isCdpMode && !agentProvidedCdp {
+	if isCdpMode {
 		cdpURL := resolveCdpURL(e.CdpPort)
 		cmdArgs = append(cmdArgs, "--cdp", cdpURL)
-		log.Printf("[BROWSER] CDP: agent omitted --cdp, injected fallback %s", cdpURL)
+		log.Printf("[BROWSER] CDP: using %s", cdpURL)
 	}
 
 	// Always add --json for machine-readable output
@@ -307,17 +299,17 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 				return "", err
 			}
 		} else {
-			selectedTab := getCDPTabSelection(e.CdpPort, cdpOwner)
-			if selectedTab == "" {
+			if inlineCDPTab == "" {
 				tabsOutput, tabsErr := e.listCDPTabs(ctx, session, opts)
 				if tabsErr != nil {
-					return "", fmt.Errorf("CDP shared-browser mode requires selecting a tab before %q, but listing tabs failed: %w", command, tabsErr)
+					return "", fmt.Errorf("CDP shared-browser mode requires a tab in args before %q, but listing tabs failed: %w", command, tabsErr)
 				}
-				return "", fmt.Errorf("CDP shared-browser mode requires selecting a tab before %q.\n\nExisting tabs:\n%s\n\nSelect an existing tab with agent_browser(command=\"tab\", args=[\"<tab-id-or-label>\"]) or create a new labeled tab with agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"])", command, strings.TrimSpace(tabsOutput))
+				return "", fmt.Errorf("CDP shared-browser mode requires every page action to include a tab before %q.\n\nExisting tabs:\n%s\n\nUse args like [\"tab\", \"<tab-id-or-label>\", ...commandArgs] or [\"--tab\", \"<tab-id-or-label>\", ...commandArgs]. To inspect tabs, call agent_browser(command=\"tab\", args=[]). To create a labeled tab, call agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"])", command, strings.TrimSpace(tabsOutput))
 			}
-			if err := e.selectCDPTab(ctx, session, selectedTab, opts); err != nil {
-				return "", fmt.Errorf("failed to select CDP tab %q before %q: %w", selectedTab, command, err)
+			if err := e.selectCDPTab(ctx, session, inlineCDPTab, opts); err != nil {
+				return "", e.cdpTabSelectionError(ctx, session, opts, inlineCDPTab, command, err)
 			}
+			log.Printf("[BROWSER] CDP: selected inline tab %q before %q", inlineCDPTab, command)
 		}
 	}
 
@@ -374,10 +366,11 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		// immediately because the killed process hasn't fully released its pages yet.
 		time.Sleep(2 * time.Second)
 		if isCdpMode && command != "tab" && command != "reset" {
-			if selectedTab := getCDPTabSelection(e.CdpPort, cdpOwner); selectedTab != "" {
-				if selectErr := e.selectCDPTab(ctx, session, selectedTab, opts); selectErr != nil {
-					return "", fmt.Errorf("failed to re-select CDP tab %q before retrying %q: %w", selectedTab, command, selectErr)
+			if inlineCDPTab != "" {
+				if selectErr := e.selectCDPTab(ctx, session, inlineCDPTab, opts); selectErr != nil {
+					return "", e.cdpTabSelectionError(ctx, session, opts, inlineCDPTab, command, selectErr)
 				}
+				log.Printf("[BROWSER] CDP: re-selected inline tab %q before retrying %q", inlineCDPTab, command)
 			}
 		}
 		output, err = e.Client.ExecuteCommand(ctx, cmdArgs, opts)
@@ -433,6 +426,14 @@ func (e *Executor) selectCDPTab(ctx context.Context, session, tab string, opts *
 		"--json",
 	}, opts)
 	return err
+}
+
+func (e *Executor) cdpTabSelectionError(ctx context.Context, session string, opts *ExecuteOptions, tab, command string, selectErr error) error {
+	tabsOutput, tabsErr := e.listCDPTabs(ctx, session, opts)
+	if tabsErr != nil {
+		return fmt.Errorf("failed to select CDP tab %q before %q: %w; listing tabs also failed: %v", tab, command, selectErr, tabsErr)
+	}
+	return fmt.Errorf("failed to select CDP tab %q before %q: %w\n\nExisting tabs:\n%s\n\nChoose an existing tab by id/label in args like [\"tab\", \"<tab-id-or-label>\", ...commandArgs], or create a labeled tab with agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"])", tab, command, selectErr, strings.TrimSpace(tabsOutput))
 }
 
 // resolveCdpURL builds the CDP URL for agent-browser.

@@ -23,7 +23,7 @@ func GetToolDefinition() llmtypes.Tool {
 						"items": map[string]interface{}{
 							"type": "string",
 						},
-						"description": "Arguments for the command. Examples: ['https://google.com'] for open, ['-i'] for snapshot (interactive elements), ['@e1'] for click, ['@e2', 'search query'] for fill, ['Enter'] for press, ['page.png'] for screenshot, ['text', '@e1'] for get.",
+						"description": "Arguments for the command. Normal examples: ['https://google.com'] for open, ['-i'] for snapshot (interactive elements), ['@e1'] for click, ['@e2', 'search query'] for fill, ['Enter'] for press, ['page.png'] for screenshot, ['text', '@e1'] for get. In shared CDP mode, every page action MUST include the tab inline before the command args: ['tab', '<tab-id-or-label>', ...] or ['--tab', '<tab-id-or-label>', ...]. CDP examples: ['tab', 't1', 'https://google.com'] for open, ['tab', 't1', '-i'] for snapshot, ['tab', 't1', '@e1'] for click, ['tab', 't1', '@e2', 'search query'] for fill. If a CDP page action is called without a tab, the tool returns an error with the current tab list; then choose or create a tab and retry with the inline tab.",
 					},
 					"session": map[string]interface{}{
 						"type":        "string",

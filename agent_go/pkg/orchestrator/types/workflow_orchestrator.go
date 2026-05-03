@@ -141,6 +141,9 @@ type WorkflowOrchestrator struct {
 	// CDP port for browser mode detection (0 = headless, >0 = CDP mode)
 	cdpPort int
 
+	// Browser mode for prompt instructions ("playwright", "headless", "cdp", or "none").
+	browserMode string
+
 	// toolCallQueryFunc provides live tool call query capability for workshop sessions.
 	// Set by the server layer which has access to the EventStore.
 	toolCallQueryFunc step_based_workflow.ToolCallQueryFunc
@@ -511,12 +514,15 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 	if wo.cdpPort > 0 {
 		todoPlannerAgent.SetCdpPort(wo.cdpPort)
 	}
+	if wo.browserMode != "" {
+		todoPlannerAgent.SetBrowserMode(wo.browserMode)
+	}
 
 	// Propagate knowledgebase lock flag + declared KB shape.
 	todoPlannerAgent.SetLockKnowledgebase(wo.lockKnowledgebase)
 	todoPlannerAgent.SetKBShape(wo.kbShape)
 
-// Pass execution options if set
+	// Pass execution options if set
 	// CRITICAL: Execution options are required for evaluation execution
 	if wo.executionOptions == nil {
 		wo.GetLogger().Error("❌ Execution options is NIL - evaluation execution requires execution options", nil)
@@ -617,12 +623,15 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 	if wo.cdpPort > 0 {
 		todoPlannerAgent.SetCdpPort(wo.cdpPort)
 	}
+	if wo.browserMode != "" {
+		todoPlannerAgent.SetBrowserMode(wo.browserMode)
+	}
 
 	// Propagate knowledgebase lock flag + declared KB shape.
 	todoPlannerAgent.SetLockKnowledgebase(wo.lockKnowledgebase)
 	todoPlannerAgent.SetKBShape(wo.kbShape)
 
-// Pass execution options from WorkflowOrchestrator to the todo planner if set
+	// Pass execution options from WorkflowOrchestrator to the todo planner if set
 	if wo.executionOptions != nil {
 		todoPlannerAgent.SetExecutionOptions(wo.executionOptions)
 		wo.GetLogger().Info(fmt.Sprintf("📋 Passed execution options to todo planner: run_mode=%s, strategy=%s",
@@ -677,6 +686,11 @@ func (wo *WorkflowOrchestrator) SetHTTPSessionID(httpSessionID string) {
 // 0 = headless mode, >0 = CDP mode (connected to user's Chrome).
 func (wo *WorkflowOrchestrator) SetCdpPort(port int) {
 	wo.cdpPort = port
+}
+
+// SetBrowserMode sets the browser mode for prompt instructions.
+func (wo *WorkflowOrchestrator) SetBrowserMode(mode string) {
+	wo.browserMode = mode
 }
 
 // Execute implements the Orchestrator interface

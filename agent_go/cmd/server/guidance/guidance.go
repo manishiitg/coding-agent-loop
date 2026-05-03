@@ -74,8 +74,6 @@ var allKinds = map[string]kindMeta{
 	// Experiment lifecycle
 	"propose-experiment": {Group: "experiment", Description: "Focused experiment opener: pick metric(s), formulate hypothesis, call propose_experiment", Modes: []string{"optimizer"}},
 	"exp-abort":          {Group: "experiment", Description: "Revert + abort the active experiment via captured revertable_diff", Modes: []string{"optimizer"}},
-	"exp-extend":         {Group: "experiment", Description: "Add measurement runs to the active experiment", Modes: []string{"optimizer"}},
-	"exp-conclude":       {Group: "experiment", Description: "Manually verdict an experiment (overrides the evaluator)", Modes: []string{"optimizer"}},
 }
 
 // tmplData is the typed context passed to every guidance template. New

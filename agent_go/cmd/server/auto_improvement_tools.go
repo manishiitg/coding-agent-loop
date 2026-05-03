@@ -62,7 +62,7 @@ func RegisterProposeExperimentTool(agent *mcpagent.Agent, workspacePath, trigger
 					"properties": map[string]interface{}{
 						"path": map[string]interface{}{
 							"type":        "string",
-							"description": "Workflow-relative path. Must match experiments/config.json::allowed_intervention_paths. Forbidden: .env, .git/, workflow.json.",
+							"description": "Workflow-relative path. Forbidden: .env, .git/, workflow.json.",
 						},
 						"operation": map[string]interface{}{
 							"type": "string",

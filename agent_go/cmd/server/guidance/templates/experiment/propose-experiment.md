@@ -47,7 +47,7 @@ WRITE IT
 2. `expected_direction` must match every targeted metric's declared direction. If the metrics' declared directions differ, you cannot bundle them — open separate experiments.
 3. `expected_magnitude` is a single number applied to each metric. If targets have different magnitude expectations, either bundle them only when the magnitude is the floor that all should clear, or split.
 4. `target_metrics` is an array — pass all chosen metric ids.
-5. `intervention_changes`: array of { path, operation, content }. Each path must be in experiments/config.json::allowed_intervention_paths. .env, .git/, and workflow.json are forbidden.
+5. `intervention_changes`: array of { path, operation, content }. `.env`, `.git/`, and `workflow.json` are forbidden.
 
 CALL THE TOOL
 Call propose_experiment with the fields above. The framework captures the revertable diff, applies the changes, opens the measurement window, and returns { experiment_id, status, decisions_entry_id, linked_success_criteria, unanchored_metrics }.

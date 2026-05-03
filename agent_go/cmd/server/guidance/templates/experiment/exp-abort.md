@@ -7,8 +7,8 @@ DISCOVERY
 2. Confirm the user wants to abort (this rolls back the intervention via the captured revertable_diff).
 
 REVERT THE INTERVENTION
-The experiment record carries `revertable_diff` — a JSON envelope listing each intervention path with its pre-intervention content. To revert:
-1. For each entry in `revertable_diff.changes` (or whatever the field is named on the record): use `diff_patch_workspace_file` to restore that path's pre-intervention content. Use `operation: "create"` if the file didn't exist before the experiment, otherwise `"replace"` with the saved content.
+The experiment record carries `intervention.revertable_diff_path` — read that JSON envelope. It lists each intervention path with its pre-intervention content under `files[]`.
+1. For each entry in `files[]`: restore `path` to `before_body` when `had_before=true`. If `had_before=false`, clear the file content because the workspace API does not expose delete.
 2. Verify each restored file matches the saved content before moving on.
 
 ARCHIVE THE EXPERIMENT

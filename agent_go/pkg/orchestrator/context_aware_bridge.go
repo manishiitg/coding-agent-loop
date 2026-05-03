@@ -320,6 +320,16 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	hasBatchContext := totalGroups > 0
 	hasStepID := currentStepID != ""
 
+	// Step-scoped agents already emit llm_generation_end, agent_end, and
+	// orchestrator_agent_end with the same final text. Forwarding their
+	// unified_completion as well duplicates workflow-step output in the UI.
+	// Keep unified_completion for top-level chat/workflow-builder turns, where no
+	// workflow step context is active.
+	if event.Type == events.EventTypeUnifiedCompletion && hasStepID {
+		c.logger.Debug(fmt.Sprintf("🔕 ContextAwareBridge: Suppressed step-scoped unified_completion for step %s", currentStepID))
+		return nil
+	}
+
 	// Add context to metadata if we have any context (step ID, batch, or orchestrator)
 	if hasOrchestratorContext || hasBatchContext || hasStepID {
 		c.logger.Debug(fmt.Sprintf("🔍 ContextAwareBridge: Processing event %s with step %s, batch %s", event.Type, currentStepID, currentGroupName))

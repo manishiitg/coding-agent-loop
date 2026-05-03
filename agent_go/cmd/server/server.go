@@ -878,7 +878,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		"workspace_image_gen": true, "workspace_image_edit": true, "human": true,
 		"workflow": true, "workflow_creator": true,
 		"llm_config_tools": true, "secret_tools": true, "skill_tools": true,
-		"mcp_server_tools": true,
+		"mcp_server_tools": true, "activity_status": true,
 		// Tools registered by guidance.RegisterGuidanceTool — namespaced as
 		// "auto_improvement" in the tool index. Without this entry, the LLM's
 		// curl call to /tools/mcp/auto_improvement/get_workflow_command_guidance
@@ -4084,6 +4084,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				logfWithContext(queryLogCtx, "[WORKFLOW CREATOR] Registered create_workflow tool")
+
+				if err := api.registerActivityStatusTool(underlyingAgent, currentUserID); err != nil {
+					logfWithContext(queryLogCtx, "[ACTIVITY STATUS] Failed to register get_activity_status tool: %v", err)
+					sendError(fmt.Sprintf("Failed to register get_activity_status tool: %v", err), true)
+					return
+				}
+				logfWithContext(queryLogCtx, "[ACTIVITY STATUS] Registered get_activity_status tool")
 
 				if err := api.registerSecretManagementTools(underlyingAgent, currentUserID, "secret_tools", nil); err != nil {
 					logfWithContext(queryLogCtx, "[SECRET TOOLS] Failed to register multi-agent secret tools: %v", err)

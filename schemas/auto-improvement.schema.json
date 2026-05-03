@@ -246,7 +246,7 @@
       "properties": {
         "path": {
           "type": "string",
-          "description": "Workflow-relative path. Must be within experiments/config.json::allowed_intervention_paths."
+          "description": "Workflow-relative path. Forbidden paths are rejected by the runtime."
         },
         "operation": { "$ref": "#/$defs/InterventionOperation" },
         "content": {
@@ -445,7 +445,7 @@
       "type": "object",
       "description": "experiments/config.json — defaults for the experiment loop.",
       "additionalProperties": false,
-      "required": ["default_measurement_runs", "baseline_window", "allowed_intervention_paths"],
+      "required": ["default_measurement_runs", "baseline_window"],
       "properties": {
         "default_measurement_runs": {
           "type": "integer",
@@ -462,7 +462,7 @@
         "allowed_intervention_paths": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Path globs that propose_experiment may write to."
+          "description": "Deprecated compatibility field. The runtime no longer uses an allow-list for propose_experiment writes."
         },
         "forbidden_intervention_paths": {
           "type": "array",

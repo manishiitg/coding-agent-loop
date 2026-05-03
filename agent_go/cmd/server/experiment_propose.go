@@ -80,7 +80,7 @@ func ProposeExperiment(ctx context.Context, workspacePath, trigger string, input
 		return nil, err
 	}
 
-	// Path allow-list.
+	// Path guard.
 	if err := validateInterventionPaths(input.InterventionChanges, cfg); err != nil {
 		return nil, err
 	}
@@ -269,22 +269,10 @@ func validateProposeInput(in *ProposeExperimentInput) error {
 func validateInterventionPaths(changes []InterventionChange, cfg ExperimentsConfig) error {
 	for _, c := range changes {
 		clean := strings.TrimPrefix(strings.TrimSpace(c.Path), "/")
-		// Forbidden first.
 		for _, fp := range cfg.ForbiddenInterventionPaths {
 			if pathMatches(clean, fp) {
 				return fmt.Errorf("intervention_changes: path %q is forbidden", clean)
 			}
-		}
-		// Allowed.
-		ok := false
-		for _, ap := range cfg.AllowedInterventionPaths {
-			if pathMatches(clean, ap) {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return fmt.Errorf("intervention_changes: path %q is not in allowed_intervention_paths", clean)
 		}
 	}
 	return nil

@@ -15,18 +15,20 @@ DISCOVERY
 7. **Framework precheck.** If builder/improve.md has no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first." A continuous-improvement schedule with no profile and no metrics will optimize nothing concrete. If the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty, also redirect.
 8. **Framework mode.** Read planning/metrics.json. If it has at least one entry, the scheduled improve runs will operate in EXPERIMENT MODE — open at most one experiment per fire, gated through propose_experiment. If empty, scheduled improve runs are in DIRECT MODE — use the decision model to optimize, harden, or replan directly. Note this in the schedule's name/description so the operator knows which mode the schedule is using.
 9. Read experiments/config.json (if it exists) to find default_measurement_runs / target_runs — needed to size the improve cadence correctly (see SCHEDULE STRATEGY below).
+10. Read planning/changelog/ if present and compare recent plan/config changes against builder/improve.md and builder/review.md. Recent plan changes increase regression risk and require a tighter improve cadence until the next one or two runs have been reviewed.
 
 SCHEDULE STRATEGY
 1. Prefer updating or reusing good existing schedules instead of creating duplicates.
 2. Only create a new schedule when there is no existing schedule that already serves that purpose.
-3. Prefer a **frequent lightweight improve schedule**, not a once-a-week batch. If the workflow runs hourly or daily, schedule the optimizer at least daily; if the workflow runs weekly, schedule the optimizer shortly after each run.
+3. Prefer a **frequent lightweight improve schedule**, not a once-a-week batch. The default target is **after every workflow run**; if exact run-completion triggers are not available, approximate it with cron so the optimizer wakes shortly after the expected run, or at worst after every two runs. Weekly improve cadence is only acceptable when the workflow itself runs weekly or the user explicitly asks for low-touch weekly optimization.
 4. **Experiment cadence guard (EXPERIMENT MODE only).** The guard limits **new experiment creation**, not cron wakeup frequency. Frequent optimizer fires are allowed, but each fire must check active experiments first and usually do nothing while measurement is still in progress. Do not open a new experiment until enough measurement capacity exists for the prior one.
 5. If cadence is not obvious:
    - choose a practical recurring run cadence based on the workflow objective and any existing schedules
-   - choose a frequent lightweight optimizer cadence that can observe, conclude/defer/log, and adjust schedules without necessarily mutating the workflow
-   - stay conservative if the workflow does not appear highly time-sensitive
-6. Because `/improve-continuously` runs in Optimizer mode, the scheduled optimizer may call schedule tools itself. It should review cadence on every fire and use update_schedule when prior builder/improve.md history, schedule run history, or active experiment state shows the run/improve cadence is too slow, too fast, stale, or mis-scoped. Prefer updating existing schedules over creating duplicates.
-7. Preserve a good existing timezone if one is already in use. Otherwise use the workflow's local/current timezone.
+   - choose a frequent lightweight optimizer cadence that can observe, conclude/defer/log, and adjust schedules without necessarily mutating the workflow; for unknown active workflows, start at every 6-12 hours, not weekly
+   - stay conservative about applying changes, but not about waking to check evidence
+6. If planning/changelog shows material plan/config changes since the last builder/improve.md entry or unresolved builder/review.md finding, tighten the improve schedule for the next 24-48 hours or until the next one or two iteration-0 runs have been reviewed. A recent plan change should never wait a week for the first optimizer check.
+7. Because `/improve-continuously` runs in Optimizer mode, the scheduled optimizer may call schedule tools itself. It should review cadence on every fire and use update_schedule when prior builder/improve.md history, schedule run history, recent planning/changelog entries, or active experiment state shows the run/improve cadence is too slow, too fast, stale, or mis-scoped. Prefer updating existing schedules over creating duplicates.
+8. Preserve a good existing timezone if one is already in use. Otherwise use the workflow's local/current timezone.
 
 RUN SCHEDULE
 Create or update a schedule for normal recurring execution with:
@@ -49,6 +51,7 @@ OPENING (every fire):
 - read builder/improve.md in full (Workflow Profile, prior improvement log, deferred ideas, previous hypotheses, decision history)
 - read builder/review.md if present (unresolved `F-...` findings, prior review risks, and anything already marked RESOLVED/PARTIALLY RESOLVED)
 - read soul/soul.md (objective + success criteria — the north star)
+- read planning/changelog/ if present and detect material plan/config changes since the last scheduled-improvement review
 - read planning/metrics.json — branches the rest of this turn:
    • if metrics.json has at least one entry → **EXPERIMENT MODE**
    • if empty or missing → **DIRECT MODE**
@@ -64,7 +67,9 @@ PRIOR HISTORY RULES:
 
 SCHEDULE SELF-TUNING RULES:
 - If the run schedule is too infrequent to produce measurement data for active experiments, update the run schedule cadence or log the blocker when changing cadence would be risky.
-- If the improve schedule is too infrequent, update it toward a frequent lightweight cadence. It is okay for many fires to log "no action" after checking active experiments.
+- If the improve schedule is too infrequent, update it toward a frequent lightweight cadence: after every run when possible, otherwise shortly after the expected run cadence, and never slower than every two runs for active workflows. It is okay for many fires to log "no action" after checking active experiments.
+- If the improve schedule is weekly but the workflow runs more often than weekly, update it. Weekly is not the default for active workflows.
+- If planning/changelog has recent material changes that have not yet been reviewed against iteration-0 evidence, tighten the improve schedule for 24-48 hours or until one or two post-change runs have been reviewed.
 - If the improve schedule is firing too often and repeatedly logging no useful observation, slow it modestly, but keep it frequent enough to catch completions and regressions soon after runs.
 - If group_names drift from variables/variables.json or from the intended measurement surface, update the schedules to the correct explicit group_names.
 - Never create duplicate run/improve schedules when an existing schedule can be updated.

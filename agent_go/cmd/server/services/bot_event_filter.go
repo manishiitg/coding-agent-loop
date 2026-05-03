@@ -32,20 +32,22 @@ type BotEventFilter struct {
 	appBaseURL string // public app URL for shareable links (e.g., "https://app.example.com")
 	userID     string // workspace user ID for shareable links (e.g., "default")
 
-	mu                 sync.Mutex
-	delegationNames    map[string]string // correlationID -> instruction (sub-agent name)
-	startedAgents      map[string]bool   // correlationID/name keys already announced as started
-	pendingDelegations int
-	awaitingInput      bool   // set on any blocking event, cleared externally
-	completionReceived bool   // set when unified_completion, agent_end, or conversation_end arrives
-	sessionDone        bool   // idempotency guard — ensures onSessionDone fires at most once
-	baseHierarchy      int    // the minimum hierarchy level seen — treated as "main" level
-	baseHierarchySet   bool   // true once baseHierarchy has been calibrated
-	lastActivity       string // human-friendly description of current activity
-	toolCallCount      int    // total tool calls seen (for progress feel)
-	mainTextSent       bool   // true once we've sent main-level text via llm_generation_end
-	onBlockingEvent    BlockingEventCallback
-	onSessionDone      SessionDoneCallback
+	mu                  sync.Mutex
+	delegationNames     map[string]string // correlationID -> instruction (sub-agent name)
+	startedAgents       map[string]bool   // correlationID/name keys already announced as started
+	endedAgents         map[string]bool   // correlationID/name keys already announced as ended
+	pendingDelegations  int
+	awaitingInput       bool   // set on any blocking event, cleared externally
+	completionReceived  bool   // set when unified_completion, agent_end, or conversation_end arrives
+	sessionDone         bool   // idempotency guard — ensures onSessionDone fires at most once
+	workflowStepStarted bool   // true once a workflow step breadcrumb was sent
+	baseHierarchy       int    // the minimum hierarchy level seen — treated as "main" level
+	baseHierarchySet    bool   // true once baseHierarchy has been calibrated
+	lastActivity        string // human-friendly description of current activity
+	toolCallCount       int    // total tool calls seen (for progress feel)
+	mainTextSent        bool   // true once we've sent main-level text via llm_generation_end
+	onBlockingEvent     BlockingEventCallback
+	onSessionDone       SessionDoneCallback
 }
 
 // NewBotEventFilter creates a new event filter
@@ -58,6 +60,7 @@ func NewBotEventFilter(connector BotConnector, threadID ThreadID, sessionID, app
 		userID:          userID,
 		delegationNames: make(map[string]string),
 		startedAgents:   make(map[string]bool),
+		endedAgents:     make(map[string]bool),
 	}
 }
 
@@ -127,12 +130,13 @@ func (f *BotEventFilter) Start(ctx context.Context, subscriber BotEventSubscribe
 			f.mu.Lock()
 			done := f.sessionDone
 			awaiting := f.awaitingInput
+			workflowStepOnly := f.isWhatsAppWorkflowStepOnlyLocked()
 			activity := f.lastActivity
 			toolCount := f.toolCallCount
 			pendingDel := f.pendingDelegations
 			f.mu.Unlock()
 			// Only send heartbeat if: session active, events flowing recently, and no message sent recently
-			if !done && !awaiting && !lastEventTime.IsZero() &&
+			if !done && !awaiting && !workflowStepOnly && !lastEventTime.IsZero() &&
 				time.Since(lastEventTime) < 60*time.Second &&
 				time.Since(lastSendTime) > 20*time.Second {
 				msg := f.buildHeartbeatMessage(activity, toolCount, pendingDel, heartbeatCount)
@@ -186,6 +190,13 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 	switch event.Type {
 	case "orchestrator_agent_start":
 		msg := f.formatOrchestratorAgentStart(event)
+		if msg != "" {
+			f.sendMessage(ctx, msg)
+			return true
+		}
+
+	case "orchestrator_agent_end":
+		msg := f.formatOrchestratorAgentEnd(event)
 		if msg != "" {
 			f.sendMessage(ctx, msg)
 			return true
@@ -251,7 +262,12 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 		if uc, ok := event.Data.Data.(*events.UnifiedCompletionEvent); ok {
 			log.Printf("[BOT_FILTER] unified_completion: isMain=%v level=%d result_len=%d", isMain, event.Data.HierarchyLevel, len(uc.FinalResult))
 		}
-		if !isMain {
+		f.mu.Lock()
+		suppressWorkflowCompletion := f.isWhatsAppWorkflowStepOnlyLocked()
+		f.mu.Unlock()
+		if suppressWorkflowCompletion {
+			log.Printf("[BOT_FILTER] unified_completion: suppressing WhatsApp workflow completion (level=%d)", event.Data.HierarchyLevel)
+		} else if !isMain {
 			// Sub-agent completions are intentionally NOT forwarded to the thread —
 			// they were spamming Slack with per-step technical dumps (PR lists, log
 			// excerpts, etc.) when each nested sub-agent reported back. The user
@@ -315,6 +331,51 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 		return true
 	}
 	return false
+}
+
+func (f *BotEventFilter) isWhatsAppWorkflowStepOnlyLocked() bool {
+	return strings.EqualFold(f.threadID.Platform, "whatsapp") && f.workflowStepStarted
+}
+
+func isWorkflowStepAgent(agentType, agentName string) bool {
+	agentType = strings.ToLower(strings.TrimSpace(agentType))
+	agentName = strings.TrimSpace(agentName)
+	if agentName == "" {
+		return false
+	}
+
+	if agentName == "Full Workflow Execution" ||
+		strings.Contains(agentType, "chat") ||
+		strings.Contains(agentName, "chat-agent") ||
+		strings.Contains(agentType, "learning") ||
+		strings.Contains(agentType, "validation") ||
+		strings.Contains(agentType, "organizer") {
+		return false
+	}
+
+	return strings.Contains(agentType, "step") ||
+		strings.Contains(agentType, "execution") ||
+		strings.Contains(agentType, "conditional") ||
+		strings.Contains(agentType, "routing")
+}
+
+func workflowStepDisplayName(agentName string) string {
+	displayName := strings.TrimSpace(strings.TrimPrefix(agentName, "Step:"))
+	if displayName == "" {
+		displayName = strings.TrimSpace(agentName)
+	}
+	return displayName
+}
+
+func workflowStepGroup(inputData map[string]string) string {
+	if inputData == nil {
+		return ""
+	}
+	group := strings.TrimSpace(inputData["group_name"])
+	if group == "" {
+		group = strings.TrimSpace(inputData["GroupName"])
+	}
+	return group
 }
 
 // setBlocking sets the blocking state and notifies the callback
@@ -415,35 +476,11 @@ func (f *BotEventFilter) formatOrchestratorAgentStart(event BotEventData) string
 
 	agentType := strings.ToLower(strings.TrimSpace(start.AgentType))
 	agentName := strings.TrimSpace(start.AgentName)
-	if agentName == "" {
+	if !isWorkflowStepAgent(agentType, agentName) {
 		return ""
 	}
 
-	// Skip normal builder/chat turns and internal helper agents. Completion
-	// notifications for these still arrive through llm_generation_end when useful.
-	if agentName == "Full Workflow Execution" ||
-		strings.Contains(agentType, "chat") ||
-		strings.Contains(agentName, "chat-agent") ||
-		strings.Contains(agentType, "learning") ||
-		strings.Contains(agentType, "validation") ||
-		strings.Contains(agentType, "organizer") {
-		return ""
-	}
-
-	// Prefer actual workflow step starts. These are the events users need to
-	// distinguish from workflow-builder chat replies.
-	if !strings.Contains(agentType, "step") &&
-		!strings.Contains(agentType, "execution") &&
-		!strings.Contains(agentType, "conditional") &&
-		!strings.Contains(agentType, "routing") {
-		return ""
-	}
-
-	displayName := strings.TrimSpace(strings.TrimPrefix(agentName, "Step:"))
-	if displayName == "" {
-		displayName = agentName
-	}
-	displayName = strings.TrimSpace(displayName)
+	displayName := workflowStepDisplayName(agentName)
 
 	key := event.Data.CorrelationID
 	if key == "" {
@@ -455,17 +492,82 @@ func (f *BotEventFilter) formatOrchestratorAgentStart(event BotEventData) string
 		return ""
 	}
 	f.startedAgents[key] = true
+	f.workflowStepStarted = true
 	f.lastActivity = fmt.Sprintf("Step started: %s", displayName)
 	f.mu.Unlock()
 
-	group := strings.TrimSpace(start.InputData["group_name"])
-	if group == "" {
-		group = strings.TrimSpace(start.InputData["GroupName"])
-	}
+	group := workflowStepGroup(start.InputData)
 	if group != "" {
 		return fmt.Sprintf("Step started (%s): running now [%s].", displayName, group)
 	}
 	return fmt.Sprintf("Step started (%s): running now.", displayName)
+}
+
+// formatOrchestratorAgentEnd formats workflow step ends without forwarding the
+// step result body. Tool calls and detailed completions remain in the web UI/logs.
+func (f *BotEventFilter) formatOrchestratorAgentEnd(event BotEventData) string {
+	if event.Data == nil || event.Data.Data == nil {
+		return ""
+	}
+
+	end, ok := event.Data.Data.(*orchestrator_events.OrchestratorAgentEndEvent)
+	if !ok {
+		return ""
+	}
+
+	agentType := strings.ToLower(strings.TrimSpace(end.AgentType))
+	agentName := strings.TrimSpace(end.AgentName)
+	if !isWorkflowStepAgent(agentType, agentName) {
+		return ""
+	}
+
+	displayName := workflowStepDisplayName(agentName)
+	key := event.Data.CorrelationID
+	if key == "" {
+		key = agentType + ":" + displayName
+	}
+	f.mu.Lock()
+	if f.endedAgents[key] {
+		f.mu.Unlock()
+		return ""
+	}
+	f.endedAgents[key] = true
+	f.lastActivity = fmt.Sprintf("Step ended: %s", displayName)
+	f.mu.Unlock()
+
+	group := workflowStepGroup(end.InputData)
+	duration := formatStepDuration(end.Duration)
+	status := "completed"
+	if !end.Success {
+		status = "failed"
+	}
+
+	var parts []string
+	parts = append(parts, fmt.Sprintf("Step %s (%s)", status, displayName))
+	if duration != "" {
+		parts = append(parts, duration)
+	}
+	suffix := ""
+	if group != "" {
+		suffix = fmt.Sprintf(" [%s]", group)
+	}
+	return strings.Join(parts, ": ") + suffix + "."
+}
+
+func formatStepDuration(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	if d < time.Second {
+		return "<1s"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
 // formatUnifiedCompletion formats a unified_completion event.

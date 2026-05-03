@@ -613,7 +613,7 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                                 )}
                                 {exp.status !== 'concluded' && exp.status !== 'aborted' && (
                                   <div className="text-[11px] text-muted-foreground italic pt-1">
-                                    Use the optimizer to act on this experiment: <code>/exp-extend</code>, <code>/exp-conclude</code>, <code>/exp-abort</code>{exp.status === 'awaiting-approval' ? ', or ask the optimizer to approve the hypothesis' : ''}{exp.status === 'awaiting-conclusion-approval' ? ', or ask the optimizer to approve the conclusion' : ''}.
+                                    Use the optimizer to monitor this experiment, or <code>/exp-abort</code> to revert it{exp.status === 'awaiting-approval' ? '; ask the optimizer to approve the hypothesis if needed' : ''}{exp.status === 'awaiting-conclusion-approval' ? '; ask the optimizer to approve the conclusion if needed' : ''}.
                                   </div>
                                 )}
                               </div>

@@ -288,7 +288,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`knowledgebase/rules/rules.md`" + ` and ` + "`knowledgebase/rules/examples/`" + ` — Type 3 only. Accumulated business rules supplied by users — agents append rules directly here via ` + "`diff_patch_workspace_file`" + ` when the user states one in chat (see "Proactive business-context capture" below for the flow). **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — rules live as a sub-section of the knowledgebase. Audit trail for rule capture lives in ` + "`builder/decisions.jsonl`" + ` filtered to ` + "`source: user`" + ` + ` + "`trigger: rule-captured`" + `.
 - ` + "`experiments/active.json`" + ` — currently in-flight experiments. Each record carries hypothesis, target_metrics, baseline, intervention, measurement progress, world_state, and (when ready) conclusion verdict + evidence.
 - ` + "`experiments/history.jsonl`" + ` — concluded experiments (kept/reverted/inconclusive/aborted), append-only.
-- ` + "`experiments/config.json`" + ` — sample size defaults, verdict thresholds, intervention path allow-list, pinned hypotheses, focus metrics, drift detection thresholds.
+- ` + "`experiments/config.json`" + ` — optional sample size defaults, verdict thresholds, pinned hypotheses, focus metrics, drift detection thresholds.
 - ` + "`experiments/diffs/<id>.patch`" + ` — pre-state snapshot for each experiment. Used by ` + "`apply_revert`" + ` if the verdict is reverted.
 - ` + "`experiments/proposer_prompt.md`" + ` and ` + "`experiments/evaluator_prompt.md`" + ` — system prompts for the two LLMs in the experiment loop. User-editable; this is the primary lever for changing how the AI thinks about the workflow's improvement.
 
@@ -380,7 +380,7 @@ Use when you have a falsifiable hypothesis: "change X will move metric Y by Z." 
 **Do NOT use** ` + "`propose_experiment`" + ` for:
 - Reading state (use shell + file reads).
 - Unconditional fixes that aren't testing a hypothesis (e.g. typo corrections — those are decisions, not experiments).
-- Changes outside the allow-listed paths in ` + "`experiments/config.json`" + ` (` + "`workflow.json`" + `, ` + "`.env`" + `, infrastructure files are blocked).
+- Forbidden paths include ` + "`workflow.json`" + `, ` + "`.env`" + `, and ` + "`.git/`" + `; infrastructure files are blocked.
 
 **Before calling propose_experiment**, read ` + "`experiments/history.jsonl`" + ` and ` + "`experiments/config.json::pinned_hypotheses`" + ` so you don't waste a cycle retrying a recently-failed hypothesis or one the user has pinned as forbidden. There is no helper tool for this — use shell + file reads.
 
@@ -419,8 +419,6 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
   Experiments:
     - propose-experiment       → focused experiment opener
     - exp-abort                → abort + revert active experiment
-    - exp-extend               → add measurement runs
-    - exp-conclude             → manually verdict an experiment
 
 **Optional parameters:**
   - ` + "`focus`" + `       : the user's free-text hint, if any

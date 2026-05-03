@@ -29,6 +29,9 @@ type ReadFileResult struct {
 	Content  string `json:"content"`
 	Type     string `json:"type,omitempty"`
 	IsImage  bool   `json:"is_image,omitempty"`
+	IsBinary bool   `json:"is_binary,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
 }
 
 // ListFilesResult is the typed response from ListWorkspaceFiles

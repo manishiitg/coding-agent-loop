@@ -9,6 +9,10 @@ type Document struct {
 	Type         string     `json:"type,omitempty"`          // "file" or "folder"
 	Children     []Document `json:"children,omitempty"`      // For hierarchical structure
 	IsImage      bool       `json:"is_image,omitempty"`      // Whether file is an image
+	IsBinary     bool       `json:"is_binary,omitempty"`     // Whether the file bytes are binary and should be read via raw/download APIs
+	Size         int64      `json:"size,omitempty"`          // File size in bytes
+	MimeType     string     `json:"mime_type,omitempty"`     // Detected or extension-derived MIME type
+	Encoding     string     `json:"encoding,omitempty"`      // Encoding for content when present (for example utf-8 or data-url)
 	LastModified string     `json:"last_modified,omitempty"` // RFC3339 modification time
 }
 

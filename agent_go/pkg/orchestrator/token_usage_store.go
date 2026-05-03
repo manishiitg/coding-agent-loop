@@ -38,12 +38,6 @@ func (s *tokenUsageFileStore) parseTokenUsageFile(content string) (*TokenUsageFi
 	if err := json.Unmarshal([]byte(content), &tokenFile); err != nil {
 		return nil, err
 	}
-	if tokenFile.ByModel == nil {
-		tokenFile.ByModel = make(map[string]*ModelTokenUsage)
-	}
-	if tokenFile.ByStepAndModel == nil {
-		tokenFile.ByStepAndModel = make(map[string]map[string]*ModelTokenUsage)
-	}
 	EnsureTokenUsageFilePricing(&tokenFile)
 	return &tokenFile, nil
 }

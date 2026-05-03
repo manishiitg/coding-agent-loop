@@ -267,7 +267,9 @@ func canonicalDeclaredExecutionMode(mode string) string {
 
 // isScriptedExecutionModeConfig returns true when the step is in learn_code mode
 // (persistent scripted code path where main.py is saved and reused across runs).
-// code_exec steps also use code execution but do NOT write persistent scripts.
+// code_exec steps also use code execution but do NOT write persistent scripts;
+// any leftover learnings/{step-id}/main.py for a code_exec step is stale artifact
+// debt and should be deleted.
 func isScriptedExecutionModeConfig(cfg *AgentConfigs) bool {
 	if cfg == nil {
 		return false
@@ -302,6 +304,8 @@ func syncDeclaredExecutionModeConfig(cfg *AgentConfigs) {
 		trueVal := true
 		cfg.DeclaredExecutionMode = "code_exec"
 		cfg.UseCodeExecutionMode = &trueVal
+		falseVal := false
+		cfg.LockCode = &falseVal
 	case "learn_code":
 		trueVal := true
 		cfg.DeclaredExecutionMode = "learn_code"
@@ -1122,7 +1126,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, report...)
-		tools = append(tools, "get_workflow_command_guidance") // /report-improve lives in this mode
+		tools = append(tools, "get_workflow_command_guidance") // /import-report lives in this mode
 
 	default:
 		// Unknown mode — allow everything (no restriction)
@@ -1824,13 +1828,14 @@ Don't try to handle these requests yourself — tell the user which mode owns th
 
 **The core optimization loop is: run → eval → harden → repeat.**
 
-**harden_workflow** is the primary optimization tool. It reads evaluation reports and execution outputs from a real run, then for EVERY failing step:
+**harden_workflow** is the primary optimization tool. It reads evaluation reports and execution outputs from a real run, fixes every failing step, and runs a best-practice sweep across plan/config/learnings/KB/db/report/eval/variables artifacts. It should repair objective invariant violations even when they were not the direct eval failure.
 - Adds pre-validation rules that would have caught the failure
 - Tightens step descriptions to be more specific
 - Applies small evidence-backed structural fixes when the failure is caused by missing/split/obsolete steps or bad step boundaries
-- Patches main.py to handle discovered edge cases
-- Updates step config (execution mode, servers, learnings)
+- Patches main.py only for `+"`learn_code`"+` steps; deletes stale `+"`learnings/{step-id}/main.py`"+` for `+"`code_exec`"+` steps
+- Updates step config (execution mode, servers, learnings, KB/db/report/eval wiring)
 - Marks passing steps as optimized when they've proven reliable
+- Cleans deterministic best-practice violations such as invalid locks, missing learning objectives, KB/db contract mismatches, stale report wiring after field changes, and hardcoded user-specific values
 
 **Optimization workflow:**
 1. **Run the workflow** — execute the full workflow or individual steps against `+"`iteration-0`"+`
@@ -2076,7 +2081,7 @@ When a step doesn't do what it should — wrong output, missing actions, incompl
 5. If the fix requires eval scoring, hardening, learning locks, or script migration, switch to Optimizer.
 {{else if eq .WorkshopMode "optimizer"}}
 **Optimizer investigation workflow:**
-1. Run **harden_workflow(group_name?)** — reads `+"`iteration-0`"+` eval reports, identifies every failing step, and applies targeted fixes automatically.
+1. Run **harden_workflow(group_name?)** — reads `+"`iteration-0`"+` eval reports, identifies every failing step, runs the best-practice sweep, and applies targeted fixes automatically.
 2. While it runs, continue other work. You'll be auto-notified when done.
 3. Review the summary of changes it made.
 {{else if eq .WorkshopMode "reporting"}}
@@ -2312,7 +2317,7 @@ Steps have two execution modes — set via **update_step_config(step_id, use_cod
   - The step processes data that benefits from Python libraries (parsing, calculations, formatting)
   - The step needs to orchestrate several tools together in a single script
   - Deterministic data processing: iterating rows, matching columns, extracting/transforming data — a Python loop handles it reliably in one shot without the agent needing to "think" through each row
-- **Code Execution mode** (declared_execution_mode="code_exec"): LLM writes and runs code inline each time — no persistent script is saved. Use when the work varies too much between runs to stabilize into a reusable script, or when the step requires adaptive reasoning. Browser/UI steps should generally stay here unless the user explicitly wants scripted browser automation and the flow is already proven stable enough to freeze into `+"`main.py`"+` (durable selectors, predictable navigation, low semantic branching).
+- **Code Execution mode** (declared_execution_mode="code_exec"): LLM writes and runs code inline each time — no persistent script is saved. Use when the work varies too much between runs to stabilize into a reusable script, or when the step requires adaptive reasoning. Browser/UI steps should generally stay here unless the user explicitly wants scripted browser automation and the flow is already proven stable enough to freeze into `+"`main.py`"+` (durable selectors, predictable navigation, low semantic branching). If a code_exec step has leftover `+"`learnings/{step-id}/main.py`"+`, delete it; that file is stale mode debt and should not be patched.
 
 **Promotion rule:** Builder-created steps should arrive here as `+"`code_exec`"+`. Promote a step to `+"`learn_code`"+` only after real run evidence shows that the inputs, tools, outputs, and error cases are stable enough to reuse `+"`main.py`"+` safely. A `+"`learn_code`"+` script written before stability is proven will need repeated repair on every drift, and `+"`lock_code`"+` accidents become harder to unwind. The only common exception is when the user explicitly asks for `+"`learn_code`"+` from the start AND it is a deterministic transform (e.g. a known CSV → JSON shape) where the script's behavior is obvious without observation.
 
@@ -2482,7 +2487,7 @@ Rules:
 {{else if eq .WorkshopMode "optimizer"}}
 ### Step Config & Analysis
 - **update_step_config(step_id, ...)** — Update servers, tools, skills, learning settings, execution mode, LLMs, optimized flag. For eval steps this writes to `+"`evaluation/step_config.json`"+`.
-- **harden_workflow(group_name?, focus?)** — The primary optimization tool. Always reads `+"`iteration-0`"+` eval reports and execution outputs. Pass `+"`group_name`"+` to scope to one group, or omit it to analyze all groups under `+"`iteration-0`"+`. For every failing step it adds pre-validation rules, tightens descriptions, patches main.py for `+"`learn_code`"+` steps, and updates config.
+- **harden_workflow(group_name?, focus?)** — The primary optimization tool. Always reads `+"`iteration-0`"+` eval reports and execution outputs. Pass `+"`group_name`"+` to scope to one group, or omit it to analyze all groups under `+"`iteration-0`"+`. It fixes every failing step and runs a best-practice sweep across plan/config/learnings/KB/db/report/eval/variables artifacts. It may clean deterministic invariant violations even when the current eval did not directly catch them. It patches main.py only for `+"`learn_code`"+` steps and deletes stale main.py files for `+"`code_exec`"+` steps.
 - **Objective + success criteria** — edit `+"`soul/soul.md`"+` directly via shell (fill in the `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections). soul.md is the canonical source; plan.json no longer stores these fields. No dedicated tool — use `+"`diff_patch_workspace_file`"+` or a shell heredoc.
 - **replan_workflow_from_results(group_name?, focus?)** — Structural rewrite: add/remove/reorder steps using actual `+"`iteration-0`"+` run evidence. Pass `+"`group_name`"+` to scope to one group. Use when the plan structure is wrong. Use harden_workflow when the structure is right but steps need hardening.
 - **review_workflow_results(iteration?, group_name?, focus?)** — Read-only outcome review: checks whether a real run is achieving the objective and success criteria, and whether the evaluation actually measures them properly.
@@ -2649,7 +2654,7 @@ Use this order when debugging latency:
 | db/*.json | Workflow state and results (JSON rows produced by steps; upsert-by-key; see §Three persistent stores) |
 | knowledgebase/notes/*.md | Per-topic narrative markdown — durable observations about the workflow's subject matter. Normally written by step agents in direct-write mode; post-step KB agent only when explicitly requested. |
 | knowledgebase/notes/_index.json | Topic registry (covers, size_bytes, section_count, last_updated) kept in sync with notes/*.md |
-| soul/soul.md | Builder's long-term memory across chat sessions (why, decisions, references) |
+| soul/soul.md | Canonical workflow north star: objective and success criteria |
 
 **Cleanup**: Delete old builder conversation files when >3 exist (`+"`ls -t builder/session-*.json`"+`, keep latest).
 
@@ -4634,12 +4639,29 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return result, nil
 			}
 
+			cleanupStaleMainPy := targetConfig.AgentConfigs != nil &&
+				canonicalDeclaredExecutionMode(targetConfig.AgentConfigs.DeclaredExecutionMode) == "code_exec"
+
 			// Write updated configs back to the matching durable config file.
 			if err := iwm.controller.WriteStepConfigsToSubdir(ctx, configSubdir, configs); err != nil {
 				return fmt.Sprintf("Failed to update step config: %v", err), nil
 			}
 
 			workspacePath := iwm.controller.GetWorkspacePath()
+			cleanupMessages := make([]string, 0, 1)
+			if cleanupStaleMainPy {
+				mainPyRelPath := fmt.Sprintf("learnings/%s/main.py", stepID)
+				if exists, existsErr := iwm.controller.CheckWorkspaceFileExists(ctx, mainPyRelPath); existsErr == nil && exists {
+					if deleteErr := iwm.controller.DeleteWorkspaceFile(ctx, mainPyRelPath); deleteErr != nil {
+						warnings = append(warnings, fmt.Sprintf("Declared code_exec but failed to delete stale %s: %v", mainPyRelPath, deleteErr))
+					} else {
+						cleanupMessages = append(cleanupMessages, fmt.Sprintf("Deleted stale %s because code_exec steps do not keep persistent main.py.", mainPyRelPath))
+						logger.Info(fmt.Sprintf("🧹 Workshop: deleted stale main.py for code_exec step %q", stepID))
+					}
+				} else if existsErr != nil {
+					warnings = append(warnings, fmt.Sprintf("Declared code_exec but could not check stale learnings/%s/main.py: %v", stepID, existsErr))
+				}
+			}
 			if err := writePlanChangelogEntry(ctx, workspacePath, PlanChangelogEntry{
 				Tool:    "update_step_config",
 				Reason:  strings.TrimSpace(reasonRaw),
@@ -4654,6 +4676,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				configPath = "evaluation/step_config.json"
 			}
 			result := fmt.Sprintf("Step config for %q updated successfully in %s. Changes will take effect on the next execute_step/run_full_evaluation call.", stepID, configPath)
+			if len(cleanupMessages) > 0 {
+				result += "\n\nCleanup:"
+				for _, msg := range cleanupMessages {
+					result += "\n- " + msg
+				}
+			}
 			if len(warnings) > 0 {
 				result += "\n\n⚠️ WARNINGS:"
 				for i, w := range warnings {
@@ -5441,16 +5469,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register organize_global_learnings tool: %v", err))
 	}
 
-	// Tool 7f: review_plan — background agent that critically reviews current plan decisions
+	// Tool 7f: review_plan — background agent that critically reviews current workflow design and artifacts
 	if err := mcpAgent.RegisterCustomTool(
 		"review_plan",
-		"Start a background agent that critically reviews the current workflow plan and challenges the decisions already made: step boundaries, step types, mode choices, context flow, portability, and whether the plan decisions are actually justified by the objective, success criteria, and optional run evidence. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",
+		"Start a background agent that critically reviews the current workflow design and dependent artifacts: plan structure, step descriptions, context flow, validation, learnings, saved scripts, knowledgebase notes, db/*.json contracts, report wiring, evaluation coverage, portability, and whether decisions are justified by objective, success criteria, and optional run evidence. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"focus": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional focus for the review, e.g., 'step boundaries', 'mode decisions', 'context flow', 'hardcoded values', 'decision quality'.",
+					"description": "Optional focus for the review, e.g., 'step boundaries', 'mode decisions', 'context flow', 'hardcoded values', 'learnings', 'knowledgebase', 'db schema', 'report wiring', 'evaluation coverage'.",
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
@@ -6285,10 +6313,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register replan_workflow_from_results tool: %v", err))
 	}
 
-	// Tool 7g2: harden_workflow — eval-driven hardening of all failing steps
+	// Tool 7g2: harden_workflow — eval-driven hardening plus invariant cleanup
 	if err := mcpAgent.RegisterCustomTool(
 		"harden_workflow",
-		"Start a background agent that reads iteration-0 evaluation reports and execution outputs, identifies every failing step, and applies targeted fixes: adds pre-validation rules that would have caught the failure, tightens step descriptions, applies small evidence-backed plan structure fixes, patches main.py for learn_code steps, and updates step config. This is the primary optimization tool — it analyzes AND acts. Use replan_workflow_from_results only when the whole plan shape needs broader redesign.",
+		"Start a background agent that reads iteration-0 evaluation reports and execution outputs, identifies failing steps, runs a best-practice sweep over workflow artifacts, and applies targeted fixes: adds pre-validation rules, tightens descriptions, deletes stale code_exec main.py files, patches main.py for learn_code steps, fixes learning/KB/db/report/eval wiring when evidence or hard invariants justify it, and updates step config. This is the primary optimization tool — it analyzes AND acts. Use replan_workflow_from_results only when the whole plan shape needs broader redesign.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8467,7 +8495,7 @@ func workshopJSONUnmarshal(data []byte, v interface{}) error {
 
 var reviewPlanAgentSystemTemplate = MustRegisterTemplate("reviewPlanAgentSystem", `# Workflow Plan Review Agent
 
-You are a critical reviewer of the current workflow plan. Your job is not to optimize or rewrite the plan. Your job is to challenge the decisions already made and identify where the current plan is weak, unjustified, risky, overfit, or internally inconsistent.
+You are a critical reviewer of the current workflow design. Your job is not to optimize or rewrite the plan. Your job is to challenge the decisions already made and identify where the current plan or its dependent artifacts are weak, unjustified, risky, overfit, stale, or internally inconsistent.
 
 This is a **read-only review**:
 - do not modify files
@@ -8478,13 +8506,16 @@ This is a **read-only review**:
 1. **Read-Only**: Do NOT modify any files.
 2. **Findings first**: Lead with concrete problems, ordered by severity. Do not hide important issues under summaries.
 3. **Be specific**: Always reference exact step IDs, and nested IDs as `+"`parent-id > sub-id`"+`.
-4. **Review current decisions**: Critique the decisions that exist now: step boundaries, step types, mode declarations, context dependencies, context outputs, validation shape, portability, and eval coverage.
+4. **Review current decisions**: Critique the decisions that exist now: step boundaries, step types, mode declarations, context dependencies, context outputs, validation shape, portability, eval coverage, learning configuration, KB configuration, db schema contracts, report wiring, and variables.
 5. **Challenge assumptions**: If a decision appears to depend on unstated assumptions, call that out explicitly.
-6. **Use evidence when available**: If a target run folder is provided, use run outputs/logs/eval reports to test whether the current plan decisions were actually justified.
+6. **Use evidence when available**: If a target run folder is provided, use run outputs/logs/eval reports to test whether the current workflow decisions were actually justified.
 7. **Do not drift into full redesign**: You may suggest a concrete correction, but the primary task is to review and explain what is wrong with the current decision.
 8. **Check portability and secrecy**: Flag plan-visible secrets, user-specific values, absolute paths, run-folder-specific values, and brittle environment assumptions.
-9. **Check persistent-store discipline**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations as per-topic markdown; normally written by step agents in direct-write mode; agent mode only when explicitly requested), `+"`"+`db/*.json`+"`"+` (per-run state/results). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing per-run state in knowledgebase, or failing to declare `+"`"+`knowledgebase_contribution`+"`"+` on steps that produce domain facts. Per-step KB config: `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` (contribution contract; empty = KB writer skipped for that step).
-10. **Check lock consistency**: Three locks freeze workflow state — `+"`"+`lock_learnings`+"`"+` (per-step: freezes SKILL.md + skips learning agent), `+"`"+`lock_code`+"`"+` (per-step, learn_code only: freezes `+"`"+`learnings/{step-id}/main.py`+"`"+` against fix-loop rewrites), `+"`"+`lock_knowledgebase`+"`"+` (workflow-level: freezes post-step KB update agent). Flag inconsistency like `+"`"+`optimized=true`+"`"+` with `+"`"+`lock_learnings=false`+"`"+` or learn_code steps that are optimized but `+"`"+`lock_code=false`+"`"+` (fix loop can still overwrite a "done" script). If a step description has meaningfully changed since the last review, recommend clearing `+"`"+`description_reviewed`+"`"+` and re-reviewing before keeping the locks.
+9. **Check persistent-store discipline**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations as per-topic markdown; normally written by step agents in direct-write mode; agent mode only when explicitly requested), `+"`"+`db/*.json`+"`"+` (structured durable tables/results for cross-run state and Report UI widgets). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing per-run state in knowledgebase, writing report data only to run folders, or failing to declare `+"`"+`knowledgebase_contribution`+"`"+` / `+"`"+`db/README.md`+"`"+` contracts when steps produce persistent facts.
+10. **Check learning discipline**: A step should write learnings only when it has reusable HOW-to-run knowledge worth capturing across runs, and it must have a concrete `+"`"+`learning_objective`+"`"+`. Prefer `+"`"+`learnings_write_method=\"direct\"`+"`"+`; `+"`"+`agent`+"`"+` is only for explicit user request. Browser-based steps should not be promoted to `+"`"+`learn_code`+"`"+`. `+"`"+`learn_code`+"`"+` should appear only after stable run evidence and no active experiment is still testing the behavior.
+11. **Check KB discipline**: KB writes require a useful `+"`"+`knowledgebase_contribution`+"`"+`, correct read/write access, and preferably `+"`"+`knowledgebase_write_method=\"direct\"`+"`"+`. The KB should contain durable narrative observations about the domain, not execution recipes, raw rows, or volatile run state. If `+"`"+`knowledgebase/notes/_index.json`+"`"+` exists, it must point to coherent topic notes.
+12. **Check db discipline**: `+"`"+`db/*.json`+"`"+` should look like a small database surface, not loose dumps: documented in `+"`"+`db/README.md`+"`"+`, stable JSON shape, primary key, merge/upsert rule, writer ownership, group/run separation, and compatible report consumers.
+13. **Check lock consistency**: Three locks freeze workflow state — `+"`"+`lock_learnings`+"`"+` (per-step: freezes SKILL.md + skips learning agent), `+"`"+`lock_code`+"`"+` (per-step, learn_code only: freezes `+"`"+`learnings/{step-id}/main.py`+"`"+` against fix-loop rewrites), `+"`"+`lock_knowledgebase`+"`"+` (workflow-level: freezes post-step KB update agent). Flag inconsistency like `+"`"+`optimized=true`+"`"+` with `+"`"+`lock_learnings=false`+"`"+` or learn_code steps that are optimized but `+"`"+`lock_code=false`+"`"+` (fix loop can still overwrite a "done" script). If a step description has meaningfully changed since the last review, recommend clearing `+"`"+`description_reviewed`+"`"+` and re-reviewing before keeping the locks.
 
 ## CONTEXT
 
@@ -8503,6 +8534,17 @@ This is a **read-only review**:
 
 ## EVALUATION PLAN
 Read `+"`evaluation/evaluation_plan.json`"+` using shell commands if it exists. If it does not exist, treat missing evaluation as a review finding when the workflow clearly needs measurable verification.
+
+## DEPENDENT ARTIFACTS
+Review these files/directories when present. Stay read-only:
+- `+"`variables/variables.json`"+`: check whether plan-visible hardcoded values should be variables and whether required variables are declared.
+- `+"`learnings/_global/SKILL.md`"+`: check whether HOW-to-run learnings match current step descriptions and do not duplicate task instructions.
+- `+"`learnings/{step-id}/.learning_metadata.json`"+`: inspect for every step with learning writes or `+"`lock_learnings=true`"+`. Check `+"`successful_runs`"+`, `+"`description_hash_runs`"+`, `+"`consecutive_no_new_learning_runs`"+`, `+"`auto_locked_at`"+`, `+"`auto_lock_reason`"+`, `+"`auto_unlocked_at`"+`, and latest detection history. Flag locks without enough same-description evidence, locks whose metadata was auto-unlocked, missing metadata for locked learning, or metadata whose description hash/streak contradicts step_config.
+- `+"`learnings/{step-id}/main.py`"+` and `+"`learnings/{step-id}/script_metadata.json`"+`: inspect for learn_code/scripted steps. For `+"`code_exec`"+` steps, verify `+"`learnings/{step-id}/main.py`"+` does NOT exist; if it does, flag it as a stale artifact that should be deleted because code_exec never runs or maintains persistent main.py.
+- `+"`knowledgebase/notes/_index.json`"+` and relevant `+"`knowledgebase/notes/*.md`"+`: check topic registry, stale/duplicated notes, and whether steps that produce domain facts have matching KB contribution contracts.
+- `+"`db/README.md`"+` and `+"`db/*.json`"+`: check schema documentation, stable row shape, primary keys, merge/upsert rules, writer ownership, group separation, and report compatibility.
+- `+"`reports/report_plan.json`"+`: check whether widgets source durable `+"`db/*.json`"+` / KB notes / built-in APIs rather than volatile run paths, whether referenced fields exist, and whether derived report helper files could be collapsed into widget-level JSONata `+"`query`"+` expressions.
+- `+"`builder/review.md`"+`: read if present to avoid repeating already-known findings and to see unresolved prior review items.
 
 {{if .TargetRunFolder}}## OPTIONAL RUN EVIDENCE
 If useful, read:
@@ -8523,11 +8565,15 @@ Review the plan through these lenses:
 1. **Decision justification** — Does each important design choice have a clear reason, or does it look accidental?
 2. **Step boundaries** — Are steps split or merged in a way that makes execution harder, more ambiguous, or more fragile?
 3. **Step type choice** — Is each step using the right type for the actual job?
-4. **Execution mode choice** — Does the declared mode fit the observed work? See §7 Execution Modes.
+4. **Execution mode choice** — Does the declared mode fit the observed work? Builder-created steps should be code_exec; Optimizer may promote to learn_code only with stable evidence. Browser-based steps should not use learn_code. If a step is declared code_exec but still has `+"`learnings/{step-id}/main.py`"+`, flag the script for deletion as stale mode debt.
 5. **Context flow** — Are dependencies/output contracts minimal, correct, and sufficient? Are there artificial file handoffs or missing dependencies?
 6. **Validation & evaluation** — Is the workflow validating and evaluating the things that actually matter for success?
 7. **Portability & secrecy** — Does the current plan leak secrets or overfit to one user, machine, run, or folder structure?
-8. **Operational risk** — Which current choices are most likely to fail, confuse the agent, or create maintenance burden later?
+8. **Learning quality** — For every learning-enabled step, is there a good reason, a concrete objective, direct write method unless explicitly requested otherwise, and no stale/stretched learning scope?
+9. **KB quality** — Are KB producer/consumer steps correctly declared, and do notes/index files contain durable domain knowledge rather than run logs or execution recipes?
+10. **DB quality** — Are `+"`"+`db/*.json`+"`"+` files documented, keyed, merge-safe, group-safe, and connected to report consumers?
+11. **Report wiring** — Are report widgets backed by durable sources with matching fields and clear ownership? Are widgets using the JSONata `+"`query`"+` feature where it would avoid helper files like `+"`*_rows.json`"+`, `+"`*_summary.json`"+`, `+"`flat_*.json`"+`, or a `+"`step-generate-report`"+` flatten step?
+12. **Operational risk** — Which current choices are most likely to fail, confuse the agent, or create maintenance burden later?
 
 ## OUTPUT FORMAT
 
@@ -8537,7 +8583,7 @@ List only real findings, ordered by severity. If there are none, say so explicit
 For each finding use:
 - **[severity: high|medium|low] [actual-step-id or plan-wide]**: <what decision is weak or risky>
   - **Why this is a problem**: <impact on objective / success criteria / maintainability>
-  - **Evidence**: <plan field, mode setting, run evidence, missing eval, hardcoded value, etc.>
+  - **Evidence**: <plan field, mode setting, step config, learning/KB/db/report/eval artifact, run evidence, hardcoded value, etc.>
   - **Better decision**: <what decision should likely replace it, briefly>
 
 ### Decisions That Look Sound
@@ -8550,7 +8596,7 @@ List any important uncertainties where the plan might be fine, but the current e
 Give the top 3-5 follow-up checks or tool calls to validate the riskiest decisions next.
 `)
 
-var reviewPlanAgentUserTemplate = MustRegisterTemplate("reviewPlanAgentUser", `Critically review the current workflow plan decisions and produce a findings-first report.{{if .TargetRunFolder}} Use run evidence from "{{.TargetRunFolder}}" where it helps test whether current decisions are justified.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var reviewPlanAgentUserTemplate = MustRegisterTemplate("reviewPlanAgentUser", `Critically review the current workflow design and dependent artifacts, then produce a findings-first report.{{if .TargetRunFolder}} Use run evidence from "{{.TargetRunFolder}}" where it helps test whether current decisions are justified.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 var reviewArtifactSyncAgentSystemTemplate = MustRegisterTemplate("reviewArtifactSyncAgentSystem", `# Artifact Sync Review Agent
 
@@ -9008,7 +9054,7 @@ Your job is to compare each step's **current description** with its **saved main
 4. **Anti-patterns** — hardcoded paths, hardcoded credentials, missing env var usage, non-portable code
 5. **Fabricated data** — script writes output data without actually fetching/computing it from real sources (MCP tools, APIs, input files)
 6. **MCP tool usage** — incorrect server/tool names in call_mcp(), missing API discovery, guessed parameter names instead of using get_api_spec
-7. **Persistent-store confusion** — script writes to the wrong store. Three stores: `+"`"+`learnings/`+"`"+` (HOW to run, agent-managed), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations — written by the post-step KB update agent in agent mode, or by step agents in direct-write mode; NOT by arbitrary step scripts in agent mode), `+"`"+`db/*.json`+"`"+` (per-run state/results — step-owned; upsert-by-key, never overwrite). Flag scripts that write directly under `+"`"+`knowledgebase/notes/`+"`"+` outside of direct-write mode (those should go through the KB update agent via `+"`"+`knowledgebase_contribution`+"`"+` on the step config), or that stash durable cross-run state in per-step output files when it belongs in `+"`"+`db/`+"`"+`, or that do wholesale rewrites of `+"`"+`db/`+"`"+` files instead of upsert-by-key.
+7. **Persistent-store confusion** — script writes to the wrong store. Three stores: `+"`"+`learnings/`+"`"+` (HOW to run, agent-managed), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations — written by the post-step KB update agent in agent mode, or by step agents in direct-write mode; NOT by arbitrary step scripts in agent mode), `+"`"+`db/*.json`+"`"+` (structured durable tables/results for cross-run state and Report UI widgets — step-owned; upsert-by-key, never overwrite). Flag scripts that write directly under `+"`"+`knowledgebase/notes/`+"`"+` outside of direct-write mode (those should go through the KB update agent via `+"`"+`knowledgebase_contribution`+"`"+` on the step config), or that stash durable cross-run state in per-step output files when it belongs in `+"`"+`db/`+"`"+`, or that do wholesale rewrites of `+"`"+`db/`+"`"+` files instead of upsert-by-key.
 
 This is a **read-only review** — do not modify any files.
 
@@ -9022,6 +9068,7 @@ This is a **read-only review** — do not modify any files.
 7. **Check MCP tool usage**: Verify that call_mcp() calls use consistent server/tool naming. Flag suspicious tool names that look guessed rather than discovered via get_api_spec.
 8. **Check browser automation quality**: For scripts using playwright / agent_browser tools, verify:
    - **Browser-heavy learn_code is usually the wrong fit.** If a browser-enabled step has a saved `+"`main.py`"+`, flag it unless the user explicitly requested scripted browser execution AND the script uses durable selectors, state-driven waits, fresh snapshots, and has evidence of stability across runs. Browser/UI automation should generally remain `+"`code_exec`"+` so the agent can adapt to live UI state, auth, dynamic selectors, pagination, and third-party page timing.
+   - **code_exec must not keep main.py.** If a step is declared `+"`code_exec`"+` but still has `+"`learnings/{step-id}/main.py`"+`, flag the file as stale artifact debt. Recommend deleting it and clearing `+"`lock_code`"+`; code_exec does not run or maintain persistent scripts.
    - **Selectors are DURABLE, not refs.** Hardcoded string refs like `+"`'abc123'`"+` or `+"`'@e1'`"+` in main.py are BUGS — refs are session-local. The durable alternatives are (in priority order): data-testid / hand-written id / aria-label / role+name / get_by_label|placeholder|text. Flag any ref that appears as a literal string (not a variable parsed from a current-run snapshot).
    - Uses browser_snapshot before interacting — never clicks or types blindly
    - Ref-based interaction is acceptable ONLY when the ref value is parsed from a snapshot taken earlier in the SAME run (`+"`ref = extract_ref(snapshot, role=..., name=...)` then `browser_click({'ref': ref})`"+`). Hardcoded refs in main.py must be flagged.
@@ -9177,7 +9224,7 @@ This tool is **evidence-driven and mutating**:
 6. **Prefer the mode that matches the work**: `+"`learn_code`"+` for stable scripted logic, especially deterministic non-browser work; `+"`code_exec`"+` for adaptive work and generally for browser/UI automation unless the user explicitly wants scripted browser execution.
 7. **Preserve portability**: Remove plan-visible secrets, user-specific constants, hardcoded paths, and run-specific values when you touch affected steps.
 8. **Do not mark the workflow optimized**: Structural replanning is separate from final optimization readiness.
-9. **Persistent-store aware**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations; normally written by step agents in direct-write mode; agent mode only when explicitly requested), `+"`"+`db/*.json`+"`"+` (per-run state/results; step-owned, upsert-by-key). When restructuring, use `+"`"+`update_step_config`+"`"+` to set `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` on steps that consume or produce KB facts. If run evidence shows a step stashing durable facts in output files or learnings that belong in the KB, restructure by adding a proper `+"`"+`knowledgebase_contribution`+"`"+` instead of creating new plan steps to manage state.
+9. **Persistent-store aware**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations; normally written by step agents in direct-write mode; agent mode only when explicitly requested), `+"`"+`db/*.json`+"`"+` (structured durable tables/results for cross-run state and Report UI widgets; step-owned, upsert-by-key). When restructuring, use `+"`"+`update_step_config`+"`"+` to set `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` on steps that consume or produce KB facts. If run evidence shows a step stashing durable facts in output files or learnings that belong in the KB, restructure by adding a proper `+"`"+`knowledgebase_contribution`+"`"+` instead of creating new plan steps to manage state.
 
 ## CONTEXT
 
@@ -9252,18 +9299,18 @@ Return a short markdown summary with:
 var replanWorkflowFromResultsAgentUserTemplate = MustRegisterTemplate("replanWorkflowFromResultsAgentUser", `Replan the workflow from actual run results in "{{.TargetRunFolder}}". Read the evidence, rewrite the plan directly, and summarize what changed.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 // ============================================================================
-// Harden Workflow Agent — eval-driven hardening of all failing steps
+// Harden Workflow Agent — eval-driven hardening plus invariant cleanup
 // ============================================================================
 
 var hardenWorkflowAgentSystemTemplate = MustRegisterTemplate("hardenWorkflowAgentSystem", `# Workflow Hardening Agent
 
-You are an eval-driven workflow hardener. Your job is to read evaluation results from a real run, identify every failing step, and apply targeted fixes so the next run is more reliable.
+You are an eval-driven workflow hardener and best-practice enforcer. Your job is to read evaluation results from a real run, identify every failing step, run a scoped artifact-quality sweep, and apply targeted fixes so the next run is more reliable and the workflow state is cleaner.
 
 **This is NOT a read-only review.** You MUST apply fixes directly using the tools available to you.
 
 ## PHILOSOPHY
 
-Every evaluation failure should leave behind a **structural artifact** — a pre-validation rule, a code fix, or a tighter description — not just prose learnings. The goal is convergence: each harden pass makes the workflow strictly better.
+Every evaluation failure should leave behind a **structural artifact** — a pre-validation rule, a code fix, or a tighter description — not just prose learnings. In addition, every harden pass should clean objective best-practice violations that create future failures or drift even when the current eval did not catch them. The goal is convergence: each harden pass makes the workflow strictly better.
 
 ## PERSISTENT STORES (READ BEFORE FIXING)
 
@@ -9277,12 +9324,12 @@ Per-step KB config:
 - `+"`"+`knowledgebase_contribution`+"`"+` — natural-language contribution contract for direct writes, or extraction instruction for an explicitly requested post-step KB agent. If empty, KB update does NOT run for this step even with write access.
 
 ## RULES
-1. **Evidence-first**: Only fix what actually failed. Do not speculatively edit passing steps.
+1. **Evidence-first, invariant-aware**: Fix every actual failure. You may also fix objective best-practice violations even on passing steps when the violation is deterministic and non-speculative: stale `+"`code_exec`"+` main.py, invalid lock state, KB/db/report contract mismatch, missing pre-validation for a produced output, hardcoded secrets/paths, or config that runtime validation would reject. Do not redesign passing behavior without evidence.
 2. **Fix the class, not the instance**: When a step fails because of a specific edge case, fix it in a way that handles the entire class of similar cases (e.g., "handle XLS and CSV" not just "handle rohit's file").
 3. **Four fix types per failing step** (apply all that are relevant):
    a. **Pre-validation rules** — Add json_checks to validation_schema that would have CAUGHT this failure before evaluation. Use update_validation_schema.
    b. **Description tightening** — Make the step description more explicit about what the agent must/must not do. Use plan modification tools (update_regular_step, update_todo_task_route, etc.).
-   c. **Code/learning fixes** — If the step uses `+"`learn_code`"+` and has `+"`learnings/{step-id}/main.py`"+`, patch the script directly with diff_patch_workspace_file. For `+"`code_exec`"+` steps, fix the description, validation schema, tool/server config, or global learnings instead; code_exec does not write a persistent main.py. Update `+"`learnings/_global/SKILL.md`"+` for supplemental notes when the fix is reusable HOW-knowledge. Every patch MUST follow the authoring rules below — violations will regress at the next learning pass.
+   c. **Code/learning fixes** — If the step uses `+"`learn_code`"+` and has `+"`learnings/{step-id}/main.py`"+`, patch the script directly with diff_patch_workspace_file. For `+"`code_exec`"+` steps, fix the description, validation schema, tool/server config, or global learnings instead; code_exec does not write a persistent main.py. If a `+"`code_exec`"+` step still has `+"`learnings/{step-id}/main.py`"+`, delete that stale script (and clear lock_code if set) rather than patching it — leaving it behind creates drift and confuses future reviewers. Update `+"`learnings/_global/SKILL.md`"+` for supplemental notes when the fix is reusable HOW-knowledge. Every patch MUST follow the authoring rules below — violations will regress at the next learning pass.
    d. **KB config fixes** — If the failure stems from a step consuming KB facts that don't exist (bad `+"`"+`knowledgebase_access`+"`"+`, or missing `+"`"+`knowledgebase_contribution`+"`"+` on an upstream producer step), use update_step_config to correct it.
 
 {{.MainPyAuthoringRules}}
@@ -9291,6 +9338,36 @@ Per-step KB config:
 6. **Mark reliable steps** — If a step passed across ALL groups with scores >= 8, increment successful_runs via update_step_config. If successful_runs >= 3, set optimized=true, lock_learnings=true, and (for learn_code steps) lock_code=true to freeze `+"`learnings/{step-id}/main.py`"+` against future fix-loop rewrites. Always pass `+"`"+`review_notes`+"`"+` with a one-sentence justification citing the concrete evidence (groups passed, eval scores, pre-validation presence, clean tool usage) — future passes read this to decide whether to unlock.
 7. **Portability check** — When touching a step, scan for hardcoded user-specific values (account IDs, sheet URLs, paths) in descriptions and learnings. Replace with variable placeholders.
 8. **Store discipline** — If the failure evidence shows a step writing cross-run state into learnings/ or plan.json, recommend moving that content to `+"`"+`db/`+"`"+` or to the KB (via `+"`"+`knowledgebase_contribution`+"`"+`) as appropriate.
+9. **Best-practice sweep is required** — After building the failure map, inspect the workflow artifacts listed below and fix hard violations. For non-blocking concerns, append findings to your summary instead of making speculative edits.
+
+## BEST-PRACTICE SWEEP
+
+Run this sweep on every harden pass. For a single-group harden, use that group's run evidence for behavioral conclusions, but global artifact invariants still apply.
+
+1. **Execution mode / saved code**
+   - `+"`code_exec`"+` steps must not keep `+"`learnings/{step-id}/main.py`"+`. If present, delete it and clear `+"`lock_code`"+`.
+   - Browser/UI-heavy steps should generally stay `+"`code_exec`"+`. If a browser step is `+"`learn_code`"+`, keep it only with explicit user intent and strong script stability evidence; otherwise convert to `+"`code_exec`"+` and remove stale script artifacts.
+   - `+"`learn_code`"+` steps should have `+"`script_metadata.json`"+` evidence before `+"`lock_code=true`"+`.
+2. **Learning state**
+   - Steps with `+"`learnings_access=\"read-write\"`"+` need a concrete `+"`learning_objective`"+` and normally `+"`learnings_write_method=\"direct\"`"+`.
+   - For `+"`lock_learnings=true`"+`, read `+"`learnings/{step-id}/.learning_metadata.json`"+`. Check `+"`description_hash_runs >= 3`"+`; for direct learning, also require repeated no-new-learning outcomes. If metadata is missing, auto-unlocked, or contradicts step_config, unlock or correct config with review_notes.
+   - For `+"`learn_code`"+` steps, avoid duplicate global learning writes unless there is HOW knowledge outside the script.
+3. **Knowledgebase**
+   - KB write/read-write access requires a useful `+"`knowledgebase_contribution`"+`.
+   - Prefer `+"`knowledgebase_write_method=\"direct\"`"+`; use `+"`agent`"+` only when the user explicitly requested a separate KB writer/reviewer.
+   - KB notes should contain durable domain observations, not raw rows, run logs, or execution recipes.
+4. **Database**
+   - Any step writing `+"`db/*.json`"+` must reference the target file and its schema contract in `+"`db/README.md`"+`.
+   - `+"`db/*.json`"+` files need stable shape, primary key, merge/upsert rule, writer ownership, and group separation where groups can run.
+   - If a failing/touched step overwrites rows wholesale or writes report data only to run folders, fix the description/code/config so it writes durable, keyed db rows.
+5. **Reports**
+   - `+"`reports/report_plan.json`"+` widgets should source durable `+"`db/*.json`"+`, KB notes, or built-in APIs, not volatile `+"`runs/`"+` paths.
+   - Prefer widget-level JSONata `+"`query`"+` expressions over derived report helper files. The report pipeline is `+"`source -> query -> path -> filter -> render`"+`; when `+"`query`"+` returns the final array/scalar, leave `+"`path`"+` empty or `+"`$`"+`.
+   - If a widget reads `+"`*_rows.json`"+`, `+"`*_summary.json`"+`, `+"`flat_*.json`"+`, or depends on a `+"`step-generate-report`"+` / flatten-data step, collapse it to the canonical `+"`db/*.json`"+` source plus `+"`query`"+` when the transformation is deterministic and does not need a workflow step.
+   - When a harden fix changes output/db field names, update report wiring or flag the required report change.
+6. **Evaluation and variables**
+   - If eval missed a clear output/schema failure, add or tighten pre-validation and, when appropriate, evaluation coverage.
+   - User-specific values belong in `+"`variables/variables.json`"+` / secrets, not descriptions, scripts, SKILL.md, KB, db rows, or reports.
 
 ## CONTEXT
 
@@ -9365,6 +9442,7 @@ Analysis rules:
 |------|----------|
 | `+"`learnings/{step-id}/main.py`"+` | Saved Python script for learn_code steps — **this is what gets executed on each scripted run** |
 | `+"`learnings/_global/SKILL.md`"+` | Global prose learnings shared across all steps |
+| `+"`learnings/{step-id}/.learning_metadata.json`"+` | Learning convergence metadata: description hash runs, successful runs, no-new-learning streak, auto-lock/unlock reason |
 | `+"`learnings/{step-id}/script_metadata.json`"+` | Script version, run counts, per-group stats, duration stats, recent run history, last failure details, streak |
 
 ### Plan and config
@@ -9372,6 +9450,12 @@ Analysis rules:
 |------|----------|
 | `+"`planning/plan.json`"+` | Step definitions, descriptions, validation schemas |
 | `+"`planning/step_config.json`"+` | Per-step config overrides |
+| `+"`variables/variables.json`"+` | Variable groups and user-specific values that descriptions/scripts should reference by placeholder |
+| `+"`knowledgebase/notes/_index.json`"+` | KB topic registry; read this before reading topic notes |
+| `+"`knowledgebase/notes/*.md`"+` | Durable narrative domain observations |
+| `+"`db/README.md`"+` | Durable db schema contracts: purpose, shape, primary_key, merge_rule, writers, consumers |
+| `+"`db/*.json`"+` | Durable structured rows/results used across runs and by reports |
+| `+"`reports/report_plan.json`"+` | Live report widget definitions and source wiring |
 
 ### Important: todo_task orchestrator logs
 For `+"`todo_task`"+` steps, the orchestrator may run sub-agent main.py scripts directly via shell commands instead of delegating to sub-agents. When this happens:
@@ -9397,7 +9481,9 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
    - `+"`runs/{{.TargetRunFolder}}/{{.GroupName}}/logs/{step-id}/execution/learn_code_fast_path.json`"+` for main.py results
    - `+"`runs/{{.TargetRunFolder}}/{{.GroupName}}/logs/{step-id}/pre_validation.json`"+` for validation results
 
-3. **Build a failure list for {{.GroupName}}** — per-step pass/fail with failure reasons. No cross-group aggregation.{{else}}1. **Discover all groups** — List the subdirectories under `+"`runs/{{.TargetRunFolder}}/`"+` to find all group folders (e.g., vikas, rohit, atul). Ignore `+"`run_metadata.json`"+`.
+3. **Build a failure list for {{.GroupName}}** — per-step pass/fail with failure reasons. No cross-group aggregation.
+
+4. **Run the best-practice sweep** — read plan/config/learnings metadata/KB/db/report/eval/variables artifacts and fix hard invariant violations using the rules above.{{else}}1. **Discover all groups** — List the subdirectories under `+"`runs/{{.TargetRunFolder}}/`"+` to find all group folders (e.g., vikas, rohit, atul). Ignore `+"`run_metadata.json`"+`.
 
 2. **Read evaluation reports** — For each group, read:
    - `+"`evaluation/runs/{{.TargetRunFolder}}/{group}/evaluation_report.json`"+`
@@ -9408,7 +9494,9 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
 3. **Build a failure map** — For each step, aggregate failures across all groups:
    | Step ID | Groups that passed | Groups that failed | Failure reasons |{{end}}
 
-4. **For each failing step** (ordered by failure count, worst first):
+4. **Run the best-practice sweep** — read plan/config/learnings metadata/KB/db/report/eval/variables artifacts and fix hard invariant violations using the rules above.
+
+5. **For each failing step** (ordered by failure count, worst first):
    a. Read the current step description, validation_schema, learnings, and main.py (if learn_code)
    b. Read the actual execution output and logs {{if .GroupName}}for `+"`{{.GroupName}}`"+`{{else}}for 1-2 failing groups{{end}}
    c. Categorize the failure:
@@ -9419,14 +9507,16 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
    d. Apply fixes using the appropriate tools
    e. Document what you changed and why
 
-5. **For each passing step** ({{if .GroupName}}passed for `+"`{{.GroupName}}`"+`{{else}}passed ALL groups{{end}}):
+6. **For each passing step** ({{if .GroupName}}passed for `+"`{{.GroupName}}`"+`{{else}}passed ALL groups{{end}}):
    - If successful_runs < 3, increment via update_step_config
    - If successful_runs >= 3, set optimized=true, lock_learnings=true, and (learn_code steps only) lock_code=true — freezes main.py so a single future transient failure won't trigger the fix loop to rewrite a proven script
    - **Unlock guard**: If you suspect the step description changed since the last review (description_reviewed may no longer reflect the current description), do NOT auto-lock. Instead flag the step as "description may have changed since last review — re-review before locking" and leave lock_learnings / lock_code at their previous values.{{if .GroupName}}
    - **Single-group caution**: Marking optimized after only one group passing is weaker evidence than after all-groups passing. Be more conservative — prefer incrementing successful_runs to locking outright unless the count is already at 3+.{{end}}
 
-6. **Produce a summary** with:
+7. **Produce a summary** with:
    - Steps hardened (with specific changes made)
+   - Best-practice violations cleaned up
+   - Best-practice concerns intentionally left as findings only
    - Steps marked optimized
    - Structural fixes applied, or broader structural redesign still recommended for replan_workflow_from_results
    - Remaining risk areas
@@ -9444,7 +9534,7 @@ When adding pre-validation rules, follow this priority:
 Always prefer specific checks over generic ones. A check that catches the actual failure is worth more than ten generic existence checks.
 `)
 
-var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from evaluation results in "{{.TargetRunFolder}}"{{if .GroupName}}, scoped to group "{{.GroupName}}" only{{end}}. {{if .GroupName}}Read this group's eval report{{else}}Read all group eval reports{{end}}, identify every failing step, and apply targeted fixes (pre-validation rules, description tightening, code patches). Mark passing steps as optimized where appropriate. Summarize all changes made.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from evaluation results in "{{.TargetRunFolder}}"{{if .GroupName}}, scoped to group "{{.GroupName}}" only{{end}}. {{if .GroupName}}Read this group's eval report{{else}}Read all group eval reports{{end}}, identify every failing step, run the required best-practice sweep over plan/config/learnings metadata/KB/db/reports/variables/eval artifacts, and apply targeted fixes (pre-validation rules, description tightening, stale-script cleanup, config fixes, code patches for learn_code). Mark passing steps as optimized where appropriate. Summarize all changes made and any best-practice findings left for later.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 // HardenWorkflowAgent applies eval-driven fixes to failing steps
 type HardenWorkflowAgent struct {
@@ -9510,7 +9600,7 @@ func (agent *StepCodeReviewAgent) Execute(ctx context.Context, templateVars map[
 	return result, updatedHistory, nil
 }
 
-// WorkflowPlanReviewAgent critically reviews current plan decisions without modifying files.
+// WorkflowPlanReviewAgent critically reviews current workflow design and dependent artifacts without modifying files.
 type WorkflowPlanReviewAgent struct {
 	*agents.BaseOrchestratorAgent
 }
@@ -9684,7 +9774,7 @@ func (agent *WorkflowResultsReplanAgent) Execute(ctx context.Context, templateVa
 	return result, updatedHistory, nil
 }
 
-// runReviewPlanAgent performs a read-only critical review of the current plan decisions.
+// runReviewPlanAgent performs a read-only critical review of the current workflow design and dependent artifacts.
 func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, targetRunFolder string, focus string) (string, error) {
 	workspacePath := iwm.controller.GetWorkspacePath()
 	logger := iwm.controller.GetLogger()
@@ -9701,8 +9791,17 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 			optimized := false
 			mode := "code_exec"
 			declaredMode := ""
+			successfulRuns := 0
 			lockLearnings := false
+			lockCode := false
+			learningAccess := ""
+			learningObjective := ""
+			learningsWriteMethod := ""
 			learningOptedIn := false
+			kbAccess := ""
+			kbContribution := ""
+			kbWriteMethod := ""
+			reviewNotes := ""
 			descriptionReviewed := false
 			if sc.AgentConfigs != nil {
 				if sc.AgentConfigs.Optimized != nil {
@@ -9712,19 +9811,28 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 					mode = "learn_code"
 				}
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
+				if sc.AgentConfigs.SuccessfulRuns != nil {
+					successfulRuns = *sc.AgentConfigs.SuccessfulRuns
+				}
 				if sc.AgentConfigs.LockLearnings != nil {
 					lockLearnings = *sc.AgentConfigs.LockLearnings
 				}
-				learningOptedIn = resolveLearningsAccess(sc.AgentConfigs) == LearningsAccessReadWrite && strings.TrimSpace(sc.AgentConfigs.LearningObjective) != ""
+				if sc.AgentConfigs.LockCode != nil {
+					lockCode = *sc.AgentConfigs.LockCode
+				}
+				learningAccess = resolveLearningsAccess(sc.AgentConfigs)
+				learningObjective = sc.AgentConfigs.LearningObjective
+				learningsWriteMethod = resolveLearningsWriteMethod(sc.AgentConfigs)
+				learningOptedIn = learningAccess == LearningsAccessReadWrite && strings.TrimSpace(learningObjective) != ""
+				kbAccess = sc.AgentConfigs.KnowledgebaseAccess
+				kbContribution = sc.AgentConfigs.KnowledgebaseContribution
+				kbWriteMethod = resolveKnowledgebaseWriteMethod(sc.AgentConfigs)
+				reviewNotes = sc.AgentConfigs.ReviewNotes
 				if sc.AgentConfigs.DescriptionReviewed != nil {
 					descriptionReviewed = *sc.AgentConfigs.DescriptionReviewed
 				}
 			}
-			lockCode := false
-			if sc.AgentConfigs != nil && sc.AgentConfigs.LockCode != nil {
-				lockCode = *sc.AgentConfigs.LockCode
-			}
-			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, lock_learnings=%v, lock_code=%v, learning_opted_in=%v, description_reviewed=%v\n", sc.ID, optimized, mode, declaredMode, lockLearnings, lockCode, learningOptedIn, descriptionReviewed))
+			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, successful_runs=%d, lock_learnings=%v, lock_code=%v, learnings_access=%s, learning_objective=%q, learnings_write_method=%s, learning_opted_in=%v, kb_access=%s, kb_contribution=%q, kb_write_method=%s, description_reviewed=%v, review_notes=%q\n", sc.ID, optimized, mode, declaredMode, successfulRuns, lockLearnings, lockCode, learningAccess, learningObjective, learningsWriteMethod, learningOptedIn, kbAccess, kbContribution, kbWriteMethod, descriptionReviewed, reviewNotes))
 		}
 		stepConfigSummary = sb.String()
 	}
@@ -9736,10 +9844,15 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 
 	readPaths := []string{
 		workspacePath,
+		fmt.Sprintf("%s/builder", workspacePath),
+		fmt.Sprintf("%s/db", workspacePath),
 		fmt.Sprintf("%s/runs", workspacePath),
 		fmt.Sprintf("%s/planning", workspacePath),
 		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/knowledgebase", workspacePath),
+		fmt.Sprintf("%s/reports", workspacePath),
 		fmt.Sprintf("%s/evaluation", workspacePath),
+		fmt.Sprintf("%s/variables", workspacePath),
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
 
@@ -10315,6 +10428,9 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 			// Run static review too
 			staticIssues := reviewMainPyScript(scriptContent)
 			stepsToReview.WriteString(fmt.Sprintf("\n**Saved Script** (`learnings/%s/main.py`):\n```python\n%s\n```\n", sid, scriptContent))
+			if !isScriptedConfig {
+				stepsToReview.WriteString("\n**Mode Fit Issue**: ⚠️ This step is not declared learn_code but still has a saved main.py. For code_exec steps, this file is stale artifact debt and should be deleted; code_exec does not run or maintain persistent main.py.\n")
+			}
 			if len(staticIssues) > 0 {
 				stepsToReview.WriteString("\n**Static Analysis Issues**:\n")
 				for idx, issue := range staticIssues {
@@ -10537,7 +10653,14 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 			mode := "code_exec"
 			declaredMode := ""
 			successfulRuns := 0
-			locked := false
+			lockLearnings := false
+			lockCode := false
+			learningsAccess := ""
+			learningObjective := ""
+			learningsWriteMethod := ""
+			kbAccess := ""
+			kbContribution := ""
+			kbWriteMethod := ""
 			reviewNotes := ""
 			if sc.AgentConfigs != nil && sc.AgentConfigs.Optimized != nil {
 				optimized = *sc.AgentConfigs.Optimized
@@ -10551,15 +10674,20 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 					successfulRuns = *sc.AgentConfigs.SuccessfulRuns
 				}
 				if sc.AgentConfigs.LockLearnings != nil {
-					locked = *sc.AgentConfigs.LockLearnings
+					lockLearnings = *sc.AgentConfigs.LockLearnings
 				}
+				if sc.AgentConfigs.LockCode != nil {
+					lockCode = *sc.AgentConfigs.LockCode
+				}
+				learningsAccess = resolveLearningsAccess(sc.AgentConfigs)
+				learningObjective = sc.AgentConfigs.LearningObjective
+				learningsWriteMethod = resolveLearningsWriteMethod(sc.AgentConfigs)
+				kbAccess = sc.AgentConfigs.KnowledgebaseAccess
+				kbContribution = sc.AgentConfigs.KnowledgebaseContribution
+				kbWriteMethod = resolveKnowledgebaseWriteMethod(sc.AgentConfigs)
 				reviewNotes = sc.AgentConfigs.ReviewNotes
 			}
-			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, successful_runs=%d, locked=%v", sc.ID, optimized, mode, declaredMode, successfulRuns, locked))
-			if optimized && reviewNotes != "" {
-				sb.WriteString(fmt.Sprintf(", review_notes=%q", reviewNotes))
-			}
-			sb.WriteString("\n")
+			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, successful_runs=%d, lock_learnings=%v, lock_code=%v, learnings_access=%s, learning_objective=%q, learnings_write_method=%s, kb_access=%s, kb_contribution=%q, kb_write_method=%s, review_notes=%q\n", sc.ID, optimized, mode, declaredMode, successfulRuns, lockLearnings, lockCode, learningsAccess, learningObjective, learningsWriteMethod, kbAccess, kbContribution, kbWriteMethod, reviewNotes))
 		}
 		stepConfigSummary = sb.String()
 	}

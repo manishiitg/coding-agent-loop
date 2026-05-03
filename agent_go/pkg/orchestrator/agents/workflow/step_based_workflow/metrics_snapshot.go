@@ -50,10 +50,10 @@ type evalReportForSnapshot struct {
 }
 
 type evalStepForSnapshot struct {
-	StepID        string                  `json:"step_id"`
-	Score         int                     `json:"score"`
-	MaxScore      int                     `json:"max_score"`
-	OutputContent *evalOutputForSnapshot  `json:"output_content,omitempty"`
+	StepID        string                 `json:"step_id"`
+	Score         int                    `json:"score"`
+	MaxScore      int                    `json:"max_score"`
+	OutputContent *evalOutputForSnapshot `json:"output_content,omitempty"`
 }
 
 type evalOutputForSnapshot struct {
@@ -166,6 +166,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) snapshotRunMetrics(ctx context.Contex
 	if trimmed := strings.TrimSpace(existing); trimmed != "" {
 		for _, line := range strings.Split(trimmed, "\n") {
 			if line = strings.TrimSpace(line); line != "" {
+				if strings.HasPrefix(line, "[Binary file:") {
+					continue
+				}
 				lines = append(lines, line)
 			}
 		}

@@ -132,6 +132,7 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 type imageGenResult struct {
 	Model        string   `json:"model"`
 	CostPerImage *float64 `json:"cost_per_image,omitempty"`
+	TotalCost    *float64 `json:"total_cost_usd,omitempty"`
 	CostNote     string   `json:"cost_note,omitempty"`
 	Prompt       string   `json:"prompt"`
 	SavedPaths   []string `json:"saved_paths,omitempty"`
@@ -650,9 +651,26 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 		}
 
 		costPerImage, costNote := imageGenerationCostMetadata(provider, modelID)
+		var totalCost *float64
+		if costPerImage != nil {
+			cost := *costPerImage * float64(len(resp.Images))
+			totalCost = &cost
+			recordPricedToolCost(ctx, cfg.WorkspaceAPIURL, cfg.UserID, pricedToolCost{
+				ToolName:    "image_gen",
+				Capability:  "image_gen",
+				Provider:    provider,
+				ModelID:     modelID,
+				Unit:        "image",
+				Quantity:    float64(len(resp.Images)),
+				Count:       len(resp.Images),
+				TotalCost:   cost,
+				OutputPaths: savedPaths,
+			})
+		}
 		result := imageGenResult{
 			Model:        modelID,
 			CostPerImage: costPerImage,
+			TotalCost:    totalCost,
 			CostNote:     costNote,
 			Prompt:       prompt,
 			SavedPaths:   savedPaths,
@@ -940,9 +958,26 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 		}
 
 		costPerImage, costNote := imageGenerationCostMetadata(provider, modelID)
+		var totalCost *float64
+		if costPerImage != nil {
+			cost := *costPerImage * float64(len(resp.Images))
+			totalCost = &cost
+			recordPricedToolCost(ctx, cfg.WorkspaceAPIURL, cfg.UserID, pricedToolCost{
+				ToolName:    "image_edit",
+				Capability:  "image_edit",
+				Provider:    provider,
+				ModelID:     modelID,
+				Unit:        "image",
+				Quantity:    float64(len(resp.Images)),
+				Count:       len(resp.Images),
+				TotalCost:   cost,
+				OutputPaths: savedPaths,
+			})
+		}
 		result := imageGenResult{
 			Model:        modelID,
 			CostPerImage: costPerImage,
+			TotalCost:    totalCost,
 			CostNote:     costNote,
 			Prompt:       prompt,
 			SavedPaths:   savedPaths,

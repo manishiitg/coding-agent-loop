@@ -1,6 +1,6 @@
-Critical audit of the workflow plan — the comprehensive review. Where /design-flow asks "what would a designer make better," this asks "what's wrong, weak, risky, or unjustified, and which steps need attention."{{if eq .WorkshopMode "run"}} In Run mode, return findings in chat only; do not write files.{{else}} Findings go to builder/review.md as recommendations; nothing is applied here.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Critical audit of the workflow design — the comprehensive review. Where /design-flow asks "what would a designer make better," this asks "what's wrong, weak, risky, stale, or unjustified, and which steps or artifacts need attention." Review the plan plus the dependent artifacts that make it executable: step config, learnings, saved scripts, KB notes, db JSON files, report wiring, variables, and evaluation coverage.{{if eq .WorkshopMode "run"}} In Run mode, return findings in chat only; do not write files.{{else}} Findings go to builder/review.md as recommendations; nothing is applied here.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-The audit has three phases. Run each in order. Skip Phase 3's orchestrator/router block when the workflow has no todo_task, routing, or orchestration steps.
+The audit has four phases. Run each in order. Skip Phase 3's orchestrator/router block when the workflow has no todo_task, routing, or orchestration steps. Do not skip Phase 4; if an artifact surface is absent, say whether that absence is acceptable or a finding.
 
 PHASE 1 — STRUCTURAL ANALYSIS
 
@@ -11,7 +11,7 @@ PHASE 1 — STRUCTURAL ANALYSIS
 
 PHASE 2 — PER-STEP DESCRIPTION AUDIT
 
-For every executable step in plan.json, read the description. This includes top-level steps, todo_task routes, routing routes, orchestration routes, and referenced orphan_steps. Read learnings/_global/SKILL.md once as the shared HOW-to-run source. For learn_code/scripted steps only, inspect learnings/{step-id}/main.py when present. Apply each lens; skip a lens when it doesn't fire.
+For every executable step in plan.json, read the description. This includes top-level steps, todo_task routes, routing routes, orchestration routes, and referenced orphan_steps. Read learnings/_global/SKILL.md once as the shared HOW-to-run source. For steps with learning writes or locked learning, inspect learnings/{step-id}/.learning_metadata.json when present. For learn_code/scripted steps, inspect learnings/{step-id}/main.py when present. For code_exec steps, verify learnings/{step-id}/main.py does not exist; if it does, flag it for deletion as a stale script. Apply each lens; skip a lens when it doesn't fire.
 
 LENS A — Description vs Skill Confusion
 - **Description contains runtime learnings**: the description should be an *instruction* (what to do), not a *retrospective* (what worked last time). "Use batch mode because single inserts timeout", "avoid X which caused failures", or specific tool parameter values discovered at runtime belong in SKILL.md, not the description.
@@ -52,6 +52,56 @@ LENS F — Orchestrator vs Sub-Agent Boundary
 LENS G — Sub-Agent Hardcoded Values
 - Same hardcoded-value checks from Lens B applied to sub-agent route descriptions (paths, run/iteration paths, credentials, IDs/URLs).
 
+PHASE 4 — DEPENDENT ARTIFACT AUDIT
+
+Treat plan, config, learning, KB, db, reports, variables, and eval as one workflow contract. A plan review is incomplete if a step change leaves one of these surfaces stale or underspecified.
+
+1. Read `planning/step_config.json`, `variables/variables.json`, `evaluation/evaluation_plan.json`, `reports/report_plan.json`, `builder/review.md`, `learnings/_global/SKILL.md`, `knowledgebase/notes/_index.json`, `db/README.md`, and relevant files under `learnings/{step-id}/`, `knowledgebase/notes/`, and `db/` when present. If a file is absent, decide whether absence is acceptable for this workflow.
+2. **Learning audit**:
+   - Check every step with `learnings_access=read-write` has a real reason, a concrete `learning_objective`, and `learnings_write_method=direct` unless the user explicitly asked for a separate learning agent.
+   - For every step with learning writes or `lock_learnings=true`, read `learnings/{step-id}/.learning_metadata.json` when present. Check `successful_runs`, `description_hash_runs`, `consecutive_no_new_learning_runs`, `auto_locked_at`, `auto_lock_reason`, `auto_unlocked_at`, and recent detection history.
+   - Flag `lock_learnings=true` when metadata is missing, metadata shows fewer than 3 same-description successful runs, direct learning lacks repeated no-new-learning outcomes, metadata was auto-unlocked after a description change, or step_config successful_runs/lock state contradicts metadata.
+   - Flag any `code_exec` step with `learnings/{step-id}/main.py`; code_exec does not run or maintain persistent main.py, so the file is stale and should be deleted.
+   - Flag learning writes for plumbing steps with no reusable HOW-to-run knowledge.
+   - Flag browser-based steps using `learn_code`; browser work should stay agentic/code_exec unless there is an explicit, defensible exception.
+   - Flag `learn_code` before stable evidence or while an experiment is still testing that behavior.
+   - Check `learnings/_global/SKILL.md` for stale step names, task descriptions masquerading as learnings, duplicated plan instructions, hardcoded values, and advice that contradicts current descriptions.
+   - For learn_code/scripted steps, inspect `learnings/{step-id}/main.py` and `learnings/{step-id}/script_metadata.json` when present. Flag stale code, missing lock rationale, brittle hardcoded values, browser automation scripts, and code writing to the wrong store.
+3. **Knowledgebase audit**:
+   - Steps that produce durable narrative domain observations should declare `knowledgebase_access` plus a useful `knowledgebase_contribution`.
+   - Prefer `knowledgebase_write_method=direct`; `agent` is only when the user explicitly wants a separate KB writer/reviewer.
+   - Check `knowledgebase/notes/_index.json` points to coherent topic files and that topic notes contain durable WHAT-we-know facts, not execution recipes, run logs, or raw rows.
+   - Flag steps that read KB without a clear need, write KB without a contribution contract, or store KB-worthy domain facts only in context outputs/db/learnings.
+4. **Database audit**:
+   - From `planning/plan.json`, find every step description that says it writes, saves, tracks, stores, accumulates, appends, caches, deduplicates, or reports data. Map those steps to concrete `db/*.json` files.
+   - Read `db/README.md` if it exists. Then list `db/*.json` files and sample each non-empty file.
+   - Read `reports/report_plan.json` if present and map which widgets consume which `db/*.json` paths.
+   - For each `db/*.json` file, check:
+     - **Documented schema exists** in `db/README.md` with purpose, shape, primary_key, merge_rule, writers, consumers, and report widgets that depend on it.
+     - **Stable JSON shape**: top-level object or array is intentional; rows have consistent keys/types; no mixed unrelated record types in one file.
+     - **Primary key discipline**: array-like tables have a stable primary key (`id`, `group_name`, domain id, composite id). If no primary key exists, repeated runs will duplicate or clobber rows.
+     - **Merge/upsert rule**: each writer description says read existing file, merge by primary key, preserve unrelated rows/groups, and write back. Flag wholesale overwrite risk.
+     - **Writer ownership**: every file has one clear owner step or explicitly documented multi-writer rules. If multiple steps write the same file, their fields and merge responsibilities must not conflict.
+     - **Group/run separation**: group-specific rows include `group_name` or another scoped key when multiple variable groups can run. Do not rely on folder names inside `db/` data.
+     - **No volatile run paths as data model**: report widgets and downstream steps should bind to `db/*.json`, not `runs/iteration-*` files. Stored paths may reference run artifacts only when intentionally archival and documented.
+     - **Report compatibility**: widget source paths, expected fields, aggregation/grouping keys, and chart/table fields exist in the sampled data.
+     - **Data hygiene**: no duplicate primary keys, stale test rows, impossible nulls, mixed date formats, or fields that silently changed names across rows.
+   - For each step that writes `db/`, check that its description references the `db/README.md` contract and names the file, primary key, and merge rule. If it only says "save the result" or writes to a run folder, flag it.
+5. **Report audit**:
+   - Check `reports/report_plan.json` widgets source durable `db/*.json`, KB notes, or built-in APIs rather than volatile run folders.
+   - Check every referenced field exists in sampled source data and each widget has a clear owner/source step.
+   - Flag report widgets whose source data is not produced by any step or whose data contract is undocumented.
+   - Check whether widgets are using the Report UI's JSONata `query` feature where appropriate. The pipeline is `source -> query -> path -> filter -> render`; when `query` returns the final array/scalar, `path` should be empty or `$`.
+   - Flag derived/helper report files like `*_rows.json`, `*_summary.json`, `flat_*.json`, or a `step-generate-report` / "flatten data" step when the same result can be expressed as a widget `query` against the canonical `db/*.json` source.
+   - For report findings, recommend collapsing helper sources into canonical db source + `query` when this would reduce duplicated data, stale helper files, or extra workflow steps.
+6. **Evaluation and variables audit**:
+   - Check `evaluation/evaluation_plan.json` covers the objective and success criteria with measurable rubrics, and that eval step IDs do not collide with execution step IDs.
+   - Check `variables/variables.json` contains user-specific values that should not be hardcoded in descriptions, scripts, KB, db rows, or reports.
+7. For every artifact finding, route ownership:
+   - Builder owns schema contract, step descriptions, context/output wiring, report widget source changes, and `db/README.md`.
+   - Optimizer owns evidence-backed hardening when real runs show a step is violating the schema/merge contract.
+   - Run mode only reports findings in chat.
+
 OUTPUT FORMAT
 
 For each step, produce a per-step report:
@@ -66,6 +116,10 @@ For each step, produce a per-step report:
 **Lens E — Orchestrator/router description:** <findings, or "n/a (not todo_task/routing/orchestration)" or "clean">
 **Lens F — Orchestrator/sub-agent boundary:** <findings or "n/a" or "clean">
 **Lens G — Sub-agent hardcoded:** <findings or "n/a" or "clean">
+**Learning contract:** <learning objective/method/.learning_metadata/script issues, or "n/a">
+**KB contract:** <KB access/contribution/topic issues, or "n/a">
+**DB contract:** <db files written/read, schema/merge issues, or "n/a">
+**Report/eval/variable contract:** <wiring, eval, or variable issues, or "n/a">
 **Severity verdict:** CRITICAL / WARNING / INFO / clean
 **Top recommendation:** <single highest-value fix>
 ```
@@ -75,9 +129,13 @@ Then a cross-step summary:
 - **Phase 1 structural findings** (from review_plan tool): list by severity.
 - **Steps with description issues** (Lens A/B/C/D): per-step, which lenses fired.
 - **Todo_task/routing/orchestration steps with parent/route issues** (Lens E/F/G): per-step, which lenses fired.
+- **Learning findings** (Phase 4): list steps with unjustified learning, missing objective, wrong write method, missing/stale `.learning_metadata.json`, unsupported learning locks, code_exec steps with leftover main.py, stale global skill content, stale main.py, or browser learn_code.
+- **Knowledgebase findings** (Phase 4): list missing or unjustified KB access/contribution, stale/malformed topic notes, and facts stored in the wrong place.
+- **Database structure findings** (Phase 4): list by `db/<file>.json`, then by writer step. Include missing `db/README.md` entries, missing primary keys, unsafe overwrite/append behavior, report incompatibilities, and duplicate/stale rows.
+- **Report/eval/variable findings** (Phase 4): list stale report wiring, missed JSONata `query` opportunities, unnecessary report helper files/flatten steps, missing eval coverage, and values that should be variables.
 - **Steps that look clean across all phases.**
 - **Top 5 issues to fix first** (highest-impact across all phases).
 
-{{if eq .WorkshopMode "run"}}RUN MODE OUTPUT: do not write builder/review.md or any workspace file. Return the review in chat using the output format above. If the user wants the findings persisted, tell them to switch to Builder or Optimizer mode and rerun /review-plan.{{else}}REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not). Include: what was reviewed, the structural findings (Phase 1), the description findings grouped by lens (Phase 2), the orchestrator/router findings (Phase 3), the cross-step summary, the top-5 list, items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply). Route fixes by ownership: Builder handles structure, step descriptions, context dependencies, validation schemas, variables, basic config, db/KB/report wiring; Optimizer handles hardening, evaluation design/scoring, experiments, learn_code promotion, and lock decisions.{{end}}
+{{if eq .WorkshopMode "run"}}RUN MODE OUTPUT: do not write builder/review.md or any workspace file. Return the review in chat using the output format above. If the user wants the findings persisted, tell them to switch to Builder or Optimizer mode and rerun /review-plan.{{else}}REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not). Include: what was reviewed, the structural findings (Phase 1), the description findings grouped by lens (Phase 2), the orchestrator/router findings (Phase 3), the dependent artifact findings (Phase 4: learnings, KB, db, reports, variables, eval), the cross-step summary, the top-5 list, items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply). Route fixes by ownership: Builder handles structure, step descriptions, context dependencies, validation schemas, variables, basic config, db/KB/report wiring; Optimizer handles hardening, evaluation design/scoring, experiments, learn_code promotion, and lock decisions.{{end}}
 
-{{if eq .WorkshopMode "run"}}**Finding IDs.** In Run mode, assign temporary ids in the response only, using `F-YYYY-MM-DD-NNN` starting at `001`; do not scan or write builder/review.md.{{else}}**Finding IDs.** Every distinct finding (whether from Phase 1, 2, or 3) gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan builder/review.md for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id or "structural"> — <finding>` so the close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.{{end}}
+{{if eq .WorkshopMode "run"}}**Finding IDs.** In Run mode, assign temporary ids in the response only, using `F-YYYY-MM-DD-NNN` starting at `001`; do not scan or write builder/review.md.{{else}}**Finding IDs.** Every distinct finding from any phase gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan builder/review.md for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id, db file, or "structural"> — <finding>` so the close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.{{end}}

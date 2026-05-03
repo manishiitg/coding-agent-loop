@@ -42,6 +42,10 @@ type musicGenResult struct {
 	Count         int              `json:"count"`
 	MimeType      string           `json:"mime_type,omitempty"`
 	Metadata      []map[string]any `json:"metadata,omitempty"`
+	CostUnit      string           `json:"cost_unit,omitempty"`
+	CostQuantity  float64          `json:"cost_quantity,omitempty"`
+	TotalCost     float64          `json:"total_cost_usd,omitempty"`
+	CostEstimated bool             `json:"cost_estimated,omitempty"`
 }
 
 func inferMusicProviderFromModel(modelID string) string {
@@ -238,7 +242,8 @@ func CreateMusicGenExecutor(cfg AudioGenExecutorConfig) func(ctx context.Context
 		}
 
 		var opts []llmtypes.MusicGenerationOption
-		if durationMS := int(numberFromAny(args["duration_ms"])); durationMS > 0 {
+		durationMS := int(numberFromAny(args["duration_ms"]))
+		if durationMS > 0 {
 			opts = append(opts, llmtypes.WithMusicDurationMS(durationMS))
 		}
 		if instrumental, ok := args["instrumental"].(bool); ok {
@@ -323,6 +328,25 @@ func CreateMusicGenExecutor(cfg AudioGenExecutorConfig) func(ctx context.Context
 			}
 		}
 
+		costUnit, costQuantity, totalCost, costEstimated := musicCost(provider, modelID, float64(durationMS), len(resp.Music))
+		if totalCost > 0 {
+			recordPricedToolCost(ctx, cfg.WorkspaceAPIURL, cfg.UserID, pricedToolCost{
+				ToolName:    generateMusicToolName,
+				Capability:  generateMusicToolName,
+				Provider:    provider,
+				ModelID:     modelID,
+				Unit:        costUnit,
+				Quantity:    costQuantity,
+				Count:       len(resp.Music),
+				TotalCost:   totalCost,
+				Estimated:   costEstimated,
+				OutputPaths: savedPaths,
+				Metadata: map[string]interface{}{
+					"duration_ms": durationMS,
+				},
+			})
+		}
+
 		result := musicGenResult{
 			Model:         modelID,
 			Provider:      provider,
@@ -332,6 +356,10 @@ func CreateMusicGenExecutor(cfg AudioGenExecutorConfig) func(ctx context.Context
 			Count:         len(resp.Music),
 			MimeType:      resultMimeType,
 			Metadata:      metadata,
+			CostUnit:      costUnit,
+			CostQuantity:  costQuantity,
+			TotalCost:     totalCost,
+			CostEstimated: costEstimated,
 		}
 		resultJSON, err := json.Marshal(result)
 		if err != nil {

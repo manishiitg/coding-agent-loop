@@ -1252,11 +1252,29 @@ export interface ModelTokenUsage {
   context_usage_percent?: number;
 }
 
+export interface ToolCostUsage {
+  tool_name: string;
+  capability?: string;
+  provider?: string;
+  model_id?: string;
+  unit?: string;
+  quantity?: number;
+  count?: number;
+  total_cost_usd?: number;
+  estimated?: boolean;
+  output_paths?: string[];
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface TokenUsageFile {
   created_at: string;
   updated_at: string;
   by_model: Record<string, ModelTokenUsage>;
   by_step_and_model?: Record<string, Record<string, ModelTokenUsage>>;
+  by_tool?: Record<string, ToolCostUsage>;
+  by_step_and_tool?: Record<string, Record<string, ToolCostUsage>>;
 }
 
 export interface PhaseTokenUsageFile {

@@ -18,6 +18,7 @@ DECISION RULES (apply per step)
 
 EXECUTION MODE FIT (code_exec | learn_code):
 - Browser/UI-heavy steps should generally be `code_exec`, not `learn_code`. If a step uses browser capability, live auth/session state, dynamic selectors, pagination/lazy-loading, or third-party page timing and is currently `learn_code` with saved main.py, flag it. Recommend `declared_execution_mode="code_exec"` unless the user explicitly requested scripted browser execution AND the script has durable selectors, state-driven waits, fresh snapshots, and proven stability across runs.
+- If a step is currently `code_exec` but `learnings/{step-id}/main.py` still exists, flag it for deletion and recommend clearing `lock_code`. code_exec does not use persistent main.py, so keeping the file creates stale-script drift for future reviewers.
 - Recommend `learn_code` only when ALL are true:
   - The step behavior is stable, mechanical, and deterministic on a stable input shape.
   - The step does not need per-instance LLM judgment, adaptive browsing, or live UI interpretation.

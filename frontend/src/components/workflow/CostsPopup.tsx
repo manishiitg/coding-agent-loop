@@ -67,6 +67,8 @@ interface RunCosts {
   steps?: Record<string, StepExecutionLogs> // Store steps for title lookup
   costSummary: {
     totalCost: number
+    totalLLMCost: number
+    totalToolCost: number
     totalInputTokens: number
     totalOutputTokens: number
     totalTokens: number
@@ -361,9 +363,11 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
 
   // Calculate cost summary from token usage
   const calculateCostSummary = (tokenUsage: TokenUsageFile | null, evaluationTokenUsage: TokenUsageFile | null | undefined, steps?: Record<string, StepExecutionLogs>): RunCosts['costSummary'] => {
-    if (!tokenUsage?.by_model && !evaluationTokenUsage?.by_model) return null
+    if (!tokenUsage?.by_model && !tokenUsage?.by_tool && !evaluationTokenUsage?.by_model && !evaluationTokenUsage?.by_tool) return null
 
     let totalCost = 0
+    let totalLLMCost = 0
+    let totalToolCost = 0
     let totalInputTokens = 0
     let totalOutputTokens = 0
     let totalLLMCalls = 0
@@ -401,6 +405,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
     if (tokenUsage?.by_model) {
       Object.values(tokenUsage.by_model).forEach(usage => {
         totalCost += usage.total_cost_usd || 0
+        totalLLMCost += usage.total_cost_usd || 0
         totalInputTokens += usage.input_tokens || 0
         totalOutputTokens += usage.output_tokens || 0
         totalLLMCalls += usage.llm_call_count || 0
@@ -408,6 +413,17 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
         totalCacheWriteTokens += usage.cache_write_tokens || 0
         totalReasoningTokens += usage.reasoning_tokens || 0
       })
+    }
+
+    if (tokenUsage?.by_tool) {
+      Object.values(tokenUsage.by_tool).forEach(usage => {
+        const cost = usage.total_cost_usd || 0
+        totalCost += cost
+        totalToolCost += cost
+      })
+      if (!tokenUsage.by_step_and_tool) {
+        stageCosts.execution += Object.values(tokenUsage.by_tool).reduce((sum, usage) => sum + (usage.total_cost_usd || 0), 0)
+      }
     }
 
     // Helper to find step number and title from stepID
@@ -485,10 +501,45 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       })
     }
 
+    if (tokenUsage?.by_step_and_tool) {
+      Object.entries(tokenUsage.by_step_and_tool).forEach(([key, toolMap]) => {
+        const parts = key.split(':')
+        const phase = parts[0]
+        const stepID = parts[1] || ''
+        const cost = Object.values(toolMap).reduce((sum, u) => sum + (u.total_cost_usd || 0), 0)
+        const stageBucket = classifyPhase(phase)
+        stageCosts[stageBucket] += cost
+        const { stepNum, stepTitle } = findStepInfo(stepID)
+        const stepKey = stepID || key
+        if (!stepCosts[stepKey]) {
+          stepCosts[stepKey] = {
+            stepID: stepKey,
+            stepNum,
+            stepTitle: stepTitle || stepKey,
+            execution: 0,
+            learning: 0,
+            evaluation: 0,
+            knowledgebase: 0,
+            routing: 0,
+            workshop: 0,
+            totalCost: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            llmCalls: 0
+          }
+        }
+        stepCosts[stepKey].totalCost += cost
+        if (stageBucket !== 'other') {
+          stepCosts[stepKey][stageBucket] += cost
+        }
+      })
+    }
+
     // Process evaluation token usage
     if (evaluationTokenUsage?.by_model) {
       Object.values(evaluationTokenUsage.by_model).forEach(usage => {
         totalCost += usage.total_cost_usd || 0
+        totalLLMCost += usage.total_cost_usd || 0
         totalInputTokens += usage.input_tokens || 0
         totalOutputTokens += usage.output_tokens || 0
         totalLLMCalls += usage.llm_call_count || 0
@@ -498,6 +549,15 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
         // All evaluation by_model costs go to evaluation stage
         stageCosts.evaluation += usage.total_cost_usd || 0
       })
+    }
+
+    if (evaluationTokenUsage?.by_tool) {
+      const evalToolCost = Object.values(evaluationTokenUsage.by_tool).reduce((sum, usage) => sum + (usage.total_cost_usd || 0), 0)
+      totalCost += evalToolCost
+      totalToolCost += evalToolCost
+      if (!evaluationTokenUsage.by_step_and_tool) {
+        stageCosts.evaluation += evalToolCost
+      }
     }
 
     // Process evaluation step-wise costs
@@ -546,6 +606,36 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       })
     }
 
+    if (evaluationTokenUsage?.by_step_and_tool) {
+      Object.entries(evaluationTokenUsage.by_step_and_tool).forEach(([key, toolMap]) => {
+        const parts = key.split(':')
+        const stepID = parts[1] || parts[0]
+        const cost = Object.values(toolMap).reduce((sum, u) => sum + (u.total_cost_usd || 0), 0)
+        const { stepNum, stepTitle } = findStepInfo(stepID)
+        const stepKey = `eval-${stepID}`
+        if (!stepCosts[stepKey]) {
+          stepCosts[stepKey] = {
+            stepID: stepKey,
+            stepNum: stepNum > 0 ? stepNum + 1000 : 0,
+            stepTitle: `[Eval] ${stepTitle}`,
+            execution: 0,
+            learning: 0,
+            evaluation: 0,
+            knowledgebase: 0,
+            routing: 0,
+            workshop: 0,
+            totalCost: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            llmCalls: 0
+          }
+        }
+        stageCosts.evaluation += cost
+        stepCosts[stepKey].totalCost += cost
+        stepCosts[stepKey].evaluation += cost
+      })
+    }
+
     // Sort by step number, then by stepID
     const sortedStepCosts = Object.values(stepCosts).sort((a, b) => {
       if (a.stepNum !== b.stepNum) return a.stepNum - b.stepNum
@@ -554,6 +644,8 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
 
     return {
       totalCost,
+      totalLLMCost,
+      totalToolCost,
       totalInputTokens,
       totalOutputTokens,
       totalTokens: totalInputTokens + totalOutputTokens,
@@ -833,6 +925,8 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
     if (runCosts.length === 0) return null
 
     let totalCost = 0
+    let totalLLMCost = 0
+    let totalToolCost = 0
     let totalInputTokens = 0
     let totalOutputTokens = 0
     let totalLLMCalls = 0
@@ -854,6 +948,8 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
     runCosts.forEach(runCost => {
       if (runCost.costSummary) {
         totalCost += runCost.costSummary.totalCost
+        totalLLMCost += runCost.costSummary.totalLLMCost
+        totalToolCost += runCost.costSummary.totalToolCost
         totalInputTokens += runCost.costSummary.totalInputTokens
         totalOutputTokens += runCost.costSummary.totalOutputTokens
         totalLLMCalls += runCost.costSummary.totalLLMCalls
@@ -879,6 +975,8 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
 
     return {
       totalCost,
+      totalLLMCost,
+      totalToolCost,
       totalInputTokens,
       totalOutputTokens,
       totalTokens: totalInputTokens + totalOutputTokens,
@@ -1144,6 +1242,11 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                   {aggregateSummary && (
                     <div className="text-muted-foreground">
                       {aggregateSummary.totalRuns} run{aggregateSummary.totalRuns !== 1 ? 's' : ''}
+                    </div>
+                  )}
+                  {aggregateSummary && aggregateSummary.totalToolCost > 0 && (
+                    <div className="text-muted-foreground">
+                      LLM {formatUSD(aggregateSummary.totalLLMCost)} | Tools {formatUSD(aggregateSummary.totalToolCost)}
                     </div>
                   )}
                   {phaseCostSummary && (
@@ -1687,7 +1790,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                           </div>
 
                           {/* Cost Breakdown Table with View Toggle */}
-                          {(runCost.tokenUsage?.by_model || runCost.evaluationTokenUsage?.by_model) && (
+                          {(runCost.tokenUsage?.by_model || runCost.tokenUsage?.by_tool || runCost.evaluationTokenUsage?.by_model || runCost.evaluationTokenUsage?.by_tool) && (
                             <div className="bg-card border border-border rounded-lg overflow-hidden shadow-sm">
                               <div className="px-4 py-3 bg-muted/30 border-b border-border flex items-center justify-between">
                                 <h3 className="text-sm font-semibold flex items-center gap-2">
@@ -1845,7 +1948,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                       </tr>
                                     </thead>
                                     <tbody className="divide-y divide-border">
-                                      {runCost.tokenUsage && Object.entries(runCost.tokenUsage.by_model).map(([modelId, usage]) => {
+                                      {runCost.tokenUsage && Object.entries(runCost.tokenUsage.by_model || {}).map(([modelId, usage]) => {
                                         const cacheRead = usage.cache_read_tokens || usage.cache_tokens || 0
                                         const cacheWrite = usage.cache_write_tokens || 0
                                         const reasoning = usage.reasoning_tokens || 0
@@ -1982,6 +2085,38 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                           </React.Fragment>
                                         )
                                       })}
+                                      {runCost.tokenUsage && Object.entries(runCost.tokenUsage.by_tool || {}).map(([toolId, usage]) => (
+                                        <tr key={`tool-${toolId}`} className="hover:bg-accent/50 transition-colors">
+                                          <td className="py-2 pl-2"></td>
+                                          <td className="py-2">
+                                            <div className="font-mono text-foreground font-medium">{usage.tool_name || toolId}</div>
+                                            <div className="text-[10px] text-muted-foreground uppercase">
+                                              {[usage.provider, usage.model_id, usage.estimated ? 'estimated' : ''].filter(Boolean).join(' | ')}
+                                            </div>
+                                          </td>
+                                          <td className="py-2 text-right text-muted-foreground">{usage.count || '-'}</td>
+                                          <td className="py-2 text-right text-muted-foreground" colSpan={5}>
+                                            {usage.quantity ? `${usage.quantity.toFixed(4)} ${usage.unit || ''}` : (usage.unit || 'tool usage')}
+                                          </td>
+                                          <td className="py-2 text-right text-green-600 dark:text-green-400 font-semibold">{formatUSD(usage.total_cost_usd)}</td>
+                                        </tr>
+                                      ))}
+                                      {runCost.evaluationTokenUsage && Object.entries(runCost.evaluationTokenUsage.by_tool || {}).map(([toolId, usage]) => (
+                                        <tr key={`eval-tool-${toolId}`} className="hover:bg-accent/50 transition-colors">
+                                          <td className="py-2 pl-2"></td>
+                                          <td className="py-2">
+                                            <div className="font-mono text-foreground font-medium">{usage.tool_name || toolId}</div>
+                                            <div className="text-[10px] text-muted-foreground uppercase">
+                                              {['evaluation', usage.provider, usage.model_id, usage.estimated ? 'estimated' : ''].filter(Boolean).join(' | ')}
+                                            </div>
+                                          </td>
+                                          <td className="py-2 text-right text-muted-foreground">{usage.count || '-'}</td>
+                                          <td className="py-2 text-right text-muted-foreground" colSpan={5}>
+                                            {usage.quantity ? `${usage.quantity.toFixed(4)} ${usage.unit || ''}` : (usage.unit || 'tool usage')}
+                                          </td>
+                                          <td className="py-2 text-right text-green-600 dark:text-green-400 font-semibold">{formatUSD(usage.total_cost_usd)}</td>
+                                        </tr>
+                                      ))}
                                     </tbody>
                                     <tfoot>
                                       <tr className="border-t-2 border-border font-bold">

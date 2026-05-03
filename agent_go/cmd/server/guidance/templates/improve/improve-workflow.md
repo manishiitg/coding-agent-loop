@@ -46,7 +46,7 @@ For group {group}:
   b. **DECIDE** based on the candidate changes from Phase 1 + the structural findings from Phase 2:
      - **DIRECT MODE (no metrics.json):**
        • If issues are structural and you haven't replanned yet, call replan_workflow_from_results(group_name="{group}"{{if .Focus}}, focus="{{.Focus}}"{{end}}), then continue.
-       • Otherwise call harden_workflow(group_name="{group}"{{if .Focus}}, focus="{{.Focus}}"{{end}}) for plan/prompt/validation fixes.
+       • Otherwise call harden_workflow(group_name="{group}"{{if .Focus}}, focus="{{.Focus}}"{{end}}) for plan/prompt/validation fixes and deterministic best-practice cleanup across learning/KB/db/report/eval/variables wiring.
        • If the candidate's primary lever is KB cleanup, call reorganize_knowledgebase or consolidate_knowledgebase as appropriate.
        • If the candidate's primary lever is learnings cleanup or promotion, call organize_global_learnings.
        • These tools may run in sequence within a single group's review.

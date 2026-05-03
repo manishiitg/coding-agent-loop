@@ -34,6 +34,9 @@ type DocumentsResponse struct {
 type DocumentEntry struct {
 	Filepath     string          `json:"filepath"`
 	Type         string          `json:"type"`
+	IsBinary     bool            `json:"is_binary,omitempty"`
+	Size         int64           `json:"size,omitempty"`
+	MimeType     string          `json:"mime_type,omitempty"`
 	LastModified string          `json:"last_modified,omitempty"`
 	Children     []DocumentEntry `json:"children,omitempty"`
 }
@@ -43,6 +46,9 @@ type DocumentContentResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
 		Content      string `json:"content"`
+		IsBinary     bool   `json:"is_binary,omitempty"`
+		Size         int64  `json:"size,omitempty"`
+		MimeType     string `json:"mime_type,omitempty"`
 		LastModified string `json:"last_modified"`
 	} `json:"data"`
 	Message string `json:"message"`
@@ -118,6 +124,9 @@ func (c *WorkspaceAPIClient) ReadFile(filePath string) (string, error) {
 
 	if !result.Success {
 		return "", fmt.Errorf("API returned error: %s", result.Message)
+	}
+	if result.Data.IsBinary {
+		return "", fmt.Errorf("cannot read binary file as text: %s", filePath)
 	}
 
 	return result.Data.Content, nil
@@ -207,4 +216,3 @@ func (c *WorkspaceAPIClient) CreateFolder(folderPath string) error {
 
 	return nil
 }
-

@@ -31,7 +31,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'review-plan',
-    description: 'Critically analyze the workflow design for weaknesses and improvements',
+    description: 'Critically analyze the workflow plan and dependent artifacts',
     icon: <Search className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -97,7 +97,7 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'report-improve',
+    command: 'import-report',
     description: 'Validate reports/report_plan.json and suggest layout/color improvements',
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
@@ -106,7 +106,7 @@ export const builtinCommands: CommandDefinition[] = [
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="report-improve", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      ctx.onSubmit(`Call get_workflow_command_guidance(kind="import-report", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
     }
   },
   {

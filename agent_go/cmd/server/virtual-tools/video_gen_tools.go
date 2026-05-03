@@ -521,6 +521,24 @@ func CreateVideoGenExecutor(cfg VideoGenExecutorConfig) func(ctx context.Context
 		}
 
 		estimatedCostPerVideo, estimatedCostTotal := estimateVideoGenerationCost(modelID, resolution, durationSeconds, len(resp.Videos))
+		if estimatedCostTotal > 0 {
+			recordPricedToolCost(ctx, cfg.WorkspaceAPIURL, cfg.UserID, pricedToolCost{
+				ToolName:    generateVideoToolName,
+				Capability:  generateVideoToolName,
+				Provider:    provider,
+				ModelID:     modelID,
+				Unit:        "video_second",
+				Quantity:    float64(durationSeconds * len(resp.Videos)),
+				Count:       len(resp.Videos),
+				TotalCost:   estimatedCostTotal,
+				Estimated:   true,
+				OutputPaths: savedPaths,
+				Metadata: map[string]interface{}{
+					"duration_seconds": durationSeconds,
+					"resolution":       resolution,
+				},
+			})
+		}
 
 		result := videoGenResult{
 			Model:                 modelID,

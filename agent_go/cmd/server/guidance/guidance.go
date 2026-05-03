@@ -57,7 +57,7 @@ var allKinds = map[string]kindMeta{
 	"ready-to-optimize": {Group: "builder", Description: "Pre-optimizer readiness checklist (objective, success criteria, runs, validation, etc.)", Modes: []string{"builder"}},
 
 	// Reviews — recommend, don't apply; appends to builder/review.md
-	"review-plan":   {Group: "review", Description: "Comprehensive plan audit: structure (review_plan tool) + per-step description quality + todo_task orchestrator quality", Modes: []string{"builder", "optimizer", "run"}},
+	"review-plan":   {Group: "review", Description: "Comprehensive workflow audit: plan, step descriptions, learnings, KB, db/*.json, reports, variables, and eval wiring", Modes: []string{"builder", "optimizer", "run"}},
 	"review-speed":  {Group: "review", Description: "Latency analysis with safe-speedup recommendations", Modes: []string{"optimizer"}},
 	"review-cost":   {Group: "review", Description: "Cost analysis with safe-reduction recommendations", Modes: []string{"optimizer"}},
 	"review-config": {Group: "review", Description: "Per-step KB / db / lock_learnings / lock_code recommendations", Modes: []string{"builder", "optimizer", "run"}},
@@ -69,7 +69,7 @@ var allKinds = map[string]kindMeta{
 	"improve-workflow":        {Group: "improve", Description: "Unified plan + KB + learnings improvement (EXPERIMENT MODE when metrics defined)", Modes: []string{"optimizer"}},
 	"improve-eval":            {Group: "improve", Description: "Evaluation plan changes (rubric edits gated against active experiments)", Modes: []string{"optimizer"}},
 	"improve-continuously":    {Group: "improve", Description: "Set up recurring run + optimizer schedules", Modes: []string{"optimizer"}},
-	"report-improve":          {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"builder", "optimizer", "reporting"}},
+	"import-report":           {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"builder", "optimizer", "reporting"}},
 
 	// Experiment lifecycle
 	"propose-experiment": {Group: "experiment", Description: "Focused experiment opener: pick metric(s), formulate hypothesis, call propose_experiment", Modes: []string{"optimizer"}},

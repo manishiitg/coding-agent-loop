@@ -830,17 +830,18 @@ export default function Workspace({
         const response = await wsFileApi.getFileContent(fullFilePath)
 
         if (response.success && response.data) {
-          // Check if content exists and is a string
-          if (response.data.content === undefined || response.data.content === null) {
-            // Content is missing - this can happen for certain file types or error cases
-            setError('File content is not available. This may be a binary file or the file may be empty.')
+          if (response.data.is_binary && !response.data.is_image) {
+            const size = typeof response.data.size === 'number' ? ` (${response.data.size.toLocaleString()} bytes)` : ''
+            setError(`File "${fileName}" is a binary file${size} and cannot be viewed in the editor.`)
             setLoadingFileContent(false)
+            setShowFileContent(false)
             return
           }
 
-          let processedContent = typeof response.data.content === 'string'
-            ? response.data.content
-            : String(response.data.content)
+          const content = response.data.content ?? ''
+          let processedContent = typeof content === 'string'
+            ? content
+            : String(content)
           let isJsonFile = false
           let formattedJson = null
 
@@ -875,14 +876,6 @@ export default function Workspace({
                   .replace(/\\r/g, '\r')
               }
             }
-          }
-
-          // Backend returns "[Binary file: N bytes]" for non-text files — single source of truth
-          if (typeof processedContent === 'string' && processedContent.startsWith('[Binary file:')) {
-            setError(`File "${fileName}" is a binary file and cannot be viewed in the editor.`)
-            setLoadingFileContent(false)
-            setShowFileContent(false)
-            return
           }
 
           // Store both original content and formatted JSON (if applicable)
@@ -1254,8 +1247,8 @@ export default function Workspace({
               const jsonData = JSON.parse(text)
               if (jsonData.success !== undefined) {
                 // It's the API JSON response, not the binary file
-                if (jsonData.data?.content?.startsWith('[Binary file:')) {
-                  throw new Error('Binary file download is not supported. The API only returns metadata for binary files. Please download the file directly from the file system.')
+                if (jsonData.data?.is_binary) {
+                  throw new Error('Binary file download is not supported by this endpoint response. The API returned metadata instead of bytes.')
                 }
                 console.error('[Download] Server returned JSON instead of binary:', jsonData)
                 throw new Error(`Server returned JSON instead of binary file. The download parameter may not be working correctly. Response: ${JSON.stringify(jsonData).substring(0, 200)}`)
@@ -1281,9 +1274,9 @@ export default function Workspace({
           return
         }
 
-        // Check if it's a binary file placeholder (even though extension suggests text)
-        // In this case, retry using the binary download endpoint to get actual file content
-        if (response.data.content?.startsWith('[Binary file:')) {
+        // If metadata says the file is binary even though the extension was not
+        // in our local list, retry using the binary download endpoint.
+        if (response.data.is_binary && !response.data.is_image) {
           // File is actually binary, use binary download path to get the actual file
           try {
             const binaryResponse = await wsRawApi.get(`/api/documents/${encodeURIComponent(fullFilePath)}`, {

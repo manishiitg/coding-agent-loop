@@ -19,6 +19,9 @@ type documentAPIResponse struct {
 		Content  string `json:"content"`
 		Type     string `json:"type,omitempty"`
 		IsImage  bool   `json:"is_image,omitempty"`
+		IsBinary bool   `json:"is_binary,omitempty"`
+		Size     int64  `json:"size,omitempty"`
+		MimeType string `json:"mime_type,omitempty"`
 	} `json:"data,omitempty"`
 	Error string `json:"error,omitempty"`
 }
@@ -51,11 +54,17 @@ func (c *Client) ReadWorkspaceFile(ctx context.Context, params ReadWorkspaceFile
 	if apiResp.Data.Content == "" && apiResp.Message == "File does not exist" {
 		return ReadFileResult{}, fmt.Errorf("file not found: %s", params.Filepath)
 	}
+	if apiResp.Data.IsBinary {
+		return ReadFileResult{}, fmt.Errorf("cannot read binary file as text: %s", params.Filepath)
+	}
 
 	return ReadFileResult{
 		Filepath: apiResp.Data.Filepath,
 		Content:  apiResp.Data.Content,
 		Type:     apiResp.Data.Type,
 		IsImage:  apiResp.Data.IsImage,
+		IsBinary: apiResp.Data.IsBinary,
+		Size:     apiResp.Data.Size,
+		MimeType: apiResp.Data.MimeType,
 	}, nil
 }

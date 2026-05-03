@@ -177,13 +177,13 @@ func ResolveMetricValue(ctx context.Context, workspacePath, runFolder string, m 
 
 // resolveFromEvalStep reads a value from the named eval step. Two modes:
 //
-//   field == ""  → returns the eval step's percent score (Score/MaxScore*100).
-//                  Used when one eval step → one metric, no structured output.
+//	field == ""  → returns the eval step's percent score (Score/MaxScore*100).
+//	               Used when one eval step → one metric, no structured output.
 //
-//   field != ""  → looks up the field key in the eval step's structured JSON
-//                  output (OutputContent.Content) and returns the numeric
-//                  value. Used when one eval step's code emits an object with
-//                  many named fields and many metrics each pull one field.
+//	field != ""  → looks up the field key in the eval step's structured JSON
+//	               output (OutputContent.Content) and returns the numeric
+//	               value. Used when one eval step's code emits an object with
+//	               many named fields and many metrics each pull one field.
 //
 // Both modes read from the same per-run evaluation report already persisted
 // to /scores/evaluation/<group>/<date>.json by the eval pipeline.
@@ -275,14 +275,14 @@ func mapKeys(m map[string]interface{}) []string {
 // resolveFromTelemetry reads the named field out of this run's telemetry
 // payload. Six fields are wired:
 //
-//   run.total_cost_usd   — execution-scope cost (workflow steps).
-//   run.duration_seconds — execution-scope wall-clock seconds.
-//   eval.total_cost_usd  — evaluation-scope cost (eval scoring + eval Python).
-//   eval.duration_seconds — evaluation-scope wall-clock seconds.
-//   total.cost_usd       — execution + evaluation cost combined.
-//   total.duration_seconds — execution + evaluation duration combined
-//                            (per-scope duration summed; eval runs after exec
-//                            so this approximates end-to-end wall-clock).
+//	run.total_cost_usd   — execution-scope cost (workflow steps).
+//	run.duration_seconds — execution-scope wall-clock seconds.
+//	eval.total_cost_usd  — evaluation-scope cost (eval scoring + eval Python).
+//	eval.duration_seconds — evaluation-scope wall-clock seconds.
+//	total.cost_usd       — execution + evaluation cost combined.
+//	total.duration_seconds — execution + evaluation duration combined
+//	                         (per-scope duration summed; eval runs after exec
+//	                         so this approximates end-to-end wall-clock).
 //
 // Unknown field names return (0, false, nil) so a workflow that declares an
 // unsupported telemetry metric just doesn't progress for that metric — no
@@ -348,14 +348,7 @@ func tokenFileCostUSD(ctx context.Context, workspacePath, runFolder string, scop
 	if err != nil || !ok || tokenFile == nil {
 		return 0, false, err
 	}
-	var total float64
-	for _, m := range tokenFile.ByModel {
-		if m == nil {
-			continue
-		}
-		total += m.TotalCost
-	}
-	return total, true, nil
+	return orchestrator.TokenUsageTotalCostUSD(tokenFile), true, nil
 }
 
 // tokenFileDurationSeconds returns UpdatedAt - CreatedAt of the named scope's

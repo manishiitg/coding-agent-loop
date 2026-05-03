@@ -106,6 +106,8 @@ type TokenUsageFile struct {
 	UpdatedAt      time.Time                              `json:"updated_at"`
 	ByModel        map[string]*ModelTokenUsage            `json:"by_model"`          // Aggregated by model (across all steps)
 	ByStepAndModel map[string]map[string]*ModelTokenUsage `json:"by_step_and_model"` // Nested map: stepKey -> modelID -> token usage
+	ByTool         map[string]*ToolCostUsage              `json:"by_tool,omitempty"` // Aggregated non-token tool costs
+	ByStepAndTool  map[string]map[string]*ToolCostUsage   `json:"by_step_and_tool,omitempty"`
 }
 
 // TokenUsageSummary represents total token usage across all models and steps
@@ -146,6 +148,24 @@ type ModelTokenUsage struct {
 	ContextWindowUsage  int     `json:"context_window_usage,omitempty"`  // Current tokens used
 	ModelContextWindow  int     `json:"model_context_window,omitempty"`  // Model's context window size
 	ContextUsagePercent float64 `json:"context_usage_percent,omitempty"` // Percentage of context window used
+}
+
+// ToolCostUsage represents non-token cost for paid tools such as image, video,
+// speech, transcription, and music generation.
+type ToolCostUsage struct {
+	ToolName    string                 `json:"tool_name"`
+	Capability  string                 `json:"capability,omitempty"`
+	Provider    string                 `json:"provider,omitempty"`
+	ModelID     string                 `json:"model_id,omitempty"`
+	Unit        string                 `json:"unit,omitempty"`
+	Quantity    float64                `json:"quantity,omitempty"`
+	Count       int                    `json:"count,omitempty"`
+	TotalCost   float64                `json:"total_cost_usd,omitempty"`
+	Estimated   bool                   `json:"estimated,omitempty"`
+	OutputPaths []string               `json:"output_paths,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt   time.Time              `json:"created_at,omitempty"`
+	UpdatedAt   time.Time              `json:"updated_at,omitempty"`
 }
 
 // StepTokenSummary represents token usage summary for a workflow step

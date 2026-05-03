@@ -54,6 +54,7 @@ func setupRouter(docsDir string) *gin.Engine {
 
 	r := gin.New()
 	r.GET("/api/documents", ListDocuments)
+	r.GET("/api/documents/*filepath", GetDocument)
 	return r
 }
 
@@ -103,6 +104,83 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+func TestJSONLIsTextBasedFile(t *testing.T) {
+	if !isTextBasedFile("metrics_history.jsonl", "") {
+		t.Fatal("expected .jsonl files to be treated as text")
+	}
+	if !isTextBasedFile("events.ndjson", "") {
+		t.Fatal("expected .ndjson files to be treated as text")
+	}
+}
+
+func TestGetDocumentReturnsJSONLContentAsText(t *testing.T) {
+	docsDir, cleanup := setupTestDocsDir(t)
+	defer cleanup()
+	if err := os.WriteFile(
+		filepath.Join(docsDir, "Workflow", "metrics_history.jsonl"),
+		[]byte("{\"ok\":true}\n"),
+		0644,
+	); err != nil {
+		t.Fatalf("write jsonl fixture: %v", err)
+	}
+
+	router := setupRouter(docsDir)
+	req, _ := http.NewRequest("GET", "/api/documents/Workflow/metrics_history.jsonl", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp models.APIResponse[models.Document]
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v\nBody: %s", err, w.Body.String())
+	}
+	if resp.Data.IsBinary {
+		t.Fatal("jsonl response should not be marked binary")
+	}
+	if resp.Data.Content != "{\"ok\":true}\n" {
+		t.Fatalf("unexpected content: %q", resp.Data.Content)
+	}
+	if resp.Data.Encoding != "utf-8" {
+		t.Fatalf("unexpected encoding: %q", resp.Data.Encoding)
+	}
+}
+
+func TestGetDocumentReturnsBinaryMetadataWithoutFakeContent(t *testing.T) {
+	docsDir, cleanup := setupTestDocsDir(t)
+	defer cleanup()
+	if err := os.WriteFile(
+		filepath.Join(docsDir, "Workflow", "payload.dat"),
+		[]byte{0x00, 0x01, 0x02},
+		0644,
+	); err != nil {
+		t.Fatalf("write binary fixture: %v", err)
+	}
+
+	router := setupRouter(docsDir)
+	req, _ := http.NewRequest("GET", "/api/documents/Workflow/payload.dat", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp models.APIResponse[models.Document]
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v\nBody: %s", err, w.Body.String())
+	}
+	if !resp.Data.IsBinary {
+		t.Fatal("binary response should be marked binary")
+	}
+	if resp.Data.Content != "" {
+		t.Fatalf("binary response should not contain fake content, got %q", resp.Data.Content)
+	}
+	if resp.Data.Size != 3 {
+		t.Fatalf("unexpected binary size: %d", resp.Data.Size)
+	}
 }
 
 // --- Tests ---

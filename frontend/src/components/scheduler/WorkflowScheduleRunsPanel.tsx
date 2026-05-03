@@ -637,11 +637,19 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           totalCost += model.total_cost_usd ?? 0
           totalTokens += (model.input_tokens ?? 0) + (model.output_tokens ?? 0)
         }
+        for (const tool of Object.values(result.token_usage.by_tool || {})) {
+          totalCost += tool.total_cost_usd ?? 0
+        }
         // Also add evaluation costs if present
         if (result.evaluation_token_usage?.by_model) {
           for (const model of Object.values(result.evaluation_token_usage.by_model)) {
             totalCost += model.total_cost_usd ?? 0
             totalTokens += (model.input_tokens ?? 0) + (model.output_tokens ?? 0)
+          }
+        }
+        if (result.evaluation_token_usage?.by_tool) {
+          for (const tool of Object.values(result.evaluation_token_usage.by_tool)) {
+            totalCost += tool.total_cost_usd ?? 0
           }
         }
         const tierTokens = calculateTierTokenBreakdown(

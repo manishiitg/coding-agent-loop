@@ -61,6 +61,7 @@ type AudioGenExecutorConfig struct {
 
 type audioGenResult struct {
 	Model         string   `json:"model"`
+	Provider      string   `json:"provider"`
 	Prompt        string   `json:"prompt"`
 	VoiceName     string   `json:"voice_name,omitempty"`
 	LanguageCode  string   `json:"language_code,omitempty"`
@@ -68,16 +69,24 @@ type audioGenResult struct {
 	AbsolutePaths []string `json:"absolute_paths,omitempty"`
 	Count         int      `json:"count"`
 	MimeType      string   `json:"mime_type,omitempty"`
+	CostUnit      string   `json:"cost_unit,omitempty"`
+	CostQuantity  float64  `json:"cost_quantity,omitempty"`
+	TotalCost     float64  `json:"total_cost_usd,omitempty"`
+	CostEstimated bool     `json:"cost_estimated,omitempty"`
 }
 
 type audioTranscriptionResult struct {
-	Model      string  `json:"model"`
-	Provider   string  `json:"provider"`
-	AudioPath  string  `json:"audio_path"`
-	Transcript string  `json:"transcript"`
-	Confidence float64 `json:"confidence,omitempty"`
-	Duration   float64 `json:"duration,omitempty"`
-	MimeType   string  `json:"mime_type,omitempty"`
+	Model         string  `json:"model"`
+	Provider      string  `json:"provider"`
+	AudioPath     string  `json:"audio_path"`
+	Transcript    string  `json:"transcript"`
+	Confidence    float64 `json:"confidence,omitempty"`
+	Duration      float64 `json:"duration,omitempty"`
+	MimeType      string  `json:"mime_type,omitempty"`
+	CostUnit      string  `json:"cost_unit,omitempty"`
+	CostQuantity  float64 `json:"cost_quantity,omitempty"`
+	TotalCost     float64 `json:"total_cost_usd,omitempty"`
+	CostEstimated bool    `json:"cost_estimated,omitempty"`
 }
 
 func inferAudioProviderFromModel(modelID string) string {
@@ -496,8 +505,30 @@ func CreateAudioGenExecutor(cfg AudioGenExecutorConfig) func(ctx context.Context
 			absolutePaths = append(absolutePaths, workspaceAbsolutePath(savedPath))
 		}
 
+		costUnit, costQuantity, totalCost, costEstimated := textToSpeechCost(provider, modelID, prompt, len(resp.Audio))
+		if totalCost > 0 {
+			recordPricedToolCost(ctx, cfg.WorkspaceAPIURL, cfg.UserID, pricedToolCost{
+				ToolName:    textToSpeechToolName,
+				Capability:  textToSpeechToolName,
+				Provider:    provider,
+				ModelID:     modelID,
+				Unit:        costUnit,
+				Quantity:    costQuantity,
+				Count:       len(resp.Audio),
+				TotalCost:   totalCost,
+				Estimated:   costEstimated,
+				OutputPaths: savedPaths,
+				Metadata: map[string]interface{}{
+					"characters":    len([]rune(prompt)),
+					"voice_name":    voiceName,
+					"language_code": languageCode,
+				},
+			})
+		}
+
 		result := audioGenResult{
 			Model:         modelID,
+			Provider:      provider,
 			Prompt:        prompt,
 			VoiceName:     voiceName,
 			LanguageCode:  languageCode,
@@ -505,6 +536,10 @@ func CreateAudioGenExecutor(cfg AudioGenExecutorConfig) func(ctx context.Context
 			AbsolutePaths: absolutePaths,
 			Count:         len(resp.Audio),
 			MimeType:      resultMimeType,
+			CostUnit:      costUnit,
+			CostQuantity:  costQuantity,
+			TotalCost:     totalCost,
+			CostEstimated: costEstimated,
 		}
 		resultJSON, err := json.Marshal(result)
 		if err != nil {
@@ -656,14 +691,38 @@ func CreateSpeechToTextExecutor(cfg AudioGenExecutorConfig) func(ctx context.Con
 			return "", fmt.Errorf("speech-to-text failed: %w", err)
 		}
 
+		costUnit, costQuantity, totalCost, costEstimated := speechToTextCost(provider, modelID, resp.Duration)
+		if totalCost > 0 {
+			recordPricedToolCost(ctx, cfg.WorkspaceAPIURL, cfg.UserID, pricedToolCost{
+				ToolName:    speechToTextToolName,
+				Capability:  speechToTextToolName,
+				Provider:    provider,
+				ModelID:     modelID,
+				Unit:        costUnit,
+				Quantity:    costQuantity,
+				Count:       1,
+				TotalCost:   totalCost,
+				Estimated:   costEstimated,
+				OutputPaths: []string{cleanAudioPath},
+				Metadata: map[string]interface{}{
+					"duration_seconds": resp.Duration,
+					"mime_type":        mimeType,
+				},
+			})
+		}
+
 		result := audioTranscriptionResult{
-			Model:      modelID,
-			Provider:   provider,
-			AudioPath:  cleanAudioPath,
-			Transcript: resp.Transcript,
-			Confidence: resp.Confidence,
-			Duration:   resp.Duration,
-			MimeType:   mimeType,
+			Model:         modelID,
+			Provider:      provider,
+			AudioPath:     cleanAudioPath,
+			Transcript:    resp.Transcript,
+			Confidence:    resp.Confidence,
+			Duration:      resp.Duration,
+			MimeType:      mimeType,
+			CostUnit:      costUnit,
+			CostQuantity:  costQuantity,
+			TotalCost:     totalCost,
+			CostEstimated: costEstimated,
 		}
 		resultJSON, err := json.Marshal(result)
 		if err != nil {

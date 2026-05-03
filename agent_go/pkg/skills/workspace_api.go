@@ -151,8 +151,15 @@ func ReadFile(filePath string) (string, error) {
 		return "", fmt.Errorf("invalid response format: missing data field")
 	}
 
+	if isBinary, _ := data["is_binary"].(bool); isBinary {
+		return "", fmt.Errorf("cannot read binary file as text: %s", filePath)
+	}
+
 	content, ok := data["content"].(string)
 	if !ok {
+		if isBinary, hasBinary := data["is_binary"].(bool); hasBinary && !isBinary {
+			return "", nil
+		}
 		return "", fmt.Errorf("invalid response format: missing content field in data")
 	}
 

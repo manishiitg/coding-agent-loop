@@ -224,15 +224,31 @@ func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, 
 
 	// Extract content from response
 	var content string
+	isBinary := false
 	if fileContent, ok := apiResp.Data.(virtualtools.WorkspaceFileContent); ok {
 		content = fileContent.Content
 	} else if dataMap, ok := apiResp.Data.(map[string]interface{}); ok {
+		if b, ok := dataMap["is_binary"].(bool); ok {
+			isBinary = b
+		}
 		if c, ok := dataMap["content"].(string); ok {
 			content = c
 		}
 	}
 
+	if isBinary {
+		return "", true, fmt.Errorf("cannot read binary file as text: %s", filePath)
+	}
+
 	if content == "" {
+		if dataMap, ok := apiResp.Data.(map[string]interface{}); ok {
+			if _, hasContent := dataMap["content"]; hasContent {
+				return "", true, nil
+			}
+			if b, hasBinary := dataMap["is_binary"].(bool); hasBinary && !b {
+				return "", true, nil
+			}
+		}
 		// Debug logging to see actual response structure
 		dataBytes, _ := json.Marshal(apiResp.Data)
 		log.Printf("[DEBUG] readFileFromWorkspace: Failed to extract content from response. FilePath: %s, Response Data: %s", filePath, string(dataBytes))

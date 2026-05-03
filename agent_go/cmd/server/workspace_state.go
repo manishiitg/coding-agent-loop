@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	orchtypes "mcp-agent-builder-go/agent_go/pkg/orchestrator/types"
 )
 
@@ -674,12 +675,7 @@ func (api *StreamingAPI) handleGetWorkflowsOverview(w http.ResponseWriter, r *ht
 				}
 
 				if runCosts, ok := costByFolder[folder.Name]; ok && runCosts.TokenUsage != nil {
-					var totalCost float64
-					for _, modelUsage := range runCosts.TokenUsage.ByModel {
-						if modelUsage != nil {
-							totalCost += modelUsage.TotalCost
-						}
-					}
+					totalCost := orchestrator.TokenUsageTotalCostUSD(runCosts.TokenUsage)
 					if totalCost > 0 {
 						detail.CostUSD = &totalCost
 					}

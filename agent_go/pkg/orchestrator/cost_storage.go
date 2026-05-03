@@ -211,6 +211,7 @@ func EnsureTokenUsageFilePricing(tokenFile *TokenUsageFile) {
 	if tokenFile == nil {
 		return
 	}
+	EnsureTokenUsageFileInitialized(tokenFile)
 
 	for modelID, usage := range tokenFile.ByModel {
 		EnsureModelTokenUsagePricing(modelID, usage)
@@ -219,6 +220,24 @@ func EnsureTokenUsageFilePricing(tokenFile *TokenUsageFile) {
 		for modelID, usage := range modelMap {
 			EnsureModelTokenUsagePricing(modelID, usage)
 		}
+	}
+}
+
+func EnsureTokenUsageFileInitialized(tokenFile *TokenUsageFile) {
+	if tokenFile == nil {
+		return
+	}
+	if tokenFile.ByModel == nil {
+		tokenFile.ByModel = make(map[string]*ModelTokenUsage)
+	}
+	if tokenFile.ByStepAndModel == nil {
+		tokenFile.ByStepAndModel = make(map[string]map[string]*ModelTokenUsage)
+	}
+	if tokenFile.ByTool == nil {
+		tokenFile.ByTool = make(map[string]*ToolCostUsage)
+	}
+	if tokenFile.ByStepAndTool == nil {
+		tokenFile.ByStepAndTool = make(map[string]map[string]*ToolCostUsage)
 	}
 }
 
@@ -317,6 +336,8 @@ func CloneTokenUsageFile(src *TokenUsageFile) *TokenUsageFile {
 		UpdatedAt:      src.UpdatedAt,
 		ByModel:        make(map[string]*ModelTokenUsage),
 		ByStepAndModel: make(map[string]map[string]*ModelTokenUsage),
+		ByTool:         make(map[string]*ToolCostUsage),
+		ByStepAndTool:  make(map[string]map[string]*ToolCostUsage),
 	}
 
 	for modelID, usage := range src.ByModel {
@@ -330,6 +351,44 @@ func CloneTokenUsageFile(src *TokenUsageFile) *TokenUsageFile {
 		}
 	}
 
+	for toolKey, usage := range src.ByTool {
+		clone.ByTool[toolKey] = CloneToolCostUsage(usage)
+	}
+
+	for stepKey, toolMap := range src.ByStepAndTool {
+		clone.ByStepAndTool[stepKey] = make(map[string]*ToolCostUsage)
+		for toolKey, usage := range toolMap {
+			clone.ByStepAndTool[stepKey][toolKey] = CloneToolCostUsage(usage)
+		}
+	}
+
+	return clone
+}
+
+func CloneToolCostUsage(src *ToolCostUsage) *ToolCostUsage {
+	if src == nil {
+		return nil
+	}
+	clone := &ToolCostUsage{
+		ToolName:    src.ToolName,
+		Capability:  src.Capability,
+		Provider:    src.Provider,
+		ModelID:     src.ModelID,
+		Unit:        src.Unit,
+		Quantity:    src.Quantity,
+		Count:       src.Count,
+		TotalCost:   src.TotalCost,
+		Estimated:   src.Estimated,
+		OutputPaths: append([]string(nil), src.OutputPaths...),
+		CreatedAt:   src.CreatedAt,
+		UpdatedAt:   src.UpdatedAt,
+	}
+	if src.Metadata != nil {
+		clone.Metadata = make(map[string]interface{}, len(src.Metadata))
+		for k, v := range src.Metadata {
+			clone.Metadata[k] = v
+		}
+	}
 	return clone
 }
 
@@ -397,6 +456,12 @@ func MergeTokenUsageFiles(dst, src *TokenUsageFile) *TokenUsageFile {
 	if dst.ByStepAndModel == nil {
 		dst.ByStepAndModel = make(map[string]map[string]*ModelTokenUsage)
 	}
+	if dst.ByTool == nil {
+		dst.ByTool = make(map[string]*ToolCostUsage)
+	}
+	if dst.ByStepAndTool == nil {
+		dst.ByStepAndTool = make(map[string]map[string]*ToolCostUsage)
+	}
 
 	for modelID, usage := range src.ByModel {
 		dst.ByModel[modelID] = MergeModelTokenUsage(dst.ByModel[modelID], usage)
@@ -411,7 +476,131 @@ func MergeTokenUsageFiles(dst, src *TokenUsageFile) *TokenUsageFile {
 		}
 	}
 
+	for toolKey, usage := range src.ByTool {
+		dst.ByTool[toolKey] = MergeToolCostUsage(dst.ByTool[toolKey], usage)
+	}
+
+	for stepKey, toolMap := range src.ByStepAndTool {
+		if dst.ByStepAndTool[stepKey] == nil {
+			dst.ByStepAndTool[stepKey] = make(map[string]*ToolCostUsage)
+		}
+		for toolKey, usage := range toolMap {
+			dst.ByStepAndTool[stepKey][toolKey] = MergeToolCostUsage(dst.ByStepAndTool[stepKey][toolKey], usage)
+		}
+	}
+
 	return dst
+}
+
+func MergeToolCostUsage(dst, src *ToolCostUsage) *ToolCostUsage {
+	if src == nil {
+		return dst
+	}
+	if dst == nil {
+		return CloneToolCostUsage(src)
+	}
+
+	dst.Quantity += src.Quantity
+	dst.Count += src.Count
+	dst.TotalCost += src.TotalCost
+	dst.OutputPaths = append(dst.OutputPaths, src.OutputPaths...)
+	if src.ToolName != "" {
+		dst.ToolName = src.ToolName
+	}
+	if src.Capability != "" {
+		dst.Capability = src.Capability
+	}
+	if src.Provider != "" {
+		dst.Provider = src.Provider
+	}
+	if src.ModelID != "" {
+		dst.ModelID = src.ModelID
+	}
+	if src.Unit != "" {
+		dst.Unit = src.Unit
+	}
+	dst.Estimated = dst.Estimated || src.Estimated
+	if dst.CreatedAt.IsZero() || (!src.CreatedAt.IsZero() && src.CreatedAt.Before(dst.CreatedAt)) {
+		dst.CreatedAt = src.CreatedAt
+	}
+	if src.UpdatedAt.After(dst.UpdatedAt) {
+		dst.UpdatedAt = src.UpdatedAt
+	}
+	if src.Metadata != nil {
+		if dst.Metadata == nil {
+			dst.Metadata = make(map[string]interface{}, len(src.Metadata))
+		}
+		for k, v := range src.Metadata {
+			dst.Metadata[k] = v
+		}
+	}
+	return dst
+}
+
+func TokenUsageLLMCostUSD(tokenFile *TokenUsageFile) float64 {
+	if tokenFile == nil {
+		return 0
+	}
+	var total float64
+	for _, usage := range tokenFile.ByModel {
+		if usage != nil {
+			total += usage.TotalCost
+		}
+	}
+	return total
+}
+
+func TokenUsageToolCostUSD(tokenFile *TokenUsageFile) float64 {
+	if tokenFile == nil {
+		return 0
+	}
+	var total float64
+	for _, usage := range tokenFile.ByTool {
+		if usage != nil {
+			total += usage.TotalCost
+		}
+	}
+	return total
+}
+
+func TokenUsageTotalCostUSD(tokenFile *TokenUsageFile) float64 {
+	return TokenUsageLLMCostUSD(tokenFile) + TokenUsageToolCostUSD(tokenFile)
+}
+
+func ApplyToolCostUsage(tokenFile *TokenUsageFile, stepKey, aggregateKey string, usage *ToolCostUsage, now time.Time) {
+	if tokenFile == nil || usage == nil || usage.TotalCost <= 0 {
+		return
+	}
+	EnsureTokenUsageFileInitialized(tokenFile)
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if tokenFile.CreatedAt.IsZero() {
+		tokenFile.CreatedAt = now
+	}
+	tokenFile.UpdatedAt = now
+	if usage.CreatedAt.IsZero() {
+		usage.CreatedAt = now
+	}
+	if usage.UpdatedAt.IsZero() {
+		usage.UpdatedAt = now
+	}
+	if aggregateKey == "" {
+		aggregateKey = usage.ToolName
+		if usage.Provider != "" {
+			aggregateKey += ":" + usage.Provider
+		}
+		if usage.ModelID != "" {
+			aggregateKey += ":" + usage.ModelID
+		}
+	}
+	tokenFile.ByTool[aggregateKey] = MergeToolCostUsage(tokenFile.ByTool[aggregateKey], usage)
+	if stepKey != "" {
+		if tokenFile.ByStepAndTool[stepKey] == nil {
+			tokenFile.ByStepAndTool[stepKey] = make(map[string]*ToolCostUsage)
+		}
+		tokenFile.ByStepAndTool[stepKey][aggregateKey] = MergeToolCostUsage(tokenFile.ByStepAndTool[stepKey][aggregateKey], usage)
+	}
 }
 
 func ClonePhaseTokenUsageFile(src *PhaseTokenUsageFile) *PhaseTokenUsageFile {

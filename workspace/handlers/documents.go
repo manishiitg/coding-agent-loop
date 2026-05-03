@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
 	"github.com/manishiitg/mcp-agent-builder-go/workspace/parsers"
@@ -273,6 +274,9 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int, limit,
 				}
 				if metadata {
 					doc.IsImage = isImageFile(name)
+					doc.Size = info.Size()
+					doc.MimeType = detectFileMimeType(name, nil)
+					doc.IsBinary = doc.IsImage || !isTextDocumentContent(name, doc.MimeType, nil)
 					doc.LastModified = info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00")
 				}
 				documents = append(documents, doc)
@@ -808,7 +812,7 @@ func GetDocument(c *gin.Context) {
 	}
 
 	// Check if file exists
-	_, err = os.Stat(filePath)
+	info, err := os.Stat(filePath)
 	if os.IsNotExist(err) {
 		// File doesn't exist - return 200 with message indicating file doesn't exist
 		c.JSON(http.StatusOK, models.APIResponse[models.Document]{
@@ -844,23 +848,35 @@ func GetDocument(c *gin.Context) {
 
 	// Check if file is an image
 	var contentStr string
-	isImage := isImageFile(filepath.Base(filePath))
+	baseName := filepath.Base(filePath)
+	isImage := isImageFile(baseName)
+	mimeType := detectFileMimeType(baseName, content)
+	isText := isTextDocumentContent(baseName, mimeType, content)
+	isBinary := isImage || !isText
+	encoding := ""
 
 	if isImage {
 		// Image file - return base64 encoded data
-		contentStr = formatImageContent(filepath.Base(filePath), content)
-	} else if isTextBasedFile(filepath.Base(filePath), "") {
+		contentStr = formatImageContent(baseName, content)
+		encoding = "data-url"
+	} else if isText {
 		// Text file - include content
 		contentStr = string(content)
+		encoding = "utf-8"
 	} else {
-		// Other binary files - return metadata
-		contentStr = fmt.Sprintf("[Binary file: %d bytes]", len(content))
+		// Binary file - expose metadata only. Raw bytes are available via
+		// download=true or the /raw endpoint.
+		contentStr = ""
 	}
 
 	doc := models.Document{
 		FilePath: relativePath,
 		Content:  contentStr, // Include content for read_workspace_file tool
 		IsImage:  isImage,
+		IsBinary: isBinary,
+		Size:     info.Size(),
+		MimeType: mimeType,
+		Encoding: encoding,
 	}
 
 	// Check if this is a download request (query parameter or Accept header)
@@ -869,17 +885,17 @@ func GetDocument(c *gin.Context) {
 	downloadRequested := downloadParam == "true" || acceptHeader == "application/octet-stream"
 
 	// Debug logging
-	if !isImage && !isTextBasedFile(filepath.Base(filePath), "") {
+	if isBinary && !isImage {
 		log.Printf("[GetDocument] Binary file detected: %s, download param: %s, accept header: %s, downloadRequested: %v",
-			filepath.Base(filePath), downloadParam, acceptHeader, downloadRequested)
+			baseName, downloadParam, acceptHeader, downloadRequested)
 	}
 
 	// For binary files when download is requested, return raw file
-	if downloadRequested && !isImage && !isTextBasedFile(filepath.Base(filePath), "") {
+	if downloadRequested && isBinary {
 		// Return raw binary file
-		c.Header("Content-Type", "application/octet-stream")
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filepath.Base(filePath)))
-		c.Data(http.StatusOK, "application/octet-stream", content)
+		c.Header("Content-Type", mimeType)
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", baseName))
+		c.Data(http.StatusOK, mimeType, content)
 		return
 	}
 
@@ -2289,6 +2305,8 @@ func isTextBasedFile(filename, contentType string) bool {
 		"md":         true,
 		"markdown":   true,
 		"json":       true,
+		"jsonl":      true,
+		"ndjson":     true,
 		"csv":        true,
 		"yaml":       true,
 		"yml":        true,
@@ -2460,4 +2478,76 @@ func isTextBasedFile(filename, contentType string) bool {
 
 	// If neither extension nor MIME type is recognized, default to false (reject)
 	return false
+}
+
+func detectFileMimeType(filename string, content []byte) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".json", ".jsonl", ".ndjson":
+		return "application/json"
+	case ".md", ".markdown":
+		return "text/markdown"
+	case ".txt", ".log":
+		return "text/plain"
+	case ".csv":
+		return "text/csv"
+	case ".yaml", ".yml":
+		return "text/yaml"
+	case ".html", ".htm":
+		return "text/html"
+	case ".css":
+		return "text/css"
+	case ".js", ".jsx":
+		return "text/javascript"
+	case ".ts", ".tsx":
+		return "text/typescript"
+	}
+
+	if len(content) > 0 {
+		sampleLen := len(content)
+		if sampleLen > 512 {
+			sampleLen = 512
+		}
+		if detected := http.DetectContentType(content[:sampleLen]); detected != "" {
+			return detected
+		}
+	}
+
+	return "application/octet-stream"
+}
+
+func isKnownBinaryFile(filename string) bool {
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+		".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz",
+		".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp", ".ico",
+		".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm",
+		".mp3", ".wav", ".flac", ".aac", ".ogg",
+		".exe", ".dll", ".so", ".dylib", ".bin", ".app", ".deb", ".rpm", ".msi", ".dmg", ".iso":
+		return true
+	default:
+		return false
+	}
+}
+
+func isLikelyTextContent(content []byte) bool {
+	if len(content) == 0 {
+		return true
+	}
+	for _, b := range content {
+		if b == 0 {
+			return false
+		}
+	}
+	return utf8.Valid(content)
+}
+
+func isTextDocumentContent(filename, contentType string, content []byte) bool {
+	if isKnownBinaryFile(filename) {
+		return false
+	}
+	if isTextBasedFile(filename, contentType) {
+		return isLikelyTextContent(content)
+	}
+	return isLikelyTextContent(content)
 }

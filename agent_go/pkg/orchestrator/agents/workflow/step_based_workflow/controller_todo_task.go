@@ -464,7 +464,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	fgGlobalLearningsPath := filepath.Join(baseWorkspacePath, "learnings", GlobalLearningID)
 	fgKnowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 	fgDBPath := getDBPath(baseWorkspacePath)
-	fgReadPaths := []string{fgExecPath, fgDBPath}
+	fgSoulPath := filepath.Join(baseWorkspacePath, "soul")
+	fgBuilderPath := filepath.Join(baseWorkspacePath, "builder")
+	fgReadPaths := []string{fgExecPath, fgDBPath, fgSoulPath, fgBuilderPath}
 	fgWritePaths := []string{fgExecPath, fgDBPath}
 	if learningsAccess != LearningsAccessNone {
 		fgReadPaths = append(fgReadPaths, fgGlobalLearningsPath)

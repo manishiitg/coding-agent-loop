@@ -539,6 +539,7 @@ export const EmployeeDashboard: React.FC = () => {
       if (!usage) return 0
       let total = 0
       for (const m of Object.values(usage.by_model || {})) total += m.total_cost_usd || 0
+      for (const t of Object.values(usage.by_tool || {})) total += t.total_cost_usd || 0
       return total
     }
     const pickTs = (run: WorkflowRunCostsEntry): number => {
@@ -593,6 +594,11 @@ export const EmployeeDashboard: React.FC = () => {
       let total = 0
       for (const m of Object.values(usage.by_model || {})) {
         total += m.total_cost_usd || 0
+      }
+      if ('by_tool' in usage) {
+        for (const t of Object.values(usage.by_tool || {})) {
+          total += t.total_cost_usd || 0
+        }
       }
       return total
     }

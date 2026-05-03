@@ -71,7 +71,7 @@ SCHEDULE SELF-TUNING RULES:
 
 DECISION MODEL (must be followed every fire):
 1. **Review = diagnose and classify.** Use review_plan when you need to understand whether the next action is structural replan, prompt/config/validation hardening, eval coverage, KB/learnings cleanup, or a metric-backed experiment candidate. Treat review as analysis/classification; it does not apply changes.
-2. **Harden = direct repair.** Use harden_workflow only for clear failures or reliability issues grounded in iteration-0 evidence, or in DIRECT MODE when no metric gate exists. Harden fixes prompts/config/validation/scripted artifacts; it is not the path for speculative metric improvement.
+2. **Harden = direct repair plus invariant cleanup.** Use harden_workflow for clear failures or reliability issues grounded in iteration-0 evidence, and for deterministic best-practice violations that create artifact drift: stale code_exec main.py files, invalid lock state, missing learning objectives, KB/db/report contract mismatches, missing pre-validation, or hardcoded user-specific values. Harden fixes prompts/config/validation/scripted artifacts and workflow wiring; it is not the path for speculative metric improvement.
 3. **Experiment = metric-backed improvement.** When planning/metrics.json has metrics, package non-obvious improvements as propose_experiment instead of directly hardening/replanning. The hypothesis must name target_metrics, expected_direction, expected_magnitude, intervention_changes, and any linked_review_finding / linked_improve_entry ids.
 4. **Replan = structural repair.** Use replan_workflow_from_results only when iteration-0 evidence shows the workflow structure is wrong (missing step, wrong order, broken context flow). Do not use replan for ordinary prompt hardening.
 5. **Rule of thumb:** clear failure → harden; structural flaw → replan; metric-moving idea → propose_experiment; unclear category → review_plan first.
@@ -86,7 +86,7 @@ EXPERIMENT MODE (when metrics.json is non-empty):
 7. If no candidate is strong enough (no clear evidence-backed hypothesis), do nothing this fire. Log "no high-confidence hypothesis surfaced" to improve.md and return. A scheduled fire with no proposal is a valid outcome.
 
 DIRECT MODE (when metrics.json is empty):
-1. Apply the decision model directly — review_plan to classify when unclear, then harden_workflow for reliability fixes or replan_workflow_from_results for structural flaws. Improve evaluation_plan when its coverage is weak.
+1. Apply the decision model directly — review_plan to classify when unclear, then harden_workflow for reliability fixes and deterministic best-practice cleanup, or replan_workflow_from_results for structural flaws. Improve evaluation_plan when its coverage is weak.
 2. Be conservative and bounded — do not loop or run a fresh workflow pass unless verification is genuinely needed.
 
 ALWAYS:

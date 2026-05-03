@@ -33,6 +33,9 @@ func readJSONLLines(ctx context.Context, filePath string) ([]string, bool, error
 		if trimmed == "" {
 			continue
 		}
+		if strings.HasPrefix(trimmed, "[Binary file:") {
+			continue
+		}
 		out = append(out, trimmed)
 	}
 	return out, true, nil

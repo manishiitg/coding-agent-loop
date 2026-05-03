@@ -432,7 +432,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Set folder guard paths:
-	// READ: execution folder (to read previous step results) + global learnings (if mode grants read) + knowledgebase folder (if mode grants read)
+	// READ: execution folder (to read previous step results) + soul north-star file + builder review/improve logs
+	// + global learnings (if mode grants read) + knowledgebase folder (if mode grants read)
 	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + execution/Downloads folder to prevent writing to other steps
 	// NOTE: under kbWriteMethod=direct we add knowledgebase/notes/ to writePaths so the
 	// step can write per-topic markdown via shell + diff_patch_workspace_file. Under
@@ -441,7 +442,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	// Use getExecutionFolderPath to support both regular and branch steps
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
-	readPaths = []string{executionWorkspacePath}
+	soulPath := fmt.Sprintf("%s/soul", baseWorkspacePath)
+	builderPath := fmt.Sprintf("%s/builder", baseWorkspacePath)
+	readPaths = []string{executionWorkspacePath, soulPath, builderPath}
 	if learningsAccess != LearningsAccessNone {
 		globalLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, GlobalLearningID)
 		readPaths = append(readPaths, globalLearningsPath)

@@ -245,8 +245,9 @@ Employees are virtual team members assigned to workflows. Each employee has a ` 
 Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Planning & config:**
-- ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, employee assignment. May carry optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
-- ` + "`planning/plan.json`" + ` — step definitions (IDs, titles). **Primary source of truth** for workflow ` + "`objective`" + ` and ` + "`success_criteria`" + ` at root level (falls back to ` + "`workflow.json`" + ` if empty).
+- ` + "`soul/soul.md`" + ` — canonical workflow north star: ` + "`## Objective`" + ` and ` + "`## Success Criteria`" + `. Read before review, improve, eval, harden, and ambiguous execution decisions.
+- ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, employee assignment. May carry legacy optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
+- ` + "`planning/plan.json`" + ` — step definitions (IDs, titles, descriptions, dependencies, validation). It no longer owns root objective/success fields; use ` + "`soul/soul.md`" + ` for that.
 - ` + "`planning/step_config.json`" + ` — per-step settings. Each step's ` + "`agent_configs`" + ` object controls execution mode:
   - ` + "`use_code_execution_mode`" + ` (bool) — ` + "`false`" + ` = direct tool calls, ` + "`true`" + ` = scripted Python (main.py)
   - ` + "`declared_execution_mode`" + ` (string) — ` + "`\"learn_code\"`" + ` (persistent main.py reused across runs) or ` + "`\"code_exec\"`" + ` (ephemeral per-run scripts). Ignored when ` + "`use_code_execution_mode`" + ` is false.
@@ -307,7 +308,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 ### Efficient Parsing
 - **List workflows:** ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/\")`" + `
-- **Objective + success criteria:** ` + "`execute_shell_command(command: \"python3 -c \\\"import json; p=json.load(open('" + absWorkflow + "/<name>/planning/plan.json')); print('objective:',p.get('objective','')); print('success:',p.get('success_criteria',''))\\\"\")`" + `
+- **Objective + success criteria:** ` + "`execute_shell_command(command: \"sed -n '1,160p' '" + absWorkflow + "/<name>/soul/soul.md'\")`" + `
 - **Step list (IDs + titles):** ` + "`execute_shell_command(command: \"python3 -c \\\"import json; steps=json.load(open('" + absWorkflow + "/<name>/planning/plan.json')).get('steps',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s.get(\\\\\\\"label\\\\\\\",s.get(\\\\\\\"title\\\\\\\",\\\\\\\"\\\\\\\"))}') for s in steps]\\\"\")`" + `
 - **Step execution modes:** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/planning/step_config.json\")`" + ` — look at each step's ` + "`agent_configs.use_code_execution_mode`" + ` + ` + "`agent_configs.declared_execution_mode`" + `
 - **Schedules:** ` + "`execute_shell_command(command: \"python3 -c \\\"import json; scheds=json.load(open('" + absWorkflow + "/<name>/workflow.json')).get('schedules',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s[\\\\\\\"cron_expression\\\\\\\"]} enabled={s.get(\\\\\\\"enabled\\\\\\\",True)}') for s in scheds]\\\"\")`" + `
@@ -330,7 +331,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
    - "What has the workflow produced / found / extracted?" → ` + "`runs/iteration-0/`" + ` (latest run outputs) or ` + "`db/*.json`" + ` (accumulated structured state across runs).
    - "What does the workflow know about X?" → ` + "`knowledgebase/graph.json`" + ` (entities/relationships) and ` + "`knowledgebase/notes/`" + ` (narratives).
    - "How does the workflow do X?" → ` + "`learnings/_global/SKILL.md`" + `.
-   - "Why does the workflow exist / what's its goal?" → ` + "`soul/soul.md`" + ` or ` + "`planning/plan.json`" + ` (objective, success criteria).
+   - "Why does the workflow exist / what's its goal?" → ` + "`soul/soul.md`" + ` (objective, success criteria).
    - "Latest results / most recent report?" → ` + "`reports/`" + ` (most recent markdown file).
 4. **Synthesize a direct answer** grounded in what you read. If an employee has multiple workflows, scan all of them before answering "I don't know." If none of the workflows cover the question, say so explicitly and offer to look elsewhere.
 
@@ -413,7 +414,7 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
     - improve-workflow         → unified plan + KB + learnings improvement
     - improve-eval             → evaluation_plan changes
     - improve-continuously     → set up cron schedules
-    - report-improve           → report layout/color improvements
+    - import-report            → report layout/color improvements
 
   Experiments:
     - propose-experiment       → focused experiment opener
@@ -1043,7 +1044,8 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 	// 6. File locations guide (matching plan improvement agent's detail level)
 	parts = append(parts, fmt.Sprintf(`**File Locations:**
 - Workflow manifest: `+"`%s/workflow.json`"+` — workflow-level config (servers, tools, skills, LLM, schedules, assignment). Holds optional `+"`objective`"+`/`+"`success_criteria`"+` fallback values.
-- Plan file: `+"`%s/planning/plan.json`"+` — step definitions + **primary** `+"`objective`"+`/`+"`success_criteria`"+` at root
+- Soul file: `+"`%s/soul/soul.md`"+` — canonical objective and success criteria
+- Plan file: `+"`%s/planning/plan.json`"+` — step definitions, dependencies, descriptions, and validation
 - Step config: `+"`%s/planning/step_config.json`"+` — per-step LLM, tools, and execution mode (`+"`agent_configs.use_code_execution_mode`"+` + `+"`agent_configs.declared_execution_mode`"+`: `+"`learn_code`"+` | `+"`code_exec`"+` | direct)
 - Variables: `+"`%s/variables/variables.json`"+` — sole source of variable values + groups (workflow.json does NOT carry variable definitions)
 - Global workflow learnings: `+"`%s/learnings/_global/SKILL.md`"+` (plus `+"`references/`"+` and `+"`scripts/`"+` siblings) — shared domain knowledge for the whole workflow
@@ -1057,7 +1059,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Metrics: `+"`%s/planning/metrics.json`"+` (optional) — quantified goal definitions; required for workflows with business-context accumulation. Tool-only writes (use propose_metric); shell writes blocked by FolderGuard.
 - Rules store: `+"`%s/knowledgebase/rules/rules.md`"+` and `+"`%s/knowledgebase/rules/examples/`"+` — Type 3 only. Accumulated user-supplied business rules; excluded from KB reorganize/consolidate passes. Audit trail folded into `+"`builder/decisions.jsonl`"+` (source=user + trigger=rule-captured).
 - Experiments: `+"`%s/experiments/active.json`"+`, `+"`%s/experiments/history.jsonl`"+`, `+"`%s/experiments/config.json`"+` — experiment loop state. See auto-improvement framework.
-`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
+`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
 
 	// 7. Step folder naming conventions and log file guide
 	parts = append(parts, `**Step Folder Naming (inside execution/ and logs/):**

@@ -1,40 +1,47 @@
-Set up automatic run + improve scheduling for this workflow. FIRST check what already exists before proposing or creating anything. Do this autonomously and avoid creating duplicate schedules.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Set up automatic run + improve scheduling for this workflow. FIRST check what already exists before proposing or creating anything. Do this autonomously and avoid duplicate schedules.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 GOAL
 Create or update TWO complementary schedules:
-1. a normal workflow run schedule for recurring execution
-2. a lightweight optimizer/workshop schedule that wakes frequently, chooses the right improvement action, and can adjust schedules when evidence shows the cadence is wrong
+1. a workshop Run-mode schedule for recurring execution
+2. a lightweight Optimizer-mode schedule that wakes frequently, delegates the actual improvement pass to canonical `improve-workflow` guidance, and can adjust schedules when cadence is wrong
 
 DISCOVERY
-1. Call get_workflow_config and inspect the current schedule list carefully before doing anything else.
-2. If there are existing candidate schedules, use get_schedule_runs on the most relevant ones to understand whether they are active, useful, stale, too frequent, or missing coverage.
-3. Read soul/soul.md to understand the objective and success criteria.
+1. Call get_workflow_config and inspect the current schedule list.
+2. If existing candidate schedules exist, call get_schedule_runs on the most relevant ones to understand whether they are active, useful, stale, too frequent, or missing coverage.
+3. Read soul/soul.md to understand objective and success criteria.
 4. Read variables/variables.json to identify valid group names and enabled groups.
-5. **Prior improvement context.** Read builder/improve.md in full. This is mandatory: it contains the Workflow Profile, previous hypotheses, deferred ideas, and prior scheduled-improvement history.
-6. **Prior review context.** Read builder/review.md if present. Carry unresolved `F-...` findings into the scheduled optimizer message so future fires know which known issues should be closed or linked.
-7. **Framework precheck.** If builder/improve.md has no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first." A continuous-improvement schedule with no profile and no metrics will optimize nothing concrete. If the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty, also redirect.
-8. **Framework mode.** Read planning/metrics.json. If it has at least one entry, the scheduled improve runs will operate in EXPERIMENT MODE — open at most one experiment per fire, gated through propose_experiment. If empty, scheduled improve runs are in DIRECT MODE — use the decision model to optimize, harden, or replan directly. Note this in the schedule's name/description so the operator knows which mode the schedule is using.
-9. Read experiments/config.json (if it exists) to find default_measurement_runs / target_runs — needed to size the improve cadence correctly (see SCHEDULE STRATEGY below).
-10. Read planning/changelog/ if present and compare recent plan/config changes against builder/improve.md and builder/review.md. Recent plan changes increase regression risk and require a tighter improve cadence until the next one or two runs have been reviewed.
+5. Read builder/improve.md in full. This is mandatory: it contains the Workflow Profile, prior actions, deferred ideas, and prior scheduled-improvement history.
+6. Read builder/review.md if present. Carry unresolved `F-...` findings into the scheduled optimizer message.
+7. Read planning/metrics.json and recent db/metrics_history.jsonl rows. Metrics are evidence for harden/replan decisions; they do not create a separate action path.
+8. Read planning/changelog/ if present and compare recent plan/config changes against builder/improve.md and builder/review.md. Recent plan changes increase regression risk and require tighter improve cadence until one or two post-change iteration-0 runs have been reviewed.
+9. If builder/improve.md has no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first." If the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty, also redirect.
 
 SCHEDULE STRATEGY
 1. Prefer updating or reusing good existing schedules instead of creating duplicates.
-2. Only create a new schedule when there is no existing schedule that already serves that purpose.
-3. Prefer a **frequent lightweight improve schedule**, not a once-a-week batch. The default target is **after every workflow run**; if exact run-completion triggers are not available, approximate it with cron so the optimizer wakes shortly after the expected run, or at worst after every two runs. Weekly improve cadence is only acceptable when the workflow itself runs weekly or the user explicitly asks for low-touch weekly optimization.
-4. **Experiment cadence guard (EXPERIMENT MODE only).** The guard limits **new experiment creation**, not cron wakeup frequency. Frequent optimizer fires are allowed, but each fire must check active experiments first and usually do nothing while measurement is still in progress. Do not open a new experiment until enough measurement capacity exists for the prior one.
-5. If cadence is not obvious:
-   - choose a practical recurring run cadence based on the workflow objective and any existing schedules
-   - choose a frequent lightweight optimizer cadence that can observe, conclude/defer/log, and adjust schedules without necessarily mutating the workflow; for unknown active workflows, start at every 6-12 hours, not weekly
-   - stay conservative about applying changes, but not about waking to check evidence
-6. If planning/changelog shows material plan/config changes since the last builder/improve.md entry or unresolved builder/review.md finding, tighten the improve schedule for the next 24-48 hours or until the next one or two iteration-0 runs have been reviewed. A recent plan change should never wait a week for the first optimizer check.
-7. Because `/improve-continuously` runs in Optimizer mode, the scheduled optimizer may call schedule tools itself. It should review cadence on every fire and use update_schedule when prior builder/improve.md history, schedule run history, recent planning/changelog entries, or active experiment state shows the run/improve cadence is too slow, too fast, stale, or mis-scoped. Prefer updating existing schedules over creating duplicates.
-8. Preserve a good existing timezone if one is already in use. Otherwise use the workflow's local/current timezone.
+2. Only create a new schedule when no existing schedule already serves the purpose.
+3. Prefer a frequent lightweight improve schedule, not a once-a-week batch. The default target is after every workflow run; if exact run-completion triggers are not available, approximate it with cron so the optimizer wakes shortly after the expected run, or at worst after every two runs. Weekly improve cadence is only acceptable when the workflow itself runs weekly or the user explicitly asks for low-touch weekly optimization.
+4. If cadence is not obvious:
+   - choose a practical recurring run cadence based on the workflow objective and existing schedules
+   - choose a frequent lightweight optimizer cadence that can observe, harden/replan when evidence justifies it, update cadence, or log no action
+   - for unknown active workflows, start at every 6-12 hours, not weekly
+5. If planning/changelog shows material plan/config changes since the last builder/improve.md entry or unresolved builder/review.md finding, tighten the improve schedule for the next 24-48 hours or until the next one or two iteration-0 runs have been reviewed.
+6. Because `/improve-continuously` runs in Optimizer mode, the scheduled optimizer may call schedule tools itself. It should review cadence on every fire and use update_schedule when builder/improve.md history, schedule run history, recent planning/changelog entries, or run/eval/metric evidence shows the cadence is too slow, too fast, stale, or mis-scoped.
+7. Preserve a good existing timezone if one is already in use. Otherwise use the workflow's local/current timezone.
 
 RUN SCHEDULE
 Create or update a schedule for normal recurring execution with:
-- mode="workflow"
+- mode="workshop"
+- workshop_mode="run"
 - valid group_names
 - a clear name and description that make it obvious this is the primary recurring run schedule
+- a single unattended scheduled message that names the exact group_names and tells Run mode to call run_full_workflow(group_name="<group>") for each configured group. Do not use mode="workflow" for /improve-continuously schedules.
+
+The run schedule message must encode:
+- Do not ask for confirmation; proceed autonomously.
+- Read variables/variables.json only if needed to verify configured group names.
+- For each configured group_name, call run_full_workflow(group_name="<group>").
+- Use default evaluation behavior so iteration-0 run evidence and metric history are available for the optimizer schedule.
+- Stop after the configured group_names have run and report the run status plainly.
 
 IMPROVE SCHEDULE
 Create or update a schedule for recurring improvement with:
@@ -42,87 +49,69 @@ Create or update a schedule for recurring improvement with:
 - workshop_mode="optimizer"
 - valid group_names
 - a clear name and description that make it obvious this is the frequent lightweight optimizer schedule
-- a single scheduled message whose purpose is to improve BOTH workflow quality and eval quality over time. The message must name the exact group_names it is scoped to, use only runs/iteration-0 evidence for those groups, read builder/improve.md and builder/review.md on every fire, include the optimize/harden/experiment decision model below, include the active-experiment guard below, and explicitly allow safe schedule cadence updates via update_schedule.
+- a single scheduled message whose purpose is to improve workflow quality and eval/metric quality over time by calling the canonical `improve-workflow` guided flow
 
-The optimizer schedule message must encode the following behavior. Write it explicitly into the schedule message — the agent that fires has no other context.
+The optimizer schedule message must be a short wrapper around `improve-workflow`, not a duplicate copy of the improve decision model. Write the wrapper explicitly into the schedule message; the agent that fires has no other context.
 
 OPENING (every fire):
-- call get_workflow_config and inspect current schedules; call get_schedule_runs for the primary run schedule and the improve schedule when deciding whether cadence or group scope needs adjustment
-- read builder/improve.md in full (Workflow Profile, prior improvement log, deferred ideas, previous hypotheses, decision history)
-- read builder/review.md if present (unresolved `F-...` findings, prior review risks, and anything already marked RESOLVED/PARTIALLY RESOLVED)
-- read soul/soul.md (objective + success criteria — the north star)
+- call get_workflow_config and inspect schedules; call get_schedule_runs for the primary run schedule and improve schedule when deciding whether cadence or group scope needs adjustment
+- read builder/improve.md in full
+- read builder/review.md if present
+- read soul/soul.md
 - read planning/changelog/ if present and detect material plan/config changes since the last scheduled-improvement review
-- read planning/metrics.json — branches the rest of this turn:
-   • if metrics.json has at least one entry → **EXPERIMENT MODE**
-   • if empty or missing → **DIRECT MODE**
-- read experiments/active.json — list active experiments and their status (proposed / awaiting-approval / measuring / evaluating)
-- scope all run-output review, eval review, harden/replan calls, and experiment proposals to the schedule's configured group_names. Do not inspect older selected runs or unrelated groups.
-
-PRIOR HISTORY RULES:
-- Already applied items in builder/improve.md: do not repeat unless iteration-0 evidence shows regression.
-- Deferred items: reconsider only if current iteration-0 evidence now supports them.
-- Failed/reverted experiments: do not retry unless the hypothesis or intervention materially changed.
-- Next hypotheses: prefer these when current evidence still supports them.
-- Unresolved builder/review.md findings: prioritize them when they affect current success criteria or current run failures.
+- read variables/variables.json and confirm the configured group_names are still valid
+- if group_names, schedule ids, cadence, or recent plan changes indicate schedule drift, prepare a concise cadence note before calling the improvement flow
 
 SCHEDULE SELF-TUNING RULES:
-- If the run schedule is too infrequent to produce measurement data for active experiments, update the run schedule cadence or log the blocker when changing cadence would be risky.
-- If the improve schedule is too infrequent, update it toward a frequent lightweight cadence: after every run when possible, otherwise shortly after the expected run cadence, and never slower than every two runs for active workflows. It is okay for many fires to log "no action" after checking active experiments.
+- If the run schedule is too infrequent to produce evidence for metrics and eval, update the run schedule cadence or log the blocker when changing cadence would be risky.
+- If the improve schedule is too infrequent, update it toward a frequent lightweight cadence: after every run when possible, otherwise shortly after the expected run cadence, and never slower than every two runs for active workflows.
 - If the improve schedule is weekly but the workflow runs more often than weekly, update it. Weekly is not the default for active workflows.
-- If planning/changelog has recent material changes that have not yet been reviewed against iteration-0 evidence, tighten the improve schedule for 24-48 hours or until one or two post-change runs have been reviewed.
+- If planning/changelog has recent material changes not yet reviewed against iteration-0 evidence, tighten the improve schedule for 24-48 hours or until one or two post-change runs have been reviewed.
 - If the improve schedule is firing too often and repeatedly logging no useful observation, slow it modestly, but keep it frequent enough to catch completions and regressions soon after runs.
-- If group_names drift from variables/variables.json or from the intended measurement surface, update the schedules to the correct explicit group_names.
+- If group_names drift from variables/variables.json or from the intended measurement surface, update schedules to the correct explicit group_names.
 - Never create duplicate run/improve schedules when an existing schedule can be updated.
 
-DECISION MODEL (must be followed every fire):
-1. **Review = diagnose and classify.** Use review_plan when you need to understand whether the next action is structural replan, prompt/config/validation hardening, eval coverage, KB/learnings cleanup, or a metric-backed experiment candidate. Treat review as analysis/classification; it does not apply changes.
-2. **Harden = direct repair plus invariant cleanup.** Use harden_workflow for clear failures or reliability issues grounded in iteration-0 evidence, and for deterministic best-practice violations that create artifact drift: stale code_exec main.py files, invalid lock state, missing learning objectives, KB/db/report contract mismatches, missing pre-validation, or hardcoded user-specific values. Harden fixes prompts/config/validation/scripted artifacts and workflow wiring; it is not the path for speculative metric improvement.
-3. **Experiment = metric-backed improvement.** When planning/metrics.json has metrics, package non-obvious improvements as propose_experiment instead of directly hardening/replanning. The hypothesis must name target_metrics, expected_direction, expected_magnitude, intervention_changes, and any linked_review_finding / linked_improve_entry ids.
-4. **Replan = structural repair.** Use replan_workflow_from_results only when iteration-0 evidence shows the workflow structure is wrong (missing step, wrong order, broken context flow). Do not use replan for ordinary prompt hardening.
-5. **Rule of thumb:** clear failure → harden; structural flaw → replan; metric-moving idea → propose_experiment; unclear category → review_plan first.
+CANONICAL IMPROVEMENT DELEGATION:
+After the opening schedule/cadence check, the scheduled optimizer message must call:
+`get_workflow_command_guidance(kind="improve-workflow", focus="<scheduled continuous improvement focus>")`
+Then follow the returned `improve-workflow` instructions verbatim. Do not inline or paraphrase the `improve-workflow` decision model in the schedule message.
 
-EXPERIMENT MODE (when metrics.json is non-empty):
-1. **Check active experiments first.** If 3+ experiments are already active, do nothing this fire — log "deferring: too many active experiments" to improve.md and return. Opening experiment #4 while 1–3 are still measuring confounds attribution.
-2. If any active experiment is in 'awaiting-approval' or 'awaiting-conclusion-approval', do nothing this fire — those need human action, not new proposals. Log and return.
-3. **Discover** by reading runs/iteration-0 outputs first, then iteration-0 eval reports and builder/decisions.jsonl. Compare outputs to soul.md success criteria as a business analyst — what gap is most worth testing? Look for things the user is NOT asking about: tone uniformity that should segment, redundant work that should cache, weak validation that should tighten, content that misses the prospect's pain point. Read enough run output that patterns appear; do not skim.
-4. **Pick exactly ONE candidate** — the highest-impact change defensible by specific run-output evidence. Multi-file bundles are fine if they share ONE underlying belief; if you need an "and" connecting distinct claims, those are separate experiments and you only open one.
-5. **Pick the target metric.** Prefer outcome metrics (linked_success_criteria non-empty) whose criterion is failing or drifting. Telemetry SLOs are last resort. State explicitly: "this experiment targets <metric_id> which operationalizes success criterion: <quoted criterion>."
-6. **Call propose_experiment.** Do NOT call harden_workflow or apply changes directly — the framework gates and reverts on a bad verdict.
-7. If no candidate is strong enough (no clear evidence-backed hypothesis), do nothing this fire. Log "no high-confidence hypothesis surfaced" to improve.md and return. A scheduled fire with no proposal is a valid outcome.
+The focus string passed to `improve-workflow` must include:
+- this is a scheduled continuous improvement fire
+- the configured group_names
+- any unresolved `F-...` findings or recent planning/changelog concern found during opening
+- any cadence note that affects evidence freshness{{if .Focus}}
+- user focus: {{.Focus}}{{end}}
 
-DIRECT MODE (when metrics.json is empty):
-1. Apply the decision model directly — review_plan to classify when unclear, then harden_workflow for reliability fixes and deterministic best-practice cleanup, or replan_workflow_from_results for structural flaws. Improve evaluation_plan when its coverage is weak.
-2. Be conservative and bounded — do not loop or run a fresh workflow pass unless verification is genuinely needed.
-
-ALWAYS:
-- improve the evaluation plan when objective/success-criteria coverage is weak or misleading (this is exempt from the experiment gate — eval definition isn't a workflow change)
-- report layout/widgets may be maintained from Optimizer when report quality is part of the requested recurring job or when prior builder/improve.md / builder/review.md entries explicitly queue report work. Use report-plan tools (`get_report_plan`, `upsert_report_widget`, `validate_report_plan`, `preview_report_render`), not shell/direct file writes.
-- update builder/improve.md with: timestamp, mode used, evidence reviewed, what was opened (experiment_id) or applied, what was deferred and why, remaining gaps, next hypotheses{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
-- if schedules were updated, include the schedule ids, old cadence/group scope, new cadence/group scope, and why the change was made in builder/improve.md
-- when this scheduled fire applies a change that addresses a finding from builder/review.md or a queued proposal in builder/improve.md, follow the resolution-discipline rules in the system prompt: scan for matching `F-...` / `I-...` ids, append `**[RESOLVED YYYY-MM-DD — <how>]**` markers inline after the original entries, and include `linked_review_finding` / `linked_improve_entry` in the experiment payload (EXPERIMENT MODE) or the builder/decisions.jsonl entry (DIRECT MODE).
+POST-IMPROVEMENT CADENCE CHECK:
+After the `improve-workflow` guidance finishes, do one short schedule check:
+- if the improvement pass changed the workflow, tightened eval/metrics, or found stale evidence, update run/improve cadence if needed
+- if no action was taken because there was no fresh evidence, slow cadence only when repeated recent schedule runs show no useful observation
+- append the schedule decision to builder/improve.md if the canonical improve pass did not already record it
 
 PERSISTENT IMPROVEMENT LOG
 Create or update builder/improve.md now as the durable optimization log for future scheduled improvement runs.
 Bootstrap it with:
 - objective and success criteria snapshot
 - current schedule strategy
-- what the run cadence is
-- what the improve cadence is
+- run cadence
+- improve cadence
 - current known workflow gaps
-- current known eval gaps
+- current known eval/metric gaps
 - next improvement hypotheses
 
 SCHEDULE CREATION RULES
 1. Do NOT delete schedules unless they are clearly redundant and safe to remove. Prefer update over delete.
-2. If an existing run schedule already serves the purpose, keep it and only refine it if needed.
-3. If an existing optimizer/improve schedule already serves the purpose, keep it and only refine it if needed.
+2. If an existing run schedule already serves the purpose, keep it and refine it if needed. For /improve-continuously, convert/update direct mode="workflow" run schedules to mode="workshop", workshop_mode="run" rather than leaving them as direct workflow schedules.
+3. If an existing optimizer/improve schedule already serves the purpose, keep it and refine it if needed.
 4. Use create_schedule / update_schedule as appropriate.
 
 FINAL REPORT
 Summarize:
 - what schedules already existed
 - what you created vs updated
-- run schedule: ID, name, cadence, timezone, groups
+- run schedule: ID, name, cadence, timezone, groups, mode, workshop_mode
 - improve schedule: ID, name, cadence, timezone, groups
+- the exact Run-mode schedule message you configured
 - where you saved builder/improve.md
-- the exact optimizer schedule message you configured
+- the exact Optimizer-mode schedule message you configured

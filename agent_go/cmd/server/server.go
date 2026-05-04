@@ -1217,7 +1217,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/decisions", api.handleGetDecisionsFeed).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/metrics", api.handleGetMetrics).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/metrics-history", api.handleGetMetricsHistory).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/experiments", api.handleGetExperiments).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/builder-doc", api.handleGetBuilderDoc).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/framework-health", api.handleGetFrameworkHealth).Methods("GET", "OPTIONS")
 
@@ -4964,9 +4963,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered reorganize_knowledgebase in %s", workflowPhaseID)
 						todo_creation_human.RegisterConsolidateKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered consolidate_knowledgebase in %s", workflowPhaseID)
-						// Auto-improvement framework — proposer-side tools. These
-						// mutate planning/metrics.json and experiments/, so keep
-						// them in Optimizer mode only.
+						// Auto-improvement metric tools mutate planning/metrics.json,
+						// so keep them in Optimizer mode only.
 						if phaseTemplateVars["WorkshopMode"] == "optimizer" {
 							RegisterAutoImprovementProposerTools(underlyingAgent, phaseWorkspacePath, "improve-workflow", api.logger)
 							log.Printf("[WORKFLOW_PHASE] Registered auto-improvement proposer tools in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])

@@ -34,6 +34,10 @@ const getEnabledGroups = (manifest: VariablesManifest | null): VariableGroup[] =
   return manifest.groups.filter(g => g.enabled)
 }
 
+const getGroupValues = (group: VariableGroup): Record<string, string> => {
+  return group.values && typeof group.values === 'object' ? group.values : {}
+}
+
 // Check if manifest has multiple groups
 const hasMultipleGroups = (manifest: VariablesManifest | null): boolean => {
   return !!manifest?.groups && manifest.groups.length > 1
@@ -205,10 +209,10 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
                 )}
               </div>
             
-            {/* Variables for this group */}
+              {/* Variables for this group */}
             <div className="ml-4 space-y-1">
               {manifest.variables && manifest.variables.slice(0, 3).map((variable, idx) => {
-                const value = group.values[variable.name] || ''
+                const value = getGroupValues(group)[variable.name] || ''
                 return (
                   <div key={idx} className="flex flex-col gap-0.5 text-xs">
                     <div className="flex items-center gap-1">
@@ -296,4 +300,3 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
 })
 
 VariablesNode.displayName = 'VariablesNode'
-

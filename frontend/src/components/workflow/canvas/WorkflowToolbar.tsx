@@ -493,6 +493,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
+        {/* Auto-improvement framework — metrics, trajectory, decisions */}
+        {workspacePath && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowAutoImprovementPopup(true)}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <Beaker className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Auto-improvement (metrics, trajectory, decisions)</p></TooltipContent>
+          </Tooltip>
+        )}
+
         {/* Show Costs - opens popup with cost analysis across all iterations */}
         {workspacePath && (
           <Tooltip>
@@ -567,22 +582,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             <TooltipContent side="bottom"><p>Evaluation reports</p></TooltipContent>
           </Tooltip>
         )}
-
-        {/* Auto-improvement framework — experiments, metrics, decisions */}
-        {workspacePath && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowAutoImprovementPopup(true)}
-                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <Beaker className="w-3.5 h-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Auto-improvement (experiments, metrics, decisions)</p></TooltipContent>
-          </Tooltip>
-        )}
-
 
         {/* Show Versions - opens popup with version publish/revert */}
         {workspacePath && (

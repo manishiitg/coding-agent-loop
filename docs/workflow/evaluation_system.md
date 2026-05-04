@@ -147,7 +147,7 @@ The scoring phase has two paths, controlled by an optional `__evaluation_scoring
 - After the agent's turn loop ends, Go runs the fixed pre-validation schema against the produced file. On failure the runtime feeds the error list back to the same agent as a follow-up user message and lets it fix `evaluation_report.json` in place; this repeats up to 3 attempts before the eval fails.
 
 **learn_code fast path (opt-in)**
-- Builder sets `{ "id": "__evaluation_scoring__", "agent_configs": { "declared_execution_mode": "learn_code" } }` in `evaluation/step_config.json`
+- Optimizer may set `{ "id": "__evaluation_scoring__", "agent_configs": { "declared_execution_mode": "learn_code" } }` in `evaluation/step_config.json` only when the user explicitly asks to freeze/reuse deterministic scoring code and 10+ eval runs cover the relevant output scenarios.
 - On every eval run, the runtime checks for `learnings/__evaluation_scoring__/main.py`
   - If present: writes `scoring_inputs.json` (with all step inputs + resolved `target_run_path`) and execs `python3 main.py <inputs> <output>`. The script writes `evaluation_report.json` deterministically; Go validates it against the same fixed schema. **No LLM call.**
   - If missing or the script fails or the output fails validation: falls back to the LLM scoring path. The LLM is also instructed to author/refine `main.py` so future runs hit the fast path.
@@ -165,7 +165,7 @@ The publish step is what makes evaluation reports line up with the execution run
 
 The reserved `__evaluation_scoring__` step config entry accepts the same `agent_configs` shape as a regular step:
 - `use_code_execution_mode` (`*bool`) — overrides the auto-detected code-exec mode (default: provider-based; CLI providers force true)
-- `declared_execution_mode` (`"learn_code"`) — opts into the fast-path described above
+- `declared_execution_mode` (`"learn_code"`) — opts into the fast-path described above after the explicit-user-request, deterministic-scoring, and 10+ eval-run gates are satisfied
 
 Implementation lives in [evaluation_scoring_agent.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_scoring_agent.go), [evaluation_scoring_learn_code.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_scoring_learn_code.go), and `createEvaluationScoringAgent` in [controller_agent_factory.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go).
 

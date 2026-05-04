@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mcp-agent-builder.local/schemas/auto-improvement.schema.json",
   "title": "Auto-Improvement Framework Schemas",
-  "description": "Canonical schemas for the auto-improvement framework. Companion to docs/workflow/auto_improvement_framework.md. Covers workflow.json extensions, planning/metrics.json, builder/decisions.jsonl entries, experiment records (experiments/active.json + history.jsonl), experiments/config.json, and the LLM-callable tool inputs.",
+  "description": "Canonical schemas for the auto-improvement framework. Companion to docs/workflow/auto_improvement_framework.md. Covers workflow.json extensions, planning/metrics.json, builder/decisions.jsonl entries, and the LLM-callable metric tool inputs.",
   "$defs": {
 
     "OversightMode": {
       "type": "string",
       "enum": ["manual", "supervised", "autonomous"],
-      "description": "Per-workflow oversight mode. manual = every change requires approval; supervised = low-risk auto, high-risk gated; autonomous = LLM applies and concludes without gates. Hard gate: drives auto-vs-human approval flow on hypotheses and verdicts."
+      "description": "Per-workflow oversight mode. manual = every change requires approval; supervised = low-risk auto, high-risk gated; autonomous = LLM applies allowed changes without gates."
     },
 
     "DecisionLogMutability": {
@@ -138,7 +138,7 @@
     "DecisionSource": {
       "type": "string",
       "enum": ["agent", "user", "system"],
-      "description": "Who made this decision. agent = builder/optimizer/evaluator LLM; user = human override or capture-context; system = automated action like apply_revert or archive_experiment."
+      "description": "Who made this decision. agent = builder/optimizer LLM; user = human override or capture-context; system = automated framework action."
     },
 
     "DecisionEntry": {
@@ -155,7 +155,7 @@
         "source": { "$ref": "#/$defs/DecisionSource" },
         "trigger": {
           "type": "string",
-          "description": "Origin of the decision. Slash command name (e.g., improve-eval, capture-context), system action name (e.g., apply_revert), or override action."
+          "description": "Origin of the decision. Slash command name (e.g., improve-eval, capture-context), system action name, or override action."
         },
         "rationale": {
           "type": "string",
@@ -170,10 +170,6 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Metric ids this decision is meant to move. REQUIRED for Type 3 workflows."
-        },
-        "linked_experiment_id": {
-          "type": "string",
-          "description": "If this decision opened or was caused by an experiment."
         },
         "linked_review_finding": {
           "type": "array",
@@ -216,387 +212,6 @@
       }
     },
 
-    "ExperimentStatus": {
-      "type": "string",
-      "enum": [
-        "proposed",
-        "awaiting-approval",
-        "measuring",
-        "evaluating",
-        "awaiting-conclusion-approval",
-        "concluded",
-        "aborted"
-      ]
-    },
-
-    "Verdict": {
-      "type": "string",
-      "enum": ["kept", "reverted", "inconclusive", "extend"]
-    },
-
-    "InterventionOperation": {
-      "type": "string",
-      "enum": ["append", "replace", "patch", "create"]
-    },
-
-    "InterventionChange": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "operation", "content"],
-      "properties": {
-        "path": {
-          "type": "string",
-          "description": "Workflow-relative path. Forbidden paths are rejected by the runtime."
-        },
-        "operation": { "$ref": "#/$defs/InterventionOperation" },
-        "content": {
-          "type": "string",
-          "description": "New content (operation=append/replace/create) or unified diff (operation=patch)."
-        }
-      }
-    },
-
-    "WorldState": {
-      "type": "object",
-      "description": "Snapshot of runtime state at a point in time. Used to detect drift between experiment start and end.",
-      "additionalProperties": false,
-      "required": ["captured_at"],
-      "properties": {
-        "captured_at": { "type": "string", "format": "date-time" },
-        "model_versions": {
-          "type": "object",
-          "additionalProperties": { "type": "string" }
-        },
-        "mcp_versions": {
-          "type": "object",
-          "additionalProperties": { "type": "string" }
-        },
-        "source_data_hashes": {
-          "type": "object",
-          "additionalProperties": { "type": "string" }
-        }
-      }
-    },
-
-    "ExperimentRecord": {
-      "type": "object",
-      "description": "Used in both experiments/active.json (status: pre-concluded) and experiments/history.jsonl (status: concluded or aborted).",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "status",
-        "hypothesis",
-        "target_metrics",
-        "expected_direction",
-        "expected_magnitude",
-        "baseline",
-        "intervention",
-        "measurement",
-        "world_state",
-        "started_at"
-      ],
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Format: exp-<workflow_id>-<YYYYMMDD>-<sequence>."
-        },
-        "status": { "$ref": "#/$defs/ExperimentStatus" },
-        "hypothesis": {
-          "type": "string",
-          "maxLength": 200
-        },
-        "target_metrics": {
-          "type": "array",
-          "items": { "type": "string" },
-          "minItems": 1
-        },
-        "expected_direction": {
-          "type": "string",
-          "enum": ["increase", "decrease", "maintain"]
-        },
-        "expected_magnitude": {
-          "type": "number",
-          "exclusiveMinimum": 0
-        },
-        "baseline": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["window", "values", "mean"],
-          "properties": {
-            "window": {
-              "type": "string",
-              "description": "Description of the baseline window (e.g., last_5_runs)."
-            },
-            "values": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "array",
-                "items": { "type": "number" }
-              },
-              "description": "Per-metric array of baseline values."
-            },
-            "mean": {
-              "type": "object",
-              "additionalProperties": { "type": "number" }
-            },
-            "std": {
-              "type": "object",
-              "additionalProperties": { "type": "number" }
-            },
-            "insufficient": {
-              "type": "boolean",
-              "description": "True if there was not enough history to form a confident baseline."
-            }
-          }
-        },
-        "intervention": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["trigger", "applied_changes", "revertable_diff_path"],
-          "properties": {
-            "trigger": { "type": "string" },
-            "applied_changes": {
-              "type": "array",
-              "items": { "type": "string" }
-            },
-            "revertable_diff_path": {
-              "type": "string",
-              "description": "Path to experiments/diffs/<id>.patch"
-            }
-          }
-        },
-        "measurement": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["target_runs", "completed_runs", "values"],
-          "properties": {
-            "target_runs": { "type": "integer", "minimum": 1 },
-            "completed_runs": { "type": "integer", "minimum": 0 },
-            "values": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "array",
-                "items": { "type": "number" }
-              }
-            }
-          }
-        },
-        "world_state": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["started_at"],
-          "properties": {
-            "started_at": { "$ref": "#/$defs/WorldState" },
-            "concluded_at": { "$ref": "#/$defs/WorldState" }
-          }
-        },
-        "started_at": { "type": "string", "format": "date-time" },
-        "concluded_at": { "type": "string", "format": "date-time" },
-        "conclusion": {
-          "type": ["object", "null"],
-          "additionalProperties": false,
-          "properties": {
-            "verdict": { "$ref": "#/$defs/Verdict" },
-            "rationale": {
-              "type": "string",
-              "maxLength": 500
-            },
-            "evidence": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "post_mean": {
-                  "type": "object",
-                  "additionalProperties": { "type": "number" }
-                },
-                "magnitude_observed": {
-                  "type": "object",
-                  "additionalProperties": { "type": "number" }
-                },
-                "per_run_beat_pct": {
-                  "type": "object",
-                  "additionalProperties": { "type": "number" }
-                },
-                "drift_flagged": { "type": "boolean" }
-              }
-            },
-            "verdict_overridden": { "type": "boolean" },
-            "override_reason": { "type": "string" }
-          }
-        },
-        "approvals": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "hypothesis_approved_by": { "type": ["string", "null"] },
-            "hypothesis_approved_at": { "type": ["string", "null"], "format": "date-time" },
-            "conclusion_approved_by": { "type": ["string", "null"] },
-            "conclusion_approved_at": { "type": ["string", "null"], "format": "date-time" }
-          }
-        },
-        "linked_decisions": {
-          "type": "array",
-          "items": { "type": "string" }
-        }
-      }
-    },
-
-    "ExperimentsConfig": {
-      "type": "object",
-      "description": "experiments/config.json — defaults for the experiment loop.",
-      "additionalProperties": false,
-      "required": ["default_measurement_runs", "baseline_window"],
-      "properties": {
-        "default_measurement_runs": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Default sample size when propose_experiment doesn't override."
-        },
-        "min_runs": { "type": "integer", "minimum": 1 },
-        "max_runs": { "type": "integer", "minimum": 1 },
-        "baseline_window": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Number of prior runs used to compute baseline."
-        },
-        "allowed_intervention_paths": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Deprecated compatibility field. The runtime no longer uses an allow-list for propose_experiment writes."
-        },
-        "forbidden_intervention_paths": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Always-rejected path globs (e.g., .env, .git/, workflow.json)."
-        },
-        "verdict_thresholds": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "kept_magnitude_pct": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5 },
-            "kept_per_run_beat_pct": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7 },
-            "reverted_per_run_beat_pct": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5 },
-            "noise_band_std_multiplier": { "type": "number", "minimum": 0, "default": 1.0 }
-          }
-        },
-        "cooldown_hours": {
-          "type": "number",
-          "description": "Minimum hours before retrying a similar hypothesis."
-        },
-        "blackout_windows": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["cron", "reason"],
-            "properties": {
-              "cron": { "type": "string" },
-              "reason": { "type": "string" }
-            }
-          }
-        },
-        "max_concurrent_experiments": {
-          "type": "integer",
-          "minimum": 1,
-          "default": 1
-        },
-        "cost_budget": {
-          "type": "object",
-          "properties": {
-            "currency": { "type": "string", "default": "usd" },
-            "per_experiment": { "type": "number" },
-            "per_period": { "type": "number" },
-            "period": { "type": "string", "description": "ISO-8601 duration, e.g. P7D" }
-          }
-        },
-        "high_risk_paths": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Path globs that, when touched by an intervention, force the experiment into high-risk approval flow regardless of oversight mode default."
-        },
-        "pinned_hypotheses": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["text", "reason", "pinned_at"],
-            "properties": {
-              "text": { "type": "string" },
-              "reason": { "type": "string" },
-              "pinned_at": { "type": "string", "format": "date-time" },
-              "pinned_by": { "type": "string" }
-            }
-          },
-          "description": "Hypotheses the optimizer must not retry."
-        },
-        "focus_metrics": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Metric ids the optimizer should prioritize for next-experiment selection."
-        },
-        "drift_threshold": {
-          "type": "object",
-          "description": "Below these thresholds the conclusion is downgraded.",
-          "properties": {
-            "model_version_change": { "type": "boolean", "default": true },
-            "mcp_version_change": { "type": "boolean", "default": true },
-            "source_data_hash_change_max": { "type": "number" }
-          }
-        }
-      }
-    },
-
-    "ToolInput_propose_experiment": {
-      "type": "object",
-      "description": "Input schema for the propose_experiment tool. Used by the proposer (builder in optimizer mode).",
-      "additionalProperties": false,
-      "required": [
-        "hypothesis",
-        "target_metrics",
-        "expected_direction",
-        "expected_magnitude",
-        "intervention_changes"
-      ],
-      "properties": {
-        "hypothesis": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-        },
-        "target_metrics": {
-          "type": "array",
-          "items": { "type": "string" },
-          "minItems": 1
-        },
-        "expected_direction": {
-          "type": "string",
-          "enum": ["increase", "decrease", "maintain"]
-        },
-        "expected_magnitude": {
-          "type": "number",
-          "exclusiveMinimum": 0
-        },
-        "intervention_changes": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/InterventionChange" },
-          "minItems": 1
-        },
-        "measurement_runs": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Override default_measurement_runs from experiments/config.json."
-        },
-        "linked_review_finding": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Optional builder/review.md finding ids (F-YYYY-MM-DD-NNN) this experiment is intended to resolve."
-        },
-        "linked_improve_entry": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Optional builder/improve.md proposal ids (I-YYYY-MM-DD-NNN) this experiment is intended to resolve."
-        }
-      }
-    },
-
     "ToolInput_propose_metric": {
       "type": "object",
       "description": "Input schema for the propose_metric tool. Used by the proposer.",
@@ -624,47 +239,6 @@
             "reason": { "type": "string" }
           }
         }
-      }
-    },
-
-    "ToolInput_conclude_experiment": {
-      "type": "object",
-      "description": "Input schema for the conclude_experiment tool. The ONLY tool the evaluator agent has.",
-      "additionalProperties": false,
-      "required": ["experiment_id", "rationale"],
-      "properties": {
-        "experiment_id": { "type": "string" },
-        "rationale": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 500
-        },
-        "override_verdict": {
-          "type": ["object", "null"],
-          "required": ["to", "reason"],
-          "properties": {
-            "to": { "$ref": "#/$defs/Verdict" },
-            "reason": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    },
-
-    "ToolInput_query_experiment_history": {
-      "type": "object",
-      "description": "Input schema for the optional query_experiment_history tool.",
-      "additionalProperties": false,
-      "properties": {
-        "target_metrics": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "since": { "type": "string", "format": "date-time" },
-        "exclude_pinned": { "type": "boolean", "default": true },
-        "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20 }
       }
     }
   }

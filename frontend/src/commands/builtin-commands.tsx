@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, Beaker } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock } from 'lucide-react'
 import type { CommandDefinition } from './types'
 
 export const builtinCommands: CommandDefinition[] = [
@@ -320,31 +320,6 @@ After the tool returns, tell me:
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
       ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-setup-framework", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
-    }
-  },
-  {
-    command: 'propose-experiment',
-    description: 'Open ONE experiment: pick a metric, formulate a hypothesis, apply the intervention through the framework gate',
-    icon: <Beaker className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="propose-experiment", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
-    }
-  },
-  {
-    command: 'exp-abort',
-    description: 'Revert and abort the active experiment',
-    icon: <AlertTriangle className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="exp-abort", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
     }
   },
   {

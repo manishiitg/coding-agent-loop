@@ -32,14 +32,20 @@ That means the recommended workflow config is to set both fields explicitly for 
 
 ## Recommended Usage
 
-Prefer `learn_code` for most stable workflow steps:
+Default to `code_exec`. Promote a workflow or eval step to `learn_code` only when all gates are satisfied:
+
+- the user explicitly asked for scripted/learn-code execution
+- the behavior is highly deterministic, with stable inputs, tools, output contract, and little/no per-instance judgment
+- there is broad stability evidence, normally 10+ successful runs across the relevant variable groups/scenarios with eval or metric evidence still at target
+
+Good `learn_code` candidates after those gates:
 
 - structured data transforms
 - report building
 - deterministic validation logic
 - fixed API call sequences
 - repeatable file processing
-- browser flows with stable selectors and predictable navigation
+- browser flows only when the user explicitly requested scripted browser automation and 10+ scenario-covering runs prove durable selectors and predictable navigation
 
 Use `code_exec` when the step still benefits from scripting, but the exact logic changes from run to run:
 
@@ -78,7 +84,7 @@ Use `code_exec` when the step still benefits from scripting, but the exact logic
 
 ### Workshop defaults
 
-Workshop guidance treats `learn_code` as the preferred default for optimized scripted steps. The workshop tools also expose:
+Workshop guidance treats `code_exec` as the default. `learn_code` is an opt-in promotion after explicit user request plus deterministic behavior and 10+ scenario-covering successful runs. The workshop tools also expose:
 
 - `update_step_config(...)`
 - `run_saved_main_py(step_id, group_id?)`
@@ -217,8 +223,8 @@ If the learn-code repair loop is exhausted (or skipped due to locked learnings),
 
 That fallback is important:
 
-- `learn_code` is the preferred stable path
-- `code_exec` is the recovery path when the saved script is not currently salvageable within the repair budget
+- `learn_code` is the explicitly requested, proven deterministic fast path
+- `code_exec` is the default and the recovery path when the saved script is not currently salvageable within the repair budget
 
 ## `code_exec` Flow
 
@@ -252,12 +258,13 @@ For `learn_code`, the prompt also emphasizes:
 
 ## When to Use Which Mode
 
-Choose `learn_code` when:
+Choose `learn_code` only when:
 
-- the task shape is stable
-- the script should improve over time
-- you want future runs to be cheap and fast
-- you want a reviewable `main.py` artifact in learnings
+- the user explicitly asked for learn_code/scripted persistence
+- the task shape is highly deterministic
+- 10+ successful runs cover the relevant scenarios/groups
+- eval/metric evidence is still at target
+- you want future runs to be cheap and fast and accept the risk of freezing assumptions into `main.py`
 
 Choose `code_exec` when:
 

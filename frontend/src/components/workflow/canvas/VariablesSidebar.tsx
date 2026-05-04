@@ -10,6 +10,10 @@ interface VariablesSidebarProps {
   showChatArea?: boolean  // When true, use lower z-index so ChatArea appears on top
 }
 
+const getGroupValues = (group: VariableGroup): Record<string, string> => {
+  return group.values && typeof group.values === 'object' ? group.values : {}
+}
+
 export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
   workspacePath,
   onClose,
@@ -378,14 +382,14 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                       </label>
                       <input
                         type="text"
-                        value={group.values[variable.name] || ''}
+                        value={getGroupValues(group)[variable.name] || ''}
                         onChange={(e) => {
                           // Update value for this specific group
                           if (!manifest) return
                           if (manifest.groups && manifest.groups.length > 0) {
                             const updatedGroups = manifest.groups.map(g => {
                               if (g.name === group.name) {
-                                return { ...g, values: { ...g.values, [variable.name]: e.target.value } }
+                                return { ...g, values: { ...getGroupValues(g), [variable.name]: e.target.value } }
                               }
                               return g
                             })

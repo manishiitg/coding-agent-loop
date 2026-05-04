@@ -92,7 +92,7 @@ Read the most recent rows of `db/metrics_history.jsonl` for each metric id. For 
 For each broken metric, name the metric, the resolve_error, and the recommended fix. Apply only after user confirms.
 
 5.5 — **Unused / orphan metrics**
-- Are any metrics in `planning/metrics.json` not referenced by any experiment in `experiments/active.json` or `experiments/history.jsonl`? If they're outcome metrics (i.e., genuinely meant to be tracked), that's fine — but flag any that look stale (defined long ago, never targeted, no recent history rows).
+- Are any metrics in `planning/metrics.json` stale, duplicated, or not represented in recent `db/metrics_history.jsonl` rows? If they're outcome metrics (i.e., genuinely meant to be tracked), that's fine — but flag metrics with no recent values, repeated resolve errors, or unclear success-criteria linkage.
 
 5.6 — **Telemetry SLOs present?**
 - If `cost_per_run` and `run_duration_seconds` (or `total.cost_usd` / `total.duration_seconds`) aren't defined as telemetry SLOs, suggest adding them. Free signal.

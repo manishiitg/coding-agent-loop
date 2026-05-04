@@ -295,86 +295,145 @@ func containsAgentBrowserInvocation(cmd string) bool {
 }
 
 // detectRawChromeCDPAccess reports shell commands/scripts that talk directly to
-// Chrome's remote debugging endpoint. Unlike containsAgentBrowserInvocation, this
-// intentionally inspects heredoc/script bodies because Python raw-CDP bypasses
-// usually live there.
+// Chrome's remote debugging endpoint.
+//
+// Keep this narrow. Workflow steps often write plan/docs/scripts that mention CDP
+// URLs as plain data. Those should pass. We only inspect executable shell text
+// plus heredocs fed directly to an interpreter, and we require a CDP endpoint (or
+// CDP URL variable) to appear together with code that actually opens or drives it.
 func detectRawChromeCDPAccess(cmd string) string {
-	lower := strings.ToLower(cmd)
-	checks := []struct {
-		name     string
-		patterns []string
-	}{
-		{
-			name: "DevTools WebSocket page endpoint",
-			patterns: []string{
-				"ws://localhost:9222/devtools/page",
-				"ws://127.0.0.1:9222/devtools/page",
-				"ws://host.docker.internal:9222/devtools/page",
-				"/devtools/page/",
-			},
-		},
-		{
-			name: "Chrome /json target endpoint",
-			patterns: []string{
-				"http://localhost:9222/json/",
-				"http://127.0.0.1:9222/json/",
-				"http://host.docker.internal:9222/json/",
-				"localhost:9222/json/",
-				"127.0.0.1:9222/json/",
-				"host.docker.internal:9222/json/",
-			},
-		},
-		{
-			name: "raw CDP WebSocket connection",
-			patterns: []string{
-				"websocket.create_connection",
-				"create_connection(",
-				"new websocket(",
-			},
-		},
-		{
-			name: "Chrome CDP method call",
-			patterns: []string{
-				"target.createtarget",
-				"target.closetarget",
-				"runtime.evaluate",
-				"page.navigate",
-				"input.dispatchmouseevent",
-				"input.dispatchkeyevent",
-			},
-		},
-		{
-			name: "workflow CDP URL variable",
-			patterns: []string{
-				"var_twitter_cdp_url",
-				"twitter_cdp_url",
-				"cdp_url",
-			},
-		},
+	if reason := detectRawChromeCDPInExecutableText(stripShellHeredocBodies(cmd)); reason != "" {
+		return reason
 	}
-
-	hasCDPEndpoint := strings.Contains(lower, ":9222") ||
-		strings.Contains(lower, "/devtools/page") ||
-		strings.Contains(lower, "/json/list") ||
-		strings.Contains(lower, "/json/version") ||
-		strings.Contains(lower, "var_twitter_cdp_url") ||
-		strings.Contains(lower, "twitter_cdp_url") ||
-		strings.Contains(lower, "cdp_url")
-
-	for _, check := range checks {
-		for _, pattern := range check.patterns {
-			if !strings.Contains(lower, pattern) {
-				continue
-			}
-			if check.name == "raw CDP WebSocket connection" || check.name == "Chrome CDP method call" {
-				if !hasCDPEndpoint {
-					continue
-				}
-			}
-			return check.name
+	for _, body := range executableHeredocBodies(cmd) {
+		if reason := detectRawChromeCDPInExecutableText(body); reason != "" {
+			return reason
 		}
 	}
 	return ""
+}
+
+func detectRawChromeCDPInExecutableText(text string) string {
+	lower := strings.ToLower(text)
+	hasDevToolsPage := strings.Contains(lower, "ws://localhost:9222/devtools/page") ||
+		strings.Contains(lower, "ws://127.0.0.1:9222/devtools/page") ||
+		strings.Contains(lower, "ws://host.docker.internal:9222/devtools/page") ||
+		strings.Contains(lower, "/devtools/page/")
+	hasJSONEndpoint := strings.Contains(lower, "http://localhost:9222/json/") ||
+		strings.Contains(lower, "http://127.0.0.1:9222/json/") ||
+		strings.Contains(lower, "http://host.docker.internal:9222/json/") ||
+		strings.Contains(lower, "localhost:9222/json/") ||
+		strings.Contains(lower, "127.0.0.1:9222/json/") ||
+		strings.Contains(lower, "host.docker.internal:9222/json/") ||
+		strings.Contains(lower, "/json/list") ||
+		strings.Contains(lower, "/json/version") ||
+		strings.Contains(lower, "/json/new") ||
+		strings.Contains(lower, "/json/close")
+	hasCDPVariable := strings.Contains(lower, "var_twitter_cdp_url") ||
+		strings.Contains(lower, "twitter_cdp_url") ||
+		strings.Contains(lower, "cdp_url")
+	hasCDPEndpointOrVariable := strings.Contains(lower, ":9222") ||
+		strings.Contains(lower, "/devtools/page") ||
+		strings.Contains(lower, "/json/list") ||
+		strings.Contains(lower, "/json/version") ||
+		strings.Contains(lower, "/json/new") ||
+		strings.Contains(lower, "/json/close") ||
+		hasCDPVariable
+
+	hasWSOpen := strings.Contains(lower, "websocket.create_connection") ||
+		strings.Contains(lower, "create_connection(") ||
+		strings.Contains(lower, "new websocket(") ||
+		strings.Contains(lower, "websocat ") ||
+		strings.Contains(lower, "wscat ")
+	if hasWSOpen && (hasDevToolsPage || hasCDPVariable) {
+		return "raw CDP WebSocket connection"
+	}
+
+	hasHTTPFetch := strings.Contains(lower, "curl ") ||
+		strings.Contains(lower, "curl\t") ||
+		strings.Contains(lower, "wget ") ||
+		strings.Contains(lower, "urlopen(") ||
+		strings.Contains(lower, "requests.get(") ||
+		strings.Contains(lower, "requests.post(") ||
+		strings.Contains(lower, "httpx.get(") ||
+		strings.Contains(lower, "httpx.post(") ||
+		strings.Contains(lower, "fetch(") ||
+		strings.Contains(lower, "axios.get(") ||
+		strings.Contains(lower, "axios.post(") ||
+		strings.Contains(lower, "http.get(") ||
+		strings.Contains(lower, "https.get(")
+	if hasHTTPFetch && (hasJSONEndpoint || hasCDPVariable) {
+		return "Chrome /json target endpoint"
+	}
+
+	hasCDPMethod := strings.Contains(lower, "target.createtarget") ||
+		strings.Contains(lower, "target.closetarget") ||
+		strings.Contains(lower, "runtime.evaluate") ||
+		strings.Contains(lower, "page.navigate") ||
+		strings.Contains(lower, "input.dispatchmouseevent") ||
+		strings.Contains(lower, "input.dispatchkeyevent")
+	if hasCDPMethod && hasCDPEndpointOrVariable {
+		return "Chrome CDP method call"
+	}
+	return ""
+}
+
+var executableHeredocCommandRe = regexp.MustCompile(`(?i)(^|[;&|]\s*)(python3?|node|ruby|perl|php|bash|sh|zsh|deno|tsx|npx\s+(?:tsx|ts-node))\b`)
+
+func executableHeredocBodies(cmd string) []string {
+	var bodies []string
+	i := 0
+	n := len(cmd)
+	for i < n {
+		if i+2 <= n && cmd[i] == '<' && cmd[i+1] == '<' {
+			if loc := heredocStartRe.FindStringSubmatchIndex(cmd[i:]); loc != nil && loc[0] == 0 {
+				lineStart := strings.LastIndex(cmd[:i], "\n") + 1
+				prefix := strings.TrimSpace(cmd[lineStart:i])
+				fullEnd := i + loc[1]
+				var delim string
+				for g := 1; g <= 3; g++ {
+					if loc[2*g] >= 0 {
+						delim = cmd[i+loc[2*g] : i+loc[2*g+1]]
+						break
+					}
+				}
+
+				i = fullEnd
+				for i < n && cmd[i] != '\n' {
+					i++
+				}
+				if i < n {
+					i++
+				}
+				bodyStart := i
+				bodyEnd := i
+				for i < n {
+					lineStart := i
+					for i < n && cmd[i] != '\n' {
+						i++
+					}
+					line := cmd[lineStart:i]
+					if strings.TrimSpace(line) == delim {
+						bodyEnd = lineStart
+						if i < n {
+							i++
+						}
+						break
+					}
+					if i < n {
+						i++
+					}
+					bodyEnd = i
+				}
+				if executableHeredocCommandRe.MatchString(prefix) {
+					bodies = append(bodies, cmd[bodyStart:bodyEnd])
+				}
+				continue
+			}
+		}
+		i++
+	}
+	return bodies
 }
 
 // heredocStartRe matches the start of a heredoc redirection and captures the delimiter.

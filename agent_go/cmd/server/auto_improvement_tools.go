@@ -10,10 +10,8 @@ import (
 )
 
 // =====================================================================
-// auto_improvement_tools.go — register propose_experiment, propose_metric,
-// and conclude_experiment with an mcpagent so the
-// proposer (builder in optimizer mode) and evaluator (narrow-context agent)
-// can call them.
+// auto_improvement_tools.go — register auto-improvement metric tools with an
+// mcpagent so the workflow optimizer can maintain planning/metrics.json.
 //
 // Caller wires these into the agent's tool registry alongside other custom
 // tools like reorganize_knowledgebase / consolidate_knowledgebase. Each
@@ -21,110 +19,12 @@ import (
 // need to supply it.
 // =====================================================================
 
-// RegisterProposeExperimentTool exposes propose_experiment to the proposer LLM.
-// `triggerSource` is the slash-command name the experiment will be tagged with
-// (e.g. "improve-eval", "improve-workflow"). For the optimizer loop, pass
-// "improve-continuously".
-func RegisterProposeExperimentTool(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
-	desc := "Open an experiment to test a hypothesis about the workflow. " +
-		"Pre-registers the hypothesis, captures a baseline from recent run history, snapshots world_state, " +
-		"applies the intervention atomically with a revertable diff, and starts a measurement window. " +
-		"The next runs populate measurement.values; " +
-		"when target_runs is reached, the system computes the verdict and the evaluator agent narrates it via conclude_experiment. " +
-		"Do NOT use this tool to read state or to apply unconditional fixes — open an experiment ONLY when you have a falsifiable hypothesis " +
-		"about how the change will move a declared metric. Returns { experiment_id, status, decisions_entry_id }."
-
-	params := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"hypothesis": map[string]interface{}{
-				"type":        "string",
-				"description": "Short prose, ≤200 chars. State the change and the metric it should move and by how much. Example: \"Adding rule 'never recommend assets <6mo old' will reduce risk.false_positive_rate by ≥10pp.\"",
-			},
-			"target_metrics": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "One or more metric ids from <workflow>/planning/metrics.json. Each must exist; expected_direction must match each metric's declared direction.",
-			},
-			"expected_direction": map[string]interface{}{
-				"type":        "string",
-				"enum":        []string{"increase", "decrease", "maintain"},
-				"description": "Direction of the predicted metric movement.",
-			},
-			"expected_magnitude": map[string]interface{}{
-				"type":        "number",
-				"description": "Predicted absolute change in the metric's unit. > 0.",
-			},
-			"intervention_changes": map[string]interface{}{
-				"type": "array",
-				"items": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"path": map[string]interface{}{
-							"type":        "string",
-							"description": "Workflow-relative path. Forbidden: .env, .git/, workflow.json.",
-						},
-						"operation": map[string]interface{}{
-							"type": "string",
-							"enum": []string{"append", "replace", "patch", "create"},
-						},
-						"content": map[string]interface{}{
-							"type":        "string",
-							"description": "New content (operation=append/replace/create) or unified diff (operation=patch).",
-						},
-					},
-					"required": []string{"path", "operation", "content"},
-				},
-				"description": "File writes the intervention applies. Captured as a revertable diff before any write.",
-			},
-			"measurement_runs": map[string]interface{}{
-				"type":        "integer",
-				"description": "Override the workflow's default sample size. Optional.",
-			},
-			"linked_review_finding": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "Optional builder/review.md finding ids (F-YYYY-MM-DD-NNN) this experiment is intended to resolve. Stored on the builder/decisions.jsonl entry for audit linkage.",
-			},
-			"linked_improve_entry": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "Optional builder/improve.md proposal ids (I-YYYY-MM-DD-NNN) this experiment is intended to resolve. Stored on the builder/decisions.jsonl entry for audit linkage.",
-			},
-		},
-		"required": []string{"hypothesis", "target_metrics", "expected_direction", "expected_magnitude", "intervention_changes"},
-	}
-
-	handler := func(ctx context.Context, args map[string]interface{}) (string, error) {
-		raw, err := json.Marshal(args)
-		if err != nil {
-			return "", err
-		}
-		var input ProposeExperimentInput
-		if err := json.Unmarshal(raw, &input); err != nil {
-			return fmt.Sprintf("invalid arguments for propose_experiment: %v", err), nil
-		}
-		out, err := ProposeExperiment(ctx, workspacePath, triggerSource, input)
-		if err != nil {
-			return fmt.Sprintf("propose_experiment failed: %v", err), nil
-		}
-		body, _ := json.MarshalIndent(out, "", "  ")
-		return string(body), nil
-	}
-
-	if err := agent.RegisterCustomTool("propose_experiment", desc, params, handler, "auto_improvement"); err != nil {
-		if logger != nil {
-			logger.Warn(fmt.Sprintf("Failed to register propose_experiment: %v", err))
-		}
-	}
-}
-
 // RegisterProposeMetricTool exposes propose_metric to the proposer LLM.
 func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
 	desc := "Privileged write path for <workflow>/planning/metrics.json (which is folder-guarded against shell writes). " +
 		"Defines a new metric: supply id + unit + direction + mode + source. " +
 		"Metrics are append-only by id. To change a metric's meaning, retire the old one (retire_metric) and create a new one with a different id. " +
-		"Use this BEFORE proposing experiments that target a metric that does not yet exist. " +
+		"Use this when harden/replan evidence needs a metric that does not yet exist, or when metric history shows a broken source definition. " +
 		"\n\nBEFORE PROPOSING — sanity-check the source: read db/metrics_history.jsonl for the latest snapshot rows of each existing metric. Any row with has_value=false carries a resolve_error explaining why. The most common gotcha is field=\"some_name\" when the eval step's report has no structured output_content — for flat eval reports (score/max_score only), use field=\"\" (percent score), field=\"score\", or field=\"max_score\". Anything else requires the eval Python to emit structured JSON output containing that key." +
 		"\n\nReturns { metric_id, status }."
 	params := map[string]interface{}{
@@ -232,70 +132,16 @@ func RegisterRetireMetricTool(agent *mcpagent.Agent, workspacePath, triggerSourc
 	}
 }
 
-// RegisterConcludeExperimentTool exposes conclude_experiment to the EVALUATOR
-// agent only. The evaluator must be a separate, narrow-scope agent with no
-// other tools (this is the proposer ≠ evaluator guardrail).
-func RegisterConcludeExperimentTool(agent *mcpagent.Agent, workspacePath string, logger loggerv2.Logger) {
-	desc := "Narrate the system-computed verdict for an experiment whose measurement window has closed. " +
-		"The verdict is already populated by the heuristic computer; your job is to write a short rationale " +
-		"explaining why that verdict is honest given the data. Override the verdict ONLY when you have strong " +
-		"evidence the heuristic is wrong — large world_state drift between started_at and concluded_at, or " +
-		"clearly visible confound. Override-with-reason is audit-flagged. Returns { final_verdict, archived }."
-	params := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"experiment_id": map[string]interface{}{"type": "string"},
-			"rationale":     map[string]interface{}{"type": "string", "description": "Short prose, ≤500 chars."},
-			"override_verdict": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"to":     map[string]interface{}{"type": "string", "enum": []string{"kept", "reverted", "inconclusive", "extend"}},
-					"reason": map[string]interface{}{"type": "string"},
-				},
-				"required": []string{"to", "reason"},
-			},
-		},
-		"required": []string{"experiment_id", "rationale"},
-	}
-
-	handler := func(ctx context.Context, args map[string]interface{}) (string, error) {
-		raw, err := json.Marshal(args)
-		if err != nil {
-			return "", err
-		}
-		var input ConcludeExperimentInput
-		if err := json.Unmarshal(raw, &input); err != nil {
-			return fmt.Sprintf("invalid arguments for conclude_experiment: %v", err), nil
-		}
-		out, err := ConcludeExperiment(ctx, workspacePath, "evaluator-agent", input)
-		if err != nil {
-			return fmt.Sprintf("conclude_experiment failed: %v", err), nil
-		}
-		body, _ := json.MarshalIndent(out, "", "  ")
-		return string(body), nil
-	}
-
-	if err := agent.RegisterCustomTool("conclude_experiment", desc, params, handler, "auto_improvement"); err != nil {
-		if logger != nil {
-			logger.Warn(fmt.Sprintf("Failed to register conclude_experiment: %v", err))
-		}
-	}
-}
-
-// RegisterAutoImprovementProposerTools registers the proposer-side tools
-// (propose_experiment + propose_metric). Call this alongside the existing
-// builder tools when the workshop session enters optimizer mode.
+// RegisterAutoImprovementProposerTools registers optimizer-side metric tools.
+// Call this alongside the existing builder tools when the workshop session
+// enters optimizer mode.
 //
 // Two earlier tools are intentionally NOT registered:
 //   - capture_context — the optimizer/builder reads chat for user-supplied
 //     business rules and writes them directly via diff_patch_workspace_file
 //     (knowledgebase/rules/rules.md) plus a decisions.jsonl entry with
 //     source=user. The system prompt documents the format.
-//   - query_experiment_history — before propose_experiment, the agent reads
-//     experiments/history.jsonl and experiments/config.json::pinned_hypotheses
-//     directly. Two file reads, no special tool needed.
 func RegisterAutoImprovementProposerTools(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
-	RegisterProposeExperimentTool(agent, workspacePath, triggerSource, logger)
 	RegisterProposeMetricTool(agent, workspacePath, triggerSource, logger)
 	RegisterRetireMetricTool(agent, workspacePath, triggerSource, logger)
 }

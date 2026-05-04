@@ -3,17 +3,8 @@ import {
   X,
   Loader2,
   RefreshCw,
-  Beaker,
   Target,
-  Activity,
-  History,
-  Clock,
-  CheckCircle,
-  XCircle,
-  AlertTriangle,
   ListChecks,
-  ChevronDown,
-  ChevronRight,
   TrendingUp,
   FileText,
   ClipboardCheck,
@@ -23,10 +14,9 @@ import ModalPortal from '../ui/ModalPortal'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 
 // =====================================================================
-// AutoImprovementPopup — surfaces the auto-improvement framework state
-// for a workflow: active experiments, history, metric definitions, the
-// decisions feed. Read endpoints land directly; mutating actions (abort,
-// extend, manual-conclude, approve) call the corresponding POST routes.
+// AutoImprovementPopup — surfaces the auto-improvement framework state for a
+// workflow: metric definitions, metric trajectory, decisions, and durable
+// improvement/review logs.
 //
 // See docs/workflow/auto_improvement_framework.md for the design.
 // =====================================================================
@@ -37,7 +27,8 @@ interface AutoImprovementPopupProps {
   workspacePath: string | null
 }
 
-type Tab = 'experiments' | 'metrics' | 'trajectory' | 'decisions' | 'improve' | 'review'
+type Tab = 'metrics' | 'trajectory' | 'decisions' | 'soul' | 'improve' | 'review'
+type BuilderDocKind = 'soul' | 'improve' | 'review'
 
 interface Metric {
   id: string
@@ -51,26 +42,6 @@ interface Metric {
   source: { type: string; id?: string; field?: string }
 }
 
-interface Experiment {
-  id: string
-  status: string
-  hypothesis: string
-  target_metrics: string[]
-  expected_direction: 'increase' | 'decrease' | 'maintain'
-  expected_magnitude: number
-  baseline?: { mean?: Record<string, number>; std?: Record<string, number>; insufficient?: boolean }
-  measurement?: { target_runs: number; completed_runs: number; values?: Record<string, number[]> }
-  conclusion?: {
-    verdict?: string
-    rationale?: string
-    evidence?: { post_mean?: Record<string, number>; magnitude_observed?: Record<string, number>; per_run_beat_pct?: Record<string, number>; drift_flagged?: boolean }
-    verdict_overridden?: boolean
-  }
-  started_at: string
-  concluded_at?: string
-  intervention?: { trigger: string; applied_changes: string[] }
-}
-
 interface Decision {
   ts: string
   id: string
@@ -79,26 +50,8 @@ interface Decision {
   rationale?: string
   applied_changes: string[]
   target_metrics?: string[]
-  linked_experiment_id?: string
   rule_added?: string
   rule_section?: string
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  proposed: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
-  'awaiting-approval': 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-  measuring: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
-  evaluating: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300',
-  'awaiting-conclusion-approval': 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-  concluded: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
-  aborted: 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
-}
-
-const VERDICT_COLORS: Record<string, string> = {
-  kept: 'text-green-600 dark:text-green-400',
-  reverted: 'text-red-600 dark:text-red-400',
-  inconclusive: 'text-amber-600 dark:text-amber-400',
-  extend: 'text-blue-600 dark:text-blue-400',
 }
 
 const SOURCE_BADGE: Record<string, string> = {
@@ -302,7 +255,7 @@ const TrajectoryPanel: React.FC<TrajectoryPanelProps> = ({ metrics, history }) =
 }
 
 interface BuilderDocPanelProps {
-  which: 'improve' | 'review'
+  which: BuilderDocKind
   doc: { exists: boolean; content: string; path: string } | null
   loading: boolean
   error: string | null
@@ -310,19 +263,29 @@ interface BuilderDocPanelProps {
 }
 
 const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, error, onRefresh }) => {
-  const title = which === 'improve' ? 'Improve log' : 'Review log'
-  const blurb = which === 'improve'
-    ? 'The optimizer agent\'s durable improvement log. Slash commands like /improve-eval, /improve-workflow, and /optimize-* read this on the way in and append decisions on the way out.'
-    : 'The reviewer agent\'s findings log. /review-* slash commands append dated entries with severity-ordered findings and follow-ups (REVIEW = recommend, not apply).'
-  const emptyHint = which === 'improve'
-    ? 'No entries yet. Run /improve-setup-framework or any /improve-* command to bootstrap it.'
-    : 'No entries yet. Run any /review-* slash command to append the first entry.'
+  const copy = {
+    soul: {
+      title: 'Soul',
+      blurb: 'The workflow north star. Optimizer treats this as the source of truth for objective and success criteria; metrics, reviews, and plans are judged against it.',
+      emptyHint: 'soul/soul.md is missing. Define ## Objective and ## Success Criteria before relying on metrics or improvement decisions.',
+    },
+    improve: {
+      title: 'Improve log',
+      blurb: 'The optimizer agent\'s durable improvement log. Slash commands like /improve-eval, /improve-workflow, and /optimize-* read this on the way in and append decisions on the way out.',
+      emptyHint: 'No entries yet. Run /improve-setup-framework or any /improve-* command to bootstrap it.',
+    },
+    review: {
+      title: 'Review log',
+      blurb: 'The reviewer agent\'s findings log. /review-* slash commands append dated entries with severity-ordered findings and follow-ups (REVIEW = recommend, not apply).',
+      emptyHint: 'No entries yet. Run any /review-* slash command to append the first entry.',
+    },
+  }[which]
 
   return (
     <div className="space-y-3">
       <div className="flex items-baseline justify-between gap-2 flex-wrap">
         <div>
-          <h3 className="text-sm font-semibold">{title}</h3>
+          <h3 className="text-sm font-semibold">{copy.title}</h3>
           {doc?.path && <code className="text-[10px] text-muted-foreground">{doc.path}</code>}
         </div>
         <button
@@ -334,7 +297,7 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
           Refresh
         </button>
       </div>
-      <p className="text-xs text-muted-foreground">{blurb}</p>
+      <p className="text-xs text-muted-foreground">{copy.blurb}</p>
       {error && (
         <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded p-2">
           {error}
@@ -347,12 +310,16 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
       )}
       {doc && !doc.exists && (
         <div className="border border-dashed rounded-md p-4 text-sm text-muted-foreground">
-          {emptyHint}
+          {copy.emptyHint}
         </div>
       )}
       {doc && doc.exists && (
-        <div className="border rounded-md p-4 bg-card">
-          <MarkdownRenderer content={doc.content} disablePathLinking />
+        <div className="border rounded-md p-3 bg-card">
+          <MarkdownRenderer
+            content={doc.content}
+            disablePathLinking
+            className="!text-[12px] leading-relaxed [&_p]:!text-[12px] [&_li]:!text-[12px] [&_h1]:!text-base [&_h2]:!text-sm [&_h3]:!text-xs [&_h1]:mt-3 [&_h2]:mt-3 [&_h3]:mt-2 [&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_code]:!text-[11px] [&_pre]:!text-[11px]"
+          />
         </div>
       )}
     </div>
@@ -360,20 +327,17 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
 }
 
 const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onClose, workspacePath }) => {
-  const [tab, setTab] = useState<Tab>('experiments')
+  const [tab, setTab] = useState<Tab>('metrics')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [metrics, setMetrics] = useState<Metric[]>([])
-  const [activeExperiments, setActiveExperiments] = useState<Experiment[]>([])
-  const [historyExperiments, setHistoryExperiments] = useState<Experiment[]>([])
   const [decisions, setDecisions] = useState<Decision[]>([])
   const [metricsHistory, setMetricsHistory] = useState<MetricSnapshotRow[]>([])
-  const [expandedExperiment, setExpandedExperiment] = useState<string | null>(null)
-  const [expandedHistory, setExpandedHistory] = useState<string | null>(null)
   const [decisionFilter, setDecisionFilter] = useState<'all' | 'agent' | 'user' | 'system'>('all')
   const [improveDoc, setImproveDoc] = useState<{ exists: boolean; content: string; path: string } | null>(null)
   const [reviewDoc, setReviewDoc] = useState<{ exists: boolean; content: string; path: string } | null>(null)
-  const [docLoading, setDocLoading] = useState<'improve' | 'review' | null>(null)
+  const [soulDoc, setSoulDoc] = useState<{ exists: boolean; content: string; path: string } | null>(null)
+  const [docLoading, setDocLoading] = useState<BuilderDocKind | null>(null)
   const [docError, setDocError] = useState<string | null>(null)
   const [frameworkHealth, setFrameworkHealth] = useState<{
     soul_exists: boolean
@@ -386,9 +350,8 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
     setLoading(true)
     setError(null)
     try {
-      const [m, e, d, h, mh] = await Promise.all([
+      const [m, d, h, mh] = await Promise.all([
         agentApi.getAutoImprovementMetrics(workspacePath).catch((err) => ({ success: false, error: String(err), file: undefined })),
-        agentApi.getAutoImprovementExperiments(workspacePath, true).catch((err) => ({ success: false, active: [], history: [], error: String(err) })),
         agentApi.getAutoImprovementDecisions(workspacePath).catch((err) => ({ success: false, decisions: [], error: String(err) })),
         agentApi.getFrameworkHealth(workspacePath).catch((err) => ({ success: false, error: String(err), soul_exists: false, objective_ok: false, success_criteria_ok: false })),
         agentApi.getMetricsHistory(workspacePath).catch((err) => ({ success: false, rows: [], error: String(err) })),
@@ -397,10 +360,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
         setMetrics(Array.isArray(m.file.metrics) ? m.file.metrics : [])
       } else {
         setMetrics([])
-      }
-      if (e.success) {
-        setActiveExperiments(Array.isArray(e.active) ? e.active : [])
-        setHistoryExperiments(Array.isArray(e.history) ? e.history : [])
       }
       if (d.success) {
         setDecisions(Array.isArray(d.decisions) ? d.decisions : [])
@@ -419,7 +378,7 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
       } else {
         setMetricsHistory([])
       }
-      const errs = [m.error, e.error, d.error, h.error, mh.error].filter(Boolean)
+      const errs = [m.error, d.error, h.error, mh.error].filter(Boolean)
       if (errs.length > 0) setError(errs.join('; '))
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err))
@@ -434,14 +393,15 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
     }
   }, [isOpen, workspacePath, refresh])
 
-  const fetchDoc = useCallback(async (which: 'improve' | 'review') => {
+  const fetchDoc = useCallback(async (which: BuilderDocKind) => {
     if (!workspacePath) return
     setDocLoading(which)
     setDocError(null)
     try {
       const res = await agentApi.getBuilderDoc(workspacePath, which)
       const payload = { exists: !!res.exists, content: res.content || '', path: res.path || '' }
-      if (which === 'improve') setImproveDoc(payload)
+      if (which === 'soul') setSoulDoc(payload)
+      else if (which === 'improve') setImproveDoc(payload)
       else setReviewDoc(payload)
       if (!res.success && res.error) setDocError(res.error)
     } catch (err) {
@@ -453,12 +413,14 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
 
   useEffect(() => {
     if (!isOpen || !workspacePath) return
+    if (tab === 'soul' && soulDoc === null) fetchDoc('soul')
     if (tab === 'improve' && improveDoc === null) fetchDoc('improve')
     if (tab === 'review' && reviewDoc === null) fetchDoc('review')
-  }, [isOpen, workspacePath, tab, improveDoc, reviewDoc, fetchDoc])
+  }, [isOpen, workspacePath, tab, soulDoc, improveDoc, reviewDoc, fetchDoc])
 
   // Bust the cached docs whenever the workspace switches or the popup re-opens.
   useEffect(() => {
+    setSoulDoc(null)
     setImproveDoc(null)
     setReviewDoc(null)
     setDocError(null)
@@ -474,7 +436,7 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
         <div className="bg-background border rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col">
           <div className="flex items-center justify-between p-4 border-b">
             <div className="flex items-center gap-2">
-              <Beaker className="w-5 h-5 text-purple-600" />
+              <TrendingUp className="w-5 h-5 text-purple-600" />
               <h2 className="text-lg font-semibold">Auto-improvement framework</h2>
             </div>
             <div className="flex items-center gap-2">
@@ -495,10 +457,10 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
           <div className="flex border-b text-sm">
             {(
               [
-                { id: 'experiments', icon: Activity, label: `Experiments (${activeExperiments.length} active / ${historyExperiments.length} done)` },
                 { id: 'metrics', icon: Target, label: `Metrics (${metrics.length})` },
                 { id: 'trajectory', icon: TrendingUp, label: 'Trajectory' },
                 { id: 'decisions', icon: ListChecks, label: `Decisions (${decisions.length})` },
+                { id: 'soul', icon: Target, label: 'Soul' },
                 { id: 'improve', icon: FileText, label: 'Improve log' },
                 { id: 'review', icon: ClipboardCheck, label: 'Review log' },
               ] as const
@@ -532,7 +494,7 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
               issues.push({ kind: 'critical', msg: 'soul/soul.md is missing — define ## Objective and ## Success Criteria before adding metrics.' })
             } else {
               if (!frameworkHealth.objective_ok) issues.push({ kind: 'critical', msg: 'soul.md ## Objective is empty or still a TODO placeholder.' })
-              if (!frameworkHealth.success_criteria_ok) issues.push({ kind: 'critical', msg: 'soul.md ## Success Criteria is empty — without it, metrics have no north star to verdict against.' })
+              if (!frameworkHealth.success_criteria_ok) issues.push({ kind: 'critical', msg: 'soul.md ## Success Criteria is empty — without it, metrics have no north star to measure against.' })
             }
             if (issues.length === 0) return null
             const hasCritical = issues.some((i) => i.kind === 'critical')
@@ -547,139 +509,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
           })()}
 
           <div className="flex-1 overflow-y-auto p-4">
-            {tab === 'experiments' && (
-              <div className="space-y-6">
-                <section>
-                  <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                    <Activity className="w-4 h-4" /> Active experiments
-                  </h3>
-                  {activeExperiments.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No active experiments. Open one via <code>/improve-eval</code>, <code>/improve-workflow</code>, or directly via the agent in optimizer mode.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {activeExperiments.map((exp) => {
-                        const expanded = expandedExperiment === exp.id
-                        const N = exp.measurement?.completed_runs ?? 0
-                        const M = exp.measurement?.target_runs ?? 0
-                        const pct = M > 0 ? Math.round((N / M) * 100) : 0
-                        return (
-                          <div key={exp.id} className="border rounded-md overflow-hidden">
-                            <button
-                              onClick={() => setExpandedExperiment(expanded ? null : exp.id)}
-                              className="w-full text-left p-3 hover:bg-accent/30 flex items-start gap-2"
-                            >
-                              {expanded ? <ChevronDown className="w-4 h-4 mt-0.5 flex-shrink-0" /> : <ChevronRight className="w-4 h-4 mt-0.5 flex-shrink-0" />}
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${STATUS_COLORS[exp.status] || 'bg-gray-100 text-gray-800'}`}>
-                                    {exp.status}
-                                  </span>
-                                  <code className="text-xs text-muted-foreground">{exp.id}</code>
-                                  <span className="text-xs text-muted-foreground">{N}/{M} runs ({pct}%)</span>
-                                </div>
-                                <p className="text-sm font-medium leading-tight">{exp.hypothesis}</p>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  targets: {exp.target_metrics.join(', ')} · expected {exp.expected_direction} by {exp.expected_magnitude} · started {formatTs(exp.started_at)}
-                                </p>
-                              </div>
-                            </button>
-                            {expanded && (
-                              <div className="border-t p-3 bg-muted/30 text-xs space-y-2">
-                                {exp.baseline?.mean && Object.keys(exp.baseline.mean).length > 0 && (
-                                  <div>
-                                    <span className="font-medium">Baseline mean:</span>{' '}
-                                    {Object.entries(exp.baseline.mean).map(([k, v]) => `${k}=${v}`).join(', ')}
-                                    {exp.baseline.insufficient && <span className="ml-2 text-amber-600">(insufficient history flagged)</span>}
-                                  </div>
-                                )}
-                                {exp.measurement?.values && Object.keys(exp.measurement.values).length > 0 && (
-                                  <div>
-                                    <span className="font-medium">Measured values:</span>{' '}
-                                    {Object.entries(exp.measurement.values).map(([k, vs]) => `${k}=[${vs.join(', ')}]`).join('; ')}
-                                  </div>
-                                )}
-                                {exp.intervention && (
-                                  <div>
-                                    <span className="font-medium">Intervention ({exp.intervention.trigger}):</span>{' '}
-                                    {exp.intervention.applied_changes.join(', ')}
-                                  </div>
-                                )}
-                                {exp.conclusion?.verdict && (
-                                  <div>
-                                    <span className="font-medium">Verdict:</span>{' '}
-                                    <span className={VERDICT_COLORS[exp.conclusion.verdict] || ''}>{exp.conclusion.verdict}</span>
-                                    {exp.conclusion.rationale && <span className="ml-2">— {exp.conclusion.rationale}</span>}
-                                  </div>
-                                )}
-                                {exp.status !== 'concluded' && exp.status !== 'aborted' && (
-                                  <div className="text-[11px] text-muted-foreground italic pt-1">
-                                    Use the optimizer to monitor this experiment, or <code>/exp-abort</code> to revert it{exp.status === 'awaiting-approval' ? '; ask the optimizer to approve the hypothesis if needed' : ''}{exp.status === 'awaiting-conclusion-approval' ? '; ask the optimizer to approve the conclusion if needed' : ''}.
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </section>
-
-                <section>
-                  <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                    <History className="w-4 h-4" /> Past experiments ({historyExperiments.length})
-                  </h3>
-                  {historyExperiments.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No concluded experiments yet.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {historyExperiments.slice().reverse().map((exp) => {
-                        const expanded = expandedHistory === exp.id
-                        const verdict = exp.conclusion?.verdict || exp.status
-                        return (
-                          <div key={exp.id} className="border rounded-md overflow-hidden">
-                            <button
-                              onClick={() => setExpandedHistory(expanded ? null : exp.id)}
-                              className="w-full text-left p-3 hover:bg-accent/30 flex items-start gap-2"
-                            >
-                              {expanded ? <ChevronDown className="w-4 h-4 mt-0.5 flex-shrink-0" /> : <ChevronRight className="w-4 h-4 mt-0.5 flex-shrink-0" />}
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                  <span className={`text-xs font-semibold ${VERDICT_COLORS[verdict] || ''}`}>{verdict}</span>
-                                  {exp.conclusion?.verdict_overridden && (
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-                                      <AlertTriangle className="w-2.5 h-2.5 mr-0.5" />override
-                                    </span>
-                                  )}
-                                  <code className="text-xs text-muted-foreground">{exp.id}</code>
-                                  <span className="text-xs text-muted-foreground"><Clock className="w-3 h-3 inline mr-0.5" />{formatTs(exp.concluded_at || exp.started_at)}</span>
-                                </div>
-                                <p className="text-sm leading-tight">{exp.hypothesis}</p>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  targets: {exp.target_metrics.join(', ')}
-                                </p>
-                              </div>
-                            </button>
-                            {expanded && exp.conclusion && (
-                              <div className="border-t p-3 bg-muted/30 text-xs space-y-1">
-                                {exp.conclusion.rationale && <div><span className="font-medium">Rationale:</span> {exp.conclusion.rationale}</div>}
-                                {exp.baseline?.mean && (
-                                  <div><span className="font-medium">Baseline:</span> {Object.entries(exp.baseline.mean).map(([k, v]) => `${k}=${v}`).join(', ')}</div>
-                                )}
-                                {exp.measurement?.values && (
-                                  <div><span className="font-medium">Measured:</span> {Object.entries(exp.measurement.values).map(([k, vs]) => `${k}=[${vs.join(', ')}]`).join('; ')}</div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </section>
-              </div>
-            )}
-
             {tab === 'metrics' && (
               <div>
                 {metrics.length === 0 ? (
@@ -747,7 +576,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] ${SOURCE_BADGE[d.source] || ''}`}>{d.source}</span>
                           <code className="text-muted-foreground">{d.trigger}</code>
                           <span className="text-muted-foreground">{formatTs(d.ts)}</span>
-                          {d.linked_experiment_id && <code className="text-muted-foreground">→ {d.linked_experiment_id}</code>}
                         </div>
                         {d.rule_added && (
                           <div className="mt-1">
@@ -769,10 +597,10 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
               </div>
             )}
 
-            {(tab === 'improve' || tab === 'review') && (
+            {(tab === 'soul' || tab === 'improve' || tab === 'review') && (
               <BuilderDocPanel
                 which={tab}
-                doc={tab === 'improve' ? improveDoc : reviewDoc}
+                doc={tab === 'soul' ? soulDoc : tab === 'improve' ? improveDoc : reviewDoc}
                 loading={docLoading === tab}
                 error={docError}
                 onRefresh={() => fetchDoc(tab)}

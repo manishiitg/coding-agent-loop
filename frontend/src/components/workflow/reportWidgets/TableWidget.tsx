@@ -30,19 +30,23 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
   const pageSize = widget.pageSize ?? DEFAULT_TABLE_PAGE_SIZE
   const hidden = useMemo(() => new Set(widget.hideColumns ?? []), [widget.hideColumns])
   const palette = useMemo(() => resolvePalette(widget, theme), [widget, theme])
+  const rows = useMemo(() => {
+    if (!Array.isArray(value)) return []
+    return value.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
+  }, [value])
   // Distinct-value → palette-index map so unmapped colorBy values get stable colors.
   const distinctIndex = useMemo(() => {
-    if (!widget.colorBy || !Array.isArray(value)) return {}
+    if (!widget.colorBy) return {}
     const out: Record<string, number> = {}
     let next = 0
-    for (const row of value as Record<string, unknown>[]) {
+    for (const row of rows) {
       const raw: unknown = row?.[widget.colorBy]
       if (raw === undefined || raw === null) continue
       const key = String(raw)
       if (!(key in out)) out[key] = next++
     }
     return out
-  }, [value, widget.colorBy])
+  }, [rows, widget.colorBy])
 
   const [sortField, setSortField] = useState<string | null>(widget.defaultSort?.field ?? null)
   const [sortDir, setSortDir] = useState<SortDirection>(widget.defaultSort?.direction ?? 'asc')
@@ -50,8 +54,7 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
   const [page, setPage] = useState(0)
 
   const columns = useMemo(() => {
-    if (!Array.isArray(value) || value.length === 0) return []
-    const rows = value as Record<string, unknown>[]
+    if (rows.length === 0) return []
     const cols: string[] = []
     const seen = new Set<string>()
     for (const row of rows) {
@@ -64,13 +67,11 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
       }
     }
     return cols
-  }, [value, hidden])
+  }, [rows, hidden])
 
   // Auto-detect numeric columns (used for right-alignment when no formatter declared).
   const numericColumns = useMemo(() => {
     const out = new Set<string>()
-    if (!Array.isArray(value)) return out
-    const rows = value as Record<string, unknown>[]
     for (const col of columns) {
       // Treat a column as numeric when at least one non-null value parses as a finite number
       // AND no value parses as a non-empty non-numeric string.
@@ -91,7 +92,7 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
       if (sawNumeric && !sawNonNumeric) out.add(col)
     }
     return out
-  }, [value, columns])
+  }, [rows, columns])
 
   const compactPrimaryColumn = useMemo(
     () => inferPrimaryColumn(columns, numericColumns),
@@ -108,8 +109,6 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
   }, [columns, compactPrimaryColumn, compactSecondaryColumn])
 
   const filtered = useMemo(() => {
-    if (!Array.isArray(value)) return []
-    const rows = value as Record<string, unknown>[]
     const needle = search.trim().toLowerCase()
     if (!needle) return rows
     return rows.filter(row => {
@@ -122,7 +121,7 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
       }
       return false
     })
-  }, [value, columns, search])
+  }, [rows, columns, search])
 
   const sorted = useMemo(() => {
     if (!sortField) return filtered
@@ -141,11 +140,11 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
     [sorted, safePage, pageSize],
   )
 
-  if (!Array.isArray(value) || value.length === 0 || columns.length === 0) return null
+  if (rows.length === 0 || columns.length === 0) return null
   const rowCountText =
-    sorted.length === (value as unknown[]).length
+    sorted.length === rows.length
       ? `${sorted.length} row${sorted.length === 1 ? '' : 's'}`
-      : `${sorted.length} of ${(value as unknown[]).length}`
+      : `${sorted.length} of ${rows.length}`
 
   const onSortClick = (col: string) => {
     if (sortField === col) {

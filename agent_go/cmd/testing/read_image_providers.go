@@ -31,11 +31,6 @@ normal agent decision loop and from config/image-analysis-config.json routing.`,
 	RunE: runReadImageProvidersTest,
 }
 
-type readImageProviderCase struct {
-	Provider string
-	ModelID  string
-}
-
 type readImageProviderResult struct {
 	Filepath string `json:"filepath"`
 	Query    string `json:"query"`

@@ -753,7 +753,7 @@ func (w *WhatsAppService) downloadIncomingMedia(ctx context.Context, msg *waProt
 		mimeType     string
 		caption      string
 		sizeBytes    uint64
-		fallbackExt  = ".bin"
+		fallbackExt  string
 	)
 
 	switch {

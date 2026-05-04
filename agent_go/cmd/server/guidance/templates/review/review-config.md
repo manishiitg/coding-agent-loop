@@ -12,21 +12,22 @@ PROCEDURE
    - pre_validation.json — validation pass/fail.
    - Any signs of recent fix-loop rewrites or transient failures.
    - For eval steps, also inspect evaluation run outputs/reports under runs/iteration-0/{first-group}/evaluation/ when available.
-5. Read experiments/active.json and builder/improve.md if present. Note active experiment status and whether any active intervention touches the target, its prompt/config, learnings, validation, KB, db schema, evaluation criteria, scoring logic, or upstream/downstream context dependencies.
+5. Read builder/improve.md if present. Note recent harden/replan/metric actions and whether any recent or queued change touches the target, its prompt/config, learnings, validation, KB, db schema, evaluation criteria, scoring logic, or upstream/downstream context dependencies.
 
 DECISION RULES (apply per step)
 
 EXECUTION MODE FIT (code_exec | learn_code):
-- Browser/UI-heavy steps should generally be `code_exec`, not `learn_code`. If a step uses browser capability, live auth/session state, dynamic selectors, pagination/lazy-loading, or third-party page timing and is currently `learn_code` with saved main.py, flag it. Recommend `declared_execution_mode="code_exec"` unless the user explicitly requested scripted browser execution AND the script has durable selectors, state-driven waits, fresh snapshots, and proven stability across runs.
+- Browser/UI-heavy steps should generally be `code_exec`, not `learn_code`. If a step uses browser capability, live auth/session state, dynamic selectors, pagination/lazy-loading, or third-party page timing and is currently `learn_code` with saved main.py, flag it. Recommend `declared_execution_mode="code_exec"` unless the user explicitly requested scripted browser execution AND the script has durable selectors, state-driven waits, fresh snapshots, and 10+ scenario-covering successful runs.
 - If a step is currently `code_exec` but `learnings/{step-id}/main.py` still exists, flag it for deletion and recommend clearing `lock_code`. code_exec does not use persistent main.py, so keeping the file creates stale-script drift for future reviewers.
 - Recommend `learn_code` only when ALL are true:
+  - The user explicitly asked for learn_code/scripted fast-path conversion.
   - The step behavior is stable, mechanical, and deterministic on a stable input shape.
   - The step does not need per-instance LLM judgment, adaptive browsing, or live UI interpretation.
   - The step has 10+ successful runs across 2+ variable groups.
   - Eval/metric evidence is at or above target across the recent measurement window.
-  - No active experiment is touching this step, its prompt/config/learnings/validation, or adjacent upstream/downstream contracts. If any related experiment is proposed, awaiting approval, measuring, or evaluating, recommend deferring learn_code promotion/locking until the experiment concludes.
-- If a current `learn_code` step violates any of the above, recommend reverting to or keeping `code_exec`, and clear/avoid lock_code until stability is proven after experiments conclude.
-- Apply the same mode-fit rule to eval steps and `__evaluation_scoring__`: deterministic file-shape/schema checks can be `learn_code` after stability evidence; subjective scoring, ambiguous judgment, or criteria that are still being revised should stay `code_exec`. If an active experiment could change expected outputs or scoring criteria, defer eval/scoring learn_code promotion and lock decisions.
+  - No recent harden/replan/metric action is still changing this step, its prompt/config/learnings/validation, or adjacent upstream/downstream contracts.
+- If a current `learn_code` step violates any of the above, recommend reverting to or keeping `code_exec`, and clear/avoid lock_code until stability is proven after recent changes settle.
+- Apply the same mode-fit rule to eval steps and `__evaluation_scoring__`: deterministic file-shape/schema checks can be `learn_code` after stability evidence; subjective scoring, ambiguous judgment, or criteria that are still being revised should stay `code_exec`. If recent changes could alter expected outputs or scoring criteria, defer eval/scoring learn_code promotion and lock decisions.
 
 LEARNINGS (learnings_access, learning_objective, learnings_write_method):
 - Global learning READ is normally useful and defaults to `read`. Do not recommend `learnings_access="none"` unless existing SKILL.md content would actively mislead this target or the target is intentionally isolated from workflow know-how.
@@ -79,9 +80,10 @@ LOCK_CODE (true | false; learn_code steps only):
 - If currently locked but linked eval/metric has dropped below target on recent runs → recommend UNLOCK (locked code stopped delivering).
 
 CONVERT REGULAR → LEARN_CODE (suggest only when ALL):
+- User explicitly asked for learn_code/scripted fast-path conversion for this step. Do not suggest conversion just because a step is deterministic or costly.
 - Step's behavior is mechanical (deterministic transform on stable input shape — filter / aggregate / map fields) rather than per-instance LLM judgment.
 - 10+ successful runs of the regular step across 2+ groups, eval at threshold throughout — proving the step's BEHAVIOR is stable enough to capture in code.
-- No active experiment is touching this step, its prompt/config/learnings/validation, or adjacent upstream/downstream contracts. If an experiment is active, defer conversion until it concludes so the script doesn't freeze a moving target.
+- No recent harden/replan/metric action is touching this step, its prompt/config/learnings/validation, or adjacent upstream/downstream contracts. If related behavior is still changing, defer conversion so the script doesn't freeze a moving target.
 - The step is not browser/UI-heavy. Browser automation should usually remain code_exec unless the user explicitly requested scripted browser execution and the browser flow is proven stable with durable selectors and state-driven waits.
 - Saving the LLM cost is meaningful (the step runs frequently, or is on the critical path).
 - DO NOT suggest conversion for steps that need per-instance LLM judgment (classification, summarization, decision-making) — even if they look "shape-preserving" the answer changes per instance and locking the LLM out via main.py loses the value of the step.
@@ -94,7 +96,7 @@ Single table, one row per target:
 |---|---|---|---|---|---|---|---|---|---|---|
 
 Then summary sections:
-- **Mode fit issues** — browser/UI-heavy learn_code steps, unstable learn_code steps, or learn_code candidates blocked by active experiments.
+- **Mode fit issues** — browser/UI-heavy learn_code steps, unstable learn_code steps, or learn_code candidates blocked by recent harden/replan changes.
 - **Learning misconfigs** — write access without a concrete objective/reason, objective present but writes disabled, unjustified agent write method, or learning enabled for steps that produce no reusable HOW-to-run knowledge.
 - **Evaluation config issues** — eval/scoring targets whose mode, tier, locks, KB, or saved code no longer match evaluation/evaluation_plan.json.
 - **To lock this round** — steps recommended for lock_learnings + lock_code (+ optimized).

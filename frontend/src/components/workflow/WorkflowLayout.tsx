@@ -379,21 +379,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Narrow selectors: bare useChatStore() re-renders on every store update (10x/sec with 2 parallel sessions)
   const currentWorkflowPhase = useChatStore(state => state.currentWorkflowPhase)
   const setCurrentWorkflowPhase = useChatStore(state => state.setCurrentWorkflowPhase)
-  const getTabEvents = useChatStore(state => state.getTabEvents)
-  // Get events from active tab instead of global events
-  const activeTab = useChatStore(state => state.getActiveTab())
-  const activeSessionId = activeTab?.sessionId
-  // Subscribe to tabEvents length so we re-run the memo when new events arrive.
-  // Using a Zustand selector for the full array caused infinite-loop issues because
-  // the inline selector closure captured activeSessionId and was recreated on every render.
-  const tabEventsLength = useChatStore((state) =>
-    activeSessionId ? (state.tabEvents[activeSessionId]?.length ?? 0) : 0
-  )
-  const events = React.useMemo(() => {
-    // tabEventsLength dependency ensures this re-evaluates when events are added
-    void tabEventsLength
-    return activeSessionId ? getTabEvents(activeSessionId) : EMPTY_WORKFLOW_EVENTS
-  }, [activeSessionId, getTabEvents, tabEventsLength])
+  const activeSessionId = useChatStore(state => {
+    const tab = state.activeTabId ? state.chatTabs[state.activeTabId] : undefined
+    return tab?.metadata?.mode === 'workflow' ? tab.sessionId : undefined
+  })
 
   // Use workflow store for UI state (single source of truth)
   const activePhase = useWorkflowStore(state => state.activePhase)
@@ -961,13 +950,13 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // independently; replaying old todo_steps_extracted events would fire multiple canvas.refresh()
   // calls for no benefit and cause the visible hang on tab switch.
   useEffect(() => {
-    const sid = activeTab?.sessionId
+    const sid = activeSessionId
     if (!sid) return
     if (!lastProcessedEventIndexRef.current.has(sid)) {
       const evts = useChatStore.getState().tabEvents[sid] ?? []
       lastProcessedEventIndexRef.current.set(sid, evts.length - 1)
     }
-  }, [activeTab?.sessionId])
+  }, [activeSessionId])
 
   // Auto-minimize the workspace sidebar when the user *enters* Report, and
   // restore it when they leave, if Report was the reason it got hidden.
@@ -1015,12 +1004,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [])
 
-  // Listen for todo_steps_extracted events to auto-refresh the canvas (with granular data from backend)
-  useEffect(() => {
-    if (events.length === 0 || !activeSessionId) return
-
+  const processPlanUpdateEvents = useCallback((sessionId: string, events: PollingEvent[]) => {
+    if (events.length === 0) return
     // Find new todo_steps_extracted events that we haven't processed yet
-    const lastIdx = lastProcessedEventIndexRef.current.get(activeSessionId) ?? events.length - 1
+    const lastIdx = lastProcessedEventIndexRef.current.get(sessionId) ?? events.length - 1
     for (let i = lastIdx + 1; i < events.length; i++) {
       const event = events[i]
       
@@ -1086,9 +1073,23 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       }
       
       // Update index processed - do this for ALL events to avoid re-scanning
-      lastProcessedEventIndexRef.current.set(activeSessionId, i)
+      lastProcessedEventIndexRef.current.set(sessionId, i)
     }
-  }, [events, activeSessionId])
+  }, [])
+
+  // Listen for todo_steps_extracted events without subscribing the whole layout
+  // render path to high-frequency chat/tool event updates.
+  useEffect(() => {
+    if (!activeSessionId) return
+
+    const sessionId = activeSessionId
+    return useChatStore.subscribe((state, prevState) => {
+      const events = state.tabEvents[sessionId] ?? EMPTY_WORKFLOW_EVENTS
+      const previousEvents = prevState.tabEvents[sessionId] ?? EMPTY_WORKFLOW_EVENTS
+      if (events === previousEvents || events.length === previousEvents.length) return
+      processPlanUpdateEvents(sessionId, events)
+    })
+  }, [activeSessionId, processPlanUpdateEvents])
 
   // Track reconnection by preset to prevent duplicate tabs while still allowing
   // Ctrl+K workflow switches to run the builder restore decision for that preset.
@@ -1558,6 +1559,25 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     handleStartPhase(phaseId)
   }, [handleStartPhase, setShowChatArea, activePresetId])
 
+  const handleToggleChatArea = useCallback(() => {
+    const newShow = !showChatArea
+    if (newShow) {
+      // Ensure a workflow tab is active when showing the chat panel
+      // (activeTabId might point to a chat/multi-agent tab from a different mode)
+      const chatStore = useChatStore.getState()
+      const activeTab = chatStore.getActiveTab()
+      if (!activeTab || activeTab.metadata?.mode !== 'workflow') {
+        const workflowTabs = Object.values(chatStore.chatTabs)
+          .filter(t => t.metadata?.mode === 'workflow')
+          .sort((a, b) => b.createdAt - a.createdAt)
+        if (workflowTabs.length > 0) {
+          chatStore.switchTab(workflowTabs[0].tabId)
+        }
+      }
+    }
+    setShowChatArea(newShow)
+  }, [showChatArea, setShowChatArea])
+
   // Minimize chat area when drawer opens to reduce renders and stop event processing
   // Open chat area when drawer closes (but not on initial mount)
   const drawerMountedRef = useRef(false)
@@ -1616,24 +1636,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       toolbarOnly={!workspacePaneVisible && showChatArea}
       sharedToolbar={showChatArea}
       paneClassName={canvasPaneClassName}
-      onToggleChatArea={() => {
-        const newShow = !showChatArea
-        if (newShow) {
-          // Ensure a workflow tab is active when showing the chat panel
-          // (activeTabId might point to a chat/multi-agent tab from a different mode)
-          const chatStore = useChatStore.getState()
-          const activeTab = chatStore.getActiveTab()
-          if (!activeTab || activeTab.metadata?.mode !== 'workflow') {
-            const workflowTabs = Object.values(chatStore.chatTabs)
-              .filter(t => t.metadata?.mode === 'workflow')
-              .sort((a, b) => b.createdAt - a.createdAt)
-            if (workflowTabs.length > 0) {
-              chatStore.switchTab(workflowTabs[0].tabId)
-            }
-          }
-        }
-        setShowChatArea(newShow)
-      }}
+      onToggleChatArea={handleToggleChatArea}
       className={showChatArea && !workspacePaneVisible ? '!h-auto shrink-0' : 'h-full'}
     />
   )

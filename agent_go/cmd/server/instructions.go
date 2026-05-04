@@ -275,22 +275,17 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 **Interactive builder / workshop:**
 - ` + "`builder/conversation/YYYY-MM-DD/session-{id}-conversation.json`" + ` — workshop (interactive builder) conversation histories. Used by workshop agents to avoid repeating failed approaches.
 - ` + "`builder/improve.md`" + ` — durable prose improvement log written by ` + "`/improve-*`" + ` commands. Read on every improvement turn; append-style narrative.
-- ` + "`builder/decisions.jsonl`" + ` — append-only **structured** audit log of every change to the workflow (sidecar to ` + "`improve.md`" + `, not a replacement). Each entry carries source (agent/user/system), trigger, applied_changes, target_metrics, optional linked_experiment_id. Generated automatically when ` + "`propose_experiment`" + ` / ` + "`propose_metric`" + ` apply changes; agents append directly via ` + "`diff_patch_workspace_file`" + ` for user-rule captures and ` + "`/improve-eval`" + ` rubric-change markers (the system prompt section on rule capture documents the line format).
+- ` + "`builder/decisions.jsonl`" + ` — append-only **structured** audit log of every change to the workflow (sidecar to ` + "`improve.md`" + `, not a replacement). Each entry carries source (agent/user/system), trigger, applied_changes, target_metrics, evidence_paths, and optional linked review/improve ids. Generated automatically for metric changes through ` + "`propose_metric`" + ` / ` + "`retire_metric`" + `; agents append directly via ` + "`diff_patch_workspace_file`" + ` for harden/replan summaries, user-rule captures, and ` + "`/improve-eval`" + ` rubric-change markers.
 - ` + "`planning/changelog/changelog-YYYY-MM-DD-HH-MM-SS.json`" + ` — per-session log of every plan-mod tool call (` + "`update_*_step`" + `, ` + "`add_*_step`" + `, ` + "`delete_plan_steps`" + `, ` + "`*_todo_task_route`" + `, ` + "`update_validation_schema`" + `, ` + "`update_step_config`" + `). Each entry carries timestamp, tool, the mandatory ` + "`reason`" + ` you supplied at invocation, affected step ids, per-field old/new values, and full JSON of added/deleted steps for revert. **Read this** before proposing plan edits to see what's already been tried this session and why; complements ` + "`builder/decisions.jsonl`" + ` (which is workflow-level, cross-session) with the per-session, per-mutation detail. Files rotate hourly. Read-only via shell — entries are written automatically by the plan-mod tools, never edit them by hand.
 
 **Auto-improvement framework files (opt-in per workflow):**
 - ` + "`planning/metrics.json`" + ` — quantified goal definitions. Each metric has id (kebab.dot), unit, direction (higher_better/lower_better), mode (target/slo with target/floor/ceiling), and a source (eval_step or telemetry). For anything else (external feeds, schema checks, lineage, delayed-outcome attribution), write a Python eval step that does the work and emits the value, then declare an eval_step-sourced metric pointing at that step. **Tool-only writes**: lives under ` + "`planning/`" + ` so the FolderGuard BlockedWritePaths makes shell writes impossible. Use ` + "`propose_metric`" + ` to add a metric and ` + "`retire_metric`" + ` to remove one — metrics are append-only by id, so to redefine a metric, retire the old one and create a new one with a different id.
-- ` + "`db/metrics_history.jsonl`" + ` — per-run metric snapshot rows, append-only. Auto-written at the tail of every successful eval. **This is also the diagnostic surface for metric design errors.** Each row carries ` + "`has_value`" + ` (bool) and ` + "`resolve_error`" + ` (string when resolution failed). Before proposing experiments — and before assuming a metric is fine — read the most recent rows for each metric id and check ` + "`resolve_error`" + `. Common causes:
+- ` + "`db/metrics_history.jsonl`" + ` — per-run metric snapshot rows, append-only. Auto-written at the tail of every successful eval. **This is also the diagnostic surface for metric design errors.** Each row carries ` + "`has_value`" + ` (bool) and ` + "`resolve_error`" + ` (string when resolution failed). Before hardening/replanning — and before assuming a metric is fine — read the most recent rows for each metric id and check ` + "`resolve_error`" + `. Common causes:
   • ` + "`field=\"my_field\"`" + ` when the eval step doesn't emit structured ` + "`output_content`" + ` — the resolver expects ` + "`field=\"\"`" + ` (percent score), ` + "`field=\"score\"`" + ` (raw step.Score), or ` + "`field=\"max_score\"`" + ` (raw step.MaxScore) for flat reports. Anything else needs the eval to write structured JSON output containing that key.
   • ` + "`source.id`" + ` referencing an eval step that doesn't exist in ` + "`evaluation/evaluation_plan.json`" + `.
   • Source type ` + "`telemetry`" + ` with an unknown ` + "`field`" + ` (only the six wired fields are recognized — see ` + "`propose_metric`" + ` description).
   Fix path: retire the broken metric (` + "`retire_metric`" + ` with reason citing the resolve_error), then propose a corrected new metric with a different id. The trajectory chart will start a fresh line; old history rows stay as audit.
 - ` + "`knowledgebase/rules/rules.md`" + ` and ` + "`knowledgebase/rules/examples/`" + ` — Type 3 only. Accumulated business rules supplied by users — agents append rules directly here via ` + "`diff_patch_workspace_file`" + ` when the user states one in chat (see "Proactive business-context capture" below for the flow). **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — rules live as a sub-section of the knowledgebase. Audit trail for rule capture lives in ` + "`builder/decisions.jsonl`" + ` filtered to ` + "`source: user`" + ` + ` + "`trigger: rule-captured`" + `.
-- ` + "`experiments/active.json`" + ` — currently in-flight experiments. Each record carries hypothesis, target_metrics, baseline, intervention, measurement progress, world_state, and (when ready) conclusion verdict + evidence.
-- ` + "`experiments/history.jsonl`" + ` — concluded experiments (kept/reverted/inconclusive/aborted), append-only.
-- ` + "`experiments/config.json`" + ` — optional sample size defaults, verdict thresholds, pinned hypotheses, focus metrics, drift detection thresholds.
-- ` + "`experiments/diffs/<id>.patch`" + ` — pre-state snapshot for each experiment. Used by ` + "`apply_revert`" + ` if the verdict is reverted.
-- ` + "`experiments/proposer_prompt.md`" + ` and ` + "`experiments/evaluator_prompt.md`" + ` — system prompts for the two LLMs in the experiment loop. User-editable; this is the primary lever for changing how the AI thinks about the workflow's improvement.
 
 **Workflow profile and oversight:**
 - The workflow's **profile** (typology, plan stability, runtime mode, whether it accumulates business context) lives as prose in ` + "`builder/improve.md`" + ` under a "## Workflow Profile" section. Read it on every improvement turn and adjust behavior accordingly. Real workflows don't fit a single enum (e.g. Twitter is exploratory + dual-mode + contextual all at once); prose captures the nuance.
@@ -343,27 +338,26 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - **Inspect recent runs**: ` + "`runs/iteration-0/`" + ` always holds the most recent execution. Read step execution results and logs to understand what happened.
 - **Use memory**: save patterns and trends about what each employee's workflows produce over time.
 
-## Auto-Improvement Framework — When to Use the New Tools
+## Auto-Improvement Framework — When to Use the Tools
 
-In ` + "`optimizer`" + ` workshop mode, the auto-improvement framework tools are available alongside the existing ` + "`/improve-*`" + ` commands. The framework treats every change as an **experiment**, not an immediate edit, so improvement becomes auditable and reversible.
+In ` + "`optimizer`" + ` workshop mode, the auto-improvement framework reads metrics, eval reports, run outputs, and logs to choose between two workflow actions: ` + "`harden_workflow`" + ` or ` + "`replan_workflow_from_results`" + `. Metrics are evidence; they do not create a separate action path.
 
-**Three-layer mental model — internalize this before reasoning about any /improve-* or /propose-experiment flow:**
+**Three-layer mental model — internalize this before reasoning about any /improve-* flow:**
 
-1. **Plan — what the workflow does.** Lives in ` + "`planning/plan.json`" + ` plus ` + "`soul/soul.md`" + ` (the durable definition of *what "done" means*: objective + success_criteria). The plan is the blueprint; ` + "`soul.md`" + ` is the goal it serves. Without ` + "`## Objective`" + ` and ` + "`## Success Criteria`" + ` populated in ` + "`soul.md`" + `, the rest of the framework refuses to run — there's no anchor to verdict against.
-2. **Eval — how we know it worked.** Lives in ` + "`evaluation/evaluation_plan.json`" + ` and per-run reports under ` + "`runs/<iter>/<group>/evaluation_report.json`" + `. Eval tracks TWO things side by side: (a) **operational quality** — how well each step actually ran (output shape, completeness, validation pass rate), and (b) **goal achievement** — whether the workflow's outputs satisfy the success_criteria from ` + "`soul.md`" + `. A good eval plan covers both. Eval is the bridge between "the plan ran" and "the goal was met."
-3. **Metrics — numeric handles for experiments.** Live in ` + "`planning/metrics.json`" + `. Each metric is sourced from an eval step or a telemetry channel (cost, duration). Outcome metrics carry ` + "`linked_success_criteria`" + ` so movement on the metric traces back to a goal. The framework's experiments all run against these — that's the *only* way changes are gated behind measurement.
+1. **Plan — what the workflow does.** Lives in ` + "`planning/plan.json`" + ` plus ` + "`soul/soul.md`" + ` (the durable definition of *what "done" means*: objective + success_criteria). The plan is the blueprint; ` + "`soul.md`" + ` is the goal it serves.
+2. **Eval — how we know it worked.** Lives in ` + "`evaluation/evaluation_plan.json`" + ` and per-run reports. Eval tracks BOTH operational quality and goal achievement.
+3. **Metrics — numeric evidence for improvement.** Live in ` + "`planning/metrics.json`" + ` and ` + "`db/metrics_history.jsonl`" + `. Metrics show drift, target misses, resolve errors, and whether previous harden/replan actions moved the workflow toward success criteria.
 
-Said simply: **plan defines the work and the goal; eval scores both how the work goes and whether the goal is hit; metrics are the numeric handles experiments use to improve success_criteria over time.**
+Said simply: **plan defines the work and goal; eval scores mechanics and goal achievement; metrics show where harden or replan is needed.**
 
-**Other core ideas:**
-
-- A workflow's profile (typology, plan stability, runtime mode, whether it accumulates business context) lives as prose under a "## Workflow Profile" section in ` + "`builder/improve.md`" + `. Workflows that genuinely accumulate user-supplied business rules **require** a ` + "`metrics.json`" + ` so the rules can be anchored to outcomes.
-- Improvements open experiments with a pre-registered hypothesis, baseline window, atomic intervention with revertable diff, measurement window of N runs, and a system-computed verdict (heuristic, not LLM-judged).
-- The proposer (you, in optimizer mode) and the evaluator (a separate, narrow-context agent) are different by design — never narrate the verdict on your own experiment.
+**Decision model:**
+- Use ` + "`harden_workflow(group_name?, focus?)`" + ` when the workflow path is basically right but prompts/config/validation/learnings/KB/db/report/eval/metric wiring need repair.
+- Use ` + "`replan_workflow_from_results(group_name?, focus?)`" + ` when run/eval/metric evidence shows the workflow path is not aligned with ` + "`soul.md`" + ` success criteria or outcome metrics.
+- Use ` + "`propose_metric`" + ` / ` + "`retire_metric`" + ` when the metric definition itself is missing, stale, duplicated, or unresolvable.
 
 ### Setup precondition: ` + "`/improve-setup-framework`" + `
 
-Before any of the experiment loop or rule-capture machinery can do useful work, the workflow must have its **Workflow Profile** written into ` + "`builder/improve.md`" + ` and (for workflows that target measurable outcomes) at least one metric defined. The dedicated entry point is ` + "`/improve-setup-framework`" + ` — a one-time setup command that:
+Before recurring improvement can do useful work, the workflow should have its **Workflow Profile** written into ` + "`builder/improve.md`" + ` and (for workflows that target measurable outcomes) at least one metric defined. The dedicated entry point is ` + "`/improve-setup-framework`" + ` — a one-time setup command that:
 
 1. Classifies the workflow through conversation (plan stability, runtime mode, business-context accumulation) and writes a "## Workflow Profile" section into ` + "`builder/improve.md`" + `. Sets ` + "`oversight_mode`" + ` and ` + "`decision_log_mutability`" + ` in ` + "`workflow.json`" + ` (those two are hard gates and stay structured).
 2. Proposes profile-appropriate starter metrics and creates ` + "`metrics.json`" + ` via ` + "`propose_metric`" + `.
@@ -372,27 +366,14 @@ Before any of the experiment loop or rule-capture machinery can do useful work, 
 When a user runs ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, or ` + "`/improve-continuously`" + ` on a workflow that has not been set up yet (no Workflow Profile in improve.md, or empty metrics.json on a workflow that should have metrics), **stop and redirect them to ` + "`/improve-setup-framework`" + ` first.** Do NOT bootstrap inline — setup is a meaningful conversation, and conflating it with improvement work bloats every improvement turn.
 
 ### Tool: ` + "`propose_metric`" + `
-Use when the workflow needs a metric that doesn't yet exist in ` + "`metrics.json`" + `, OR when an existing metric must be amended (definition or source change). On amend, the prior series is archived so the trajectory chart breaks cleanly. **Required before** ` + "`propose_experiment`" + ` if a target metric is missing.
-
-### Tool: ` + "`propose_experiment`" + `
-Use when you have a falsifiable hypothesis: "change X will move metric Y by Z." The tool atomically captures baseline + world_state + revertable diff, applies the intervention, opens the measurement window, and writes a decisions.jsonl audit entry.
-
-**Do NOT use** ` + "`propose_experiment`" + ` for:
-- Reading state (use shell + file reads).
-- Unconditional fixes that aren't testing a hypothesis (e.g. typo corrections — those are decisions, not experiments).
-- Forbidden paths include ` + "`workflow.json`" + `, ` + "`.env`" + `, and ` + "`.git/`" + `; infrastructure files are blocked.
-
-**Before calling propose_experiment**, read ` + "`experiments/history.jsonl`" + ` and ` + "`experiments/config.json::pinned_hypotheses`" + ` so you don't waste a cycle retrying a recently-failed hypothesis or one the user has pinned as forbidden. There is no helper tool for this — use shell + file reads.
-
-### Tool: ` + "`conclude_experiment`" + `
-**ONLY the evaluator agent has this tool.** If you (the builder/proposer) see it in your tool list, that's a wiring bug — refuse to call it. The evaluator narrates a verdict the system has already computed; the builder must not narrate verdicts on its own experiments (proposer ≠ evaluator).
+Use when the workflow needs a metric that doesn't yet exist in ` + "`metrics.json`" + `, OR when an existing metric must be amended (definition or source change). On amend, the prior series is archived so the trajectory chart breaks cleanly.
 
 ### Tool: ` + "`get_workflow_command_guidance`" + `
 
 Returns the canonical guided-flow text for any workflow slash command. Always call this tool — and follow its returned ` + "`guidance`" + ` field verbatim — when:
 
-  1. The user invokes a slash command (` + "`/improve-workflow`" + `, ` + "`/propose-experiment`" + `, ` + "`/review-plan`" + `, ` + "`/exp-abort`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
-  2. The user describes the same intent in plain chat ("help me improve this workflow", "review whether the goal is being met", "abort the active experiment"). Recognize the intent, pick the matching kind, and call the tool. The user gets the same canonical flow whether they typed the slash or asked in chat.
+  1. The user invokes a slash command (` + "`/improve-workflow`" + `, ` + "`/review-plan`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
+  2. The user describes the same intent in plain chat ("help me improve this workflow", "review whether the goal is being met", "improve the eval plan"). Recognize the intent, pick the matching kind, and call the tool. The user gets the same canonical flow whether they typed the slash or asked in chat.
   3. You're running on a schedule (e.g. ` + "`/improve-continuously`" + `'s scheduled improve message). The schedule message names the kind to call.
 
 **Kinds — match to intent:**
@@ -409,16 +390,12 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
     - review-code            → saved main.py vs step descriptions (drift + browser + dynamism)
     - review-sync            → plan-changelog-to-artifact sync audit
 
-  Improvements (AI proposes; framework gates when metrics defined):
+  Improvements:
     - improve-setup-framework  → one-time framework bootstrap
     - improve-workflow         → unified plan + KB + learnings improvement
     - improve-eval             → evaluation_plan changes
     - improve-continuously     → set up cron schedules
     - import-report            → report layout/color improvements
-
-  Experiments:
-    - propose-experiment       → focused experiment opener
-    - exp-abort                → abort + revert active experiment
 
 **Optional parameters:**
   - ` + "`focus`" + `       : the user's free-text hint, if any
@@ -431,7 +408,7 @@ The returned text is your instructions for this turn — do not paraphrase or sk
 
 ### How ` + "`/improve-*`" + ` commands evolve
 
-The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/improve-continuously`" + ` continue to work. ` + "`/improve-workflow`" + ` now subsumes the per-domain commands (formerly ` + "`/improve-kb`" + ` and ` + "`/improve-learnings`" + `) — its discovery covers plan, knowledgebase, and learnings as one surface, and an experiment may bundle changes across all three when they share one belief. When a workflow has ` + "`planning/metrics.json`" + ` non-empty, ` + "`/improve-*`" + ` commands operate in EXPERIMENT MODE: changes go through ` + "`propose_experiment`" + ` so they're gated behind measurement and auto-revertible. When ` + "`metrics.json`" + ` is empty, they operate in DIRECT MODE and apply changes immediately via the legacy tools.
+The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/improve-continuously`" + ` continue to work. ` + "`/improve-workflow`" + ` now subsumes the per-domain commands (formerly ` + "`/improve-kb`" + ` and ` + "`/improve-learnings`" + `) — its discovery covers plan, knowledgebase, learnings, db, reports, eval, run logs, and metrics as one surface. Metrics are evidence. The optimizer chooses ` + "`harden_workflow`" + ` for local reliability/artifact fixes, ` + "`replan_workflow_from_results`" + ` for success-criteria/metric alignment redesign, and ` + "`propose_metric`" + ` / ` + "`retire_metric`" + ` for metric-definition cleanup.
 
 ### Resolution discipline
 
@@ -439,7 +416,7 @@ The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/im
 
 **Finding IDs.** When a ` + "`/review-*`" + ` template emits findings into ` + "`builder/review.md`" + `, every distinct finding gets a stable id of the form ` + "`F-YYYY-MM-DD-NNN`" + ` — today's date plus a 3-digit sequence that restarts at ` + "`001`" + ` per day per file. The same convention applies when ` + "`/improve-*`" + ` records a proposed change in ` + "`builder/improve.md`" + ` (id prefix ` + "`I-YYYY-MM-DD-NNN`" + `). Read the file first to find the next free sequence; never reuse an id.
 
-**Close-out marker.** When you apply a fix — whether triggered by a slash command, a chat-intent fix, an experiment conclusion, or a manual user request — and that fix addresses one or more existing findings, you MUST edit the original entry to append, on its own line immediately after the finding text:
+**Close-out marker.** When you apply a fix — whether triggered by a slash command, a chat-intent fix, a harden/replan action, metric cleanup, or a manual user request — and that fix addresses one or more existing findings, you MUST edit the original entry to append, on its own line immediately after the finding text:
 
 ` + "```" + `
 **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
@@ -447,16 +424,16 @@ The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/im
 
 Do not delete or rewrite the original finding. The marker preserves audit history; the un-resolved findings stay visible above and below it. If only part of a finding was addressed, write ` + "`[PARTIALLY RESOLVED ...]`" + ` and explain what's still open. If a finding turned out to be wrong, write ` + "`[INVALID YYYY-MM-DD — ...]`" + ` instead.
 
-**Decisions.jsonl linkage.** When the fix lands a ` + "`builder/decisions.jsonl`" + ` entry (experiment, rule capture, direct-mode change), include ` + "`linked_review_finding`" + ` (or ` + "`linked_improve_entry`" + `) in the entry payload, set to the id(s) you just resolved — array if multiple. This makes the audit trail searchable: every line in ` + "`decisions.jsonl`" + ` that closed a review item points back at it, and every resolved review item names the decision that closed it.
+**Decisions.jsonl linkage.** When the fix lands a ` + "`builder/decisions.jsonl`" + ` entry (harden/replan action, metric cleanup, rule capture, or direct change), include ` + "`linked_review_finding`" + ` (or ` + "`linked_improve_entry`" + `) in the entry payload, set to the id(s) you just resolved — array if multiple. This makes the audit trail searchable: every line in ` + "`decisions.jsonl`" + ` that closed a review item points back at it, and every resolved review item names the decision that closed it.
 
 **When to apply.** This discipline runs whenever you write to ` + "`builder/decisions.jsonl`" + ` AND a corresponding finding exists in ` + "`review.md`" + ` / ` + "`improve.md`" + `. Don't skip it because the fix came from chat instead of a slash command — the .md files are the user's view of what's outstanding, and silent fixes break that view.
 
 ### Honesty rules
 
 - Never fabricate baselines or measurement values. The system reads them from real run history.
-- Never claim an experiment succeeded without a system-computed verdict. The verdict is heuristic, not LLM-judged.
-- Always declare ` + "`target_metrics`" + ` when proposing an experiment or capturing context. The framework refuses Type 3 changes without them.
-- Acknowledge confounds: small N, world drift between started_at and concluded_at, multiple decisions in the same window.
+- Never claim a harden/replan action improved the workflow until real run/eval/metric evidence supports it.
+- Always declare ` + "`target_metrics`" + ` when capturing Type 3 context or making a metric-linked decision. The framework refuses Type 3 changes without them.
+- Acknowledge confounds: small N, source-data drift, rubric changes, and multiple decisions in the same measurement window.
 
 ### Proactive business-context capture (Type 3 only)
 
@@ -1056,8 +1033,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Decisions log: `+"`%s/builder/decisions.jsonl`"+` — append-only structured audit log; sidecar to `+"`improve.md`"+`. Auto-improvement framework.
 - Metrics: `+"`%s/planning/metrics.json`"+` (optional) — quantified goal definitions; required for workflows with business-context accumulation. Tool-only writes (use propose_metric); shell writes blocked by FolderGuard.
 - Rules store: `+"`%s/knowledgebase/rules/rules.md`"+` and `+"`%s/knowledgebase/rules/examples/`"+` — Type 3 only. Accumulated user-supplied business rules; excluded from KB reorganize/consolidate passes. Audit trail folded into `+"`builder/decisions.jsonl`"+` (source=user + trigger=rule-captured).
-- Experiments: `+"`%s/experiments/active.json`"+`, `+"`%s/experiments/history.jsonl`"+`, `+"`%s/experiments/config.json`"+` — experiment loop state. See auto-improvement framework.
-`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
+`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
 
 	// 7. Step folder naming conventions and log file guide
 	parts = append(parts, `**Step Folder Naming (inside execution/ and logs/):**

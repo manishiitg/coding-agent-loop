@@ -44,7 +44,7 @@ func (m *countingWorkspaceAPI) count(prefix string) int {
 	return total
 }
 
-func TestEvaluationScoreMigrationDoesNotRecordMeasurement(t *testing.T) {
+func TestEvaluationScoreMigrationWritesOnlyScoreFiles(t *testing.T) {
 	resetEvaluationScoreMigrationStateForTest()
 
 	const workspacePath = "Workflow/social-media"
@@ -57,17 +57,6 @@ func TestEvaluationScoreMigrationDoesNotRecordMeasurement(t *testing.T) {
 	api := &countingWorkspaceAPI{
 		base: &mockWorkspaceAPI{files: map[string]string{
 			workspacePath + "/evaluation/runs/iteration-1/default/evaluation_report.json": string(reportJSON),
-			workspacePath + "/experiments/active.json": `{
-				"experiments": [{
-					"id": "exp-1",
-					"status": "measuring",
-					"target_metrics": ["run_score"],
-					"expected_direction": "increase",
-					"expected_magnitude": 1,
-					"baseline": {"mean": {"run_score": 1}, "values": {"run_score": [1]}},
-					"measurement": {"target_runs": 5, "completed_runs": 0, "values": {}}
-				}]
-			}`,
 			workspacePath + "/planning/metrics.json": `{
 				"metrics": [{
 					"id": "run_score",
@@ -90,13 +79,10 @@ func TestEvaluationScoreMigrationDoesNotRecordMeasurement(t *testing.T) {
 		t.Fatalf("read reports: %v", err)
 	}
 
-	// Give any accidental async hook a chance to run. Migration writes must not
-	// count as new run completions or mutate active experiment state.
+	// Give any accidental async hook a chance to run. Migration should only
+	// write the migrated score file.
 	time.Sleep(50 * time.Millisecond)
 
-	if got := api.count("PUT " + workspacePath + "/experiments/active.json"); got != 0 {
-		t.Fatalf("migration unexpectedly wrote active experiment state %d time(s)", got)
-	}
 	if got := api.count("PUT " + workspacePath + "/scores/evaluation/"); got != 1 {
 		t.Fatalf("migration should write one score file, wrote %d", got)
 	}

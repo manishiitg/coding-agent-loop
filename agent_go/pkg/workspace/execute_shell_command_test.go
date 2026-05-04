@@ -130,6 +130,52 @@ PY`
 	}
 }
 
+func TestDetectRawChromeCDPAccessAllowsPlanTextMentioningCDPVariable(t *testing.T) {
+	command := `cat > /tmp/plan.py <<'PY'
+description = """
+VAR: TWITTER_CDP_URL
+node learnings/step-post-twitter-reply/scripts/post_reply_v2.js $VAR_TWITTER_CDP_URL $tweet_url $payload_path.
+"""
+PY`
+
+	if got := detectRawChromeCDPAccess(command); got != "" {
+		t.Fatalf("expected CDP variable mentions in plan text to pass, got %q", got)
+	}
+}
+
+func TestDetectRawChromeCDPAccessAllowsDocumentationTextWithEndpoints(t *testing.T) {
+	command := `cat > /tmp/browser-docs.md <<'EOF'
+Do not use ws://localhost:9222/devtools/page/<id>.
+Do not call websocket.create_connection("ws://localhost:9222/devtools/page/<id>").
+Do not read http://localhost:9222/json/list directly.
+EOF`
+
+	if got := detectRawChromeCDPAccess(command); got != "" {
+		t.Fatalf("expected documentation text to pass, got %q", got)
+	}
+}
+
+func TestDetectRawChromeCDPAccessBlocksCurlJSONEndpoint(t *testing.T) {
+	command := `curl -sS http://localhost:9222/json/list`
+
+	if got := detectRawChromeCDPAccess(command); got != "Chrome /json target endpoint" {
+		t.Fatalf("expected curl to Chrome JSON endpoint to be blocked, got %q", got)
+	}
+}
+
+func TestDetectRawChromeCDPAccessBlocksCDPMethodWithVariableInExecutableHeredoc(t *testing.T) {
+	command := `python3 <<'PY'
+import os
+method = "Target.createTarget"
+url = os.environ["TWITTER_CDP_URL"]
+print(method, url)
+PY`
+
+	if got := detectRawChromeCDPAccess(command); got != "Chrome CDP method call" {
+		t.Fatalf("expected CDP method with CDP URL variable to be blocked, got %q", got)
+	}
+}
+
 func TestExecuteShellCommand_BlocksRawChromeCDPAccess(t *testing.T) {
 	client := NewClient("http://127.0.0.1:1")
 	result, err := client.ExecuteShellCommand(context.Background(), ExecuteShellCommandParams{

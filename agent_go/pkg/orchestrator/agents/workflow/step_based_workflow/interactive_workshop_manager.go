@@ -1030,22 +1030,16 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"reorganize_knowledgebase", "consolidate_knowledgebase",
 	}
 
-	// Auto-improvement framework tools — registered by
-	// RegisterAutoImprovementProposerTools in server.go when the workshop
-	// session enters optimizer mode. Builder stays focused on plan construction
-	// and single-step debug; metric/eval cleanup belongs to Optimizer.
+	// Auto-improvement tools — registered by RegisterAutoImprovementProposerTools
+	// in server.go when the workshop session enters optimizer mode. Builder stays
+	// focused on plan construction and single-step debug; metric/eval cleanup
+	// belongs to Optimizer.
 	// Rule capture (Type 3 workflows) is done via diff_patch_workspace_file +
-	// a decisions.jsonl append by the agent itself — no dedicated tool. Reading
-	// experiment history before proposing a new one is also done via raw file
-	// reads of experiments/history.jsonl + experiments/config.json::pinned_hypotheses.
+	// a decisions.jsonl append by the agent itself — no dedicated tool.
 	autoImprovement := []string{
 		"propose_metric",
 		"retire_metric",
-		"propose_experiment",
 		"get_workflow_command_guidance", // canonical slash-command prose; see guidance package.
-		// conclude_experiment is intentionally NOT in this list — it is the
-		// evaluator agent's only tool. Exposing it to the proposer would
-		// violate the proposer != evaluator guardrail.
 	}
 
 	var tools []string
@@ -1391,8 +1385,7 @@ func workshopWritePaths(workspacePath string) []string {
 		fmt.Sprintf("%s/memory", workspacePath),
 		fmt.Sprintf("%s/execution", workspacePath),
 		fmt.Sprintf("%s/variables", workspacePath),
-		fmt.Sprintf("%s/builder", workspacePath),     // improve.md, review.md, decisions.jsonl
-		fmt.Sprintf("%s/experiments", workspacePath), // active.json, history.jsonl (config.json read-only by convention)
+		fmt.Sprintf("%s/builder", workspacePath), // improve.md, review.md, decisions.jsonl
 	}
 }
 
@@ -1542,7 +1535,7 @@ When you call `+"`"+`run_full_workflow`+"`"+` for a multi-group workflow, **defa
 {{if eq .WorkshopMode "builder"}}
 ## Reporting — Builder owns the live dashboard
 
-The workflow has a live frontend report viewer at the top toolbar's "Report" tab. Builder mode owns report widget authoring: creating dashboard widgets, themes, layouts, custom colors, and `+"`reports/report_plan.json`"+` edits. Keep report edits presentation-only: do not use dashboard work as a reason to change evaluation, hardening, experiments, or learn_code settings.
+The workflow has a live frontend report viewer at the top toolbar's "Report" tab. Builder mode owns report widget authoring: creating dashboard widgets, themes, layouts, custom colors, and `+"`reports/report_plan.json`"+` edits. Keep report edits presentation-only: do not use dashboard work as a reason to change evaluation, hardening, metrics, or learn_code settings.
 {{else if eq .WorkshopMode "reporting"}}
 ## Reporting — the frontend Report tab is already wired
 
@@ -1591,7 +1584,7 @@ If a widget renders empty because the underlying `+"`db/`"+` file hasn't been po
 - Diagnose first with `+"`review_workflow_results`"+` and `+"`get_report_plan`"+` — don't run steps blindly. The widget might be pointing at the wrong path or filter, in which case the fix is in the plan, not in the data.
 
 **What you do NOT do here:**
-{{if eq .WorkshopMode "builder"}}- No evaluation design, no `+"`harden_workflow`"+`, no experiment proposals, and no learn_code/script-locking work as part of report authoring. If a report exposes a real workflow-quality problem, fix basic Builder-owned structure/config or switch to Optimizer for hardening/eval/experiments.
+{{if eq .WorkshopMode "builder"}}- No evaluation design, no `+"`harden_workflow`"+`, no metric cleanup, and no learn_code/script-locking work as part of report authoring. If a report exposes a real workflow-quality problem, fix basic Builder-owned structure/config or switch to Optimizer for hardening/eval/metric work.
 {{else if eq .WorkshopMode "optimizer"}}- Do not use report work as a reason to make speculative workflow/eval changes. If the user asked only for dashboard/report changes, stay within report-plan tools plus read/preview/validation. If the report exposes a real workflow-quality issue, then use optimizer tools deliberately and explain the boundary.
 {{else}}
 - No `+"`update_step_config`"+`, no `+"`harden_workflow`"+`, no plan or eval mutations. If the user asks to fix a step's behavior or change what a step writes to `+"`db/`"+`, tell them to switch to Builder or Optimizer.
@@ -1623,8 +1616,8 @@ Optimizer owns the eval plan: write it, validate it, run it against `+"`iteratio
 - `+"`pre_validation`"+` checks files inside the eval step execution folder, not the original run folder.
 - Eval step descriptions may reference `+"`"+`{{"{{TARGET_RUN_PATH}}"}}`+"`"+`, which resolves to the absolute path of the original execution folder being scored. Use that placeholder when the eval needs to inspect original run artifacts directly; never hardcode iteration paths.
 - For scoring config in `+"`evaluation/step_config.json`"+`:
-  - prefer `+"`declared_execution_mode=learn_code`"+` for deterministic checks and stable reusable scoring logic
-  - use `+"`declared_execution_mode=code_exec`"+` when the eval still needs adaptive model judgment
+  - default to `+"`declared_execution_mode=code_exec`"+`; promote eval steps to `+"`learn_code`"+` only when the user explicitly asks to freeze/reuse scoring code, the check is fully deterministic, and 10+ eval runs cover the relevant output scenarios
+  - use `+"`declared_execution_mode=code_exec`"+` when the eval still needs adaptive model judgment, the rubric is changing, or the scenario coverage is not proven
   - set per-eval-step `+"`execution_tier`"+` with `+"`update_step_config(step_id=\"eval-step-id\", execution_tier=\"high|medium|low\")`"+`; the tool writes `+"`evaluation/step_config.json`"+` when the id is from `+"`evaluation/evaluation_plan.json`"+`
   - tier rule of thumb: `+"`high`"+` for subjective/ambiguous judgment, `+"`medium`"+` for normal eval checks, `+"`low`"+` for deterministic/file-shape checks
   - configure the final scoring agent with reserved id `+"`__evaluation_scoring__`"+` (for example `+"`update_step_config(step_id=\"__evaluation_scoring__\", execution_tier=\"high\")`"+`)
@@ -1772,7 +1765,7 @@ Learning writes and KB access/writes are **opt-in** for every step. Global learn
 
 **Cheap heuristics to use while deciding:**
 - **Step writes a brand-new `+"`"+`db/`+"`"+` file or consumes a db file**: likely worth KB too (the domain facts often live alongside the persistent rows). Likely NOT worth learning (db schema is stable; selectors aren't).
-- **Step drives a UI / browser / third-party API with fussy selectors or timing**: worth learning. Probably NOT worth KB (selectors are HOW, not WHAT). For execution mode, keep these steps on `+"`code_exec`"+` in Builder; Optimizer can consider later migration only after real run evidence.
+- **Step drives a UI / browser / third-party API with fussy selectors or timing**: worth learning. Probably NOT worth KB (selectors are HOW, not WHAT). For execution mode, keep these steps on `+"`code_exec`"+` in Builder; Optimizer can consider later migration only if the user explicitly asks for scripted execution and 10+ scenario-covering successful runs prove the flow is deterministic enough to freeze.
 - **Step is pure data transformation, math, or file IO**: neither. Leave both empty.
 - **Step calls an LLM for analysis/classification**: worth KB (facts discovered) if outputs are domain facts; not worth learning (the LLM prompt is stable and doesn't need SKILL.md tips).
 {{if ne .WorkshopMode "builder"}}- **Step uses `+"`"+`declared_execution_mode = \"learn_code\"`+"`"+`**: generally leave `+"`"+`learning_objective`+"`"+` empty. The saved `+"`"+`learnings/{step-id}/main.py`+"`"+` script IS the captured HOW — running a separate learning pass on top of it just duplicates work and risks drift between the script and SKILL.md. Only opt in if there's HOW-knowledge the script itself can't encode (e.g. out-of-band operator notes, cross-step patterns that belong in the shared `+"`"+`_global/`+"`"+` skill).
@@ -1794,8 +1787,8 @@ Learning writes and KB access/writes are **opt-in** for every step. Global learn
 
 **When creating or configuring each step, use code execution mode in Builder:**
 - Set new steps to `+"`declared_execution_mode=\"code_exec\"`"+`.
-- Do not choose `+"`learn_code`"+`, write `+"`learnings/{step-id}/main.py`"+`, or discuss script locking in Builder mode. Those belong in Optimizer after the plan has real run evidence.
-- If the user explicitly asks for `+"`learn_code`"+`, explain that Builder will first create and test the `+"`code_exec`"+` workflow, then Optimizer can promote stable steps later.
+- Do not choose `+"`learn_code`"+`, write `+"`learnings/{step-id}/main.py`"+`, or discuss script locking in Builder mode. Those belong in Optimizer only after explicit user intent plus 10+ scenario-covering successful runs prove a highly deterministic step is safe to freeze.
+- If the user explicitly asks for `+"`learn_code`"+`, explain that Builder will first create and test the `+"`code_exec`"+` workflow, then Optimizer can promote only after the user confirms, the step is highly deterministic, and 10+ scenario-covering successful runs prove stability.
 
 ### Evaluation Belongs In Optimizer
 In Builder mode, capture the workflow objective and success criteria clearly, but do not design the evaluation plan or run the eval/harden loop. Once the plan runs end-to-end, tell the user to switch to Optimizer mode to add evaluation coverage and harden the workflow.
@@ -1854,7 +1847,7 @@ Run one group at a time so each group's failures harden the workflow before the 
 3. After all groups have run: summarize overall scores and remaining issues
 4. If any groups still failing: repeat the loop (max 2 full iterations to prevent infinite loops)
 
-For **small evidence-backed structural fixes** (add a missing validation/extraction step, remove an obsolete step, split/merge a clearly broken boundary), `+"`harden_workflow`"+` may use the plan modification tools directly. Use `+"`replan_workflow_from_results`"+` only when the whole plan shape needs broader redesign from run evidence.
+For **small evidence-backed structural fixes** (add a missing validation/extraction step, remove an obsolete step, split/merge a clearly broken boundary), `+"`harden_workflow`"+` may use the plan modification tools directly. Use `+"`replan_workflow_from_results`"+` when run/eval/metric evidence shows the workflow path itself is not aligned with the objective or success criteria — for example, it is doing the wrong business work, collecting the wrong evidence, optimizing the wrong artifact, or producing outputs that cannot satisfy a success criterion even after local hardening.
 
 ### When to redirect to another mode
 Optimizer is for the run/eval/harden loop. If the user asks about:
@@ -2160,7 +2153,7 @@ Mature workflows accumulate three kinds of state that you can freeze independent
 | Lock | Scope | Freezes | Prevents | Use when |
 | --- | --- | --- | --- | --- |
 | `+"`lock_learnings`"+` | Per-step | `+"`learnings/_global/SKILL.md`"+` content the step relies on | Learning agent from updating SKILL.md after this step runs | **Auto-set** after learnings converge. In `+"`agent`"+` mode: 3 successful runs with the same description hash. In `+"`direct`"+` mode: same threshold plus 2 consecutive no-new-learning outcomes from the direct learnings turn. **Auto-cleared** when the description changes (for auto-locked steps). Manually set only when you hand-edited SKILL.md and want your edits preserved regardless of description changes. |
-| `+"`lock_code`"+` | Per-step (learn_code only) | `+"`learnings/{step-id}/main.py`"+` | Execution-agent rewrites on failure, fast-path repair loop, and learning-agent replacement of the script | You hand-patched main.py and want it used exactly as-is, OR the script is stable and `+"`learn_code`"+` is the declared mode |
+| `+"`lock_code`"+` | Per-step (learn_code only) | `+"`learnings/{step-id}/main.py`"+` | Execution-agent rewrites on failure, fast-path repair loop, and learning-agent replacement of the script | The user explicitly wanted `+"`learn_code`"+`, the step is highly deterministic, and script/eval evidence shows 10+ successful scenario-covering runs. Hand-patched scripts still need this evidence before freezing, otherwise keep `+"`lock_code=false`"+` so repair can continue. |
 | `+"`lock_knowledgebase`"+` | Workflow-level | `+"`knowledgebase/notes/`"+` auto-updates after step completions | Post-step KB update agent from firing across ALL steps (reads still work) | Domain knowledge has stabilized — keep `+"`reorganize_knowledgebase`"+` for intentional curation but stop paying per-step LLM cost |
 
 **Rule of thumb after hand-editing an artifact**: always lock the matching artifact immediately. Otherwise the corresponding agent will overwrite your edit on the next run.
@@ -2230,8 +2223,8 @@ For steps in learn_code mode, the saved Python script at `+"`learnings/{step-id}
 
 **5. Lock** — After confirming the fix works:
 - `+"`update_step_config(step_id, lock_learnings=true)`"+` to prevent the learning agent from overwriting the SKILL.md notes that guided your fix.
-- `+"`update_step_config(step_id, lock_code=true)`"+` to freeze `+"`learnings/{step-id}/main.py`"+` itself. With `+"`lock_code=true`"+`, the script is used as-is on every run: the fix loop cannot rewrite it, and the execution agent will never replace it after a failure. Use this whenever you have hand-patched the script and want it to stay exactly as written.
-- **Both together is the common case** after a hand-fix: `+"`lock_learnings=true`"+` freezes the WHY (SKILL.md), `+"`lock_code=true`"+` freezes the WHAT (main.py).
+- `+"`update_step_config(step_id, lock_code=true)`"+` to freeze `+"`learnings/{step-id}/main.py`"+` itself only after the learn_code gate is satisfied: explicit user request, highly deterministic behavior, and 10+ successful scenario-covering runs with eval/metric evidence at target. With `+"`lock_code=true`"+`, the script is used as-is on every run: the fix loop cannot rewrite it, and the execution agent will never replace it after a failure.
+- **Do not lock code just because you hand-patched it.** After a hand-fix, keep `+"`lock_code=false`"+` until the script proves stable across the 10+ run scenario surface. `+"`lock_learnings=true`"+` can still freeze the WHY (SKILL.md) when the learning notes are correct.
 
 **Key principle**: Always edit `+"`learnings/{step-id}/main.py`"+`, never `+"`execution/{step-id}/code/main.py`"+`. The execution copy is overwritten from learnings on every run.
 
@@ -2248,7 +2241,7 @@ In tiered mode, prefer a persistent `+"`execution_tier`"+` when a step should us
 
 - **Use `+"`execution_tier`"+` for persistent behavior**: `+"`update_step_config(step_id, execution_tier=\"medium\")`"+` or `+"`\"low\"`"+` when the step is stable and you want future runs to default to that tier.
 - **Use `+"`execution_llm`"+` only when you need an exact model**: this pins a specific provider/model and overrides tier selection entirely.
-- **Use `+"`execute_step(step_id, group_name, tier=\"...\")`"+` for one-off experiments**: this is for testing a single run without changing the step's persistent config.
+- **Use `+"`execute_step(step_id, group_name, tier=\"...\")`"+` for one-off trials**: this is for testing a single run without changing the step's persistent config.
 - **Prefer `+"`execution_tier`"+` over exact-model pinning for mature steps**: if the goal is "this step can usually run on medium/low", set the tier, don't hardcode a model.
 - **Do not force a cheaper tier too early**: first make the step reliable with a clear description, good validation, and stable learnings. Then downgrade deliberately.
 - **If a step has `+"`execution_llm`"+` set, `+"`execution_tier`"+` is ignored** until the exact-model override is cleared.
@@ -2312,14 +2305,14 @@ When the user runs a step, briefly note the highest-priority improvement needed.
 
 Steps have two execution modes — set via **update_step_config(step_id, use_code_execution_mode=true, declared_execution_mode="learn_code"|"code_exec")**:
 
-- **Learn Code mode** (declared_execution_mode="learn_code"): Agent writes a reusable `+"`main.py`"+` that is saved and tried first on future runs (0 LLM tokens when stable). If the saved script fails, the LLM repairs it. **Use this for stable, scriptable work** — especially deterministic non-browser logic:
+- **Learn Code mode** (declared_execution_mode="learn_code"): Agent writes a reusable `+"`main.py`"+` that is saved and tried first on future runs (0 LLM tokens when stable). If the saved script fails, the LLM repairs it. **Do not use this as the default optimization path.** Promote to this mode only when ALL conditions hold: the user explicitly asked for scripted/learn_code execution for this step; the step is highly deterministic; and there is broad stability evidence, normally 10+ successful runs across the relevant variable groups/scenarios with eval/metric evidence still at target. Good candidates after those gates:
   - The step needs to combine multiple tool calls with logic (loops, conditionals, data transformation)
   - The step processes data that benefits from Python libraries (parsing, calculations, formatting)
   - The step needs to orchestrate several tools together in a single script
   - Deterministic data processing: iterating rows, matching columns, extracting/transforming data — a Python loop handles it reliably in one shot without the agent needing to "think" through each row
-- **Code Execution mode** (declared_execution_mode="code_exec"): LLM writes and runs code inline each time — no persistent script is saved. Use when the work varies too much between runs to stabilize into a reusable script, or when the step requires adaptive reasoning. Browser/UI steps should generally stay here unless the user explicitly wants scripted browser automation and the flow is already proven stable enough to freeze into `+"`main.py`"+` (durable selectors, predictable navigation, low semantic branching). If a code_exec step has leftover `+"`learnings/{step-id}/main.py`"+`, delete it; that file is stale mode debt and should not be patched.
+- **Code Execution mode** (declared_execution_mode="code_exec"): LLM writes and runs code inline each time — no persistent script is saved. Use when the work varies too much between runs to stabilize into a reusable script, or when the step requires adaptive reasoning. Browser/UI steps should generally stay here unless the user explicitly wants scripted browser automation and 10+ scenario-covering successful runs prove the flow is stable enough to freeze into `+"`main.py`"+` (durable selectors, predictable navigation, low semantic branching). If a code_exec step has leftover `+"`learnings/{step-id}/main.py`"+`, delete it; that file is stale mode debt and should not be patched.
 
-**Promotion rule:** Builder-created steps should arrive here as `+"`code_exec`"+`. Promote a step to `+"`learn_code`"+` only after real run evidence shows that the inputs, tools, outputs, and error cases are stable enough to reuse `+"`main.py`"+` safely. A `+"`learn_code`"+` script written before stability is proven will need repeated repair on every drift, and `+"`lock_code`"+` accidents become harder to unwind. The only common exception is when the user explicitly asks for `+"`learn_code`"+` from the start AND it is a deterministic transform (e.g. a known CSV → JSON shape) where the script's behavior is obvious without observation.
+**Promotion rule:** Builder-created steps should arrive here as `+"`code_exec`"+`. Promote a step to `+"`learn_code`"+` only when the user explicitly asks, the step is very deterministic, and run evidence covers enough scenarios to trust the saved script (normally 10+ successful runs across the relevant groups/scenarios with eval/metric evidence at target). A `+"`learn_code`"+` script written before stability is proven will need repeated repair on every drift, and `+"`lock_code`"+` accidents become harder to unwind. If any of the three gates is missing, keep `+"`code_exec`"+` and improve descriptions, validation, learnings, or tool usage instead.
 
 **Mode declaration is required**: Every optimized step must store:
 - `+"`declared_execution_mode`"+`
@@ -2349,8 +2342,8 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 - **Already-optimized steps** (optimized=true in step_config) are automatically skipped by harden_workflow.
 - **Reset optimization** (optimized=false) only if you make major changes to the step description, tools, or validation schema — then re-run and re-optimize once. Also unlock any stale locks in the same call: `+"`update_step_config(step_id, optimized=false, lock_learnings=false, lock_code=false)`"+`.
 
-**When you mark a learn_code step optimized, lock its code too**:
-- `+"`update_step_config(step_id, optimized=true, lock_learnings=true, lock_code=true)`"+` — after 3+ successful runs across the groups you care about, lock both SKILL.md and main.py. Without `+"`lock_code`"+`, a single transient failure can trigger the fix loop to rewrite a script that was actually working, flipping you back into an iteration cycle.
+**When you mark a learn_code step optimized, lock its code only after strong evidence**:
+- `+"`update_step_config(step_id, optimized=true, lock_learnings=true, lock_code=true)`"+` — only after the user explicitly wanted `+"`learn_code`"+`, the step is highly deterministic, and `+"`script_metadata.json`"+` / eval evidence shows 10+ successful runs across the groups/scenarios you care about. Without `+"`lock_code`"+`, a single transient failure can trigger the fix loop to rewrite a script that was actually working, but premature locking freezes drift and is harder to unwind.
 - Only lock code when the script has been stable across multiple runs AND multiple groups (if the workflow is multi-group). Flaky scripts should be fixed first, not frozen.
 
 **`+"`lock_learnings`"+` is independent of `+"`learn_code`"+`**:
@@ -2399,7 +2392,7 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 
 ### 9a. Orchestrator learn_code mode (deterministic delegation, 0 LLM tokens)
 
-When a todo_task orchestrator's flow is **stable and deterministic** — the set of sub-agent calls is known in advance and branches only on success/failure — author a `+"`main.py`"+` and mark the step `+"`declared_execution_mode=learn_code`"+`. At runtime the script runs first; any failure falls back to the normal LLM orchestrator with a fresh start.
+When a todo_task orchestrator's flow is **stable and deterministic** — the set of sub-agent calls is known in advance and branches only on success/failure — you may author a `+"`main.py`"+` and mark the step `+"`declared_execution_mode=learn_code`"+` only if the user explicitly asks for this fast path and 10+ successful runs across the relevant scenarios/groups prove the route behavior is stable. At runtime the script runs first; any failure falls back to the normal LLM orchestrator with a fresh start.
 
 **Unlike regular-step learn_code, the orchestrator path is read-only at runtime**: you (the builder) write `+"`learnings/{step-id}/main.py`"+` once, and the runtime never repairs or rewrites it. There is no fix loop, no save-back. Script failures are surfaced so you can regenerate `+"`main.py`"+` manually if needed.
 
@@ -2489,7 +2482,7 @@ Rules:
 - **update_step_config(step_id, ...)** — Update servers, tools, skills, learning settings, execution mode, LLMs, optimized flag. For eval steps this writes to `+"`evaluation/step_config.json`"+`.
 - **harden_workflow(group_name?, focus?)** — The primary optimization tool. Always reads `+"`iteration-0`"+` eval reports and execution outputs. Pass `+"`group_name`"+` to scope to one group, or omit it to analyze all groups under `+"`iteration-0`"+`. It fixes every failing step and runs a best-practice sweep across plan/config/learnings/KB/db/report/eval/variables artifacts. It may clean deterministic invariant violations even when the current eval did not directly catch them. It patches main.py only for `+"`learn_code`"+` steps and deletes stale main.py files for `+"`code_exec`"+` steps.
 - **Objective + success criteria** — edit `+"`soul/soul.md`"+` directly via shell (fill in the `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections). soul.md is the canonical source; plan.json no longer stores these fields. No dedicated tool — use `+"`diff_patch_workspace_file`"+` or a shell heredoc.
-- **replan_workflow_from_results(group_name?, focus?)** — Structural rewrite: add/remove/reorder steps using actual `+"`iteration-0`"+` run evidence. Pass `+"`group_name`"+` to scope to one group. Use when the plan structure is wrong. Use harden_workflow when the structure is right but steps need hardening.
+- **replan_workflow_from_results(group_name?, focus?)** — Alignment rewrite: add/remove/reorder steps using actual `+"`iteration-0`"+` run/eval evidence so the workflow better satisfies `+"`soul/soul.md`"+` objective, success criteria, and any outcome metrics. Pass `+"`group_name`"+` to scope to one group. Use when the workflow path is not aligned with the desired result; use harden_workflow for local reliability, prompt/config, validation, or artifact-drift fixes.
 - **review_workflow_results(iteration?, group_name?, focus?)** — Read-only outcome review: checks whether a real run is achieving the objective and success criteria, and whether the evaluation actually measures them properly.
 - **review_workflow_timing(iteration?, group_name?, focus?)** — Read-only latency review: finds the slowest groups/steps/tools/LLM calls and recommends faster descriptions, fewer handoffs, safer step merges, or plan changes.
 - **review_workflow_costs(iteration?, group_name?, focus?)** — Read-only cost review: finds the biggest cost drivers and recommends cheaper models, fewer retries/handoffs, better descriptions, or plan changes without sacrificing success criteria.
@@ -2529,13 +2522,14 @@ Rules:
 - Schedule management is available in **builder and optimizer modes**. If the user asks about schedules in another mode, tell them to switch to builder or optimizer mode.
 - **3 ways to schedule a workflow:**
   1. **Execute** (mode=workflow, default) — runs the orchestrator directly, no LLM involved. Fast, no messages needed.
-  2. **Run** (mode=workshop, workshop_mode=runner) — LLM-driven execution with per-step notifications. Requires `+"`messages`"+` array (e.g. a single message: "Run the full workflow using run_full_workflow").
-  3. **Optimize** (mode=workshop, workshop_mode=optimizer) — LLM-driven optimizer run. Requires `+"`messages`"+` array with exact group scope, `+"`runs/iteration-0`"+` evidence scope, active-experiment guards when metrics exist, and bounded stop conditions.
+  2. **Run** (mode=workshop, workshop_mode=run) — LLM-driven execution with per-step notifications. Requires `+"`messages`"+` array (e.g. a single message: "Run the full workflow using run_full_workflow(group_name=\"group-1\")").
+  3. **Optimize** (mode=workshop, workshop_mode=optimizer) — LLM-driven optimizer run. Requires `+"`messages`"+` array with exact group scope, `+"`runs/iteration-0`"+` evidence scope, metric/eval/log review, and bounded stop conditions.
 - **Default mode rule**: choose `+"`mode=\"workflow\"`"+` unless the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule. Do not choose `+"`mode=\"workshop\"`"+` for normal recurring business runs.
+- **/improve-continuously exception**: When setting up continuous improvement, BOTH schedules must be workshop schedules. The recurring execution schedule uses `+"`mode=\"workshop\", workshop_mode=\"run\"`"+` and a message that calls `+"`run_full_workflow(group_name=\"...\")`"+` for each configured group. The recurring improvement schedule uses `+"`mode=\"workshop\", workshop_mode=\"optimizer\"`"+`. Do not use direct `+"`mode=\"workflow\"`"+` for this command.
 - `+"`messages`"+` is an ordered queue of strings sent to the workshop LLM one-by-one as user turns. The LLM completes all tool calls triggered by message N before message N+1 is sent.
 - **How to write messages:**
   - Write each message as a plain instruction, like you would type in chat: "Run the full workflow", "Generate the final report"
-  - **Run mode** (workshop_mode="run"): typically one message, e.g. "Run the full workflow using run_full_workflow. Use the latest run folder."
+  - **Run mode** (workshop_mode="run"): typically one message with exact groups, e.g. "Do not ask for confirmation. Run the full workflow for group-1 using run_full_workflow(group_name=\"group-1\")."
   - **Optimize mode**: one message with stop conditions (see optimizer best practices below)
   - Use multiple messages to break work into sequential phases, e.g. ["Run the workflow", "Generate the final report"]
   - Read `+"`variables/variables.json`"+` for available group names and include them explicitly in the message if needed
@@ -2544,9 +2538,9 @@ Rules:
   - Provide all required parameters upfront in the message (group names, run folders, step IDs) so the agent never needs to ask
   - Tell the agent to skip or use defaults for anything unclear rather than pausing to ask
   - Never include open-ended questions or "let me know" style instructions
-  - Bad: "Run the workflow and ask me which steps to optimize" — Good: "Review runs/iteration-0 for group-1, check active experiments, then choose optimize/harden/replan/propose_experiment using the scheduled decision model. Log no action if nothing is ready."
-- **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message around the exact recurring job. For `+"`/improve-continuously`"+`, the message should name the configured group_names, use only `+"`runs/iteration-0`"+` evidence for those groups, check active experiments before proposing more, read `+"`builder/improve.md`"+` / `+"`builder/review.md`"+` / recent `+"`planning/changelog/`"+` entries, and handle report-layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it. Do not default continuous improvement to weekly for active workflows: prefer an optimizer check after every workflow run, or at worst after every two runs; if cron cannot trigger on run completion, approximate with a frequent lightweight schedule that no-ops when there is no new evidence. After material plan/config changes, tighten the improve cadence for 24-48 hours or until the next one or two post-change iteration-0 runs have been reviewed.
-- **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) use bounded evidence review, (2) open at most one experiment per fire in experiment mode, (3) avoid fresh workflow reruns unless verification is explicitly needed, (4) stop after recording what was applied, proposed, or deferred.
+  - Bad: "Run the workflow and ask me which steps to optimize" — Good: "Review runs/iteration-0 for group-1, read metrics/eval/log evidence, then choose harden_workflow or replan_workflow_from_results using the scheduled decision model. Log no action if nothing is ready."
+- **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message around the exact recurring job. For `+"`/improve-continuously`"+`, the message should name the configured group_names, use only `+"`runs/iteration-0`"+` evidence for those groups, inspect run outputs plus execution/tool logs for failures, retries, wrong tool arguments, timeouts, validation errors, and stuck steps, read `+"`planning/metrics.json`"+` / `+"`db/metrics_history.jsonl`"+` / `+"`builder/improve.md`"+` / `+"`builder/review.md`"+` / recent `+"`planning/changelog/`"+` entries, and handle report-layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it. Do not default continuous improvement to weekly for active workflows: prefer an optimizer check after every workflow run, or at worst after every two runs; if cron cannot trigger on run completion, approximate with a frequent lightweight schedule that no-ops when there is no new evidence. After material plan/config changes, tighten the improve cadence for 24-48 hours or until the next one or two post-change iteration-0 runs have been reviewed.
+- **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) use bounded evidence review, (2) apply at most one primary harden/replan action per fire, (3) avoid fresh workflow reruns unless verification is explicitly needed, (4) stop after recording what was applied or deferred.
 
 {{end}}
 
@@ -3585,7 +3579,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q completed.\n\n%s", stepID, result), nil
 				}
-				return fmt.Sprintf("Step %q completed.\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read shared workflow guidance: 'cat learnings/_global/SKILL.md'. If this is a learn_code step, also inspect 'cat learnings/%s/main.py'.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — only consider locking after the step has at least 3 successful runs on the same description hash and repeated no-new-learning outcomes.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, result, stepID, stepID, stepID, stepID), nil
+				return fmt.Sprintf("Step %q completed.\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read shared workflow guidance: 'cat learnings/_global/SKILL.md'. If this is a learn_code step, also inspect 'cat learnings/%s/main.py'.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — only consider locking SKILL.md after the step has at least 3 successful runs on the same description hash and repeated no-new-learning outcomes. For learn_code, lock_code requires explicit user intent plus 10+ scenario-covering successful runs.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, result, stepID, stepID, stepID, stepID), nil
 			case WorkshopStepFailed:
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q failed: %v", stepID, execErr), nil
@@ -3946,12 +3940,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 	// Tool 4: update_step_config — update step_config.json for a specific step
 	declaredExecutionModeEnum := []interface{}{"code_exec", "learn_code"}
-	declaredExecutionModeDescription := "Required mode declaration for this step. Always set this intentionally so the optimizer records the final decision explicitly. Builder mode accepts only code_exec; learn_code promotion belongs in Optimizer mode after run evidence."
-	lockCodeDescription := "If true, lock the saved main.py script — prevents LLM-rewritten scripts from being saved back to learnings, and skips the fix loop (falls back directly to code_exec mode). Use this when the saved script is stable and should not be overwritten. Only applies to learn_code steps."
+	declaredExecutionModeDescription := "Required mode declaration for this step. Always set this intentionally so the optimizer records the final decision explicitly. Builder mode accepts only code_exec. In Optimizer mode, set learn_code only when the user explicitly asked for it, the step is highly deterministic, and 10+ successful runs across relevant scenarios/groups prove the saved script is safe."
+	lockCodeDescription := "If true, lock the saved main.py script — prevents LLM-rewritten scripts from being saved back to learnings, and skips the fix loop (falls back directly to code_exec mode). Only applies to learn_code steps. Use only when the user explicitly wanted learn_code, the script is deterministic, and script_metadata/eval evidence shows 10+ successful scenario-covering runs."
 	if iwm.currentWorkshopModeFromConfigs(nil) == "builder" {
 		declaredExecutionModeEnum = []interface{}{"code_exec"}
-		declaredExecutionModeDescription = "Builder mode only accepts code_exec. Create and debug the workflow with code_exec steps; promote stable steps to learn_code later in Optimizer mode."
-		lockCodeDescription = "Unavailable in Builder mode. Builder creates and debugs code_exec steps only; lock_code freezes learn_code main.py scripts and is Optimizer-only after run evidence proves a script is stable. Passing lock_code=true in Builder is rejected."
+		declaredExecutionModeDescription = "Builder mode only accepts code_exec. Create and debug the workflow with code_exec steps; learn_code promotion is Optimizer-only and requires explicit user request plus 10+ scenario-covering successful runs."
+		lockCodeDescription = "Unavailable in Builder mode. Builder creates and debugs code_exec steps only; lock_code freezes learn_code main.py scripts and is Optimizer-only after explicit user intent plus 10+ scenario-covering successful runs prove the script is stable. Passing lock_code=true in Builder is rejected."
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_step_config",
@@ -4136,7 +4130,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if workshopMode == "builder" {
 				if val, ok := args["declared_execution_mode"]; ok && val != nil {
 					if s, ok := val.(string); ok && s == "learn_code" {
-						return "Builder mode only creates and debugs code_exec steps. Use declared_execution_mode=\"code_exec\" here; promote stable steps to learn_code later in Optimizer mode.", nil
+						return "Builder mode only creates and debugs code_exec steps. Use declared_execution_mode=\"code_exec\" here. Learn_code promotion is Optimizer-only and requires explicit user request plus 10+ scenario-covering successful runs.", nil
 					}
 				}
 				if val, ok := args["lock_code"]; ok && val != nil {
@@ -4279,7 +4273,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							isLearnCodeStep := isScriptedExecutionModeConfig(targetConfig.AgentConfigs)
 							if stepWritesLearnings {
 								if isLearnCodeStep {
-									// For scripted code steps: check script exists and has >= 3 successful runs
+									// For scripted code steps: check script exists and has enough scenario-covering evidence.
 									mainPyRelPath := learningsPath + "/main.py"
 									if _, readErr := iwm.controller.ReadWorkspaceFile(ctx, mainPyRelPath); readErr != nil {
 										missing = append(missing, "scripted code main.py (learnings/"+stepID+"/main.py not found — run the step first so the LLM writes and saves main.py)")
@@ -4293,12 +4287,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 												if scriptedSuccessRuns == 0 && meta.SuccessfulRuns["learn_code"] > 0 {
 													scriptedSuccessRuns = meta.SuccessfulRuns["learn_code"]
 												}
-												if scriptedSuccessRuns < 3 {
-													missing = append(missing, fmt.Sprintf("scripted code successful runs (%d/3) — run the step at least 3 more times in learn_code mode to confirm the script is stable before locking", scriptedSuccessRuns))
+												if scriptedSuccessRuns < 10 {
+													missing = append(missing, fmt.Sprintf("scripted code successful runs (%d/10) — keep the step in code_exec/repairable mode until learn_code has 10+ successful scenario-covering runs", scriptedSuccessRuns))
 												}
 											}
 										} else {
-											missing = append(missing, "scripted code metadata (script_metadata.json not found — run the step at least 3 times first)")
+											missing = append(missing, "scripted code metadata (script_metadata.json not found — run the step enough times to prove 10+ scenario-covering successful learn_code runs)")
 										}
 									}
 								} else {
@@ -6196,7 +6190,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7g: replan_workflow_from_results — background agent that rewrites the plan from actual run evidence
 	if err := mcpAgent.RegisterCustomTool(
 		"replan_workflow_from_results",
-		"Start a background agent that reads actual outputs, validation failures, and evaluation results from a real run, then rewrites planning/plan.json to better satisfy the existing objective and success criteria. This is result-driven replanning, not static structural review. Returns execution_id immediately — you will be automatically notified when it completes.",
+		"Start a background agent that reads actual outputs, validation failures, evaluation results, and metric evidence from a real run, then rewrites planning/plan.json so the workflow path better satisfies the existing objective, success criteria, and outcome metrics. Use this when the workflow is aimed at the wrong result or cannot satisfy a success criterion through local hardening alone. This is result-driven alignment replanning, not static structural review. Returns execution_id immediately — you will be automatically notified when it completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -6316,7 +6310,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7g2: harden_workflow — eval-driven hardening plus invariant cleanup
 	if err := mcpAgent.RegisterCustomTool(
 		"harden_workflow",
-		"Start a background agent that reads iteration-0 evaluation reports and execution outputs, identifies failing steps, runs a best-practice sweep over workflow artifacts, and applies targeted fixes: adds pre-validation rules, tightens descriptions, deletes stale code_exec main.py files, patches main.py for learn_code steps, fixes learning/KB/db/report/eval wiring when evidence or hard invariants justify it, and updates step config. This is the primary optimization tool — it analyzes AND acts. Use replan_workflow_from_results only when the whole plan shape needs broader redesign.",
+		"Start a background agent that reads iteration-0 evaluation reports and execution outputs, identifies failing steps, runs a best-practice sweep over workflow artifacts, and applies targeted fixes: adds pre-validation rules, tightens descriptions, deletes stale code_exec main.py files, patches main.py for learn_code steps, fixes learning/KB/db/report/eval wiring when evidence or hard invariants justify it, and updates step config. This is the primary optimization tool — it analyzes AND acts. Use replan_workflow_from_results when run/eval/metric evidence shows the workflow path itself is not aligned with the objective or success criteria and cannot be fixed by local hardening.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -7683,7 +7677,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. Default to mode='workflow' for normal recurring runs. Use mode='workshop' only when the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule; then messages are required. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, iteration-0 evidence scope, active-experiment guards when metrics are present, and bounded stop conditions so unattended runs cannot loop indefinitely. For continuous improvement, do not default to weekly for active workflows; prefer checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable.",
+		"Create a new cron schedule for this workflow. Default to mode='workflow' for normal recurring runs. Use mode='workshop' only when the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule; then messages are required. For /improve-continuously, BOTH schedules must be workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the improve schedule uses workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, iteration-0 evidence scope, metric/eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For continuous improvement, do not default to weekly for active workflows; prefer checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8512,7 +8506,7 @@ This is a **read-only review**:
 7. **Do not drift into full redesign**: You may suggest a concrete correction, but the primary task is to review and explain what is wrong with the current decision.
 8. **Check portability and secrecy**: Flag plan-visible secrets, user-specific values, absolute paths, run-folder-specific values, and brittle environment assumptions.
 9. **Check persistent-store discipline**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations as per-topic markdown; normally written by step agents in direct-write mode; agent mode only when explicitly requested), `+"`"+`db/*.json`+"`"+` (structured durable tables/results for cross-run state and Report UI widgets). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing per-run state in knowledgebase, writing report data only to run folders, or failing to declare `+"`"+`knowledgebase_contribution`+"`"+` / `+"`"+`db/README.md`+"`"+` contracts when steps produce persistent facts.
-10. **Check learning discipline**: A step should write learnings only when it has reusable HOW-to-run knowledge worth capturing across runs, and it must have a concrete `+"`"+`learning_objective`+"`"+`. Prefer `+"`"+`learnings_write_method=\"direct\"`+"`"+`; `+"`"+`agent`+"`"+` is only for explicit user request. Browser-based steps should not be promoted to `+"`"+`learn_code`+"`"+`. `+"`"+`learn_code`+"`"+` should appear only after stable run evidence and no active experiment is still testing the behavior.
+10. **Check learning discipline**: A step should write learnings only when it has reusable HOW-to-run knowledge worth capturing across runs, and it must have a concrete `+"`"+`learning_objective`+"`"+`. Prefer `+"`"+`learnings_write_method=\"direct\"`+"`"+`; `+"`"+`agent`+"`"+` is only for explicit user request. Browser-based steps should not be promoted to `+"`"+`learn_code`+"`"+`. `+"`"+`learn_code`+"`"+` should appear only after explicit user request, highly deterministic behavior, 10+ scenario-covering successful runs, and no recent harden/replan pass still changing the behavior.
 11. **Check KB discipline**: KB writes require a useful `+"`"+`knowledgebase_contribution`+"`"+`, correct read/write access, and preferably `+"`"+`knowledgebase_write_method=\"direct\"`+"`"+`. The KB should contain durable narrative observations about the domain, not execution recipes, raw rows, or volatile run state. If `+"`"+`knowledgebase/notes/_index.json`+"`"+` exists, it must point to coherent topic notes.
 12. **Check db discipline**: `+"`"+`db/*.json`+"`"+` should look like a small database surface, not loose dumps: documented in `+"`"+`db/README.md`+"`"+`, stable JSON shape, primary key, merge/upsert rule, writer ownership, group/run separation, and compatible report consumers.
 13. **Check lock consistency**: Three locks freeze workflow state — `+"`"+`lock_learnings`+"`"+` (per-step: freezes SKILL.md + skips learning agent), `+"`"+`lock_code`+"`"+` (per-step, learn_code only: freezes `+"`"+`learnings/{step-id}/main.py`+"`"+` against fix-loop rewrites), `+"`"+`lock_knowledgebase`+"`"+` (workflow-level: freezes post-step KB update agent). Flag inconsistency like `+"`"+`optimized=true`+"`"+` with `+"`"+`lock_learnings=false`+"`"+` or learn_code steps that are optimized but `+"`"+`lock_code=false`+"`"+` (fix loop can still overwrite a "done" script). If a step description has meaningfully changed since the last review, recommend clearing `+"`"+`description_reviewed`+"`"+` and re-reviewing before keeping the locks.
@@ -8565,7 +8559,7 @@ Review the plan through these lenses:
 1. **Decision justification** — Does each important design choice have a clear reason, or does it look accidental?
 2. **Step boundaries** — Are steps split or merged in a way that makes execution harder, more ambiguous, or more fragile?
 3. **Step type choice** — Is each step using the right type for the actual job?
-4. **Execution mode choice** — Does the declared mode fit the observed work? Builder-created steps should be code_exec; Optimizer may promote to learn_code only with stable evidence. Browser-based steps should not use learn_code. If a step is declared code_exec but still has `+"`learnings/{step-id}/main.py`"+`, flag the script for deletion as stale mode debt.
+4. **Execution mode choice** — Does the declared mode fit the observed work? Builder-created steps should be code_exec; Optimizer may promote to learn_code only when the user explicitly asked for it, the step is highly deterministic, and 10+ scenario-covering successful runs prove stability. Browser-based steps should not use learn_code unless the same strict exception is satisfied. If a step is declared code_exec but still has `+"`learnings/{step-id}/main.py`"+`, flag the script for deletion as stale mode debt.
 5. **Context flow** — Are dependencies/output contracts minimal, correct, and sufficient? Are there artificial file handoffs or missing dependencies?
 6. **Validation & evaluation** — Is the workflow validating and evaluating the things that actually matter for success?
 7. **Portability & secrecy** — Does the current plan leak secrets or overfit to one user, machine, run, or folder structure?
@@ -9215,13 +9209,22 @@ This tool is **evidence-driven and mutating**:
 - identify where the current plan failed in practice
 - apply plan changes directly using workflow plan modification tools
 
+## SOURCE-OF-TRUTH HIERARCHY
+Use this hierarchy before changing the plan:
+1. `+"`soul/soul.md`"+` is the truth: objective and success criteria define what the workflow must achieve.
+2. `+"`planning/metrics.json`"+` and `+"`db/metrics_history.jsonl`"+` operationalize `+"`soul.md`"+`: metrics are numeric evidence, but they do not override the objective or success criteria.
+3. `+"`runs/iteration-0/<group>/...`"+` proves current reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did.
+4. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
+5. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and iteration-0 evidence; do not treat the current plan as proof that the workflow is correct.
+6. `+"`builder/improve.md`"+` and `+"`builder/review.md`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current iteration-0 evidence.
+
 ## RULES
 1. **Use real evidence first**: Base every structural change on what actually happened in the target run. Do not make speculative edits when the artifacts do not support them.
 2. **Do not rewrite the objective**: Treat the existing `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections in `+"`soul/soul.md`"+` as the north star. If they're missing, leave them unchanged and continue using the visible plan context — do NOT edit soul.md from the harden tool.
 3. **Rewrite the plan, not just the report**: Use plan modification tools directly. Do not stop at recommendations.
 4. **Prefer minimal decisive changes**: Merge, split, add, remove, or reorder only when the run evidence justifies it.
 5. **Optimize for actual success**: First make the workflow achieve the success criteria. Only then optimize for elegance or cost.
-6. **Prefer the mode that matches the work**: `+"`learn_code`"+` for stable scripted logic, especially deterministic non-browser work; `+"`code_exec`"+` for adaptive work and generally for browser/UI automation unless the user explicitly wants scripted browser execution.
+6. **Prefer the mode that matches the work**: default to `+"`code_exec`"+`. Promote to `+"`learn_code`"+` only when the user explicitly asks for it, the work is highly deterministic, and there is broad stability evidence (normally 10+ successful runs across the relevant scenarios/groups). Keep adaptive work and browser/UI automation on `+"`code_exec`"+` by default.
 7. **Preserve portability**: Remove plan-visible secrets, user-specific constants, hardcoded paths, and run-specific values when you touch affected steps.
 8. **Do not mark the workflow optimized**: Structural replanning is separate from final optimization readiness.
 9. **Persistent-store aware**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations; normally written by step agents in direct-write mode; agent mode only when explicitly requested), `+"`"+`db/*.json`+"`"+` (structured durable tables/results for cross-run state and Report UI widgets; step-owned, upsert-by-key). When restructuring, use `+"`"+`update_step_config`+"`"+` to set `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` on steps that consume or produce KB facts. If run evidence shows a step stashing durable facts in output files or learnings that belong in the KB, restructure by adding a proper `+"`"+`knowledgebase_contribution`+"`"+` instead of creating new plan steps to manage state.
@@ -9275,7 +9278,7 @@ Prioritize this area while replanning: **{{.Focus}}**
    - convert a regular step into `+"`todo_task`"+` / `+"`routing`"+` when the results show hidden branching
 4. Apply the changes directly using workflow plan tools. Use `+"`diff_patch_workspace_file`"+` only when the workflow tools cannot express the exact edit.
 5. Update step descriptions / validation / success criteria fields only when the results show they are materially wrong or incomplete.
-6. Update step execution modes if the new structure changes the best fit. Prefer `+"`learn_code`"+` for stable scripted paths, especially deterministic non-browser work; prefer `+"`code_exec`"+` for adaptive work and generally for browser/UI automation unless the user explicitly wants scripted browser execution.
+6. Update step execution modes if the new structure changes the best fit. Keep steps on `+"`code_exec`"+` by default. Promote to `+"`learn_code`"+` only when the user explicitly asks for it, the step is highly deterministic, and 10+ successful runs across the relevant scenarios/groups prove the scriptable behavior is stable.
 7. End with a concise summary of what you changed, why, and what should be run next to verify the new plan.
 
 ## OUTPUT FORMAT
@@ -9312,6 +9315,15 @@ You are an eval-driven workflow hardener and best-practice enforcer. Your job is
 
 Every evaluation failure should leave behind a **structural artifact** — a pre-validation rule, a code fix, or a tighter description — not just prose learnings. In addition, every harden pass should clean objective best-practice violations that create future failures or drift even when the current eval did not catch them. The goal is convergence: each harden pass makes the workflow strictly better.
 
+## SOURCE-OF-TRUTH HIERARCHY
+Use this hierarchy before fixing:
+1. `+"`soul/soul.md`"+` is the truth: objective and success criteria define what the workflow must achieve.
+2. `+"`planning/metrics.json`"+` and `+"`db/metrics_history.jsonl`"+` operationalize `+"`soul.md`"+`: metrics are numeric evidence, but they do not override the objective or success criteria.
+3. `+"`runs/iteration-0/<group>/...`"+` proves current reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did.
+4. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
+5. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and iteration-0 evidence; do not treat the current plan as proof that the workflow is correct.
+6. `+"`builder/improve.md`"+` and `+"`builder/review.md`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current iteration-0 evidence.
+
 ## PERSISTENT STORES (READ BEFORE FIXING)
 
 Workflows have three separate stores that survive across runs. Don't move content between them sideways when fixing:
@@ -9333,9 +9345,9 @@ Per-step KB config:
    d. **KB config fixes** — If the failure stems from a step consuming KB facts that don't exist (bad `+"`"+`knowledgebase_access`+"`"+`, or missing `+"`"+`knowledgebase_contribution`+"`"+` on an upstream producer step), use update_step_config to correct it.
 
 {{.MainPyAuthoringRules}}
-4. **Structural fixes are allowed when evidence demands them** — If the failure is caused by a missing step, obsolete step, wrong boundary, or bad ordering, use the plan modification tools (`+"`add_regular_step`"+`, `+"`add_todo_task_route`"+`, `+"`update_*`"+`, `+"`delete_*`"+`) to apply the smallest evidence-backed structural fix. Use `+"`replan_workflow_from_results`"+` only for broad redesign where many steps/routes need reconsideration.
+4. **Structural fixes are allowed when evidence demands them** — If the failure is caused by a missing step, obsolete step, wrong boundary, or bad ordering, use the plan modification tools (`+"`add_regular_step`"+`, `+"`add_todo_task_route`"+`, `+"`update_*`"+`, `+"`delete_*`"+`) to apply the smallest evidence-backed structural fix. Use `+"`replan_workflow_from_results`"+` only when the run/eval/metric evidence shows the workflow path itself is misaligned with the objective or success criteria and needs broader redesign across multiple steps/routes.
 5. **Preserve what works** — Do not modify steps that passed evaluation. Do not weaken existing pre-validation rules.
-6. **Mark reliable steps** — If a step passed across ALL groups with scores >= 8, increment successful_runs via update_step_config. If successful_runs >= 3, set optimized=true, lock_learnings=true, and (for learn_code steps) lock_code=true to freeze `+"`learnings/{step-id}/main.py`"+` against future fix-loop rewrites. Always pass `+"`"+`review_notes`+"`"+` with a one-sentence justification citing the concrete evidence (groups passed, eval scores, pre-validation presence, clean tool usage) — future passes read this to decide whether to unlock.
+6. **Mark reliable steps** — If a step passed across ALL groups with scores >= 8, increment successful_runs via update_step_config. Use 3+ successful runs only as operational stability evidence for optimized/lock_learnings consideration; do NOT promote to `+"`learn_code`"+` or set `+"`lock_code=true`"+` unless the user explicitly asked for learn_code, the step is highly deterministic, and script/eval evidence shows 10+ successful runs across the relevant scenario/group surface. Always pass `+"`"+`review_notes`+"`"+` with a one-sentence justification citing the concrete evidence (groups passed, eval scores, pre-validation presence, clean tool usage) — future passes read this to decide whether to unlock.
 7. **Portability check** — When touching a step, scan for hardcoded user-specific values (account IDs, sheet URLs, paths) in descriptions and learnings. Replace with variable placeholders.
 8. **Store discipline** — If the failure evidence shows a step writing cross-run state into learnings/ or plan.json, recommend moving that content to `+"`"+`db/`+"`"+` or to the KB (via `+"`"+`knowledgebase_contribution`+"`"+`) as appropriate.
 9. **Best-practice sweep is required** — After building the failure map, inspect the workflow artifacts listed below and fix hard violations. For non-blocking concerns, append findings to your summary instead of making speculative edits.
@@ -9346,8 +9358,8 @@ Run this sweep on every harden pass. For a single-group harden, use that group's
 
 1. **Execution mode / saved code**
    - `+"`code_exec`"+` steps must not keep `+"`learnings/{step-id}/main.py`"+`. If present, delete it and clear `+"`lock_code`"+`.
-   - Browser/UI-heavy steps should generally stay `+"`code_exec`"+`. If a browser step is `+"`learn_code`"+`, keep it only with explicit user intent and strong script stability evidence; otherwise convert to `+"`code_exec`"+` and remove stale script artifacts.
-   - `+"`learn_code`"+` steps should have `+"`script_metadata.json`"+` evidence before `+"`lock_code=true`"+`.
+   - Browser/UI-heavy steps should generally stay `+"`code_exec`"+`. If a browser step is `+"`learn_code`"+`, keep it only with explicit user intent and 10+ scenario-covering successful runs proving durable selectors/state-driven waits; otherwise convert to `+"`code_exec`"+` and remove stale script artifacts.
+   - `+"`learn_code`"+` steps should have `+"`script_metadata.json`"+` evidence with 10+ successful runs across the relevant scenarios/groups before `+"`lock_code=true`"+`.
 2. **Learning state**
    - Steps with `+"`learnings_access=\"read-write\"`"+` need a concrete `+"`learning_objective`"+` and normally `+"`learnings_write_method=\"direct\"`"+`.
    - For `+"`lock_learnings=true`"+`, read `+"`learnings/{step-id}/.learning_metadata.json`"+`. Check `+"`description_hash_runs >= 3`"+`; for direct learning, also require repeated no-new-learning outcomes. If metadata is missing, auto-unlocked, or contradicts step_config, unlock or correct config with review_notes.
@@ -9509,7 +9521,7 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
 
 6. **For each passing step** ({{if .GroupName}}passed for `+"`{{.GroupName}}`"+`{{else}}passed ALL groups{{end}}):
    - If successful_runs < 3, increment via update_step_config
-   - If successful_runs >= 3, set optimized=true, lock_learnings=true, and (learn_code steps only) lock_code=true — freezes main.py so a single future transient failure won't trigger the fix loop to rewrite a proven script
+   - If successful_runs >= 3, set optimized=true and lock_learnings=true when the learning notes are stable. For learn_code steps, set lock_code=true only when the user explicitly wanted learn_code, the step is highly deterministic, and script/eval evidence shows 10+ successful runs across the relevant scenario/group surface.
    - **Unlock guard**: If you suspect the step description changed since the last review (description_reviewed may no longer reflect the current description), do NOT auto-lock. Instead flag the step as "description may have changed since last review — re-review before locking" and leave lock_learnings / lock_code at their previous values.{{if .GroupName}}
    - **Single-group caution**: Marking optimized after only one group passing is weaker evidence than after all-groups passing. Be more conservative — prefer incrementing successful_runs to locking outright unless the count is already at 3+.{{end}}
 
@@ -9518,7 +9530,7 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
    - Best-practice violations cleaned up
    - Best-practice concerns intentionally left as findings only
    - Steps marked optimized
-   - Structural fixes applied, or broader structural redesign still recommended for replan_workflow_from_results
+   - Structural fixes applied, or broader success-criteria/metric alignment redesign still recommended for replan_workflow_from_results
    - Remaining risk areas
 
 ## PRE-VALIDATION EVOLUTION GUIDE

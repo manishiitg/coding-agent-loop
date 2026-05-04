@@ -1404,45 +1404,11 @@ export const agentApi = {
     const response = await api.get('/api/workflow/decisions', { params: { workspace_path: workspacePath } })
     return { ...response.data, decisions: Array.isArray(response.data?.decisions) ? response.data.decisions : [] }
   },
-  getAutoImprovementExperiments: async (workspacePath: string, includeHistory = true): Promise<{ success: boolean; active: any[]; history?: any[]; error?: string }> => {
-    const response = await api.get('/api/workflow/experiments', {
-      params: { workspace_path: workspacePath, include_history: includeHistory ? 'true' : 'false' }
-    })
-    return {
-      ...response.data,
-      active: Array.isArray(response.data?.active) ? response.data.active : [],
-      history: Array.isArray(response.data?.history) ? response.data.history : [],
-    }
-  },
   getAutoImprovementEvalTrajectory: async (workspacePath: string): Promise<{ success: boolean; series: any[]; error?: string }> => {
     const response = await api.get('/api/workflow/eval-trajectory', { params: { workspace_path: workspacePath } })
     return { ...response.data, series: Array.isArray(response.data?.series) ? response.data.series : [] }
   },
-  abortExperiment: async (workspacePath: string, experimentId: string, reason: string, actorUser?: string): Promise<{ success: boolean; error?: string }> => {
-    const response = await api.post('/api/workflow/experiments/abort', {
-      workspace_path: workspacePath, experiment_id: experimentId, reason, actor_user: actorUser || ''
-    })
-    return response.data
-  },
-  extendExperiment: async (workspacePath: string, experimentId: string, additionalRuns: number, reason: string, actorUser?: string): Promise<{ success: boolean; error?: string }> => {
-    const response = await api.post('/api/workflow/experiments/extend', {
-      workspace_path: workspacePath, experiment_id: experimentId, additional_runs: additionalRuns, reason, actor_user: actorUser || ''
-    })
-    return response.data
-  },
-  manualConcludeExperiment: async (workspacePath: string, experimentId: string, verdict: string, reason: string, rationale: string, actorUser?: string): Promise<{ success: boolean; final_verdict?: string; archived?: boolean; error?: string }> => {
-    const response = await api.post('/api/workflow/experiments/manual-conclude', {
-      workspace_path: workspacePath, experiment_id: experimentId, verdict, reason, rationale, actor_user: actorUser || ''
-    })
-    return response.data
-  },
-  approveExperiment: async (workspacePath: string, experimentId: string, gate: 'hypothesis' | 'conclusion', actorUser?: string): Promise<{ success: boolean; error?: string }> => {
-    const response = await api.post('/api/workflow/experiments/approve', {
-      workspace_path: workspacePath, experiment_id: experimentId, gate, actor_user: actorUser || ''
-    })
-    return response.data
-  },
-  getBuilderDoc: async (workspacePath: string, doc: 'improve' | 'review'): Promise<{ success: boolean; doc: string; path: string; exists: boolean; content: string; error?: string }> => {
+  getBuilderDoc: async (workspacePath: string, doc: 'improve' | 'review' | 'soul'): Promise<{ success: boolean; doc: string; path: string; exists: boolean; content: string; error?: string }> => {
     const response = await api.get('/api/workflow/builder-doc', { params: { workspace_path: workspacePath, doc } })
     return response.data
   },

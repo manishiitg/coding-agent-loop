@@ -507,16 +507,17 @@ The `ExecutionLogsPopup` component displays todo task logs in a similar format t
 
 ## Orchestrator learn_code mode (fast path)
 
-A todo_task step can be put into **learn_code mode** — the builder authors a Python `main.py` at `learnings/{step-id}/main.py` that drives the orchestration deterministically. At runtime, if eligibility holds, the script runs first and returns success with **zero LLM tokens**. Any failure falls through to the normal LLM orchestrator with a **fresh start** (no state carried over from the script).
+A todo_task step can be put into **learn_code mode** only as an Optimizer promotion after the user explicitly asks for a scripted fast path, the orchestration is highly deterministic, and 10+ scenario-covering successful runs prove the route behavior is stable. Optimizer authors a Python `main.py` at `learnings/{step-id}/main.py` that drives the orchestration deterministically. At runtime, if eligibility holds, the script runs first and returns success with **zero LLM tokens**. Any failure falls through to the normal LLM orchestrator with a **fresh start** (no state carried over from the script).
 
 ### Eligibility
 
-Both conditions required — checked at the start of `executeTodoTaskStep`:
+All conditions are required before promotion; runtime checks only the mechanical eligibility at the start of `executeTodoTaskStep`:
 
 1. `declared_execution_mode = "learn_code"` set on the step (via `update_step_config(step_id, declared_execution_mode="learn_code")`) — lives in `planning/step_config.json`, not plan.json
 2. `len(predefined_routes) >= 1` — the script needs routes to call
+3. Promotion policy already satisfied before that config is set: explicit user request, deterministic route behavior, and 10+ successful scenario-covering runs
 
-Either missing → script never attempted, step runs as normal LLM orchestrator.
+If either runtime eligibility condition is missing, the script is never attempted and the step runs as the normal LLM orchestrator. If the policy condition was not met, do not set `declared_execution_mode="learn_code"` in the first place.
 
 ### Contract
 

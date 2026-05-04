@@ -12,7 +12,7 @@ These docs cover workflow design, execution, and workflow-scoped runtime behavio
 
 ## Files
 
-- `auto_improvement_framework.md` — measurable, auditable, overridable workflow improvement: types, metrics, experiment loop, oversight modes
+- `auto_improvement_framework.md` — metric-backed workflow improvement: metrics as evidence, harden/replan decisions, schedules, and audit logs
 - `browser_automation.md` — durable selector and browser-discovery guidance for workflow browser steps
 - `cost_and_log_measurement.md` — token usage, cost files, phase/run aggregation, and log storage
 - `evaluation_system.md` — workflow evaluation runs, eval step execution, and scoring reports

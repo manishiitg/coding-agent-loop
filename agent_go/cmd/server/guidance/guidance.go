@@ -30,14 +30,14 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
-//go:embed templates/builder/*.md templates/review/*.md templates/improve/*.md templates/experiment/*.md templates/report/*.md
+//go:embed templates/builder/*.md templates/review/*.md templates/improve/*.md templates/report/*.md
 var templatesFS embed.FS
 
 // kindMeta captures everything we know about a guided flow at registration
 // time: which file holds its template, which workshop modes are allowed to
 // invoke it, and a one-line description used in the tool-list enum.
 type kindMeta struct {
-	Group       string // builder | review | improve | experiment
+	Group       string // builder | review | improve | report
 	Description string // shown to the agent in the kind enum
 	Modes       []string
 }
@@ -64,16 +64,12 @@ var allKinds = map[string]kindMeta{
 	"review-code":   {Group: "review", Description: "Saved main.py vs current step descriptions drift check", Modes: []string{"optimizer"}},
 	"review-sync":   {Group: "review", Description: "Audit plan changelog entries against dependent artifacts: learnings, main.py, KB, db, reports, and eval wiring", Modes: []string{"builder", "optimizer"}},
 
-	// Improvements — AI proposes; framework gates when metrics defined
+	// Improvements — metric-driven harden/replan flows
 	"improve-setup-framework": {Group: "improve", Description: "One-time bootstrap of the auto-improvement framework (Workflow Profile + metrics)", Modes: []string{"optimizer"}},
-	"improve-workflow":        {Group: "improve", Description: "Unified plan + KB + learnings improvement (EXPERIMENT MODE when metrics defined)", Modes: []string{"optimizer"}},
-	"improve-eval":            {Group: "improve", Description: "Evaluation plan changes (rubric edits gated against active experiments)", Modes: []string{"optimizer"}},
+	"improve-workflow":        {Group: "improve", Description: "Unified metric-driven workflow improvement: harden or replan from run/eval evidence", Modes: []string{"optimizer"}},
+	"improve-eval":            {Group: "improve", Description: "Evaluation plan changes and metric-source health checks", Modes: []string{"optimizer"}},
 	"improve-continuously":    {Group: "improve", Description: "Set up recurring run + optimizer schedules", Modes: []string{"optimizer"}},
 	"import-report":           {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"builder", "optimizer", "reporting"}},
-
-	// Experiment lifecycle
-	"propose-experiment": {Group: "experiment", Description: "Focused experiment opener: pick metric(s), formulate hypothesis, call propose_experiment", Modes: []string{"optimizer"}},
-	"exp-abort":          {Group: "experiment", Description: "Revert + abort the active experiment via captured revertable_diff", Modes: []string{"optimizer"}},
 }
 
 // tmplData is the typed context passed to every guidance template. New
@@ -172,7 +168,7 @@ func RegisterGuidanceTool(agent *mcpagent.Agent, currentMode string, logger logg
 		"Call this tool — and follow the returned instructions verbatim — when (1) the user invokes a slash command " +
 		"like /improve-workflow or /review-plan (the slash command will name the kind to pass), (2) the user describes " +
 		"the same intent in plain chat (\"help me improve this workflow\", \"review whether the goal is being met\", " +
-		"\"abort the active experiment\") — recognize the intent and pick the matching kind, or (3) you're running on a " +
+		"\"improve the eval plan\") — recognize the intent and pick the matching kind, or (3) you're running on a " +
 		"schedule and the message names a kind. The returned text is your instructions for this turn — do not paraphrase " +
 		"or skip steps. Available kinds:\n" + kindEnumWithDescriptions() +
 		"Mode validation: each kind is gated to specific workshop modes. If the user's request matches a kind not allowed " +

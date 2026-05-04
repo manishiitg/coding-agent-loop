@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"log"
 	pathpkg "path"
 	"path/filepath"
 	"strings"
@@ -114,9 +113,7 @@ func migrateLegacyEvaluationReports(ctx context.Context, workspacePath string) e
 			continue
 		}
 
-		if err := persistEvaluationReportToScoresWithOptions(ctx, workspacePath, runFolder, &report, persistEvaluationReportOptions{
-			recordMeasurement: false,
-		}); err != nil {
+		if err := persistEvaluationReportToScores(ctx, workspacePath, runFolder, &report); err != nil {
 			return err
 		}
 	}
@@ -125,16 +122,6 @@ func migrateLegacyEvaluationReports(ctx context.Context, workspacePath string) e
 }
 
 func persistEvaluationReportToScores(ctx context.Context, workspacePath, runFolder string, report *EvaluationReport) error {
-	return persistEvaluationReportToScoresWithOptions(ctx, workspacePath, runFolder, report, persistEvaluationReportOptions{
-		recordMeasurement: true,
-	})
-}
-
-type persistEvaluationReportOptions struct {
-	recordMeasurement bool
-}
-
-func persistEvaluationReportToScoresWithOptions(ctx context.Context, workspacePath, runFolder string, report *EvaluationReport, opts persistEvaluationReportOptions) error {
 	if report == nil {
 		return nil
 	}
@@ -169,21 +156,6 @@ func persistEvaluationReportToScoresWithOptions(ctx context.Context, workspacePa
 	}
 	if err := writeRawFileToWorkspace(ctx, targetPath, string(jsonData)); err != nil {
 		return err
-	}
-
-	if opts.recordMeasurement {
-		// Auto-improvement framework hook: now that this run's eval scores are
-		// persisted (so eval_step source values are queryable) and cost storage
-		// has finalized (so telemetry source values are queryable), fan out to
-		// any active experiments. Async — we don't want eval persistence to wait
-		// on the experiment loop, and a measurement failure must not block the
-		// eval pipeline.
-		go func(workspace, run string) {
-			bgCtx := context.Background()
-			if err := RecordMeasurement(bgCtx, workspace, run); err != nil {
-				log.Printf("[RECORD_MEASUREMENT] async failed for %s / %s: %v", workspace, run, err)
-			}
-		}(workspacePath, runFolder)
 	}
 
 	return nil

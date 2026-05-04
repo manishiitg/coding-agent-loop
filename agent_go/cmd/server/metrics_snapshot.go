@@ -109,7 +109,7 @@ func writePerRunSnapshot(ctx context.Context, workspacePath, runFolder, complete
 }
 
 // appendToCrossRunHistory appends one JSONL row per metric to db/metrics_history.jsonl.
-// Uses appendJSONLRecord (read-modify-write atomic) — same pattern as decisions/experiments.
+// Uses appendJSONLRecord (read-modify-write atomic) — same pattern as decisions.
 func appendToCrossRunHistory(ctx context.Context, workspacePath string, rows []MetricSnapshotRow) {
 	historyPath := path.Join(workspacePath, "db", "metrics_history.jsonl")
 	for i := range rows {

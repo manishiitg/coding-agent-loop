@@ -800,11 +800,12 @@ function ReadOnlyStepDetailPanel({
         </div>
         <button
           onClick={onClose}
-          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label="Close step details"
           title="Close"
         >
-          <X className="h-4 w-4" />
+          <X className="h-3.5 w-3.5" />
+          <span>Close</span>
         </button>
       </div>
 
@@ -2292,13 +2293,26 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [stepStatusMap, setNodes, toolbarOnly, canvasViewMode])
 
 
+  useEffect(() => {
+    if (!selectedFlowNode) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSelectedFlowNode(null)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedFlowNode])
+
   const onNodeClick = useCallback((_: React.MouseEvent, node: WorkflowNode) => {
     if (node.type === 'variables') {
       setShowVariablesSidebar(true)
       setSelectedFlowNode(null)
       return
     }
-    setSelectedFlowNode(node)
+    setSelectedFlowNode(current => current?.id === node.id ? null : node)
   }, [])
   const onPaneClick = useCallback(() => {
     setSelectedFlowNode(null)
@@ -2548,14 +2562,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 // Add display name for debugging
 WorkflowCanvasInner.displayName = 'WorkflowCanvasInner'
 
-// Wrap with ReactFlowProvider for hooks to work
-export const WorkflowCanvasWithProvider = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((props, ref) => {
+// Wrap with ReactFlowProvider for hooks to work. Memoizing this boundary keeps
+// chat/tool stream renders from repainting the canvas when workflow props are unchanged.
+export const WorkflowCanvasWithProvider = React.memo(forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((props, ref) => {
   return (
     <ReactFlowProvider>
       <WorkflowCanvasInner {...props} ref={ref} />
     </ReactFlowProvider>
   )
-})
+}))
 
 WorkflowCanvasWithProvider.displayName = 'WorkflowCanvasWithProvider'
 

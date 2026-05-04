@@ -10,12 +10,11 @@ import (
 // =====================================================================
 // soul_preconditions.go — gate the auto-improvement framework on soul.md.
 //
-// The framework's contract: experiments move metrics → metrics
-// operationalize success_criteria → success_criteria are the user-facing
-// outcome. If soul.md is missing or empty, there is no north star, and
-// metrics defined against it are arbitrary. So before any metric can be
-// added, both `## Objective` and `## Success Criteria` must hold real
-// content — not the scaffold placeholders.
+// The framework's contract: metrics operationalize success_criteria, and
+// success_criteria are the user-facing outcome. If soul.md is missing or
+// empty, there is no north star, and metrics defined against it are arbitrary.
+// So before any metric can be added, both `## Objective` and
+// `## Success Criteria` must hold real content — not scaffold placeholders.
 //
 // Self-contained reader so the framework files don't pull a dependency
 // on the orchestrator package; the section-extraction logic mirrors
@@ -27,12 +26,12 @@ import (
 // adding metrics to a workflow that doesn't yet declare what success
 // looks like.
 type SoulPreconditions struct {
-	SoulPath           string
-	SoulExists         bool
-	Objective          string
-	SuccessCriteria    string
-	ObjectiveOK        bool
-	SuccessCriteriaOK  bool
+	SoulPath          string
+	SoulExists        bool
+	Objective         string
+	SuccessCriteria   string
+	ObjectiveOK       bool
+	SuccessCriteriaOK bool
 }
 
 // RequireSoulPreconditions returns nil iff soul.md exists and both
@@ -45,7 +44,7 @@ func RequireSoulPreconditions(ctx context.Context, workspacePath string) error {
 		return err
 	}
 	if !pre.SoulExists {
-		return fmt.Errorf("soul/soul.md is missing — write it first with `## Objective` and `## Success Criteria` sections. Metrics without an objective are arbitrary; without success_criteria, the framework has no north star to verdict against")
+		return fmt.Errorf("soul/soul.md is missing — write it first with `## Objective` and `## Success Criteria` sections. Metrics without an objective are arbitrary; without success_criteria, the framework has no north star to measure against")
 	}
 	if !pre.ObjectiveOK && !pre.SuccessCriteriaOK {
 		return fmt.Errorf("soul/soul.md exists but `## Objective` and `## Success Criteria` are both empty or still TODO placeholders — fill them in before defining metrics")

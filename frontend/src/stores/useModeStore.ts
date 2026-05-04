@@ -33,8 +33,8 @@ export const useModeStore = create<ModeState>()(
 
         return {
           // Initial state
-          selectedModeCategory: null,
-          hasCompletedInitialSetup: false,
+          selectedModeCategory: 'multi-agent',
+          hasCompletedInitialSetup: true,
           lastSelectedPreset: {
             'workflow': null,
           },
@@ -109,8 +109,8 @@ export const useModeStore = create<ModeState>()(
 
           resetModeSelection: () => {
             set({
-              selectedModeCategory: null,
-              hasCompletedInitialSetup: false,
+              selectedModeCategory: 'multi-agent',
+              hasCompletedInitialSetup: true,
               lastSelectedPreset: {
                 'workflow': null,
               }

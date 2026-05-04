@@ -247,9 +247,7 @@ func createGenerateTextLLMExecutor(workspaceURL string) func(ctx context.Context
 }
 
 // GenerateTextOneShot is an exported helper that mirrors generate_text_llm
-// but is callable directly from Go code (not via the LLM tool surface). Used
-// by the auto-improvement framework's evaluator-agent path to narrate
-// experiment verdicts without having to spin up a full agent.
+// but is callable directly from Go code (not via the LLM tool surface).
 //
 // Pass tier "low", "medium", or "high"; system + user are the two messages.
 // Returns the model's text response, trimmed.

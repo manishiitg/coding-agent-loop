@@ -159,7 +159,7 @@ Two optional top-level fields configure hard behavioral gates the auto-improveme
 
 | Field | Values | Default | Purpose |
 |---|---|---|---|
-| `oversight_mode` | `manual` \| `supervised` \| `autonomous` | `supervised` | Controls when human approval is required for hypothesis acceptance and verdict commitment. Hard gate. |
+| `oversight_mode` | `manual` \| `supervised` \| `autonomous` | `supervised` | Controls when human approval is required for high-risk framework changes. Hard gate. |
 | `decision_log_mutability` | `append_only` \| `append_only_strict` | `append_only` | `append_only_strict` forbids any edit to a decision-log entry, even corrective. Used by compliance workflows. Hard gate. |
 
 **The workflow's profile** — typology (deterministic / exploratory / contextual), plan stability, runtime mode (single / dual explore-exploit), and whether it accumulates business context — lives as **prose in `builder/improve.md`** under a `## Workflow Profile` section. The agent reads improve.md on every improvement turn and adjusts behavior accordingly. Real workflows mix axes a single enum can't express (e.g. social-media is exploratory + dual-mode + accumulating-context all at once); prose captures the nuance, and the framework no longer hard-gates on a workflow_type value.
@@ -196,8 +196,7 @@ These still live alongside it:
 - `evaluation/evaluation_plan.json`
 - `planning/metrics.json` — defines the workflow's quantified goals and how each value is sourced per run. Lives under `planning/` so the existing FolderGuard `BlockedWritePaths` makes it tool-only — only the privileged `propose_metric` tool can write here (same pattern as `planning/step_config.json` / `update_step_config`). See [auto_improvement_framework.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/auto_improvement_framework.md).
 - `builder/decisions.jsonl` — append-only structured audit log of every change to the workflow (sidecar to the existing `builder/improve.md` prose log). Auto-improvement framework.
-- `knowledgebase/rules/rules.md` and `knowledgebase/rules/examples/` — Type 3 business-rule store. User-supplied rules from `capture_context`. Excluded from `reorganize_knowledgebase` and `consolidate_knowledgebase` passes — never silently rewritten by the optimizer. Audit trail folded into `builder/decisions.jsonl` (filter to `source: user` + `trigger: capture-context`).
-- `experiments/active.json`, `experiments/history.jsonl`, `experiments/config.json`, `experiments/diffs/<id>.patch` — experiment loop persistence (Types 2 and 3).
+- `knowledgebase/rules/rules.md` and `knowledgebase/rules/examples/` — Type 3 business-rule store. User-supplied rules are captured through chat-intent rule capture. Excluded from `reorganize_knowledgebase` and `consolidate_knowledgebase` passes — never silently rewritten by the optimizer. Audit trail folded into `builder/decisions.jsonl` (filter to `source: user` + `trigger: capture-context`).
 
 `workflow.json` is the workflow-level definition file.
 The planning files are still the step graph and execution-plan files.

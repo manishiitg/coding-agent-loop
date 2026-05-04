@@ -23,7 +23,6 @@ import { prepareDomForPdfExport } from "./utils/pdfExport";
 import { convertToSlackMarkdown } from "./utils/slackMarkdown";
 import { isDiffFilePath, looksLikeDiffContent } from "./utils/diff";
 import { Edit, Save, X, Loader2, Download, Link, Github } from "lucide-react";
-import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
 import { WorkflowsOverviewPage } from "./components/WorkflowsOverviewPage";
 import { ModePresetBar } from "./components/ModePresetBar";
@@ -31,6 +30,7 @@ import { QuickSwitcher } from "./components/QuickSwitcher";
 import { ChatTabs } from "./components/ChatTabs";
 import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
+import { useLLMStore } from "./stores/useLLMStore";
 import { useAuthStore } from "./stores/useAuthStore";
 import { waitForChatStoreHydration } from "./stores/useChatStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
@@ -159,7 +159,12 @@ function App() {
 
   // Store subscriptions
   const { setAgentMode, setSidebarMinimized } = useAppStore()
-  const { hasCompletedInitialSetup, selectedModeCategory } = useModeStore()
+  const { hasCompletedInitialSetup, selectedModeCategory, setModeCategory, completeInitialSetup } = useModeStore()
+  const defaultsLoaded = useLLMStore(state => state.defaultsLoaded)
+  const savedLLMs = useLLMStore(state => state.savedLLMs)
+  const llmConfigLocked = useLLMStore(state => state.llmConfigLocked)
+  const isConfigValid = useLLMStore(state => state.isConfigValid)
+  const setShowLLMModal = useLLMStore(state => state.setShowLLMModal)
   
   // Load LLM defaults from backend
   useLLMDefaults()
@@ -874,6 +879,7 @@ function App() {
   }, [showFileContent, getHasUnsavedChanges])
 
   const hasInitializedRef = useRef(false)
+  const hasCheckedInitialLLMConfigRef = useRef(false)
 
   // Initialize stores on mount
   useEffect(() => {
@@ -894,6 +900,27 @@ function App() {
     // Initialize workflow store (load phases)
     useWorkflowStore.getState().loadPhases()
   }, [])
+
+  // First launch now defaults directly to Chat. If no LLM is configured once
+  // backend defaults are loaded, open the LLM configuration dialog instead of
+  // asking the user to choose between Chat and Workflow.
+  useEffect(() => {
+    if (!hasCompletedInitialSetup || !selectedModeCategory) {
+      setModeCategory('multi-agent')
+      completeInitialSetup()
+    }
+  }, [hasCompletedInitialSetup, selectedModeCategory, setModeCategory, completeInitialSetup])
+
+  useEffect(() => {
+    if (hasCheckedInitialLLMConfigRef.current) return
+    if (!defaultsLoaded) return
+
+    hasCheckedInitialLLMConfigRef.current = true
+    const hasConfiguredLLM = isConfigValid() || savedLLMs.length > 0 || llmConfigLocked
+    if (!hasConfiguredLLM) {
+      setShowLLMModal(true)
+    }
+  }, [defaultsLoaded, isConfigValid, llmConfigLocked, savedLLMs.length, setShowLLMModal])
   
   // Create default tab on page load (only for multi-agent mode, not workflow mode)
   // In workflow mode, tabs are created when user starts a phase/execution
@@ -1107,9 +1134,6 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedModeCategory, setSidebarMinimized])
 
-  // Show mode selection modal if initial setup not completed
-  const showModeSelection = !hasCompletedInitialSetup
-
   // Start new chat function
   const startNewChat = useCallback(() => {
     
@@ -1281,12 +1305,6 @@ function App() {
       <ThemeProvider>
         <AuthWrapper>
         <TooltipProvider>
-        {/* Mode Selection Modal */}
-        <ModeSelectionModal
-          isOpen={showModeSelection}
-          onClose={() => {}} // Modal handles its own closing
-        />
-
         <div className="h-screen bg-background flex">
           {/* Left Sidebar */}
           <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out relative z-30`}>

@@ -56,7 +56,7 @@ type ProposeMetricOutput struct {
 func ProposeMetric(ctx context.Context, workspacePath, trigger string, input ProposeMetricInput) (*ProposeMetricOutput, error) {
 	// Soul precondition: an objective and success_criteria must exist before
 	// metrics are defined against them. Without that anchor, metrics are
-	// arbitrary and the framework has no north star to verdict against.
+	// arbitrary and the framework has no north star to measure against.
 	if err := RequireSoulPreconditions(ctx, workspacePath); err != nil {
 		return nil, err
 	}
@@ -245,37 +245,6 @@ func dryResolveWarnings(ctx context.Context, workspacePath string, src *MetricSo
 	return []string{
 		fmt.Sprintf("No published eval report found for step %q yet. Cannot dry-resolve field=%q until the next eval run produces a report.", stepID, field),
 	}
-}
-
-// trimAndDedupe drops empty entries and duplicates while preserving order.
-func trimAndDedupe(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		t := strings.TrimSpace(s)
-		if t == "" {
-			continue
-		}
-		if _, ok := seen[t]; ok {
-			continue
-		}
-		seen[t] = struct{}{}
-		out = append(out, t)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func max1(v int) int {
-	if v < 1 {
-		return 1
-	}
-	return v
 }
 
 // =====================================================================

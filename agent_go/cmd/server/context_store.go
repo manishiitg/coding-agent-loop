@@ -25,17 +25,6 @@ func contextRulesPath(workspacePath string) string {
 	return path.Join(strings.Trim(workspacePath, "/"), "knowledgebase", "rules", "rules.md")
 }
 
-func contextExamplesDir(workspacePath string) string {
-	return path.Join(strings.Trim(workspacePath, "/"), "knowledgebase", "rules", "examples")
-}
-
-// rulesFolderRelative returns the workflow-relative path to the rules folder,
-// for use by tools that need to gate writes / exclude this folder from KB
-// optimization passes.
-func rulesFolderRelative() string {
-	return "knowledgebase/rules"
-}
-
 // ReadContextRules returns the contents of knowledgebase/rules/rules.md.
 func ReadContextRules(ctx context.Context, workspacePath string) (string, bool, error) {
 	return readFileFromWorkspace(ctx, contextRulesPath(workspacePath))

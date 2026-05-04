@@ -17,18 +17,17 @@ import (
 //   GET  /api/workflow/eval-trajectory?workspace_path=...
 //   GET  /api/workflow/decisions?workspace_path=...
 //   GET  /api/workflow/metrics?workspace_path=...
-//   GET  /api/workflow/experiments?workspace_path=...&include_history=true
 //
-// All read-only; mutating endpoints land later (Phase 5 user-side actions).
+// All read-only.
 // =====================================================================
 
 // EvalTrajectoryPoint is one (run_folder, score) sample for a single eval step.
 type EvalTrajectoryPoint struct {
-	RunFolder      string  `json:"run_folder"`
-	GeneratedAt    string  `json:"generated_at"`
-	Score          int     `json:"score"`
-	MaxScore       int     `json:"max_score"`
-	ScorePercent   float64 `json:"score_percent"`
+	RunFolder    string  `json:"run_folder"`
+	GeneratedAt  string  `json:"generated_at"`
+	Score        int     `json:"score"`
+	MaxScore     int     `json:"max_score"`
+	ScorePercent float64 `json:"score_percent"`
 }
 
 // EvalTrajectorySeries is one eval step's time series.
@@ -120,9 +119,9 @@ func (api *StreamingAPI) handleGetDecisionsFeed(w http.ResponseWriter, r *http.R
 
 // MetricsResponse is the JSON shape of GET /api/workflow/metrics.
 type MetricsResponse struct {
-	Success bool        `json:"success"`
+	Success bool         `json:"success"`
 	File    *MetricsFile `json:"file,omitempty"`
-	Error   string      `json:"error,omitempty"`
+	Error   string       `json:"error,omitempty"`
 }
 
 func (api *StreamingAPI) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
@@ -179,41 +178,6 @@ func (api *StreamingAPI) handleGetMetricsHistory(w http.ResponseWriter, r *http.
 	writeAIJSON(w, MetricsHistoryResponse{Success: true, Rows: rows})
 }
 
-// ExperimentsResponse is the JSON shape of GET /api/workflow/experiments.
-type ExperimentsResponse struct {
-	Success  bool                `json:"success"`
-	Active   []ExperimentRecord  `json:"active"`
-	History  []ExperimentRecord  `json:"history,omitempty"`
-	Error    string              `json:"error,omitempty"`
-}
-
-func (api *StreamingAPI) handleGetExperiments(w http.ResponseWriter, r *http.Request) {
-	if !setupCORS(w, r, http.MethodGet) {
-		return
-	}
-	workspacePath, ok := requireWorkspacePath(w, r)
-	if !ok {
-		return
-	}
-	includeHistory := r.URL.Query().Get("include_history") == "true"
-
-	active, err := ReadActiveExperiments(r.Context(), workspacePath)
-	if err != nil {
-		writeAIJSON(w, ExperimentsResponse{Success: false, Error: err.Error()})
-		return
-	}
-	resp := ExperimentsResponse{Success: true, Active: active}
-	if includeHistory {
-		hist, err := ReadHistoryExperiments(r.Context(), workspacePath)
-		if err != nil {
-			writeAIJSON(w, ExperimentsResponse{Success: false, Error: err.Error()})
-			return
-		}
-		resp.History = hist
-	}
-	writeAIJSON(w, resp)
-}
-
 // FrameworkHealthResponse is the JSON shape of GET /api/workflow/framework-health.
 // One stop shop for "is the framework wired correctly?": soul preconditions,
 // success-criteria coverage by metrics, and the unanchored-metric set.
@@ -254,33 +218,20 @@ func (api *StreamingAPI) handleGetFrameworkHealth(w http.ResponseWriter, r *http
 	writeAIJSON(w, resp)
 }
 
-// isTelemetryMetric returns true for the universal telemetry SLOs
-// (cost_per_run, run_duration_seconds) and any metric sourced from
-// telemetry.
-func isTelemetryMetric(m Metric) bool {
-	if m.Source.Type == MetricSourceTelemetry {
-		return true
-	}
-	switch m.ID {
-	case "cost_per_run", "run_duration_seconds":
-		return true
-	}
-	return false
-}
-
 // BuilderDocResponse is the JSON shape of GET /api/workflow/builder-doc.
 // It returns the markdown content (or empty if the file does not exist yet).
 type BuilderDocResponse struct {
 	Success bool   `json:"success"`
-	Doc     string `json:"doc"`     // "improve" | "review" — echoed back
+	Doc     string `json:"doc"`     // "improve" | "review" | "soul" — echoed back
 	Path    string `json:"path"`    // workspace-relative path that was read
 	Exists  bool   `json:"exists"`  // false if the file does not exist yet
 	Content string `json:"content"` // markdown body, "" when !exists
 	Error   string `json:"error,omitempty"`
 }
 
-// handleGetBuilderDoc serves the contents of builder/improve.md or
-// builder/review.md so the AutoImprovementPopup can render them inline.
+// handleGetBuilderDoc serves the contents of builder/improve.md,
+// builder/review.md, or soul/soul.md so the AutoImprovementPopup can render
+// them inline.
 // The "doc" query param picks which file. Read-only.
 func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Request) {
 	if !setupCORS(w, r, http.MethodGet) {
@@ -291,17 +242,18 @@ func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	doc := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("doc")))
-	var fileName string
+	var rel string
 	switch doc {
 	case "improve":
-		fileName = "improve.md"
+		rel = "builder/improve.md"
 	case "review":
-		fileName = "review.md"
+		rel = "builder/review.md"
+	case "soul":
+		rel = "soul/soul.md"
 	default:
-		http.Error(w, "doc must be one of: improve, review", http.StatusBadRequest)
+		http.Error(w, "doc must be one of: improve, review, soul", http.StatusBadRequest)
 		return
 	}
-	rel := path.Join("builder", fileName)
 	full := path.Join(strings.Trim(workspacePath, "/"), rel)
 	content, exists, err := readFileFromWorkspace(r.Context(), full)
 	if err != nil {

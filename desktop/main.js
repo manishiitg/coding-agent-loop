@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, shell, nativeTheme, Menu, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, dialog, shell, nativeTheme, Menu, Tray, ipcMain, nativeImage } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
@@ -22,6 +22,7 @@ let workspaceProcess = null;
 let agentProcess = null;
 let mainWindow = null;
 let settingsWindow = null;
+let tray = null;
 
 // Settings Management
 function loadSettings() {
@@ -345,6 +346,54 @@ function applyAppIcon() {
   if (process.platform === 'darwin' && app.dock) {
     app.dock.setIcon(icon);
   }
+}
+
+function openMainWindow() {
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
+  const devUrl = process.env.DEV_URL;
+  if (devUrl) {
+    createWindow(devUrl);
+    return;
+  }
+
+  if (dynamicAgentPort) {
+    createWindow();
+  }
+}
+
+function createTray() {
+  if (process.platform !== 'darwin' || tray) {
+    return;
+  }
+
+  const iconPath = getAppIconPath();
+  if (!fs.existsSync(iconPath)) {
+    console.warn(`[main] Tray icon not found at ${iconPath}`);
+    return;
+  }
+
+  const icon = nativeImage.createFromPath(iconPath);
+  if (icon.isEmpty()) {
+    console.warn(`[main] Failed to load tray icon from ${iconPath}`);
+    return;
+  }
+
+  const trayIcon = icon.resize({ width: 18, height: 18 });
+  trayIcon.setTemplateImage(true);
+
+  tray = new Tray(trayIcon);
+  tray.setToolTip('AgentForge');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open AgentForge', click: openMainWindow },
+    { type: 'separator' },
+    { label: 'Quit AgentForge (Stop Servers)', click: () => app.quit() },
+  ]));
+  tray.on('click', openMainWindow);
 }
 
 // isPortInUse function is no longer needed with dynamic ports
@@ -729,6 +778,7 @@ function createWindow(initialUrl) {
 app.whenReady().then(async () => {
   applyAppIcon();
   createMenu();
+  createTray();
   
   // If DEV_URL is set (e.g. http://localhost:5173), skip spawning servers and just load that URL
   const devUrl = process.env.DEV_URL;
@@ -777,20 +827,7 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   console.log('[main] activate');
-  if (mainWindow) {
-    mainWindow.focus();
-    return;
-  }
-
-  const devUrl = process.env.DEV_URL;
-  if (devUrl) {
-    createWindow(devUrl);
-    return;
-  }
-
-  if (dynamicAgentPort) {
-    createWindow();
-  }
+  openMainWindow();
 });
 
 app.on('before-quit', () => {

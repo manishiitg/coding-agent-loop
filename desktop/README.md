@@ -58,9 +58,9 @@ Artifacts will be output to `desktop/dist/`.
 
 ### Window and Server Lifecycle
 
-On macOS, closing the AgentForge window keeps the app process and bundled servers running in the background so scheduled jobs can continue. Click the Dock icon to reopen the UI.
+On macOS, closing the AgentForge window keeps the app process and bundled servers running in the background so scheduled jobs can continue. Click the Dock icon or the AgentForge menu bar icon to reopen the UI.
 
-Use **Quit AgentForge** or `Cmd+Q` to fully exit the app. Quitting stops both bundled servers.
+Right-click the menu bar icon and choose **Quit AgentForge (Stop Servers)**, or use **Quit AgentForge** / `Cmd+Q`, to fully exit the app. Quitting stops both bundled servers.
 
 ### Ports
 - **45678**: Agent server (API + static frontend)

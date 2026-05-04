@@ -53,6 +53,9 @@ func (bo *BaseOrchestrator) CheckWorkspaceFileExists(ctx context.Context, filePa
 		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") {
 			return false, nil
 		}
+		if strings.Contains(errStr, "cannot read binary file as text") {
+			return true, nil
+		}
 		// ReadWorkspaceFile fails on directories — fall back to ListWorkspaceFiles
 		_, listErr := bo.ListWorkspaceFiles(ctx, filePath)
 		if listErr != nil {

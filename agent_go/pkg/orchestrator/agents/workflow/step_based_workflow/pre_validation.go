@@ -129,16 +129,16 @@ func RunPreValidation(
 
 // PreValidationLogEntry represents a pre-validation result persisted to disk
 type PreValidationLogEntry struct {
-	StepID       string                    `json:"step_id"`
-	StepPath     string                    `json:"step_path"`
-	Timestamp    string                    `json:"timestamp"`
-	OverallPass  bool                      `json:"overall_pass"`
-	TotalChecks  int                       `json:"total_checks"`
-	PassedChecks int                       `json:"passed_checks"`
-	FailedChecks int                       `json:"failed_checks"`
-	Errors       []ValidationError         `json:"errors,omitempty"`
-	FilesChecked []FileCheckResult         `json:"files_checked,omitempty"`
-	Schema       *ValidationSchema         `json:"schema_used,omitempty"`
+	StepID       string            `json:"step_id"`
+	StepPath     string            `json:"step_path"`
+	Timestamp    string            `json:"timestamp"`
+	OverallPass  bool              `json:"overall_pass"`
+	TotalChecks  int               `json:"total_checks"`
+	PassedChecks int               `json:"passed_checks"`
+	FailedChecks int               `json:"failed_checks"`
+	Errors       []ValidationError `json:"errors,omitempty"`
+	FilesChecked []FileCheckResult `json:"files_checked,omitempty"`
+	Schema       *ValidationSchema `json:"schema_used,omitempty"`
 }
 
 // SavePreValidationLog writes pre-validation results to the step's log folder.
@@ -352,6 +352,14 @@ func validateFile(
 		return result
 	}
 
+	// Check if file has JSON checks - if not, skip text reading and JSON parsing.
+	// Binary artifacts such as mp3/mp4 files can be valid outputs when the schema
+	// only requires existence.
+	hasJSONChecks := len(fileRule.JSONChecks) > 0
+	if !hasJSONChecks {
+		return result
+	}
+
 	// Read file content
 	content, err := baseOrchestrator.ReadWorkspaceFile(ctx, readPath)
 	if err != nil {
@@ -378,9 +386,6 @@ func validateFile(
 		})
 		return result
 	}
-
-	// Check if file has JSON checks - if not, skip JSON parsing
-	hasJSONChecks := len(fileRule.JSONChecks) > 0
 
 	// If file doesn't have .json extension and has JSON checks, it might be incorrectly configured
 	// But we'll still try to parse it - if it fails, we'll only fail if there are JSON checks

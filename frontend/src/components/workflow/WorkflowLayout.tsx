@@ -277,52 +277,7 @@ async function loadWorkflowBuilderSession(
   return session
 }
 
-const RESTORED_CONTEXT_TEXT_LIMIT = 2000
-
-function restoredEventText(event: PollingEvent): string {
-  const data = (event as any)?.data?.data || (event as any)?.data || {}
-  const nested = data?.data || data
-  const text =
-    nested?.content ||
-    nested?.final_result ||
-    nested?.result ||
-    nested?.unified_completion?.content ||
-    data?.content ||
-    data?.final_result ||
-    data?.result ||
-    ''
-  return typeof text === 'string' ? text.trim() : ''
-}
-
-function truncateRestoredContext(text: string): string {
-  const trimmed = text.trim()
-  if (trimmed.length <= RESTORED_CONTEXT_TEXT_LIMIT) return trimmed
-  return `${trimmed.slice(0, RESTORED_CONTEXT_TEXT_LIMIT).trim()}...`
-}
-
-function restoredConversationSummary(events?: PollingEvent[]): string | undefined {
-  if (!events?.length) return undefined
-
-  const reversed = [...events].reverse()
-  const lastUser = reversed.find(event => event.type === 'user_message')
-  const lastAgent = reversed.find(event =>
-    event.type === 'unified_completion' ||
-    event.type === 'conversation_end' ||
-    event.type === 'agent_end' ||
-    event.type === 'conversation_error' ||
-    event.type === 'agent_error'
-  )
-
-  const parts: string[] = []
-  const userText = lastUser ? restoredEventText(lastUser) : ''
-  const agentText = lastAgent ? restoredEventText(lastAgent) : ''
-  if (userText) parts.push(`Last user message:\n${truncateRestoredContext(userText)}`)
-  if (agentText) parts.push(`Last agent update:\n${truncateRestoredContext(agentText)}`)
-
-  return parts.length > 0 ? parts.join('\n\n') : undefined
-}
-
-function applyRestoredConversationContext(tabId: string, conversationPath?: string, events?: PollingEvent[]): void {
+function applyRestoredConversationContext(tabId: string, conversationPath?: string): void {
   const path = conversationPath?.trim()
   if (!path) return
 
@@ -343,8 +298,26 @@ function applyRestoredConversationContext(tabId: string, conversationPath?: stri
   store.setTabConfig(tabId, {
     fileContext,
     restoredConversationPath: path,
-    restoredConversationSummary: restoredConversationSummary(events),
+    restoredConversationSummary: undefined,
   })
+}
+
+function formatRestoreOfferTime(value?: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function restoreOfferFileName(offer: WorkflowRestoreOffer): string {
+  if (offer.kind !== 'builder-history') return 'previous conversation'
+  const path = offer.session.conversation_path?.trim()
+  return path?.split('/').pop() || 'previous conversation'
 }
 
 interface WorkflowLayoutProps {
@@ -523,6 +496,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const restoreOfferKey = useCallback((presetId: string, sessionId?: string): string => {
     return `${presetId}:${sessionId || 'unknown'}`
   }, [])
+  const restoreOfferFile = restoreOffer ? restoreOfferFileName(restoreOffer) : ''
+  const restoreOfferTime = restoreOffer?.kind === 'builder-history'
+    ? formatRestoreOfferTime(restoreOffer.session.updated_at)
+    : ''
 
   const offerBuilderHistoryRestore = useCallback(async (presetId: string): Promise<WorkflowBuilderSessionResponse | null> => {
     const builderHistory = await loadWorkflowBuilderSession(presetId, activeWorkflowPreset?.selectedFolder?.filepath)
@@ -601,13 +578,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       presetQueryId: presetId
     }, builderHistory.session_id)
 
-    if (builderHistory.session_id) {
-      chatStore.setTabEvents(builderHistory.session_id, builderHistory.events || [])
-      chatStore.setTabLastEventIndex(builderHistory.session_id, builderHistory.last_processed_index ?? (builderHistory.events?.length || 0) - 1)
-    }
-    chatStore.setTabCompleted(tabId, builderHistory.status !== 'running')
-    chatStore.setTabStreaming(tabId, builderHistory.status === 'running')
-    applyRestoredConversationContext(tabId, builderHistory.conversation_path, builderHistory.events)
+    chatStore.setTabCompleted(tabId, false)
+    chatStore.setTabStreaming(tabId, false)
+    applyRestoredConversationContext(tabId, builderHistory.conversation_path)
     chatStore.switchTab(tabId)
     setShowChatArea(true)
   }, [setShowChatArea])
@@ -649,12 +622,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         if (builderHistory.session_id && builderHistory.session_id !== builderTab.sessionId) {
           chatStore.updateTabSessionId(builderTab.tabId, builderHistory.session_id)
         }
-        const sessionId = builderHistory.session_id || builderTab.sessionId
-        chatStore.setTabEvents(sessionId, builderHistory.events || [])
-        chatStore.setTabLastEventIndex(sessionId, builderHistory.last_processed_index ?? (builderHistory.events?.length || 0) - 1)
-        chatStore.setTabCompleted(builderTab.tabId, builderHistory.status !== 'running')
-        chatStore.setTabStreaming(builderTab.tabId, builderHistory.status === 'running')
-        applyRestoredConversationContext(builderTab.tabId, builderHistory.conversation_path, builderHistory.events)
+        chatStore.setTabCompleted(builderTab.tabId, false)
+        chatStore.setTabStreaming(builderTab.tabId, false)
+        applyRestoredConversationContext(builderTab.tabId, builderHistory.conversation_path)
       }
     }
 
@@ -1667,7 +1637,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             {restoreOffer && (
               <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
                 <span className="min-w-0 truncate text-xs text-muted-foreground">
-                  Previous builder chat available.
+                  Previous builder chat file available: <span className="font-medium text-foreground">{restoreOfferFile}</span>
+                  {restoreOfferTime ? <span> · last chat {restoreOfferTime}</span> : null}
                 </span>
                 <div className="flex shrink-0 items-center gap-1.5">
                   <button

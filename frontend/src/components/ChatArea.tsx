@@ -1161,7 +1161,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       const hasBgAgents = response.has_running_background_agents ?? false
       const isSyntheticTurn = response.is_synthetic_turn ?? false
       const canSteer = response.can_steer ?? false
-      const isForegroundStreaming = sessionStatus === 'running' && (!hasBgAgents || isSyntheticTurn || canSteer)
+      const isForegroundStreaming = sessionStatus === 'running' && !isSyntheticTurn && (!hasBgAgents || canSteer)
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
         if (hasBgAgents) {
           chatStore.setTabCompleted(tab.tabId, false)
@@ -1186,7 +1186,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       const hasBgAgents = response.has_running_background_agents ?? false
       const isSyntheticTurn = response.is_synthetic_turn ?? false
       const canSteer = response.can_steer ?? false
-      const isForegroundStreaming = sessionStatus === 'running' && (!hasBgAgents || isSyntheticTurn || canSteer)
+      const isForegroundStreaming = sessionStatus === 'running' && !isSyntheticTurn && (!hasBgAgents || canSteer)
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
         setIsStreaming(false)
         setIsCompleted(true)

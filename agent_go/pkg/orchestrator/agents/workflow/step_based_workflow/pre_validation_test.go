@@ -1,8 +1,16 @@
 package step_based_workflow
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
 func TestValidateFilePath(t *testing.T) {
@@ -118,5 +126,65 @@ func TestBuildValidationPathHint(t *testing.T) {
 	)
 	if got == "" || !strings.Contains(got, "Another copy also exists") || !strings.Contains(got, "validation read the other") {
 		t.Fatalf("unexpected hint: %q", got)
+	}
+}
+
+func TestRunPreValidationAllowsBinaryFileWhenOnlyMustExist(t *testing.T) {
+	const stepPath = "Workflow/instagram/runs/iteration-0/test-run/execution/route-generate-voiceover"
+	const voiceoverPath = stepPath + "/voiceover.mp3"
+
+	var binaryReads int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/documents/"+voiceoverPath {
+			atomic.AddInt32(&binaryReads, 1)
+			fmt.Fprint(w, `{"success":true,"message":"Document retrieved successfully","data":{"filepath":"`+voiceoverPath+`","content":"","is_binary":true,"size":3,"mime_type":"audio/mpeg"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"success":true,"message":"File does not exist","data":{},"error":"File not found"}`)
+	}))
+	defer server.Close()
+
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(),
+		nil,
+		orchestrator.OrchestratorTypeWorkflow,
+		"",
+		0,
+		"",
+		nil,
+		nil,
+		false,
+		&orchestrator.LLMConfig{},
+		1,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+
+	result, err := RunPreValidation(context.Background(), &ValidationSchema{
+		Files: []FileValidationRule{{
+			FileName:  "voiceover.mp3",
+			MustExist: true,
+		}},
+	}, stepPath, base)
+	if err != nil {
+		t.Fatalf("RunPreValidation returned error: %v", err)
+	}
+	if !result.OverallPass {
+		t.Fatalf("expected validation to pass, got errors: %#v", result.Summary.Errors)
+	}
+	if result.Summary.TotalChecks != 1 || result.Summary.PassedChecks != 1 || result.Summary.FailedChecks != 0 {
+		t.Fatalf("unexpected summary: %#v", result.Summary)
+	}
+	if got := atomic.LoadInt32(&binaryReads); got != 1 {
+		t.Fatalf("expected exactly one binary metadata read for existence, got %d", got)
+	}
+	if len(result.FilesChecked) != 1 || len(result.FilesChecked[0].JSONChecks) != 0 {
+		t.Fatalf("binary must-exist validation should not add JSON/text read checks: %#v", result.FilesChecked)
 	}
 }

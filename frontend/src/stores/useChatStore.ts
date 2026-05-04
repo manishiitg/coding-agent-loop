@@ -266,7 +266,7 @@ export interface ChatTab {
   isStreaming: boolean  // Whether this tab's execution is currently running
   isCompleted: boolean  // Whether this tab's execution has completed
   hasRunningBgAgents: boolean  // Whether background agents are still running for this session
-  isSyntheticTurn: boolean  // Whether current streaming turn is an auto-notification (input remains locked as normal)
+  isSyntheticTurn: boolean  // Whether current running turn is an auto-notification that should not queue user input
   canSteer: boolean  // Whether the backend currently has a live agent that can accept steer injection
   hideToolCalls: boolean  // Whether to hide tool_call_start/end events in this tab
   // Event layout mode. Legacy persisted values are normalized on read:

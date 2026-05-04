@@ -17,9 +17,8 @@ type RuntimeSessionState = {
 function isForegroundStreaming(state: RuntimeSessionState): boolean {
   if (state.status !== 'running') return false
   // Background-only work should not lock the composer after restore.
-  // Keep the UI in "streaming" mode only when a foreground turn is actually active,
-  // or when the running turn is a synthetic auto-notification that should stay locked.
-  return !state.hasRunningBackgroundAgents || !!state.isSyntheticTurn || !!state.canSteer
+  // Synthetic auto-notification turns are activity, but they should not queue user input.
+  return !state.isSyntheticTurn && (!state.hasRunningBackgroundAgents || !!state.canSteer)
 }
 
 /**

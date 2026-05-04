@@ -769,8 +769,28 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  console.log('[main] window-all-closed; quitting app');
-  app.quit();
+  console.log('[main] window-all-closed');
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+app.on('activate', () => {
+  console.log('[main] activate');
+  if (mainWindow) {
+    mainWindow.focus();
+    return;
+  }
+
+  const devUrl = process.env.DEV_URL;
+  if (devUrl) {
+    createWindow(devUrl);
+    return;
+  }
+
+  if (dynamicAgentPort) {
+    createWindow();
+  }
 });
 
 app.on('before-quit', () => {

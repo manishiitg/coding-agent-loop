@@ -1,7 +1,7 @@
 Audit every configurable execution target in this workflow — workflow steps, evaluation steps, and the reserved final evaluation scoring target `__evaluation_scoring__` — and recommend the right values for: declared_execution_mode, learnings_access, learning_objective, learnings_write_method, knowledgebase_access, knowledgebase_contribution, lock_learnings, and lock_code (learn_code/scripted targets only). This is a READ-ONLY analysis pass — do NOT apply any changes via update_step_config. Produce a recommendation table the user will review and apply selectively.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 PROCEDURE
-1. Read planning/plan.json and planning/step_config.json. For each workflow step capture: id, title, description, declared_execution_mode, and current AgentConfigs (learnings_access, learning_objective, learnings_write_method, knowledgebase_access, knowledgebase_contribution, lock_learnings, lock_code, optimized, successful_runs, description_hash, review_notes).
+1. Read planning/plan.json and planning/step_config.json. For each workflow step capture: id, title, description, declared_execution_mode, and current AgentConfigs (learnings_access, learning_objective, learnings_write_method, knowledgebase_access, knowledgebase_contribution, lock_learnings, lock_code, successful_runs, description_hash, review_notes).
 2. Read evaluation/evaluation_plan.json and evaluation/step_config.json if present. For each eval step capture the same fields from evaluation/step_config.json. Also inspect the reserved scoring config id `__evaluation_scoring__` in evaluation/step_config.json; treat it as scope `evaluation_scoring` with title "Final Evaluation Scoring Agent".
 3. For every target, inspect learnings/{step-id}/:
    - SKILL.md exists? size? recent edit signal (read first/last lines for context).
@@ -75,7 +75,7 @@ LOCK_CODE (true | false; learn_code steps only):
   - Description hash matches stored value
   - **Eval evidence** as defined above (eval_step at threshold for last 10 runs, OR linked metric at-or-above target/floor for last 10 runs)
 - DO NOT lock when ANY: main.py rewritten in last 5 runs, transient failures present, description being iterated, < 10 successful runs, runs all on a single group, no eval coverage, eval below threshold.
-- When recommending lock_code=true, also recommend lock_learnings=true and optimized=true together — they should move as a set per the workshop convention. Include optimized_reason citing the **outcome evidence** (groups passed, eval scores at threshold across N runs, linked metric trajectory at target).
+- When recommending lock_code=true, also recommend lock_learnings=true when the SKILL.md guidance is stable. Include review_notes citing the **outcome evidence** (groups passed, eval scores at threshold across N runs, linked metric trajectory at target).
 - If currently locked but description_hash drifted → recommend UNLOCK (main.py may be stale).
 - If currently locked but linked eval/metric has dropped below target on recent runs → recommend UNLOCK (locked code stopped delivering).
 
@@ -99,7 +99,7 @@ Then summary sections:
 - **Mode fit issues** — browser/UI-heavy learn_code steps, unstable learn_code steps, or learn_code candidates blocked by recent harden/replan changes.
 - **Learning misconfigs** — write access without a concrete objective/reason, objective present but writes disabled, unjustified agent write method, or learning enabled for steps that produce no reusable HOW-to-run knowledge.
 - **Evaluation config issues** — eval/scoring targets whose mode, tier, locks, KB, or saved code no longer match evaluation/evaluation_plan.json.
-- **To lock this round** — steps recommended for lock_learnings + lock_code (+ optimized).
+- **To lock this round** — steps recommended for lock_learnings and/or lock_code.
 - **KB misconfigs** — knowledgebase_contribution set but access blocks writes (silent skip).
 - **Should write to db/ but doesn't** — steps producing cross-run state outside db/.
 - **Stale locks (unlock + re-review)** — currently locked but description_hash drifted.

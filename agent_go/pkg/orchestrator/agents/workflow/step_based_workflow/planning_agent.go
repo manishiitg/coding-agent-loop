@@ -221,19 +221,18 @@ type AgentConfigs struct {
 	EnableContextOffloading      *bool           `json:"enable_context_offloading,omitempty"`       // Enable/disable context offloading (default: true if nil)
 	UseCodeExecutionMode         *bool           `json:"use_code_execution_mode,omitempty"`         // Step-level code execution mode override (nil = use preset default, true/false = override)
 	EnabledSkills                []string        `json:"enabled_skills,omitempty"`                  // Step-level skill selection (skill folder names, overrides preset if specified)
-	KnowledgebaseAccess          string          `json:"knowledgebase_access,omitempty"`            // "read" | "write" | "read-write" | "none". If empty, defaults to "none" — KB is opt-in per step. Preset-level UseKnowledgebase is a prerequisite (off → forced "none"). When granted "read", this also covers user-supplied business rules at knowledgebase/rules/rules.md (Type 3 workflows). knowledgebase/rules/ is excluded from reorganize_knowledgebase / consolidate_knowledgebase passes — user-supplied content is never silently rewritten.
+	KnowledgebaseAccess          string          `json:"knowledgebase_access,omitempty"`            // "read" | "write" | "read-write" | "none". If empty, defaults to "none" — KB is opt-in per step. Preset-level UseKnowledgebase is a prerequisite (off → forced "none"). When granted "read", this also covers user-supplied business rules at knowledgebase/rules/rules.md (Type 3 workflows). knowledgebase/rules/ is excluded from improve_kb passes — user-supplied content is never silently rewritten.
 	KnowledgebaseWriteMethod     string          `json:"knowledgebase_write_method,omitempty"`      // "agent" | "direct". How KB writes happen when knowledgebase_access permits them. Runtime fallback is "agent": the post-step KB update agent reads the step's trail + knowledgebase_contribution and writes notes/. Builder preference is usually "direct" so the step agent writes notes/ itself via shell + diff_patch_workspace_file during execution, with a post-completion self-review turn. Use "agent" mainly when the user explicitly wants it or when the step's output is messy enough that a separate extractor is clearly better. Only meaningful when knowledgebase_access ∈ {"write", "read-write"}.
 	KnowledgebaseContribution    string          `json:"knowledgebase_contribution,omitempty"`      // User-authored instruction for KB writes — what this step should contribute to notes/. In "agent" write-method, it's the extraction instruction handed to the post-step KB update agent. In "direct" write-method, it's injected into the step agent's prompt as its contribution contract. Required to trigger KB writes; if empty, no KB write happens regardless of access.
 	TodoTaskOrchestratorTier     *int            `json:"todo_task_orchestrator_tier,omitempty"`     // Tier for todo task orchestrator agent (1/2/3) in tiered mode
 	DisableParallelToolExecution *bool           `json:"disable_parallel_tool_execution,omitempty"` // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
 	DisableTierOptimization      *bool           `json:"disable_tier_optimization,omitempty"`       // If true, execution and conditional agents always use Tier 1 (high reasoning)
-	Optimized                    *bool           `json:"optimized,omitempty"`                       // If true, step is considered optimized — retained for readiness tracking, no longer affects tier selection
 	SuccessfulRuns               *int            `json:"successful_runs,omitempty"`                 // System-managed counter. Written by syncSuccessfulRunsToStepConfig after each successful validation; mirrors the authoritative count in learning metadata. Read by the readiness checklist to gauge optimization progress (3+ = ready). Agents must NOT set this directly.
 	LearnCodeMaxFixIter          *int            `json:"learn_code_max_fix_iterations,omitempty"`   // Max LLM fix iterations when main.py execution fails (default: 5)
 	DeclaredExecutionMode        string          `json:"declared_execution_mode,omitempty"`         // Required mode decision for the step: "learn_code" or "code_exec"
 	DeclaredExecutionModeReason  string          `json:"declared_execution_mode_reason,omitempty"`  // Audit trail: why the declared mode is the best fit. Not consumed by Go runtime, but preserved so future LLM reviewers (harden, replan) reading raw step_config.json see the original decision rationale.
-	DescriptionReviewed          *bool           `json:"description_reviewed,omitempty"`            // True when the step description has been reviewed — clarity AND secrets/hardcoded values. Single flag consolidating the previous description_optimized + description_no_secrets booleans.
-	ReviewNotes                  string          `json:"review_notes,omitempty"`                    // Free-form rationale covering why the step is optimized and/or why the description is considered reviewed. Replaces the previous optimized_reason + description_optimization_reason string fields.
+	DescriptionReviewed          *bool           `json:"description_reviewed,omitempty"`            // True when the step description has been reviewed — clarity AND secrets/hardcoded values.
+	ReviewNotes                  string          `json:"review_notes,omitempty"`                    // Free-form rationale covering why config, locks, learning/KB choices, or description review state are justified.
 	GlobalSkillObjective         string          `json:"global_skill_objective,omitempty"`          // Objective for the global skill — what domain knowledge should it capture and why
 }
 
@@ -713,11 +712,10 @@ type PlanStep = PlanStepInterface
 // PlanningResponse represents the structured response from planning
 // Uses type-safe PlanStepInterface - all plans must be in new format with "type" field
 type PlanningResponse struct {
-	Objective         string              `json:"objective,omitempty"`
-	SuccessCriteria   string              `json:"success_criteria,omitempty"`
-	WorkflowOptimized *bool               `json:"workflow_optimized,omitempty"`
-	Steps             []PlanStepInterface `json:"-"`
-	OrphanSteps       []PlanStepInterface `json:"-"`
+	Objective       string              `json:"objective,omitempty"`
+	SuccessCriteria string              `json:"success_criteria,omitempty"`
+	Steps           []PlanStepInterface `json:"-"`
+	OrphanSteps     []PlanStepInterface `json:"-"`
 }
 
 // parseStepFromJSON parses a single step from raw JSON using the type field
@@ -772,11 +770,10 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 // UnmarshalJSON implements custom unmarshaling for typed steps
 func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 	var temp struct {
-		Objective         string            `json:"objective"`
-		SuccessCriteria   string            `json:"success_criteria"`
-		WorkflowOptimized *bool             `json:"workflow_optimized"`
-		Steps             []json.RawMessage `json:"steps"`
-		OrphanSteps       []json.RawMessage `json:"orphan_steps"`
+		Objective       string            `json:"objective"`
+		SuccessCriteria string            `json:"success_criteria"`
+		Steps           []json.RawMessage `json:"steps"`
+		OrphanSteps     []json.RawMessage `json:"orphan_steps"`
 	}
 	if err := json.Unmarshal(data, &temp); err != nil {
 		return fmt.Errorf("failed to unmarshal plan: %w", err)
@@ -784,7 +781,6 @@ func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 
 	pr.Objective = temp.Objective
 	pr.SuccessCriteria = temp.SuccessCriteria
-	pr.WorkflowOptimized = temp.WorkflowOptimized
 	pr.Steps = make([]PlanStepInterface, len(temp.Steps))
 	for i, stepData := range temp.Steps {
 		typedStep, err := parseStepFromJSON(stepData, i, "step")
@@ -829,10 +825,6 @@ func (pr PlanningResponse) MarshalJSON() ([]byte, error) {
 	if pr.SuccessCriteria != "" {
 		result["success_criteria"] = pr.SuccessCriteria
 	}
-	if pr.WorkflowOptimized != nil {
-		result["workflow_optimized"] = *pr.WorkflowOptimized
-	}
-
 	if len(pr.OrphanSteps) > 0 {
 		wrappedOrphans := make([]json.RawMessage, len(pr.OrphanSteps))
 		for i, step := range pr.OrphanSteps {
@@ -909,11 +901,11 @@ type PlanFieldChange struct {
 // successful plan-mod tool call appends one entry to the active session file
 // under planning/changelog/.
 type PlanChangelogEntry struct {
-	Timestamp string            `json:"timestamp"`            // ISO 8601 UTC
-	Tool      string            `json:"tool"`                 // tool name (e.g. "update_regular_step")
-	Reason    string            `json:"reason"`               // mandatory rationale supplied by the agent
-	StepIDs   []string          `json:"step_ids,omitempty"`   // affected step IDs
-	Changes   []PlanFieldChange `json:"changes,omitempty"`    // per-field old/new values when known
+	Timestamp    string            `json:"timestamp"`               // ISO 8601 UTC
+	Tool         string            `json:"tool"`                    // tool name (e.g. "update_regular_step")
+	Reason       string            `json:"reason"`                  // mandatory rationale supplied by the agent
+	StepIDs      []string          `json:"step_ids,omitempty"`      // affected step IDs
+	Changes      []PlanFieldChange `json:"changes,omitempty"`       // per-field old/new values when known
 	AddedSteps   []json.RawMessage `json:"added_steps,omitempty"`   // full JSON of steps added (for revert)
 	DeletedSteps []json.RawMessage `json:"deleted_steps,omitempty"` // full JSON of steps deleted (for revert)
 }
@@ -3324,7 +3316,6 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 				logger.Info(fmt.Sprintf("🧹 Cascade-removed %d step_config entries: %v", len(removed), removed))
 			}
 		}
-
 
 		// Unlock learnings for all deleted steps (if unlock function provided)
 		// Use old step indices from before deletion

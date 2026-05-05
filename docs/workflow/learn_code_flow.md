@@ -28,7 +28,7 @@ Important implementation detail:
 - `code_exec` is the fallback mode whenever scripted execution is enabled but the step is not explicitly marked as `learn_code`.
 - `syncDeclaredExecutionModeConfig()` forces `use_code_execution_mode=true` when `declared_execution_mode` is `learn_code` or `code_exec`.
 
-That means the recommended workflow config is to set both fields explicitly for every optimized scripted step.
+That means the recommended workflow config is to set both fields explicitly for every scripted step.
 
 ## Recommended Usage
 

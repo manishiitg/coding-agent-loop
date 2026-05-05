@@ -4455,53 +4455,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
-				// Auto-detect workshop mode if not provided by frontend
+				// Default workshop mode if not provided by frontend. Run/Optimizer/Reporting
+				// are explicit user/frontend choices, not inferred from step flags.
 				if phaseTemplateVars["WorkshopMode"] == "" && existingPlanJSON != "" && workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
-					stepConfigJSON, _ := phaseReadFile(setupCtx, phaseWorkspacePath+"/planning/step_config.json")
-					optimizedSet := make(map[string]bool)
-					if stepConfigJSON != "" {
-						var scData struct {
-							Steps []struct {
-								ID           string `json:"id"`
-								AgentConfigs *struct {
-									Optimized *bool `json:"optimized,omitempty"`
-								} `json:"agent_configs,omitempty"`
-							} `json:"steps"`
-						}
-						if err := json.Unmarshal([]byte(stepConfigJSON), &scData); err == nil {
-							for _, sc := range scData.Steps {
-								if sc.AgentConfigs != nil && sc.AgentConfigs.Optimized != nil && *sc.AgentConfigs.Optimized {
-									optimizedSet[sc.ID] = true
-								}
-							}
-						}
-					}
-					var planData struct {
-						Steps []struct {
-							ID string `json:"id"`
-						} `json:"steps"`
-					}
-					if err := json.Unmarshal([]byte(existingPlanJSON), &planData); err == nil {
-						var unoptimized []string
-						for _, s := range planData.Steps {
-							if !optimizedSet[s.ID] {
-								unoptimized = append(unoptimized, s.ID)
-							}
-						}
-						totalSteps := len(planData.Steps)
-						optimizedCount := totalSteps - len(unoptimized)
-						if optimizedCount == 0 {
-							phaseTemplateVars["WorkshopMode"] = "builder"
-						} else if optimizedCount >= totalSteps {
-							phaseTemplateVars["WorkshopMode"] = "run"
-						} else {
-							phaseTemplateVars["WorkshopMode"] = "optimizer"
-						}
-						if len(unoptimized) > 0 {
-							phaseTemplateVars["UnoptimizedSteps"] = strings.Join(unoptimized, ", ")
-						}
-						log.Printf("[WORKSHOP_MODE] Auto-detected: %s (optimized: %d/%d)", phaseTemplateVars["WorkshopMode"], optimizedCount, totalSteps)
-					}
+					phaseTemplateVars["WorkshopMode"] = "builder"
+					log.Printf("[WORKSHOP_MODE] Defaulted to builder")
 				}
 				if phaseTemplateVars["WorkshopMode"] == "" {
 					phaseTemplateVars["WorkshopMode"] = "builder"
@@ -4959,6 +4917,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if workshopSession != nil {
 						todo_creation_human.RegisterRunFullWorkflowTool(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered run_full_workflow in %s", workflowPhaseID)
+						todo_creation_human.RegisterImproveKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
+						log.Printf("[WORKFLOW_PHASE] Registered improve_kb in %s", workflowPhaseID)
 						todo_creation_human.RegisterReorganizeKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered reorganize_knowledgebase in %s", workflowPhaseID)
 						todo_creation_human.RegisterConsolidateKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
@@ -7167,14 +7127,12 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 			resultText = fmt.Sprintf("Status: %s", snap.Status)
 		}
 		workshopMode := ""
-		isStepOptimized := false
 		isLockCode := false
 		isLockLearnings := false
 		lockCodeConsecutiveFailures := 0
 		lockCodeNeedsReview := false
 		if snap.Metadata != nil {
 			workshopMode = snap.Metadata["workshop_mode"]
-			isStepOptimized = snap.Metadata["step_optimized"] == "true"
 			isLockCode = snap.Metadata["lock_code"] == "true"
 			isLockLearnings = snap.Metadata["lock_learnings"] == "true"
 			if v := snap.Metadata["lock_code_consecutive_failures"]; v != "" {
@@ -7184,7 +7142,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 			}
 			lockCodeNeedsReview = snap.Metadata["lock_code_needs_review"] == "true"
 		}
-		actionHint := buildWorkshopActionHint(workshopMode, isStepOptimized, isLockCode, isLockLearnings, lockCodeConsecutiveFailures, lockCodeNeedsReview, snap.Status == BGAgentFailed)
+		actionHint := buildWorkshopActionHint(workshopMode, isLockCode, isLockLearnings, lockCodeConsecutiveFailures, lockCodeNeedsReview, snap.Status == BGAgentFailed)
 		batchContext := ""
 		if snap.Metadata != nil {
 			if iter, ok := snap.Metadata["iteration"]; ok && iter != "" {
@@ -7217,11 +7175,6 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		})
 	}
 
-	if isScheduledWorkflowSession(sessionID) {
-		log.Printf("[BG AGENT] Suppressing batched synthetic turn for scheduled workflow session %s (%d completions)", sessionID, len(emittedIDs))
-		return
-	}
-
 	api.executeSyntheticTurn(sessionID, syntheticMsg)
 }
 
@@ -7230,7 +7183,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 // this function only adds extra guidance for cases where the engine has silently degraded behavior
 // the orchestrator wouldn't otherwise know about — most notably fast-path failures on locked steps,
 // where the fix loop is disabled and the step gets exactly one shot at running the saved main.py.
-func buildWorkshopActionHint(workshopMode string, isOptimized, isLockCode, isLockLearnings bool, lockCodeConsecutiveFailures int, lockCodeNeedsReview, failed bool) string {
+func buildWorkshopActionHint(workshopMode string, isLockCode, isLockLearnings bool, lockCodeConsecutiveFailures int, lockCodeNeedsReview, failed bool) string {
 	if !failed {
 		return ""
 	}
@@ -7248,9 +7201,9 @@ func buildWorkshopActionHint(workshopMode string, isOptimized, isLockCode, isLoc
 				"this as one more transient failure.",
 			lockCodeConsecutiveFailures, lockCodeConsecutiveFailures, lockCodeNeedsReview)
 	}
-	if isLockCode && isLockLearnings && isOptimized {
-		return "\n\n[LOCKED OPTIMIZED STEP FAILED] This step is locked " +
-			"(`lock_code=true`, `lock_learnings=true`, `optimized=true`) and ran on the fast path, " +
+	if isLockCode && isLockLearnings {
+		return "\n\n[LOCKED STEP FAILED] This step is locked " +
+			"(`lock_code=true`, `lock_learnings=true`) and ran on the fast path, " +
 			"so only the saved main.py executed — no fix loop, no LLM repair attempt. " +
 			"Investigate the failure: read the run folder " +
 			"(`step_*_status.json`, `learn_code_fast_path.json`, screenshots, downloaded files) " +
@@ -7313,14 +7266,12 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 
 	// Append mode-specific action hint so the agent knows what to do next.
 	workshopMode := ""
-	isStepOptimized := false
 	isLockCode := false
 	isLockLearnings := false
 	lockCodeConsecutiveFailures := 0
 	lockCodeNeedsReview := false
 	if snap.Metadata != nil {
 		workshopMode = snap.Metadata["workshop_mode"]
-		isStepOptimized = snap.Metadata["step_optimized"] == "true"
 		isLockCode = snap.Metadata["lock_code"] == "true"
 		isLockLearnings = snap.Metadata["lock_learnings"] == "true"
 		if v := snap.Metadata["lock_code_consecutive_failures"]; v != "" {
@@ -7331,7 +7282,7 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		lockCodeNeedsReview = snap.Metadata["lock_code_needs_review"] == "true"
 	}
 	isFailed := snap.Status == BGAgentFailed
-	actionHint := buildWorkshopActionHint(workshopMode, isStepOptimized, isLockCode, isLockLearnings, lockCodeConsecutiveFailures, lockCodeNeedsReview, isFailed)
+	actionHint := buildWorkshopActionHint(workshopMode, isLockCode, isLockLearnings, lockCodeConsecutiveFailures, lockCodeNeedsReview, isFailed)
 
 	// Include iteration and group_name if available in metadata
 	contextInfo := ""
@@ -7374,19 +7325,10 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		"status":   string(snap.Status),
 	})
 
-	if isScheduledWorkflowSession(sessionID) {
-		log.Printf("[BG AGENT] Suppressing synthetic turn for scheduled workflow session %s agent %s", sessionID, agentID)
-		return
-	}
-
 	// Trigger a synthetic turn using the stored QueryRequest
 	// Called synchronously so handleQuery sets session busy before returning,
 	// preventing concurrent synthetic turns for the same session.
 	api.executeSyntheticTurn(sessionID, syntheticMsg)
-}
-
-func isScheduledWorkflowSession(sessionID string) bool {
-	return strings.HasPrefix(sessionID, "schedule-cron--")
 }
 
 // executeSyntheticTurn drives the stored agent directly with a synthetic message.

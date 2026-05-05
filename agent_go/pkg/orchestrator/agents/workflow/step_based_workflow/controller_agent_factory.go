@@ -934,8 +934,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupSubAgentSessionGuard(agentKind s
 }
 
 // createKBUpdateAgent builds the post-step KB update agent. Folder guard reads the
-// step's execution output + knowledgebase/, writes knowledgebase/ only. Uses the
-// learning LLM config (same cheap-post-step-analysis profile).
+// step's execution output + knowledgebase/, writes knowledgebase/ only. KB agents
+// use the workflow phase LLM so builder/optimizer knowledge work is model-aligned.
 func (hcpo *StepBasedWorkflowOrchestrator) createKBUpdateAgent(ctx context.Context, phase string, agentName string, stepConfig *AgentConfigs, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
 	readPaths, writePaths := hcpo.setupKBUpdateFolderGuard(stepID, stepPath)
 	// Dedicated session so the session-level folder guard wins over the parent
@@ -944,7 +944,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBUpdateAgent(ctx context.Conte
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for KB update agent - Read: %v, Write: %v", readPaths, writePaths))
 
-	llmConfig := hcpo.selectLearningLLM(ctx, stepConfig, stepID, stepPath)
+	llmConfig := hcpo.selectPhaseLLM("KB update agent")
 	if llmConfig == nil {
 		return nil, fmt.Errorf("no valid LLM configuration found for KB update agent")
 	}
@@ -991,6 +991,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBUpdateAgent(ctx context.Conte
 	return agent, nil
 }
 
+type maintenanceToolLLMContextKey struct{}
+
+var maintenanceToolLLMOverrideKey = maintenanceToolLLMContextKey{}
+
+func (hcpo *StepBasedWorkflowOrchestrator) selectPhaseLLM(agentPurpose string) *orchestrator.LLMConfig {
+	if hcpo.presetPhaseLLM == nil || hcpo.presetPhaseLLM.Provider == "" || hcpo.presetPhaseLLM.ModelID == "" {
+		hcpo.GetLogger().Warn(fmt.Sprintf("selectPhaseLLM: no valid phase LLM configured for %s", agentPurpose))
+		return nil
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using phase LLM for %s: %s/%s",
+		agentPurpose, hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
+	return &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{
+			Provider: hcpo.presetPhaseLLM.Provider,
+			ModelID:  hcpo.presetPhaseLLM.ModelID,
+		},
+		Fallbacks: convertAgentFallbacks(hcpo.presetPhaseLLM.Fallbacks),
+		APIKeys:   hcpo.GetAPIKeys(),
+	}
+}
+
 // createKBConsolidateAgent builds the one-shot KB consolidate agent. Same folder-guard
 // shape as KB update/reorganize: read execution folder + KB, write KB only. The read
 // path on executionWorkspacePath is what gives it access to ALL step output folders
@@ -1005,7 +1026,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBConsolidateAgent(ctx context.
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for KB consolidate agent - Read: %v, Write: %v", readPaths, writePaths))
 
-	llmConfig := hcpo.selectLearningLLM(ctx, stepConfig, stepID, stepPath)
+	llmConfig := hcpo.selectPhaseLLM("KB consolidate agent")
 	if llmConfig == nil {
 		return nil, fmt.Errorf("no valid LLM configuration found for KB consolidate agent")
 	}
@@ -1061,7 +1082,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBReorganizeAgent(ctx context.C
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for KB reorganize agent - Read: %v, Write: %v", readPaths, writePaths))
 
-	llmConfig := hcpo.selectLearningLLM(ctx, stepConfig, stepID, stepPath)
+	llmConfig := hcpo.selectPhaseLLM("KB reorganize agent")
 	if llmConfig == nil {
 		return nil, fmt.Errorf("no valid LLM configuration found for KB reorganize agent")
 	}
@@ -1156,13 +1177,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaxTurns(stepConfig *Agent
 // selectLearningLLM selects the LLM config for learning agents
 //
 // Priority:
-//  1. step config LearningLLM    — explicit per-step override; beats tiered mode
-//  2. tiered mode                — maturity-based tier resolution
-//  3. presetLearningLLM          — workflow-level default
+//  1. maintenance tool override — explicit builder/optimizer tools that should use phase LLM
+//  2. step config LearningLLM   — only when tiered mode is not active
+//  3. tiered mode               — learning tier resolution
 func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context, stepConfig *AgentConfigs, stepID string, stepPath string) *orchestrator.LLMConfig {
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	if orchestratorLLMConfig == nil {
 		orchestratorLLMConfig = &orchestrator.LLMConfig{}
+	}
+
+	if override, ok := ctx.Value(maintenanceToolLLMOverrideKey).(*orchestrator.LLMConfig); ok && override != nil && override.Primary.Provider != "" && override.Primary.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [MAINTENANCE TOOL] Using explicit LLM override for learning agent %s: %s/%s",
+			stepPath, override.Primary.Provider, override.Primary.ModelID))
+		return override
 	}
 
 	// ── 1. STEP CONFIG LearningLLM ───────────────────────────────────────────

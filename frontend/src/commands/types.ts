@@ -2,15 +2,15 @@ import type { ReactNode } from 'react'
 import type { ModeCategory } from '../stores/useModeStore'
 import type { ExecutionOptions } from '../services/api-types'
 
-// Visible workshop modes:
+// Visible workshop modes in the main workshop UI:
 //   - 'builder'   — design the workflow plan, step config, and live report
 //   - 'optimizer' — run / eval / harden existing steps until reliable
-//   - 'run'       — execute and inspect; no plan / config changes
 //
 // Historical: 'eval' and 'output' modes folded into 'builder' in an earlier
 // migration; 'ask' (formerly 'debugger') folded into 'run'. 'reporting' is
 // still accepted for backend compatibility but the UI maps report authoring to
-// Builder.
+// Builder. 'run' remains in the type for backend/bot routes such as Slack and
+// WhatsApp, but it is not shown in the main workshop mode toggle.
 export type WorkshopMode = 'builder' | 'optimizer' | 'run' | 'reporting'
 
 export interface CommandContext {

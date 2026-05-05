@@ -30,14 +30,14 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
-//go:embed templates/builder/*.md templates/review/*.md templates/improve/*.md templates/report/*.md
+//go:embed templates/builder/*.md templates/review/*.md templates/improve/*.md templates/report/*.md templates/kb/*.md templates/learning/*.md templates/db/*.md
 var templatesFS embed.FS
 
 // kindMeta captures everything we know about a guided flow at registration
 // time: which file holds its template, which workshop modes are allowed to
 // invoke it, and a one-line description used in the tool-list enum.
 type kindMeta struct {
-	Group       string // builder | review | improve | report
+	Group       string // builder | review | improve | report | kb | learning | db
 	Description string // shown to the agent in the kind enum
 	Modes       []string
 }
@@ -63,6 +63,15 @@ var allKinds = map[string]kindMeta{
 	"review-config": {Group: "review", Description: "Per-step KB / db / lock_learnings / lock_code recommendations", Modes: []string{"builder", "optimizer", "run"}},
 	"review-code":   {Group: "review", Description: "Saved main.py vs current step descriptions drift check", Modes: []string{"optimizer"}},
 	"review-sync":   {Group: "review", Description: "Audit plan changelog entries against dependent artifacts: learnings, main.py, KB, db, reports, and eval wiring", Modes: []string{"builder", "optimizer"}},
+
+	// Knowledgebase maintenance — applies targeted or cross-step KB cleanup
+	"improve-kb": {Group: "kb", Description: "Improve knowledgebase/notes with targeted cleanup or cross-step consolidation", Modes: []string{"builder", "optimizer"}},
+
+	// Learning maintenance — applies targeted/cross-step cleanup to learnings/_global
+	"improve-learning": {Group: "learning", Description: "Improve learnings/_global with targeted cleanup or current-plan consolidation", Modes: []string{"builder", "optimizer"}},
+
+	// DB maintenance — applies guarded schema/contract cleanup to db/*.json
+	"improve-db": {Group: "db", Description: "Improve db/*.json contracts, schemas, and report compatibility", Modes: []string{"builder", "optimizer"}},
 
 	// Improvements — metric-driven harden/replan flows
 	"improve-setup-framework": {Group: "improve", Description: "One-time bootstrap of the auto-improvement framework (Workflow Profile + metrics)", Modes: []string{"optimizer"}},

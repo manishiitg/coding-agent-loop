@@ -9,6 +9,7 @@ import {
   DollarSign,
   Package,
   Database,
+  Table2,
   Beaker,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -23,6 +24,7 @@ import { useSessionExecutionTree } from '../../../hooks/useSessionExecutionTree'
 import { useCommandDialogStore } from '../../../stores/useCommandDialogStore'
 import LearningsPopup from '../LearningsPopup'
 import KBPopup from '../KBPopup'
+import DatabasePopup from '../DatabasePopup'
 import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import EvaluationPopup from '../EvaluationPopup'
 import CostsPopup from '../CostsPopup'
@@ -136,6 +138,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Learnings popup state
   const [showLearningsPopup, setShowLearningsPopup] = useState(false)
   const [showKBPopup, setShowKBPopup] = useState(false)
+  const [showDatabasePopup, setShowDatabasePopup] = useState(false)
 
   // Execution logs popup state
   const [showExecutionLogsPopup, setShowExecutionLogsPopup] = useState(false)
@@ -149,23 +152,31 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Versions popup state
   const [showVersionsPopup, setShowVersionsPopup] = useState(false)
+
+  const closeAllPopups = useCallback(() => {
+    setShowLearningsPopup(false)
+    setShowKBPopup(false)
+    setShowDatabasePopup(false)
+    setShowExecutionLogsPopup(false)
+    setShowCostsPopup(false)
+    setShowEvaluationPopup(false)
+    setShowVersionsPopup(false)
+    setShowAutoImprovementPopup(false)
+  }, [])
   
-  // Close popups when workspacePath changes (switching workflows)
-  // Use a ref to track previous workspacePath to avoid closing on initial mount
-  const prevWorkspacePathRef = useRef<string | null | undefined>(workspacePath)
+  // Close popups only when switching between two concrete workflows.
+  // Preset refreshes can briefly unset workspacePath; treating that as a switch
+  // closes every toolbar popup even though the user is still on the same workflow.
+  const prevWorkspacePathRef = useRef<string | null>(workspacePath ?? null)
   useEffect(() => {
-    // Only close if workspacePath actually changed (not on initial mount)
-    if (prevWorkspacePathRef.current !== undefined && prevWorkspacePathRef.current !== workspacePath) {
-      setShowLearningsPopup(false)
-      setShowKBPopup(false)
-      setShowExecutionLogsPopup(false)
-      setShowCostsPopup(false)
-      setShowEvaluationPopup(false)
-      setShowVersionsPopup(false)
-      setShowAutoImprovementPopup(false)
+    if (!workspacePath) {
+      return
+    }
+    if (prevWorkspacePathRef.current && prevWorkspacePathRef.current !== workspacePath) {
+      closeAllPopups()
     }
     prevWorkspacePathRef.current = workspacePath
-  }, [workspacePath]) // Only depend on workspacePath - popup states are only read, not dependencies
+  }, [workspacePath, closeAllPopups])
   
   // Main workflow execution phase for the canvas toolbar
   const targetExecutionPhaseId = EXECUTION_PHASE_ID
@@ -568,6 +579,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
+        {/* Show Database - durable db/*.json sources used by report widgets and steps */}
+        {workspacePath && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowDatabasePopup(true)}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <Table2 className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Database</p></TooltipContent>
+          </Tooltip>
+        )}
+
         {/* Show Evaluation Reports - opens popup with evaluation scores */}
         {workspacePath && (
           <Tooltip>
@@ -626,6 +652,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     <KBPopup
       isOpen={showKBPopup}
       onClose={() => setShowKBPopup(false)}
+      workspacePath={workspacePath || null}
+    />
+
+    {/* Database Popup */}
+    <DatabasePopup
+      isOpen={showDatabasePopup}
+      onClose={() => setShowDatabasePopup(false)}
       workspacePath={workspacePath || null}
     />
 

@@ -113,7 +113,7 @@ If a step was **auto-locked** (metadata has `auto_locked_at`) and its descriptio
 
 - detect the hash change
 - clear `auto_locked_at` in metadata, set `auto_unlocked_at`
-- clear `lock_learnings` and `optimized` in `step_config.json` (the two flags always move together)
+- clear auto-managed `lock_learnings` in `step_config.json`
 - emit a step-config-updated event so the frontend reflects the unlock
 
 Manual locks — steps where `lock_learnings: true` was set by a human without an `auto_locked_at` record — are **never** auto-unlocked. Auto-unlock is strictly the inverse of auto-lock.

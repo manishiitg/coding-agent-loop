@@ -1434,7 +1434,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 	                const presetWorkshopMode = presetId ? wfState.workshopModeByPreset[presetId] : undefined
 	                return presetWorkshopMode || wfState.workshopMode
 	              })() || (inputData?.workshop_mode ?? '') as string
-              const isStepOptimized = inputData?.step_optimized === 'true'
 
               // Determine if this is a sub-agent within a todo task (vs a top-level step)
               const isSubAgent = isWorkshopSubAgent
@@ -2145,8 +2144,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Store execution options for use in the request
   const executionOptionsRef = useRef<ExecutionOptions | undefined>(undefined)
 
-  // Guard: prevent double submission from any source (Enter key repeat, double-click, effect race, etc.)
-  const isSubmittingQueryRef = useRef(false)
+  // Guard: prevent duplicate submission of the same message from any source
+  // (Enter key repeat, form submit/click overlap, restore-triggered rerender races, etc.).
+  const submitGuardRef = useRef<{ key: string; expiresAt: number } | null>(null)
 
   // Helper: reset streaming state (replaces 4 duplicated blocks)
   const resetStreamingState = useCallback((tabId?: string) => {
@@ -2162,24 +2162,30 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // (prevents stale notifications from SSE backfill on page load)
     hasUserSentMessageRef.current = true
 
-    // Prevent double submission: if already submitting, ignore
-    if (isSubmittingQueryRef.current) {
-      console.warn('[ChatArea] Blocked duplicate submitQueryWithQuery call', { query: query.substring(0, 50) })
+    const trimmedQuery = query?.trim() || ''
+    const activeTabKey = activeTab?.tabId || 'no-tab'
+    const submitGuardKey = `${selectedModeCategory || 'unknown'}:${activeTabKey}:${trimmedQuery}`
+    const now = Date.now()
+    const activeGuard = submitGuardRef.current
+    if (activeGuard && activeGuard.key === submitGuardKey && activeGuard.expiresAt > now) {
+      console.warn('[ChatArea] Blocked duplicate submitQueryWithQuery call', { query: trimmedQuery.substring(0, 50) })
       return
     }
-    isSubmittingQueryRef.current = true
-    // Reset after a short delay — long enough to block rapid duplicates,
-    // short enough to allow the next legitimate send (e.g., queued messages after completion)
-    setTimeout(() => { isSubmittingQueryRef.current = false }, 500)
+    submitGuardRef.current = { key: submitGuardKey, expiresAt: now + 3000 }
+    setTimeout(() => {
+      if (submitGuardRef.current?.key === submitGuardKey) {
+        submitGuardRef.current = null
+      }
+    }, 3000)
 
-    console.log('[ChatArea] submitQueryWithQuery called', { query: query.substring(0, 80), stack: new Error().stack?.split('\n').slice(1, 4).join(' <- ') })
+    console.log('[ChatArea] submitQueryWithQuery called', { query: trimmedQuery.substring(0, 80), stack: new Error().stack?.split('\n').slice(1, 4).join(' <- ') })
 
     // Get fresh tab state from store to avoid stale closure issues
     const chatStore = useChatStore.getState()
     const freshActiveTab = activeTab?.tabId ? chatStore.chatTabs[activeTab.tabId] : activeTab
 
     // Early validation
-    if (!query?.trim()) {
+    if (!trimmedQuery) {
       logger.warn('ChatArea', 'Empty query, returning early')
       return
     }
@@ -2239,7 +2245,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const restoredConversationPath = storedRestoredConversationPath || ''
     const restoredConversationSummary = currentTab?.config?.restoredConversationSummary?.trim()
     const restoredConversationContext = restoredConversationPath
-      ? `\n\nPrevious workflow-builder conversation: ${restoredConversationPath}\nUse this compact restored context only; do not read the full conversation file unless the user explicitly asks for older details.${restoredConversationSummary ? `\n\n${restoredConversationSummary}` : ''}`
+      ? `\n\nPrevious workflow-builder conversation file: ${restoredConversationPath}\nThis file is JSON with a top-level conversation_history array. User messages have Role \"human\" or \"user\" and text in Parts[].Text; assistant replies have Role \"ai\" or \"assistant\"; tool calls/results may be interleaved and are usually noisy. To understand the recent context, scan conversation_history from the end for the latest user/assistant Text parts. Do not treat the last JSON entry as the last user request, because it may be a tool result or function call.${restoredConversationSummary ? `\n\n${restoredConversationSummary}` : ''}`
       : ''
     const fileContextForPrompt = restoredConversationPath
       ? effectiveFileContext.filter((file) => file.path !== restoredConversationPath)

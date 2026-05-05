@@ -13,13 +13,19 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// Learning system prompt template — focuses on domain-level accumulated knowledge
+// Learning system prompt template — focuses on reusable operational HOW knowledge.
 var globalLearningSystemPromptTemplate = MustRegisterTemplate("globalLearningSystemPrompt", `# Global Workflow Skill Generation Agent
 
 ## Role & Identity
 - **Role**: Global Workflow Skill Generation Agent
 - **Trigger**: {{.LearningTrigger}} (from step: {{.ContributingStepTitle}})
-- **Focus**: Accumulate domain-level knowledge across ALL workflow steps into a shared skill at '{{.WritePath}}/'.
+- **Focus**: Accumulate operational HOW-to-run knowledge across ALL workflow steps into a shared skill at '{{.WritePath}}/'.
+{{if .CurrentObjective}}
+## CURRENT WORKFLOW OBJECTIVE
+{{.CurrentObjective}}
+
+Use this objective to decide which HOW knowledge is plan-relevant, stale, duplicated, or missing from the global skill.
+{{end}}
 {{if .GlobalSkillObjective}}
 ## SKILL OBJECTIVE (from user)
 {{.GlobalSkillObjective}}
@@ -33,33 +39,33 @@ Every piece of knowledge you capture should contribute toward this objective. As
 4. **Cross-Step Patterns**: Document patterns that help ANY step in the workflow, not just the one that discovered them.
 
 {{if .HasBrowserAccess}}## BROWSER-AUTOMATION STEPS — REQUIRED LEARNINGS SHAPE
-This workflow has a browser MCP configured (playwright / agent_browser). For steps that used a browser tool, the skill MUST include — typically as ` + "`" + `references/site-profile.md` + "`" + ` and ` + "`" + `references/selectors.md` + "`" + `:
+This workflow has a browser MCP configured (playwright / agent_browser). For steps that used a browser tool, the skill MUST include — typically as `+"`"+`references/site-profile.md`+"`"+` and `+"`"+`references/selectors.md`+"`"+`:
 
 1. **Site access preconditions**: Anything required BEFORE navigation works. Examples: "site blocks Playwright-launched browsers — use CDP attach", "Cloudflare interstitial on apex domain, use subdomain X", "native alert() must be dismissed via dialog handler". Capture the failure signature ("Permission Denied" text, blank page, frozen browser) so future steps can detect-and-switch automatically.
 
 2. **Stable-hook inventory (once per site)**: One-time profile of what durable attributes exist site-wide. Example shape:
-   ` + "```" + `
+   `+"```"+`
    Site: eportal.incometax.gov.in — Angular Material app
    data-testid: 0    aria-label: 38    hand-written ids: yes (panAdhaarUserId, loginPasswordField, ...)
    Avoid: mat-mdc-* auto-generated ids — rotate across rebuilds.
    Strategy: prefer hand-written id → aria-label → role+name.
-   ` + "```" + `
+   `+"```"+`
    This tells every future step on this site which locator priority to use without re-probing.
 
 3. **Per-action intents, not raw selectors alone**: For each significant interaction, record the *semantic identity* plus 1-2 alternates, so a fix loop can re-derive the locator if the primary rots. Example:
-   ` + "```" + `
+   `+"```"+`
    Step [login.fill_user_id]
      intent: {by: "id", value: "panAdhaarUserId"}
      alt:    {by: "placeholder", value: "PAN/ Aadhaar/ Other User ID"}
      alt:    {by: "role+name_contains", role: "textbox", name: "User ID"}
      notes:  Continue button stays disabled until input has a value.
-   ` + "```" + `
+   `+"```"+`
 
-4. **Behavioral quirks**: Multi-step flows (User ID → Continue → Password), cross-domain redirects (e-Filing → TRACES), disabled-until-valid gates, secondary confirmation modals, OTP/captcha branches, phantom controls (a ` + "`" + `#btn` + "`" + ` that looks like Proceed but does nothing — the real action is a link below). These are the highest-value learnings because they are not derivable from the DOM.
+4. **Behavioral quirks**: Multi-step flows (User ID → Continue → Password), cross-domain redirects (e-Filing → TRACES), disabled-until-valid gates, secondary confirmation modals, OTP/captcha branches, phantom controls (a `+"`"+`#btn`+"`"+` that looks like Proceed but does nothing — the real action is a link below). These are the highest-value learnings because they are not derivable from the DOM.
 
 5. **Known-bad selector patterns**: Explicit "do NOT use" list for this site — auto-generated id shapes, dynamic class chains, any selector that seemed to work but broke on the next run. Future steps consult this list before picking a locator.
 
-**Never save ephemeral refs (` + "`" + `@e1` + "`" + `, ` + "`" + `e68` + "`" + `, etc.) into learnings.** They are session-local and useless across runs.
+**Never save ephemeral refs (`+"`"+`@e1`+"`"+`, `+"`"+`e68`+"`"+`, etc.) into learnings.** They are session-local and useless across runs.
 {{end}}
 {{if .SkillCreatorPath}}
 ## SKILL WRITING GUIDE (CRITICAL — READ FIRST)
@@ -81,51 +87,53 @@ It defines the correct anatomy of a skill (SKILL.md + references/ + scripts/ + a
 {{.LearningObjectivesBlock}}
 
 Use this block to drive CROSS-STEP consolidation that a single step's learning agent can't see:
-- If multiple objectives imply the same HOW-knowledge (e.g. two different steps' objectives both mention "OTP timing after PAN submit"), promote the shared lesson to a common section in ` + "`" + `references/` + "`" + ` and remove the step-specific duplicates from SKILL.md.
+- If multiple objectives imply the same HOW-knowledge (e.g. two different steps' objectives both mention "OTP timing after PAN submit"), promote the shared lesson to a common section in `+"`"+`references/`+"`"+` and remove the step-specific duplicates from SKILL.md.
 - If an objective's scope has NO corresponding content in SKILL.md/references/, flag it in your final summary (line like "diagnostic: step X's learning_objective not reflected in current skill — likely the learning agent didn't run successfully for it") — do NOT silently re-learn it; that's the per-step learning agent's job.
-- If the current SKILL.md has sections that no declared objective covers, decide: is it stale (from a removed step) or genuinely shared? Stale → remove; shared → move to a ` + "`" + `references/` + "`" + ` file with a clear scope note.
+- If the current SKILL.md has sections that no declared objective covers, decide: is it stale (from a removed step) or genuinely shared? Stale → remove; shared → move to a `+"`"+`references/`+"`"+` file with a clear scope note.
 {{end}}
+{{if .ExecutionLogsPath}}
 3. **Read Execution Logs**: The execution logs at '{{.ExecutionLogsPath}}' show what step "{{.ContributingStepTitle}}" just did.
-{{if .ExecutionLogsFilesListing}}   - Files available (pre-enumerated — do NOT run ` + "`" + `ls` + "`" + ` again):
+{{if .ExecutionLogsFilesListing}}   - Files available (pre-enumerated — do NOT run `+"`"+`ls`+"`"+` again):
 {{.ExecutionLogsFilesListing}}
-{{else}}   - List files: ` + "`" + `ls '{{.ExecutionLogsPath}}'` + "`" + `
+{{else}}   - List files: `+"`"+`ls '{{.ExecutionLogsPath}}'`+"`"+`
 {{end}}   - Start with the smallest summary file in the listing to understand what happened.
-   - Read the conversation JSON (largest file) only if you need domain details. **Read end-first**: the final turns hold the refined, working pattern (selectors that ended up succeeding, the winning tool sequence); earlier turns are exploration and recoveries. Use ` + "`" + `tail -c 30000` + "`" + ` to pull the tail, then ` + "`" + `jq` + "`" + ` backward if you need earlier context.
+   - Read the conversation JSON (largest file) only if you need domain details. **Read end-first**: the final turns hold the refined, working pattern (selectors that ended up succeeding, the winning tool sequence); earlier turns are exploration and recoveries. Use `+"`"+`tail -c 30000`+"`"+` to pull the tail, then `+"`"+`jq`+"`"+` backward if you need earlier context.
+{{end}}
 4. **Merge & Consolidate**:
 {{if .IsSuccess}}
-   - Extract domain knowledge discovered by step "{{.ContributingStepTitle}}".
+   - Extract operational HOW knowledge discovered by step "{{.ContributingStepTitle}}".
    - Decide which file(s) to update or create based on the skill structure.
    - Update SKILL.md if you added new reference files.
    - Update any patterns that were refined or corrected by this execution.
 {{else}}
-   - Document what went wrong and any domain knowledge revealed by the failure.
+   - Document what went wrong and any operational HOW knowledge revealed by the failure.
    - Preserve all existing successful patterns.
    - Add failure avoidance guidance to the relevant file.
 {{end}}
 5. **Persist** (CRITICAL — organize into multiple files, do NOT dump everything into SKILL.md):
    - SKILL.md should be a SHORT index/overview (under 100 lines) with links to reference files.
-   - Move detailed domain knowledge into ` + "`" + `references/` + "`" + ` files organized by topic (e.g. references/auth-flow.md, references/selectors.md, references/api-patterns.md).
+   - Move detailed operational HOW knowledge into `+"`"+`references/`+"`"+` files organized by topic (e.g. references/auth-flow.md, references/selectors.md, references/api-patterns.md).
    - SKILL.md MUST exist with YAML frontmatter:
-   ` + "```" + `
+   `+"```"+`
    ---
    name: {{.WorkflowName}}
-   description: "<Summary of accumulated domain knowledge for this workflow>"
+   description: "<Summary of accumulated operational HOW knowledge for this workflow>"
    disable-model-invocation: true
    user-invocable: false
    ---
-   ` + "```" + `
+   `+"```"+`
    - Organize supporting files following the skill creator guide (references/, scripts/, etc.).
    - Use diff_patch_workspace_file for existing files, execute_shell_command with cat heredoc for new files.
 {{if .IsScriptedCodeMode}}6. **Scripts (Code Execution Mode)**:
-   - ` + "`main.py`" + ` and helper scripts are STEP-SPECIFIC — save them to '{{.StepScriptsPath}}/' (NOT to the global skill folder).
-   - Domain knowledge (selectors, API patterns, common issues) goes to the global skill at '{{.WritePath}}/'.
+   - `+"`main.py`"+` and helper scripts are STEP-SPECIFIC — save them to '{{.StepScriptsPath}}/' (NOT to the global skill folder).
+   - Reusable HOW knowledge (selectors, API patterns, common issues) goes to the global skill at '{{.WritePath}}/'.
    - Reference the step scripts path from SKILL.md if relevant patterns were discovered.
 {{end}}
 
 ## FINAL ACTION
 End with exactly one summary line:
-- If you updated files: ` + "`" + `Updated: {{.WritePath}}/ (files: <list of files changed>)` + "`" + `
-- If there is no materially new learning and you made no file changes: ` + "`" + `Updated: no-op; reason: <short reason>` + "`" + ``)
+- If you updated files: `+"`"+`Updated: {{.WritePath}}/ (files: <list of files changed>)`+"`"+`
+- If there is no materially new learning and you made no file changes: `+"`"+`Updated: no-op; reason: <short reason>`+"`"+``)
 
 // Global learning user message template
 var globalLearningUserMessageTemplate = MustRegisterTemplate("globalLearningUserMessage", `# Global Workflow Skill Update
@@ -135,14 +143,14 @@ var globalLearningUserMessageTemplate = MustRegisterTemplate("globalLearningUser
 - **Goal**: {{.StepDescription}}
 
 ## What Happened
-{{if .IsSuccess}}- Step executed successfully. Extract domain knowledge discovered during execution.
-{{else}}- Step failed. Document domain knowledge revealed by the failure and how to prevent it.
+{{if .IsSuccess}}- Step executed successfully. Extract reusable operational HOW knowledge discovered during execution.
+{{else}}- Step failed. Document reusable operational HOW knowledge revealed by the failure and how to prevent it.
 {{end}}
 
 ## Instructions
 - Merge findings into the global skill, organized by category
-- Do NOT include step-specific tool sequences — only domain knowledge
-- Keep the skill focused on the TARGET SYSTEM, not on workflow mechanics
+- Do NOT include step-specific tool sequences — only reusable operational HOW knowledge
+- Keep the skill focused on how to operate the TARGET SYSTEM, not workflow mechanics or discovered facts
 - Replace hardcoded values with {{"{{"}}VARIABLE_NAME{{"}}"}} placeholders: {{.Variables}}
 
 ---
@@ -219,7 +227,7 @@ func (agent *WorkflowLearningAgent) Execute(ctx context.Context, templateVars ma
 	// pre-enumerated file listing drive the system prompt's "Read Execution
 	// Logs" step — without them, the prompt renders `at '' ... ls ''` and the
 	// agent has no idea where to look. Both are set by runSuccessLearningPhase.
-	for _, key := range []string{"StepExecutionPath", "StepNumber", "SkillCreatorPath", "AllowedTools", "IsScriptedCodeMode", "UseGlobalLearning", "ContributingStepID", "ContributingStepTitle", "GlobalSkillObjective", "StepScriptsPath", "LearningObjectivesBlock", "HasBrowserAccess", "ExecutionLogsPath", "ExecutionLogsFilesListing"} {
+	for _, key := range []string{"StepExecutionPath", "StepNumber", "SkillCreatorPath", "AllowedTools", "IsScriptedCodeMode", "UseGlobalLearning", "ContributingStepID", "ContributingStepTitle", "CurrentObjective", "GlobalSkillObjective", "StepScriptsPath", "LearningObjectivesBlock", "HasBrowserAccess", "ExecutionLogsPath", "ExecutionLogsFilesListing"} {
 		if v, ok := templateVars[key]; ok {
 			learningTemplateVars[key] = v
 		}
@@ -271,20 +279,21 @@ func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars m
 	writePath := docsRoot + "/" + workspacePath + "/learnings/" + GlobalLearningID
 	var result strings.Builder
 	if err := globalLearningSystemPromptTemplate.Execute(&result, map[string]interface{}{
-		"IsSuccess":                isSuccess,
-		"LearningTrigger":          strings.ToUpper(learningTrigger),
-		"WritePath":                writePath,
-		"ContributingStepTitle":    templateVars["ContributingStepTitle"],
-		"WorkflowName":             "Workflow Knowledge",
+		"IsSuccess":                 isSuccess,
+		"LearningTrigger":           strings.ToUpper(learningTrigger),
+		"WritePath":                 writePath,
+		"ContributingStepTitle":     templateVars["ContributingStepTitle"],
+		"WorkflowName":              "Workflow Knowledge",
 		"ExecutionLogsPath":         executionLogsPath,
 		"ExecutionLogsFilesListing": executionLogsFilesListing,
 		"ExistingLearningsContent":  existingLearningsContent,
-		"SkillCreatorPath":         templateVars["SkillCreatorPath"],
-		"GlobalSkillObjective":     templateVars["GlobalSkillObjective"],
-		"IsScriptedCodeMode":       templateVars["IsScriptedCodeMode"] == "true",
-		"StepScriptsPath":          templateVars["StepScriptsPath"],
-		"LearningObjectivesBlock":  templateVars["LearningObjectivesBlock"],
-		"HasBrowserAccess":         templateVars["HasBrowserAccess"] == "true",
+		"SkillCreatorPath":          templateVars["SkillCreatorPath"],
+		"CurrentObjective":          templateVars["CurrentObjective"],
+		"GlobalSkillObjective":      templateVars["GlobalSkillObjective"],
+		"IsScriptedCodeMode":        templateVars["IsScriptedCodeMode"] == "true",
+		"StepScriptsPath":           templateVars["StepScriptsPath"],
+		"LearningObjectivesBlock":   templateVars["LearningObjectivesBlock"],
+		"HasBrowserAccess":          templateVars["HasBrowserAccess"] == "true",
 	}); err != nil {
 		panic(fmt.Sprintf("learning system prompt template execution failed: %v", err))
 	}
@@ -302,12 +311,12 @@ func (agent *WorkflowLearningAgent) learningUserMessageProcessor(templateVars ma
 	// Always use global learning user message template
 	var result strings.Builder
 	if err := globalLearningUserMessageTemplate.Execute(&result, map[string]interface{}{
-		"IsSuccess":              isSuccess,
-		"ContributingStepTitle":  templateVars["ContributingStepTitle"],
-		"ContributingStepID":     templateVars["ContributingStepID"],
-		"StepDescription":        templateVars["StepDescription"],
-		"Variables":              templateVars["VariableNames"],
-		"ValidationResult":       templateVars["ValidationResult"],
+		"IsSuccess":             isSuccess,
+		"ContributingStepTitle": templateVars["ContributingStepTitle"],
+		"ContributingStepID":    templateVars["ContributingStepID"],
+		"StepDescription":       templateVars["StepDescription"],
+		"Variables":             templateVars["VariableNames"],
+		"ValidationResult":      templateVars["ValidationResult"],
 	}); err != nil {
 		panic(fmt.Sprintf("learning user message template execution failed: %v", err))
 	}

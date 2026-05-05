@@ -30,7 +30,7 @@ use one of the explicit overrides below (`preferred_tier`, workshop `tier`
 argument, or the per-step `execution_llm` override).
 
 `disable_tier_optimization=true` still forces execution and conditional agents
-to Tier 1. The `optimized` flag no longer affects tier selection.
+to Tier 1.
 
 ## Selection Priority
 

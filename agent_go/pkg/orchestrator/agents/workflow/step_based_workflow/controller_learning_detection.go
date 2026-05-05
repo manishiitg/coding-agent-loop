@@ -34,18 +34,18 @@ const GlobalLearningID = "_global"
 
 // LearningMetadata represents the learning metadata stored per step
 type LearningMetadata struct {
-	StepID              string `json:"step_id"`
-	StepPath            string `json:"step_path"`
-	LearningContentHash string `json:"learning_content_hash,omitempty"` // SHA256 of SKILL.md contents — if changed, force exploration mode
-	TotalIterations     int    `json:"total_iterations"`
-	SuccessfulRuns      int    `json:"successful_runs"`                 // Total count of successful runs (all description versions, observability only)
-	LastDescriptionHash string `json:"last_description_hash,omitempty"` // SHA256 of step.GetDescription(); resets DescriptionHashRuns when it changes
-	DescriptionHashRuns int    `json:"description_hash_runs,omitempty"` // Successful runs accumulated under LastDescriptionHash. Auto-lock gate fires at 3.
+	StepID                       string `json:"step_id"`
+	StepPath                     string `json:"step_path"`
+	LearningContentHash          string `json:"learning_content_hash,omitempty"` // SHA256 of SKILL.md contents — if changed, force exploration mode
+	TotalIterations              int    `json:"total_iterations"`
+	SuccessfulRuns               int    `json:"successful_runs"`                            // Total count of successful runs (all description versions, observability only)
+	LastDescriptionHash          string `json:"last_description_hash,omitempty"`            // SHA256 of step.GetDescription(); resets DescriptionHashRuns when it changes
+	DescriptionHashRuns          int    `json:"description_hash_runs,omitempty"`            // Successful runs accumulated under LastDescriptionHash. Auto-lock gate fires at 3.
 	ConsecutiveNoNewLearningRuns int    `json:"consecutive_no_new_learning_runs,omitempty"` // Consecutive successful runs whose learning pass reported no materially new learning.
-	FailureLearningRuns int    `json:"failure_learning_runs"`           // Count of failure learning runs (persisted across iterations)
-	LastTurnCount       int    `json:"last_turn_count"`                 // Last recorded TurnCount
-	LastExecutionLLM    string `json:"last_execution_llm,omitempty"`
-	LastLearningLLM     string `json:"last_learning_llm,omitempty"`
+	FailureLearningRuns          int    `json:"failure_learning_runs"`                      // Count of failure learning runs (persisted across iterations)
+	LastTurnCount                int    `json:"last_turn_count"`                            // Last recorded TurnCount
+	LastExecutionLLM             string `json:"last_execution_llm,omitempty"`
+	LastLearningLLM              string `json:"last_learning_llm,omitempty"`
 	// Detection tracking
 	LastLearningDetectedAt  string                  `json:"last_learning_detected_at,omitempty"`
 	LastDetectionReasoning  string                  `json:"last_detection_reasoning,omitempty"`
@@ -115,8 +115,8 @@ type MetadataUpdateResult struct {
 }
 
 const (
-	autoLockMinSuccessfulRuns              = 3
-	autoLockConsecutiveNoNewLearningRuns   = 2
+	autoLockMinSuccessfulRuns            = 3
+	autoLockConsecutiveNoNewLearningRuns = 2
 )
 
 func inferHasNewLearningFromResult(result string) (bool, string, float64) {
@@ -240,7 +240,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	// Increment successful run counter on successful validation
 	if validationPassed && turnCount > 0 {
 		metadata.SuccessfulRuns++
-		// Sync successful run count to step_config.json so it's visible alongside optimized flag
+		// Sync successful run count to step_config.json so review/harden prompts can see run evidence.
 		if step != nil {
 			hcpo.syncSuccessfulRunsToStepConfig(ctx, step.GetID(), metadata.SuccessfulRuns)
 		}
@@ -382,7 +382,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoLockStepLearningsInConfig(
 		stepConfig.AgentConfigs = &AgentConfigs{}
 	}
 
-	// Validate prerequisites before auto-locking and marking optimized
+	// Validate prerequisites before auto-locking learnings.
 	// 1. Check learnings exist
 	learningsPath := getLearningFolderPathByStepID("", stepID, "", hcpo.isEvaluationMode)
 	learningFiles, _ := hcpo.readStepLearningFiles(ctx, learningsPath)
@@ -402,17 +402,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoLockStepLearningsInConfig(
 		}
 	}
 
-	// Set LockLearnings = true AND Optimized = true together.
-	// When the skill is built (minimum stable-run threshold reached and repeated
-	// no-new-learning outcomes confirm convergence), the step is
-	// flagged optimized. NOTE: Optimized is currently a UI/reporting flag only —
-	// it does NOT change runtime LLM tier selection. Learning stays on Tier 2
-	// (Medium) and execution stays on Tier 1 (High) regardless. If you later
-	// want optimized steps to use cheaper LLMs, wire it into ResolveForLearning
-	// / ResolveForExecution in tiered_llm.go.
+	// Lock learnings once the skill is built (minimum stable-run threshold
+	// reached and repeated no-new-learning outcomes confirm convergence).
 	lockValue := true
 	stepConfig.AgentConfigs.LockLearnings = &lockValue
-	stepConfig.AgentConfigs.Optimized = &lockValue
 	if strings.TrimSpace(stepConfig.AgentConfigs.ReviewNotes) == "" {
 		stepConfig.AgentConfigs.ReviewNotes = "Auto-locked after stable successful runs and repeated no-new-learning outcomes against the same step description hash (learnings converged). Edit the description to invalidate and regenerate."
 	}
@@ -466,7 +459,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) shouldBackfillAutoLockToConfig(ctx co
 	return true
 }
 
-// autoUnlockStepLearningsInConfig clears LockLearnings and Optimized in step_config.json
+// autoUnlockStepLearningsInConfig clears auto-managed LockLearnings in step_config.json
 // when a previously auto-locked step's description has changed (its stored learnings no
 // longer match the current description). Only invoked from the description-hash change
 // path; manual locks are left alone (the caller already checked metadata.AutoLockedAt).
@@ -492,12 +485,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoUnlockStepLearningsInConfig(
 			// Nothing to unlock.
 			return nil
 		}
-		// Clear the auto-lock + optimized markers. Optimized is cleared because
-		// it moves in lock-step with LockLearnings in autoLockStepLearningsInConfig;
-		// keeping it set after unlock would leave the step flagged "optimized" with
-		// stale learnings — worst of both worlds.
+		// Clear the auto-lock marker.
 		configs[i].AgentConfigs.LockLearnings = nil
-		configs[i].AgentConfigs.Optimized = nil
 		// Only overwrite review_notes if it still carries the auto-lock wording;
 		// if a human edited it we preserve their content.
 		if strings.HasPrefix(strings.TrimSpace(configs[i].AgentConfigs.ReviewNotes), "Auto-locked after") {
@@ -514,7 +503,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoUnlockStepLearningsInConfig(
 		return fmt.Errorf("failed to write step configs: %w", err)
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Auto-unlocked learnings for step %s (LockLearnings cleared, Optimized cleared)", stepID))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Auto-unlocked learnings for step %s (LockLearnings cleared)", stepID))
 
 	if err := hcpo.emitStepConfigUpdatedEvent(ctx, stepID); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit step config updated event: %v", err))
@@ -523,7 +512,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoUnlockStepLearningsInConfig(
 }
 
 // syncSuccessfulRunsToStepConfig updates the successful_runs count in step_config.json
-// so it's visible alongside the optimized flag for the workflow builder.
+// so it's visible in step_config.json for the workflow builder.
 func (hcpo *StepBasedWorkflowOrchestrator) syncSuccessfulRunsToStepConfig(ctx context.Context, stepID string, count int) {
 	configs, err := hcpo.ReadStepConfigs(ctx)
 	if err != nil {

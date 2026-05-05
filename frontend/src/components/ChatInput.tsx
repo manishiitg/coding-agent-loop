@@ -42,12 +42,12 @@ function WorkshopModeToggle() {
     })
   }
 
-  // Three visible modes. Report authoring is folded into Builder so users do
-  // not need a separate underlying model session just to edit the dashboard.
+  // Two visible user-facing modes. Run mode remains available for bot routes
+  // (Slack/WhatsApp/etc.) and backend compatibility, but the workshop UI should
+  // not expose it as a chat persona.
   const builderModes = [
     { id: 'builder' as const, label: 'Builder', title: 'Builder', description: 'Design the workflow plan, step config, and live report dashboard.' },
     { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize', description: 'Harden existing steps — run, evaluate, fix, repeat until reliable.' },
-    { id: 'run' as const, label: 'Run', title: 'Run', description: 'Execute the finished workflow or inspect prior runs, eval reports, KB, and learnings. No plan/config changes.' },
   ]
 
   return (

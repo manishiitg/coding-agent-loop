@@ -268,11 +268,11 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
 
 async function loadWorkflowBuilderSession(
   presetQueryId?: string,
-  workspacePath?: string
+  workspacePath?: string | null
 ): Promise<WorkflowBuilderSessionResponse | null> {
   if (!presetQueryId && !workspacePath) return null
 
-  const session = await agentApi.getWorkflowBuilderSession(presetQueryId, workspacePath)
+  const session = await agentApi.getWorkflowBuilderSession(presetQueryId, workspacePath ?? undefined)
   if (!session?.session_id || session.source === 'none') return null
   return session
 }
@@ -458,6 +458,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const { getActivePreset } = useGlobalPresetStore()
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const activeWorkflowPreset = getActivePreset('workflow')
+  const activeWorkflowWorkspacePath = activeWorkflowPreset?.selectedFolder?.filepath ?? null
   const emptyActiveBuilderTabKey = useChatStore(state => {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : null
@@ -474,13 +475,33 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   })
   const builderRestoreOfferAttemptRef = useRef<string | null>(null)
 
-  // Get workspace path from active preset
+  // Keep the last concrete workspace path for the active preset during manifest
+  // refreshes. A transient null here unmounts the report pane and makes toolbar
+  // popups think the user switched workflows.
+  const lastWorkspacePathRef = useRef<{ presetId: string | null, path: string | null }>({
+    presetId: activePresetId,
+    path: activeWorkflowWorkspacePath,
+  })
+
   const workspacePath = useMemo(() => {
-    if (activeWorkflowPreset?.selectedFolder?.filepath) {
-      return activeWorkflowPreset.selectedFolder.filepath
+    if (activeWorkflowWorkspacePath) {
+      lastWorkspacePathRef.current = {
+        presetId: activePresetId,
+        path: activeWorkflowWorkspacePath,
+      }
+      return activeWorkflowWorkspacePath
+    }
+
+    if (activePresetId && lastWorkspacePathRef.current.presetId === activePresetId) {
+      return lastWorkspacePathRef.current.path
+    }
+
+    lastWorkspacePathRef.current = {
+      presetId: activePresetId,
+      path: null,
     }
     return null
-  }, [activeWorkflowPreset])
+  }, [activePresetId, activeWorkflowWorkspacePath])
 
   const [reportPreviewPreference, setReportPreviewPreference] = useState<'auto' | 'desktop' | 'tablet' | 'mobile'>(() => {
     try {
@@ -496,13 +517,20 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const restoreOfferKey = useCallback((presetId: string, sessionId?: string): string => {
     return `${presetId}:${sessionId || 'unknown'}`
   }, [])
-  const restoreOfferFile = restoreOffer ? restoreOfferFileName(restoreOffer) : ''
-  const restoreOfferTime = restoreOffer?.kind === 'builder-history'
-    ? formatRestoreOfferTime(restoreOffer.session.updated_at)
+  const visibleRestoreOffer = restoreOffer?.presetId === activePresetId ? restoreOffer : null
+  const restoreOfferFile = visibleRestoreOffer ? restoreOfferFileName(visibleRestoreOffer) : ''
+  const restoreOfferTime = visibleRestoreOffer?.kind === 'builder-history'
+    ? formatRestoreOfferTime(visibleRestoreOffer.session.updated_at)
     : ''
 
+  useEffect(() => {
+    if (restoreOffer && activePresetId && restoreOffer.presetId !== activePresetId) {
+      setRestoreOffer(null)
+    }
+  }, [activePresetId, restoreOffer])
+
   const offerBuilderHistoryRestore = useCallback(async (presetId: string): Promise<WorkflowBuilderSessionResponse | null> => {
-    const builderHistory = await loadWorkflowBuilderSession(presetId, activeWorkflowPreset?.selectedFolder?.filepath)
+    const builderHistory = await loadWorkflowBuilderSession(presetId, workspacePath ?? undefined)
       .catch(err => {
         console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
         return null
@@ -517,7 +545,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
 
     return builderHistory
-  }, [activeWorkflowPreset?.selectedFolder?.filepath, restoreOfferKey])
+  }, [workspacePath, restoreOfferKey])
 
   const createFreshWorkflowBuilderTab = useCallback(async (presetId: string, options?: { skipRestoreOffer?: boolean }) => {
     const chatStore = useChatStore.getState()
@@ -613,7 +641,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     const builderTab = restoredTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
 
     if (builderTab?.sessionId && chatStore.getTabEvents(builderTab.sessionId).length === 0) {
-      const builderHistory = await loadWorkflowBuilderSession(presetId, activeWorkflowPreset?.selectedFolder?.filepath)
+      const builderHistory = await loadWorkflowBuilderSession(presetId, workspacePath ?? undefined)
         .catch(err => {
           console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
           return null
@@ -634,10 +662,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     const targetTab = builderTab || streamingTab || restoredTabs[0]
     chatStore.switchTab(targetTab.tabId)
     setShowChatArea(true)
-  }, [activeWorkflowPreset?.selectedFolder?.filepath, rehydrateWorkflowTabs, setShowChatArea])
+  }, [workspacePath, rehydrateWorkflowTabs, setShowChatArea])
 
   const handleRestorePreviousWorkflowConversation = useCallback(() => {
-    const offer = restoreOffer
+    const offer = visibleRestoreOffer
     if (!offer) return
 
     if (offer.kind === 'builder-history') {
@@ -654,14 +682,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }).finally(() => {
       setIsRestoringWorkflowSessions(false)
     })
-  }, [restoreOffer, restoreBuilderHistory, restoreExistingWorkflowTabs, setIsRestoringWorkflowSessions, restoreOfferKey])
+  }, [visibleRestoreOffer, restoreBuilderHistory, restoreExistingWorkflowTabs, setIsRestoringWorkflowSessions, restoreOfferKey])
 
   const handleDismissRestoreOffer = useCallback(() => {
-    if (restoreOffer?.kind === 'builder-history') {
-      handledRestoreOfferKeysRef.current.add(restoreOfferKey(restoreOffer.presetId, restoreOffer.session.session_id))
+    if (visibleRestoreOffer?.kind === 'builder-history') {
+      handledRestoreOfferKeysRef.current.add(restoreOfferKey(visibleRestoreOffer.presetId, visibleRestoreOffer.session.session_id))
     }
     setRestoreOffer(null)
-  }, [restoreOffer, restoreOfferKey])
+  }, [visibleRestoreOffer, restoreOfferKey])
 
   useEffect(() => {
     const handleWorkflowChatUserStarted = (event: Event) => {
@@ -1274,7 +1302,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         if (!lastTabId) {
           const store = useChatStore.getState()
           if (existingWorkflowTabs.length === 0) {
-            const builderHistory = await loadWorkflowBuilderSession(activePresetId, activeWorkflowPreset?.selectedFolder?.filepath)
+            const builderHistory = await loadWorkflowBuilderSession(activePresetId, workspacePath ?? undefined)
               .catch(err => {
                 console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
                 return null
@@ -1318,7 +1346,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 (!tab.sessionId || getTabEvents(tab.sessionId).length === 0)
               )
               if (hasOnlyEmptyBuilderTabs) {
-                const builderHistory = await loadWorkflowBuilderSession(activePresetId, activeWorkflowPreset?.selectedFolder?.filepath)
+                const builderHistory = await loadWorkflowBuilderSession(activePresetId, workspacePath ?? undefined)
                   .catch(err => {
                     console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
                     return null
@@ -1351,7 +1379,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     const timeoutId = setTimeout(reconnectWorkflowTabs, 500)
     return () => clearTimeout(timeoutId)
-  }, [activePresetId, activeWorkflowPreset?.selectedFolder?.filepath, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs, createFreshWorkflowBuilderTab, restoreBuilderHistory, restoreExistingWorkflowTabs])
+  }, [activePresetId, workspacePath, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs, createFreshWorkflowBuilderTab, restoreBuilderHistory, restoreExistingWorkflowTabs])
 
 
   // Auto-minimize workflows when switching to a different preset
@@ -1570,7 +1598,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [showRunningDrawer, setShowChatArea])
 
   // No preset selected state
-  if (!activeWorkflowPreset) {
+  if (!activeWorkflowPreset && !workspacePath) {
     return (
       <div className={`flex flex-col h-full ${className}`}>
 
@@ -1634,7 +1662,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               </div>
             )}
 
-            {restoreOffer && (
+            {visibleRestoreOffer && (
               <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
                 <span className="min-w-0 truncate text-xs text-muted-foreground">
                   Previous builder chat file available: <span className="font-medium text-foreground">{restoreOfferFile}</span>

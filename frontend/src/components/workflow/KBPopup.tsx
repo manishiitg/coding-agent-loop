@@ -40,6 +40,14 @@ interface KBNotesIndex {
   last_updated_by?: { step?: string; run?: string }
 }
 
+type LegacyKBTopicMeta = {
+  covers?: unknown
+  last_updated?: unknown
+  last_updated_by?: unknown
+  size_bytes?: unknown
+  section_count?: unknown
+}
+
 async function readJSON<T>(filepath: string): Promise<T | null> {
   try {
     const resp = await agentApi.getPlannerFileContent(filepath)
@@ -60,6 +68,47 @@ async function readText(filepath: string): Promise<string | null> {
   }
 }
 
+function topicIdFromFile(file: string): string {
+  return file.replace(/\.md$/i, '')
+}
+
+function normalizeUpdatedBy(value: unknown): KBNotesTopic['last_updated_by'] {
+  if (!value) return undefined
+  if (typeof value === 'string') return { step: value }
+  if (typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  return {
+    step: typeof record.step === 'string' ? record.step : undefined,
+    run: typeof record.run === 'string' ? record.run : undefined,
+  }
+}
+
+function normalizeKBIndex(raw: unknown): KBNotesIndex | null {
+  if (!raw || typeof raw !== 'object') return null
+  const record = raw as Record<string, unknown>
+  if (Array.isArray(record.topics)) {
+    return raw as KBNotesIndex
+  }
+
+  const topics: KBNotesTopic[] = Object.entries(record)
+    .filter(([file, meta]) => file.toLowerCase().endsWith('.md') && meta && typeof meta === 'object' && !Array.isArray(meta))
+    .map(([file, rawMeta]) => {
+      const meta = rawMeta as LegacyKBTopicMeta
+      return {
+        id: topicIdFromFile(file),
+        file,
+        covers: Array.isArray(meta.covers) ? meta.covers.filter((item): item is string => typeof item === 'string') : undefined,
+        last_updated: typeof meta.last_updated === 'string' ? meta.last_updated : undefined,
+        last_updated_by: normalizeUpdatedBy(meta.last_updated_by),
+        size_bytes: typeof meta.size_bytes === 'number' ? meta.size_bytes : undefined,
+        section_count: typeof meta.section_count === 'number' ? meta.section_count : undefined,
+      }
+    })
+    .sort((a, b) => a.id.localeCompare(b.id))
+
+  return { topics }
+}
+
 export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -77,8 +126,8 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
     setLoading(true)
     setError(null)
     try {
-      const ni = await readJSON<KBNotesIndex>(notesIndexPath)
-      setNotesIndex(ni)
+      const rawIndex = await readJSON<unknown>(notesIndexPath)
+      setNotesIndex(normalizeKBIndex(rawIndex))
       // Reset per-topic markdown cache on reload — sizes/content may have changed.
       setNotesBodies({})
       setExpandedNotes(new Set())

@@ -881,13 +881,19 @@ func validateReportPlan(
 				continue
 			}
 
-			// JSONata query widgets transform the raw source in the browser before
-			// path/filter/widget-shape validation applies. The Go validator does
-			// not evaluate JSONata, so keep source validation and option sanity but
-			// avoid false shape errors against the pre-query JSON.
-			if strings.TrimSpace(w.Fields["query"]) != "" {
-				validateReportPlanOptions(w, section.Heading, locator, result)
-				continue
+			if q := strings.TrimSpace(w.Fields["query"]); q != "" {
+				transformed, qErr := evalReportPlanQuery(q, data)
+				if qErr != nil {
+					result.Valid = false
+					result.Errors = append(result.Errors, reportPlanDiagnostic{
+						Severity: "error", Section: section.Heading, Line: w.LineNum, Widget: locator,
+						Message: fmt.Sprintf("JSONata query failed: %v", qErr),
+						Hint:    "Fix `query:` or test it against the source JSON. The query runs before path/filter/widget rendering.",
+					})
+					validateReportPlanOptions(w, section.Heading, locator, result)
+					continue
+				}
+				data = transformed
 			}
 
 			// Suggest `query:` when the source filename looks like a

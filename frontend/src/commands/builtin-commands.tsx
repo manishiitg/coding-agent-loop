@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, BookOpen } from 'lucide-react'
 import type { CommandDefinition } from './types'
 
 export const builtinCommands: CommandDefinition[] = [
@@ -94,6 +94,45 @@ export const builtinCommands: CommandDefinition[] = [
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
       ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-sync", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+    }
+  },
+  {
+    command: 'improve-kb',
+    description: 'Improve knowledgebase notes with targeted cleanup or cross-step consolidation',
+    icon: <Layers className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-kb", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+    }
+  },
+  {
+    command: 'improve-learning',
+    description: 'Improve global learnings with targeted cleanup or current-plan consolidation',
+    icon: <BookOpen className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-learning", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+    }
+  },
+  {
+    command: 'improve-db',
+    description: 'Improve db JSON contracts, schemas, and report compatibility',
+    icon: <Server className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-db", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
     }
   },
   {

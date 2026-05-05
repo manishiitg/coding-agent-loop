@@ -50,16 +50,12 @@ func clearStepConfigField(sc *StepConfig, name string) bool {
 		ac.LearningObjective = ""
 	case "lock_learnings":
 		ac.LockLearnings = nil
-		// Keep Optimized in sync with LockLearnings — the setter couples them.
-		ac.Optimized = nil
 	case "lock_code":
 		ac.LockCode = nil
 	case "use_code_execution_mode":
 		ac.UseCodeExecutionMode = nil
 	case "disable_parallel_tool_execution":
 		ac.DisableParallelToolExecution = nil
-	case "optimized":
-		ac.Optimized = nil
 	case "description_reviewed":
 		ac.DescriptionReviewed = nil
 
@@ -99,7 +95,7 @@ func isKnownAgentConfigClearField(name string) bool {
 		"servers", "tools", "enabled_custom_tools", "enabled_skills",
 		"learning_objective", "lock_learnings", "lock_code",
 		"use_code_execution_mode",
-		"disable_parallel_tool_execution", "optimized",
+		"disable_parallel_tool_execution",
 		"description_reviewed",
 		"learning_mode", "knowledgebase_access", "knowledgebase_contribution",
 		"knowledgebase_write_method",

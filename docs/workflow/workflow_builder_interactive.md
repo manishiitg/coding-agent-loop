@@ -74,7 +74,7 @@ Allowed behavior:
 - patch scripts and files
 
 ### `optimizer`
-Use this after the basic workflow exists and some steps are already optimized.
+Use this after the basic workflow exists and needs hardening against run/eval/metric evidence.
 
 Adds:
 - `harden_workflow`
@@ -84,7 +84,7 @@ Adds:
 - learning and step-hardening workflows
 
 ### `runner`
-Use this when the workflow is already built and mostly optimized.
+Use this when the workflow is already built and the user mainly wants to execute or inspect runs.
 
 Allowed behavior is narrower:
 - run steps
@@ -95,12 +95,11 @@ It is intentionally more operational and less structural.
 
 ## Mode Detection
 
-If the frontend does not explicitly force a workshop mode, the backend auto-detects it from step optimization state.
+If the frontend does not explicitly force a workshop mode, the backend defaults to Builder.
 
 Current rule:
-- no optimized steps -> `builder`
-- some optimized steps -> `optimizer`
-- all top-level steps optimized -> `runner`
+- default -> `builder`
+- `optimizer`, `runner`, and reporting mode are explicit frontend/user choices
 
 This logic lives in [interactive_workshop_manager.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go).
 

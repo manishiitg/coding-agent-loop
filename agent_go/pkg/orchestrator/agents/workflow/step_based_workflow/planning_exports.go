@@ -101,7 +101,6 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["CustomInstructions"] = templateVars["CustomInstructions"]
 		templateData["StepSummary"] = templateVars["StepSummary"]
 		templateData["WorkshopMode"] = templateVars["WorkshopMode"]
-		templateData["UnoptimizedSteps"] = templateVars["UnoptimizedSteps"]
 		templateData["WorkflowObjective"] = templateVars["WorkflowObjective"]
 		templateData["WorkflowSuccessCriteria"] = templateVars["WorkflowSuccessCriteria"]
 		templateData["ExecutionMode"] = templateVars["ExecutionMode"]
@@ -1010,6 +1009,117 @@ func RegisterConsolidateKnowledgebaseTool(
 	); err != nil {
 		logger.Warn(fmt.Sprintf("Failed to register consolidate_knowledgebase tool: %v", err))
 	}
+}
+
+// RegisterImproveKnowledgebaseTool registers the single user-facing KB improvement
+// tool. It routes targeted note hygiene to KB reorganize and holistic cross-step
+// synthesis to KB consolidate while keeping the older tools available as compatibility
+// wrappers for existing prompts/sessions.
+func RegisterImproveKnowledgebaseTool(
+	mcpAgent *mcpagent.Agent,
+	session *WorkshopChatSession,
+	logger loggerv2.Logger,
+) {
+	if err := mcpAgent.RegisterCustomTool(
+		"improve_kb",
+		"Improve the workflow knowledgebase notes for the current plan. By default mode='auto' chooses targeted cleanup for concrete file/topic hygiene and cross-step consolidation for broad plan-level KB optimization. Use mode='targeted' for known cleanup operations like merge, rename, compact, delete stale sections, or fix _index.json. Use mode='cross_step' for holistic consolidation after multiple steps have contributed: dedupe topics across steps, surface contradictions, canonicalize drift, or write durable pattern notes. Takes 'instruction' describing the goal and optional 'focus' to narrow scope. Returns the agent's summary line.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"mode": map[string]interface{}{
+					"type":        "string",
+					"enum":        []interface{}{"auto", "targeted", "cross_step"},
+					"description": "Optional. auto = choose based on the instruction; targeted = clean known KB structure; cross_step = compare step outputs and KB notes to optimize the KB for the plan.",
+				},
+				"instruction": map[string]interface{}{
+					"type":        "string",
+					"description": "What to improve, in natural language. Plan-level examples: 'optimize the KB for this plan', 'make the KB reflect the current workflow objective and step outputs'. Targeted examples: 'merge notes/company-acme.md and notes/company-acme-corp.md', 'compact notes/pattern-tax-cycle.md to under 10KB', 'fix notes/_index.json'. Cross-step examples: 'reconcile company vs organization naming across step outputs', 'write pattern notes for recurring cost anomalies across service-analysis steps', 'surface contradictions between steps on the same entity'.",
+				},
+				"focus": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional. Narrow the improvement to a step id, topic/file path, entity, pattern, or concern while still following the selected mode.",
+				},
+			},
+			"required": []string{"instruction"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			mode, _ := args["mode"].(string)
+			mode = strings.TrimSpace(strings.ToLower(mode))
+			if mode == "" {
+				mode = "auto"
+			}
+			instruction, _ := args["instruction"].(string)
+			instruction = strings.TrimSpace(instruction)
+			if instruction == "" {
+				return "instruction is required — describe the KB improvement goal in natural language", nil
+			}
+			focus, _ := args["focus"].(string)
+			focus = strings.TrimSpace(focus)
+			effectiveInstruction := instruction
+			if focus != "" {
+				effectiveInstruction = fmt.Sprintf("%s\n\nFocus: %s", instruction, focus)
+			}
+			if session == nil || session.controller == nil {
+				return "session controller not available — cannot improve KB", nil
+			}
+
+			if mode == "auto" {
+				mode = inferKBImproveMode(effectiveInstruction)
+			}
+
+			switch mode {
+			case "targeted":
+				summary, err := session.controller.RunKBReorganize(session.sessionCtx, effectiveInstruction)
+				if err != nil {
+					logger.Warn(fmt.Sprintf("⚠️ improve_kb targeted mode failed: %v", err))
+					return fmt.Sprintf("KB improve failed: %v", err), nil
+				}
+				if summary == "" {
+					return "KB improve completed (no summary line returned by agent)", nil
+				}
+				return summary, nil
+			case "cross_step":
+				summary, err := session.controller.RunKBConsolidate(session.sessionCtx, effectiveInstruction)
+				if err != nil {
+					logger.Warn(fmt.Sprintf("⚠️ improve_kb cross_step mode failed: %v", err))
+					return fmt.Sprintf("KB improve failed: %v", err), nil
+				}
+				if summary == "" {
+					return "KB improve completed (no summary line returned by agent)", nil
+				}
+				return summary, nil
+			default:
+				return "mode must be 'auto', 'targeted', or 'cross_step'", nil
+			}
+		},
+		"knowledgebase_tools",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("Failed to register improve_kb tool: %v", err))
+	}
+}
+
+func inferKBImproveMode(instruction string) string {
+	text := strings.ToLower(instruction)
+	targetedSignals := []string{
+		"notes/", "_index.json", "merge ", "rename ", "compact ", "delete ", "drop ",
+		"remove stale", "fix index", "fix _index", "topic file", "topic id",
+	}
+	for _, signal := range targetedSignals {
+		if strings.Contains(text, signal) {
+			return "targeted"
+		}
+	}
+	crossStepSignals := []string{
+		"plan", "workflow", "cross-step", "cross step", "all steps", "multiple steps",
+		"step outputs", "consolidate", "dedupe", "duplicate", "contradiction",
+		"pattern", "canonical", "drift", "holistic", "optimize", "current objective",
+	}
+	for _, signal := range crossStepSignals {
+		if strings.Contains(text, signal) {
+			return "cross_step"
+		}
+	}
+	return "targeted"
 }
 
 // RegisterRunFullEvaluationTool registers a run_full_evaluation tool that executes all

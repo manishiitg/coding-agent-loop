@@ -53,7 +53,7 @@ type BackgroundAgent struct {
 	CompletedAt       *time.Time            `json:"completed_at,omitempty"`
 	ReasoningLevel    string                `json:"reasoning_level,omitempty"`
 	ModelID           string                `json:"model_id,omitempty"`
-	Metadata          map[string]string     `json:"metadata,omitempty"` // arbitrary key-value pairs (e.g. workshop_mode, step_optimized)
+	Metadata          map[string]string     `json:"metadata,omitempty"` // arbitrary key-value pairs (e.g. workshop_mode, lock_code)
 	cancel            context.CancelFunc
 	mu                sync.RWMutex
 	notified          bool

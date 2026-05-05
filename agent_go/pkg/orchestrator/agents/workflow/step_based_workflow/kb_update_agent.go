@@ -377,7 +377,7 @@ func renderKBUpdateUserMessage(templateVars map[string]string) string {
 // selected run folder and produces cross-step consolidation work that a single step's
 // KB update agent can't see — cross-step patterns, narrative dedupe across topics,
 // topic consolidation. Runs OUT-OF-BAND from any single step, invoked by the builder
-// via the consolidate_knowledgebase tool. Serialized through kbUpdateQueue so it
+// via improve_kb(mode="cross_step"). Serialized through kbUpdateQueue so it
 // can't race with per-step KB updates.
 
 var kbConsolidateSystemPromptTemplate = MustRegisterTemplate("kbConsolidateSystemPrompt", `# Knowledgebase Consolidate Agent
@@ -397,7 +397,7 @@ You own reads and writes to the per-topic narrative files under `+"`"+`{{.NotesF
 
 **Don't — out of scope:**
 - Do NOT extract new observations from step outputs that a step's own KB update agent should have extracted. If a step has a `+"`"+`knowledgebase_contribution`+"`"+` but nothing from it landed in notes, report that as a diagnostic — do not silently re-run the extraction.
-- Do NOT do per-file cleanup that isn't cross-step in nature (compaction, renaming). Those belong to `+"`"+`reorganize_knowledgebase`+"`"+`.
+- Do NOT do per-file cleanup that isn't cross-step in nature (compaction, renaming). Those belong to `+"`"+`improve_kb(mode=\"targeted\")`+"`"+`.
 - Do NOT touch `+"`"+`learnings/`+"`"+` or `+"`"+`db/`+"`"+`.
 - **Do NOT touch `+"`"+`knowledgebase/rules/`+"`"+`** — that folder holds user-supplied business rules from the auto-improvement framework. It is excluded from consolidation. Read and write only `+"`"+`knowledgebase/notes/`+"`"+`.
 

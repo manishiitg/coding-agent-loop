@@ -203,7 +203,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	if agentConfigs != nil && agentConfigs.GlobalSkillObjective != "" {
 		successLearningTemplateVars["GlobalSkillObjective"] = agentConfigs.GlobalSkillObjective
 	}
-	// Code exec: scripts go to per-step folder, domain knowledge to global
+	// Code exec: scripts go to per-step folder, reusable HOW knowledge to global
 	if isCodeExecutionMode {
 		docsRoot := GetPromptDocsRoot()
 		successLearningTemplateVars["StepScriptsPath"] = fmt.Sprintf("%s/%s/learnings/%s/scripts", docsRoot, hcpo.GetWorkspacePath(), step.GetID())
@@ -765,7 +765,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) logLearningExecution(ctx context.Cont
 }
 
 // BuildLearningObjectivesBlock produces a deterministic markdown block listing every
-// step's declared learning_objective. Consumed by the organize_global_learnings flow so
+// step's declared learning_objective. Consumed by the improve_learnings flow so
 // the agent can check cross-step coherence: lessons that multiple objectives imply the
 // same HOW-knowledge (worth promoting to a shared section) and objectives whose scope
 // is never reflected in SKILL.md (worth a diagnostic line, not silent re-learning).

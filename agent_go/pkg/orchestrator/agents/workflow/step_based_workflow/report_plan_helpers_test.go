@@ -98,6 +98,127 @@ func TestValidateReportPlanStatUnknownFormatWarns(t *testing.T) {
 	}
 }
 
+func TestValidateReportPlanJSONataQueryFeedsShapeValidation(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := "Workflow/orders"
+	files := map[string]string{
+		"Workflow/orders/reports/report_plan.json": `{
+			"version": 1,
+			"sections": [
+				{
+					"heading": "Overview",
+					"entries": [
+						{
+							"kind": "single",
+							"widget": {
+								"kind": "stat",
+								"title": "Paid Total",
+								"source": "db/orders.json",
+								"query": "$sum(rows[status='paid'].amount)",
+								"format": "currency-usd"
+							}
+						}
+					]
+				}
+			]
+		}`,
+		"Workflow/orders/db/orders.json": `{"rows":[{"status":"paid","amount":12.5},{"status":"open","amount":99},{"status":"paid","amount":7.5}]}`,
+	}
+
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	if err != nil {
+		t.Fatalf("validateReportPlan returned error: %v", err)
+	}
+
+	if !result.Valid {
+		t.Fatalf("expected result.Valid=true, got false with errors %#v", result.Errors)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no validation errors, got %#v", result.Errors)
+	}
+}
+
+func TestValidateReportPlanJSONataQueryErrorIsDeterministicError(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := "Workflow/orders"
+	files := map[string]string{
+		"Workflow/orders/reports/report_plan.json": `{
+			"version": 1,
+			"sections": [
+				{
+					"heading": "Overview",
+					"entries": [
+						{
+							"kind": "single",
+							"widget": {
+								"kind": "stat",
+								"title": "Paid Total",
+								"source": "db/orders.json",
+								"query": "$sum(rows[status='paid'.amount)"
+							}
+						}
+					]
+				}
+			]
+		}`,
+		"Workflow/orders/db/orders.json": `{"rows":[{"status":"paid","amount":12.5}]}`,
+	}
+
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	if err != nil {
+		t.Fatalf("validateReportPlan returned error: %v", err)
+	}
+
+	if result.Valid {
+		t.Fatalf("expected result.Valid=false, got true")
+	}
+	if !diagnosticsContain(result.Errors, "JSONata query failed") {
+		t.Fatalf("expected JSONata query failure, got %#v", result.Errors)
+	}
+}
+
+func TestValidateReportPlanJSONataWrongShapeIsError(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := "Workflow/orders"
+	files := map[string]string{
+		"Workflow/orders/reports/report_plan.json": `{
+			"version": 1,
+			"sections": [
+				{
+					"heading": "Overview",
+					"entries": [
+						{
+							"kind": "single",
+							"widget": {
+								"kind": "stat",
+								"title": "Paid Rows",
+								"source": "db/orders.json",
+								"query": "rows[status='paid']"
+							}
+						}
+					]
+				}
+			]
+		}`,
+		"Workflow/orders/db/orders.json": `{"rows":[{"status":"paid","amount":12.5},{"status":"paid","amount":7.5}]}`,
+	}
+
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	if err != nil {
+		t.Fatalf("validateReportPlan returned error: %v", err)
+	}
+
+	if result.Valid {
+		t.Fatalf("expected result.Valid=false, got true")
+	}
+	if !diagnosticsContain(result.Errors, "stat widgets require a scalar value") {
+		t.Fatalf("expected scalar-value error, got %#v", result.Errors)
+	}
+}
+
 // Regression: theme and section.Layout were silently stripped on every plan
 // mutation because normalizeReportPlanDocument reconstructed sections from a
 // hand-written field list. set_report_theme and set_section_layout would

@@ -12,7 +12,6 @@ import (
 // override so a step falls back to preset/default behavior.
 func TestClearStepConfigField(t *testing.T) {
 	truePtr := true
-	falsePtr := false
 
 	cases := []struct {
 		name           string
@@ -20,22 +19,22 @@ func TestClearStepConfigField(t *testing.T) {
 		prep           func(*StepConfig)
 		assertJSONGone string // JSON key that must disappear after clearing
 	}{
-			{
-				name:  "clears LLM pointer override",
-				field: "learning_llm",
-				prep: func(sc *StepConfig) {
-					sc.AgentConfigs = &AgentConfigs{LearningLLM: &AgentLLMConfig{Provider: "anthropic", ModelID: "claude-opus"}}
-				},
-				assertJSONGone: "learning_llm",
+		{
+			name:  "clears LLM pointer override",
+			field: "learning_llm",
+			prep: func(sc *StepConfig) {
+				sc.AgentConfigs = &AgentConfigs{LearningLLM: &AgentLLMConfig{Provider: "anthropic", ModelID: "claude-opus"}}
 			},
-			{
-				name:  "clears execution tier override",
-				field: "execution_tier",
-				prep: func(sc *StepConfig) {
-					sc.AgentConfigs = &AgentConfigs{ExecutionTier: "medium"}
-				},
-				assertJSONGone: "execution_tier",
+			assertJSONGone: "learning_llm",
+		},
+		{
+			name:  "clears execution tier override",
+			field: "execution_tier",
+			prep: func(sc *StepConfig) {
+				sc.AgentConfigs = &AgentConfigs{ExecutionTier: "medium"}
 			},
+			assertJSONGone: "execution_tier",
+		},
 		{
 			name:  "clears slice selection",
 			field: "servers",
@@ -53,14 +52,6 @@ func TestClearStepConfigField(t *testing.T) {
 			assertJSONGone: "lock_learnings",
 		},
 		{
-			name:  "clearing lock_learnings also clears Optimized (setter couples them)",
-			field: "lock_learnings",
-			prep: func(sc *StepConfig) {
-				sc.AgentConfigs = &AgentConfigs{LockLearnings: &truePtr, Optimized: &truePtr}
-			},
-			assertJSONGone: "optimized",
-		},
-		{
 			name:  "clears string field (knowledgebase_contribution)",
 			field: "knowledgebase_contribution",
 			prep: func(sc *StepConfig) {
@@ -75,14 +66,6 @@ func TestClearStepConfigField(t *testing.T) {
 				sc.ValidationSchema = &ValidationSchema{}
 			},
 			assertJSONGone: "validation_schema",
-		},
-		{
-			name:  "clearing a bool-pointer-false value also drops it (not just nil)",
-			field: "optimized",
-			prep: func(sc *StepConfig) {
-				sc.AgentConfigs = &AgentConfigs{Optimized: &falsePtr}
-			},
-			assertJSONGone: "optimized",
 		},
 	}
 

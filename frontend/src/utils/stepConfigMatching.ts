@@ -50,7 +50,6 @@ export interface AgentConfigs {
   global_skill_objective?: string;            // Objective for the global skill — what domain knowledge should it capture
   knowledgebase_access?: 'read' | 'write' | 'read-write' | 'none';
   knowledgebase_contribution?: string;
-  optimized?: boolean;                        // UI/reporting flag set alongside lock_learnings after auto-lock; cleared on auto-unlock
   description_reviewed?: boolean;
   review_notes?: string;
   declared_execution_mode?: string;           // "learn_code" | "code_exec" | "tool_calling" — authoring hint; resolution in backend

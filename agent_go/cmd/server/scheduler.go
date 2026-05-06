@@ -244,6 +244,9 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 	// Periodically rescan multi-agent schedule files for changes (written by agents via shell)
 	go s.multiAgentRescanLoop(ctx)
 
+	// Heartbeat loop: liveness signal + macOS sleep/wake detection + per-job NextRun snapshot.
+	go s.heartbeatLoop(ctx)
+
 	// Wait for context cancellation
 	<-ctx.Done()
 	scheduleLogf("[SCHEDULER] Shutting down (context canceled)")
@@ -262,6 +265,69 @@ func (s *SchedulerService) multiAgentRescanLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.rescanMultiAgentSchedules(ctx)
+		}
+	}
+}
+
+// heartbeatLoop emits a liveness line every minute. Three signals on each tick:
+//   - now / gap-since-last-tick: a gap > 90s is a near-certain macOS suspend window
+//     (the goroutine timer paused with the process). Logged separately as WAKE_DETECTED
+//     so it stands out in the schedule.log when correlating to a missed fire.
+//   - per-job NextRun() from gocron: lets us see, post-wake, whether each job's timer
+//     was correctly re-armed. If a job's NextRun stays in the past tick after tick,
+//     the gocron scheduler is wedged and the process needs a restart.
+//   - registered job count: if it drops to 0 unexpectedly, we caught a deregistration bug.
+func (s *SchedulerService) heartbeatLoop(ctx context.Context) {
+	const interval = 60 * time.Second
+	const wakeThreshold = 90 * time.Second
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	last := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case t := <-ticker.C:
+			gap := t.Sub(last)
+			if gap > wakeThreshold {
+				scheduleLogf("[SCHEDULER] 💤 WAKE_DETECTED gap=%s now=%s prev_tick=%s (likely macOS suspend; check next fires below)",
+					gap.Round(time.Second), t.Format(time.RFC3339), last.Format(time.RFC3339))
+			}
+
+			// Build reverse index gocronJobID → scheduleID for friendly logging.
+			s.mu.Lock()
+			jobToSched := make(map[uuid.UUID]string, len(s.jobIDs))
+			for sid, ids := range s.jobIDs {
+				for _, id := range ids {
+					jobToSched[id] = sid
+				}
+			}
+			s.mu.Unlock()
+
+			jobs := s.scheduler.Jobs()
+			parts := make([]string, 0, len(jobs))
+			stale := 0
+			for _, j := range jobs {
+				sid, ok := jobToSched[j.ID()]
+				if !ok {
+					sid = j.ID().String()
+				}
+				next, err := j.NextRun()
+				if err != nil {
+					parts = append(parts, fmt.Sprintf("%s next=ERR(%v)", sid, err))
+					continue
+				}
+				if !next.IsZero() && next.Before(t) {
+					stale++
+				}
+				parts = append(parts, fmt.Sprintf("%s next=%s", sid, next.UTC().Format(time.RFC3339)))
+			}
+
+			scheduleLogf("[SCHEDULER] ❤️ heartbeat now=%s gap=%s jobs=%d stale_next_run=%d | %s",
+				t.Format(time.RFC3339), gap.Round(time.Second), len(jobs), stale, strings.Join(parts, ", "))
+			last = t
 		}
 	}
 }
@@ -834,7 +900,21 @@ func (s *SchedulerService) StopRunningJob(scheduleID string) {
 // triggerSchedule is called by gocron when a cron fires.
 func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 	schedID := sctx.Schedule.ID
-	s.logf(sctx, "[SCHEDULER] ⏰ Cron fired for %s (%s) at %s", schedID, sctx.Schedule.Name, time.Now().Format(time.RFC3339))
+	now := time.Now()
+	s.logf(sctx, "[SCHEDULER] ⏰ Cron fired for %s (%s) at %s", schedID, sctx.Schedule.Name, now.Format(time.RFC3339))
+
+	// Late-fire detection: compare to the next_run we recorded last time. Drift > 60s
+	// usually means a missed-fire catch-up after macOS sleep/wake, or scheduler stall.
+	s.runtimeStatesMu.RLock()
+	if st, ok := s.runtimeStates[schedID]; ok && st.NextRunAt != nil {
+		expected := *st.NextRunAt
+		drift := now.Sub(expected)
+		if drift > 60*time.Second {
+			s.logf(sctx, "[SCHEDULER] ⚠️ LATE_FIRE schedule=%s expected=%s actual=%s drift=%s",
+				schedID, expected.Format(time.RFC3339), now.Format(time.RFC3339), drift.Round(time.Second))
+		}
+	}
+	s.runtimeStatesMu.RUnlock()
 
 	paused, cfg, err := s.IsGloballyPaused(context.Background())
 	if err != nil {

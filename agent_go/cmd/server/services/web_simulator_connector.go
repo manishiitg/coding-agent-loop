@@ -14,11 +14,11 @@ import (
 
 // SimulatorMessage represents a message in the simulator thread
 type SimulatorMessage struct {
-	ID        string          `json:"id"`
-	Text      string          `json:"text"`
-	Blocks    []MessageBlock  `json:"blocks,omitempty"`
-	IsBot     bool            `json:"is_bot"`
-	Timestamp time.Time       `json:"timestamp"`
+	ID        string         `json:"id"`
+	Text      string         `json:"text"`
+	Blocks    []MessageBlock `json:"blocks,omitempty"`
+	IsBot     bool           `json:"is_bot"`
+	Timestamp time.Time      `json:"timestamp"`
 }
 
 // simulatorThread holds an in-memory thread's messages
@@ -134,6 +134,7 @@ func (w *WebSimulatorConnector) SendThreadMessage(ctx context.Context, threadID 
 	})
 	thread.mu.Unlock()
 
+	logBotOutboundMessage("web_simulator", threadID, "thread", message, 1, 0)
 	log.Printf("[WEB_SIMULATOR] Bot message in thread %s: %s", threadID.ThreadTS, botTruncate(message, 80))
 	return msgID, nil
 }
@@ -152,6 +153,7 @@ func (w *WebSimulatorConnector) SendThreadMessageWithBlocks(ctx context.Context,
 	})
 	thread.mu.Unlock()
 
+	logBotOutboundMessage("web_simulator", threadID, "blocks", message, 1, len(blocks))
 	log.Printf("[WEB_SIMULATOR] Bot message+blocks in thread %s: %s (%d blocks)", threadID.ThreadTS, botTruncate(message, 80), len(blocks))
 	return msgID, nil
 }

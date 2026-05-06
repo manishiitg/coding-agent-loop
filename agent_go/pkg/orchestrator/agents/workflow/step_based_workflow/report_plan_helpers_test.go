@@ -219,6 +219,211 @@ func TestValidateReportPlanJSONataWrongShapeIsError(t *testing.T) {
 	}
 }
 
+func TestValidateReportPlanJSONataCanJoinMultipleSources(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := "Workflow/orders"
+	files := map[string]string{
+		"Workflow/orders/planning/plan.json": `{
+			"steps": [
+				{
+					"type": "regular",
+					"id": "collect-runs",
+					"title": "Collect Runs",
+					"description": "Write run rows.",
+					"context_dependencies": [],
+					"context_output": "db/runs.json",
+					"validation_schema": {
+						"files": [
+							{
+								"file_name": "db/runs.json",
+								"must_exist": true,
+								"json_checks": [
+									{"path": "$.rows", "must_exist": true, "value_type": "array"}
+								]
+							}
+						]
+					}
+				},
+				{
+					"type": "regular",
+					"id": "collect-costs",
+					"title": "Collect Costs",
+					"description": "Write cost rows.",
+					"context_dependencies": [],
+					"context_output": "db/costs.json",
+					"validation_schema": {
+						"files": [
+							{
+								"file_name": "db/costs.json",
+								"must_exist": true,
+								"json_checks": [
+									{"path": "$.rows", "must_exist": true, "value_type": "array"}
+								]
+							}
+						]
+					}
+				}
+			]
+		}`,
+		"Workflow/orders/reports/report_plan.json": `{
+			"version": 1,
+			"sections": [
+				{
+					"heading": "Overview",
+					"entries": [
+						{
+							"kind": "single",
+							"widget": {
+								"kind": "stat",
+								"title": "Cost Total",
+								"sources": {
+									"runs": "db/runs.json",
+									"costs": "db/costs.json"
+								},
+								"query": "{\"cost_total\": $sum(costs.rows.amount), \"run_count\": $count(runs.rows)}",
+								"path": "cost_total",
+								"format": "currency-usd"
+							}
+						}
+					]
+				}
+			]
+		}`,
+		"Workflow/orders/db/runs.json":  `{"rows":[{"run_id":"r1"},{"run_id":"r2"}]}`,
+		"Workflow/orders/db/costs.json": `{"rows":[{"run_id":"r1","amount":12.5},{"run_id":"r2","amount":7.5}]}`,
+	}
+
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	if err != nil {
+		t.Fatalf("validateReportPlan returned error: %v", err)
+	}
+
+	if !result.Valid {
+		t.Fatalf("expected result.Valid=true, got false with errors %#v", result.Errors)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no validation errors, got %#v", result.Errors)
+	}
+}
+
+func TestValidateReportPlanErrorsWhenSourceHasNoValidationContract(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := "Workflow/orders"
+	files := map[string]string{
+		"Workflow/orders/planning/plan.json": `{
+			"steps": [
+				{
+					"type": "regular",
+					"id": "collect-orders",
+					"title": "Collect Orders",
+					"description": "Collect order data and write db/orders.json.",
+					"context_dependencies": [],
+					"context_output": "db/orders.json"
+				}
+			]
+		}`,
+		"Workflow/orders/reports/report_plan.json": `{
+			"version": 1,
+			"sections": [
+				{
+					"heading": "Overview",
+					"entries": [
+						{
+							"kind": "single",
+							"widget": {
+								"kind": "table",
+								"title": "Orders",
+								"source": "db/orders.json",
+								"path": "rows",
+								"fields": ["status", "amount"]
+							}
+						}
+					]
+				}
+			]
+		}`,
+		"Workflow/orders/db/orders.json": `{"rows":[{"status":"paid","amount":12.5}]}`,
+	}
+
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	if err != nil {
+		t.Fatalf("validateReportPlan returned error: %v", err)
+	}
+
+	if result.Valid {
+		t.Fatalf("expected result.Valid=false, got true")
+	}
+	if !diagnosticsContain(result.Errors, "no validation_schema file rule declares") {
+		t.Fatalf("expected missing producer contract error, got %#v", result.Errors)
+	}
+}
+
+func TestValidateReportPlanErrorsWhenProducerContractMissesReportFields(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := "Workflow/orders"
+	files := map[string]string{
+		"Workflow/orders/planning/plan.json": `{
+			"steps": [
+				{
+					"type": "regular",
+					"id": "collect-orders",
+					"title": "Collect Orders",
+					"description": "Collect order data and write db/orders.json.",
+					"context_dependencies": [],
+					"context_output": "db/orders.json",
+					"validation_schema": {
+						"files": [
+							{
+								"file_name": "db/orders.json",
+								"must_exist": true,
+								"json_checks": [
+									{"path": "$.rows", "must_exist": true, "value_type": "array"}
+								]
+							}
+						]
+					}
+				}
+			]
+		}`,
+		"Workflow/orders/reports/report_plan.json": `{
+			"version": 1,
+			"sections": [
+				{
+					"heading": "Overview",
+					"entries": [
+						{
+							"kind": "single",
+							"widget": {
+								"kind": "table",
+								"title": "Orders",
+								"source": "db/orders.json",
+								"path": "rows",
+								"fields": ["status", "amount"]
+							}
+						}
+					]
+				}
+			]
+		}`,
+		"Workflow/orders/db/orders.json": `{"rows":[{"status":"paid","amount":12.5}]}`,
+	}
+
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	if err != nil {
+		t.Fatalf("validateReportPlan returned error: %v", err)
+	}
+
+	if result.Valid {
+		t.Fatalf("expected result.Valid=false, got true")
+	}
+	if !diagnosticsContain(result.Errors, "does not mention report field") {
+		t.Fatalf("expected missing report field error, got %#v", result.Errors)
+	}
+}
+
 // Regression: theme and section.Layout were silently stripped on every plan
 // mutation because normalizeReportPlanDocument reconstructed sections from a
 // hand-written field list. set_report_theme and set_section_layout would

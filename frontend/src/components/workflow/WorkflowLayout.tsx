@@ -79,7 +79,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   )
 })
 import { agentApi, workflowManifestApi } from '../../services/api'
-import { type ExecutionOptions, type PollingEvent, type WorkflowBuilderSessionResponse } from '../../services/api-types'
+import { type ActiveSessionInfo, type ExecutionOptions, type PollingEvent, type WorkflowBuilderSessionResponse } from '../../services/api-types'
 import { getRawEventData } from '../../generated/event-types'
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
 // hydrateTabEvents removed - no longer hydrating inactive tabs on reload to prevent page hang
@@ -87,6 +87,30 @@ import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chat
 // Stable empty array for Zustand selector (must be module-level to avoid referential instability)
 const EMPTY_WORKFLOW_EVENTS: PollingEvent[] = []
 const WORKFLOW_RESTORE_TIMEOUT_MS = 8000
+
+function normalizeWorkflowPath(path?: string | null): string {
+  return (path || '').replace(/\/+$/, '')
+}
+
+function isLiveWorkflowSessionForPreset(session: ActiveSessionInfo, presetId: string, workspacePath?: string | null): boolean {
+  if (session.agent_mode !== 'workflow' && session.agent_mode !== 'workflow_phase') return false
+
+  const status = (session.status || '').toLowerCase().trim()
+  const isLive =
+    session.needs_user_input === true ||
+    session.has_running_background_agents === true ||
+    (session.running_background_agent_count ?? 0) > 0 ||
+    status === 'running' ||
+    status === 'paused' ||
+    status === 'waiting' ||
+    status === 'waiting_feedback'
+  if (!isLive) return false
+
+  if (session.preset_query_id && session.preset_query_id === presetId) return true
+
+  const targetWorkspace = normalizeWorkflowPath(workspacePath)
+  return !!targetWorkspace && normalizeWorkflowPath(session.workspace_path) === targetWorkspace
+}
 
 function withWorkflowRestoreTimeout<T>(promise: Promise<T>, label: string, timeoutMs = WORKFLOW_RESTORE_TIMEOUT_MS): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -130,7 +154,7 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
     // Load events for this session from the in-memory EventStore. If the
     // server restarted, there's nothing to replay — the workflow run folder
     // is the durable source of truth for the run's state.
-    const response = await agentApi.getSessionEvents(sessionId, -1)
+    const response = await agentApi.getRecentSessionEvents(sessionId)
     const events = response.events as PollingEvent[]
     const lastIndex = response.last_processed_index ?? events.length - 1
 
@@ -316,8 +340,7 @@ function formatRestoreOfferTime(value?: string): string {
 
 function restoreOfferFileName(offer: WorkflowRestoreOffer): string {
   if (offer.kind !== 'builder-history') return 'previous conversation'
-  const path = offer.session.conversation_path?.trim()
-  return path?.split('/').pop() || 'previous conversation'
+  return offer.session.workflow_name || 'previous builder chat'
 }
 
 interface WorkflowLayoutProps {
@@ -459,7 +482,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const activeWorkflowPreset = getActivePreset('workflow')
   const activeWorkflowWorkspacePath = activeWorkflowPreset?.selectedFolder?.filepath ?? null
-  const emptyActiveBuilderTabKey = useChatStore(state => {
+  const activeBuilderTabRestoreKey = useChatStore(state => {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : null
     if (
@@ -470,8 +493,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     ) {
       return null
     }
-    const eventCount = tab.sessionId ? (state.tabEvents[tab.sessionId]?.length || 0) : 0
-    return eventCount === 0 ? `${tab.metadata?.presetQueryId || ''}:${tabId}` : null
+    const hasRestoredConversation = !!tab.config?.restoredConversationPath
+    return `${tab.metadata?.presetQueryId || ''}:${tabId}:${hasRestoredConversation ? '1' : '0'}`
   })
   const builderRestoreOfferAttemptRef = useRef<string | null>(null)
 
@@ -512,6 +535,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   })
   const [restoreOffer, setRestoreOffer] = useState<WorkflowRestoreOffer | null>(null)
+  const [isCheckingRestoreOffer, setIsCheckingRestoreOffer] = useState(false)
   const handledRestoreOfferKeysRef = useRef<Set<string>>(new Set())
 
   const restoreOfferKey = useCallback((presetId: string, sessionId?: string): string => {
@@ -530,21 +554,26 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [activePresetId, restoreOffer])
 
   const offerBuilderHistoryRestore = useCallback(async (presetId: string): Promise<WorkflowBuilderSessionResponse | null> => {
-    const builderHistory = await loadWorkflowBuilderSession(presetId, workspacePath ?? undefined)
-      .catch(err => {
-        console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
-        return null
-      })
+    setIsCheckingRestoreOffer(true)
+    try {
+      const builderHistory = await loadWorkflowBuilderSession(presetId, workspacePath ?? undefined)
+        .catch(err => {
+          console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
+          return null
+        })
 
-    if (builderHistory?.source === 'workspace' && !handledRestoreOfferKeysRef.current.has(restoreOfferKey(presetId, builderHistory.session_id))) {
-      setRestoreOffer({
-        kind: 'builder-history',
-        presetId,
-        session: builderHistory
-      })
+      if (builderHistory?.source === 'workspace' && !handledRestoreOfferKeysRef.current.has(restoreOfferKey(presetId, builderHistory.session_id))) {
+        setRestoreOffer({
+          kind: 'builder-history',
+          presetId,
+          session: builderHistory
+        })
+      }
+
+      return builderHistory
+    } finally {
+      setIsCheckingRestoreOffer(false)
     }
-
-    return builderHistory
   }, [workspacePath, restoreOfferKey])
 
   const createFreshWorkflowBuilderTab = useCallback(async (presetId: string, options?: { skipRestoreOffer?: boolean }) => {
@@ -574,16 +603,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [offerBuilderHistoryRestore, setShowChatArea])
 
   useEffect(() => {
-    if (!activePresetId || !emptyActiveBuilderTabKey || restoreOffer) return
-    const [presetId, tabId] = emptyActiveBuilderTabKey.split(':')
-    if (presetId !== activePresetId || !tabId) return
+    if (!activePresetId || !activeBuilderTabRestoreKey || restoreOffer) return
+    const [presetId, tabId, hasRestoredConversation] = activeBuilderTabRestoreKey.split(':')
+    if (presetId !== activePresetId || !tabId || hasRestoredConversation === '1') return
 
-    const attemptKey = `${activePresetId}:${tabId}`
+    const attemptKey = `${activePresetId}:${tabId}:${workspacePath || ''}`
     if (builderRestoreOfferAttemptRef.current === attemptKey) return
     builderRestoreOfferAttemptRef.current = attemptKey
 
-    void offerBuilderHistoryRestore(activePresetId)
-  }, [activePresetId, emptyActiveBuilderTabKey, offerBuilderHistoryRestore, restoreOffer])
+    void (async () => {
+      const activeSessions = await useChatStore.getState().getActiveSessions(true)
+      if (activeSessions.some(session => isLiveWorkflowSessionForPreset(session, activePresetId, workspacePath))) {
+        return
+      }
+      await offerBuilderHistoryRestore(activePresetId)
+    })()
+  }, [activePresetId, activeBuilderTabRestoreKey, offerBuilderHistoryRestore, restoreOffer, workspacePath])
 
   const restoreBuilderHistory = useCallback(async (
     presetId: string,
@@ -1662,24 +1697,31 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               </div>
             )}
 
+            {!visibleRestoreOffer && isCheckingRestoreOffer && (
+              <div className="flex shrink-0 items-center gap-1.5 border-b border-border bg-muted/20 px-2 py-1">
+                <div className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground"></div>
+                <span className="truncate text-[11px] leading-4 text-muted-foreground">Checking previous chat...</span>
+              </div>
+            )}
+
             {visibleRestoreOffer && (
-              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
-                <span className="min-w-0 truncate text-xs text-muted-foreground">
-                  Previous builder chat file available: <span className="font-medium text-foreground">{restoreOfferFile}</span>
+              <div className="flex shrink-0 items-center justify-between gap-1.5 border-b border-border bg-muted/30 px-2 py-1">
+                <span className="min-w-0 truncate text-[11px] leading-4 text-muted-foreground">
+                  Restore chat: <span className="font-medium text-foreground">{restoreOfferFile}</span>
                   {restoreOfferTime ? <span> · last chat {restoreOfferTime}</span> : null}
                 </span>
-                <div className="flex shrink-0 items-center gap-1.5">
+                <div className="flex shrink-0 items-center gap-1">
                   <button
                     type="button"
                     onClick={handleDismissRestoreOffer}
-                    className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    className="rounded px-1.5 py-0.5 text-[11px] font-medium leading-4 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   >
                     Dismiss
                   </button>
                   <button
                     type="button"
                     onClick={handleRestorePreviousWorkflowConversation}
-                    className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                    className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-medium leading-4 text-primary-foreground transition-colors hover:bg-primary/90"
                   >
                     Restore
                   </button>

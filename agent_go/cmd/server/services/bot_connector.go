@@ -29,6 +29,36 @@ func newBotSessionID(platform string) string {
 	return fmt.Sprintf("bot-%s--%s", p, uuid.New().String())
 }
 
+func logBotOutboundMessage(platform string, threadID ThreadID, kind string, message string, parts int, blockCount int) {
+	if parts <= 0 {
+		parts = 1
+	}
+	platform = strings.TrimSpace(platform)
+	if platform == "" {
+		platform = threadID.Platform
+	}
+	log.Printf("[BOT_SEND] platform=%s kind=%s channel=%s thread=%s parts=%d blocks=%d chars=%d preview=%q",
+		platform,
+		kind,
+		threadID.ChannelID,
+		threadID.ThreadTS,
+		parts,
+		blockCount,
+		len(message),
+		botMessageLogPreview(message),
+	)
+}
+
+func botMessageLogPreview(message string) string {
+	const maxPreviewRunes = 240
+	preview := strings.Join(strings.Fields(message), " ")
+	runes := []rune(preview)
+	if len(runes) > maxPreviewRunes {
+		preview = string(runes[:maxPreviewRunes]) + "..."
+	}
+	return preview
+}
+
 // ChannelRoute maps a Slack channel to a specific workflow, including the workspace path
 // so the bot can read the workflow manifest without scanning all workspaces.
 type ChannelRoute struct {
@@ -1286,6 +1316,55 @@ func (m *BotConversationManager) PrepareSyntheticTurn(sessionID string) {
 		return
 	}
 	m.resetActiveForNewTurn(active)
+}
+
+// SendSyntheticTurnFinalIfNeeded forwards the final assistant text produced by
+// a background auto-notification turn back to the originating bot thread.
+//
+// Most normal turns are delivered by BotEventFilter from llm_generation_end /
+// unified_completion events. Synthetic background turns can finish by only
+// persisting builder history, so this is a narrow fallback. It checks the
+// filter's per-turn mainTextSent flag first to avoid duplicate messages when
+// events were delivered normally.
+func (m *BotConversationManager) SendSyntheticTurnFinalIfNeeded(sessionID, message string) bool {
+	message = strings.TrimSpace(message)
+	if sessionID == "" || message == "" {
+		return false
+	}
+
+	active := m.findActiveBySessionID(sessionID)
+	if active == nil {
+		log.Printf("[BOT_MANAGER] Synthetic final fallback skipped for %s: no active bot session", sessionID)
+		return false
+	}
+
+	active.mu.Lock()
+	platform := active.Platform
+	threadID := active.ThreadID
+	filter := active.eventFilter
+	active.LastActivity = time.Now()
+	active.mu.Unlock()
+
+	if filter != nil && filter.HasSentMainText() {
+		log.Printf("[BOT_MANAGER] Synthetic final fallback skipped for %s: builder text already sent", sessionID)
+		return false
+	}
+
+	connector := m.GetConnector(platform)
+	if connector == nil {
+		log.Printf("[BOT_MANAGER] Synthetic final fallback skipped for %s: no connector for platform %s", sessionID, platform)
+		return false
+	}
+
+	if _, err := connector.SendThreadMessage(context.Background(), threadID, message); err != nil {
+		log.Printf("[BOT_MANAGER] Synthetic final fallback failed for %s: %v", sessionID, err)
+		return false
+	}
+	if filter != nil {
+		filter.MarkMainTextSent()
+	}
+	log.Printf("[BOT_MANAGER] Synthetic final fallback sent for %s (%d chars)", sessionID, len(message))
+	return true
 }
 
 // findActiveBySessionID returns the active bot session whose SessionID matches,

@@ -205,6 +205,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context
 	if err != nil {
 		return nil, fmt.Errorf("scoring agent failed: %w", err)
 	}
+	hcpo.enrichEvaluationReportWithStepOutputs(ctx, report, evalExecutionPath)
 
 	// The scoring tool wrote a minimal validated JSON to internalReportPath. We now
 	// re-marshal with computed totals/timestamps so the on-disk file matches what
@@ -234,6 +235,67 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("📚 Evaluation score ledger updated for target path: %s", targetRunFolder))
 	return report, nil
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) enrichEvaluationReportWithStepOutputs(ctx context.Context, report *EvaluationReport, evalExecutionPath string) {
+	if report == nil {
+		return
+	}
+	for _, score := range report.StepScores {
+		if score == nil || score.OutputContent != nil || score.Skipped {
+			continue
+		}
+		stepFolder := getArtifactFolderName(score.StepID, "")
+		if stepFolder == "" {
+			continue
+		}
+		candidates := []string{
+			filepath.Join(evalExecutionPath, stepFolder, "output_content.json"),
+			filepath.Join(evalExecutionPath, stepFolder, "context_output.json"),
+		}
+		for _, candidate := range candidates {
+			raw, err := hcpo.ReadWorkspaceFile(ctx, candidate)
+			if err != nil || strings.TrimSpace(raw) == "" {
+				continue
+			}
+			score.OutputContent = buildStepOutputContent(candidate, raw)
+			break
+		}
+	}
+}
+
+func buildStepOutputContent(filePath string, raw string) *StepOutputContent {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+
+	var decoded interface{}
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err == nil {
+		if envelope, ok := decoded.(map[string]interface{}); ok {
+			if content, hasContent := envelope["content"]; hasContent {
+				if _, hasIsJSON := envelope["is_json"]; hasIsJSON {
+					isJSON, _ := envelope["is_json"].(bool)
+					return &StepOutputContent{
+						FilePath: filePath,
+						Content:  content,
+						IsJSON:   isJSON,
+					}
+				}
+			}
+		}
+		return &StepOutputContent{
+			FilePath: filePath,
+			Content:  decoded,
+			IsJSON:   true,
+		}
+	}
+
+	return &StepOutputContent{
+		FilePath: filePath,
+		Content:  trimmed,
+		IsJSON:   false,
+	}
 }
 
 // readStepExecutionOutput reads all relevant output files from evaluation step execution

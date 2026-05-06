@@ -639,8 +639,20 @@ func runServer(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to load MCP config: %v", err)
 	}
 
-	// Initialize polling system (activity callback will be set after api is created)
-	eventStore := events.NewEventStore(10000) // Max 10000 events per session
+	// Initialize polling system (activity callback will be set after api is created).
+	// Keep the backend close to the frontend retention window. Large workflow runs can
+	// emit bulky tool events; retaining 10k events per session makes the server process
+	// balloon even after the UI trims them.
+	maxSessionEvents := 1500
+	if raw := strings.TrimSpace(os.Getenv("EVENT_STORE_MAX_EVENTS")); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
+			maxSessionEvents = parsed
+		} else {
+			log.Printf("⚠️  Invalid EVENT_STORE_MAX_EVENTS=%q; using default %d", raw, maxSessionEvents)
+		}
+	}
+	eventStore := events.NewEventStore(maxSessionEvents)
+	log.Printf("📡 EventStore retention: max %d events per session", maxSessionEvents)
 
 	// Initialize the operator-state store (bot connector configs + user
 	// secrets) and the global cost ledger.
@@ -1441,6 +1453,25 @@ func buildModeChangeRecap(history []llmtypes.MessageContent, prevMode, newMode s
 		strings.Join(lines, "\n\n"),
 		newMode,
 	)
+}
+
+func latestAssistantTextFromHistory(history []llmtypes.MessageContent) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		msg := history[i]
+		if msg.Role != llmtypes.ChatMessageTypeAI {
+			continue
+		}
+		var textParts []string
+		for _, part := range msg.Parts {
+			if t, ok := part.(llmtypes.TextContent); ok && strings.TrimSpace(t.Text) != "" {
+				textParts = append(textParts, t.Text)
+			}
+		}
+		if len(textParts) > 0 {
+			return strings.TrimSpace(strings.Join(textParts, "\n"))
+		}
+	}
+	return ""
 }
 
 // User secrets take priority on name collision.
@@ -7482,6 +7513,11 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 			}
 		}
 
+		if api.botManager != nil && strings.HasPrefix(sessionID, "bot-") {
+			finalText := latestAssistantTextFromHistory(finalHistory)
+			api.botManager.SendSyntheticTurnFinalIfNeeded(sessionID, finalText)
+		}
+
 		// Update stored agent (it now has the latest history from this turn)
 		api.sessionAgentsMux.Lock()
 		api.sessionAgents[sessionID] = llmAgent
@@ -7798,7 +7834,7 @@ func (api *StreamingAPI) cleanupInactiveSessions() {
 			}
 			// Delete completed/inactive sessions after 30 minutes to prevent memory leaks
 			// These sessions have already been saved to the database
-			if (session.Status == "completed" || session.Status == "inactive") && now.Sub(session.LastActivity) >= completedSessionRetention {
+			if (session.Status == "completed" || session.Status == "inactive" || session.Status == "stopped" || session.Status == "error") && now.Sub(session.LastActivity) >= completedSessionRetention {
 				sessionsToDelete = append(sessionsToDelete, sessionID)
 			}
 		}
@@ -7813,6 +7849,13 @@ func (api *StreamingAPI) cleanupInactiveSessions() {
 		}
 
 		api.activeSessionsMux.Unlock()
+
+		for _, sessionID := range sessionsToDelete {
+			if api.eventStore != nil {
+				api.eventStore.RemoveSession(sessionID)
+				log.Printf("[ACTIVE_SESSION] Cleanup: Removed event buffer for session %s", sessionID)
+			}
+		}
 
 		// Mark sessions as inactive (outside lock to avoid deadlock)
 		for _, sessionID := range sessionsToMarkInactive {

@@ -13,6 +13,12 @@ PHASE 2 — PER-STEP DESCRIPTION AUDIT
 
 For every executable step in plan.json, read the description. This includes top-level steps, todo_task routes, routing routes, orchestration routes, and referenced orphan_steps. Read learnings/_global/SKILL.md once as the shared HOW-to-run source. For steps with learning writes or locked learning, inspect learnings/{step-id}/.learning_metadata.json when present. For learn_code/scripted steps, inspect learnings/{step-id}/main.py when present. For code_exec steps, verify learnings/{step-id}/main.py does not exist; if it does, flag it for deletion as a stale script. Apply each lens; skip a lens when it doesn't fire.
 
+LENS 0 — Durable Boundary Fit
+- **Do not flag size alone**: modern agents can handle long context and many tool calls. A step is not wrong just because it performs many screen actions, file reads, API calls, or small transformations.
+- **Over-merged boundary**: flag when one step owns unrelated durable outputs, validation gates, retry/failure domains, tool/security contexts, downstream contracts, persistent stores, human approvals, or routing decisions.
+- **Over-split boundary**: flag when adjacent steps share the same objective/output contract, fail and retry together, use the same tools/security context, produce only pass-through artifacts, or exist only to hand context to the next step.
+- **Boundary truth**: split for durable contracts; combine for scratch intermediates and coherent agentic work.
+
 LENS A — Description vs Skill Confusion
 - **Description contains runtime learnings**: the description should be an *instruction* (what to do), not a *retrospective* (what worked last time). "Use batch mode because single inserts timeout", "avoid X which caused failures", or specific tool parameter values discovered at runtime belong in SKILL.md, not the description.
 - **Skill contains task instructions**: SKILL.md should capture *reusable patterns and pitfalls discovered during execution*, not restate what the step is supposed to do. If the skill reads like a task description, it's confused.
@@ -109,6 +115,7 @@ For each step, produce a per-step report:
 ```
 ### step-id: <name> (type: <regular|todo_task|routing|human_input|orphan>)
 **Description summary:** <one-line>
+**Lens 0 — Durable boundary fit:** <findings or "clean">
 **Lens A — Description vs Skill:** <findings or "clean">
 **Lens B — Hardcoded:** <findings or "clean">
 **Lens C — Browser:** <findings or "n/a (no browser capability)" or "clean">
@@ -127,7 +134,7 @@ For each step, produce a per-step report:
 Then a cross-step summary:
 
 - **Phase 1 structural findings** (from review_plan tool): list by severity.
-- **Steps with description issues** (Lens A/B/C/D): per-step, which lenses fired.
+- **Steps with boundary/description issues** (Lens 0/A/B/C/D): per-step, which lenses fired.
 - **Todo_task/routing/orchestration steps with parent/route issues** (Lens E/F/G): per-step, which lenses fired.
 - **Learning findings** (Phase 4): list steps with unjustified learning, missing objective, wrong write method, missing/stale `.learning_metadata.json`, unsupported learning locks, code_exec steps with leftover main.py, stale global skill content, stale main.py, or browser learn_code.
 - **Knowledgebase findings** (Phase 4): list missing or unjustified KB access/contribution, stale/malformed topic notes, and facts stored in the wrong place.
@@ -136,6 +143,6 @@ Then a cross-step summary:
 - **Steps that look clean across all phases.**
 - **Top 5 issues to fix first** (highest-impact across all phases).
 
-{{if eq .WorkshopMode "run"}}RUN MODE OUTPUT: do not write builder/review.md or any workspace file. Return the review in chat using the output format above. If the user wants the findings persisted, tell them to switch to Builder or Optimizer mode and rerun /review-plan.{{else}}REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not). Include: what was reviewed, the structural findings (Phase 1), the description findings grouped by lens (Phase 2), the orchestrator/router findings (Phase 3), the dependent artifact findings (Phase 4: learnings, KB, db, reports, variables, eval), the cross-step summary, the top-5 list, items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply). Route fixes by ownership: Builder handles structure, step descriptions, context dependencies, validation schemas, variables, basic config, db/KB/report wiring; Optimizer handles hardening, evaluation design/scoring, metric cleanup, learn_code promotion, and lock decisions.{{end}}
+{{if eq .WorkshopMode "run"}}RUN MODE OUTPUT: do not write builder/review.md or any workspace file. Return the review in chat using the output format above. If the user wants the findings persisted, tell them to switch to Builder or Optimizer mode and rerun /review-plan.{{else}}REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not). Include: what was reviewed, the structural findings (Phase 1), the boundary/description findings grouped by lens (Phase 2), the orchestrator/router findings (Phase 3), the dependent artifact findings (Phase 4: learnings, KB, db, reports, variables, eval), the cross-step summary, the top-5 list, items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply). Route fixes by ownership: Builder handles structure, step descriptions, context dependencies, validation schemas, variables, basic config, db/KB/report wiring; Optimizer handles hardening, evaluation design/scoring, metric cleanup, learn_code promotion, and lock decisions.{{end}}
 
 {{if eq .WorkshopMode "run"}}**Finding IDs.** In Run mode, assign temporary ids in the response only, using `F-YYYY-MM-DD-NNN` starting at `001`; do not scan or write builder/review.md.{{else}}**Finding IDs.** Every distinct finding from any phase gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan builder/review.md for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id, db file, or "structural"> — <finding>` so the close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.{{end}}

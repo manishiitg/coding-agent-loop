@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Alert, AlertDescription } from '../components/ui/alert'
 import { Loader2, KeyRound, Mail, Lock, AlertCircle } from 'lucide-react'
 import type { AuthProvider } from '../services/api'
-import { AgentForgeMark } from '../components/branding/AgentForgeLogo'
+import { RunloopMark } from '../components/branding/RunloopLogo'
 
 // Google icon SVG component
 const GoogleIcon = () => (
@@ -183,11 +183,11 @@ export function Login() {
         <CardHeader className="text-center pb-2">
           {/* Logo / Branding */}
           <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-[1.75rem] bg-slate-950/95 shadow-[0_24px_60px_-30px_rgba(15,23,42,0.95)] ring-1 ring-slate-700/40">
-            <AgentForgeMark className="h-14 w-14" />
+            <RunloopMark className="h-14 w-14" />
           </div>
           <CardTitle className="text-2xl">Welcome Back</CardTitle>
           <CardDescription className="text-base">
-            Sign in to continue to AgentForge
+            Sign in to continue to Runloop
             {providers.length > 0 && (
               <span className="block text-xs text-muted-foreground/70 mt-1">
                 via {providers.map(p => (providerConfig[p.name]?.displayName || p.name)).join(', ')}

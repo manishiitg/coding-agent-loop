@@ -889,6 +889,8 @@ func (es *EventStore) RemoveSession(sessionID string) {
 	defer es.mu.Unlock()
 
 	delete(es.events, sessionID)
+	delete(es.sessionStartIndices, sessionID)
+	delete(es.sessionOwners, sessionID)
 }
 
 // GetActiveSessions returns all active session IDs

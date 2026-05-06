@@ -1056,7 +1056,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       }
       try {
         const existingEvents = chatStore.getTabEvents(sessionId)
-        const response = await agentApi.getSessionEvents(sessionId, existingEvents.length === 0 ? -1 : chatStore.getTabLastEventIndex(sessionId))
+        const response = existingEvents.length === 0
+          ? await agentApi.getRecentSessionEvents(sessionId)
+          : await agentApi.getSessionEvents(sessionId, chatStore.getTabLastEventIndex(sessionId))
         if (response.events.length > 0) {
           if (existingEvents.length === 0) {
             chatStore.setTabEvents(sessionId, response.events)
@@ -1091,7 +1093,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       sessionId,
     )
     try {
-      const response = await agentApi.getSessionEvents(sessionId, -1)
+      const response = await agentApi.getRecentSessionEvents(sessionId)
       if (response.events.length > 0) {
         chatStore.setTabEvents(sessionId, response.events)
       }

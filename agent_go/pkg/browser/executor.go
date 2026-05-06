@@ -306,10 +306,15 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 				}
 				return "", fmt.Errorf("CDP shared-browser mode requires every page action to include a tab before %q.\n\nExisting tabs:\n%s\n\nUse args like [\"tab\", \"<tab-id-or-label>\", ...commandArgs] or [\"--tab\", \"<tab-id-or-label>\", ...commandArgs]. To inspect tabs, call agent_browser(command=\"tab\", args=[]). To create a labeled tab, call agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"])", command, strings.TrimSpace(tabsOutput))
 			}
-			if err := e.selectCDPTab(ctx, session, inlineCDPTab, opts); err != nil {
-				return "", e.cdpTabSelectionError(ctx, session, opts, inlineCDPTab, command, err)
+			if getCDPActiveTab(e.CdpPort) == inlineCDPTab {
+				log.Printf("[BROWSER] CDP: inline tab %q already active before %q; skipping select", inlineCDPTab, command)
+			} else {
+				if err := e.selectCDPTab(ctx, session, inlineCDPTab, opts); err != nil {
+					return "", e.cdpTabSelectionError(ctx, session, opts, inlineCDPTab, command, err)
+				}
+				setCDPActiveTab(e.CdpPort, inlineCDPTab)
+				log.Printf("[BROWSER] CDP: selected inline tab %q before %q", inlineCDPTab, command)
 			}
-			log.Printf("[BROWSER] CDP: selected inline tab %q before %q", inlineCDPTab, command)
 		}
 	}
 
@@ -367,10 +372,15 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		time.Sleep(2 * time.Second)
 		if isCdpMode && command != "tab" && command != "reset" {
 			if inlineCDPTab != "" {
-				if selectErr := e.selectCDPTab(ctx, session, inlineCDPTab, opts); selectErr != nil {
-					return "", e.cdpTabSelectionError(ctx, session, opts, inlineCDPTab, command, selectErr)
+				if getCDPActiveTab(e.CdpPort) == inlineCDPTab {
+					log.Printf("[BROWSER] CDP: inline tab %q already active before retrying %q; skipping select", inlineCDPTab, command)
+				} else {
+					if selectErr := e.selectCDPTab(ctx, session, inlineCDPTab, opts); selectErr != nil {
+						return "", e.cdpTabSelectionError(ctx, session, opts, inlineCDPTab, command, selectErr)
+					}
+					setCDPActiveTab(e.CdpPort, inlineCDPTab)
+					log.Printf("[BROWSER] CDP: re-selected inline tab %q before retrying %q", inlineCDPTab, command)
 				}
-				log.Printf("[BROWSER] CDP: re-selected inline tab %q before retrying %q", inlineCDPTab, command)
 			}
 		}
 		output, err = e.Client.ExecuteCommand(ctx, cmdArgs, opts)
@@ -399,8 +409,10 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 					clearCDPTabSelection(e.CdpPort, cdpOwner)
 					log.Printf("[BROWSER] CDP: cleared selected tab for owner=%q port=%d", cdpOwner, e.CdpPort)
 				}
+				clearCDPActiveTab(e.CdpPort, tab)
 			} else if tab != "" {
 				setCDPTabSelection(e.CdpPort, cdpOwner, tab)
+				setCDPActiveTab(e.CdpPort, tab)
 				log.Printf("[BROWSER] CDP: selected tab %q for owner=%q port=%d", tab, cdpOwner, e.CdpPort)
 			}
 		}

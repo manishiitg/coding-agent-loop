@@ -289,7 +289,7 @@ export async function hydrateTabEvents(
   const chatStore = useChatStore.getState()
   let response
   try {
-    response = await agentApi.getSessionEvents(sessionId, -1)
+    response = await agentApi.getRecentSessionEvents(sessionId)
   } catch (error) {
     if (isNotFoundError(error)) {
       console.log(`${TAG} Polling session ${sessionId} not found; restoring from workspace chat history`)

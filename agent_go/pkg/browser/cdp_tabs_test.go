@@ -106,3 +106,28 @@ func TestCDPOwnerIDUsesStableBrowserSessionOverride(t *testing.T) {
 		t.Fatalf("cdpOwnerID() = %q, want %q", got, browserSession)
 	}
 }
+
+func TestCDPActiveTabTracksPortSelection(t *testing.T) {
+	port := 9922
+	clearCDPTabSelectionsForPort(port)
+	t.Cleanup(func() { clearCDPTabSelectionsForPort(port) })
+
+	if got := getCDPActiveTab(port); got != "" {
+		t.Fatalf("active tab = %q, want empty", got)
+	}
+
+	setCDPActiveTab(port, "workflow-tab")
+	if got := getCDPActiveTab(port); got != "workflow-tab" {
+		t.Fatalf("active tab = %q, want workflow-tab", got)
+	}
+
+	clearCDPActiveTab(port, "other-tab")
+	if got := getCDPActiveTab(port); got != "workflow-tab" {
+		t.Fatalf("active tab = %q, want workflow-tab after clearing unrelated tab", got)
+	}
+
+	clearCDPActiveTab(port, "workflow-tab")
+	if got := getCDPActiveTab(port); got != "" {
+		t.Fatalf("active tab = %q, want empty after clearing active tab", got)
+	}
+}

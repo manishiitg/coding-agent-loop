@@ -23,6 +23,17 @@ type BlockingEventCallback func(eventType string)
 // This fires when: a main-level completion arrives, no delegations are pending, and no blocking events are active.
 type SessionDoneCallback func()
 
+type BotNotificationKind string
+
+const (
+	BotNotifyNone          BotNotificationKind = ""
+	BotNotifyBuilderText   BotNotificationKind = "builder_message"
+	BotNotifyStepStarted   BotNotificationKind = "workflow_step_started"
+	BotNotifyStepCompleted BotNotificationKind = "workflow_step_completed"
+	BotNotifyHumanInput    BotNotificationKind = "human_input_required"
+	BotNotifyError         BotNotificationKind = "error"
+)
+
 // BotEventFilter filters agent events and posts updates to a platform thread.
 // It also tracks session lifecycle: delegations, blocking events, and completion.
 type BotEventFilter struct {
@@ -92,6 +103,22 @@ func (f *BotEventFilter) ResetForNewTurn() {
 	log.Printf("[BOT_FILTER] Reset for new turn")
 }
 
+// HasSentMainText reports whether this turn already forwarded a main builder
+// reply. The synthetic-turn fallback uses this to avoid duplicate bot messages
+// when the normal event stream already delivered the final text.
+func (f *BotEventFilter) HasSentMainText() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mainTextSent
+}
+
+// MarkMainTextSent marks the current turn as having forwarded builder text.
+func (f *BotEventFilter) MarkMainTextSent() {
+	f.mu.Lock()
+	f.mainTextSent = true
+	f.mu.Unlock()
+}
+
 // ClearBlockingState clears the awaiting input flag (called when user responds to a blocking event).
 // Also resets completionReceived so the session stays alive for the follow-up agent's completion.
 func (f *BotEventFilter) ClearBlockingState() {
@@ -130,13 +157,14 @@ func (f *BotEventFilter) Start(ctx context.Context, subscriber BotEventSubscribe
 			f.mu.Lock()
 			done := f.sessionDone
 			awaiting := f.awaitingInput
+			whatsApp := strings.EqualFold(f.threadID.Platform, "whatsapp")
 			workflowStepOnly := f.isWhatsAppWorkflowStepOnlyLocked()
 			activity := f.lastActivity
 			toolCount := f.toolCallCount
 			pendingDel := f.pendingDelegations
 			f.mu.Unlock()
 			// Only send heartbeat if: session active, events flowing recently, and no message sent recently
-			if !done && !awaiting && !workflowStepOnly && !lastEventTime.IsZero() &&
+			if !done && !awaiting && !whatsApp && !workflowStepOnly && !lastEventTime.IsZero() &&
 				time.Since(lastEventTime) < 60*time.Second &&
 				time.Since(lastSendTime) > 20*time.Second {
 				msg := f.buildHeartbeatMessage(activity, toolCount, pendingDel, heartbeatCount)
@@ -189,17 +217,21 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 
 	switch event.Type {
 	case "orchestrator_agent_start":
-		msg := f.formatOrchestratorAgentStart(event)
-		if msg != "" {
-			f.sendMessage(ctx, msg)
-			return true
+		if kind := f.classifyBotNotification(event); kind == BotNotifyStepStarted {
+			msg := f.formatOrchestratorAgentStart(event)
+			if msg != "" {
+				f.sendMessage(ctx, msg)
+				return true
+			}
 		}
 
 	case "orchestrator_agent_end":
-		msg := f.formatOrchestratorAgentEnd(event)
-		if msg != "" {
-			f.sendMessage(ctx, msg)
-			return true
+		if kind := f.classifyBotNotification(event); kind == BotNotifyStepCompleted {
+			msg := f.formatOrchestratorAgentEnd(event)
+			if msg != "" {
+				f.sendMessage(ctx, msg)
+				return true
+			}
 		}
 
 	case "delegation_start":
@@ -226,18 +258,17 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 		}
 
 	case "llm_generation_end":
-		msg := f.formatGenerationEnd(event)
-		if msg != "" {
+		kind := f.classifyBotNotification(event)
+		if kind == BotNotifyBuilderText {
+			msg := f.formatGenerationEnd(event)
 			log.Printf("[BOT_FILTER] llm_generation_end: sending %d chars (level=%d)", len(msg), event.Data.HierarchyLevel)
 			f.sendMessage(ctx, msg)
-			if f.isMainLevel(event) {
-				f.mu.Lock()
-				f.mainTextSent = true
-				f.mu.Unlock()
-			}
+			f.mu.Lock()
+			f.mainTextSent = true
+			f.mu.Unlock()
 			return true
 		} else {
-			log.Printf("[BOT_FILTER] llm_generation_end: skipped (mainLevel=%v, level=%d)", f.isMainLevel(event), event.Data.HierarchyLevel)
+			log.Printf("[BOT_FILTER] llm_generation_end: skipped by policy (kind=%q mainLevel=%v workflowScoped=%v level=%d)", kind, f.isMainLevel(event), f.isWorkflowScopedEvent(event), event.Data.HierarchyLevel)
 		}
 
 	case "delegation_end":
@@ -262,19 +293,15 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 		if uc, ok := event.Data.Data.(*events.UnifiedCompletionEvent); ok {
 			log.Printf("[BOT_FILTER] unified_completion: isMain=%v level=%d result_len=%d", isMain, event.Data.HierarchyLevel, len(uc.FinalResult))
 		}
-		f.mu.Lock()
-		suppressWorkflowCompletion := f.isWhatsAppWorkflowStepOnlyLocked()
-		f.mu.Unlock()
-		if suppressWorkflowCompletion {
-			log.Printf("[BOT_FILTER] unified_completion: suppressing WhatsApp workflow completion (level=%d)", event.Data.HierarchyLevel)
-		} else if !isMain {
+		kind := f.classifyBotNotification(event)
+		if kind != BotNotifyBuilderText {
 			// Sub-agent completions are intentionally NOT forwarded to the thread —
 			// they were spamming Slack with per-step technical dumps (PR lists, log
 			// excerpts, etc.) when each nested sub-agent reported back. The user
 			// only cares about the main agent's synthesized reply, which arrives
 			// via llm_generation_end / main-level unified_completion. Sub-agent
 			// detail still lives in workflow logs and the run folder.
-			log.Printf("[BOT_FILTER] unified_completion: skipping sub-agent completion (level=%d)", event.Data.HierarchyLevel)
+			log.Printf("[BOT_FILTER] unified_completion: skipped by policy (kind=%q mainLevel=%v workflowScoped=%v level=%d)", kind, isMain, f.isWorkflowScopedEvent(event), event.Data.HierarchyLevel)
 		} else {
 			// Main-level completion — only send if no text was already sent via llm_generation_end
 			// (avoids duplicates when the agent sends text + completion with same content)
@@ -302,20 +329,28 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 		return sent
 
 	case "plan_approval":
+		f.setBlocking("plan_approval")
+		if kind := f.classifyBotNotification(event); kind != BotNotifyHumanInput {
+			log.Printf("[BOT_FILTER] plan_approval: skipped by policy (kind=%q)", kind)
+			return false
+		}
 		msg := f.formatPlanApproval(event)
 		if msg != "" {
 			f.sendMessage(ctx, msg)
 			return true
 		}
-		f.setBlocking("plan_approval")
 
 	case "blocking_human_feedback":
+		f.setBlocking("blocking_human_feedback")
+		if kind := f.classifyBotNotification(event); kind != BotNotifyHumanInput {
+			log.Printf("[BOT_FILTER] blocking_human_feedback: skipped by policy (kind=%q)", kind)
+			return false
+		}
 		msg := f.formatBlockingFeedback(event)
 		if msg != "" {
 			f.sendMessage(ctx, msg)
 			return true
 		}
-		f.setBlocking("blocking_human_feedback")
 
 	case "agent_end", "conversation_end":
 		// Only main-level events signal session completion
@@ -327,14 +362,141 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 		}
 
 	case "agent_error", "conversation_error", "orchestrator_agent_error":
-		f.sendMessage(ctx, f.formatErrorEvent(event))
-		return true
+		if kind := f.classifyBotNotification(event); kind == BotNotifyError {
+			f.sendMessage(ctx, f.formatErrorEvent(event))
+			return true
+		}
 	}
 	return false
 }
 
+func (f *BotEventFilter) classifyBotNotification(event BotEventData) BotNotificationKind {
+	if event.Data == nil || event.Data.Data == nil {
+		return BotNotifyNone
+	}
+
+	switch event.Type {
+	case "orchestrator_agent_start":
+		if f.isWorkflowStepLifecycleEvent(event) {
+			return BotNotifyStepStarted
+		}
+
+	case "orchestrator_agent_end":
+		if f.isWorkflowStepLifecycleEvent(event) {
+			return BotNotifyStepCompleted
+		}
+
+	case "llm_generation_end":
+		if f.isBuilderGenerationEvent(event) {
+			return BotNotifyBuilderText
+		}
+
+	case "unified_completion":
+		if f.isBuilderCompletionEvent(event) {
+			return BotNotifyBuilderText
+		}
+
+	case "plan_approval", "blocking_human_feedback":
+		return BotNotifyHumanInput
+
+	case "agent_error", "conversation_error", "orchestrator_agent_error":
+		return BotNotifyError
+	}
+
+	return BotNotifyNone
+}
+
 func (f *BotEventFilter) isWhatsAppWorkflowStepOnlyLocked() bool {
 	return strings.EqualFold(f.threadID.Platform, "whatsapp") && f.workflowStepStarted
+}
+
+func (f *BotEventFilter) isWorkflowScopedEvent(event BotEventData) bool {
+	if event.Data == nil || event.Data.Data == nil {
+		return false
+	}
+
+	meta := eventMetadata(event)
+	if len(meta) == 0 {
+		return false
+	}
+
+	for _, key := range []string{
+		"current_step_id",
+		"orchestrator_step_id",
+		"workflow_step_id",
+		"step_id",
+		"route_id",
+		"workshop_step_id",
+	} {
+		if strings.TrimSpace(metadataString(meta, key)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *BotEventFilter) isBuilderGenerationEvent(event BotEventData) bool {
+	if event.Data == nil || event.Data.Data == nil || !f.isMainLevel(event) {
+		return false
+	}
+	gen, ok := event.Data.Data.(*events.LLMGenerationEndEvent)
+	return ok && strings.TrimSpace(gen.Content) != ""
+}
+
+func (f *BotEventFilter) isBuilderCompletionEvent(event BotEventData) bool {
+	if event.Data == nil || event.Data.Data == nil || !f.isMainLevel(event) {
+		return false
+	}
+	uc, ok := event.Data.Data.(*events.UnifiedCompletionEvent)
+	return ok && uc.Status != "error" && strings.TrimSpace(uc.FinalResult) != ""
+}
+
+func (f *BotEventFilter) isWorkflowStepLifecycleEvent(event BotEventData) bool {
+	if event.Data == nil || event.Data.Data == nil {
+		return false
+	}
+	switch d := event.Data.Data.(type) {
+	case *orchestrator_events.OrchestratorAgentStartEvent:
+		return isWorkflowStepAgent(d.AgentType, d.AgentName)
+	case *orchestrator_events.OrchestratorAgentEndEvent:
+		return isWorkflowStepAgent(d.AgentType, d.AgentName)
+	default:
+		return false
+	}
+}
+
+func eventMetadata(event BotEventData) map[string]interface{} {
+	if event.Data == nil || event.Data.Data == nil {
+		return nil
+	}
+	type baseDataCarrier interface {
+		GetBaseEventData() *events.BaseEventData
+	}
+	if carrier, ok := event.Data.Data.(baseDataCarrier); ok {
+		base := carrier.GetBaseEventData()
+		if base != nil {
+			return base.Metadata
+		}
+	}
+	return nil
+}
+
+func metadataString(meta map[string]interface{}, key string) string {
+	if meta == nil {
+		return ""
+	}
+	v, ok := meta[key]
+	if !ok || v == nil {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return t
+	case fmt.Stringer:
+		return t.String()
+	default:
+		return fmt.Sprint(t)
+	}
 }
 
 func isWorkflowStepAgent(agentType, agentName string) bool {
@@ -482,10 +644,7 @@ func (f *BotEventFilter) formatOrchestratorAgentStart(event BotEventData) string
 
 	displayName := workflowStepDisplayName(agentName)
 
-	key := event.Data.CorrelationID
-	if key == "" {
-		key = agentType + ":" + displayName
-	}
+	key := workflowStepDedupeKey(event, agentType, displayName)
 	f.mu.Lock()
 	if f.startedAgents[key] {
 		f.mu.Unlock()
@@ -522,10 +681,7 @@ func (f *BotEventFilter) formatOrchestratorAgentEnd(event BotEventData) string {
 	}
 
 	displayName := workflowStepDisplayName(agentName)
-	key := event.Data.CorrelationID
-	if key == "" {
-		key = agentType + ":" + displayName
-	}
+	key := workflowStepDedupeKey(event, agentType, displayName)
 	f.mu.Lock()
 	if f.endedAgents[key] {
 		f.mu.Unlock()
@@ -552,6 +708,25 @@ func (f *BotEventFilter) formatOrchestratorAgentEnd(event BotEventData) string {
 		suffix = fmt.Sprintf(" [%s]", group)
 	}
 	return strings.Join(parts, ": ") + suffix + "."
+}
+
+func workflowStepDedupeKey(event BotEventData, agentType, displayName string) string {
+	meta := eventMetadata(event)
+	for _, key := range []string{
+		"current_step_id",
+		"orchestrator_step_id",
+		"workflow_step_id",
+		"step_id",
+		"route_id",
+	} {
+		if value := strings.TrimSpace(metadataString(meta, key)); value != "" {
+			return agentType + ":" + value + ":" + displayName
+		}
+	}
+	if event.Data != nil && strings.TrimSpace(event.Data.CorrelationID) != "" {
+		return agentType + ":" + event.Data.CorrelationID + ":" + displayName
+	}
+	return agentType + ":" + displayName
 }
 
 func formatStepDuration(d time.Duration) string {

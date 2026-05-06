@@ -1481,6 +1481,7 @@ export type ReportSectionLayout = ReportPlanDocumentSectionLayout;
 // omitempty allows them to be absent on the wire.
 export type ReportWidget = ReportPlanDocumentWidget & {
   source: string;
+  sources?: Record<string, string>;
   path: string;
   query?: string;
 };
@@ -1495,8 +1496,8 @@ export interface ReportWidgetRow {
 // optional widget/row fields; the parser narrows to a discriminated union
 // keyed on `kind` so callsites get the matching variant.
 export type ReportEntry =
-  | { kind: 'single'; widget: ReportWidget }
-  | { kind: 'row'; row: ReportWidgetRow };
+  | { kind: 'single'; widget: ReportWidget; tab?: string }
+  | { kind: 'row'; row: ReportWidgetRow; tab?: string };
 
 // Narrowed section — entries is the discriminated ReportEntry[] (parser
 // output) rather than the loose generated array.

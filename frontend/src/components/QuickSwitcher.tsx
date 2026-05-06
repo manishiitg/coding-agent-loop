@@ -9,6 +9,7 @@ import { useAppStore } from '../stores/useAppStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { ActiveSessionInfo, PollingEvent } from '../services/api-types'
 import { restoreSession } from '../utils/sessionRestore'
+import { restoreWorkflowSessionChat } from '../utils/workflowSessionRestore'
 import { formatEventMemoryBytes, getEventMemoryStats, hasEventMemoryPressure, type EventMemoryStats } from '../utils/eventMemory'
 
 interface QuickSwitcherProps {
@@ -460,12 +461,8 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
         return
       }
 
-      if (item.mode === 'workflow' && item.session.preset_query_id) {
-        const preset = useGlobalPresetStore.getState().workflowPresets.find(p => p.id === item.session.preset_query_id)
-        useAppStore.getState().setShowWorkflowsOverview(false)
-        useModeStore.getState().setModeCategory('workflow')
-        if (preset) useGlobalPresetStore.getState().applyPreset(preset, 'workflow')
-        useWorkflowStore.getState().setShowChatArea(true)
+      if (item.mode === 'workflow') {
+        await restoreWorkflowSessionChat(item.session)
         onClose()
         return
       }
@@ -533,6 +530,13 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
     presetStore.applyPreset(item.preset, 'workflow')
 
+    if (item.activeSession) {
+      await restoreWorkflowSessionChat(item.activeSession, { preset: item.preset })
+      console.timeEnd('[QuickSwitcher] workflow-switch-total')
+      onClose()
+      return
+    }
+
     // Switch to the correct tab for the new preset (the App.tsx effect only
     // runs on mode change, not on preset change within workflow mode)
     const updatedChatStore = useChatStore.getState()
@@ -551,8 +555,16 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
         updatedChatStore.switchTab(presetTabs[0].tabId)
         useWorkflowStore.getState().setShowChatArea(true)
       } else {
-        // No tabs for this preset yet — clear activeTabId so ChatArea doesn't show stale content
-        useChatStore.setState({ activeTabId: null })
+        // No tabs for this preset yet — create an empty builder tab. WorkflowLayout
+        // watches this state and offers workspace builder-history restore when present.
+        const tabId = await updatedChatStore.createChatTab('Workflow Builder', {
+          mode: 'workflow',
+          phaseId: 'workflow-builder',
+          phaseName: 'Workflow Builder',
+          presetQueryId: item.preset.id,
+        })
+        updatedChatStore.switchTab(tabId)
+        useWorkflowStore.getState().setShowChatArea(true)
       }
     }
 

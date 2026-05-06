@@ -78,6 +78,33 @@ function parseFormatsField(raw: string): Record<string, ReportFormatterName> | u
   return Object.keys(out).length > 0 ? out : undefined
 }
 
+// Parses `sources` value: comma-separated `alias=db/file.json` pairs.
+// Example: `sources: runs=db/runs.json, costs=db/costs.json`
+function parseSourcesField(raw: string): Record<string, string> | undefined {
+  const out: Record<string, string> = {}
+  for (const part of raw.split(',')) {
+    const eq = part.indexOf('=')
+    if (eq <= 0) continue
+    const alias = part.slice(0, eq).trim()
+    const source = part.slice(eq + 1).trim()
+    if (!alias || !source) continue
+    out[alias] = source
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+function parseSourcesObject(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const out: Record<string, string> = {}
+  for (const [alias, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value !== 'string') continue
+    const cleanAlias = alias.trim()
+    const cleanValue = value.trim()
+    if (cleanAlias && cleanValue) out[cleanAlias] = cleanValue
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
 // Parses `colors` / `colors_dark` — comma-separated list of hex or CSS color names.
 // Invalid entries are dropped but don't invalidate the whole list.
 function parseColorsField(raw: string): string[] | undefined {
@@ -190,6 +217,7 @@ function parseReportPlanJSON(raw: string): ParsedReportPlan | null {
         heading?: unknown
         entries?: Array<{
           kind?: unknown
+          tab?: unknown
           widget?: unknown
           row?: { widgets?: unknown }
         }>
@@ -204,9 +232,10 @@ function parseReportPlanJSON(raw: string): ParsedReportPlan | null {
       const rawEntries = Array.isArray(section.entries) ? section.entries : []
       for (const entry of rawEntries) {
         if (!entry || typeof entry.kind !== 'string') continue
+        const tab = typeof entry.tab === 'string' && entry.tab.trim() !== '' ? entry.tab.trim() : undefined
         if (entry.kind === 'single') {
           const widget = parseReportPlanJSONWidget(entry.widget)
-          if (widget) entries.push({ kind: 'single', widget })
+          if (widget) entries.push({ kind: 'single', widget, tab })
           continue
         }
         if (entry.kind === 'row') {
@@ -214,7 +243,7 @@ function parseReportPlanJSON(raw: string): ParsedReportPlan | null {
           const widgets = rawWidgets
             .map(widget => parseReportPlanJSONWidget(widget))
             .filter((widget): widget is ReportWidget => widget !== null)
-          if (widgets.length > 0) entries.push({ kind: 'row', row: { widgets } })
+          if (widgets.length > 0) entries.push({ kind: 'row', row: { widgets }, tab })
         }
       }
       const layout = parseSectionLayout((section as Record<string, unknown>).layout)
@@ -266,7 +295,9 @@ function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
     source: typeof source.source === 'string' ? source.source : '',
     path: normalizePath(typeof source.path === 'string' ? source.path : ''),
   }
-  if (!widget.source) return null
+  const sources = parseSourcesObject(source.sources)
+  if (sources) widget.sources = sources
+  if (!widget.source && !widget.sources) return null
 
   if (typeof source.filter === 'string') widget.filter = source.filter
   if (typeof source.query === 'string') widget.query = source.query
@@ -376,10 +407,14 @@ function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
   return widget
 }
 
-function parseSectionLayout(raw: unknown): { columns?: number; gap?: number } | null {
+function parseSectionLayout(raw: unknown): ReportSection['layout'] | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const obj = raw as Record<string, unknown>
-  const layout: { columns?: number; gap?: number } = {}
+  const layout: NonNullable<ReportSection['layout']> = {}
+  if (typeof obj.mode === 'string') {
+    const mode = obj.mode.toLowerCase()
+    if (mode === 'grid' || mode === 'tabs') layout.mode = mode
+  }
   if (typeof obj.columns === 'number' && Number.isFinite(obj.columns) && obj.columns > 0) {
     layout.columns = Math.min(24, Math.trunc(obj.columns))
   }
@@ -482,12 +517,14 @@ function parseKeyValueFields(body: string[]): Record<string, string> {
 //   y_axis: <field>                           (chart only)
 function parseKeyValueWidget(kind: ReportWidgetKind, body: string[]): ReportWidget | null {
   const fields = parseKeyValueFields(body)
-  if (!fields.source) return null
+  const sources = fields.sources ? parseSourcesField(fields.sources) : undefined
+  if (!fields.source && !sources) return null
   const widget: ReportWidget = {
     kind,
-    source: fields.source,
+    source: fields.source ?? '',
     path: normalizePath(fields.path),
   }
+  if (sources) widget.sources = sources
   if (fields.filter) widget.filter = fields.filter
   if (fields.query) widget.query = fields.query
   if (fields.show_if || fields.showif) widget.showIf = fields.show_if || fields.showif
@@ -686,12 +723,14 @@ function parseRowBlock(body: string[]): ReportWidgetRow {
       continue
     }
     if (!isWidgetKind(kind)) continue
-    if (!fields.source) continue
+    const sources = fields.sources ? parseSourcesField(fields.sources) : undefined
+    if (!fields.source && !sources) continue
     const widget: ReportWidget = {
       kind,
-      source: fields.source,
+      source: fields.source ?? '',
       path: normalizePath(fields.path),
     }
+    if (sources) widget.sources = sources
     if (fields.filter) widget.filter = fields.filter
     if (fields.query) widget.query = fields.query
     if (fields.show_if || fields.showif) widget.showIf = fields.show_if || fields.showif

@@ -13,6 +13,7 @@ var (
 
 	cdpTabSelectionsMu sync.RWMutex
 	cdpTabSelections   = make(map[string]string)
+	cdpActiveTabs      = make(map[int]string)
 )
 
 func sharedCDPSessionName(port int) string {
@@ -59,6 +60,32 @@ func clearCDPTabSelectionsForPort(port int) {
 		if strings.HasPrefix(key, prefix) {
 			delete(cdpTabSelections, key)
 		}
+	}
+	delete(cdpActiveTabs, port)
+}
+
+func getCDPActiveTab(port int) string {
+	cdpTabSelectionsMu.RLock()
+	defer cdpTabSelectionsMu.RUnlock()
+	return cdpActiveTabs[port]
+}
+
+func setCDPActiveTab(port int, tab string) {
+	tab = strings.TrimSpace(tab)
+	if tab == "" {
+		return
+	}
+	cdpTabSelectionsMu.Lock()
+	defer cdpTabSelectionsMu.Unlock()
+	cdpActiveTabs[port] = tab
+}
+
+func clearCDPActiveTab(port int, tab string) {
+	tab = strings.TrimSpace(tab)
+	cdpTabSelectionsMu.Lock()
+	defer cdpTabSelectionsMu.Unlock()
+	if tab == "" || cdpActiveTabs[port] == tab {
+		delete(cdpActiveTabs, port)
 	}
 }
 

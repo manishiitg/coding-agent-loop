@@ -1,7 +1,7 @@
 {
-  "name": "agentforge-desktop",
+  "name": "runloop-desktop",
   "version": "0.1.0",
-  "description": "Standalone Mac app for AgentForge",
+  "description": "Standalone Mac app for Runloop",
   "repository": "github:manishiitg/mcp-agent-builder-go",
   "main": "main.js",
   "private": true,
@@ -12,7 +12,7 @@
   },
   "build": {
     "appId": "com.mcp-agent-builder.desktop",
-    "productName": "AgentForge",
+    "productName": "Runloop",
     "publish": [
       "github"
     ],

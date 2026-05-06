@@ -362,6 +362,8 @@ func (s *SlackService) SendFeedbackNotification(
 		postOpts = append(postOpts, slack.MsgOptionTS(threadTS))
 	}
 
+	logBotOutboundMessage("slack", ThreadID{Platform: "slack", ChannelID: channelID, ThreadTS: threadTS}, "notification", message, 1, len(blocks))
+
 	postedChannelID, timestamp, err := s.client.PostMessage(channelID, postOpts...)
 	if err != nil {
 		return "", fmt.Errorf("failed to post Slack message: %w", err)
@@ -1374,6 +1376,7 @@ func (s *SlackService) SendThreadMessage(ctx context.Context, threadID ThreadID,
 	// Split long messages
 	formatter := &SlackFormatter{}
 	parts := formatter.SplitLongMessage(formatted)
+	logBotOutboundMessage("slack", threadID, "thread", formatted, len(parts), 0)
 
 	var lastTS string
 	for _, part := range parts {
@@ -1435,6 +1438,8 @@ func (s *SlackService) SendThreadMessageWithBlocks(ctx context.Context, threadID
 		}
 	}
 
+	logBotOutboundMessage("slack", threadID, "blocks", formatted, 1, len(blocks))
+
 	_, ts, err := s.client.PostMessageContext(ctx,
 		threadID.ChannelID,
 		slack.MsgOptionBlocks(slackBlocks...),
@@ -1454,6 +1459,7 @@ func (s *SlackService) UpdateMessage(ctx context.Context, threadID ThreadID, mes
 	}
 
 	formatted := convertMarkdownToSlackMrkdwn(newText)
+	logBotOutboundMessage("slack", threadID, "update", formatted, 1, 0)
 
 	_, _, _, err := s.client.UpdateMessageContext(ctx,
 		threadID.ChannelID,

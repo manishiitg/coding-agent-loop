@@ -1827,6 +1827,7 @@ func (w *WhatsAppService) SendThreadMessage(ctx context.Context, threadID Thread
 	}
 
 	parts := splitLongText(message, 4000)
+	logBotOutboundMessage("whatsapp", threadID, "thread", message, len(parts), 0)
 	var lastID string
 	for _, part := range parts {
 		msg := &waProto.Message{Conversation: protoString(part)}

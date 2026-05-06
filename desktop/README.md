@@ -1,4 +1,4 @@
-# AgentForge — Desktop
+# Runloop — Desktop
 
 Electron shell for the standalone Mac app. It bundles the `agent-server` and `workspace-server` binaries, managing their lifecycle automatically.
 
@@ -58,9 +58,9 @@ Artifacts will be output to `desktop/dist/`.
 
 ### Window and Server Lifecycle
 
-On macOS, closing the AgentForge window keeps the app process and bundled servers running in the background so scheduled jobs can continue. Click the Dock icon or the AgentForge menu bar icon to reopen the UI.
+On macOS, closing the Runloop window keeps the app process and bundled servers running in the background so scheduled jobs can continue. Click the Dock icon or the Runloop menu bar icon to reopen the UI.
 
-Right-click the menu bar icon and choose **Quit AgentForge (Stop Servers)**, or use **Quit AgentForge** / `Cmd+Q`, to fully exit the app. Quitting stops both bundled servers.
+Right-click the menu bar icon and choose **Quit Runloop (Stop Servers)**, or use **Quit Runloop** / `Cmd+Q`, to fully exit the app. Quitting stops both bundled servers.
 
 ### Ports
 - **45678**: Agent server (API + static frontend)
@@ -68,7 +68,7 @@ Right-click the menu bar icon and choose **Quit AgentForge (Stop Servers)**, or 
 
 ### Data & Logs
 The app stores data in the system's Application Support directory:
-`~/Library/Application Support/AgentForge/`
+`~/Library/Application Support/Runloop/`
 
 - **Logs:** `logs/agent.log`, `logs/workspace.log`
 - **Database:** `chat_history.db`

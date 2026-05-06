@@ -5,9 +5,8 @@ import { agentApi } from '../services/api'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
-import { useRunningWorkflowsStore } from '../stores/useRunningWorkflowsStore'
-import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { restoreSession } from '../utils/sessionRestore'
+import { restoreWorkflowSessionChat } from '../utils/workflowSessionRestore'
 
 const ACTIVITY_DETAILS_POLL_MS = 30000
 
@@ -302,26 +301,6 @@ function sessionFromRunningWorkflow(workflow: RunningWorkflowInfo): ActiveSessio
   }
 }
 
-function normalizeWorkspacePath(path?: string): string {
-  return (path || '').replace(/\/+$/, '')
-}
-
-function findWorkflowPresetId(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo): string | null {
-  const presetId = session.preset_query_id || workflow?.preset_query_id
-  const presetStore = useGlobalPresetStore.getState()
-
-  if (presetId && presetStore.workflowPresets.some(preset => preset.id === presetId)) {
-    return presetId
-  }
-
-  const workspacePath = normalizeWorkspacePath(workflow?.workspace_path || session.workspace_path)
-  if (!workspacePath) return null
-
-  return presetStore.workflowPresets.find(preset =>
-    normalizeWorkspacePath(preset.selectedFolder?.filepath) === workspacePath
-  )?.id ?? null
-}
-
 export const GlobalActivityMonitor: React.FC = () => {
   const [open, setOpen] = useState(false)
   const [runningWorkflowsBySession, setRunningWorkflowsBySession] = useState<Record<string, RunningWorkflowInfo>>({})
@@ -496,62 +475,8 @@ export const GlobalActivityMonitor: React.FC = () => {
 
     if (isWorkflowSession(session)) {
       const workflowInfo = runningWorkflowsBySession[session.session_id]
-      const presetId = findWorkflowPresetId(session, workflowInfo)
-      const isActive = isActiveSession(session)
-
-      useRunningWorkflowsStore.getState().setIsRestoringWorkflow(true)
-      try {
-        if (presetId) {
-          useGlobalPresetStore.getState().setActivePreset('workflow', presetId)
-        }
-        useModeStore.getState().setModeCategory('workflow')
-
-        if (
-          existingTab?.metadata?.mode === 'workflow' &&
-          existingTab.metadata?.phaseId === 'workflow-builder' &&
-          existingTab.name !== 'Workflow Builder'
-        ) {
-          await chatStore.closeTab(existingTab.tabId, false)
-        }
-
-        const latestChatStore = useChatStore.getState()
-        const builderTab = Object.values(latestChatStore.chatTabs).find(tab =>
-          tab.metadata?.mode === 'workflow' &&
-          tab.metadata?.phaseId === 'workflow-builder' &&
-          (presetId ? tab.metadata?.presetQueryId === presetId : tab.sessionId === session.session_id)
-        )
-
-        const tabId = builderTab?.tabId ?? await latestChatStore.createChatTab('Workflow Builder', {
-          mode: 'workflow',
-          phaseId: 'workflow-builder',
-          phaseName: 'Workflow Builder',
-          presetQueryId: presetId || session.preset_query_id || workflowInfo?.preset_query_id,
-        }, session.session_id)
-
-        if (builderTab?.sessionId !== session.session_id) {
-          latestChatStore.updateTabSessionId(tabId, session.session_id)
-        }
-
-        try {
-          const response = await agentApi.getSessionEvents(session.session_id, -1)
-          latestChatStore.setTabEvents(session.session_id, response.events || [])
-          latestChatStore.setTabLastEventIndex(
-            session.session_id,
-            response.last_processed_index ?? (response.events?.length ? response.events.length - 1 : -1),
-          )
-          latestChatStore.setTabStreaming(tabId, isActive || response.session_status === 'running')
-          latestChatStore.setTabCompleted(tabId, !isActive && response.session_status !== 'running')
-        } catch {
-          latestChatStore.setTabStreaming(tabId, isActive)
-          latestChatStore.setTabCompleted(tabId, !isActive)
-        }
-
-        useWorkflowStore.getState().setShowChatArea(true)
-        latestChatStore.switchTab(tabId)
-      } finally {
-        useRunningWorkflowsStore.getState().setIsRestoringWorkflow(false)
-        setOpen(false)
-      }
+      await restoreWorkflowSessionChat(session, { runningWorkflow: workflowInfo })
+      setOpen(false)
       return
     }
 

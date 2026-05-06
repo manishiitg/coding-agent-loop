@@ -151,7 +151,7 @@ export function CardsWidget({ value, widget }: { value: unknown; widget: ReportW
         </div>
       </div>
 
-      <div className={`grid gap-3 ${isCompact ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3'}`}>
+      <div className={`grid gap-3 ${isCompact ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
         {pageRows.map((row, index) => {
           const rowColor = resolveSemanticColor(widget, row, palette, distinctIndex[String(row?.[widget.colorBy ?? ''] ?? '')] ?? index)
           const rowStyle = rowColor ? { backgroundColor: toRowTint(rowColor) } : undefined

@@ -282,6 +282,11 @@ type JSONataQueryState =
   | { status: 'success'; value: unknown }
   | { status: 'error'; message: string }
 
+type WidgetSourceInput =
+  | { status: 'ok'; value: unknown; label: string }
+  | { status: 'loading'; label: string }
+  | { status: 'missing'; label: string }
+
 function useJSONataQuery(source: unknown, query: string): JSONataQueryState {
   const [state, setState] = useState<JSONataQueryState>({ status: 'idle' })
 
@@ -313,6 +318,52 @@ function useJSONataQuery(source: unknown, query: string): JSONataQueryState {
   return state
 }
 
+function widgetSourcePaths(widget: ReportWidget): string[] {
+  const paths = new Set<string>()
+  if (widget.source) paths.add(widget.source)
+  if (widget.sources) {
+    for (const source of Object.values(widget.sources)) {
+      if (source) paths.add(source)
+    }
+  }
+  return Array.from(paths).sort()
+}
+
+function widgetSourceLabel(widget: ReportWidget): string {
+  if (widget.sources && Object.keys(widget.sources).length > 0) {
+    return Object.entries(widget.sources)
+      .map(([alias, source]) => `${alias}:${source}`)
+      .join(', ')
+  }
+  return widget.source
+}
+
+function resolveWidgetSourceInput(widget: ReportWidget, sources: SourceCache): WidgetSourceInput {
+  const label = widgetSourceLabel(widget)
+  if (widget.sources && Object.keys(widget.sources).length > 0) {
+    const combined: Record<string, unknown> = {}
+    for (const [alias, source] of Object.entries(widget.sources)) {
+      const value = sources[source]
+      if (value === undefined) return { status: 'loading', label }
+      if (value === null) return { status: 'missing', label }
+      combined[alias] = value
+    }
+    return { status: 'ok', value: combined, label }
+  }
+  if (!widget.source) return { status: 'missing', label }
+  const raw = sources[widget.source]
+  if (raw === undefined) return { status: 'loading', label }
+  if (raw === null) return { status: 'missing', label }
+  return { status: 'ok', value: raw, label }
+}
+
+function widgetRawForVisibility(widget: ReportWidget, sources: SourceCache): unknown {
+  const input = resolveWidgetSourceInput(widget, sources)
+  if (input.status === 'ok') return input.value
+  if (input.status === 'loading') return undefined
+  return null
+}
+
 function widgetInstanceKey(
   widget: ReportWidget,
   ids: { sectionIndex: number; entryIndex: number; widgetIndex: number },
@@ -323,6 +374,7 @@ function widgetInstanceKey(
     ids.widgetIndex,
     widget.kind,
     widget.source,
+    JSON.stringify(widget.sources ?? {}),
     widget.path ?? '',
     widget.title ?? '',
   ].join('::')
@@ -400,10 +452,10 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
     for (const section of plan.sections) {
       for (const entry of section.entries) {
         if (entry.kind === 'single') {
-          if (entry.widget.source) set.add(entry.widget.source)
+          for (const source of widgetSourcePaths(entry.widget)) set.add(source)
         } else {
           for (const w of entry.row.widgets) {
-            if (w.source) set.add(w.source)
+            for (const source of widgetSourcePaths(w)) set.add(source)
           }
         }
       }
@@ -516,7 +568,7 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
         const widgets = entry.kind === 'single' ? [entry.widget] : entry.row.widgets
         const hasVisibleWidget = widgets.some((widget, widgetIndex) => {
           if (hiddenWidgetKeys.has(widgetInstanceKey(widget, { sectionIndex, entryIndex, widgetIndex }))) return true
-          return widgetShouldRender(widget, sources[widget.source])
+          return widgetShouldRender(widget, widgetRawForVisibility(widget, sources))
         })
         return hasVisibleWidget ? [{ entry, entryIndex }] : []
       })
@@ -535,7 +587,7 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
         for (let widgetIndex = 0; widgetIndex < widgets.length; widgetIndex += 1) {
           const w = widgets[widgetIndex]
           if (hiddenWidgetKeys.has(widgetInstanceKey(w, { sectionIndex, entryIndex, widgetIndex }))) return true
-          if (widgetShouldRender(w, sources[w.source])) return true
+          if (widgetShouldRender(w, widgetRawForVisibility(w, sources))) return true
         }
       }
     }
@@ -833,6 +885,32 @@ function SectionContainer({
   hiddenWidgetKeys: Set<string>
   handleToggleWidgetHidden: (widgetKey: string) => void
 }) {
+  const tabsEnabled = section.layout?.mode === 'tabs'
+  const tabGroups = useMemo(() => {
+    if (!tabsEnabled) return []
+    const groups: Array<{ key: string; label: string; entries: Array<{ entry: ReportEntry; entryIndex: number }> }> = []
+    const byKey = new Map<string, { key: string; label: string; entries: Array<{ entry: ReportEntry; entryIndex: number }> }>()
+    for (const item of entries) {
+      const label = item.entry.tab?.trim() || 'Overview'
+      const key = label.toLowerCase()
+      let group = byKey.get(key)
+      if (!group) {
+        group = { key, label, entries: [] }
+        byKey.set(key, group)
+        groups.push(group)
+      }
+      group.entries.push(item)
+    }
+    return groups
+  }, [entries, tabsEnabled])
+  const [activeTabKey, setActiveTabKey] = useState<string | null>(null)
+  useEffect(() => {
+    if (!tabsEnabled || tabGroups.length === 0) return
+    if (!activeTabKey || !tabGroups.some(tab => tab.key === activeTabKey)) {
+      setActiveTabKey(tabGroups[0].key)
+    }
+  }, [activeTabKey, tabGroups, tabsEnabled])
+
   // Container size tier — phone / tablet / desktop, matching the project's
   // sm/md Tailwind breakpoints. Container-width based, so it works in
   // split-pane / mobile-preview modes where the report tab is narrower than
@@ -870,11 +948,36 @@ function SectionContainer({
         gap: `${gridGap}px`,
       }
     : undefined
+  const activeTab = tabsEnabled && tabGroups.length > 0
+    ? tabGroups.find(tab => tab.key === activeTabKey) ?? tabGroups[0]
+    : null
+  const renderedEntries = activeTab ? activeTab.entries : entries
   return (
     <section className="flex flex-col gap-2.5 p-0 sm:gap-3 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3.5 sm:shadow-sm">
       <SectionHeader heading={section.heading} />
+      {tabsEnabled && tabGroups.length > 0 && (
+        <div className="flex gap-1 overflow-x-auto border-b border-border/60 pb-1 [scrollbar-width:thin]">
+          {tabGroups.map(tab => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveTabKey(tab.key)}
+              className={`shrink-0 rounded-t-md border px-3 py-1.5 text-sm transition-colors ${
+                (activeTab?.key ?? tabGroups[0]?.key) === tab.key
+                  ? 'border-border border-b-background bg-background font-medium text-foreground shadow-sm'
+                  : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+              }`}
+            >
+              <span>{tab.label}</span>
+              <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {tab.entries.length}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
       <div ref={gridRef} className={containerClassName} style={containerStyle}>
-        {entries.map(({ entry, entryIndex }) => {
+        {renderedEntries.map(({ entry, entryIndex }) => {
           const span = entry.kind === 'single'
             ? entry.widget.layout?.span
             : undefined
@@ -944,7 +1047,7 @@ function EntryRenderer({
   const visibleWidgets = entry.row.widgets.flatMap((widget, widgetIndex) => {
     const widgetKey = widgetInstanceKey(widget, { sectionIndex, entryIndex, widgetIndex })
     if (hiddenWidgetKeys.has(widgetKey)) return [{ widget, widgetKey, hidden: true }]
-    if (!widgetShouldRender(widget, sources[widget.source])) return []
+    if (!widgetShouldRender(widget, widgetRawForVisibility(widget, sources))) return []
     return [{ widget, widgetKey, hidden: false }]
   })
   if (visibleWidgets.length === 0) return null
@@ -1040,7 +1143,8 @@ function WidgetCard({
   onToggleHidden?: () => void
 }) {
   const query = widget.query?.trim() ?? ''
-  const raw = widget.source ? sources[widget.source] : undefined
+  const sourceInput = useMemo(() => resolveWidgetSourceInput(widget, sources), [widget, sources])
+  const raw = sourceInput.status === 'ok' ? sourceInput.value : sourceInput.status === 'loading' ? undefined : null
   const queryState = useJSONataQuery(raw, query)
 
   if (hidden && onToggleHidden) {
@@ -1056,7 +1160,7 @@ function WidgetCard({
       <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>{content}</WidgetShell>
     )
 
-  if (!widget.source) {
+  if (!widget.source && !widget.sources) {
     return (
       <div
         aria-hidden="true"
@@ -1068,13 +1172,13 @@ function WidgetCard({
 
   if (raw === undefined) {
     return wrapNotice(
-      <div className="py-1.5 text-xs italic text-muted-foreground">Loading {widget.source}…</div>,
+      <div className="py-1.5 text-xs italic text-muted-foreground">Loading {sourceInput.label}…</div>,
     )
   }
   if (raw === null) {
     return wrapNotice(
       <div className="py-1.5 text-xs italic text-muted-foreground">
-        Source not available: <code className="px-1 rounded bg-muted">{widget.source}</code>
+        Source not available: <code className="px-1 rounded bg-muted">{sourceInput.label}</code>
       </div>,
     )
   }
@@ -1129,7 +1233,7 @@ function WidgetCard({
     content = (
       <WidgetError
         widget={widget}
-        message={`Path "${widget.path || '(root)'}" doesn't resolve in ${widget.source}.`}
+        message={`Path "${widget.path || '(root)'}" doesn't resolve in ${sourceInput.label}.`}
         hint="Check the source JSON for a matching key. Run validate_report_plan in builder chat for specifics."
       />
     )
@@ -1140,7 +1244,7 @@ function WidgetCard({
       content = (
         <WidgetError
           widget={widget}
-          message={`No rows in ${widget.source}${widget.filter ? ` matching filter "${widget.filter}"` : ''}.`}
+          message={`No rows in ${sourceInput.label}${widget.filter ? ` matching filter "${widget.filter}"` : ''}.`}
           hint="The source is valid but empty for this widget; this usually clears after the workflow runs."
           severity="info"
         />

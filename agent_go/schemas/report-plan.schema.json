@@ -29,6 +29,9 @@
             "row"
           ]
         },
+        "tab": {
+          "type": "string"
+        },
         "widget": {
           "$ref": "#/$defs/reportPlanDocumentWidget"
         },
@@ -83,6 +86,13 @@
     },
     "reportPlanDocumentSectionLayout": {
       "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "grid",
+            "tabs"
+          ]
+        },
         "columns": {
           "type": "integer"
         },
@@ -143,6 +153,12 @@
         },
         "source": {
           "type": "string"
+        },
+        "sources": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
         },
         "path": {
           "type": "string"

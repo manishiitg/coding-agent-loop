@@ -560,6 +560,14 @@ export const agentApi = {
     return response.data
   },
 
+  // Initial restores should not use since=-1. That requests the entire
+  // in-memory event buffer before the frontend trims it, which can spike both
+  // backend and Electron memory on large workflow runs. since=0 uses the
+  // backend's bounded initial page and still returns last_processed_index.
+  getRecentSessionEvents: async (sessionId: string): Promise<GetEventsResponse> => {
+    return agentApi.getSessionEvents(sessionId, 0)
+  },
+
   // Observer APIs removed - no longer needed
 
   // Stop session/agent execution (preserves conversation history)

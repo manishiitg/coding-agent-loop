@@ -28,6 +28,7 @@ export interface ReportPlanDocumentSection {
 export interface ReportPlanDocumentEntry {
   id?: string;
   kind: "single" | "row";
+  tab?: string;
   widget?: ReportPlanDocumentWidget;
   row?: ReportPlanDocumentRow;
 }
@@ -36,6 +37,9 @@ export interface ReportPlanDocumentWidget {
   hidden?: boolean;
   kind: "text" | "markdown" | "chart" | "table" | "cards" | "stat" | "alert" | "pivot";
   source?: string;
+  sources?: {
+    [k: string]: string;
+  };
   path?: string;
   filter?: string;
   query?: string;
@@ -124,6 +128,7 @@ export interface ReportPlanDocumentRow {
   widgets: ReportPlanDocumentWidget[];
 }
 export interface ReportPlanDocumentSectionLayout {
+  mode?: "grid" | "tabs";
   columns?: number;
   gap?: number;
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import SidebarHeader from './sidebar/SidebarHeader'
-import { AgentForgeMark } from './branding/AgentForgeLogo'
+import { RunloopMark } from './branding/RunloopLogo'
 import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
 import MCPServersSection from './sidebar/MCPServersSection'
 import { SkillsSection } from './skills'
@@ -76,7 +76,7 @@ export default function WorkspaceSidebar({
     
     if (Notification.permission === 'granted') {
       new Notification('Test Notification', {
-        body: 'This is a test notification from AgentForge',
+        body: 'This is a test notification from Runloop',
         icon: '/logo.svg'
       })
     } else if (Notification.permission === 'default') {
@@ -84,7 +84,7 @@ export default function WorkspaceSidebar({
         setOsPermission(permission)
         if (permission === 'granted') {
           new Notification('Test Notification', {
-            body: 'This is a test notification from AgentForge',
+            body: 'This is a test notification from Runloop',
             icon: '/logo.svg'
           })
         }
@@ -94,7 +94,7 @@ export default function WorkspaceSidebar({
 
   const handleNotificationClick = () => {
     if (osPermission === 'denied') {
-      alert('Notifications are blocked by your system settings. Please enable them in System Settings > Notifications > AgentForge.')
+      alert('Notifications are blocked by your system settings. Please enable them in System Settings > Notifications > Runloop.')
       return
     }
 
@@ -145,7 +145,7 @@ export default function WorkspaceSidebar({
                 title={minimized ? 'Expand sidebar' : 'Minimize sidebar'}
               >
           {minimized ? (
-            <AgentForgeMark className="h-7 w-7" title="AgentForge" />
+            <RunloopMark className="h-7 w-7" title="Runloop" />
           ) : (
             <PanelLeftClose className="w-5 h-5" />
           )}

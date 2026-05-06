@@ -24,6 +24,28 @@ let mainWindow = null;
 let settingsWindow = null;
 let tray = null;
 
+function migrateLegacyUserData() {
+  const userDataPath = app.getPath('userData');
+  const legacyUserDataPath = path.join(path.dirname(userDataPath), 'AgentForge');
+
+  if (legacyUserDataPath === userDataPath || !fs.existsSync(legacyUserDataPath)) {
+    return;
+  }
+
+  const hasRunloopData = fs.existsSync(userDataPath) && fs.readdirSync(userDataPath).length > 0;
+  if (hasRunloopData) {
+    return;
+  }
+
+  try {
+    fs.mkdirSync(userDataPath, { recursive: true });
+    fs.cpSync(legacyUserDataPath, userDataPath, { recursive: true, errorOnExist: false });
+    console.log(`[main] Migrated legacy user data from ${legacyUserDataPath} to ${userDataPath}`);
+  } catch (error) {
+    console.warn('[main] Failed to migrate legacy AgentForge user data:', error);
+  }
+}
+
 // Settings Management
 function loadSettings() {
   const configPath = path.join(app.getPath('userData'), 'config.json');
@@ -387,11 +409,11 @@ function createTray() {
   trayIcon.setTemplateImage(true);
 
   tray = new Tray(trayIcon);
-  tray.setToolTip('AgentForge');
+  tray.setToolTip('Runloop');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Open AgentForge', click: openMainWindow },
+    { label: 'Open Runloop', click: openMainWindow },
     { type: 'separator' },
-    { label: 'Quit AgentForge (Stop Servers)', click: () => app.quit() },
+    { label: 'Quit Runloop (Stop Servers)', click: () => app.quit() },
   ]));
   tray.on('click', openMainWindow);
 }
@@ -691,7 +713,7 @@ function killChildren() {
 function showErrorAndExit(message) {
   dialog.showMessageBoxSync({
     type: 'error',
-    title: 'AgentForge',
+    title: 'Runloop',
     message: 'Startup failed',
     detail: message,
   });
@@ -755,8 +777,8 @@ function createWindow(initialUrl) {
   });
 
   const devUrl = process.env.DEV_URL;
-  if (devUrl) {
-    // Open DevTools automatically in dev mode
+  if (devUrl && process.env.ELECTRON_OPEN_DEVTOOLS === '1') {
+    // DevTools is expensive on large workflow/event views; keep it opt-in.
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
 
@@ -776,6 +798,7 @@ function createWindow(initialUrl) {
 }
 
 app.whenReady().then(async () => {
+  migrateLegacyUserData();
   applyAppIcon();
   createMenu();
   createTray();

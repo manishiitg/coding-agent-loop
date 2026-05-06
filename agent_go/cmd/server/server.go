@@ -114,6 +114,8 @@ type ActiveSessionInfo struct {
 	WorkspacePath               string     `json:"workspace_path,omitempty"`
 	PresetName                  string     `json:"preset_name,omitempty"`
 	PresetQueryID               string     `json:"preset_query_id,omitempty"`
+	BotPlatform                 string     `json:"bot_platform,omitempty"`
+	TriggeredBy                 string     `json:"triggered_by,omitempty"`
 	LLMGuidance                 string     `json:"llm_guidance,omitempty"`  // LLM guidance message for this session
 	MemoryFolder                string     `json:"memory_folder,omitempty"` // Per-user memory folder (default: _users/<userID>/memories)
 	ChatsFolder                 string     `json:"chats_folder,omitempty"`  // Per-user Chats folder (default: _users/<userID>/Chats)
@@ -2093,7 +2095,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	api.clearSessionStopped(sessionID)
 
 	// Track active session for page refresh recovery (no observer needed)
-	api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID)
+	api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID, req.BotPlatform, req.TriggeredBy)
 
 	// Per-user memory and chat folders. Both live under _users/<userID>/ so different users
 	// don't share each other's persistent memory or chat output files. If a prior LLMGuidance
@@ -5751,13 +5753,22 @@ func createLLMLogger() loggerv2.Logger {
 // --- ACTIVE SESSION MANAGEMENT ---
 
 // trackActiveSession tracks a new active session
-func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID string) {
+func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID, botPlatform, triggeredBy string) {
 	if api.eventStore != nil {
 		api.eventStore.SetSessionOwner(sessionID, userID)
 	}
 
 	api.activeSessionsMux.Lock()
 	defer api.activeSessionsMux.Unlock()
+
+	if existing := api.activeSessions[sessionID]; existing != nil {
+		if botPlatform == "" {
+			botPlatform = existing.BotPlatform
+		}
+		if triggeredBy == "" {
+			triggeredBy = existing.TriggeredBy
+		}
+	}
 
 	api.activeSessions[sessionID] = &ActiveSessionInfo{
 		SessionID:    sessionID,
@@ -5767,6 +5778,8 @@ func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID 
 		CreatedAt:    time.Now(),
 		Query:        query,
 		UserID:       userID,
+		BotPlatform:  botPlatform,
+		TriggeredBy:  triggeredBy,
 	}
 
 	logfWithContext(

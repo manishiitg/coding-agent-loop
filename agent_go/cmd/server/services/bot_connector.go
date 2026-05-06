@@ -1630,6 +1630,7 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 	}
 	if platform != "" {
 		req["bot_platform"] = platform
+		req["triggered_by"] = "bot:" + platform
 	}
 
 	// Resolve the workflow route: an explicit preset wins over channel lookup,

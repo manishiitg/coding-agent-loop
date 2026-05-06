@@ -6,7 +6,7 @@ import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { restoreSession } from '../utils/sessionRestore'
-import { restoreWorkflowSessionChat } from '../utils/workflowSessionRestore'
+import { isBotWorkflowSession, isScheduledWorkflowSession, restoreBotWorkflowRunChat, restoreScheduledWorkflowRunChat, restoreWorkflowSessionChat, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
 
 const ACTIVITY_DETAILS_POLL_MS = 30000
 
@@ -160,8 +160,10 @@ function compactHeaderLabel(
   fallbackWorkflowName?: string | null,
 ): string {
   const title = shortText(displaySessionTitle(session, tab, workflow, fallbackWorkflowName), 28)
+  const source = workflowSessionBotPlatform(session, workflow)
   const status = headerStatusLabel(session, workflow)
-  return status === 'running' ? title : `${title} · ${status}`
+  const label = source ? `${source} · ${title}` : title
+  return status === 'running' ? label : `${label} · ${status}`
 }
 
 function countLabel(count: number, singular: string, plural = `${singular}s`): string {
@@ -298,6 +300,7 @@ function sessionFromRunningWorkflow(workflow: RunningWorkflowInfo): ActiveSessio
     created_at: timestamp,
     query: workflowFallbackName(workflow),
     title: workflowFallbackName(workflow),
+    triggered_by: workflow.triggered_by,
   }
 }
 
@@ -475,7 +478,13 @@ export const GlobalActivityMonitor: React.FC = () => {
 
     if (isWorkflowSession(session)) {
       const workflowInfo = runningWorkflowsBySession[session.session_id]
-      await restoreWorkflowSessionChat(session, { runningWorkflow: workflowInfo })
+      if (isScheduledWorkflowSession(session, workflowInfo)) {
+        await restoreScheduledWorkflowRunChat(session, { runningWorkflow: workflowInfo })
+      } else if (isBotWorkflowSession(session, workflowInfo)) {
+        await restoreBotWorkflowRunChat(session, { runningWorkflow: workflowInfo })
+      } else {
+        await restoreWorkflowSessionChat(session, { runningWorkflow: workflowInfo })
+      }
       setOpen(false)
       return
     }

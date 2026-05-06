@@ -2702,7 +2702,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // For view-only (restored) tabs, show a minimal indicator instead of the full input form
   if (isViewOnly) {
     const isScheduledRun = activeTab?.metadata?.isScheduledRun
+    const isBotRun = activeTab?.metadata?.isBotRun
     const jobName = activeTab?.metadata?.scheduledJobName
+    const botPlatform = activeTab?.metadata?.botPlatform
     return (
       <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-center gap-2 py-1 text-xs text-muted-foreground">
@@ -2710,6 +2712,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           <span>
             {isScheduledRun
               ? `Scheduled run — view only${jobName ? ` (${jobName})` : ''}`
+              : isBotRun
+                ? `${botPlatform || 'Bot'} run — view only`
               : 'View only — restored conversation'}
           </span>
         </div>

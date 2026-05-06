@@ -9,7 +9,7 @@ import { useAppStore } from '../stores/useAppStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { ActiveSessionInfo, PollingEvent } from '../services/api-types'
 import { restoreSession } from '../utils/sessionRestore'
-import { restoreWorkflowSessionChat } from '../utils/workflowSessionRestore'
+import { isBotWorkflowSession, isScheduledWorkflowSession, restoreBotWorkflowRunChat, restoreScheduledWorkflowRunChat, restoreWorkflowSessionChat, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
 import { formatEventMemoryBytes, getEventMemoryStats, hasEventMemoryPressure, type EventMemoryStats } from '../utils/eventMemory'
 
 interface QuickSwitcherProps {
@@ -150,8 +150,10 @@ const eventStatsSuffix = (stats?: EventMemoryStats): string => {
 
 const activeSessionSuffix = (session?: ActiveSessionInfo): string => {
   if (!session) return ''
+  const source = workflowSessionBotPlatform(session)
+  const sourcePart = source ? ` · ${source}` : ''
   const current = session.current_execution_name ? ` · ${session.current_execution_name}` : ''
-  return ` · active: ${activeSessionStatusLabel(session)}${current} · ${sessionShortId(session.session_id)}`
+  return ` · active: ${activeSessionStatusLabel(session)}${sourcePart}${current} · ${sessionShortId(session.session_id)}`
 }
 
 const requestChatScrollToBottom = () => {
@@ -462,7 +464,13 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       }
 
       if (item.mode === 'workflow') {
-        await restoreWorkflowSessionChat(item.session)
+        if (isScheduledWorkflowSession(item.session)) {
+          await restoreScheduledWorkflowRunChat(item.session)
+        } else if (isBotWorkflowSession(item.session)) {
+          await restoreBotWorkflowRunChat(item.session)
+        } else {
+          await restoreWorkflowSessionChat(item.session)
+        }
         onClose()
         return
       }
@@ -531,7 +539,13 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     presetStore.applyPreset(item.preset, 'workflow')
 
     if (item.activeSession) {
-      await restoreWorkflowSessionChat(item.activeSession, { preset: item.preset })
+      if (isScheduledWorkflowSession(item.activeSession)) {
+        await restoreScheduledWorkflowRunChat(item.activeSession, { preset: item.preset })
+      } else if (isBotWorkflowSession(item.activeSession)) {
+        await restoreBotWorkflowRunChat(item.activeSession, { preset: item.preset })
+      } else {
+        await restoreWorkflowSessionChat(item.activeSession, { preset: item.preset })
+      }
       console.timeEnd('[QuickSwitcher] workflow-switch-total')
       onClose()
       return

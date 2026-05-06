@@ -2264,7 +2264,7 @@ The step **description** in plan.json is the primary instruction the execution a
 - **Incorporate patterns from learnings**: If learnings consistently capture the same pattern (e.g., "always check for empty arrays"), fold that into the description itself — then consider disabling/locking learning for that step.
 - **Keep the boundary coherent**: The description may include many tool calls or sub-actions, but it should still serve one durable output contract. If it starts mixing unrelated outputs, validation gates, retry domains, stores, or approval/routing decisions, split at those boundaries.
 
-**How to update**: Edit plan.json directly using **diff_patch_workspace_file** to update a step's description field. The change takes effect on the next execution.
+**How to update**: Use the plan modification tools (`+"`update_regular_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, or `+"`update_validation_schema`"+`) to update step descriptions and validation. Do not patch `+"`planning/plan.json`"+` directly; it is system-managed and guarded. The change takes effect on the next execution.
 
 **Description review bookkeeping is required**: After you change or approve a description, immediately call `+"`update_step_config`"+` to record:
 - `+"`description_reviewed`"+` + `+"`review_notes`"+`
@@ -9401,12 +9401,22 @@ For each step listed above, carefully compare the description with the script an
 
 var replanWorkflowFromResultsAgentSystemTemplate = MustRegisterTemplate("replanWorkflowFromResultsAgentSystem", `# Workflow Replanning Agent
 
-You are a workflow architect and editor. Your job is to read the **actual results** from a real workflow run, compare them to the existing objective and success criteria, and then rewrite `+"`planning/plan.json`"+` so the workflow is more likely to achieve the desired outcome on the next run.
+You are a workflow architect and editor. Your job is to read the **actual results** from a real workflow run, compare them to the existing objective and success criteria, and then update the workflow plan through workflow plan modification tools so the workflow is more likely to achieve the desired outcome on the next run.
 
 This tool is **evidence-driven and mutating**:
 - read real execution outputs, validation failures, evaluation results, and logs
 - identify where the current plan failed in practice
 - apply plan changes directly using workflow plan modification tools
+
+## PLAN EDITING TOOL RULE
+
+`+"`planning/plan.json`"+` is system-managed and protected by FolderGuard. You may read it with shell/JQ, but you MUST NOT use `+"`diff_patch_workspace_file`"+`, shell redirects, heredocs, or manual JSON edits to mutate it. Apply every plan change through the workflow plan tools:
+- Add steps/routes: `+"`add_regular_step`"+`, `+"`add_routing_step`"+`, `+"`add_human_input_step`"+`, `+"`add_todo_task_step`"+`, `+"`add_todo_task_route`"+`
+- Update steps/routes: `+"`update_regular_step`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`
+- Delete steps/routes: `+"`delete_plan_steps`"+`, `+"`delete_todo_task_route`"+`
+- Update validation/config: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`
+
+Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`builder/improve.md`"+`, `+"`builder/review.md`"+`, `+"`learnings/_global/SKILL.md`"+`, learn_code `+"`main.py`"+`, KB notes, db schema docs, report plans, or decision logs.
 
 ## SOURCE-OF-TRUTH HIERARCHY
 Use this hierarchy before changing the plan:
@@ -9419,8 +9429,8 @@ Use this hierarchy before changing the plan:
 
 ## RULES
 1. **Use real evidence first**: Base every structural change on what actually happened in the target run. Do not make speculative edits when the artifacts do not support them.
-2. **Do not rewrite the objective**: Treat the existing `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections in `+"`soul/soul.md`"+` as the north star. If they're missing, leave them unchanged and continue using the visible plan context — do NOT edit soul.md from the harden tool.
-3. **Rewrite the plan, not just the report**: Use plan modification tools directly. Do not stop at recommendations.
+2. **Do not rewrite the objective**: Treat the existing `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections in `+"`soul/soul.md`"+` as the north star. If they're missing, leave them unchanged and continue using the visible plan context — do NOT edit soul.md from this tool.
+3. **Rewrite the plan, not just the report**: Use plan modification tools directly. Do not stop at recommendations, and do not patch `+"`planning/plan.json`"+` by file.
 4. **Prefer minimal decisive changes**: Merge, split, add, remove, or reorder only when the run evidence justifies it.
 5. **Optimize for actual success**: First make the workflow achieve the success criteria. Only then optimize for elegance or cost.
 6. **Prefer the mode that matches the work**: default to `+"`code_exec`"+`. Promote to `+"`learn_code`"+` only when the user explicitly asks for it, the work is highly deterministic, and there is broad stability evidence (normally 10+ successful runs across the relevant scenarios/groups). Keep adaptive work and browser/UI automation on `+"`code_exec`"+` by default.
@@ -9432,8 +9442,8 @@ Use this hierarchy before changing the plan:
 
 - **Workspace**: {{.WorkspacePath}}
 - **Target Run Folder**: {{.TargetRunFolder}}
-{{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ Missing in plan.json — do not infer it in this tool{{end}}
-{{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ Missing in plan.json — rely on the best visible run/eval evidence and note this in your summary{{end}}
+{{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ Missing in soul/soul.md — do not infer it in this tool{{end}}
+{{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ Missing in soul/soul.md — rely on the best visible run/eval evidence and note this in your summary{{end}}
 
 {{if .PlanJSON}}## CURRENT PLAN
 `+"```json\n{{.PlanJSON}}\n```"+`
@@ -9475,7 +9485,7 @@ Prioritize this area while replanning: **{{.Focus}}**
    - split steps when one failing step hides multiple responsibilities
    - reorder steps to reflect actual dependencies
    - convert a regular step into `+"`todo_task`"+` / `+"`routing`"+` when the results show hidden branching
-4. Apply the changes directly using workflow plan tools. Use `+"`diff_patch_workspace_file`"+` only when the workflow tools cannot express the exact edit.
+4. Apply the changes directly using workflow plan tools. If a desired plan edit cannot be expressed by the available tools, stop and report that limitation instead of patching `+"`planning/plan.json`"+` by file.
 5. Update step descriptions / validation / success criteria fields only when the results show they are materially wrong or incomplete.
 6. Update step execution modes if the new structure changes the best fit. Keep steps on `+"`code_exec`"+` by default. Promote to `+"`learn_code`"+` only when the user explicitly asks for it, the step is highly deterministic, and 10+ successful runs across the relevant scenarios/groups prove the scriptable behavior is stable.
 7. End with a concise summary of what you changed, why, and what should be run next to verify the new plan.
@@ -9498,7 +9508,7 @@ Return a short markdown summary with:
 - What the builder should run next to test the new plan
 `)
 
-var replanWorkflowFromResultsAgentUserTemplate = MustRegisterTemplate("replanWorkflowFromResultsAgentUser", `Replan the workflow from actual run results in "{{.TargetRunFolder}}". Read the evidence, rewrite the plan directly, and summarize what changed.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var replanWorkflowFromResultsAgentUserTemplate = MustRegisterTemplate("replanWorkflowFromResultsAgentUser", `Replan the workflow from actual run results in "{{.TargetRunFolder}}". Read the evidence, update the plan through workflow plan modification tools, and summarize what changed. Do not patch planning/plan.json directly.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 // ============================================================================
 // Harden Workflow Agent — eval-driven hardening plus invariant cleanup
@@ -9534,17 +9544,26 @@ Per-step KB config:
 - `+"`"+`knowledgebase_access`+"`"+` — "read" | "write" | "read-write" | "none". Defaults to "none" (KB is opt-in per step).
 - `+"`"+`knowledgebase_contribution`+"`"+` — natural-language contribution contract for direct writes, or extraction instruction for an explicitly requested post-step KB agent. If empty, KB update does NOT run for this step even with write access.
 
+## PLAN EDITING TOOL RULE
+
+`+"`planning/plan.json`"+` is system-managed and protected by FolderGuard. You may read it with shell/JQ, but you MUST NOT use `+"`diff_patch_workspace_file`"+`, shell redirects, heredocs, or manual JSON edits to mutate it. Apply every plan/validation/config change through the workflow tools:
+- Description/step edits: `+"`update_regular_step`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`
+- Structural edits: `+"`add_regular_step`"+`, `+"`add_routing_step`"+`, `+"`add_human_input_step`"+`, `+"`add_todo_task_step`"+`, `+"`add_todo_task_route`"+`, `+"`delete_plan_steps`"+`, `+"`delete_todo_task_route`"+`
+- Validation/config edits: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`
+
+Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`learnings/_global/SKILL.md`"+`, learn_code `+"`main.py`"+`, KB notes, db schema docs, report plans, `+"`builder/improve.md`"+`, `+"`builder/review.md`"+`, or decision logs.
+
 ## RULES
 1. **Evidence-first, invariant-aware**: Fix every actual failure. You may also fix objective best-practice violations even on passing steps when the violation is deterministic and non-speculative: stale `+"`code_exec`"+` main.py, invalid lock state, KB/db/report contract mismatch, missing pre-validation for a produced output, hardcoded secrets/paths, or config that runtime validation would reject. Do not redesign passing behavior without evidence.
 2. **Fix the class, not the instance**: When a step fails because of a specific edge case, fix it in a way that handles the entire class of similar cases (e.g., "handle XLS and CSV" not just "handle rohit's file").
 3. **Four fix types per failing step** (apply all that are relevant):
    a. **Pre-validation rules** — Add json_checks to validation_schema that would have CAUGHT this failure before evaluation. Use update_validation_schema.
-   b. **Description tightening** — Make the step description more explicit about what the agent must/must not do. Use plan modification tools (update_regular_step, update_todo_task_route, etc.).
+   b. **Description tightening** — Make the step description more explicit about what the agent must/must not do. Use plan modification tools (`+"`update_regular_step`"+`, `+"`update_todo_task_route`"+`, etc.); never patch `+"`planning/plan.json`"+` by file.
    c. **Code/learning fixes** — If the step uses `+"`learn_code`"+` and has `+"`learnings/{step-id}/main.py`"+`, patch the script directly with diff_patch_workspace_file. For `+"`code_exec`"+` steps, fix the description, validation schema, tool/server config, or global learnings instead; code_exec does not write a persistent main.py. If a `+"`code_exec`"+` step still has `+"`learnings/{step-id}/main.py`"+`, delete that stale script (and clear lock_code if set) rather than patching it — leaving it behind creates drift and confuses future reviewers. Update `+"`learnings/_global/SKILL.md`"+` for supplemental notes when the fix is reusable HOW-knowledge. Every patch MUST follow the authoring rules below — violations will regress at the next learning pass.
    d. **KB config fixes** — If the failure stems from a step consuming KB facts that don't exist (bad `+"`"+`knowledgebase_access`+"`"+`, or missing `+"`"+`knowledgebase_contribution`+"`"+` on an upstream producer step), use update_step_config to correct it.
 
 {{.MainPyAuthoringRules}}
-4. **Structural fixes are allowed when evidence demands them** — If the failure is caused by a missing step, obsolete step, wrong boundary, or bad ordering, use the plan modification tools (`+"`add_regular_step`"+`, `+"`add_todo_task_route`"+`, `+"`update_*`"+`, `+"`delete_*`"+`) to apply the smallest evidence-backed structural fix. Use `+"`replan_workflow_from_results`"+` only when the run/eval/metric evidence shows the workflow path itself is misaligned with the objective or success criteria and needs broader redesign across multiple steps/routes.
+4. **Structural fixes are allowed when evidence demands them** — If the failure is caused by a missing step, obsolete step, wrong boundary, or bad ordering, use the plan modification tools (`+"`add_regular_step`"+`, `+"`add_todo_task_route`"+`, `+"`update_*`"+`, `+"`delete_*`"+`) to apply the smallest evidence-backed structural fix. If the exact plan edit cannot be expressed by the available tools, stop and report the limitation instead of patching `+"`planning/plan.json`"+` by file. Use `+"`replan_workflow_from_results`"+` only when the run/eval/metric evidence shows the workflow path itself is misaligned with the objective or success criteria and needs broader redesign across multiple steps/routes.
 5. **Preserve what works** — Do not modify steps that passed evaluation. Do not weaken existing pre-validation rules.
 6. **Mark reliable evidence** — If a step passed across ALL groups with scores >= 8, increment successful_runs via update_step_config. Use 3+ successful runs only as operational stability evidence for lock_learnings consideration; do NOT promote to `+"`learn_code`"+` or set `+"`lock_code=true`"+` unless the user explicitly asked for learn_code, the step is highly deterministic, and script/eval evidence shows 10+ successful runs across the relevant scenario/group surface. Always pass `+"`"+`review_notes`+"`"+` with a one-sentence justification citing the concrete evidence (groups passed, eval scores, pre-validation presence, clean tool usage) — future passes read this to decide whether to unlock.
 7. **Portability check** — When touching a step, scan for hardcoded user-specific values (account IDs, sheet URLs, paths) in descriptions and learnings. Replace with variable placeholders.
@@ -9745,7 +9764,7 @@ When adding pre-validation rules, follow this priority:
 Always prefer specific checks over generic ones. A check that catches the actual failure is worth more than ten generic existence checks.
 `)
 
-var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from evaluation results in "{{.TargetRunFolder}}"{{if .GroupName}}, scoped to group "{{.GroupName}}" only{{end}}. {{if .GroupName}}Read this group's eval report{{else}}Read all group eval reports{{end}}, identify every failing step, run the required best-practice sweep over plan/config/learnings metadata/KB/db/reports/variables/eval artifacts, and apply targeted fixes (pre-validation rules, description tightening, stale-script cleanup, config fixes, code patches for learn_code). Update review_notes and locks only when the evidence supports them. Summarize all changes made and any best-practice findings left for later.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from evaluation results in "{{.TargetRunFolder}}"{{if .GroupName}}, scoped to group "{{.GroupName}}" only{{end}}. {{if .GroupName}}Read this group's eval report{{else}}Read all group eval reports{{end}}, identify every failing step, run the required best-practice sweep over plan/config/learnings metadata/KB/db/reports/variables/eval artifacts, and apply targeted fixes (pre-validation rules, description tightening via workflow plan tools, stale-script cleanup, config fixes, code patches for learn_code). Do not patch planning/plan.json directly. Update review_notes and locks only when the evidence supports them. Summarize all changes made and any best-practice findings left for later.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 // HardenWorkflowAgent applies eval-driven fixes to failing steps
 type HardenWorkflowAgent struct {

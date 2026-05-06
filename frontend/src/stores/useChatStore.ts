@@ -289,6 +289,8 @@ export interface ChatTab {
     isViewOnly?: boolean // True when tab is in view-only mode (e.g. shared session or bot connector)
     isScheduledRun?: boolean // True when tab is observing a scheduled-run session (read-only live view)
     scheduledJobName?: string // Display name of the scheduled job, surfaced in the view-only banner
+    isBotRun?: boolean // True when tab is observing a bot-triggered session (read-only live view)
+    botPlatform?: string // Display label for the bot platform, e.g. Slack or WhatsApp
   }
 }
 

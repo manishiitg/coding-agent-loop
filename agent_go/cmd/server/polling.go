@@ -305,6 +305,9 @@ func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInf
 		enriched.PresetQueryID = active.PresetQueryID
 		enriched.PresetName = active.PresetName
 		enriched.WorkspacePath = active.WorkspacePath
+		if active.TriggeredBy != "" {
+			enriched.TriggeredBy = active.TriggeredBy
+		}
 		if active.PresetName != "" {
 			enriched.WorkflowName = active.PresetName
 			enriched.WorkflowLabel = active.PresetName
@@ -331,6 +334,9 @@ func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInf
 		enriched.PresetQueryID = active.PresetQueryID
 		enriched.PresetName = active.PresetName
 		enriched.WorkspacePath = active.WorkspacePath
+		if active.TriggeredBy != "" {
+			enriched.TriggeredBy = active.TriggeredBy
+		}
 		if active.PresetName != "" {
 			enriched.WorkflowName = active.PresetName
 			enriched.WorkflowLabel = active.PresetName

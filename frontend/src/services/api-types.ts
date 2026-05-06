@@ -422,6 +422,8 @@ export interface ActiveSessionInfo {
   workspace_path?: string
   preset_name?: string
   preset_query_id?: string
+  bot_platform?: string
+  triggered_by?: string
   has_running_background_agents?: boolean
   running_background_agent_count?: number
   current_execution_name?: string

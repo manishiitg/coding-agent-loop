@@ -292,8 +292,11 @@ func (s *SchedulerService) heartbeatLoop(ctx context.Context) {
 		case t := <-ticker.C:
 			gap := t.Sub(last)
 			if gap > wakeThreshold {
-				scheduleLogf("[SCHEDULER] 💤 WAKE_DETECTED gap=%s now=%s prev_tick=%s (likely macOS suspend; check next fires below)",
+				scheduleLogf("[SCHEDULER] 💤 WAKE_DETECTED gap=%s now=%s prev_tick=%s (likely macOS suspend; rebuilding gocron to re-arm timers)",
 					gap.Round(time.Second), t.Format(time.RFC3339), last.Format(time.RFC3339))
+				if err := s.rebuildAfterWake(ctx); err != nil {
+					scheduleLogf("[SCHEDULER] ❌ rebuildAfterWake failed: %v", err)
+				}
 			}
 
 			// Build reverse index gocronJobID → scheduleID for friendly logging.
@@ -450,6 +453,68 @@ func (s *SchedulerService) Stop() {
 			scheduleLogf("[SCHEDULER] Error shutting down: %v", err)
 		}
 	}
+}
+
+// rebuildAfterWake swaps in a fresh gocron scheduler and re-registers every
+// known schedule. Used when the heartbeat detects a clock gap consistent with
+// macOS suspend: gocron's monotonic-clock-based timers may be wedged with
+// past next_run values that never re-arm, so we throw the instance away and
+// build a new one from the current manifests.
+func (s *SchedulerService) rebuildAfterWake(ctx context.Context) error {
+	newScheduler, err := gocron.NewScheduler()
+	if err != nil {
+		return fmt.Errorf("failed to create new scheduler: %w", err)
+	}
+
+	s.mu.Lock()
+	oldScheduler := s.scheduler
+	s.scheduler = newScheduler
+	s.jobIDs = make(map[string][]uuid.UUID)
+	s.mu.Unlock()
+
+	if oldScheduler != nil {
+		if err := oldScheduler.Shutdown(); err != nil {
+			scheduleLogf("[SCHEDULER] rebuildAfterWake: error shutting down old scheduler: %v", err)
+		}
+	}
+
+	s.InvalidateWorkflowManifestCache()
+
+	loaded := 0
+	workflows := s.discoverWorkflows(ctx)
+	for _, wf := range workflows {
+		for _, sched := range wf.Manifest.Schedules {
+			if !sched.Enabled {
+				continue
+			}
+			sctx := buildScheduleContext(wf.WorkspacePath, wf.Manifest, sched)
+			if err := s.LoadSchedule(sctx); err != nil {
+				scheduleLogf("[SCHEDULER] rebuildAfterWake: failed to load schedule %s (%s): %v", sched.ID, sched.Name, err)
+				continue
+			}
+			loaded++
+		}
+	}
+
+	if maScheds, err := DiscoverMultiAgentSchedules(ctx); err == nil {
+		for _, ma := range maScheds {
+			for _, sched := range MergeBuiltinSchedules(ma.ScheduleFile.Schedules) {
+				if !sched.Enabled {
+					continue
+				}
+				sctx := buildMultiAgentScheduleContext(ma.UserID, sched, ma.ScheduleFile.Capabilities)
+				if err := s.LoadSchedule(sctx); err != nil {
+					scheduleLogf("[SCHEDULER] rebuildAfterWake: failed to load multi-agent schedule %s (%s) for user %s: %v", sched.ID, sched.Name, ma.UserID, err)
+					continue
+				}
+				loaded++
+			}
+		}
+	}
+
+	newScheduler.Start()
+	scheduleLogf("[SCHEDULER] ✅ rebuildAfterWake complete: %d schedules re-armed", loaded)
+	return nil
 }
 
 // LoadSchedule registers a schedule in gocron from a ScheduleContext.

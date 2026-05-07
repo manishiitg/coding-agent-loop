@@ -11,13 +11,13 @@ import (
 // fully encode what passing/failing looks like (deterministic checks via
 // learn_code, or LLM judgment grounded in the description).
 type EvaluationStep struct {
-	ID               string                         `json:"id"`
-	Title            string                         `json:"title"`
-	Description      string                         `json:"description"`
-	PreValidation    *ValidationSchema              `json:"pre_validation,omitempty"`
-	AgentConfigs     *AgentConfigs                  `json:"-"`                        // runtime config
-	ContextOutput    string                         `json:"context_output,omitempty"` // Filename of output produced by the step
-	AppliesToRoutes  []EvaluationRouteApplicability `json:"applies_to_routes,omitempty"`
+	ID              string                         `json:"id"`
+	Title           string                         `json:"title"`
+	Description     string                         `json:"description"`
+	PreValidation   *ValidationSchema              `json:"pre_validation,omitempty"`
+	AgentConfigs    *AgentConfigs                  `json:"-"`                        // runtime config
+	ContextOutput   string                         `json:"context_output,omitempty"` // Filename of output produced by the step
+	AppliesToRoutes []EvaluationRouteApplicability `json:"applies_to_routes,omitempty"`
 	// DBWrite grants this evaluation step write access to db/. Read is always allowed.
 	// Off by default: evaluation typically reads db/ to score against real state, and its
 	// own writes stay in the sandbox run folder. Set true only for workflows where the eval
@@ -68,19 +68,6 @@ func (e *EvaluationStep) MarshalJSON() ([]byte, error) {
 		Alias: (*Alias)(e),
 	})
 }
-
-// EvaluationScoringStepID is the reserved StepConfig ID used to configure the
-// evaluation scoring agent through the same evaluation/step_config.json file the
-// workflow builder writes for regular eval steps. The agent isn't a real eval step
-// (it runs after all eval steps complete), but reusing the StepConfig vocabulary
-// lets the builder set use_code_execution_mode (and any future AgentConfigs field)
-// with no special-case schema. To override scoring's code-exec mode, add an entry
-// like:
-//
-//	{ "id": "__evaluation_scoring__", "agent_configs": { "use_code_execution_mode": false } }
-//
-// to evaluation/step_config.json.
-const EvaluationScoringStepID = "__evaluation_scoring__"
 
 // EvaluationPlan represents the structured evaluation plan
 type EvaluationPlan struct {
@@ -134,14 +121,16 @@ type StepOutputContent struct {
 	IsJSON   bool        `json:"is_json"`
 }
 
-// EvaluationStepScore represents the score for a single evaluation step.
+// EvaluationStepScore is the per-step entry in evaluation_report.json.
+// The legacy score fields are retained only for old reports and old metric
+// definitions; new evaluation runs treat output_content as the source of truth.
 // step_title and success_criteria are intentionally absent — UI consumers can
 // look them up by step_id from evaluation_plan.json (the plan is loaded next
 // to the report by the same API endpoint).
 type EvaluationStepScore struct {
 	StepID        string             `json:"step_id"`
-	Score         int                `json:"score"`
-	MaxScore      int                `json:"max_score"`
+	Score         int                `json:"score,omitempty"`
+	MaxScore      int                `json:"max_score,omitempty"`
 	Reasoning     string             `json:"reasoning"`
 	Evidence      string             `json:"evidence"`
 	Skipped       bool               `json:"skipped,omitempty"`
@@ -149,16 +138,15 @@ type EvaluationStepScore struct {
 	OutputContent *StepOutputContent `json:"output_content,omitempty"`
 }
 
-// EvaluationReport represents the final evaluation report with all scores.
-// summary is intentionally absent — totals + per-step reasoning/evidence give a
-// reader everything they need; a separate "overall narrative" field was just
-// duplicate prose that nobody read.
+// EvaluationReport captures eval step outputs for a target run. The aggregate
+// score fields are legacy-only; new reports omit them because there is no final
+// scoring agent. Metrics should read explicit fields from step output_content.
 type EvaluationReport struct {
 	TargetRunFolder  string                 `json:"target_run_folder"`
 	GeneratedAt      string                 `json:"generated_at"`
-	TotalScore       int                    `json:"total_score"`
-	MaxPossibleScore int                    `json:"max_possible_score"`
-	ScorePercentage  float64                `json:"score_percentage"`
+	TotalScore       int                    `json:"total_score,omitempty"`
+	MaxPossibleScore int                    `json:"max_possible_score,omitempty"`
+	ScorePercentage  float64                `json:"score_percentage,omitempty"`
 	StepScores       []*EvaluationStepScore `json:"step_scores"`
 }
 

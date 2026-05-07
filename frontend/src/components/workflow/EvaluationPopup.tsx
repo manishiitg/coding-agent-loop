@@ -4,15 +4,10 @@ import {
   Loader2,
   ChevronRight,
   ChevronDown,
-  CheckCircle,
-  XCircle,
   AlertCircle,
   FileText,
   BarChart3,
   Target,
-  TrendingUp,
-  TrendingDown,
-  Award,
   Filter,
   RefreshCw,
   Copy,
@@ -32,32 +27,6 @@ interface EvaluationPopupProps {
   runFolders: string[]
   onRunEvaluation?: (runFolder: string) => Promise<void>
   startedAt?: string | null
-}
-
-// Format percentage for display
-const formatPercentage = (value: number) => {
-  return `${value.toFixed(1)}%`
-}
-
-// Get score color based on percentage
-const getScoreColor = (percentage: number) => {
-  if (percentage >= 80) return 'text-green-600 dark:text-green-400'
-  if (percentage >= 50) return 'text-yellow-600 dark:text-yellow-400'
-  return 'text-red-600 dark:text-red-400'
-}
-
-// Get score background color
-const getScoreBgColor = (percentage: number) => {
-  if (percentage >= 80) return 'bg-green-100 dark:bg-green-900/30'
-  if (percentage >= 50) return 'bg-yellow-100 dark:bg-yellow-900/30'
-  return 'bg-red-100 dark:bg-red-900/30'
-}
-
-// Get progress bar color
-const getProgressBarColor = (percentage: number) => {
-  if (percentage >= 80) return 'bg-green-500'
-  if (percentage >= 50) return 'bg-yellow-500'
-  return 'bg-red-500'
 }
 
 const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
@@ -388,44 +357,10 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
               {viewMode === 'all' && data.aggregate && (
                 <div className="bg-card border border-border rounded-lg p-4 shadow-sm">
                   <h3 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
-                    <Award className="w-4 h-4 text-primary" />
-                    Aggregate Summary ({data.aggregate.total_runs} runs)
+                    <Target className="w-4 h-4 text-primary" />
+                    Evaluation Runs
                   </h3>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {/* Average Score */}
-                    <div className={`rounded-lg p-3 ${getScoreBgColor(data.aggregate.average_percentage)}`}>
-                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Average Score</div>
-                      <div className={`text-2xl font-bold ${getScoreColor(data.aggregate.average_percentage)}`}>
-                        {formatPercentage(data.aggregate.average_percentage)}
-                      </div>
-                      <div className="text-xs text-muted-foreground mt-1">
-                        {data.aggregate.average_score.toFixed(1)} / {data.aggregate.max_possible_score}
-                      </div>
-                    </div>
-
-                    {/* Highest Score */}
-                    <div className="bg-green-100 dark:bg-green-900/30 rounded-lg p-3">
-                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
-                        <TrendingUp className="w-3 h-3" />
-                        Highest
-                      </div>
-                      <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                        {data.aggregate.highest_score} / {data.aggregate.max_possible_score}
-                      </div>
-                    </div>
-
-                    {/* Lowest Score */}
-                    <div className="bg-red-100 dark:bg-red-900/30 rounded-lg p-3">
-                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
-                        <TrendingDown className="w-3 h-3" />
-                        Lowest
-                      </div>
-                      <div className="text-2xl font-bold text-red-600 dark:text-red-400">
-                        {data.aggregate.lowest_score} / {data.aggregate.max_possible_score}
-                      </div>
-                    </div>
-
-                    {/* Total Runs */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="bg-muted rounded-lg p-3">
                       <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
                         <Target className="w-3 h-3" />
@@ -444,7 +379,6 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                 {data.reports.map((entry) => {
                   const isExpanded = expandedReports.has(entry.run_folder)
                   const report = entry.report
-                  const scorePercentage = report.score_percentage
 
                   return (
                     <div
@@ -490,21 +424,11 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                           </div>
                         </div>
 
-                        {/* Score Badge */}
                         <div className="flex items-center gap-3 flex-shrink-0 ml-4">
-                          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${getScoreBgColor(scorePercentage)}`}>
-                            {scorePercentage >= 80 ? (
-                              <CheckCircle className={`w-4 h-4 ${getScoreColor(scorePercentage)}`} />
-                            ) : scorePercentage >= 50 ? (
-                              <AlertCircle className={`w-4 h-4 ${getScoreColor(scorePercentage)}`} />
-                            ) : (
-                              <XCircle className={`w-4 h-4 ${getScoreColor(scorePercentage)}`} />
-                            )}
-                            <span className={`text-sm font-semibold ${getScoreColor(scorePercentage)}`}>
-                              {report.total_score} / {report.max_possible_score}
-                            </span>
-                            <span className={`text-xs ${getScoreColor(scorePercentage)}`}>
-                              ({formatPercentage(scorePercentage)})
+                          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-muted-foreground">
+                            <FileText className="w-4 h-4" />
+                            <span className="text-sm font-semibold">
+                              {report.step_scores.length} step{report.step_scores.length === 1 ? '' : 's'}
                             </span>
                           </div>
                         </div>
@@ -513,16 +437,15 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                       {/* Expanded Content */}
                       {isExpanded && (
                         <div className="border-t border-border">
-                          {/* Step Scores */}
+                          {/* Evaluation step outputs */}
                           <div className="p-4">
                             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                              Step Scores ({report.step_scores.length} steps)
+                              Evaluation Steps ({report.step_scores.length})
                             </h4>
                             <div className="space-y-2">
                               {report.step_scores.map((step, idx) => {
                                 const stepKey = `${entry.run_folder}-${step.step_id}`
                                 const isStepExpanded = expandedSteps.has(stepKey)
-                                const stepPercentage = step.max_score > 0 ? (step.score / step.max_score) * 100 : 0
 
                                 return (
                                   <div
@@ -554,18 +477,6 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                                           )}
                                         </div>
 
-                                        {/* Progress Bar */}
-                                        <div className="flex items-center gap-2">
-                                          <div className="flex-1 bg-muted rounded-full h-2 overflow-hidden">
-                                            <div
-                                              className={`h-full transition-all ${getProgressBarColor(stepPercentage)}`}
-                                              style={{ width: `${stepPercentage}%` }}
-                                            />
-                                          </div>
-                                          <span className={`text-xs font-medium ${getScoreColor(stepPercentage)}`}>
-                                            {step.skipped ? 'N/A' : `${step.score}/${step.max_score}`}
-                                          </span>
-                                        </div>
                                       </div>
                                     </button>
 

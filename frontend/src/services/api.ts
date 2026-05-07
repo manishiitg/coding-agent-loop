@@ -109,14 +109,34 @@ export interface WorkflowOverviewRunFolderDetail {
   total_steps: number
   completed_steps: number
   last_updated?: string
-  eval_score?: number
-  eval_max_score?: number
+  metrics_summary?: WorkflowMetricRunSummary
   cost_usd?: number
   started_at?: string
   completed_at?: string
   triggered_by?: string
   status: string
   models?: RunMetadataModels | null
+}
+
+export interface MetricSnapshotRow {
+  run_folder: string
+  completed_at: string
+  metric_id: string
+  value: number
+  has_value: boolean
+  resolve_error?: string
+  threshold_kind?: string
+  threshold_value?: number
+  passed?: boolean
+}
+
+export interface WorkflowMetricRunSummary {
+  total: number
+  with_value: number
+  passed: number
+  failed: number
+  unknown: number
+  rows?: MetricSnapshotRow[]
 }
 
 export interface WorkflowOverviewBatchResponse {
@@ -1464,6 +1484,7 @@ export const agentApi = {
         completed_at?: string
         completed_steps: number
         total_steps: number
+        metrics_summary?: WorkflowMetricRunSummary
       } | null
       is_running: boolean
       active_run_folder?: string

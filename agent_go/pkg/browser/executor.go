@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,11 +46,59 @@ func NewExecutor(client *Client, opts ...ExecutorOption) *Executor {
 	return e
 }
 
+func isBrowserOpenCommand(command string) bool {
+	return command == "open" || command == "goto" || command == "navigate"
+}
+
+type cdpArgInfo struct {
+	found bool
+	url   string
+	port  int
+}
+
+func extractCDPArg(args []string) (cdpArgInfo, []string, error) {
+	var info cdpArgInfo
+	cleaned := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] != "--cdp" {
+			cleaned = append(cleaned, args[i])
+			continue
+		}
+		if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+			return cdpArgInfo{}, nil, fmt.Errorf("--cdp requires a non-empty URL")
+		}
+		cdpURL := strings.TrimSpace(args[i+1])
+		i++
+		if !info.found {
+			info = cdpArgInfo{found: true, url: cdpURL, port: parseCDPPort(cdpURL)}
+		}
+	}
+	return info, cleaned, nil
+}
+
+func parseCDPPort(cdpURL string) int {
+	parsed, err := url.Parse(cdpURL)
+	if err == nil && parsed.Port() != "" {
+		if port, convErr := strconv.Atoi(parsed.Port()); convErr == nil {
+			return port
+		}
+	}
+	if strings.Contains(cdpURL, ":9222") {
+		return 9222
+	}
+	return 0
+}
+
 // HandleAgentBrowser executes the agent-browser CLI command
 func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]interface{}) (string, error) {
 	command, ok := args["command"].(string)
 	if !ok || command == "" {
 		return "", fmt.Errorf("command is required")
+	}
+	argsArray := stringArgs(args["args"])
+	cdpArg, argsWithoutCDP, cdpArgErr := extractCDPArg(argsArray)
+	if cdpArgErr != nil {
+		return "", cdpArgErr
 	}
 
 	// Build command arguments
@@ -58,7 +107,22 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	// Headless mode: add anti-detection launch options (not needed for CDP/user's real Chrome)
 	// CDP mode: agent passes --cdp in args (prompt instructs it to use --cdp http://host.docker.internal:9222)
 	// The args processing below resolves host.docker.internal to an IP for Chrome compatibility.
-	isCdpMode := e.CdpPort > 0
+	cdpPort := e.CdpPort
+	if cdpPort <= 0 && cdpArg.found {
+		cdpPort = cdpArg.port
+	}
+	if cdpArg.found && cdpPort <= 0 {
+		return "", fmt.Errorf("CDP mode requires --cdp URL to include a port, got %q", cdpArg.url)
+	}
+	isCdpMode := cdpPort > 0
+	cdpURL := ""
+	if isCdpMode {
+		if e.CdpPort > 0 {
+			cdpURL = resolveCdpURL(cdpPort)
+		} else {
+			cdpURL = cdpArg.url
+		}
+	}
 	if !isCdpMode {
 		cmdArgs = append(cmdArgs, "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 		// --no-sandbox removes the sandbox broker process (~100MB saved)
@@ -92,9 +156,9 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	}
 
 	if isCdpMode {
-		sharedSession := sharedCDPSessionName(e.CdpPort)
+		sharedSession := sharedCDPSessionName(cdpPort)
 		if session != sharedSession {
-			log.Printf("[BROWSER] CDP: remapped session %q -> %q for shared browser port %d", session, sharedSession, e.CdpPort)
+			log.Printf("[BROWSER] CDP: remapped session %q -> %q for shared browser port %d", session, sharedSession, cdpPort)
 			session = sharedSession
 		}
 	} else {
@@ -109,11 +173,11 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 
 	// Track headless browser sessions to prevent unbounded growth.
 	// CDP mode connects to user's real browser — no tracking needed.
-	isHeadless := e.CdpPort <= 0
+	isHeadless := !isCdpMode
 	tracker := GetSessionTracker()
 
 	if isHeadless {
-		isOpenCommand := command == "open" || command == "goto" || command == "navigate"
+		isOpenCommand := isBrowserOpenCommand(command)
 
 		if isOpenCommand {
 			// Auto-evict helper: kills runtime + removes files + unregisters from tracker.
@@ -192,8 +256,21 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	// Add the command
 	cmdArgs = append(cmdArgs, command)
 
-	argsArray := stringArgs(args["args"])
-	tabArgs := stripCDPArgs(argsArray)
+	openTabArg := ""
+	if isCdpMode && isBrowserOpenCommand(command) {
+		if tab, cleaned, ok, stripErr := stripInlineTabFromOpenArgs(argsArray); stripErr != nil {
+			return "", stripErr
+		} else if ok {
+			openTabArg = tab
+			argsArray = cleaned
+			log.Printf("[BROWSER] stripped inline tab %q from %q args; agent-browser open receives URL-only args", tab, command)
+		}
+	}
+	commandInputArgs := argsArray
+	if isCdpMode {
+		commandInputArgs = argsWithoutCDP
+	}
+	tabArgs := commandInputArgs
 	commandArgs := argsArray
 	inlineCDPTab := ""
 	if isCdpMode {
@@ -202,13 +279,15 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		if inlineErr != nil {
 			return "", inlineErr
 		}
+		if inlineCDPTab == "" && openTabArg != "" {
+			inlineCDPTab = openTabArg
+		}
 	}
 
 	for _, argStr := range commandArgs {
 		cmdArgs = append(cmdArgs, argStr)
 	}
 	if isCdpMode {
-		cdpURL := resolveCdpURL(e.CdpPort)
 		cmdArgs = append(cmdArgs, "--cdp", cdpURL)
 		log.Printf("[BROWSER] CDP: using %s", cdpURL)
 	}
@@ -288,32 +367,39 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	cdpOwner := ""
 	if isCdpMode {
 		cdpOwner = cdpOwnerID(workflowSessionID, agentSessionID, session)
-		lock := sharedCDPLock(e.CdpPort)
+		lock := sharedCDPLock(cdpPort)
 		lock.Lock()
 		defer lock.Unlock()
 
 		if command == "reset" {
-			clearCDPTabSelectionsForPort(e.CdpPort)
+			clearCDPTabSelectionsForPort(cdpPort)
 		} else if command == "tab" {
 			if _, _, err := parseTabSelection(tabArgs); err != nil {
 				return "", err
 			}
 		} else {
-			if inlineCDPTab == "" {
-				tabsOutput, tabsErr := e.listCDPTabs(ctx, session, opts)
+			tabForCommand := inlineCDPTab
+			if tabForCommand == "" && isBrowserOpenCommand(command) {
+				tabForCommand = getCDPTabSelection(cdpPort, cdpOwner)
+			}
+			if tabForCommand == "" {
+				tabsOutput, tabsErr := e.listCDPTabs(ctx, session, cdpURL, opts)
 				if tabsErr != nil {
 					return "", fmt.Errorf("CDP shared-browser mode requires a tab in args before %q, but listing tabs failed: %w", command, tabsErr)
 				}
+				if isBrowserOpenCommand(command) {
+					return "", fmt.Errorf("CDP shared-browser mode requires selecting or creating a tab before %q.\n\nExisting tabs:\n%s\n\nUse agent_browser(command=\"tab\", args=[\"<tab-id-or-label>\"]) to select an existing tab, or agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"]) to create one. Then call agent_browser(command=\"open\", args=[\"https://example.com\"]).", command, strings.TrimSpace(tabsOutput))
+				}
 				return "", fmt.Errorf("CDP shared-browser mode requires every page action to include a tab before %q.\n\nExisting tabs:\n%s\n\nUse args like [\"tab\", \"<tab-id-or-label>\", ...commandArgs] or [\"--tab\", \"<tab-id-or-label>\", ...commandArgs]. To inspect tabs, call agent_browser(command=\"tab\", args=[]). To create a labeled tab, call agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"])", command, strings.TrimSpace(tabsOutput))
 			}
-			if getCDPActiveTab(e.CdpPort) == inlineCDPTab {
-				log.Printf("[BROWSER] CDP: inline tab %q already active before %q; skipping select", inlineCDPTab, command)
+			if getCDPActiveTab(cdpPort) == tabForCommand {
+				log.Printf("[BROWSER] CDP: tab %q already active before %q; skipping select", tabForCommand, command)
 			} else {
-				if err := e.selectCDPTab(ctx, session, inlineCDPTab, opts); err != nil {
-					return "", e.cdpTabSelectionError(ctx, session, opts, inlineCDPTab, command, err)
+				if err := e.selectCDPTab(ctx, session, tabForCommand, cdpURL, opts); err != nil {
+					return "", e.cdpTabSelectionError(ctx, session, cdpURL, opts, tabForCommand, command, err)
 				}
-				setCDPActiveTab(e.CdpPort, inlineCDPTab)
-				log.Printf("[BROWSER] CDP: selected inline tab %q before %q", inlineCDPTab, command)
+				setCDPActiveTab(cdpPort, tabForCommand)
+				log.Printf("[BROWSER] CDP: selected tab %q before %q", tabForCommand, command)
 			}
 		}
 	}
@@ -335,7 +421,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 
 	// After a successful open/navigate, record Chrome's PID so killSessionRuntime can
 	// kill it reliably even if Chrome has been reparented (daemon auto-relaunch race).
-	isOpenCommand := command == "open" || command == "goto" || command == "navigate"
+	isOpenCommand := isBrowserOpenCommand(command)
 	if err == nil && isOpenCommand {
 		captureChromePID(session)
 	}
@@ -371,15 +457,19 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		// immediately because the killed process hasn't fully released its pages yet.
 		time.Sleep(2 * time.Second)
 		if isCdpMode && command != "tab" && command != "reset" {
-			if inlineCDPTab != "" {
-				if getCDPActiveTab(e.CdpPort) == inlineCDPTab {
-					log.Printf("[BROWSER] CDP: inline tab %q already active before retrying %q; skipping select", inlineCDPTab, command)
+			tabForRetry := inlineCDPTab
+			if tabForRetry == "" && isBrowserOpenCommand(command) {
+				tabForRetry = getCDPTabSelection(cdpPort, cdpOwner)
+			}
+			if tabForRetry != "" {
+				if getCDPActiveTab(cdpPort) == tabForRetry {
+					log.Printf("[BROWSER] CDP: tab %q already active before retrying %q; skipping select", tabForRetry, command)
 				} else {
-					if selectErr := e.selectCDPTab(ctx, session, inlineCDPTab, opts); selectErr != nil {
-						return "", e.cdpTabSelectionError(ctx, session, opts, inlineCDPTab, command, selectErr)
+					if selectErr := e.selectCDPTab(ctx, session, tabForRetry, cdpURL, opts); selectErr != nil {
+						return "", e.cdpTabSelectionError(ctx, session, cdpURL, opts, tabForRetry, command, selectErr)
 					}
-					setCDPActiveTab(e.CdpPort, inlineCDPTab)
-					log.Printf("[BROWSER] CDP: re-selected inline tab %q before retrying %q", inlineCDPTab, command)
+					setCDPActiveTab(cdpPort, tabForRetry)
+					log.Printf("[BROWSER] CDP: re-selected tab %q before retrying %q", tabForRetry, command)
 				}
 			}
 		}
@@ -405,15 +495,15 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	if isCdpMode && command == "tab" {
 		if tab, clear, parseErr := parseTabSelection(tabArgs); parseErr == nil {
 			if clear {
-				if tab == "" || tab == getCDPTabSelection(e.CdpPort, cdpOwner) {
-					clearCDPTabSelection(e.CdpPort, cdpOwner)
-					log.Printf("[BROWSER] CDP: cleared selected tab for owner=%q port=%d", cdpOwner, e.CdpPort)
+				if tab == "" || tab == getCDPTabSelection(cdpPort, cdpOwner) {
+					clearCDPTabSelection(cdpPort, cdpOwner)
+					log.Printf("[BROWSER] CDP: cleared selected tab for owner=%q port=%d", cdpOwner, cdpPort)
 				}
-				clearCDPActiveTab(e.CdpPort, tab)
+				clearCDPActiveTab(cdpPort, tab)
 			} else if tab != "" {
-				setCDPTabSelection(e.CdpPort, cdpOwner, tab)
-				setCDPActiveTab(e.CdpPort, tab)
-				log.Printf("[BROWSER] CDP: selected tab %q for owner=%q port=%d", tab, cdpOwner, e.CdpPort)
+				setCDPTabSelection(cdpPort, cdpOwner, tab)
+				setCDPActiveTab(cdpPort, tab)
+				log.Printf("[BROWSER] CDP: selected tab %q for owner=%q port=%d", tab, cdpOwner, cdpPort)
 			}
 		}
 	}
@@ -421,27 +511,27 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	return output, nil
 }
 
-func (e *Executor) listCDPTabs(ctx context.Context, session string, opts *ExecuteOptions) (string, error) {
+func (e *Executor) listCDPTabs(ctx context.Context, session, cdpURL string, opts *ExecuteOptions) (string, error) {
 	return e.Client.ExecuteCommand(ctx, []string{
 		"--session", session,
 		"tab",
-		"--cdp", resolveCdpURL(e.CdpPort),
+		"--cdp", cdpURL,
 		"--json",
 	}, opts)
 }
 
-func (e *Executor) selectCDPTab(ctx context.Context, session, tab string, opts *ExecuteOptions) error {
+func (e *Executor) selectCDPTab(ctx context.Context, session, tab, cdpURL string, opts *ExecuteOptions) error {
 	_, err := e.Client.ExecuteCommand(ctx, []string{
 		"--session", session,
 		"tab", tab,
-		"--cdp", resolveCdpURL(e.CdpPort),
+		"--cdp", cdpURL,
 		"--json",
 	}, opts)
 	return err
 }
 
-func (e *Executor) cdpTabSelectionError(ctx context.Context, session string, opts *ExecuteOptions, tab, command string, selectErr error) error {
-	tabsOutput, tabsErr := e.listCDPTabs(ctx, session, opts)
+func (e *Executor) cdpTabSelectionError(ctx context.Context, session, cdpURL string, opts *ExecuteOptions, tab, command string, selectErr error) error {
+	tabsOutput, tabsErr := e.listCDPTabs(ctx, session, cdpURL, opts)
 	if tabsErr != nil {
 		return fmt.Errorf("failed to select CDP tab %q before %q: %w; listing tabs also failed: %v", tab, command, selectErr, tabsErr)
 	}

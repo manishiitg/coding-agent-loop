@@ -4956,12 +4956,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered reorganize_knowledgebase in %s", workflowPhaseID)
 						todo_creation_human.RegisterConsolidateKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered consolidate_knowledgebase in %s", workflowPhaseID)
-						// Auto-improvement metric tools mutate planning/metrics.json,
-						// so keep them in Optimizer mode only.
-						if phaseTemplateVars["WorkshopMode"] == "optimizer" {
+						// Auto-improvement metric tools mutate metrics, so keep
+						// them in Optimizer mode. capture_context is also safe in
+						// Run mode because it requires explicit user confirmation
+						// and target metric anchoring.
+						switch phaseTemplateVars["WorkshopMode"] {
+						case "optimizer":
 							RegisterAutoImprovementProposerTools(underlyingAgent, phaseWorkspacePath, "improve-workflow", api.logger)
 							log.Printf("[WORKFLOW_PHASE] Registered auto-improvement proposer tools in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
-						} else {
+						case "run":
+							RegisterCaptureContextTool(underlyingAgent, phaseWorkspacePath, api.logger)
+							log.Printf("[WORKFLOW_PHASE] Registered capture_context in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
+						default:
 							log.Printf("[WORKFLOW_PHASE] Skipped auto-improvement proposer tools in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
 						}
 						// Guided-flow text for every workflow slash command, returned via

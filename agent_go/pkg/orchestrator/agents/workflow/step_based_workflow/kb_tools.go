@@ -41,6 +41,7 @@ func BuildStepKBGuidance(kbAccess, writeMethod, kbContribution string) string {
 	b.WriteString("4. **Update `notes/_index.json` after every note write.** Bump `size_bytes`, `section_count`, `last_updated`, `last_updated_by`; merge new entity ids into `covers[]`. Use `diff_patch_workspace_file` with `jq`-built diffs — never rewrite the index wholesale.\n")
 	b.WriteString("5. **No deletes.** Never remove sections from earlier steps/runs. Refinement only.\n")
 	b.WriteString("6. **No fabrication.** Capture only observations from this execution. If a pattern is unverified, say so explicitly.\n")
+	b.WriteString("7. **Do not edit `knowledgebase/context/`.** That folder is user-supplied runtime context captured by the builder, not step-discovered KB notes.\n")
 
 	if trimmed := strings.TrimSpace(kbContribution); trimmed != "" {
 		b.WriteString("\n**For this step specifically, contribute:**\n")

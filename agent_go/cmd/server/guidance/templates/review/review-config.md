@@ -1,18 +1,17 @@
-Audit every configurable execution target in this workflow — workflow steps, evaluation steps, and the reserved final evaluation scoring target `__evaluation_scoring__` — and recommend the right values for: declared_execution_mode, learnings_access, learning_objective, learnings_write_method, knowledgebase_access, knowledgebase_contribution, lock_learnings, and lock_code (learn_code/scripted targets only). This is a READ-ONLY analysis pass — do NOT apply any changes via update_step_config. Produce a recommendation table the user will review and apply selectively.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Audit every configurable execution target in this workflow — workflow steps and evaluation steps — and recommend the right values for: declared_execution_mode, learnings_access, learning_objective, learnings_write_method, knowledgebase_access, knowledgebase_contribution, lock_learnings, and lock_code (learn_code/scripted targets only). This is a READ-ONLY analysis pass — do NOT apply any changes via update_step_config. Produce a recommendation table the user will review and apply selectively.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 PROCEDURE
 1. Read planning/plan.json and planning/step_config.json. For each workflow step capture: id, title, description, declared_execution_mode, and current AgentConfigs (learnings_access, learning_objective, learnings_write_method, knowledgebase_access, knowledgebase_contribution, lock_learnings, lock_code, successful_runs, description_hash, review_notes).
-2. Read evaluation/evaluation_plan.json and evaluation/step_config.json if present. For each eval step capture the same fields from evaluation/step_config.json. Also inspect the reserved scoring config id `__evaluation_scoring__` in evaluation/step_config.json; treat it as scope `evaluation_scoring` with title "Final Evaluation Scoring Agent".
+2. Read evaluation/evaluation_plan.json and evaluation/step_config.json if present. For each eval step capture the same fields from evaluation/step_config.json.
 3. For every target, inspect learnings/{step-id}/:
    - SKILL.md exists? size? recent edit signal (read first/last lines for context).
    - main.py exists? Read learnings/{step-id}/script_metadata.json for successful_runs counts (code_exec/learn_code) and recent failure history.
-   - For scoring, use `learnings/__evaluation_scoring__/main.py` and `learnings/__evaluation_scoring__/script_metadata.json`.
 4. Sample run evidence from runs/iteration-0/{first-group}/logs/{step-id}/ when available:
    - learn_code_fast_path.json — recent main.py outcomes.
    - pre_validation.json — validation pass/fail.
    - Any signs of recent fix-loop rewrites or transient failures.
    - For eval steps, also inspect evaluation run outputs/reports under runs/iteration-0/{first-group}/evaluation/ when available.
-5. Read builder/improve.md if present. Note recent harden/replan/metric actions and whether any recent or queued change touches the target, its prompt/config, learnings, validation, KB, db schema, evaluation criteria, scoring logic, or upstream/downstream context dependencies.
+5. Read builder/improve.md if present. Note recent harden/replan/metric actions and whether any recent or queued change touches the target, its prompt/config, learnings, validation, KB, db schema, evaluation criteria, metric fields, or upstream/downstream context dependencies.
 
 DECISION RULES (apply per step)
 
@@ -27,26 +26,28 @@ EXECUTION MODE FIT (code_exec | learn_code):
   - Eval/metric evidence is at or above target across the recent measurement window.
   - No recent harden/replan/metric action is still changing this step, its prompt/config/learnings/validation, or adjacent upstream/downstream contracts.
 - If a current `learn_code` step violates any of the above, recommend reverting to or keeping `code_exec`, and clear/avoid lock_code until stability is proven after recent changes settle.
-- Apply the same mode-fit rule to eval steps and `__evaluation_scoring__`: deterministic file-shape/schema checks can be `learn_code` after stability evidence; subjective scoring, ambiguous judgment, or criteria that are still being revised should stay `code_exec`. If recent changes could alter expected outputs or scoring criteria, defer eval/scoring learn_code promotion and lock decisions.
+- Apply the same mode-fit rule to eval steps: deterministic file-shape/schema checks can be `learn_code` after stability evidence; subjective judgment, ambiguous checks, or criteria that are still being revised should stay `code_exec`. If recent changes could alter expected outputs or metric fields, defer eval learn_code promotion and lock decisions.
 
 LEARNINGS (learnings_access, learning_objective, learnings_write_method):
 - Global learning READ is normally useful and defaults to `read`. Do not recommend `learnings_access="none"` unless existing SKILL.md content would actively mislead this target or the target is intentionally isolated from workflow know-how.
 - Recommend `learnings_access="read-write"` only when the target can produce durable HOW-to-run knowledge that will improve future runs: selectors, auth/login flow quirks, timing/wait strategies, API/MCP parameter pitfalls, pagination/tool-call patterns, rate-limit handling, file format quirks, or reusable recovery steps.
-- Do NOT recommend learning writes for pure plumbing/data movement, one-off output formatting, deterministic transforms whose behavior is already captured in code/tests, or eval/scoring targets that only record whether an output passed. Those should usually keep `read` only.
+- Do NOT recommend learning writes for pure plumbing/data movement, one-off output formatting, deterministic transforms whose behavior is already captured in code/tests, or eval targets that only record whether an output passed. Those should usually keep `read` only.
 - When learning writes are enabled, `learning_objective` must be concrete and bounded. Good: "Capture durable HDFC login selectors, OTP timing, and retry behavior that changed during this run." Bad: "learn from this step", "improve future runs", "capture anything useful".
 - If `learnings_access="read-write"` but `learning_objective` is empty/vague, flag it. Recommend either writing a precise objective or downgrading to `read`.
 - If `learning_objective` exists but `learnings_access` is not `read-write`, flag it as a silent no-op/misconfig. Recommend `read-write` only if the objective is justified; otherwise clear the objective.
 - Check `review_notes` or surrounding evidence for the reason learning was enabled. A good reason names the reusable operational uncertainty being learned and why future runs need it. If there is no reason, or the reason is just "step is important", flag it and ask for a better rationale before enabling/keeping writes.
 - For new write-capable steps, recommend `learnings_write_method="direct"` by default. Recommend `agent` only when the user explicitly asked for a separate post-step learning agent/reviewer.
-- For eval steps and `__evaluation_scoring__`, learning writes should be rare: use them only for reusable scoring mechanics or evaluation-tool quirks, not for changing rubric/business judgment.
+- For eval steps, learning writes should be rare: use them only for reusable evaluation mechanics or tool quirks, not for changing rubric/business judgment.
 
 KB_ACCESS (none | read | write | read-write):
 - Step CONSUMES durable subject-matter facts (entities, relationships, prior strategies)? → "read"
+- Step CONSUMES user-supplied runtime context from `knowledgebase/context/context.md` (preferences, constraints, examples, approval rules, ICP filters)? → "read" and recommend adding an explicit sentence to the step description naming the relevant context section/path.
 - Step PRODUCES durable facts (extracts companies, identifies recurring patterns, captures decisions)? → "write" + must set knowledgebase_contribution to a non-empty extraction instruction
 - Both? → "read-write"
 - Pure I/O / orchestration / data movement? → "none" (default; KB is opt-in per step)
+- FLAG: knowledgebase_access includes read because the step needs `knowledgebase/context/context.md`, but the step description does not mention which section/path to read and apply — recommend updating the description and config together.
 - FLAG: knowledgebase_contribution is non-empty but knowledgebase_access lacks write — the post-step KB update agent is silently skipped (controller_kb_update.go gates on kbAccessAllowsWrite). Recommend either set access to "write"/"read-write" OR clear the contribution.
-- For eval steps and `__evaluation_scoring__`, default KB to none unless the evaluation genuinely needs durable subject-matter context. Do not recommend KB writes from eval/scoring unless the eval is intentionally the canonical producer of durable narrative observations.
+- For eval steps, default KB to none unless the evaluation genuinely needs durable subject-matter context. Do not recommend KB writes from eval unless the eval is intentionally the canonical producer of durable narrative observations.
 
 DB ACCESS:
 - Every step already has db/ read+write via folder guard (unconditional, no opt-in). The audit question is INTENT: should this step write to db/?
@@ -55,7 +56,7 @@ DB ACCESS:
 - FLAG: step description claims to "save state" / "update results" / "track" something but doesn't explicitly name a db/ file — likely a portability bug; the step is probably writing into runs/{iter}/ instead of the workspace-level db/.
 
 LOCK PRINCIPLE (read this before applying lock rules below)
-Lock is a **reward for proven outcome quality, not a default for operational stability**. A step that ran cleanly 3 times isn't proven; a step whose linked eval score / outcome metric has stayed at-or-above target across 10+ runs spanning 2+ variable groups IS proven. The framework's three layers are the basis: PLAN defines the work + goal, EVAL scores both how the plan ran and whether the goal was met, METRICS are the numeric trajectory. Lock decisions ride on EVAL + METRICS evidence, not on operational counts alone. If a step has no eval coverage at all, you cannot prove outcome quality — recommend the user add eval coverage first OR accept the risk and lock manually; do NOT recommend auto-lock for outcome-blind steps.
+Lock is a **reward for proven outcome quality, not a default for operational stability**. A step that ran cleanly 3 times isn't proven; a step whose linked outcome metric has stayed at-or-above target across 10+ runs spanning 2+ variable groups IS proven. The framework's three layers are the basis: PLAN defines the work + goal, EVAL produces per-step evidence, METRICS are the numeric trajectory. Lock decisions ride on EVAL + METRICS evidence, not on operational counts alone. If a step has no eval coverage at all, you cannot prove outcome quality — recommend the user add eval coverage first OR accept the risk and lock manually; do NOT recommend auto-lock for outcome-blind steps.
 
 LOCK_LEARNINGS (true | false):
 - Lock when ALL of:
@@ -75,7 +76,7 @@ LOCK_CODE (true | false; learn_code steps only):
   - Description hash matches stored value
   - **Eval evidence** as defined above (eval_step at threshold for last 10 runs, OR linked metric at-or-above target/floor for last 10 runs)
 - DO NOT lock when ANY: main.py rewritten in last 5 runs, transient failures present, description being iterated, < 10 successful runs, runs all on a single group, no eval coverage, eval below threshold.
-- When recommending lock_code=true, also recommend lock_learnings=true when the SKILL.md guidance is stable. Include review_notes citing the **outcome evidence** (groups passed, eval scores at threshold across N runs, linked metric trajectory at target).
+- When recommending lock_code=true, also recommend lock_learnings=true when the SKILL.md guidance is stable. Include review_notes citing the **outcome evidence** (groups passed, eval evidence checked, linked metric trajectory at target).
 - If currently locked but description_hash drifted → recommend UNLOCK (main.py may be stale).
 - If currently locked but linked eval/metric has dropped below target on recent runs → recommend UNLOCK (locked code stopped delivering).
 

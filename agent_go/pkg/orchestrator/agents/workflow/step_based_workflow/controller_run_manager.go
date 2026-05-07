@@ -2,6 +2,7 @@ package step_based_workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -10,18 +11,49 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
+const (
+	defaultRunRetentionCount = 5
+	maxRunRetentionCount     = 50
+)
+
 // resolveRunFolderWithOptions always resolves to iteration-0 under the workflow's
 // runs/ tree. The previous iteration-0 (workflow + eval) is rotated to the same
 // numbered backup so workflow run N and its eval at evaluation/runs/iteration-N
-// stay paired by construction. keep=10 retention applies to both trees.
+// stay paired by construction. workflow.json run_retention_count controls backup
+// retention for both trees, defaulting to 5 when omitted.
 func (hcpo *StepBasedWorkflowOrchestrator) resolveRunFolderWithOptions(ctx context.Context, workspacePath, runMode, selectedRunFolder string) (string, error) {
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
 	evalRunsPath := fmt.Sprintf("%s/evaluation/runs", workspacePath)
-	if err := hcpo.rotatePairedIterationZero(ctx, runsPath, evalRunsPath, 10); err != nil {
+	runRetentionCount := hcpo.resolveRunRetentionCount(ctx)
+	if err := hcpo.rotatePairedIterationZero(ctx, runsPath, evalRunsPath, runRetentionCount); err != nil {
 		return "", err
 	}
-	hcpo.GetLogger().Info("Using iteration-0 for workflow execution")
+	hcpo.GetLogger().Info(fmt.Sprintf("Using iteration-0 for workflow execution (keeping %d backup iteration(s))", runRetentionCount))
 	return "iteration-0", nil
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) resolveRunRetentionCount(ctx context.Context) int {
+	content, err := hcpo.ReadWorkspaceFile(ctx, "workflow.json")
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("Could not read workflow.json for run retention, using default %d: %v", defaultRunRetentionCount, err))
+		return defaultRunRetentionCount
+	}
+
+	var manifest struct {
+		RunRetentionCount *int `json:"run_retention_count,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("Could not parse workflow.json run_retention_count, using default %d: %v", defaultRunRetentionCount, err))
+		return defaultRunRetentionCount
+	}
+	if manifest.RunRetentionCount == nil {
+		return defaultRunRetentionCount
+	}
+	if *manifest.RunRetentionCount < 1 || *manifest.RunRetentionCount > maxRunRetentionCount {
+		hcpo.GetLogger().Warn(fmt.Sprintf("Invalid workflow.json run_retention_count=%d, using default %d", *manifest.RunRetentionCount, defaultRunRetentionCount))
+		return defaultRunRetentionCount
+	}
+	return *manifest.RunRetentionCount
 }
 
 // rotatePairedIterationZero rotates iteration-0 in both the workflow runs tree
@@ -258,6 +290,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createRunFolderStructure(ctx context.
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Created knowledgebase folder: %s/%s", workspacePath, KnowledgebaseFolderName))
 		}
+		if err := createFolderViaAPI(ctx, filepath.Join(KnowledgebaseFolderName, KnowledgebaseContextFolderName), workspacePath); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create knowledgebase context folder via API: %v (continuing)", err))
+		}
 		// Seed knowledgebase/notes/_index.json so the first agent read sees a valid registry.
 		// Pre-existing files are left untouched. kbShape is retained for config compatibility
 		// but runtime behavior is always notes-only (see workflowtypes.ResolveKBShape).
@@ -279,6 +314,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createRunFolderStructure(ctx context.
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create db folder via API: %v (continuing)", err))
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Created db folder: %s/%s", workspacePath, DBFolderName))
+		}
+		if err := createFolderViaAPI(ctx, filepath.Join(DBFolderName, DBAssetsFolderName), workspacePath); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create db assets folder via API: %v (continuing)", err))
 		}
 	}
 

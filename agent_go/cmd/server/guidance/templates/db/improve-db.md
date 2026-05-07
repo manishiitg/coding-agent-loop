@@ -12,7 +12,7 @@ READ FIRST
 1. Read `soul/soul.md` if present to understand the workflow objective and success criteria.
 2. Read `planning/plan.json` and `planning/step_config.json` if present. Identify steps that produce, consume, save, track, upsert, append, deduplicate, or report persistent data.
 3. Read `reports/report_plan.json` if present. Map widgets to their `source: db/*.json` files and any JSONata `query` expressions.
-4. Read `db/README.md` if present, then list `db/*.json`, `db/*.jsonl`, and obvious helper files such as `*_rows.json`, `*_summary.json`, or `flat_*.json`.
+4. Read `db/README.md` if present, then list `db/*.json`, `db/*.jsonl`, `db/assets/`, and obvious helper files such as `*_rows.json`, `*_summary.json`, or `flat_*.json`.
 5. Sample each relevant DB file enough to understand shape. Do not load very large files wholesale; use `jq`, `head`, `tail`, or targeted slices.
 
 WHEN TO USE EACH MODE
@@ -35,6 +35,7 @@ Use `mode="schema"` for contract/schema work:
 Use `mode="cross_step"` when improving DB requires the plan, multiple writer/consumer steps, or reports:
 
 - reconcile writer step descriptions with actual `db/*.json` files
+- ensure durable images/PDFs/screenshots/downloads/generated files are stored under `db/assets/` with metadata/provenance/reference rows in `db/*.json`, not embedded as base64 in JSON
 - identify duplicate helper files that should become report JSONata queries
 - align DB files with report widgets and downstream consumers
 - surface stale fields/files whose writers no longer exist

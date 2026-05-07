@@ -19,19 +19,25 @@ import (
 // Current manifest schema version
 const WorkflowManifestSchemaVersion = 1
 
+const (
+	DefaultRunRetentionCount = 5
+	MaxRunRetentionCount     = 50
+)
+
 // WorkflowManifest is the top-level workflow.json structure that lives in each workspace.
 type WorkflowManifest struct {
-	SchemaVersion   int                       `json:"schema_version"`
-	ID              string                    `json:"id"`
-	Label           string                    `json:"label"`
-	Objective       string                    `json:"objective,omitempty"`
-	SuccessCriteria string                    `json:"success_criteria,omitempty"`
-	Capabilities    WorkflowCapabilities      `json:"capabilities"`
-	ExecutionDefs   WorkflowExecutionDefaults `json:"execution_defaults"`
-	Ownership       WorkflowOwnership         `json:"ownership"`
-	Schedules       []WorkflowSchedule        `json:"schedules"`
-	CreatedAt       string                    `json:"created_at,omitempty"`
-	UpdatedAt       string                    `json:"updated_at,omitempty"`
+	SchemaVersion     int                       `json:"schema_version"`
+	ID                string                    `json:"id"`
+	Label             string                    `json:"label"`
+	Objective         string                    `json:"objective,omitempty"`
+	SuccessCriteria   string                    `json:"success_criteria,omitempty"`
+	Capabilities      WorkflowCapabilities      `json:"capabilities"`
+	ExecutionDefs     WorkflowExecutionDefaults `json:"execution_defaults"`
+	Ownership         WorkflowOwnership         `json:"ownership"`
+	Schedules         []WorkflowSchedule        `json:"schedules"`
+	CreatedAt         string                    `json:"created_at,omitempty"`
+	UpdatedAt         string                    `json:"updated_at,omitempty"`
+	RunRetentionCount *int                      `json:"run_retention_count,omitempty"`
 
 	// Auto-improvement framework fields. See docs/workflow/auto_improvement_framework.md.
 	//
@@ -112,6 +118,11 @@ func ValidateManifest(m *WorkflowManifest) error {
 	}
 	if m.Label == "" {
 		return fmt.Errorf("label is required")
+	}
+	if m.RunRetentionCount != nil {
+		if *m.RunRetentionCount < 1 || *m.RunRetentionCount > MaxRunRetentionCount {
+			return fmt.Errorf("run_retention_count must be between 1 and %d", MaxRunRetentionCount)
+		}
 	}
 
 	// Validate browser mode if set

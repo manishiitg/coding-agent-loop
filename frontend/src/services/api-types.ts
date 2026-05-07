@@ -1378,8 +1378,8 @@ export interface BatchExecutionCanceledEvent {
 // summary is also absent — per-step reasoning + evidence is the entire output.
 export interface EvaluationStepScore {
   step_id: string;
-  score: number;
-  max_score: number;
+  score?: number;
+  max_score?: number;
   reasoning: string;
   evidence: string;
   skipped?: boolean;
@@ -1390,9 +1390,9 @@ export interface EvaluationStepScore {
 export interface EvaluationReport {
   target_run_folder: string;
   generated_at: string;
-  total_score: number;
-  max_possible_score: number;
-  score_percentage: number;
+  total_score?: number;
+  max_possible_score?: number;
+  score_percentage?: number;
   step_scores: EvaluationStepScore[];
 }
 
@@ -1418,11 +1418,6 @@ export interface EvaluationReportEntry {
 
 export interface EvaluationAggregate {
   total_runs: number;
-  average_score: number;
-  average_percentage: number;
-  highest_score: number;
-  lowest_score: number;
-  max_possible_score: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1919,6 +1914,7 @@ export interface WorkflowManifest {
   schedules: WorkflowScheduleEntry[]
   created_at?: string
   updated_at?: string
+  run_retention_count?: number
 }
 
 export interface WorkflowCapabilities {
@@ -1991,6 +1987,7 @@ export interface UpdateWorkflowManifestRequest {
   ownership?: WorkflowOwnership
   schedules?: WorkflowScheduleEntry[]
   workshop_mode?: string // Standalone patch — avoids zeroing out other execution_defaults fields
+  run_retention_count?: number
 }
 
 export interface DuplicateWorkflowManifestRequest {

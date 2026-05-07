@@ -175,18 +175,15 @@ func ResolveMetricValue(ctx context.Context, workspacePath, runFolder string, m 
 	}
 }
 
-// resolveFromEvalStep reads a value from the named eval step. Two modes:
-//
-//	field == ""  → returns the eval step's percent score (Score/MaxScore*100).
-//	               Used when one eval step → one metric, no structured output.
+// resolveFromEvalStep reads a value from the named eval step. Preferred mode:
 //
 //	field != ""  → looks up the field key in the eval step's structured JSON
-//	               output (OutputContent.Content) and returns the numeric
-//	               value. Used when one eval step's code emits an object with
-//	               many named fields and many metrics each pull one field.
+//	               output (OutputContent.Content) and returns the numeric value.
 //
-// Both modes read from the same per-run evaluation report already persisted
-// to /scores/evaluation/<group>/<date>.json by the eval pipeline.
+// Legacy compatibility: field == "" or field in {score,max_score} can still
+// read old top-level scoring-agent fields when a historical report has them.
+// New evaluation runs do not execute a final scoring agent, so metrics should
+// point at explicit output_content fields.
 func resolveFromEvalStep(ctx context.Context, workspacePath, runFolder, stepID, field string) (float64, bool, error) {
 	reports, err := readAllEvaluationReportsFromScores(ctx, workspacePath)
 	if err != nil {
@@ -201,38 +198,69 @@ func resolveFromEvalStep(ctx context.Context, workspacePath, runFolder, stepID, 
 			continue
 		}
 
-		// Top-level shortcuts so a metric can target step.Score / step.MaxScore
-		// directly without requiring the eval to emit structured output.
-		switch strings.TrimSpace(field) {
-		case "":
-			if step.MaxScore <= 0 {
-				return float64(step.Score), true, nil
+		trimmedField := strings.TrimSpace(field)
+		if trimmedField != "" {
+			if v, hasValue, lookupErr := resolveFromEvalStepOutputContent(step, trimmedField); lookupErr == nil || hasValue {
+				return v, hasValue, lookupErr
+			} else if trimmedField != "score" && trimmedField != "max_score" {
+				return 0, false, lookupErr
 			}
-			return (float64(step.Score) / float64(step.MaxScore)) * 100.0, true, nil
-		case "score":
-			return float64(step.Score), true, nil
-		case "max_score":
-			return float64(step.MaxScore), true, nil
 		}
 
-		// Otherwise: field-keyed lookup into the eval step's structured JSON output.
-		if step.OutputContent == nil {
-			return 0, false, fmt.Errorf("eval step %q produced no OutputContent; cannot read field %q (set field=\"score\" for the raw score, or drop the field for the percent score)", stepID, field)
+		// Legacy top-level shortcuts. These exist only for historical reports
+		// produced by the removed final scoring agent.
+		switch trimmedField {
+		case "":
+			if v, hasValue, err := resolvePercentFromEvalStepOutputContent(step); err == nil || hasValue {
+				return v, hasValue, err
+			}
+			if step.MaxScore > 0 {
+				return (float64(step.Score) / float64(step.MaxScore)) * 100.0, true, nil
+			}
+			return 0, false, fmt.Errorf("eval step %q has no final score; set source.field to a numeric key emitted in output_content", stepID)
+		case "score":
+			if step.MaxScore > 0 || step.Score != 0 {
+				return float64(step.Score), true, nil
+			}
+			return 0, false, fmt.Errorf("eval step %q has no top-level score and output_content.score is missing", stepID)
+		case "max_score":
+			if step.MaxScore > 0 {
+				return float64(step.MaxScore), true, nil
+			}
+			return 0, false, fmt.Errorf("eval step %q has no top-level max_score and output_content.max_score is missing", stepID)
 		}
-		if !step.OutputContent.IsJSON {
-			return 0, false, fmt.Errorf("eval step %q output is not JSON; cannot read field %q", stepID, field)
-		}
-		obj, ok := step.OutputContent.Content.(map[string]interface{})
-		if !ok {
-			return 0, false, fmt.Errorf("eval step %q output is %T, not an object; cannot read field %q", stepID, step.OutputContent.Content, field)
-		}
-		raw, present := obj[field]
-		if !present {
-			return 0, false, fmt.Errorf("field %q not present in eval step %q output (keys: %v)", field, stepID, mapKeys(obj))
-		}
-		return coerceToFloat(raw, field)
 	}
 	return 0, false, nil
+}
+
+func resolveFromEvalStepOutputContent(step EvaluationStepScore, field string) (float64, bool, error) {
+	if step.OutputContent == nil {
+		return 0, false, fmt.Errorf("eval step %q produced no OutputContent; cannot read field %q", step.StepID, field)
+	}
+	if !step.OutputContent.IsJSON {
+		return 0, false, fmt.Errorf("eval step %q output is not JSON; cannot read field %q", step.StepID, field)
+	}
+	obj, ok := step.OutputContent.Content.(map[string]interface{})
+	if !ok {
+		return 0, false, fmt.Errorf("eval step %q output is %T, not an object; cannot read field %q", step.StepID, step.OutputContent.Content, field)
+	}
+	raw, present := obj[field]
+	if !present {
+		return 0, false, fmt.Errorf("field %q not present in eval step %q output (keys: %v)", field, step.StepID, mapKeys(obj))
+	}
+	return coerceToFloat(raw, field)
+}
+
+func resolvePercentFromEvalStepOutputContent(step EvaluationStepScore) (float64, bool, error) {
+	score, hasScore, scoreErr := resolveFromEvalStepOutputContent(step, "score")
+	if scoreErr != nil || !hasScore {
+		return 0, false, scoreErr
+	}
+	maxScore, hasMaxScore, maxErr := resolveFromEvalStepOutputContent(step, "max_score")
+	if maxErr != nil || !hasMaxScore || maxScore <= 0 {
+		return score, true, nil
+	}
+	return (score / maxScore) * 100.0, true, nil
 }
 
 // coerceToFloat converts a JSON-decoded value to float64. Handles the four

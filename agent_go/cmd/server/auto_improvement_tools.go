@@ -10,8 +10,9 @@ import (
 )
 
 // =====================================================================
-// auto_improvement_tools.go — register auto-improvement metric tools with an
-// mcpagent so the workflow optimizer can maintain planning/metrics.json.
+// auto_improvement_tools.go — register auto-improvement tools with an
+// mcpagent so the workflow optimizer can maintain planning/metrics.json and
+// capture user-supplied runtime context.
 //
 // Caller wires these into the agent's tool registry alongside other custom
 // tools like reorganize_knowledgebase / consolidate_knowledgebase. Each
@@ -50,6 +51,10 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 					"field": map[string]interface{}{"type": "string", "description": "REQUIRED when type=telemetry. Optional when type=eval_step (then it's a field key into the eval step's JSON output). For type=telemetry, six wired field names — three scopes × two measurements each:\n  • run.total_cost_usd — execution cost only (workflow steps)\n  • run.duration_seconds — execution wall-clock seconds (workflow only)\n  • eval.total_cost_usd — evaluation cost only (eval scoring + eval Python)\n  • eval.duration_seconds — evaluation wall-clock seconds\n  • total.cost_usd — execution + evaluation cost combined\n  • total.duration_seconds — execution + evaluation duration combined (sequential, so ~ end-to-end wall-clock)\nUnknown telemetry field names silently return no value."},
 				},
 				"required": []string{"type"},
+			},
+			"success_criteria": map[string]interface{}{
+				"type":        "string",
+				"description": "The soul.md success criterion this metric operationalizes. Quote or summarize the exact criterion.",
 			},
 		},
 		"required": []string{"id", "unit", "direction", "mode", "source"},
@@ -132,16 +137,70 @@ func RegisterRetireMetricTool(agent *mcpagent.Agent, workspacePath, triggerSourc
 	}
 }
 
-// RegisterAutoImprovementProposerTools registers optimizer-side metric tools.
+// RegisterCaptureContextTool exposes capture_context to the optimizer/builder.
+// It is the privileged, structured path for durable user-supplied runtime
+// context. The tool validates target metric anchoring and writes both the
+// context file and decisions.jsonl audit entry.
+func RegisterCaptureContextTool(agent *mcpagent.Agent, workspacePath string, logger loggerv2.Logger) {
+	desc := "Capture durable user-supplied runtime business context for this workflow. " +
+		"Use only after the user confirms the item should be remembered across runs, and only when the Workflow Profile allows business-context accumulation. " +
+		"Writes to knowledgebase/context/context.md and appends a source=user, trigger=capture-context entry to builder/decisions.jsonl. " +
+		"Every capture must name target_metrics so context stays tied to measurable outcomes. " +
+		"Use for persistent rules, preferences, constraints, assumptions, examples, ICP filters, approval rules, brand voice, or domain context that workflow steps must respect. " +
+		"Do not use for one-off instructions, general chat memory, workflow-discovered facts that belong in knowledgebase/notes, or execution recipes that belong in learnings."
+	params := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"section": map[string]interface{}{
+				"type":        "string",
+				"description": "Markdown section heading in knowledgebase/context/context.md. Defaults to General when empty.",
+			},
+			"context_text": map[string]interface{}{
+				"type":        "string",
+				"description": "The durable user-supplied context to capture. Keep it concise and faithful to the user's wording.",
+			},
+			"target_metrics": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Metric ids this context is expected to affect. Required so context capture is tied to workflow outcomes.",
+			},
+			"example_note": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional short note about the example or source context for this capture.",
+			},
+		},
+		"required": []string{"context_text", "target_metrics"},
+	}
+
+	handler := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		raw, err := json.Marshal(args)
+		if err != nil {
+			return "", err
+		}
+		var input CaptureContextInput
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return fmt.Sprintf("invalid arguments for capture_context: %v", err), nil
+		}
+		out, err := CaptureContextTool(ctx, workspacePath, input)
+		if err != nil {
+			return fmt.Sprintf("capture_context failed: %v", err), nil
+		}
+		body, _ := json.MarshalIndent(out, "", "  ")
+		return string(body), nil
+	}
+
+	if err := agent.RegisterCustomTool("capture_context", desc, params, handler, "auto_improvement"); err != nil {
+		if logger != nil {
+			logger.Warn(fmt.Sprintf("Failed to register capture_context: %v", err))
+		}
+	}
+}
+
+// RegisterAutoImprovementProposerTools registers optimizer-side framework tools.
 // Call this alongside the existing builder tools when the workshop session
 // enters optimizer mode.
-//
-// Two earlier tools are intentionally NOT registered:
-//   - capture_context — the optimizer/builder reads chat for user-supplied
-//     business rules and writes them directly via diff_patch_workspace_file
-//     (knowledgebase/rules/rules.md) plus a decisions.jsonl entry with
-//     source=user. The system prompt documents the format.
 func RegisterAutoImprovementProposerTools(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
 	RegisterProposeMetricTool(agent, workspacePath, triggerSource, logger)
 	RegisterRetireMetricTool(agent, workspacePath, triggerSource, logger)
+	RegisterCaptureContextTool(agent, workspacePath, logger)
 }

@@ -3,7 +3,7 @@ Improve the workflow knowledgebase notes so they support the current plan and ob
 BOUNDARIES
 
 1. Work only on `knowledgebase/notes/` and `knowledgebase/notes/_index.json`.
-2. Never read or write `knowledgebase/rules/`. That folder is user-owned business-rule context, not optimizer-maintained notes.
+2. Never read or write `knowledgebase/context/`. That folder is user-owned runtime business context, not optimizer-maintained notes.
 3. Do not edit planning files, eval files, report files, learnings, or db files unless the user explicitly asks outside this command.
 4. This command is allowed in Builder and Optimizer because KB shape can be part of workflow design or optimizer cleanup. It is not available in Run mode.
 

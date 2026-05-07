@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	orchevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
 
 // ExecuteEvaluationOnly runs only the evaluation execution phase
@@ -142,16 +140,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 
 	hcpo.GetLogger().Info("✅ Evaluation execution completed successfully")
 
-	// Run scoring phase after all evaluation steps complete
-	hcpo.GetLogger().Info("📊 Starting evaluation scoring phase")
-	report, err := hcpo.runEvaluationScoringPhase(ctx, evaluationPlan, targetRunFolder, internalEvalRunFolder, skippedStepScores)
+	// Build the evaluation report directly from individual eval step outputs.
+	// There is no final scoring agent: metric extraction reads the structured
+	// output_content for each eval step.
+	hcpo.GetLogger().Info("📊 Building evaluation report from step outputs")
+	report, err := hcpo.runEvaluationReportPhase(ctx, evaluationPlan, targetRunFolder, internalEvalRunFolder, skippedStepScores)
 	if err != nil {
-		hcpo.GetLogger().Error(fmt.Sprintf("❌ Evaluation scoring failed: %v", err), nil)
-		return "", fmt.Errorf("evaluation scoring phase failed: %w", err)
+		hcpo.GetLogger().Error(fmt.Sprintf("❌ Evaluation report build failed: %v", err), nil)
+		return "", fmt.Errorf("evaluation report build failed: %w", err)
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Evaluation complete. Total Score: %d/%d (%.1f%%)",
-		report.TotalScore, report.MaxPossibleScore, report.ScorePercentage))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Evaluation complete. Captured %d evaluation step output(s)", len(report.StepScores)))
 
 	// Snapshot per-run metric values now that the evaluation_report.json has
 	// been published to evaluation/runs/<originalTarget>/. This fires for both
@@ -160,56 +159,36 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	// No-op when planning/metrics.json is absent.
 	hcpo.snapshotRunMetrics(ctx, originalTarget)
 
-	return fmt.Sprintf("Evaluation complete. Score: %d/%d (%.1f%%)", report.TotalScore, report.MaxPossibleScore, report.ScorePercentage), nil
+	return fmt.Sprintf("Evaluation complete. Captured %d evaluation step output(s)", len(report.StepScores)), nil
 }
 
-// runEvaluationScoringPhase collects all eval step outputs and runs a single scoring agent
-// that scores all steps at once with holistic analysis.
-func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context.Context, evaluationPlan *EvaluationPlan, targetRunFolder string, internalEvalRunFolder string, skippedStepScores []*EvaluationStepScore) (*EvaluationReport, error) {
+// runEvaluationReportPhase builds the durable evaluation_report.json directly
+// from eval step outputs. There is intentionally no final scoring agent in this phase.
+func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationReportPhase(ctx context.Context, evaluationPlan *EvaluationPlan, targetRunFolder string, internalEvalRunFolder string, skippedStepScores []*EvaluationStepScore) (*EvaluationReport, error) {
 	evalExecutionPath := filepath.Join("evaluation", "runs", internalEvalRunFolder, "execution")
-	// The scoring agent will write its raw report to this folder via submit_report. We
-	// then re-marshal with totals/timestamps and publish to the target run folder too.
 	evalReportFolder := filepath.Join("evaluation", "runs", internalEvalRunFolder)
 
-	// Collect all step outputs
-	var stepInputs []EvaluationStepInput
-	for i, step := range evaluationPlan.Steps {
-		legacyStepPath := fmt.Sprintf("step-%d", i+1)
+	report := &EvaluationReport{
+		TargetRunFolder: targetRunFolder,
+		GeneratedAt:     time.Now().Format(time.RFC3339),
+		StepScores:      make([]*EvaluationStepScore, 0, len(evaluationPlan.Steps)+len(skippedStepScores)),
+	}
 
-		hcpo.GetLogger().Info(fmt.Sprintf("📂 Reading output for step %d: %s", i+1, step.Title))
-
-		executionOutput, err := hcpo.readStepExecutionOutput(ctx, evalExecutionPath, step.ID, legacyStepPath)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not read execution output for step %d: %v", i+1, err))
-			executionOutput = fmt.Sprintf("Error reading output: %v", err)
+	for _, step := range evaluationPlan.Steps {
+		if step == nil {
+			continue
 		}
-
-		stepInputs = append(stepInputs, EvaluationStepInput{
-			ID:              step.ID,
-			Title:           step.Title,
-			Description:     step.Description,
-			ExecutionOutput: executionOutput,
+		report.StepScores = append(report.StepScores, &EvaluationStepScore{
+			StepID:    step.ID,
+			Score:     0,
+			MaxScore:  0,
+			Reasoning: "Final scoring is disabled; this report preserves the eval step output for metrics and review.",
+			Evidence:  "Inspect output_content for the eval step's structured verdict and evidence.",
 		})
 	}
-
-	// Run single scoring agent with all steps
-	hcpo.GetLogger().Info(fmt.Sprintf("📊 Running scoring agent for all %d evaluation steps", len(stepInputs)))
-
-	// Inject correlation ID so scoring agent events are tagged for frontend auto-notifications
-	scoringSessionID := fmt.Sprintf("workshop-eval-scoring-%s-%d", targetRunFolder, time.Now().UnixNano())
-	scoringCtx := context.WithValue(ctx, orchevents.AgentSessionIDKey, scoringSessionID)
-	scoringCtx = context.WithValue(scoringCtx, orchevents.ForceCorrelationIDKey, scoringSessionID)
-	scoringCtx = context.WithValue(scoringCtx, orchevents.IsSubAgentContextKey, true)
-
-	report, err := hcpo.scoreAllSteps(scoringCtx, evaluationPlan, stepInputs, targetRunFolder, evalReportFolder, skippedStepScores)
-	if err != nil {
-		return nil, fmt.Errorf("scoring agent failed: %w", err)
-	}
+	report.StepScores = append(report.StepScores, skippedStepScores...)
 	hcpo.enrichEvaluationReportWithStepOutputs(ctx, report, evalExecutionPath)
 
-	// The scoring tool wrote a minimal validated JSON to internalReportPath. We now
-	// re-marshal with computed totals/timestamps so the on-disk file matches what
-	// scoreAllSteps returned. Then publish a copy next to the target run folder.
 	internalReportPath := filepath.Join(evalReportFolder, EvaluationReportFileName)
 	publishedReportPath := filepath.Join("evaluation", "runs", targetRunFolder, EvaluationReportFileName)
 	reportJSON, err := json.MarshalIndent(report, "", "  ")
@@ -226,14 +205,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context
 		}
 	}
 	if err := hcpo.persistEvaluationScoreLedger(ctx, report, targetRunFolder); err != nil {
-		return report, fmt.Errorf("failed to persist evaluation score ledger: %w", err)
+		return report, fmt.Errorf("failed to persist evaluation report ledger: %w", err)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("📄 Evaluation report saved to internal path: %s", internalReportPath))
 	if filepath.ToSlash(internalReportPath) != filepath.ToSlash(publishedReportPath) {
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 Evaluation report published to target path: %s", publishedReportPath))
 	}
-	hcpo.GetLogger().Info(fmt.Sprintf("📚 Evaluation score ledger updated for target path: %s", targetRunFolder))
+	hcpo.GetLogger().Info(fmt.Sprintf("📚 Evaluation report ledger updated for target path: %s", targetRunFolder))
 	return report, nil
 }
 
@@ -296,75 +275,6 @@ func buildStepOutputContent(filePath string, raw string) *StepOutputContent {
 		Content:  trimmed,
 		IsJSON:   false,
 	}
-}
-
-// readStepExecutionOutput reads all relevant output files from evaluation step execution
-// It looks in multiple locations since execution outputs are stored in logs folders
-func (hcpo *StepBasedWorkflowOrchestrator) readStepExecutionOutput(ctx context.Context, evalExecutionPath string, stepID string, legacyStepPath string) (string, error) {
-	var outputs []string
-	folderCandidates := []string{getArtifactFolderName(stepID, legacyStepPath)}
-	if legacyStepPath != "" && legacyStepPath != folderCandidates[0] {
-		folderCandidates = append(folderCandidates, legacyStepPath)
-	}
-
-	seenOutputs := make(map[string]bool)
-	appendOutput := func(label string, content string) {
-		if strings.TrimSpace(content) == "" {
-			return
-		}
-		entry := fmt.Sprintf("=== %s ===\n%s", label, content)
-		if seenOutputs[entry] {
-			return
-		}
-		seenOutputs[entry] = true
-		outputs = append(outputs, entry)
-	}
-
-	for _, stepFolder := range folderCandidates {
-		executionStepPath := filepath.Join(evalExecutionPath, stepFolder)
-
-		hcpo.GetLogger().Info(fmt.Sprintf("📂 Looking for step output files in: %s", executionStepPath))
-
-		// Read step output files from execution folder (the actual results to score)
-		execFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, executionStepPath)
-		if listErr == nil && len(execFiles) > 0 {
-			for _, filename := range execFiles {
-				if strings.HasSuffix(filename, ".json") || strings.HasSuffix(filename, ".md") {
-					filePath := filepath.Join(executionStepPath, filename)
-					content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
-					if err == nil && content != "" {
-						appendOutput(filename, content)
-					}
-				}
-			}
-		} else {
-			stepOutputFiles := []string{
-				"final_verification_report.json",
-				"verification_report.json",
-				"verification_summary.json",
-				"verification_report.md",
-				"output.json",
-				"result.json",
-				"summary.json",
-				"step_done.json",
-				"context_output.json",
-			}
-			for _, filename := range stepOutputFiles {
-				filePath := filepath.Join(executionStepPath, filename)
-				content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
-				if err == nil && content != "" {
-					appendOutput(filename, content)
-				}
-			}
-		}
-	}
-
-	if len(outputs) == 0 {
-		return "No execution output files found. The evaluation step may not have run or produced no output.", nil
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("📄 Found %d output file(s) for evaluation scoring", len(outputs)))
-	return strings.Join(outputs, "\n\n"), nil
 }
 
 // filterEvaluationPlanForTargetRun removes eval steps that are explicitly scoped
@@ -443,63 +353,6 @@ func stringInList(value string, candidates []string) bool {
 		}
 	}
 	return false
-}
-
-// scoreAllSteps runs a single scoring agent that scores all applicable evaluation
-// steps at once. Non-applicable route checks are appended with max_score=0 so
-// they are visible in the report without penalizing the target run.
-func (hcpo *StepBasedWorkflowOrchestrator) scoreAllSteps(ctx context.Context, evaluationPlan *EvaluationPlan, stepInputs []EvaluationStepInput, targetRunFolder string, evalReportFolder string, skippedStepScores []*EvaluationStepScore) (*EvaluationReport, error) {
-	var report *EvaluationReport
-	if len(stepInputs) == 0 {
-		report = &EvaluationReport{StepScores: []*EvaluationStepScore{}}
-	} else {
-		var err error
-		report, err = hcpo.createEvaluationScoringAgent(ctx, "evaluation-scoring", evaluationPlan, stepInputs, evalReportFolder)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	report.TargetRunFolder = targetRunFolder
-	report.GeneratedAt = time.Now().Format(time.RFC3339)
-
-	// Fill in any steps that the scoring agent missed
-	scoredStepIDs := make(map[string]bool)
-	for _, s := range report.StepScores {
-		if s == nil {
-			continue
-		}
-		scoredStepIDs[s.StepID] = true
-	}
-	for _, step := range evaluationPlan.Steps {
-		if !scoredStepIDs[step.ID] {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Scoring agent did not score step %s — adding zero score", step.ID))
-			report.StepScores = append(report.StepScores, &EvaluationStepScore{
-				StepID:    step.ID,
-				Score:     0,
-				MaxScore:  10,
-				Reasoning: "Scoring agent did not provide a score for this step",
-				Evidence:  "n/a — step missing from agent's submitted report",
-			})
-		}
-	}
-	report.StepScores = append(report.StepScores, skippedStepScores...)
-
-	// Calculate totals
-	report.TotalScore = 0
-	report.MaxPossibleScore = 0
-	for _, s := range report.StepScores {
-		if s == nil {
-			continue
-		}
-		report.TotalScore += s.Score
-		report.MaxPossibleScore += s.MaxScore
-	}
-	if report.MaxPossibleScore > 0 {
-		report.ScorePercentage = float64(report.TotalScore) / float64(report.MaxPossibleScore) * 100
-	}
-
-	return report, nil
 }
 
 // ============================================================================

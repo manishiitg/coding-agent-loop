@@ -10,7 +10,7 @@ Call validate_report_plan.
 PASS 2 — IMPROVEMENT SUGGESTIONS
 Call preview_report_render first so you can inspect what the report actually renders like with current data. Treat that rendered preview as a required input, not an optional extra.
 
-Then call get_report_plan yourself and also sample the underlying db/*.json sources plus knowledgebase/notes/_index.json and the relevant topic markdown files. Use both the rendered preview and the raw data/plan to propose improvements in these categories:
+Then call get_report_plan yourself and also sample the underlying db/*.json sources, db/assets references, knowledgebase/context/context.md when present, plus knowledgebase/notes/_index.json and the relevant topic markdown files. Use both the rendered preview and the raw data/plan to propose improvements in these categories:
 
 1. **Layout**: are the most important widgets at the top? Are there too many widgets in a row cramming the view? Is the H2 structure grouping related content?
 2. **Chart-type fit**: for each chart, is bar/line/area/pie the right choice for that data? (bar=categorical, line=time series, pie=composition ≤6 slices)

@@ -126,18 +126,19 @@ By default, browser-based MCP servers (like `playwright` or `agent-browser`) run
 
 ### Shared CDP Tabs
 
-Native agent-browser tracks an active tab per `--session`. In a shared workflow environment that is too implicit: whichever workflow last selected a tab can influence the next page action. The project wrapper therefore requires every CDP page action to include an inline tab argument.
+Native agent-browser tracks an active tab per `--session`. In a shared workflow environment that is too implicit: whichever workflow last selected a tab can influence the next page action. The project wrapper therefore requires an explicit tab for CDP work. Use the `tab` command to choose/create the tab, call `open` with URL-only args, then include an inline tab argument on later page actions.
 
 Allowed page action forms:
 
 ```json
-{"command": "open", "args": ["tab", "profile", "https://example.com"], "session": "workflow_a"}
+{"command": "tab", "args": ["profile"], "session": "workflow_a"}
+{"command": "open", "args": ["https://example.com"], "session": "workflow_a"}
 {"command": "snapshot", "args": ["tab", "profile", "-i"], "session": "workflow_a"}
 {"command": "click", "args": ["--tab", "profile", "@e1"], "session": "workflow_a"}
 {"command": "eval", "args": ["tab", "profile", "document.title"], "session": "workflow_a"}
 ```
 
-If a CDP page action omits the tab, the tool returns an error with the current tab list. The LLM is expected to choose an existing tab or create a labeled tab, then retry the command.
+If a CDP page action omits the tab, the tool returns an error with the current tab list. The LLM is expected to choose an existing tab or create a labeled tab, then retry the command. `open` is the exception: it uses the workflow's previously selected tab and passes only the URL to agent-browser.
 
 Tab management commands:
 

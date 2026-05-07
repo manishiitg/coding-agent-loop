@@ -1,4 +1,4 @@
-Improve this workflow using actual iteration-0 evidence. Metrics are evidence, not a separate action path. Your job is to decide whether the next action is `harden_workflow`, `replan_workflow_from_results`, eval-plan improvement, metric-definition cleanup (`propose_metric` / `retire_metric`), or no action. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and update it before finishing.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Improve this workflow using actual retained run evidence. Metrics are evidence, not a separate action path. Your job is to decide whether the next action is `harden_workflow`, `replan_workflow_from_results`, eval-plan improvement, metric-definition cleanup (`propose_metric` / `retire_metric`), or no action. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and update it before finishing.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 MENTAL MODEL
 Think like a sharp business analyst auditing the workflow's actual outputs against soul.md success criteria and metric trajectory. These are business-process workflows, not software systems. The important question is: "What change would make the workflow better satisfy its goal on the next runs?"
@@ -7,10 +7,10 @@ SOURCE-OF-TRUTH HIERARCHY
 Use this hierarchy when deciding harden vs replan:
 1. `soul/soul.md` is the truth: objective and success criteria define what the workflow must achieve.
 2. `planning/metrics.json` and `db/metrics_history.jsonl` operationalize `soul.md`: metrics are numeric evidence, but they do not override the objective or success criteria.
-3. `runs/iteration-0/<group>/...` proves current reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did.
+3. `runs/iteration-{N}/<group>/...` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `iteration-0` is the latest/current run; older retained iterations are supporting evidence for trends, regressions, and whether a prior improve.md action helped.
 4. `evaluation/evaluation_plan.json` explains measurement: use it to understand scores, but if eval conflicts with `soul.md`, fix eval instead of optimizing to a bad rubric.
-5. `planning/plan.json` is only the current implementation attempt. Judge it against `soul.md` and iteration-0 evidence; do not treat the current plan as proof that the workflow is correct.
-6. `builder/improve.md` and `builder/review.md` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `soul.md` or current iteration-0 evidence.
+5. `planning/plan.json` is only the current implementation attempt. Judge it against `soul.md` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
+6. `builder/improve.md` and `builder/review.md` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `soul.md` or current run/eval/metric evidence.
 
 SETUP
 1. Read soul/soul.md and extract the objective and success criteria.
@@ -19,16 +19,21 @@ SETUP
 4. Read planning/metrics.json and recent db/metrics_history.jsonl rows. Metrics reveal drift, failures, missing values, and whether previous changes are moving the workflow in the right direction.
 5. Read evaluation/evaluation_plan.json so you understand how metrics and eval reports are produced.
 6. Read variables/variables.json to get enabled group names.
-7. Use only runs/iteration-0 as the evidence set for fixes. Optimizer tools operate on iteration-0; do not inspect an older selected iteration as the basis for changes.
+7. Build an evidence window from retained runs:
+   - Always include `runs/iteration-0` and paired `evaluation/runs/iteration-0`.
+   - Read `builder/improve.md`, `builder/decisions.jsonl`, `planning/changelog/`, and run/eval `run_metadata.json` timestamps to decide which older `iteration-{N}` folders matter.
+   - Include older iterations since the last relevant harden/replan/eval/metric change, plus 1-2 runs immediately before that change when you need a before/after comparison.
+   - Ignore older iterations when they predate a material plan/config/eval change and no longer represent the current workflow, except as regression context.
 
 PHASE 1 — OUTPUT + METRIC REVIEW
-1. Open runs/iteration-0 for each enabled group with run evidence. Read what the workflow actually produced: generated copy, sent messages, reports, scored decisions, db writes, and any business artifacts.
-2. Read execution/tool logs for the same groups. Look for wrong tool arguments, retries, timeouts, validation failures, empty outputs, permission/auth failures, stuck human-feedback waits, unnecessary tool calls, and repeated fallback behavior.
-3. Read evaluation reports for the same groups. Pay attention to rationale text, not just scores.
+1. Open the evidence-window runs for each enabled group with run evidence. Read what the workflow actually produced: generated copy, sent messages, reports, scored decisions, db writes, and any business artifacts.
+2. Read execution/tool logs for the same groups and iterations. Look for wrong tool arguments, retries, timeouts, validation failures, empty outputs, permission/auth failures, stuck human-feedback waits, unnecessary tool calls, and repeated fallback behavior.
+3. Read evaluation reports for the same groups and iterations. Pay attention to rationale text, not just scores.
 4. Read db/metrics_history.jsonl. For each active metric, check recent values, target/floor/ceiling status, and `has_value=false` / `resolve_error` rows.
 5. Compare the outputs and metrics against soul.md. Where is the workflow missing the success criteria or outcome metrics?
 6. Inspect KB/learnings/report/db only when the evidence points there:
-   - knowledgebase/notes/_index.json + topic files for stale, duplicate, missing, or contradictory context
+   - knowledgebase/context/context.md for user-supplied runtime context that steps may be ignoring; when a step needs it, the fix must update both `knowledgebase_access` and the step description so it names the relevant context section/path
+   - knowledgebase/notes/_index.json + topic files for stale, duplicate, missing, or contradictory workflow-discovered context
    - learnings/_global/SKILL.md and learnings/<step-id>/script_metadata.json for stale rules, missing learning objectives, or code_exec steps with leftover main.py
    - db/*.json for broken data contracts or write/read drift
    - reports/report_plan.json for dashboard/report wiring that hides important metric/eval evidence
@@ -57,12 +62,12 @@ Use this decision model:
 If unclear, call `review_plan({{if .Focus}}focus="{{.Focus}}"{{end}})` first, wait/query until it completes, then classify. Review is diagnosis only; it does not apply changes.
 
 PHASE 3 — APPLY ONE BOUNDED ACTION PER GROUP
-For each enabled group with meaningful iteration-0 evidence:
+For each enabled group with meaningful evidence in the selected run window:
 
 1. Build a concise `focus` string before calling a tool. It should include the reason and intended target in one sentence, for example:
    - `reply_quality_score below target; harden validation and outreach prompt using F-2026-05-04-001`
    - `outputs cannot satisfy success criterion "must cite source"; replan workflow to collect and pass source evidence`
-2. If the issue is group-specific, pass `group_name="{group}"`. If the issue is shared across groups, omit group_name so the tool analyzes all iteration-0 groups.
+2. If the issue is group-specific, pass `group_name="{group}"`. If the issue is shared across groups, omit group_name so the tool analyzes all current groups and uses retained iterations for trend/regression evidence.
 3. Call exactly one primary action for the group:
    - `harden_workflow(group_name="{group}", focus="<brief>")`, or
    - `replan_workflow_from_results(group_name="{group}", focus="<brief>")`, or

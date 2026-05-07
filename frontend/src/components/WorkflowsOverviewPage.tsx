@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { Loader2, ChevronRight, ChevronDown, FileText, BarChart3, DollarSign, Clock, AlertCircle, X, CheckCircle2, PlayCircle, Circle, Timer, Zap } from 'lucide-react'
-import { agentApi } from '../services/api'
+import { agentApi, type WorkflowMetricRunSummary } from '../services/api'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
@@ -15,8 +15,7 @@ interface RunFolderDetail {
   totalSteps: number
   completedSteps: number
   lastUpdated: string | null
-  evalScore: number | null
-  evalMaxScore: number | null
+  metricsSummary: WorkflowMetricRunSummary | null
   costUsd: number | null
   startedAt: string | null
   completedAt: string | null
@@ -74,6 +73,39 @@ const getProgressColor = (completed: number, total: number): string => {
   if (pct >= 1) return 'bg-green-500'
   if (pct >= 0.5) return 'bg-blue-500'
   return 'bg-amber-500'
+}
+
+const metricHealthText = (summary: WorkflowMetricRunSummary | null): string | null => {
+  if (!summary || summary.total <= 0) return null
+  if (summary.failed > 0) return `${summary.failed} failing`
+  if (summary.with_value < summary.total) return `${summary.with_value}/${summary.total} values`
+  if (summary.passed > 0) return `${summary.passed}/${summary.total} passing`
+  return `${summary.total} metrics`
+}
+
+const metricHealthClass = (summary: WorkflowMetricRunSummary | null): string => {
+  if (!summary || summary.total <= 0) return 'text-gray-400 dark:text-gray-500'
+  if (summary.failed > 0) return 'text-red-600 dark:text-red-400'
+  if (summary.with_value < summary.total) return 'text-amber-600 dark:text-amber-400'
+  if (summary.passed > 0) return 'text-green-600 dark:text-green-400'
+  return 'text-gray-600 dark:text-gray-300'
+}
+
+const MetricsSummaryBadge: React.FC<{ summary: WorkflowMetricRunSummary | null; compact?: boolean }> = ({ summary, compact = false }) => {
+  const text = metricHealthText(summary)
+  if (!text) return <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
+  return (
+    <div
+      className="flex items-center gap-1.5"
+      title={`${summary?.passed || 0} passing, ${summary?.failed || 0} failing, ${summary?.unknown || 0} unknown`}
+    >
+      <BarChart3 className="w-3 h-3 text-cyan-500 dark:text-cyan-400" />
+      <span className={`text-xs font-medium ${metricHealthClass(summary)}`}>{text}</span>
+      {!compact && summary && summary.unknown > 0 && (
+        <span className="text-xs text-gray-400 dark:text-gray-500">{summary.unknown} unknown</span>
+      )}
+    </div>
+  )
 }
 
 const triggerLabel = (t: string | null): string => {
@@ -140,8 +172,7 @@ function useWorkflowRows() {
         totalSteps: detail.total_steps || 0,
         completedSteps: detail.completed_steps || 0,
         lastUpdated: detail.last_updated || null,
-        evalScore: detail.eval_score ?? null,
-        evalMaxScore: detail.eval_max_score ?? null,
+        metricsSummary: detail.metrics_summary || null,
         costUsd: detail.cost_usd ?? null,
         startedAt: detail.started_at || null,
         completedAt: detail.completed_at || null,
@@ -290,24 +321,15 @@ const RunFolderRow: React.FC<{
       <StatusBadge status={detail.status} completedSteps={detail.completedSteps} totalSteps={detail.totalSteps} />
     </td>
 
-    {/* Eval score - clickable */}
+    {/* Metric health */}
     <td className="px-5 py-2.5">
-      {detail.evalScore !== null && detail.evalMaxScore !== null && detail.evalMaxScore > 0 ? (
+      {detail.metricsSummary ? (
         <button
           onClick={(e) => { e.stopPropagation(); onOpenEval(workspacePath, detail.folder.name) }}
           className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
-          title="View evaluation details"
+          title="View evaluation evidence"
         >
-          <BarChart3 className="w-3 h-3 text-purple-500 dark:text-purple-400" />
-          <span className={`text-xs font-medium ${
-            (detail.evalScore / detail.evalMaxScore) >= 0.8
-              ? 'text-green-600 dark:text-green-400'
-              : (detail.evalScore / detail.evalMaxScore) >= 0.5
-                ? 'text-amber-600 dark:text-amber-400'
-                : 'text-red-600 dark:text-red-400'
-          }`}>
-            {Math.round((detail.evalScore / detail.evalMaxScore) * 100)}%
-          </span>
+          <MetricsSummaryBadge summary={detail.metricsSummary} compact />
         </button>
       ) : (
         <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
@@ -406,7 +428,7 @@ const WorkflowTable: React.FC<{
         <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
           <th className="px-6 py-3">Workflow / Run</th>
           <th className="px-5 py-3">Status</th>
-          <th className="px-5 py-3">Eval</th>
+          <th className="px-5 py-3">Metrics</th>
           <th className="px-5 py-3">Cost</th>
           <th className="px-5 py-3">Last Active</th>
           <th className="px-5 py-3 text-right">Actions</th>
@@ -417,14 +439,6 @@ const WorkflowTable: React.FC<{
           const isExpanded = expandedIds.has(row.preset.id)
           const hasRuns = row.runFolders.length > 0
           const allFolderNames = row.runFolders.map(rf => rf.folder.name)
-
-          // Aggregate eval
-          let aggEvalScore: number | null = null
-          let aggEvalMax: number | null = null
-          if (row.evalData?.success && row.evalData.aggregate) {
-            aggEvalScore = row.evalData.aggregate.average_score
-            aggEvalMax = row.evalData.aggregate.max_possible_score
-          }
 
           // Aggregate cost
           let aggCost: number | null = null
@@ -478,26 +492,16 @@ const WorkflowTable: React.FC<{
                 </td>
 
                 <td className="px-5 py-3.5">
-                  {!row.loading && aggEvalScore !== null && aggEvalMax !== null && aggEvalMax > 0 ? (
+                  {!row.loading && latestRun?.metricsSummary ? (
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
                         if (row.workspacePath) onOpenEval(row.workspacePath, '')
                       }}
                       className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
-                      title="View evaluation details"
+                      title="View evaluation evidence"
                     >
-                      <BarChart3 className="w-3 h-3 text-purple-500 dark:text-purple-400" />
-                      <span className={`text-xs font-medium ${
-                        (aggEvalScore / aggEvalMax) >= 0.8
-                          ? 'text-green-600 dark:text-green-400'
-                          : (aggEvalScore / aggEvalMax) >= 0.5
-                            ? 'text-amber-600 dark:text-amber-400'
-                            : 'text-red-600 dark:text-red-400'
-                      }`}>
-                        {Math.round((aggEvalScore / aggEvalMax) * 100)}%
-                      </span>
-                      <span className="text-xs text-gray-400 dark:text-gray-500">avg</span>
+                      <MetricsSummaryBadge summary={latestRun.metricsSummary} />
                     </button>
                   ) : (
                     !row.loading && <span className="text-xs text-gray-400 dark:text-gray-500">-</span>

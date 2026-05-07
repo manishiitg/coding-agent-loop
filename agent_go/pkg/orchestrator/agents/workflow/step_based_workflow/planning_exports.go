@@ -919,7 +919,7 @@ func RegisterReorganizeKnowledgebaseTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"reorganize_knowledgebase",
-		"Apply a natural-language transformation to the knowledgebase notes. Supported operations: merge two topic files, drop sections from a bad run, compact a topic file, rename a topic and rewrite cross-references, drop a topic entirely. Takes one argument 'instruction' describing what to do. The agent reads knowledgebase/notes/_index.json, scopes to the relevant topic files, applies the transformation, and resyncs the index. Serialized against post-step KB updates — safe to call while a workflow is running. Returns the agent's summary line describing what changed.",
+		"Apply a natural-language transformation to the knowledgebase notes only. Supported operations: merge two topic files, drop sections from a bad run, compact a topic file, rename a topic and rewrite cross-references, drop a topic entirely. Takes one argument 'instruction' describing what to do. The agent reads knowledgebase/notes/_index.json, scopes to the relevant topic files, applies the transformation, and resyncs the index. It must not read or write knowledgebase/context/. Serialized against post-step KB updates — safe to call while a workflow is running. Returns the agent's summary line describing what changed.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1123,7 +1123,7 @@ func inferKBImproveMode(instruction string) string {
 }
 
 // RegisterRunFullEvaluationTool registers a run_full_evaluation tool that executes all
-// evaluation steps and scoring against a target execution run. Runs in background.
+// evaluation steps against a target execution run and publishes their outputs. Runs in background.
 func RegisterRunFullEvaluationTool(
 	mcpAgent *mcpagent.Agent,
 	session *WorkshopChatSession,
@@ -1131,7 +1131,7 @@ func RegisterRunFullEvaluationTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_evaluation",
-		"Run the full evaluation pipeline: execute all evaluation steps against a target execution run, then score each step and generate an evaluation report. Evaluation always targets iteration-0 (the default execution run). Runs in background — you will be notified when complete.",
+		"Run the full evaluation pipeline: execute all evaluation steps against a target execution run, then publish their outputs into evaluation_report.json for metrics and review. Evaluation always targets iteration-0 (the default execution run). Runs in background — you will be notified when complete.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

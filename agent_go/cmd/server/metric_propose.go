@@ -31,6 +31,9 @@ type ProposeMetricInput struct {
 	Floor     *float64        `json:"floor,omitempty"`
 	Ceiling   *float64        `json:"ceiling,omitempty"`
 	Source    MetricSource    `json:"source,omitempty"`
+	// SuccessCriteria should quote or summarize the soul.md success criterion
+	// this metric measures, so metric rows stay anchored to user outcomes.
+	SuccessCriteria string `json:"success_criteria,omitempty"`
 }
 
 // ProposeMetricOutput is what the tool returns to the proposer LLM.
@@ -62,15 +65,16 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 	}
 
 	candidate := Metric{
-		ID:        strings.TrimSpace(input.ID),
-		Label:     input.Label,
-		Unit:      input.Unit,
-		Direction: input.Direction,
-		Mode:      input.Mode,
-		Target:    input.Target,
-		Floor:     input.Floor,
-		Ceiling:   input.Ceiling,
-		Source:    input.Source,
+		ID:              strings.TrimSpace(input.ID),
+		Label:           input.Label,
+		Unit:            input.Unit,
+		Direction:       input.Direction,
+		Mode:            input.Mode,
+		Target:          input.Target,
+		Floor:           input.Floor,
+		Ceiling:         input.Ceiling,
+		Source:          input.Source,
+		SuccessCriteria: strings.TrimSpace(input.SuccessCriteria),
 	}
 	if err := ValidateMetric(&candidate); err != nil {
 		return nil, fmt.Errorf("invalid metric: %w", err)

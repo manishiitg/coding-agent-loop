@@ -246,7 +246,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Planning & config:**
 - ` + "`soul/soul.md`" + ` — canonical workflow north star: ` + "`## Objective`" + ` and ` + "`## Success Criteria`" + `. Read before review, improve, eval, harden, and ambiguous execution decisions.
-- ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, employee assignment. May carry legacy optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
+- ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, employee assignment, optional ` + "`run_retention_count`" + ` (backup iterations to keep; default 5). May carry legacy optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
 - ` + "`planning/plan.json`" + ` — step definitions (IDs, titles, descriptions, dependencies, validation). It no longer owns root objective/success fields; use ` + "`soul/soul.md`" + ` for that.
 - ` + "`planning/step_config.json`" + ` — per-step settings. Each step's ` + "`agent_configs`" + ` object controls execution mode:
   - ` + "`use_code_execution_mode`" + ` (bool) — ` + "`false`" + ` = direct tool calls, ` + "`true`" + ` = scripted Python (main.py)
@@ -262,35 +262,36 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`learnings/<step-id>/script_metadata.json`" + ` — version history + run stats for the saved script
 
 **Runs (execution output):**
-- ` + "`runs/iteration-0/`" + ` — **active run folder**. All new executions land here. When a new run starts, the previous ` + "`iteration-0`" + ` is backed up to ` + "`iteration-1`" + `, older backups shift up (` + "`iteration-2`" + `, etc.). Only the 10 most recent backups are kept.
+- ` + "`runs/iteration-0/`" + ` — **active run folder**. All new executions land here. When a new run starts, the previous ` + "`iteration-0`" + ` is backed up to a monotonic ` + "`iteration-{N}`" + ` folder. ` + "`workflow.json::run_retention_count`" + ` controls how many backup iterations are kept; default 5.
 - ` + "`runs/iteration-{N}/{group-name}/execution/step-X/`" + ` — per-step execution outputs (when variable groups are in use, each group runs in its own subfolder)
 - ` + "`runs/iteration-{N}/{group-name}/execution/step-X/code/main.py`" + ` — per-run working copy of the ` + "`learn_code`" + ` script
 - ` + "`runs/iteration-{N}/{group-name}/logs/step-X/`" + ` — per-step logs (see Log Layout below)
 
 **Reports & evaluation:**
 - ` + "`reports/{group-name}/{timestamp}.md`" + ` — final output reports generated after a successful run (one per group, per run timestamp)
-- ` + "`evaluation/runs/{runFolder}/evaluation_report.json`" + ` — scored evaluation results (eval pipeline only, separate from normal runs)
+- ` + "`evaluation/runs/{runFolder}/evaluation_report.json`" + ` — evaluation step outputs and evidence (eval pipeline only, separate from normal runs)
 - ` + "`evaluation/runs/iteration-0/`" + ` — ephemeral eval sandbox used during evaluation execution
 
 **Interactive builder / workshop:**
 - ` + "`builder/conversation/YYYY-MM-DD/session-{id}-conversation.json`" + ` — workshop (interactive builder) conversation histories. These are JSON files with ` + "`conversation_history`" + ` entries. User messages have ` + "`Role`" + `=` + "`human`" + `/` + "`user`" + ` and text in ` + "`Parts[].Text`" + `; assistant replies have ` + "`Role`" + `=` + "`ai`" + `/` + "`assistant`" + `. Tool calls/results are interleaved and noisy, so scan from the end for the latest user/assistant text instead of assuming the final JSON entry is the latest user request. Used by workshop agents to avoid repeating failed approaches.
 - ` + "`builder/improve.md`" + ` — durable prose improvement log written by ` + "`/improve-*`" + ` commands. Read on every improvement turn; append-style narrative.
-- ` + "`builder/decisions.jsonl`" + ` — append-only **structured** audit log of every change to the workflow (sidecar to ` + "`improve.md`" + `, not a replacement). Each entry carries source (agent/user/system), trigger, applied_changes, target_metrics, evidence_paths, and optional linked review/improve ids. Generated automatically for metric changes through ` + "`propose_metric`" + ` / ` + "`retire_metric`" + `; agents append directly via ` + "`diff_patch_workspace_file`" + ` for harden/replan summaries, user-rule captures, and ` + "`/improve-eval`" + ` rubric-change markers.
+- ` + "`builder/decisions.jsonl`" + ` — append-only **structured** audit log of every change to the workflow (sidecar to ` + "`improve.md`" + `, not a replacement). Each entry carries source (agent/user/system), trigger, applied_changes, target_metrics, evidence_paths, and optional linked review/improve ids. Generated automatically for metric changes through ` + "`propose_metric`" + ` / ` + "`retire_metric`" + ` and user context captures through ` + "`capture_context`" + `; agents append directly via ` + "`diff_patch_workspace_file`" + ` for harden/replan summaries and ` + "`/improve-eval`" + ` rubric-change markers.
 - ` + "`planning/changelog/changelog-YYYY-MM-DD-HH-MM-SS.json`" + ` — per-session log of every plan-mod tool call (` + "`update_*_step`" + `, ` + "`add_*_step`" + `, ` + "`delete_plan_steps`" + `, ` + "`*_todo_task_route`" + `, ` + "`update_validation_schema`" + `, ` + "`update_step_config`" + `). Each entry carries timestamp, tool, the mandatory ` + "`reason`" + ` you supplied at invocation, affected step ids, per-field old/new values, and full JSON of added/deleted steps for revert. **Read this** before proposing plan edits to see what's already been tried this session and why; complements ` + "`builder/decisions.jsonl`" + ` (which is workflow-level, cross-session) with the per-session, per-mutation detail. Files rotate hourly. Read-only via shell — entries are written automatically by the plan-mod tools, never edit them by hand.
 
 **Auto-improvement framework files (opt-in per workflow):**
-- ` + "`planning/metrics.json`" + ` — quantified goal definitions. Each metric has id (kebab.dot), unit, direction (higher_better/lower_better), mode (target/slo with target/floor/ceiling), and a source (eval_step or telemetry). For anything else (external feeds, schema checks, lineage, delayed-outcome attribution), write a Python eval step that does the work and emits the value, then declare an eval_step-sourced metric pointing at that step. **Tool-only writes**: lives under ` + "`planning/`" + ` so the FolderGuard BlockedWritePaths makes shell writes impossible. Use ` + "`propose_metric`" + ` to add a metric and ` + "`retire_metric`" + ` to remove one — metrics are append-only by id, so to redefine a metric, retire the old one and create a new one with a different id.
+- ` + "`planning/metrics.json`" + ` — quantified goal definitions. Each metric has id (kebab.dot), unit, direction (higher_better/lower_better), mode (target/slo with target/floor/ceiling), a source (eval_step or telemetry), and ` + "`success_criteria`" + ` quoting or summarizing the soul.md success criterion it operationalizes. For anything else (external feeds, schema checks, lineage, delayed-outcome attribution), write a Python eval step that does the work and emits the value, then declare an eval_step-sourced metric pointing at that step. **Tool-only writes**: lives under ` + "`planning/`" + ` so the FolderGuard BlockedWritePaths makes shell writes impossible. Use ` + "`propose_metric`" + ` to add a metric and ` + "`retire_metric`" + ` to remove one — metrics are append-only by id, so to redefine a metric, retire the old one and create a new one with a different id.
 - ` + "`db/metrics_history.jsonl`" + ` — per-run metric snapshot rows, append-only. Auto-written at the tail of every successful eval. **This is also the diagnostic surface for metric design errors.** Each row carries ` + "`has_value`" + ` (bool) and ` + "`resolve_error`" + ` (string when resolution failed). Before hardening/replanning — and before assuming a metric is fine — read the most recent rows for each metric id and check ` + "`resolve_error`" + `. Common causes:
-  • ` + "`field=\"my_field\"`" + ` when the eval step doesn't emit structured ` + "`output_content`" + ` — the resolver expects ` + "`field=\"\"`" + ` (percent score), ` + "`field=\"score\"`" + ` (raw step.Score), or ` + "`field=\"max_score\"`" + ` (raw step.MaxScore) for flat reports. Anything else needs the eval to write structured JSON output containing that key.
+  • ` + "`field=\"my_field\"`" + ` when the eval step doesn't emit structured ` + "`output_content`" + ` — metrics should point at explicit numeric keys emitted by the eval step's structured JSON output. The old final-score fields are legacy-only and should not be used for new metrics.
   • ` + "`source.id`" + ` referencing an eval step that doesn't exist in ` + "`evaluation/evaluation_plan.json`" + `.
   • Source type ` + "`telemetry`" + ` with an unknown ` + "`field`" + ` (only the six wired fields are recognized — see ` + "`propose_metric`" + ` description).
   Fix path: retire the broken metric (` + "`retire_metric`" + ` with reason citing the resolve_error), then propose a corrected new metric with a different id. The trajectory chart will start a fresh line; old history rows stay as audit.
-- ` + "`knowledgebase/rules/rules.md`" + ` and ` + "`knowledgebase/rules/examples/`" + ` — Type 3 only. Accumulated business rules supplied by users — agents append rules directly here via ` + "`diff_patch_workspace_file`" + ` when the user states one in chat (see "Proactive business-context capture" below for the flow). **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — rules live as a sub-section of the knowledgebase. Audit trail for rule capture lives in ` + "`builder/decisions.jsonl`" + ` filtered to ` + "`source: user`" + ` + ` + "`trigger: rule-captured`" + `.
+- ` + "`knowledgebase/context/context.md`" + ` and ` + "`knowledgebase/context/examples/`" + ` — user-supplied runtime business context: rules, preferences, constraints, assumptions, examples. Agents append captured context through the ` + "`capture_context`" + ` tool when the user confirms capture (see "Proactive business-context capture" below for the flow). **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — context lives as a sub-section of the knowledgebase. Audit trail for context capture lives in ` + "`builder/decisions.jsonl`" + ` filtered to ` + "`source: user`" + ` + ` + "`trigger: capture-context`" + `.
 
 **Workflow profile and oversight:**
-- The workflow's **profile** (typology, plan stability, runtime mode, whether it accumulates business context) lives as prose in ` + "`builder/improve.md`" + ` under a "## Workflow Profile" section. Read it on every improvement turn and adjust behavior accordingly. Real workflows don't fit a single enum (e.g. Twitter is exploratory + dual-mode + contextual all at once); prose captures the nuance.
+- The workflow's **profile** lives as prose in ` + "`builder/improve.md`" + ` under a "## Workflow Profile" section. It declares a primary type, optional secondary traits, plan stability, runtime mode, business-context accumulation, and improvement cadence. Read it on every improvement turn and adjust behavior accordingly. Real workflows don't fit a single enum (e.g. Twitter can be open metric optimization + dual-mode + contextual all at once); primary/secondary prose captures the nuance.
 - ` + "`oversight_mode`" + ` (in ` + "`workflow.json`" + `) — ` + "`manual`" + ` (every change gated) | ` + "`supervised`" + ` (low-risk auto, high-risk gated) | ` + "`autonomous`" + ` (all auto). Default: ` + "`supervised`" + `. Hard gate: drives auto-vs-human-approval flow.
 - ` + "`decision_log_mutability`" + ` (in ` + "`workflow.json`" + `) — ` + "`append_only`" + ` | ` + "`append_only_strict`" + ` (no edits even for corrections; used by compliance workflows). Hard gate.
+- ` + "`run_retention_count`" + ` (in ` + "`workflow.json`" + `) — optional integer, 1-50. Number of backup run/eval iterations to keep, excluding active ` + "`iteration-0`" + `. Default: 5. Builder, harden, and optimizer agents may raise it when a workflow needs a wider evidence window.
 - For **dual-mode workflows** (declared as such in improve.md), the active mode lives in ` + "`planning/metrics.json`" + ` under ` + "`active_mode`" + ` so steps can branch on it via variables.
 
 ### Log Layout (inside ` + "`runs/iteration-{N}/{group-name}/logs/step-X/`" + `)
@@ -310,7 +311,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - **Variables + groups:** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/variables/variables.json\")`" + `
 - **Global workflow learnings:** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/learnings/_global/SKILL.md\")`" + `
 - **Saved step code (learn_code steps only):** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/learnings/<step-id>/main.py\")`" + `
-- **Latest run logs:** ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/runs/iteration-0/\")`" + ` (active run is always iteration-0; older runs backed up at iteration-1, iteration-2, ...)
+- **Run logs:** start with ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/runs/iteration-0/\")`" + ` for the latest active run, then inspect older retained ` + "`iteration-{N}`" + ` folders when improve.md / decisions timestamps / metric history indicate a relevant before-after window.
 - **Latest final reports:** ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/reports/\")`" + `
 - **Full config (when needed):** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/workflow.json\")`" + `
 
@@ -335,7 +336,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 ### What You Can Do
 - **Reuse global workflow learnings**: ` + "`learnings/_global/SKILL.md`" + ` contains accumulated domain knowledge for a workflow (how to log into a bank, parsing quirks, conventions). Read it and reuse the guidance in your own delegated tasks for related work.
 - **Reuse saved step scripts**: For ` + "`learn_code`" + ` steps, the canonical working script lives at ` + "`learnings/<step-id>/main.py`" + `. Read it to understand what a step does, or borrow patterns into your own scripts.
-- **Inspect recent runs**: ` + "`runs/iteration-0/`" + ` always holds the most recent execution. Read step execution results and logs to understand what happened.
+- **Inspect recent runs**: ` + "`runs/iteration-0/`" + ` always holds the most recent execution. Older ` + "`runs/iteration-{N}/`" + ` folders are retained history; use them for trends, regressions, and before/after comparisons against builder/improve.md and decisions.jsonl timestamps.
 - **Use memory**: save patterns and trends about what each employee's workflows produce over time.
 
 ## Auto-Improvement Framework — When to Use the Tools
@@ -348,7 +349,7 @@ In ` + "`optimizer`" + ` workshop mode, the auto-improvement framework reads met
 2. **Eval — how we know it worked.** Lives in ` + "`evaluation/evaluation_plan.json`" + ` and per-run reports. Eval tracks BOTH operational quality and goal achievement.
 3. **Metrics — numeric evidence for improvement.** Live in ` + "`planning/metrics.json`" + ` and ` + "`db/metrics_history.jsonl`" + `. Metrics show drift, target misses, resolve errors, and whether previous harden/replan actions moved the workflow toward success criteria.
 
-Said simply: **plan defines the work and goal; eval scores mechanics and goal achievement; metrics show where harden or replan is needed.**
+Said simply: **plan defines the work and goal; eval produces per-step evidence; metrics show where harden or replan is needed.**
 
 **Decision model:**
 - Use ` + "`harden_workflow(group_name?, focus?)`" + ` when the workflow path is basically right but prompts/config/validation/learnings/KB/db/report/eval/metric wiring need repair.
@@ -359,14 +360,14 @@ Said simply: **plan defines the work and goal; eval scores mechanics and goal ac
 
 Before recurring improvement can do useful work, the workflow should have its **Workflow Profile** written into ` + "`builder/improve.md`" + ` and (for workflows that target measurable outcomes) at least one metric defined. The dedicated entry point is ` + "`/improve-setup-framework`" + ` — a one-time setup command that:
 
-1. Classifies the workflow through conversation (plan stability, runtime mode, business-context accumulation) and writes a "## Workflow Profile" section into ` + "`builder/improve.md`" + `. Sets ` + "`oversight_mode`" + ` and ` + "`decision_log_mutability`" + ` in ` + "`workflow.json`" + ` (those two are hard gates and stay structured).
+1. Classifies the workflow through conversation as one primary type plus optional secondary traits, then maps that to plan stability, runtime mode, business-context accumulation, and improvement cadence. Writes a "## Workflow Profile" section into ` + "`builder/improve.md`" + `. Sets ` + "`oversight_mode`" + ` and ` + "`decision_log_mutability`" + ` in ` + "`workflow.json`" + ` (those two are hard gates and stay structured).
 2. Proposes profile-appropriate starter metrics and creates ` + "`metrics.json`" + ` via ` + "`propose_metric`" + `.
-3. For workflows that accumulate business context, scaffolds ` + "`knowledgebase/rules/rules.md`" + ` with metric-keyed sections.
+3. For workflows that accumulate business context, scaffolds ` + "`knowledgebase/context/context.md`" + ` with metric-keyed sections.
 
 When a user runs ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, or ` + "`/improve-continuously`" + ` on a workflow that has not been set up yet (no Workflow Profile in improve.md, or empty metrics.json on a workflow that should have metrics), **stop and redirect them to ` + "`/improve-setup-framework`" + ` first.** Do NOT bootstrap inline — setup is a meaningful conversation, and conflating it with improvement work bloats every improvement turn.
 
 ### Tool: ` + "`propose_metric`" + `
-Use when the workflow needs a metric that doesn't yet exist in ` + "`metrics.json`" + `, OR when an existing metric must be amended (definition or source change). On amend, the prior series is archived so the trajectory chart breaks cleanly.
+Use when the workflow needs a metric that doesn't yet exist in ` + "`metrics.json`" + `, OR when an existing metric must be amended (definition or source change). Include ` + "`success_criteria`" + ` so the metric is visibly anchored to the soul.md outcome it measures. On amend, the prior series is archived so the trajectory chart breaks cleanly.
 
 ### Tool: ` + "`get_workflow_command_guidance`" + `
 
@@ -432,12 +433,12 @@ Do not delete or rewrite the original finding. The marker preserves audit histor
 
 - Never fabricate baselines or measurement values. The system reads them from real run history.
 - Never claim a harden/replan action improved the workflow until real run/eval/metric evidence supports it.
-- Always declare ` + "`target_metrics`" + ` when capturing Type 3 context or making a metric-linked decision. The framework refuses Type 3 changes without them.
+- Always declare ` + "`target_metrics`" + ` when capturing business context or making a metric-linked decision. The framework refuses context-accumulation changes without them.
 - Acknowledge confounds: small N, source-data drift, rubric changes, and multiple decisions in the same measurement window.
 
-### Proactive business-context capture (Type 3 only)
+### Proactive business-context capture (context-accumulating workflows only)
 
-There is no slash command and no dedicated tool for rule capture. When the user shares a business rule, constraint, or persistent domain fact in conversation about a Type 3 workflow, **recognize it, confirm with the user, and persist it directly via the primitives you already have**: ` + "`diff_patch_workspace_file`" + ` for the rules file edit, plus an append to ` + "`builder/decisions.jsonl`" + `.
+There is no slash command for context capture because it should happen naturally during workflow setup, improvement, and normal run-mode conversation. When the user shares a business rule, constraint, or persistent domain fact in conversation about a workflow whose profile says ` + "`business_context_accumulating`" + ` as primary/secondary or ` + "`Business context: accumulating`" + `, **recognize it, confirm with the user, and persist it with ` + "`capture_context`" + `**. Do not manually patch ` + "`knowledgebase/context/context.md`" + ` or ` + "`builder/decisions.jsonl`" + ` unless the tool is unavailable.
 
 **Recognition signals (capture-worthy):**
 - Imperatives that should persist: *"always X"*, *"never X"*, *"don't ever X"*, *"avoid X"*.
@@ -453,18 +454,14 @@ There is no slash command and no dedicated tool for rule capture. When the user 
 **Capture flow:**
 1. **Recognize.** Briefly echo the rule back so the user confirms it's accurately captured. Do not write anything until the user confirms.
 2. **Anchor.** Read ` + "`planning/metrics.json`" + ` and ask the user which existing metric(s) the rule is meant to move. If ` + "`planning/metrics.json`" + ` is empty, redirect to ` + "`/improve-setup-framework`" + ` first.
-3. **Pick a section.** Read ` + "`knowledgebase/rules/rules.md`" + ` (creates the file if missing) and choose the right ` + "`## <Section>`" + ` heading or propose a new one.
-4. **Append the rule.** Use ` + "`diff_patch_workspace_file`" + ` to append the rule as a bullet under that section heading. If the section heading does not yet exist, also add it.
-5. **Append a decisions.jsonl entry.** Use ` + "`diff_patch_workspace_file`" + ` to append one JSON line (no trailing comma) to ` + "`builder/decisions.jsonl`" + `:
-   ` + "```json" + `
-   {"id":"<short-id>","ts":"<ISO-8601 UTC>","source":"user","trigger":"rule-captured","applied_changes":["knowledgebase/rules/rules.md"],"target_metrics":["<metric_id>",...],"rationale":"<one-line summary of the rule>"}
-   ` + "```" + `
-   ` + "`source: \"user\"`" + ` is load-bearing — the trajectory chart filters by source to distinguish user-authoritative changes from agent proposals. Generate ` + "`id`" + ` as a short random string (e.g. 8 hex chars). Use UTC ISO-8601 for ` + "`ts`" + `.
-6. **Confirm.** Tell the user the section + bullet that was added and the decisions.jsonl entry id.
+3. **Pick a section.** Read ` + "`knowledgebase/context/context.md`" + ` when useful and choose the right ` + "`## <Section>`" + ` heading or propose a new one.
+4. **Capture.** Call ` + "`capture_context`" + ` with ` + "`section`" + `, ` + "`context_text`" + `, and ` + "`target_metrics`" + `. The tool appends the context and writes the ` + "`builder/decisions.jsonl`" + ` audit entry with ` + "`source: \"user\"`" + ` and ` + "`trigger: \"capture-context\"`" + `. ` + "`source: \"user\"`" + ` is load-bearing — the trajectory chart filters by source to distinguish user-authoritative changes from agent proposals.
+5. **Wire affected steps.** If an existing step must apply this context at runtime, update that step through the plan modification tools: set ` + "`knowledgebase_access`" + ` to ` + "`read`" + ` or ` + "`read-write`" + ` and add one sentence to the step description naming the relevant ` + "`knowledgebase/context/context.md`" + ` section/path. Do not copy the whole context file into the description; make the dependency explicit so the step agent knows to read and apply it.
+6. **Confirm.** Tell the user the section + context that was added, which step descriptions/configs were wired, and the decisions.jsonl entry id returned by ` + "`capture_context`" + `.
 
-**On Type 1 / Type 2 workflows**: do NOT add rules to ` + "`knowledgebase/rules/`" + ` (it's Type-3-only). If the user shares what looks like a durable rule:
-- Type 1: the rule probably belongs in ` + "`soul.md`" + ` or as a hardened eval check; offer that path.
-- Type 2: tell the user that if rule accumulation is becoming the pattern, the Workflow Profile in ` + "`builder/improve.md`" + ` should be updated to declare the workflow as accumulating business context — then ` + "`/improve-setup-framework`" + ` will bootstrap metrics and the rules folder.
+**On workflows without business-context accumulation**: do NOT add context to ` + "`knowledgebase/context/`" + ` unless the workflow profile says it accumulates business context. If the user shares what looks like durable runtime context:
+- For deterministic/compliance-style workflows, the rule probably belongs in ` + "`soul.md`" + `, the eval plan, or a hardened validation check; offer that path.
+- For open optimization, monitoring, research, creative, or human-review workflows, tell the user that if durable context is becoming part of runtime behavior, the Workflow Profile in ` + "`builder/improve.md`" + ` should be updated to add ` + "`business_context_accumulating`" + ` as primary/secondary or set ` + "`Business context: accumulating`" + ` — then ` + "`/improve-setup-framework`" + ` will bootstrap metrics and the context folder.
 
 **Be conservative.** It's better to ask "should I capture that as a rule?" than to silently start writing to the user's context store. The user's context is their content; you write to it only with explicit OK.
 
@@ -551,6 +548,9 @@ Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1
 - ` + "`browser_mode`" + ` — ` + "`none`" + ` | ` + "`headless`" + ` | ` + "`cdp`" + ` | ` + "`playwright`" + `
 - ` + "`use_code_execution_mode`" + ` — ` + "`true`" + ` if steps should run scripted Python; ` + "`false`" + ` for direct tool calls
 - ` + "`llm_config`" + ` — set to ` + "`null`" + ` unless the user asked for a specific provider/model
+
+**Optional workflow-level fields**:
+- ` + "`run_retention_count`" + ` — number of backup run/eval iterations to keep, excluding active ` + "`iteration-0`" + `. Omit for the default 5; set 1-50 when the workflow needs a wider or narrower evidence window.
 
 **` + "`schedules`" + `** is an array; leave empty ` + "`[]`" + ` unless the user asked for cron scheduling. Each schedule (if any) needs: ` + "`id`" + `, ` + "`name`" + `, ` + "`cron_expression`" + `, ` + "`timezone`" + `, ` + "`enabled`" + ` (bool), ` + "`group_names`" + ` (array).
 
@@ -1018,7 +1018,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 
 	// 6. File locations guide (matching plan improvement agent's detail level)
 	parts = append(parts, fmt.Sprintf(`**File Locations:**
-- Workflow manifest: `+"`%s/workflow.json`"+` — workflow-level config (servers, tools, skills, LLM, schedules, assignment). Holds optional `+"`objective`"+`/`+"`success_criteria`"+` fallback values.
+- Workflow manifest: `+"`%s/workflow.json`"+` — workflow-level config (servers, tools, skills, LLM, schedules, assignment, optional `+"`run_retention_count`"+`). Holds optional `+"`objective`"+`/`+"`success_criteria`"+` fallback values.
 - Soul file: `+"`%s/soul/soul.md`"+` — canonical objective and success criteria
 - Plan file: `+"`%s/planning/plan.json`"+` — step definitions, dependencies, descriptions, and validation
 - Step config: `+"`%s/planning/step_config.json`"+` — per-step LLM, tools, and execution mode (`+"`agent_configs.use_code_execution_mode`"+` + `+"`agent_configs.declared_execution_mode`"+`: `+"`learn_code`"+` | `+"`code_exec`"+` | direct)
@@ -1026,13 +1026,13 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Global workflow learnings: `+"`%s/learnings/_global/SKILL.md`"+` (plus `+"`references/`"+` and `+"`scripts/`"+` siblings) — shared domain knowledge for the whole workflow
 - Per-step saved scripts: `+"`%s/learnings/{step_id}/main.py`"+` — persistent script for `+"`learn_code`"+` steps (source of truth, reused across runs)
 - Knowledgebase: `+"`%s/knowledgebase/`"+` — persistent files across runs
-- Runs: `+"`%s/runs/iteration-0/`"+` is the **active** run; older runs are backed up to `+"`iteration-1/`"+`, `+"`iteration-2/`"+`, ... (keep 10). Per-run layout: `+"`runs/iteration-{N}/{group}/execution/step-{N}/code/main.py`"+` for working main.py copies.
+- Runs: `+"`%s/runs/iteration-0/`"+` is the **active** run; older runs are backed up to monotonic `+"`iteration-{N}/`"+` folders. `+"`workflow.json::run_retention_count`"+` controls how many backups are kept; default 5. Per-run layout: `+"`runs/iteration-{N}/{group}/execution/step-{N}/code/main.py`"+` for working main.py copies.
 - Final reports: `+"`%s/reports/{group-name}/{timestamp}.md`"+` — per-group final output reports
 - Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`
 - Builder sessions: `+"`%s/builder/conversation/YYYY-MM-DD/session-{id}-conversation.json`"+` — workshop chat histories
 - Decisions log: `+"`%s/builder/decisions.jsonl`"+` — append-only structured audit log; sidecar to `+"`improve.md`"+`. Auto-improvement framework.
 - Metrics: `+"`%s/planning/metrics.json`"+` (optional) — quantified goal definitions; required for workflows with business-context accumulation. Tool-only writes (use propose_metric); shell writes blocked by FolderGuard.
-- Rules store: `+"`%s/knowledgebase/rules/rules.md`"+` and `+"`%s/knowledgebase/rules/examples/`"+` — Type 3 only. Accumulated user-supplied business rules; excluded from KB reorganize/consolidate passes. Audit trail folded into `+"`builder/decisions.jsonl`"+` (source=user + trigger=rule-captured).
+- Context store: `+"`%s/knowledgebase/context/context.md`"+` and `+"`%s/knowledgebase/context/examples/`"+` — accumulated user-supplied runtime business context; excluded from KB reorganize/consolidate passes. Audit trail folded into `+"`builder/decisions.jsonl`"+` (source=user + trigger=capture-context).
 `, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
 
 	// 7. Step folder naming conventions and log file guide

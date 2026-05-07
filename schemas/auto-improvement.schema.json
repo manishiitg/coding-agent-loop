@@ -82,8 +82,12 @@
           "type": "number",
           "description": "Required when mode=slo and direction=lower_better."
         },
-        "source": { "$ref": "#/$defs/MetricSource" },
-        "parent": {
+	        "source": { "$ref": "#/$defs/MetricSource" },
+	        "success_criteria": {
+	          "type": "string",
+	          "description": "The soul.md success criterion this metric operationalizes. Quote or summarize the exact criterion; UI warns when this is absent."
+	        },
+	        "parent": {
           "type": "string",
           "description": "Optional id of a parent metric for grouping in UI. NO weighted rollup."
         },
@@ -128,10 +132,16 @@
 
     "WorkflowExtensions": {
       "type": "object",
-      "description": "Additions to workflow.json that the auto-improvement framework reads. Only fields that drive HARD behavioral gates live here. Workflow profile (typology, plan stability, runtime mode, business-context accumulation) lives as prose in builder/improve.md under a '## Workflow Profile' section — the agent reads improve.md every turn anyway, and prose captures nuance enums can't.",
+      "description": "Additions to workflow.json that the auto-improvement framework and runtime read as structured config. Workflow profile (primary type, secondary traits, plan stability, runtime mode, business-context accumulation) lives as prose in builder/improve.md under a '## Workflow Profile' section — the agent reads improve.md every turn anyway, and prose captures nuance enums can't.",
       "properties": {
         "oversight_mode": { "$ref": "#/$defs/OversightMode" },
-        "decision_log_mutability": { "$ref": "#/$defs/DecisionLogMutability" }
+        "decision_log_mutability": { "$ref": "#/$defs/DecisionLogMutability" },
+        "run_retention_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Number of backup run iterations to keep in runs/ and evaluation/runs/, excluding iteration-0. Defaults to 5 when omitted."
+        }
       }
     },
 
@@ -169,7 +179,7 @@
         "target_metrics": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Metric ids this decision is meant to move. REQUIRED for Type 3 workflows."
+          "description": "Metric ids this decision is meant to move. Required for business-context capture and metric-linked improvement decisions."
         },
         "linked_review_finding": {
           "type": "array",
@@ -198,16 +208,16 @@
         "edited_by": { "type": "string" },
         "rule_added": {
           "type": "string",
-          "description": "Type-3 rule capture: the rule text appended to knowledgebase/rules/rules.md. Populated when source=user + trigger=capture-context."
+          "description": "Context capture: the user-supplied runtime context appended to knowledgebase/context/context.md. Populated when source=user + trigger=capture-context."
         },
         "rule_section": {
           "type": "string",
-          "description": "Type-3 rule capture: the markdown section heading the rule was added under."
+          "description": "Context capture: the markdown section heading the context was added under."
         },
         "example_paths": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Type-3 rule capture: workflow-relative paths under knowledgebase/rules/examples/ added with this rule."
+          "description": "Context capture: workflow-relative paths under knowledgebase/context/examples/ associated with this captured context."
         }
       }
     },
@@ -227,10 +237,14 @@
         "direction": { "$ref": "#/$defs/MetricDirection" },
         "mode": { "$ref": "#/$defs/MetricMode" },
         "target": { "type": "number" },
-        "floor": { "type": "number" },
-        "ceiling": { "type": "number" },
-        "source": { "$ref": "#/$defs/MetricSource" },
-        "parent": { "type": "string" },
+	        "floor": { "type": "number" },
+	        "ceiling": { "type": "number" },
+	        "source": { "$ref": "#/$defs/MetricSource" },
+	        "success_criteria": {
+	          "type": "string",
+	          "description": "The soul.md success criterion this metric operationalizes. Quote or summarize the exact criterion."
+	        },
+	        "parent": { "type": "string" },
         "amend_existing": {
           "type": "object",
           "required": ["id", "reason"],
@@ -238,6 +252,33 @@
             "id": { "type": "string" },
             "reason": { "type": "string" }
           }
+        }
+      }
+    },
+
+    "ToolInput_capture_context": {
+      "type": "object",
+      "description": "Input schema for the capture_context tool. Used after user confirmation to persist durable runtime business context.",
+      "additionalProperties": false,
+      "required": ["context_text", "target_metrics"],
+      "properties": {
+        "section": {
+          "type": "string",
+          "description": "Markdown section heading in knowledgebase/context/context.md. Defaults to General when empty."
+        },
+        "context_text": {
+          "type": "string",
+          "description": "The durable user-supplied context to capture."
+        },
+        "target_metrics": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Active metric ids this context is expected to affect."
+        },
+        "example_note": {
+          "type": "string",
+          "description": "Optional short note about the example or source context for this capture."
         }
       }
     }

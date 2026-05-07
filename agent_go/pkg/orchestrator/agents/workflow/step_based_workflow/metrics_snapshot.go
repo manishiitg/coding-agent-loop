@@ -12,9 +12,9 @@ import (
 // =====================================================================
 // metrics_snapshot.go — per-run metric snapshotting.
 //
-// Called inline from MaybeRunAutoEvaluation after eval scores are written.
+// Called inline after eval step outputs are written.
 // Reads planning/metrics.json (eval-step sourced metrics only), looks up
-// each metric's score in the just-written evaluation_report.json, and
+// each metric's value in the just-written evaluation_report.json, and
 // writes:
 //
 //   runs/<runFolder>/metrics_snapshot.json   — full per-run snapshot
@@ -100,7 +100,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) snapshotRunMetrics(ctx context.Contex
 		return
 	}
 
-	// 2. evaluation_report.json — the just-written scores for this run.
+	// 2. evaluation_report.json — the just-written eval step outputs for this run.
 	reportPath := path.Join("evaluation/runs", runFolder, "evaluation_report.json")
 	reportRaw, err := hcpo.ReadWorkspaceFile(ctx, reportPath)
 	if err != nil {
@@ -194,49 +194,66 @@ func (hcpo *StepBasedWorkflowOrchestrator) snapshotRunMetrics(ctx context.Contex
 //
 // Field interpretation:
 //
-//	field == ""        → return the step's percent score (Score/MaxScore*100).
-//	field == "score"   → return the step's raw score (Score).
-//	field == "max_score" → return the step's max score (MaxScore).
-//	any other value    → look up the key in OutputContent.Content (the eval
-//	                     step's structured JSON output, when present).
-//
-// Most evaluation pipelines today emit only flat reports (score, max_score,
-// reasoning, evidence), so structured-field lookups will commonly fail with
-// a clear resolve_error pointing the user at the gap.
+//	field != ""        → look up the key in OutputContent.Content (preferred).
+//	field == ""        → legacy: percent score for historical scored reports,
+//	                     or output_content score/max_score when present.
+//	field == "score" / "max_score" can still read historical top-level fields
+//	when output_content does not contain those keys.
 func resolveMetricValueFromStep(row *metricSnapshotRow, step *evalStepForSnapshot, field string) {
 	field = strings.TrimSpace(field)
-	switch field {
-	case "":
-		if step.MaxScore <= 0 {
-			row.Value = float64(step.Score)
-		} else {
-			row.Value = float64(step.Score) / float64(step.MaxScore) * 100.0
+	if field != "" {
+		if resolveStructuredMetricValue(row, step, field) || (field != "score" && field != "max_score") {
+			return
 		}
-		row.HasValue = true
-		return
-	case "score":
-		row.Value = float64(step.Score)
-		row.HasValue = true
-		return
-	case "max_score":
-		row.Value = float64(step.MaxScore)
-		row.HasValue = true
-		return
+		row.ResolveError = ""
 	}
 
+	switch field {
+	case "":
+		if resolvePercentFromStructuredStep(row, step) {
+			return
+		}
+		row.ResolveError = ""
+		if step.MaxScore > 0 {
+			row.Value = float64(step.Score) / float64(step.MaxScore) * 100.0
+			row.HasValue = true
+			return
+		}
+		row.ResolveError = fmt.Sprintf("eval step %q has no final score; set source.field to a numeric key emitted in output_content", step.StepID)
+		return
+	case "score":
+		if step.MaxScore > 0 || step.Score != 0 {
+			row.Value = float64(step.Score)
+			row.HasValue = true
+			return
+		}
+		row.ResolveError = fmt.Sprintf("eval step %q has no top-level score and output_content.score is missing", step.StepID)
+		return
+	case "max_score":
+		if step.MaxScore > 0 {
+			row.Value = float64(step.MaxScore)
+			row.HasValue = true
+			return
+		}
+		row.ResolveError = fmt.Sprintf("eval step %q has no top-level max_score and output_content.max_score is missing", step.StepID)
+		return
+	}
+}
+
+func resolveStructuredMetricValue(row *metricSnapshotRow, step *evalStepForSnapshot, field string) bool {
 	// Structured-output field lookup.
 	if step.OutputContent == nil {
-		row.ResolveError = fmt.Sprintf("eval step %q has no structured output (field=%q). Either drop `field` to read percent score, set field=\"score\" for raw score, or update the eval step to emit a structured JSON output containing %q.", step.StepID, field, field)
-		return
+		row.ResolveError = fmt.Sprintf("eval step %q has no structured output (field=%q). Update the eval step to emit a structured JSON output containing %q.", step.StepID, field, field)
+		return false
 	}
 	if !step.OutputContent.IsJSON || step.OutputContent.Content == nil {
 		row.ResolveError = fmt.Sprintf("eval step %q output is not JSON object (field=%q)", step.StepID, field)
-		return
+		return false
 	}
 	raw, present := step.OutputContent.Content[field]
 	if !present {
 		row.ResolveError = fmt.Sprintf("field %q not present in eval step %q output", field, step.StepID)
-		return
+		return false
 	}
 	switch v := raw.(type) {
 	case float64:
@@ -256,6 +273,22 @@ func resolveMetricValueFromStep(row *metricSnapshotRow, step *evalStepForSnapsho
 	default:
 		row.ResolveError = fmt.Sprintf("field %q is %T, not numeric", field, raw)
 	}
+	return row.HasValue || row.ResolveError != ""
+}
+
+func resolvePercentFromStructuredStep(row *metricSnapshotRow, step *evalStepForSnapshot) bool {
+	scoreRow := &metricSnapshotRow{}
+	if !resolveStructuredMetricValue(scoreRow, step, "score") || !scoreRow.HasValue {
+		return false
+	}
+	maxRow := &metricSnapshotRow{}
+	if resolveStructuredMetricValue(maxRow, step, "max_score") && maxRow.HasValue && maxRow.Value > 0 {
+		row.Value = scoreRow.Value / maxRow.Value * 100.0
+	} else {
+		row.Value = scoreRow.Value
+	}
+	row.HasValue = true
+	return true
 }
 
 // applyThreshold sets row.ThresholdKind / ThresholdValue / Passed based on

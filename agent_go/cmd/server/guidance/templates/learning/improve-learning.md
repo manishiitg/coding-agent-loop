@@ -5,7 +5,7 @@ BOUNDARIES
 1. The applied tool is `improve_learnings`; call it once with a concrete `instruction` string and optional `focus`.
 2. Work on `learnings/_global/` only. Do not edit `planning/`, `evaluation/`, `reports/`, `db/`, `knowledgebase/`, or per-step `learnings/{step-id}/main.py` from this command.
 3. If you discover stale per-step scripts, bad `learning_objective`, wrong `learnings_access`, or lock issues, record/recommend them; use `/review-config`, `/review-code`, `/review-sync`, or `harden_workflow` for those applied fixes.
-4. Keep WHAT-the-workflow-discovered out of learnings. Durable subject-matter facts belong in `knowledgebase/notes/` or `db/*.json`, not `learnings/_global/`.
+4. Keep WHAT-the-workflow-discovered out of learnings. User-supplied runtime context belongs in `knowledgebase/context/`; workflow-discovered subject-matter facts belong in `knowledgebase/notes/` or `db/*.json`, not `learnings/_global/`.
 
 READ FIRST
 

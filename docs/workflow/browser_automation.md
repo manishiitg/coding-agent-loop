@@ -112,9 +112,9 @@ When a workflow uses `agent_browser` in CDP mode, it is controlling the user's r
    ```python
    browser("tab", ["new", "--label", "upwork-profile", "https://www.upwork.com/"])
    ```
-4. Include the tab inline on every page action:
+4. Navigate with URL-only `open`, then include the tab inline on later page actions:
    ```python
-   browser("open", ["tab", "upwork-profile", "https://www.upwork.com/freelancers/example"])
+   browser("open", ["https://www.upwork.com/freelancers/example"])
    browser("snapshot", ["tab", "upwork-profile", "-i"])
    browser("click", ["tab", "upwork-profile", "@e1"])
    browser("fill", ["tab", "upwork-profile", "@e2", "search text"])

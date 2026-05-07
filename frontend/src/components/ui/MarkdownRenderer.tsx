@@ -17,6 +17,62 @@ interface MarkdownRendererProps {
   maxHeight?: string
   showScrollbar?: boolean
   disablePathLinking?: boolean
+  basePath?: string
+}
+
+const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/', '_users/']
+const workspaceStandardPrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/']
+const linkableWorkspaceFileExtensions = [
+  'md', 'markdown', 'txt', 'json', 'jsonl', 'csv', 'tsv', 'yaml', 'yml', 'xml',
+  'html', 'htm', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'png', 'jpg', 'jpeg',
+  'gif', 'webp', 'svg', 'bmp', 'ico', 'log', 'diff', 'patch'
+]
+
+const linkableWorkspaceFileExtensionPattern = linkableWorkspaceFileExtensions.join('|')
+
+const safeDecodeURIComponent = (value: string): string => {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+const stripLinkFragmentAndQuery = (href: string): string => href.split(/[?#]/, 1)[0]
+
+const hasWorkspacePrefix = (path: string): boolean => workspacePrefixes.some(prefix => path.startsWith(prefix))
+
+const hasExplicitUrlProtocol = (href: string): boolean => /^[a-z][a-z0-9+.-]*:/i.test(href)
+
+const isLikelyRelativeWorkspaceFile = (href: string): boolean => {
+  if (!href || href.startsWith('#') || href.startsWith('//') || hasExplicitUrlProtocol(href)) return false
+  const path = stripLinkFragmentAndQuery(href).replace(/^\/+/, '')
+  return new RegExp(`(?:^|/)\\.?[^/]+\\.(${linkableWorkspaceFileExtensionPattern})$`, 'i').test(path)
+}
+
+const normalizeWorkspacePathSegments = (path: string): string => {
+  const output: string[] = []
+  for (const segment of path.split('/')) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') {
+      output.pop()
+      continue
+    }
+    output.push(segment)
+  }
+  return output.join('/')
+}
+
+const getParentPath = (path: string): string => {
+  const normalized = path.replace(/\/+$/, '')
+  const slashIndex = normalized.lastIndexOf('/')
+  return slashIndex === -1 ? '' : normalized.slice(0, slashIndex)
+}
+
+const resolveRelativeWorkspacePath = (href: string, basePath: string): string => {
+  const cleanedHref = safeDecodeURIComponent(stripLinkFragmentAndQuery(href)).replace(/^\/+/, '')
+  const baseDir = getParentPath(basePath)
+  return normalizeWorkspacePathSegments(baseDir ? `${baseDir}/${cleanedHref}` : cleanedHref)
 }
 
 const ToolDefinition: React.FC<{ content: string }> = ({ content }) => {
@@ -141,7 +197,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   className = "",
   maxHeight = "none",
   showScrollbar = false,
-  disablePathLinking = false
+  disablePathLinking = false,
+  basePath
 }) => {
   const containerClasses = `prose prose-sm max-w-none dark:prose-invert ${className}`
   const scrollClasses = showScrollbar ? 'overflow-y-auto overflow-x-auto min-w-0' : ""
@@ -158,33 +215,106 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   const setBinaryFileData = useWorkspaceStore(state => state.setBinaryFileData)
   const setWorkspaceMinimized = useAppStore(state => state.setWorkspaceMinimized)
 
+  const getActiveWorkflowFolderPath = useCallback((): string | null => {
+    const modeCategory = useModeStore.getState().selectedModeCategory
+    if (modeCategory !== 'workflow') return null
+
+    const activePreset = useGlobalPresetStore.getState().getActivePreset('workflow')
+    const folderFilepath = activePreset?.selectedFolder?.filepath
+    if (!folderFilepath) return null
+
+    const parts = folderFilepath.split('/').filter(Boolean)
+    const lastPart = parts[parts.length - 1]
+    const isFile = lastPart?.includes('.')
+    return isFile && parts.length > 1 ? parts.slice(0, -1).join('/') : parts.join('/')
+  }, [])
+
+  const getWorkspaceDisplayPath = useCallback((filepath: string): string => {
+    const workflowFolderPath = getActiveWorkflowFolderPath()
+    if (!workflowFolderPath) return filepath
+
+    const normalizedFilepath = filepath.replace(/^\/+|\/+$/g, '')
+    const normalizedWorkflowFolderPath = workflowFolderPath.replace(/^\/+|\/+$/g, '')
+
+    if (normalizedFilepath === normalizedWorkflowFolderPath) {
+      const parts = normalizedWorkflowFolderPath.split('/').filter(Boolean)
+      return parts[parts.length - 1] || filepath
+    }
+
+    if (normalizedFilepath.startsWith(`${normalizedWorkflowFolderPath}/`)) {
+      return normalizedFilepath.slice(normalizedWorkflowFolderPath.length + 1)
+    }
+
+    return filepath
+  }, [getActiveWorkflowFolderPath])
+
+  const resolveWorkspaceHref = useCallback((href?: string | null): { filepath: string; displayPath: string } | null => {
+    if (!href) return null
+
+    const sameOriginUrl = (() => {
+      if (typeof window === 'undefined') return null
+      try {
+        const url = new URL(href, window.location.href)
+        return url.origin === window.location.origin ? url : null
+      } catch {
+        return null
+      }
+    })()
+
+    if (href.startsWith('#workspace/')) {
+      const filepath = safeDecodeURIComponent(href.replace('#workspace/', ''))
+      return { filepath, displayPath: getWorkspaceDisplayPath(filepath) }
+    }
+
+    if (sameOriginUrl?.hash.startsWith('#workspace/')) {
+      const filepath = safeDecodeURIComponent(sameOriginUrl.hash.replace('#workspace/', ''))
+      return { filepath, displayPath: getWorkspaceDisplayPath(filepath) }
+    }
+
+    const strippedHref = safeDecodeURIComponent(stripLinkFragmentAndQuery(href).trim()).replace(/^\/+/, '')
+    if (!strippedHref || strippedHref.startsWith('#') || strippedHref.startsWith('//') || hasExplicitUrlProtocol(strippedHref)) {
+      const sameOriginPath = sameOriginUrl
+        ? safeDecodeURIComponent(sameOriginUrl.pathname.replace(/^\/+/, ''))
+        : ''
+
+      if (!basePath || !sameOriginPath || !isLikelyRelativeWorkspaceFile(sameOriginPath)) {
+        return null
+      }
+
+      const filepath = resolveRelativeWorkspacePath(sameOriginPath, basePath)
+      return { filepath, displayPath: getWorkspaceDisplayPath(filepath) }
+    }
+
+    if (hasWorkspacePrefix(strippedHref)) {
+      return { filepath: strippedHref, displayPath: getWorkspaceDisplayPath(strippedHref) }
+    }
+
+    if (basePath && isLikelyRelativeWorkspaceFile(strippedHref)) {
+      const filepath = resolveRelativeWorkspacePath(strippedHref, basePath)
+      return { filepath, displayPath: getWorkspaceDisplayPath(filepath) }
+    }
+
+    return null
+  }, [basePath, getWorkspaceDisplayPath])
+
   // Standard file opening logic — mirrors Workspace.tsx handleFileClick
-  const handleWorkspaceLink = async (filepath: string) => {
+  const handleWorkspaceLink = useCallback(async (filepath: string, displayPathOverride?: string) => {
     try {
       // In workflow mode, paths like "knowledgebase/..." are adjusted (prefix stripped).
       // We need to prepend the workflow folder path for the API call.
-      const standardPrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/']
-      const isStandardPath = standardPrefixes.some(p => filepath.startsWith(p))
+      const isStandardPath = workspaceStandardPrefixes.some(p => filepath.startsWith(p))
       let resolvedPath = filepath
 
       if (!isStandardPath) {
-        const modeCategory = useModeStore.getState().selectedModeCategory
-        if (modeCategory === 'workflow') {
-          const activePreset = useGlobalPresetStore.getState().getActivePreset('workflow')
-          const folderFilepath = activePreset?.selectedFolder?.filepath
-          if (folderFilepath) {
-            const parts = folderFilepath.split('/').filter(Boolean)
-            const lastPart = parts[parts.length - 1]
-            const isFile = lastPart?.includes('.')
-            const workflowFolderPath = isFile && parts.length > 1 ? parts.slice(0, -1).join('/') : parts.join('/')
-            resolvedPath = `${workflowFolderPath}/${filepath}`
-          }
+        const workflowFolderPath = getActiveWorkflowFolderPath()
+        if (workflowFolderPath) {
+          resolvedPath = `${workflowFolderPath}/${filepath}`
         }
       }
 
       // displayPath is what the workspace tree uses (adjusted path without workflow prefix)
       // resolvedPath is the full path for API calls
-      const displayPath = filepath
+      const displayPath = displayPathOverride || getWorkspaceDisplayPath(resolvedPath)
 
       const fileName = resolvedPath.split('/').pop() || resolvedPath
       const ext = fileName.split('.').pop()?.toLowerCase() || ''
@@ -246,7 +376,34 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     } finally {
       setLoadingFileContent(false)
     }
-  }
+  }, [
+    expandFoldersForFile,
+    getActiveWorkflowFolderPath,
+    getWorkspaceDisplayPath,
+    highlightFile,
+    setBinaryFileData,
+    setFileContent,
+    setLoadingFileContent,
+    setSelectedFile,
+    setShowFileContent,
+    setWorkspaceMinimized,
+  ])
+
+  const handleMarkdownClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target
+    if (!(target instanceof Element)) return
+
+    const anchor = target.closest('a')
+    if (!anchor) return
+
+    const href = anchor.getAttribute('href') || anchor.href
+    const workspaceTarget = resolveWorkspaceHref(href)
+    if (!workspaceTarget) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    handleWorkspaceLink(workspaceTarget.filepath, workspaceTarget.displayPath)
+  }, [handleWorkspaceLink, resolveWorkspaceHref])
 
   const processedContent = React.useMemo(() => {
     if (!content) return ""
@@ -330,12 +487,83 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         return match
       }
     })
+
+    if (basePath) {
+      const relativeFileRegex = new RegExp(
+        `(\`?)\\b((?:\\.{1,2}/)?(?:[\\w.-]+/)*[\\w.-]+\\.(${linkableWorkspaceFileExtensionPattern}))\\1`,
+        'gi'
+      )
+
+      processed = processed.replace(relativeFileRegex, (match, backtick, path, _extension, ...args) => {
+        try {
+          let str = args[args.length - 1] as string
+          let offset = args[args.length - 2] as number
+
+          if (typeof str !== 'string') {
+            const foundStr = args.find(a => typeof a === 'string')
+            if (foundStr) str = foundStr
+          }
+          if (typeof offset !== 'number') {
+            const foundOffset = args.find(a => typeof a === 'number')
+            if (foundOffset !== undefined) offset = foundOffset
+          }
+          if (typeof str !== 'string' || typeof offset !== 'number') return match
+
+          const before = str.substring(Math.max(0, offset - 1), offset)
+          const after = str.substring(offset + match.length, offset + match.length + 1)
+          const linePrefix = str.substring(str.lastIndexOf('\n', offset - 1) + 1, offset)
+          const lastOpenParen = linePrefix.lastIndexOf('(')
+          const lastCloseParen = linePrefix.lastIndexOf(')')
+          const insideMarkdownLinkDestination =
+            lastOpenParen > lastCloseParen && linePrefix.slice(0, lastOpenParen).endsWith(']')
+
+          if (!backtick) {
+            const backticksBefore = (str.substring(0, offset).match(/`/g) || []).length
+            if (backticksBefore % 2 === 1) return match
+            if (
+              insideMarkdownLinkDestination ||
+              linePrefix.includes('#workspace/') ||
+              before === '[' ||
+              before === '(' ||
+              before === '/' ||
+              before === '#' ||
+              before === ':' ||
+              before === '@' ||
+              before === '%' ||
+              after === ']' ||
+              after === ')'
+            ) {
+              return match
+            }
+          }
+
+          if (hasWorkspacePrefix(path) || hasExplicitUrlProtocol(path)) return match
+
+          let cleanPath = path
+          let suffix = ''
+          const trimmed = cleanPath.replace(/[.,; ]+$/, '')
+          if (trimmed !== cleanPath) {
+            suffix = cleanPath.substring(trimmed.length)
+            cleanPath = trimmed
+          }
+
+          return `[${cleanPath}](#workspace/${encodeURIComponent(resolveRelativeWorkspacePath(cleanPath, basePath))})${suffix}`
+        } catch (err) {
+          console.error('[MarkdownWorkspace] Error in relative path replace:', err)
+          return match
+        }
+      })
+    }
     
     return processed
-  }, [content])
+  }, [basePath, content, disablePathLinking])
 
   return (
-    <div className={`${containerClasses} ${scrollClasses} markdown-content`} style={containerStyle}>
+    <div
+      className={`${containerClasses} ${scrollClasses} markdown-content`}
+      style={containerStyle}
+      onClickCapture={handleMarkdownClickCapture}
+    >
       <style dangerouslySetInnerHTML={{
         __html: `
           .markdown-content ul ul {
@@ -523,24 +751,20 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           strong: ({ children }) => <strong className="font-semibold break-words overflow-wrap-anywhere text-gray-900 dark:text-gray-100">{children}</strong>,
           em: ({ children }) => <em className="italic break-words overflow-wrap-anywhere">{children}</em>,
           a: ({ href, children }) => {
-            const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/', '_users/']
-            const isWorkspacePath = href && workspacePrefixes.some(p => href.startsWith(p))
-            const workspaceFilepath = href?.startsWith('#workspace/')
-              ? decodeURIComponent(href.replace('#workspace/', ''))
-              : isWorkspacePath ? href : null
+            const workspaceTarget = resolveWorkspaceHref(href)
 
-            if (workspaceFilepath) {
+            if (workspaceTarget) {
               return (
                 <a
                   href={href}
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
-                    handleWorkspaceLink(workspaceFilepath)
+                    handleWorkspaceLink(workspaceTarget.filepath, workspaceTarget.displayPath)
                   }}
                   style={{ pointerEvents: 'auto', cursor: 'pointer' }}
                   className="text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 underline cursor-pointer break-words overflow-wrap-anywhere font-medium transition-colors"
-                  title={`Open ${workspaceFilepath} in workspace`}
+                  title={`Open ${workspaceTarget.filepath} in workspace`}
                 >
                   {children}
                 </a>

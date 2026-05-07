@@ -94,6 +94,55 @@ func TestExtractInlineCDPTab(t *testing.T) {
 	}
 }
 
+func TestStripInlineTabFromOpenArgs(t *testing.T) {
+	tab, cleaned, ok, err := stripInlineTabFromOpenArgs([]string{"tab", "t1", "https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok || tab != "t1" || len(cleaned) != 1 || cleaned[0] != "https://example.com" {
+		t.Fatalf("stripInlineTabFromOpenArgs() = (%q, %v, %v), want t1 URL true", tab, cleaned, ok)
+	}
+
+	_, cleaned, ok, err = stripInlineTabFromOpenArgs([]string{"https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok || len(cleaned) != 1 || cleaned[0] != "https://example.com" {
+		t.Fatalf("expected URL-only open args to stay unchanged, got cleaned=%v ok=%v", cleaned, ok)
+	}
+
+	if _, _, _, err := stripInlineTabFromOpenArgs([]string{"tab", "t1"}); err == nil {
+		t.Fatalf("expected malformed tab-prefixed open args to fail")
+	}
+}
+
+func TestExtractCDPArg(t *testing.T) {
+	info, cleaned, err := extractCDPArg([]string{"--cdp", "http://localhost:9222", "tab", "t1", "-i"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !info.found || info.url != "http://localhost:9222" || info.port != 9222 {
+		t.Fatalf("cdp info = %+v, want found localhost:9222 port 9222", info)
+	}
+	want := []string{"tab", "t1", "-i"}
+	if len(cleaned) != len(want) {
+		t.Fatalf("cleaned len = %d, want %d (%v)", len(cleaned), len(want), cleaned)
+	}
+	for i := range want {
+		if cleaned[i] != want[i] {
+			t.Fatalf("cleaned[%d] = %q, want %q", i, cleaned[i], want[i])
+		}
+	}
+
+	info, cleaned, err = extractCDPArg([]string{"https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info.found || len(cleaned) != 1 || cleaned[0] != "https://example.com" {
+		t.Fatalf("expected no cdp arg and unchanged args, got info=%+v cleaned=%v", info, cleaned)
+	}
+}
+
 func TestCDPOwnerIDUsesStableBrowserSessionOverride(t *testing.T) {
 	agentSession := "agent-session-for-cdp-owner-test"
 	workflowSession := "workflow-session-for-cdp-owner-test"

@@ -28,8 +28,8 @@ type StepOutputContent struct {
 
 type EvaluationStepScore struct {
 	StepID        string             `json:"step_id"`
-	Score         int                `json:"score"`
-	MaxScore      int                `json:"max_score"`
+	Score         int                `json:"score,omitempty"`
+	MaxScore      int                `json:"max_score,omitempty"`
 	Reasoning     string             `json:"reasoning"`
 	Evidence      string             `json:"evidence"`
 	ContextOutput string             `json:"context_output,omitempty"`
@@ -39,9 +39,9 @@ type EvaluationStepScore struct {
 type EvaluationReport struct {
 	TargetRunFolder  string                `json:"target_run_folder"`
 	GeneratedAt      string                `json:"generated_at"`
-	TotalScore       int                   `json:"total_score"`
-	MaxPossibleScore int                   `json:"max_possible_score"`
-	ScorePercentage  float64               `json:"score_percentage"`
+	TotalScore       int                   `json:"total_score,omitempty"`
+	MaxPossibleScore int                   `json:"max_possible_score,omitempty"`
+	ScorePercentage  float64               `json:"score_percentage,omitempty"`
 	StepScores       []EvaluationStepScore `json:"step_scores"`
 }
 
@@ -51,12 +51,7 @@ type EvaluationReportEntry struct {
 }
 
 type EvaluationAggregate struct {
-	TotalRuns         int     `json:"total_runs"`
-	AverageScore      float64 `json:"average_score"`
-	AveragePercentage float64 `json:"average_percentage"`
-	HighestScore      int     `json:"highest_score"`
-	LowestScore       int     `json:"lowest_score"`
-	MaxPossibleScore  int     `json:"max_possible_score"`
+	TotalRuns int `json:"total_runs"`
 }
 
 type workflowEvaluationReportsResponse struct {
@@ -172,34 +167,8 @@ func buildEvaluationAggregate(reports []EvaluationReportEntry) *EvaluationAggreg
 		return nil
 	}
 
-	totalScore := 0
-	totalPercentage := 0.0
-	highestScore := 0
-	lowestScore := reports[0].Report.TotalScore
-	maxPossible := 0
-
-	for _, entry := range reports {
-		totalScore += entry.Report.TotalScore
-		totalPercentage += entry.Report.ScorePercentage
-
-		if entry.Report.TotalScore > highestScore {
-			highestScore = entry.Report.TotalScore
-		}
-		if entry.Report.TotalScore < lowestScore {
-			lowestScore = entry.Report.TotalScore
-		}
-		if entry.Report.MaxPossibleScore > maxPossible {
-			maxPossible = entry.Report.MaxPossibleScore
-		}
-	}
-
 	return &EvaluationAggregate{
-		TotalRuns:         len(reports),
-		AverageScore:      float64(totalScore) / float64(len(reports)),
-		AveragePercentage: totalPercentage / float64(len(reports)),
-		HighestScore:      highestScore,
-		LowestScore:       lowestScore,
-		MaxPossibleScore:  maxPossible,
+		TotalRuns: len(reports),
 	}
 }
 

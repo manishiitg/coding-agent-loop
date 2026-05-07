@@ -20,14 +20,29 @@ After Discovery, decide which mode this command runs in:
 - **PARTIAL** — one is present, the other isn't. Run STEP 5 first to surface what's there, then walk the user through completing the missing piece (Profile if absent → STEP 2; metrics if absent → STEP 4).
 
 STEP 1 — Classify the workflow profile
-Walk the user through the four axes. Real workflows mix them; do not force a single enum.
+Walk the user through a **primary type** plus optional **secondary traits**, then map that to the internal axes. Real workflows mix types; do not force a single enum.
+
+Ask the user to confirm:
+
+- **Primary type** — the main improvement strategy:
+  - `deterministic_harden_first`: known plan/output; improve reliability, validation, and locking.
+  - `open_metric_optimization`: goal known but best plan unknown; improve by experiments, outcome metrics, and replanning.
+  - `business_context_accumulating`: workflow improves by remembering user rules, preferences, examples, account/domain context.
+  - `compliance_audit`: correctness, evidence, traceability, and conservative change control matter most.
+  - `human_review_production`: workflow prepares drafts/options for human approval; improve approval rate and reduce edit burden.
+  - `monitoring_alerting`: workflow watches events/thresholds and escalates; improve false positives/negatives and alert latency.
+  - `research_synthesis`: workflow gathers uncertain external info and produces grounded judgment; improve source quality and unsupported-claim checks.
+  - `creative_generative`: subjective output quality and preference fit matter most; improve via feedback and examples.
+- **Secondary traits** — any additional types that materially constrain improvement. Usually 0–3.
+
+Then map the confirmed type/traits onto the internal axes:
 
 - **Plan stability** — `mutable` (plan changes freely), `ratchet` (additions only — compliance, security), `frozen` (no plan-shape change without explicit user OK).
 - **Runtime mode** — `single` (one plan, runs as-is) vs `dual` (alternates explore / exploit; e.g. social-media trying new tactics weekly then exploiting the winner).
-- **Business context accumulation** — does the workflow accumulate user-supplied business rules (audit clauses, ICP filters, risk constraints)? `yes` for Type-3-style workflows; `no` for QA suites and pure exploratory creative.
-- **Improvement cadence** — how often is this workflow expected to improve? Daily / weekly / per-incident / quarterly / never (frozen).
+- **Business context accumulation** — `accumulating` when the workflow should persist user-supplied rules/preferences/examples/context; otherwise `none`.
+- **Improvement cadence** — how often this workflow is expected to improve: daily / weekly / per-incident / quarterly / never (frozen).
 
-Show your inference + reasoning + the alternative answers you considered for each axis. Ask the user to confirm.
+Show your inference + reasoning + the alternative answers you considered for primary type, secondary traits, and each axis. Ask the user to confirm.
 
 STEP 2 — Write the Workflow Profile to builder/improve.md
 Append (or replace, if a section already exists) the following section in builder/improve.md. Use `diff_patch_workspace_file` — do NOT `mkdir` via shell. Use workflow-relative paths.
@@ -35,12 +50,16 @@ Append (or replace, if a section already exists) the following section in builde
 ```markdown
 ## Workflow Profile (auto-improvement framework)
 
+- **Primary type**: <chosen> — <one-line rationale>
+- **Secondary traits**: <comma-separated list or "none"> — <one-line rationale>
 - **Plan stability**: <chosen> — <one-line rationale>
 - **Runtime mode**: <single | dual> — <one-line rationale; if dual, name the modes: e.g., "explore (weekly reset) / exploit (daily default)">
 - **Business context**: <accumulating | none> — <one-line rationale>
 - **Improvement cadence**: <chosen> — <one-line rationale>
 
 Behavioral implications the agent should respect on every turn:
+- <primary-type implication, e.g. "Default to harden_workflow unless evidence shows plan structure is wrong." or "Metrics drive strategy changes; use replan_workflow_from_results when outcome trends show strategy weakness.">
+- <secondary-trait implication, e.g. "Because this is also human-review production, track approval/edit burden and preserve provenance.">
 - <plan-stability implication, e.g. "Do not call replan_workflow_from_results or delete_plan_steps without explicit user approval.">
 - <runtime-mode implication, e.g. "When dual: branch step behavior on the workflow's chosen runtime signal.">
 - <business-context implication, e.g. "Recognize user-supplied rules in conversation and offer capture_context.">
@@ -55,12 +74,18 @@ These are the only structured framework fields; they drive real behavior.
 STEP 4 — Bootstrap metrics.json
 Behavior depends on the profile from Step 1:
 
-- Plan stability `mutable` + business context `none`: tell the user outcome metrics can be deferred. Track per-eval-step trajectories instead. Still propose `cost_per_run` and `run_duration_seconds` as telemetry SLOs — they're free signal and catch regressions while exploring.
-- Plan stability `ratchet`/`frozen` + business context `none` (e.g. QA suite, ETL): propose 3–5 SLO-mode metrics — success-rate (floor), `cost_per_run` (ceiling), `run_duration_seconds` (ceiling), data freshness. Source: `telemetry` for cost/duration, `eval_step` for the rest.
-- Business context `accumulating`: REQUIRED. Propose 3–5 outcome + rule-conformance metrics derived from success_criteria. Mix outcome metrics (mode=`target`, drive toward a value) with SLO metrics (mode=`slo`, stay above floor / below ceiling) — outcome metrics drive progress, SLOs enforce constraints. Always include `cost_per_run` and `run_duration_seconds` as telemetry SLOs.
+- Primary `deterministic_harden_first` or plan stability `ratchet`/`frozen` + business context `none`: propose 3–5 SLO-mode metrics — success-rate (floor), schema/file validity, data freshness, `cost_per_run` (ceiling), `run_duration_seconds` (ceiling). Source: `telemetry` for cost/duration, `eval_step` for the rest.
+- Primary `open_metric_optimization`: propose 3–5 outcome metrics derived from success_criteria plus 1–2 operational SLOs. Outcome metrics should be target-mode where the workflow is trying to move a number; they drive experiments and replans.
+- Primary `business_context_accumulating` or business context `accumulating`: REQUIRED. Propose 3–5 outcome + rule-conformance metrics derived from success_criteria. Mix outcome metrics (mode=`target`, drive toward a value) with SLO metrics (mode=`slo`, stay above floor / below ceiling) — outcome metrics drive progress, SLOs enforce constraints.
+- Primary `compliance_audit`: propose evidence-completeness, false-negative, traceability, and policy-coverage SLOs. Prefer strict decision log mutability and supervised/manual oversight.
+- Primary `human_review_production`: propose approval-rate, revision-count/edit-burden, provenance completeness, and draft-quality metrics.
+- Primary `monitoring_alerting`: propose false-positive, false-negative/missed-alert, alert-latency, and escalation-quality metrics.
+- Primary `research_synthesis`: propose citation/source freshness, source diversity, unsupported-claim count, and synthesis-usefulness metrics.
+- Primary `creative_generative`: propose human rating, style adherence, preference-match, and variant-performance metrics; keep thresholds softer unless the user has explicit quality bars.
+- Always include `cost_per_run` and `run_duration_seconds` as telemetry SLOs when the telemetry source is supported for this workflow surface; if telemetry metrics cannot resolve yet, surface that as a framework gap rather than creating noisy broken metrics.
 
-For each proposed metric, supply id + unit + direction + mode + threshold + source. Use `propose_metric` to write each one — never shell-write `planning/metrics.json` (it's folder-guarded). Common gotchas to avoid:
-- For `source.type=eval_step`, use `field=""` for the percent score, `field="score"` / `field="max_score"` for the raw values, or a structured-output key only if the eval Python emits a JSON object containing that key.
+For each proposed metric, supply id + unit + direction + mode + threshold + source + `success_criteria` (quote or summarize the soul.md success criterion it measures). Use `propose_metric` to write each one — never shell-write `planning/metrics.json` (it's folder-guarded). Common gotchas to avoid:
+- For `source.type=eval_step`, prefer explicit structured-output keys emitted by the eval step's JSON output. Legacy final-score fields are not produced by new eval runs.
 - Telemetry source: only six wired fields exist (`run.total_cost_usd`, `run.duration_seconds`, `eval.total_cost_usd`, `eval.duration_seconds`, `total.cost_usd`, `total.duration_seconds`). Other names silently return no value.
 
 STEP 5 — REVIEW PATH (when framework is already set up)
@@ -68,7 +93,7 @@ You're auditing existing setup, not bootstrapping. Walk through these checks and
 
 5.1 — **Workflow Profile sanity**
 - Is the existing "## Workflow Profile" still accurate given the current plan? If the workflow has evolved (steps added/removed, mode changed) but the profile section is stale, propose updating it.
-- Are the four axes filled in with rationale, or are some empty / placeholder?
+- Are primary type, secondary traits, and the four axes filled in with rationale, or are some empty / placeholder?
 - Are the behavioral implications still relevant?
 
 5.2 — **Hard-gate fields**
@@ -77,17 +102,18 @@ You're auditing existing setup, not bootstrapping. Walk through these checks and
 5.3 — **Metric definitions**
 - Read every entry in `planning/metrics.json::metrics[]`.
 - For each metric, validate: id is unique kebab.dot, unit is sensible, direction matches (e.g. `cost_per_run` should be `lower_better`), mode + threshold is consistent (target requires `target`, slo+higher_better requires `floor`, slo+lower_better requires `ceiling`).
+- For each metric, verify `success_criteria` is present and clearly links to a `soul.md` success criterion. Missing linkage is a framework issue: the UI will warn because the metric is not anchored to a user outcome.
 - Does the source point at something real? `eval_step` source must reference an existing eval step id; `telemetry` source must use one of the six wired fields.
 - Are there obvious gaps — success criteria from soul.md that no metric measures? Surface as coverage suggestions (don't auto-add).
 
 5.4 — **Metric health (resolve errors)** — most important pass
 Read the most recent rows of `db/metrics_history.jsonl` for each metric id. For each row with `has_value: false` and a `resolve_error`, categorize:
 
-- "no structured output (field=X)" — the metric specifies `field=X` but the eval step emits flat output only. Two fix paths:
+- "no structured output (field=X)" — the metric specifies `field=X` but the eval step does not emit that key in structured output. Two fix paths:
   (a) Update the eval step's Python to emit a structured JSON containing `X` (preferred — measures the named outcome explicitly). This is an eval-side change; recommend running `/improve-eval` with focus on that step.
-  (b) Retire the metric and propose a replacement using `field=""` (percent score) or `field="score"` (raw 0-10).
+  (b) Retire the metric if it no longer represents a real outcome.
 - "eval step <id> not found" — id mismatch. Either restore the eval step or retire the metric and propose a new one with the correct id.
-- Consistent NO VALUE without resolve_error — the eval step didn't run or produced no score. Operational coverage gap; flag for `/improve-eval`.
+- Consistent NO VALUE without resolve_error — the eval step didn't run or produced no metric-ready value. Operational coverage gap; flag for `/improve-eval`.
 
 For each broken metric, name the metric, the resolve_error, and the recommended fix. Apply only after user confirms.
 

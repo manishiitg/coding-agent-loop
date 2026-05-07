@@ -61,11 +61,11 @@ const (
 
 // DecisionEntry is one line of builder/decisions.jsonl. Append-only.
 //
-// Type-3 rule captures (formerly stored in context/clarifications.jsonl) now
-// land here too with `Source: user` + `Trigger: rule-captured` + the
-// rule-specific fields below (RuleAdded, RuleSection, ExamplePaths). One
+// User context captures (formerly stored in context/clarifications.jsonl) now
+// land here too with `Source: user` + `Trigger: capture-context` + the
+// context-specific fields below (RuleAdded, RuleSection, ExamplePaths). One
 // audit log, one place to read. Agents append these directly via
-// diff_patch_workspace_file when the user states a rule in chat.
+// capture_context when the user confirms durable context in chat.
 type DecisionEntry struct {
 	Ts                  string         `json:"ts"`
 	ID                  string         `json:"id"`
@@ -81,7 +81,7 @@ type DecisionEntry struct {
 	Supersedes          string         `json:"supersedes,omitempty"`
 	EditedAt            string         `json:"edited_at,omitempty"`
 	EditedBy            string         `json:"edited_by,omitempty"`
-	// Rule-capture fields. Populated when Source=user + Trigger=rule-captured.
+	// Context-capture fields. Populated when Source=user + Trigger=capture-context.
 	RuleAdded    string   `json:"rule_added,omitempty"`
 	RuleSection  string   `json:"rule_section,omitempty"`
 	ExamplePaths []string `json:"example_paths,omitempty"`
@@ -133,6 +133,9 @@ type Metric struct {
 	Floor     *float64        `json:"floor,omitempty"`
 	Ceiling   *float64        `json:"ceiling,omitempty"`
 	Source    MetricSource    `json:"source"`
+	// SuccessCriteria is the soul.md success-criteria text this metric operationalizes.
+	// Optional for backward compatibility; UI surfaces a warning when it is missing.
+	SuccessCriteria string `json:"success_criteria,omitempty"`
 }
 
 // MetricsFile is the shape of <workflow>/planning/metrics.json.

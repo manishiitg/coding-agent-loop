@@ -27,12 +27,21 @@ import (
 // This folder is never deleted during cleanup operations and is shared across all runs
 const KnowledgebaseFolderName = "knowledgebase"
 
+// KnowledgebaseContextFolderName stores user-supplied runtime business context.
+// It is read by steps when knowledgebase_access grants read, but excluded from
+// automatic KB note reorganization/consolidation because the content is user-owned.
+const KnowledgebaseContextFolderName = "context"
+
 // DBFolderName is the name of the persistent structured-data folder at workspace root.
 // Always created on workspace init (no preset toggle, unlike knowledgebase). All regular steps
 // get read+write by default. Evaluation steps get read always, write only if DBWrite: true
 // on the step. Files are JSON by convention; steps should upsert by builder-defined key rather
 // than overwrite wholesale. See docs/workflow/persistent_stores_design.md section 1.
 const DBFolderName = "db"
+
+// DBAssetsFolderName stores durable binary/media assets referenced by db rows,
+// reports, or later steps. Keep metadata in db/*.json and the actual files here.
+const DBAssetsFolderName = "assets"
 
 // getKnowledgebasePath returns the full path to the knowledgebase folder
 // Path format: {workspaceRoot}/knowledgebase/

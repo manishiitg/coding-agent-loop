@@ -1794,6 +1794,7 @@ function App() {
                                   content={fileContent} 
                                   className="max-w-none"
                                   showScrollbar={true}
+                                  basePath={selectedFile?.path}
                                 />
                               </div>
                             </div>

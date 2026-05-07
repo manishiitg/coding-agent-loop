@@ -159,6 +159,19 @@ func extractInlineCDPTab(args []string) (tab string, cleaned []string, err error
 	return tab, cleaned, nil
 }
 
+func stripInlineTabFromOpenArgs(args []string) (tab string, cleaned []string, ok bool, err error) {
+	if len(args) == 0 {
+		return "", args, false, nil
+	}
+	if args[0] != "tab" && args[0] != "--tab" {
+		return "", args, false, nil
+	}
+	if len(args) < 3 || strings.TrimSpace(args[1]) == "" {
+		return "", nil, false, fmt.Errorf("open command uses %s but is missing <tab-id-or-label> and URL", args[0])
+	}
+	return strings.TrimSpace(args[1]), append([]string(nil), args[2:]...), true, nil
+}
+
 func stringArgs(raw interface{}) []string {
 	switch v := raw.(type) {
 	case []interface{}:

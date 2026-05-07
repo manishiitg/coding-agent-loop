@@ -53,6 +53,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [selectedGlobalSecrets, setSelectedGlobalSecrets] = useState<string[] | null>(null);
   const [internalAgentMode, setInternalAgentMode] = useState<'simple' | 'workflow'>('simple');
   const [selectedFolder, setSelectedFolder] = useState<PlannerFile | null>(null);
+  const [workflowFolderEdited, setWorkflowFolderEdited] = useState(false);
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
@@ -122,6 +123,21 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     if (propAgentMode) return propAgentMode as 'simple' | 'workflow';
     return internalAgentMode;
   }, [fixedAgentMode, propAgentMode, internalAgentMode]);
+
+  const sanitizeWorkflowFolderName = useCallback((value: string): string => {
+    const sanitized = value
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+
+    return sanitized || 'workflow'
+  }, []);
+
+  const makeWorkflowFolder = useCallback((folderName: string): PlannerFile => ({
+    filepath: `Workflow/${folderName}`,
+    type: 'folder'
+  }), []);
 
   // CDP connection check
   const checkCdpConnection = useCallback(async (port: number) => {
@@ -229,6 +245,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setSelectedGlobalSecrets(editingPreset.selectedGlobalSecretNames ?? null);
       setInternalAgentMode(editingPreset.agentMode || 'workflow'); // Default to workflow
       setSelectedFolder(editingPreset.selectedFolder || null);
+      setWorkflowFolderEdited(true);
       const presetLLM: PresetLLMConfig = editingPreset.llmConfig || {
         provider: primaryConfig.provider as PresetLLMConfig['provider'],
         model_id: primaryConfig.model_id
@@ -271,7 +288,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       // Default to workflow mode as chat presets are disabled
       const defaultMode = 'workflow';
       setInternalAgentMode(defaultMode);
-      setSelectedFolder(null);
+      setSelectedFolder(makeWorkflowFolder(sanitizeWorkflowFolderName('')));
+      setWorkflowFolderEdited(false);
       // Initialize LLM config from current primary config
       const defaultLLM: PresetLLMConfig = {
         provider: primaryConfig.provider as PresetLLMConfig['provider'],
@@ -291,7 +309,15 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setTier2Fallbacks([]);
       setTier3Fallbacks([]);
     }
-  }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory]);
+  }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory, makeWorkflowFolder, sanitizeWorkflowFolderName]);
+
+  useEffect(() => {
+    if (editingPreset || effectiveAgentMode !== 'workflow' || workflowFolderEdited) {
+      return;
+    }
+
+    setSelectedFolder(makeWorkflowFolder(sanitizeWorkflowFolderName(label)));
+  }, [editingPreset, effectiveAgentMode, label, makeWorkflowFolder, sanitizeWorkflowFolderName, workflowFolderEdited]);
 
   const handleSelectFolders = useCallback((e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -315,12 +341,20 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
 
   const handleFolderSelect = useCallback((folder: PlannerFile) => {
     setSelectedFolder(folder);
+    setWorkflowFolderEdited(true);
     setShowFolderDialog(false);
   }, []);
 
   const handleRemoveFolder = useCallback(() => {
     setSelectedFolder(null);
+    setWorkflowFolderEdited(true);
   }, []);
+
+  const handleWorkflowFolderNameChange = useCallback((value: string) => {
+    setWorkflowFolderEdited(true);
+    const folderName = sanitizeWorkflowFolderName(value);
+    setSelectedFolder(makeWorkflowFolder(folderName));
+  }, [makeWorkflowFolder, sanitizeWorkflowFolderName]);
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
@@ -643,34 +677,51 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     Workflow Folder <span className="text-red-500">*</span>
                   </label>
                   <div className="space-y-2">
-                    {selectedFolder && (
-                      <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-md">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <Folder className="w-5 h-5 text-blue-600" />
-                          <span className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{selectedFolder.filepath}</span>
-                        </div>
+                    <div className="flex overflow-hidden rounded-md border border-gray-300 bg-white focus-within:ring-2 focus-within:ring-blue-500 dark:border-gray-600 dark:bg-gray-700">
+                      <div className="flex flex-shrink-0 items-center gap-2 border-r border-gray-200 bg-gray-50 px-3 text-sm text-gray-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400">
+                        <Folder className="h-4 w-4" />
+                        Workflow/
+                      </div>
+                      <input
+                        type="text"
+                        value={(selectedFolder?.filepath || 'Workflow/').replace(/^Workflow\//i, '')}
+                        onChange={(e) => handleWorkflowFolderNameChange(e.target.value)}
+                        disabled={!!editingPreset}
+                        className="min-w-0 flex-1 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:text-gray-100"
+                        aria-label="Workflow folder name"
+                        required
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-400">
+                      <span className="min-w-0 truncate">
+                        {editingPreset
+                          ? 'Folder path cannot be changed while editing.'
+                          : `Default folder: ${selectedFolder?.filepath || 'Workflow/workflow'}`}
+                      </span>
+                      {!editingPreset && (
                         <button
                           type="button"
-                          onClick={handleRemoveFolder}
-                          className="p-1 text-gray-500 hover:text-red-600 transition-colors"
+                          data-folder-button
+                          onClick={handleSelectFolders}
+                          className="flex-shrink-0 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                         >
-                          <X className="w-4 h-4" />
+                          Choose existing
+                        </button>
+                      )}
+                    </div>
+                    {!editingPreset && selectedFolder && workflowFolderEdited && (
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setWorkflowFolderEdited(false);
+                            setSelectedFolder(makeWorkflowFolder(sanitizeWorkflowFolderName(label)));
+                          }}
+                          className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        >
+                          Reset to workflow name
                         </button>
                       </div>
-                    )}
-                    {!selectedFolder && (
-                      <button
-                        type="button"
-                        data-folder-button
-                        onClick={handleSelectFolders}
-                        className="w-full p-4 border-2 border-dashed border-red-300 dark:border-red-600 text-red-500 dark:text-red-400 hover:border-red-500 rounded-md transition-colors"
-                      >
-                        <div className="flex items-center justify-center gap-2">
-                          <Folder className="w-5 h-5" />
-                          <span className="font-medium">Select Workflow Folder</span>
-                        </div>
-                        <p className="text-xs mt-1 text-red-400">Required for workflows</p>
-                      </button>
                     )}
                   </div>
                 </div>

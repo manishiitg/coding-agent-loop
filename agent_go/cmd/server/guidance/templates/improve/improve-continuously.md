@@ -13,7 +13,7 @@ DISCOVERY
 5. Read builder/improve.md in full. This is mandatory: it contains the Workflow Profile, prior actions, deferred ideas, and prior scheduled-improvement history.
 6. Read builder/review.md if present. Carry unresolved `F-...` findings into the scheduled optimizer message.
 7. Read planning/metrics.json and recent db/metrics_history.jsonl rows. Metrics are evidence for harden/replan decisions; they do not create a separate action path.
-8. Read planning/changelog/ if present and compare recent plan/config changes against builder/improve.md and builder/review.md. Recent plan changes increase regression risk and require tighter improve cadence until one or two post-change iteration-0 runs have been reviewed.
+8. Read planning/changelog/ if present and compare recent plan/config changes against builder/improve.md and builder/review.md. Recent plan changes increase regression risk and require tighter improve cadence until one or two post-change runs have been reviewed.
 9. If builder/improve.md has no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first." If the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty, also redirect.
 
 SCHEDULE STRATEGY
@@ -24,7 +24,7 @@ SCHEDULE STRATEGY
    - choose a practical recurring run cadence based on the workflow objective and existing schedules
    - choose a frequent lightweight optimizer cadence that can observe, harden/replan when evidence justifies it, update cadence, or log no action
    - for unknown active workflows, start at every 6-12 hours, not weekly
-5. If planning/changelog shows material plan/config changes since the last builder/improve.md entry or unresolved builder/review.md finding, tighten the improve schedule for the next 24-48 hours or until the next one or two iteration-0 runs have been reviewed.
+5. If planning/changelog shows material plan/config changes since the last builder/improve.md entry or unresolved builder/review.md finding, tighten the improve schedule for the next 24-48 hours or until the next one or two post-change runs have been reviewed.
 6. Because `/improve-continuously` runs in Optimizer mode, the scheduled optimizer may call schedule tools itself. It should review cadence on every fire and use update_schedule when builder/improve.md history, schedule run history, recent planning/changelog entries, or run/eval/metric evidence shows the cadence is too slow, too fast, stale, or mis-scoped.
 7. Preserve a good existing timezone if one is already in use. Otherwise use the workflow's local/current timezone.
 
@@ -40,7 +40,7 @@ The run schedule message must encode:
 - Do not ask for confirmation; proceed autonomously.
 - Read variables/variables.json only if needed to verify configured group names.
 - For each configured group_name, call run_full_workflow(group_name="<group>").
-- Use default evaluation behavior so iteration-0 run evidence and metric history are available for the optimizer schedule.
+- Use default evaluation behavior so latest run evidence, retained-run history, and metric history are available for the optimizer schedule.
 - Stop after the configured group_names have run and report the run status plainly.
 
 IMPROVE SCHEDULE
@@ -66,7 +66,7 @@ SCHEDULE SELF-TUNING RULES:
 - If the run schedule is too infrequent to produce evidence for metrics and eval, update the run schedule cadence or log the blocker when changing cadence would be risky.
 - If the improve schedule is too infrequent, update it toward a frequent lightweight cadence: after every run when possible, otherwise shortly after the expected run cadence, and never slower than every two runs for active workflows.
 - If the improve schedule is weekly but the workflow runs more often than weekly, update it. Weekly is not the default for active workflows.
-- If planning/changelog has recent material changes not yet reviewed against iteration-0 evidence, tighten the improve schedule for 24-48 hours or until one or two post-change runs have been reviewed.
+- If planning/changelog has recent material changes not yet reviewed against retained run/eval evidence, tighten the improve schedule for 24-48 hours or until one or two post-change runs have been reviewed.
 - If the improve schedule is firing too often and repeatedly logging no useful observation, slow it modestly, but keep it frequent enough to catch completions and regressions soon after runs.
 - If group_names drift from variables/variables.json or from the intended measurement surface, update schedules to the correct explicit group_names.
 - Never create duplicate run/improve schedules when an existing schedule can be updated.

@@ -132,7 +132,9 @@ func (iwm *InteractiveWorkshopManager) ensureWorkshopStoreFoldersExist(ctx conte
 
 	for _, folder := range []string{
 		DBFolderName,
+		filepath.Join(DBFolderName, DBAssetsFolderName),
 		KnowledgebaseFolderName,
+		filepath.Join(KnowledgebaseFolderName, KnowledgebaseContextFolderName),
 		filepath.Join(KnowledgebaseFolderName, KBNotesFolderName),
 		LearningsFolderName,
 		filepath.Join(LearningsFolderName, "_global"),
@@ -1024,8 +1026,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 	}
 
 	// Knowledgebase write tools — explicit graph/notes mutations. Registered only
-	// in the workflow-builder phase (server.go) and kept out of run mode because
-	// run == read-only.
+	// in the workflow-builder phase (server.go) and kept out of run mode. Run mode
+	// only gets capture_context for confirmed user-owned runtime context.
 	kb := []string{
 		"improve_kb",
 	}
@@ -1033,15 +1035,13 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"improve_db",
 	}
 
-	// Auto-improvement tools — registered by RegisterAutoImprovementProposerTools
-	// in server.go when the workshop session enters optimizer mode. Builder stays
-	// focused on plan construction and single-step debug; metric/eval cleanup
-	// belongs to Optimizer.
-	// Rule capture (Type 3 workflows) is done via diff_patch_workspace_file +
-	// a decisions.jsonl append by the agent itself — no dedicated tool.
+	// Auto-improvement tools. Metric tools are optimizer-only; capture_context is
+	// also available in run mode so users can say "remember this" while executing
+	// the workflow, with explicit confirmation and target metric anchoring.
 	autoImprovement := []string{
 		"propose_metric",
 		"retire_metric",
+		"capture_context",
 		"get_workflow_command_guidance", // canonical slash-command prose; see guidance package.
 	}
 
@@ -1101,6 +1101,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 		// RUN: execute the finished workflow, inspect results, and report outcomes.
 		// Merged mode (absorbs legacy 'ask'/'debugger' read-only inspection). No plan
 		// changes, no optimization, no config changes, no harden — that's Optimize.
+		// The only framework mutation allowed here is capture_context after user
+		// confirmation, so context learned during a run is not lost.
 		// Read-only review tools stay available for outcome inspection.
 		tools = append(tools, execution...)
 		tools = append(tools, "run_full_workflow")
@@ -1110,6 +1112,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, "get_workflow_command_guidance") // /review-* commands need this even in run mode
+		tools = append(tools, "capture_context")
 
 	case "reporting":
 		// REPORTING: focused surface for the live report — design widgets, set
@@ -1515,18 +1518,26 @@ The workflow has a live frontend report viewer at the top toolbar's "Report" tab
 {{else if eq .WorkshopMode "reporting"}}
 ## Reporting — the frontend Report tab is already wired
 
-The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders the widget blocks defined there against `+"`db/*.json`"+`, `+"`knowledgebase/`"+` (graph + notes), and dedicated workflow APIs for built-in `+"`costs`"+` / `+"`evals`"+` / `+"`runs`"+` widgets. It is always available — there is NO "generate report" phase, no HTML/PDF artifact to produce, no step that writes a finished report.
+The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders the widget blocks defined there against `+"`db/*.json`"+`, durable `+"`db/assets/`"+` references, `+"`knowledgebase/`"+` context/notes, and dedicated workflow APIs for built-in `+"`costs`"+` / `+"`evals`"+` / `+"`runs`"+` widgets. It is always available — there is NO "generate report" phase, no HTML/PDF artifact to produce, no step that writes a finished report.
 {{else if eq .WorkshopMode "optimizer"}}
 ## Reporting — Optimizer can maintain the live dashboard
 
 The workflow has a live frontend report viewer at the top toolbar's "Report" tab. Optimizer mode can author and maintain report widgets when reporting needs to reflect optimization/evaluation/run evidence: creating dashboard widgets, themes, layouts, custom colors, and `+"`reports/report_plan.json`"+` edits. Keep report edits presentation-only unless the user also asked for workflow hardening/eval changes.
-{{else}}
-## Reporting — switch to Builder or Optimizer mode to edit dashboards
+	{{else}}
+	## Reporting — switch to Builder or Optimizer mode to edit dashboards
 
-The workflow has a live frontend report viewer at the top toolbar's "Report" tab, but this mode does not own report widget authoring. If the user asks to create dashboard widgets, themes, layouts, custom colors, or `+"`reports/report_plan.json`"+` edits, tell them to switch to Builder or Optimizer mode. Do not offer to draft or edit `+"`reports/report_plan.json`"+` via shell/direct file writes from this mode.
-{{end}}
+	The workflow has a live frontend report viewer at the top toolbar's "Report" tab, but this mode does not own report widget authoring. If the user asks to create dashboard widgets, themes, layouts, custom colors, or `+"`reports/report_plan.json`"+` edits, tell them to switch to Builder or Optimizer mode. Do not offer to draft or edit `+"`reports/report_plan.json`"+` via shell/direct file writes from this mode.
+	{{end}}
 
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "reporting")}}
+	{{if eq .WorkshopMode "run"}}
+	## Context Capture — Allowed In Run Mode
+
+	Run mode normally executes and inspects the workflow; it does not edit plan/config/eval/metrics/report artifacts. One exception is durable user-owned runtime context. If the user says something that future workflow runs should remember — rules, preferences, constraints, ICP filters, approval rules, brand voice, examples, or domain assumptions — ask whether to capture it.
+
+	If confirmed, call `+"`capture_context`"+` with a concise `+"`context_text`"+`, a section name, and existing `+"`target_metrics`"+`. Do not manually edit `+"`knowledgebase/context/context.md`"+` or `+"`builder/decisions.jsonl`"+`. If there are no metrics yet, tell the user setup is needed before context can be anchored and suggest switching to Optimizer for `+"`/improve-setup-framework`"+`.
+	{{end}}
+
+	{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "reporting")}}
 **When the user asks "create a report" / "build a reporting UI" / "show me X in a dashboard":**
 - The answer is almost always: **update `+"`reports/report_plan.json`"+` via the report-plan tools** — add, move, toggle, or remove widgets.
 - If the workflow has routing, todo_task predefined routes, orchestration routes, or route-specific outputs, prefer a tabbed report section: `+"`set_section_layout(mode=\"tabs\")`"+`, then give each route's widgets `+"`tab: \"<route name>\"`"+`. Use one tab per user-meaningful route so the dashboard does not mix unrelated path outputs in one long section.
@@ -1593,13 +1604,12 @@ Optimizer owns the eval plan: write it, validate it, run it against `+"`iteratio
 - Focus eval steps on workflow outcomes, not intermediate files, unless a file check is truly the outcome.
 - `+"`pre_validation`"+` checks files inside the eval step execution folder, not the original run folder.
 - Eval step descriptions may reference `+"`"+`{{"{{TARGET_RUN_PATH}}"}}`+"`"+`, which resolves to the absolute path of the original execution folder being scored. Use that placeholder when the eval needs to inspect original run artifacts directly; never hardcode iteration paths.
-- For scoring config in `+"`evaluation/step_config.json`"+`:
+- For eval step config in `+"`evaluation/step_config.json`"+`:
   - default to `+"`declared_execution_mode=code_exec`"+`; promote eval steps to `+"`learn_code`"+` only when the user explicitly asks to freeze/reuse scoring code, the check is fully deterministic, and 10+ eval runs cover the relevant output scenarios
   - use `+"`declared_execution_mode=code_exec`"+` when the eval still needs adaptive model judgment, the rubric is changing, or the scenario coverage is not proven
   - set per-eval-step `+"`execution_tier`"+` with `+"`update_step_config(step_id=\"eval-step-id\", execution_tier=\"high|medium|low\")`"+`; the tool writes `+"`evaluation/step_config.json`"+` when the id is from `+"`evaluation/evaluation_plan.json`"+`
   - tier rule of thumb: `+"`high`"+` for subjective/ambiguous judgment, `+"`medium`"+` for normal eval checks, `+"`low`"+` for deterministic/file-shape checks
-  - configure the final scoring agent with reserved id `+"`__evaluation_scoring__`"+` (for example `+"`update_step_config(step_id=\"__evaluation_scoring__\", execution_tier=\"high\")`"+`)
-  - set `+"`use_code_execution_mode=false`"+` for lean tool-call scoring when supported; set it to `+"`true`"+` to force code-exec on non-CLI providers
+  - there is no final combined scoring agent; each eval step must emit the structured verdict fields that metrics need
 - After every edit to `+"`evaluation/evaluation_plan.json`"+`, call `+"`validate_evaluation_plan`"+`.
 - When you want to test the current eval plan, call `+"`run_full_evaluation(group_name=\"...\")`"+`. Evaluation always targets `+"`iteration-0`"+`.
 
@@ -1628,8 +1638,9 @@ Optimizer owns the eval plan: write it, validate it, run it against `+"`iteratio
 The workflow may use three persistent stores. In this mode, use them only to understand or present results; do not redesign them.
 
 - **learnings/_global/SKILL.md**: execution know-how for step agents. Do not edit it here.
+- **knowledgebase/context/**: user-supplied runtime business context. Read only if it helps answer the user's question.
 - **knowledgebase/notes/**: durable narrative observations the workflow has accumulated. Read only if it helps answer the user's question.
-- **db/*.json**: persistent workflow result data. Report widgets bind to db files, and Run mode summaries should translate db rows into plain English.
+- **db/*.json + db/assets/**: persistent workflow result data and durable media/file assets. Report widgets bind to db files/assets, and Run mode summaries should translate db rows into plain English.
 
 If the user wants to change what gets stored, how db files are shaped, or how KB/learnings are written, switch to Builder or Optimizer.
 {{else}}
@@ -1644,13 +1655,14 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 - Shape: SKILL.md + references/ + scripts/ (Anthropic skill-creator format).
 - Examples: "OTP field appears ~3s after PAN submit — poll, don't sleep", "HDFC balance is inside .account-summary", "gmail.search_messages returns max 50 — paginate".
 
-**knowledgebase/ — durable narrative observations built up over time**
-- Single surface: `+"`notes/`"+` — per-topic narrative markdown, one file per topic (entity-scoped like `+"`company-acme.md`"+` or cross-cutting like `+"`pattern-<slug>.md`"+`), plus `+"`notes/_index.json`"+` as the registry. Use for prose analysis, hypotheses, evolution-over-time observations, cross-cutting patterns, and any durable subject-matter knowledge. No structured graph — entity references inside notes are just markdown (`+"`company-acme`"+`) that consolidation tools can resolve by slug.
+**knowledgebase/ — business context and durable narrative observations**
+- `+"`context/context.md`"+`: user-supplied runtime business context. Use for rules, preferences, constraints, assumptions, examples, and other context the user explicitly gives that future steps must respect. It is user-owned content captured via `+"`capture_context`"+` or curated by Builder; Optimizer/KB consolidation must not rewrite it.
+- `+"`notes/`"+`: per-topic narrative markdown built up by workflow runs, one file per topic (entity-scoped like `+"`company-acme.md`"+` or cross-cutting like `+"`pattern-<slug>.md`"+`), plus `+"`notes/_index.json`"+` as the registry. Use for prose analysis, hypotheses, evolution-over-time observations, cross-cutting patterns, and durable subject-matter knowledge discovered by the workflow. No structured graph — entity references inside notes are just markdown (`+"`company-acme`"+`) that consolidation tools can resolve by slug.
 - Writes are picked per step via `+"`knowledgebase_write_method`"+`:
   - `+"`direct`"+` — the **normal/default design choice**. The step agent itself writes notes inline via shell + `+"`diff_patch_workspace_file`"+`. A dedicated post-completion self-review turn fires automatically to verify contribution against the contract. No post-step KB update agent runs for direct-mode steps.
   - `+"`agent`"+` — use only when the user explicitly asks for a separate post-step KB writer/reviewer. The post-step KB update agent reads the step's tool trail + knowledgebase_contribution after completion and merges into the right topic file under notes/. Step code CANNOT write notes/ directly; the folder guard blocks shell writes.
 - **Written by (design time — you):** YOU (the builder) MAY shell-write notes files directly for bootstrap/repair work — seeding an initial topic file, fixing a malformed `+"`_index.json`"+`, hand-curating a note. Your FolderGuard allows it. Prefer `+"`knowledgebase_contribution`"+` instructions on steps when the content comes from step output — that's what keeps growth automatic and consistent.
-- Read as: step agents shell-read on demand if knowledgebase_access grants read. ALWAYS read `+"`notes/_index.json`"+` first to find which topics exist and what they cover, then `+"`cat`"+` only the relevant topic files. NEVER glob `+"`notes/*.md`"+`.
+- Read as: step agents shell-read on demand if knowledgebase_access grants read. If `+"`context/context.md`"+` exists, read it once at step start when the step needs business context. For discovered notes, ALWAYS read `+"`notes/_index.json`"+` first to find which topics exist and what they cover, then `+"`cat`"+` only the relevant topic files. NEVER glob `+"`notes/*.md`"+`.
 - Shape:
   - `+"`notes/<topic-id>.md`"+`: H1 = topic-id; sections = `+"`## YYYY-MM-DD`"+` or topical subhead; cross-reference entities by slug inline.
   - `+"`notes/_index.json`"+`: `+"`{topics: [{id, file, covers, last_updated, last_updated_by, size_bytes, section_count}]}`"+`.
@@ -1662,23 +1674,40 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 
 **db/*.json — workflow state and results**
 - The workflow's actual output data: rows the workflow produces or consumes this run (processed records, cursors, cumulative output, per-group tallies).
+- Durable media/file assets live under `+"`db/assets/`"+`. Store images, PDFs, screenshots, audio, generated files, and other binary assets there when they must survive runs or be used by reports/later steps. Keep metadata, provenance, and references in a `+"`db/*.json`"+` file; do not base64-embed large assets in JSON.
 - **Written by (runtime):** step code directly (shell / Python). Step-owned during runs — upsert-by-key, never overwrite wholesale (that destroys rows from other groups/runs).
 - **Written by (design time — you):** YOU (the builder) MAY shell-write `+"`db/*.json`"+` directly to scaffold empty schemas, seed initial state, fix corrupt rows, or stage test data for development. Your FolderGuard allows it. Prefer letting steps populate `+"`db/`"+` during actual runs — your writes are for setup and repair, not ongoing state.
 - Read as: step agents read directly, widgets in reports/report_plan.json bind to it.
 - Shape: JSON with per-file schema (primary key + merge rule) decided by the builder at design time.
 - Examples: "db/processed_companies.json with rows keyed by company_id", "db/monthly_totals.json aggregated across all months", "db/cursors.json tracking last-processed dates".
 
-**KB shape:** notes-only. Per-topic markdown files under `+"`knowledgebase/notes/`"+` plus `+"`notes/_index.json`"+` as the registry. There is no graph/entity surface — cross-step reasoning happens through markdown consolidation, not typed-relationship traversal.
+**KB shape:** context + notes. User-supplied runtime context lives under `+"`knowledgebase/context/`"+`; workflow-discovered narrative knowledge lives as per-topic markdown files under `+"`knowledgebase/notes/`"+` plus `+"`notes/_index.json`"+` as the registry. There is no graph/entity surface — cross-step reasoning happens through markdown consolidation, not typed-relationship traversal.
 
 **When to use which — deciding questions:**
 - *Does it tell the agent HOW to do the task?* → learnings/ (the learning agent writes it; you rarely do)
-- *Is it a durable observation, decision, or pattern about the workflow's subject matter?* → knowledgebase/notes/ (write a knowledgebase_contribution; the KB update agent appends to the right topic file, or the step writes directly in direct-mode)
+- *Did the user provide runtime business context, rules, examples, preferences, or constraints that steps must respect?* → knowledgebase/context/context.md (capture_context/user-owned; steps read it with KB read access)
+- *Is it a durable observation, decision, or pattern about the workflow's subject matter discovered by the workflow?* → knowledgebase/notes/ (write a knowledgebase_contribution; the KB update agent appends to the right topic file, or the step writes directly in direct-mode)
 - *Is it the workflow's actual output data — rows, records, results this run produced?* → db/ (the step writes JSON directly; upsert by key, never overwrite wholesale)
+- *Is it a durable image/PDF/audio/download/generated file?* → db/assets/ with a db/*.json metadata row pointing to it
 
 **Rule of thumb on the split:**
 - learnings = HOW (methods, patterns, quirks of the target system)
-- knowledgebase = WHAT we know about the domain (narrative observations, patterns)
-- db = WHAT the workflow produced (state, results, rows)
+- knowledgebase/context = WHAT the user told us to remember at runtime
+- knowledgebase/notes = WHAT the workflow learned about the domain (narrative observations, patterns)
+- db = WHAT the workflow produced (state, results, rows, plus durable assets under db/assets/)
+
+**Business/runtime context placement:**
+When the user gives context that future step agents will need at run time, do not leave it only in chat. Put it in the narrowest durable surface:
+- **Workflow-wide goal, policy, or success constraint** -> `+"`soul/soul.md`"+` if it defines what success means for the whole workflow.
+- **Step-specific behavior rule** -> the relevant step description via plan modification tools. Example: "never send outreach before human approval" belongs in the send/approval step boundary, not KB.
+- **User-provided business/runtime context needed across runs** -> `+"`knowledgebase/context/context.md`"+` plus `+"`knowledgebase_access=\"read\"`"+` on steps that must use it, and an explicit sentence in each affected step description naming the relevant context section/path. Example: customer preferences, market context, account history, domain heuristics, examples, style constraints, approval rules.
+- **Workflow-discovered business/domain facts** -> `+"`knowledgebase/notes/`"+` plus `+"`knowledgebase_contribution`"+` on producer steps. Example: patterns discovered from account history, cross-run observations, hypotheses.
+- **Structured lookup/context needed by code or reports** -> `+"`db/*.json`"+` with schema in `+"`db/README.md`"+`. Example: account rows, scored leads, product catalog, rolling metrics.
+- **Durable assets needed by reports or later steps** -> `+"`db/assets/`"+` with metadata/reference rows in `+"`db/*.json`"+`. Example: generated images, screenshots, PDFs, downloaded source documents, chart PNGs.
+- **User/account-specific values** -> `+"`variables/variables.json`"+` or secrets. Example: account IDs, email addresses, phone numbers, sheet IDs, API endpoints.
+- **Execution technique** -> `+"`learnings/_global/SKILL.md`"+`, only when it is reusable HOW-to-run knowledge such as selectors, API quirks, timing, or auth-flow pitfalls.
+
+If a step needs business context while running, explicitly wire it in BOTH places: set `+"`knowledgebase_access=\"read\"`"+` for KB context, and update the step description to say which `+"`knowledgebase/context/context.md`"+` section or rule family it must read and apply. Also add the right `+"`context_dependencies`"+` for prior run outputs, reference the `+"`db/README.md`"+` contract for db reads/writes, or use variables/placeholders for group-specific values. A step should not depend on untracked chat memory.
 
 **Step config knobs for KB (use update_step_config):**
 - knowledgebase_access — one of read / write / read-write / none. **Defaults to 'none' — KB is opt-in per step.** Set to 'read' on steps that consume KB notes, 'read-write' (or 'write') on steps that produce KB narrative via knowledgebase_contribution. Leave unset for steps that have nothing to do with KB.
@@ -1734,15 +1763,16 @@ Learning writes and KB access/writes are **opt-in** for every step. Global learn
 **For each step, ask yourself three questions:**
 
 1. **Should this step build up SKILL.md?** — Every step by default READS `+"`"+`learnings/_global/SKILL.md`+"`"+` into its prompt (learnings_access defaults to `+"`\"read\"`"+`). The question is whether it should also WRITE. Only if the step has HOW-to-run knowledge worth capturing across runs: selectors, timings, auth/login flows, tool-call patterns, API quirks, format pitfalls. If yes, set `+"`learnings_access: \"read-write\"`"+` AND `+"`"+`learning_objective`+"`"+` to a concrete instruction naming exactly what SKILL.md should capture. Then set `+"`learnings_write_method: \"direct\"`"+` so the step agent writes SKILL.md in its dedicated post-completion turn. Choose `+"`\"agent\"`"+` only when the user explicitly asks for a separate post-step learning agent/reviewer. Do not choose agent merely because the trace is long, messy, or analytical. For plumbing steps (send email, generate PDF, upload to S3), leave access at `+"`\"read\"`"+`. For fully invisible steps, set `+"`learnings_access: \"none\"`"+`.
-2. **Should this step contribute to knowledgebase/notes/?** — Only if the step produces durable narrative knowledge about the workflow's subject matter (observations, decisions, patterns, cross-run findings). If yes, set `+"`"+`knowledgebase_access`+"`"+` to `+"`"+`write`+"`"+` or `+"`"+`read-write`+"`"+` AND set `+"`"+`knowledgebase_contribution`+"`"+` to a concrete instruction naming the topic(s) and what to record. Then set `+"`knowledgebase_write_method: \"direct\"`"+` so the step agent writes notes/ inline and self-reviews once after completion. Choose `+"`\"agent\"`"+` only when the user explicitly asks for a separate post-step KB writer/reviewer. Do not choose agent merely because the output is long, messy, or analytical. Access without a contribution is a validation error.
-3. **Should this step write to `+"`"+`db/`+"`"+`?** — Only if the step produces rows the workflow will persist across runs/groups or bind to the Report UI. If yes, **before you set the step's description or code**, ensure `+"`"+`db/README.md`+"`"+` has an entry for the target file declaring primary_key, merge_rule, writers, and shape. Reference that schema in the step description so the step agent reads the same contract you wrote. Skip db/ for pure forward-pipe data — use `+"`"+`context_output`+"`"+` instead. KB ≠ db: facts about the subject go through `+"`"+`knowledgebase_contribution`+"`"+`, not `+"`"+`db/`+"`"+`.
+2. **Should this step read user-provided business context?** — If the step must respect durable user-supplied context from `+"`knowledgebase/context/context.md`"+`, set `+"`"+`knowledgebase_access`+"`"+` to `+"`"+`read`+"`"+` or `+"`"+`read-write`+"`"+` AND update the step description to name the relevant context section/path, e.g. *"Before deciding, read and apply `+"`knowledgebase/context/context.md`"+` section `+"`ICP Filters`"+`."* Do not copy the whole context file into the description; describe the dependency and wire read access instead. A step with KB read access but no description-level context mention is under-specified.
+3. **Should this step contribute to knowledgebase/notes/?** — Only if the step produces durable narrative knowledge about the workflow's subject matter (observations, decisions, patterns, cross-run findings). If yes, set `+"`"+`knowledgebase_access`+"`"+` to `+"`"+`write`+"`"+` or `+"`"+`read-write`+"`"+` AND set `+"`"+`knowledgebase_contribution`+"`"+` to a concrete instruction naming the topic(s) and what to record. Then set `+"`knowledgebase_write_method: \"direct\"`"+` so the step agent writes notes/ inline and self-reviews once after completion. Choose `+"`\"agent\"`"+` only when the user explicitly asks for a separate post-step KB writer/reviewer. Do not choose agent merely because the output is long, messy, or analytical. Access without a contribution is a validation error.
+4. **Should this step write to `+"`"+`db/`+"`"+` or `+"`db/assets/`"+`?** — Only if the step produces rows or durable assets the workflow will persist across runs/groups or bind to the Report UI. If yes, **before you set the step's description or code**, ensure `+"`"+`db/README.md`+"`"+` has an entry for the target file declaring primary_key, merge_rule, writers, and shape. For assets, store files under `+"`db/assets/`"+` and write metadata/reference rows in `+"`db/*.json`"+`. Reference that schema in the step description so the step agent reads the same contract you wrote. Skip db/ for pure forward-pipe data — use `+"`"+`context_output`+"`"+` instead. KB ≠ db: facts about the subject go through `+"`"+`knowledgebase_contribution`+"`"+`, not `+"`"+`db/`+"`"+`.
 
 **Record your reasoning.** When you set `+"`"+`learning_objective`+"`"+` or `+"`"+`knowledgebase_contribution`+"`"+`, or designate the step as a `+"`"+`db/`+"`"+` writer, also update `+"`"+`review_notes`+"`"+` with one sentence explaining WHY — future hardening passes and other LLM reviewers will read it. Example: *"Opted into learning: ICICI login selectors change quarterly so auth-flow drift must be captured. Opted into KB: account nicknames surface here and nowhere else. Writes db/accounts.json (PK=account_id, merge=latest-wins) per schema in db/README.md — consumed by the balances widget."*
 
 **Symmetric rules for opt-OUT:** if most steps in a workflow shouldn't learn or contribute, that's fine — just leave the fields empty. Don't set either field "because the others have it" — that accumulates noise. If you unset a step (via `+"`"+`clear_fields`+"`"+`), explain in `+"`"+`review_notes`+"`"+` why the step no longer deserves the overhead.
 
 **Cheap heuristics to use while deciding:**
-- **Step writes a brand-new `+"`"+`db/`+"`"+` file or consumes a db file**: likely worth KB too (the domain facts often live alongside the persistent rows). Likely NOT worth learning (db schema is stable; selectors aren't).
+- **Step writes a brand-new `+"`"+`db/`+"`"+` file, `+"`db/assets/`"+` asset, or consumes a db file**: likely worth KB too if there are narrative domain facts alongside the persistent rows/assets. Likely NOT worth learning (db schema is stable; selectors aren't).
 - **Step drives a UI / browser / third-party API with fussy selectors or timing**: worth learning. Probably NOT worth KB (selectors are HOW, not WHAT). For execution mode, keep these steps on `+"`code_exec`"+` in Builder; Optimizer can consider later migration only if the user explicitly asks for scripted execution and 10+ scenario-covering successful runs prove the flow is deterministic enough to freeze.
 - **Step is pure data transformation, math, or file IO**: neither. Leave both empty.
 - **Step calls an LLM for analysis/classification**: worth KB (facts discovered) if outputs are domain facts; not worth learning (the LLM prompt is stable and doesn't need SKILL.md tips).
@@ -1862,7 +1892,7 @@ Run mode is an execution and inspection surface. Optimize for these four jobs:
 
 1. **Run the workflow** for one configured group at a time with `+"`run_full_workflow(group_name=\"...\")`"+`.
 2. **Run a specific step** with `+"`execute_step(step_id=\"...\", group_name=\"...\")`"+` when the user asks for a targeted action or retry.
-3. **Answer user questions** from current workflow state, latest run outputs, `+"`db/*.json`"+`, report data, eval reports, timing/cost reviews, KB notes, and prior step results.
+3. **Answer user questions** from current workflow state, latest run outputs, `+"`db/*.json`"+`, `+"`db/assets/`"+` references, report data, eval reports, timing/cost reviews, KB context/notes, and prior step results.
 4. **Inspect/debug execution** with `+"`list_executions`"+`, `+"`query_step`"+`, `+"`debug_step`"+`, and read-only review tools. Explain the issue and next action; do not mutate plan/config/learnings/KB/report/eval files in Run mode.
 
 ### Audience
@@ -2082,7 +2112,7 @@ When a step doesn't do what it should — wrong output, missing actions, incompl
 3. Review the summary of changes it made.
 {{else if eq .WorkshopMode "reporting"}}
 **Reporting investigation workflow:**
-1. If a report widget or data view is wrong, first inspect with `+"`get_report_plan`"+`, `+"`validate_report_plan`"+`, `+"`preview_report_render`"+`, `+"`review_workflow_results`"+`, and targeted reads of `+"`db/`"+` / `+"`knowledgebase/notes/`"+`.
+1. If a report widget or data view is wrong, first inspect with `+"`get_report_plan`"+`, `+"`validate_report_plan`"+`, `+"`preview_report_render`"+`, `+"`review_workflow_results`"+`, and targeted reads of `+"`db/`"+` / `+"`db/assets/`"+` / `+"`knowledgebase/context/`"+` / `+"`knowledgebase/notes/`"+`.
 2. If the issue is report wiring, layout, theme, or an empty widget pointing at the wrong source, fix it with report-plan tools.
 3. If the issue is step behavior, db shape, KB/learnings, evaluation scoring, or hardening, explain the finding and tell the user to switch to Builder or Optimizer. Do not call harden_workflow or mutate plan/config/eval from Reporting.
 {{else}}
@@ -2510,7 +2540,7 @@ Rules:
 - **update_variable(action, name?, value?, description?)** — Add, update, or delete a variable
 - **add_group / update_group / delete_group** — Manage variable groups
 - **MCP Servers workflow**: (1) `+"`get_workflow_config`"+` to inspect which servers are currently selected, (2) `+"`update_workflow_config(add_servers=[\"server-name\"])`"+` to add to workflow — **do NOT edit workflow.json manually**, (3) `+"`update_step_config(step_id, servers=[\"server-name\"])`"+` to scope specific servers to a step
-- **update_workflow_config(add_servers?, remove_servers?, add_skills?, remove_skills?, add_secrets?, remove_secrets?)** — Update workflow MCP servers, skills, or secrets
+- **update_workflow_config(add_servers?, remove_servers?, add_skills?, remove_skills?, add_secrets?, remove_secrets?, run_retention_count?)** — Update workflow MCP servers, skills, secrets, or run/eval backup retention
 
 ### Schedule Management
 - **create_schedule / update_schedule / delete_schedule / trigger_schedule / get_schedule_runs**
@@ -2638,14 +2668,16 @@ Use this order when debugging latency:
 | Path | Contents |
 |------|----------|
 | evaluation/evaluation_plan.json | Eval step definitions |
-| evaluation/runs/{iter}/{group}/evaluation_report.json | Eval scores + reasoning per eval step |
+| evaluation/runs/{iter}/{group}/evaluation_report.json | Eval step outputs + evidence |
 
 ### Other
 | Path | Contents |
 |------|----------|
 | builder/session-{id}-conversation.json | Previous builder chat sessions |
 | db/*.json | Workflow state and results (JSON rows produced by steps; upsert-by-key; see §Three persistent stores) |
-| knowledgebase/notes/*.md | Per-topic narrative markdown — durable observations about the workflow's subject matter. Normally written by step agents in direct-write mode; post-step KB agent only when explicitly requested. |
+| db/assets/* | Durable media/file assets referenced by db rows, report widgets, or later steps |
+| knowledgebase/context/context.md | User-supplied runtime business context that steps with KB read access must respect |
+| knowledgebase/notes/*.md | Per-topic narrative markdown — durable observations discovered by the workflow. Normally written by step agents in direct-write mode; post-step KB agent only when explicitly requested. |
 | knowledgebase/notes/_index.json | Topic registry (covers, size_bytes, section_count, last_updated) kept in sync with notes/*.md |
 | soul/soul.md | Canonical workflow north star: objective and success criteria |
 
@@ -2874,10 +2906,6 @@ func resolveWorkshopStepID(controller *StepBasedWorkflowOrchestrator, inputID st
 }
 
 func resolveWorkshopStepConfigTarget(ctx context.Context, controller *StepBasedWorkflowOrchestrator, inputID string) (resolvedID string, configSubdir string, isEvalStep bool, err error) {
-	if strings.TrimSpace(inputID) == EvaluationScoringStepID {
-		return EvaluationScoringStepID, "evaluation", true, nil
-	}
-
 	originalEvalMode := controller.isEvaluationMode
 	originalPlan := controller.approvedPlan
 	defer func() {
@@ -3941,13 +3969,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_step_config",
-		"Update step_config.json for a specific workflow or evaluation step. The tool auto-detects whether step_id belongs to planning/plan.json or evaluation/evaluation_plan.json, then writes planning/step_config.json or evaluation/step_config.json accordingly. Use step_id=\"__evaluation_scoring__\" to configure the final evaluation scoring agent. Changes take effect on the next execute_step or run_full_evaluation call. To REMOVE a field (so the step falls back to preset/default behavior), list its name in clear_fields — sending null in a value field does NOT clear; it's ignored.",
+		"Update step_config.json for a specific workflow or evaluation step. The tool auto-detects whether step_id belongs to planning/plan.json or evaluation/evaluation_plan.json, then writes planning/step_config.json or evaluation/step_config.json accordingly. Changes take effect on the next execute_step or run_full_evaluation call. To REMOVE a field (so the step falls back to preset/default behavior), list its name in clear_fields — sending null in a value field does NOT clear; it's ignored.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"step_id": map[string]interface{}{
 					"type":        "string",
-					"description": "The step ID from planning/plan.json or evaluation/evaluation_plan.json. Use \"__evaluation_scoring__\" for the final evaluation scoring agent.",
+					"description": "The step ID from planning/plan.json or evaluation/evaluation_plan.json.",
 				},
 				"clear_fields": map[string]interface{}{
 					"type":        "array",
@@ -4046,7 +4074,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"execution_tier": map[string]interface{}{
 					"type":        "string",
 					"enum":        []interface{}{"high", "medium", "low"},
-					"description": "Persistent execution tier override for this workflow step, evaluation step, or __evaluation_scoring__ in tiered mode. Use high for subjective/ambiguous judgment, medium for normal checks, low for deterministic/file-shape checks. execution_llm still takes precedence, and execute_step(..., tier=...) can still override workflow/eval step tier for a single run.",
+					"description": "Persistent execution tier override for this workflow step or evaluation step in tiered mode. Use high for subjective/ambiguous judgment, medium for normal checks, low for deterministic/file-shape checks. execution_llm still takes precedence, and execute_step(..., tier=...) can still override workflow/eval step tier for a single run.",
 				},
 				"validation_llm": map[string]interface{}{
 					"type":        "object",
@@ -5426,7 +5454,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7b: improve_db — guarded maintenance pass over workflow-root db/ JSON contracts
 	if err := mcpAgent.RegisterCustomTool(
 		"improve_db",
-		"Improve workflow-root db/*.json and db/README.md for the current plan. Supports targeted cleanup, schema/contract documentation, and cross-step/report compatibility checks. Guarded: the background agent can write only under db/, and row/data migrations require explicit instruction.",
+		"Improve workflow-root db/*.json, db/assets/, and db/README.md for the current plan. Supports targeted cleanup, asset reference hygiene, schema/contract documentation, and cross-step/report compatibility checks. Guarded: the background agent can write only under db/, and row/data or asset migrations require explicit instruction.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -6166,13 +6194,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: review_step_code — background agent that checks if saved scripts match step descriptions
 	if err := mcpAgent.RegisterCustomTool(
 		"review_step_code",
-		"Start a background agent that compares saved main.py scripts with current descriptions to detect drift. Reviews workflow steps, evaluation steps, and the reserved __evaluation_scoring__ script. Over time, descriptions get updated but scripts don't — this tool finds where they've gone out of sync. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",
+		"Start a background agent that compares saved main.py scripts with current descriptions to detect drift. Reviews workflow steps and evaluation steps. Over time, descriptions get updated but scripts don't — this tool finds where they've gone out of sync. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"step_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional workflow step ID, evaluation step ID, or \"__evaluation_scoring__\" to review. If omitted, reviews all saved main.py scripts across workflow, evaluation, and scoring code.",
+					"description": "Optional workflow step ID or evaluation step ID to review. If omitted, reviews all saved main.py scripts across workflow and evaluation code.",
 				},
 				"focus": map[string]interface{}{
 					"type":        "string",
@@ -6292,13 +6320,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7g: replan_workflow_from_results — background agent that rewrites the plan from actual run evidence
 	if err := mcpAgent.RegisterCustomTool(
 		"replan_workflow_from_results",
-		"Start a background agent that reads actual outputs, validation failures, evaluation results, and metric evidence from a real run, then rewrites planning/plan.json so the workflow path better satisfies the existing objective, success criteria, and outcome metrics. Use this when the workflow is aimed at the wrong result or cannot satisfy a success criterion through local hardening alone. This is result-driven alignment replanning, not static structural review. Returns execution_id immediately — you will be automatically notified when it completes.",
+		"Start a background agent that reads actual outputs, validation failures, evaluation results, and metric evidence from the retained run window (latest iteration-0 plus older iteration-N runs selected by improve.md/decision timestamps), then rewrites planning/plan.json so the workflow path better satisfies the existing objective, success criteria, and outcome metrics. Use this when the workflow is aimed at the wrong result or cannot satisfy a success criterion through local hardening alone. This is result-driven alignment replanning, not static structural review. Returns execution_id immediately — you will be automatically notified when it completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"group_name": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional group/user subfolder under iteration-0 (e.g., 'saurabh', 'xspaces', 'group-1'). Omit to replan from all iteration-0 groups.",
+					"description": "Optional group/user subfolder from the latest iteration-0 run (e.g., 'saurabh', 'xspaces', 'group-1'). When provided, replan analyzes that group's retained run window. Omit to replan from all current iteration-0 groups plus relevant older iterations.",
 				},
 				"focus": map[string]interface{}{
 					"type":        "string",
@@ -6412,13 +6440,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7g2: harden_workflow — eval-driven hardening plus invariant cleanup
 	if err := mcpAgent.RegisterCustomTool(
 		"harden_workflow",
-		"Start a background agent that reads iteration-0 evaluation reports and execution outputs, identifies failing steps, runs a best-practice sweep over workflow artifacts, and applies targeted fixes: adds pre-validation rules, tightens descriptions, deletes stale code_exec main.py files, patches main.py for learn_code steps, fixes learning/KB/db/report/eval wiring when evidence or hard invariants justify it, and updates step config. This is the primary optimization tool — it analyzes AND acts. Use replan_workflow_from_results when run/eval/metric evidence shows the workflow path itself is not aligned with the objective or success criteria and cannot be fixed by local hardening.",
+		"Start a background agent that reads retained run evidence (latest iteration-0 plus older iteration-N runs selected by improve.md/decision timestamps), identifies failing steps and regressions, runs a best-practice sweep over workflow artifacts, and applies targeted fixes: adds pre-validation rules, tightens descriptions, deletes stale code_exec main.py files, patches main.py for learn_code steps, fixes learning/KB/db/report/eval wiring when evidence or hard invariants justify it, and updates step config. This is the primary optimization tool — it analyzes AND acts. Use replan_workflow_from_results when run/eval/metric evidence shows the workflow path itself is not aligned with the objective or success criteria and cannot be fixed by local hardening.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"group_name": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional group name under iteration-0. When provided, harden scopes its analysis and fixes to ONLY this group's eval report and execution data. When omitted, harden discovers all groups under iteration-0 and analyzes them collectively (cross-group failure patterns).",
+					"description": "Optional group name. When provided, harden scopes behavior analysis and fixes to this group's evidence across the selected retained run window. When omitted, harden discovers current groups under iteration-0 and uses retained iterations for cross-group and cross-run failure patterns.",
 				},
 				"focus": map[string]interface{}{
 					"type":        "string",
@@ -6988,7 +7016,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: get_workflow_config — read-only view of workflow-level settings (MCP servers, skills, secrets, LLM config)
 	if err := mcpAgent.RegisterCustomTool(
 		"get_workflow_config",
-		"Show current workflow configuration: selected workflow MCP servers, selected workflow skills, secrets (names only, no values), and LLM config (tiered allocation with fallbacks, preset defaults).",
+		"Show current workflow configuration: selected workflow MCP servers, selected workflow skills, secrets (names only, no values), run retention, and LLM config (tiered allocation with fallbacks, preset defaults).",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -7096,6 +7124,23 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			sb.WriteString("\n")
 
+			runRetentionCount := defaultRunRetentionCount
+			runRetentionNote := " (default)"
+			if content, err := ctrl.ReadWorkspaceFile(ctx, "workflow.json"); err == nil {
+				var manifest struct {
+					RunRetentionCount *int `json:"run_retention_count"`
+				}
+				if json.Unmarshal([]byte(content), &manifest) == nil && manifest.RunRetentionCount != nil {
+					if *manifest.RunRetentionCount >= 1 && *manifest.RunRetentionCount <= maxRunRetentionCount {
+						runRetentionCount = *manifest.RunRetentionCount
+						runRetentionNote = ""
+					} else {
+						runRetentionNote = fmt.Sprintf(" (invalid; runtime uses default %d)", defaultRunRetentionCount)
+					}
+				}
+			}
+			sb.WriteString(fmt.Sprintf("- run_retention_count: %d%s\n", runRetentionCount, runRetentionNote))
+
 			// Preset-level defaults
 			sb.WriteString("\n**Preset Defaults**:\n")
 			writeLLMDefault := func(label string, llm *AgentLLMConfig) {
@@ -7138,10 +7183,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	}
 
 	// === Tool: update_workflow_config ===
-	// Tool: update_workflow_config — add/remove MCP servers, skills, and secrets
+	// Tool: update_workflow_config — add/remove MCP servers, skills, secrets, and workflow-level knobs
 	if err := mcpAgent.RegisterCustomTool(
 		"update_workflow_config",
-		"Update workflow configuration: add/remove MCP servers, add/remove skills, enable/disable secrets. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Changes take effect immediately for subsequent step executions.",
+		"Update workflow configuration: add/remove MCP servers, add/remove skills, enable/disable secrets, set run retention. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Changes take effect immediately for subsequent step executions.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -7196,6 +7241,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"lock_knowledgebase": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Workflow-level freeze on the post-step KB update agent. When true, notes/ only mutates via explicit improve_kb calls (reads unaffected). Set after KB is stable to save LLM cost per step.",
+				},
+				"run_retention_count": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     1,
+					"maximum":     maxRunRetentionCount,
+					"description": "Number of backup run/eval iterations to keep, excluding active iteration-0. Defaults to 5 when omitted. Raise this for workflows whose harden/replan agents need a wider evidence window.",
 				},
 			},
 		},
@@ -7542,8 +7593,57 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
+			// --- Run Retention ---
+			if raw, ok := args["run_retention_count"]; ok && raw != nil {
+				parseRetention := func(raw interface{}) (int, bool) {
+					switch v := raw.(type) {
+					case int:
+						return v, true
+					case int64:
+						return int(v), true
+					case float64:
+						if v == float64(int(v)) {
+							return int(v), true
+						}
+					case json.Number:
+						if n, err := v.Int64(); err == nil {
+							return int(n), true
+						}
+					}
+					return 0, false
+				}
+
+				count, ok := parseRetention(raw)
+				if !ok || count < 1 || count > maxRunRetentionCount {
+					return fmt.Sprintf("Error: run_retention_count must be an integer between 1 and %d.", maxRunRetentionCount), nil
+				}
+
+				content, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json")
+				if err != nil {
+					return fmt.Sprintf("Failed to read workflow.json: %v", err), nil
+				}
+				var manifest map[string]interface{}
+				if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+					return fmt.Sprintf("Failed to parse workflow.json: %v", err), nil
+				}
+				manifest["run_retention_count"] = count
+				manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+
+				out, err := json.MarshalIndent(manifest, "", "  ")
+				if err != nil {
+					return fmt.Sprintf("Failed to marshal workflow.json: %v", err), nil
+				}
+				if err := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(out)); err != nil {
+					return fmt.Sprintf("Failed to write workflow.json: %v", err), nil
+				}
+
+				anyChanged = true
+				sb.WriteString(fmt.Sprintf("\n### Run Retention (updated)\nKeeping %d backup run/eval iteration(s), excluding active iteration-0.\n", count))
+				logger.Info(fmt.Sprintf("Updated workflow run_retention_count=%d", count))
+			}
+
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase.", nil
+				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase, run_retention_count.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)
@@ -7779,7 +7879,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. Default to mode='workflow' for normal recurring runs. Use mode='workshop' only when the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule; then messages are required. For /improve-continuously, BOTH schedules must be workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the improve schedule uses workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, iteration-0 evidence scope, metric/eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For continuous improvement, do not default to weekly for active workflows; prefer checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable.",
+		"Create a new cron schedule for this workflow. Default to mode='workflow' for normal recurring runs. Use mode='workshop' only when the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule; then messages are required. For /improve-continuously, BOTH schedules must be workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the improve schedule uses workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, retained-run evidence window selection, metric/eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For continuous improvement, do not default to weekly for active workflows; prefer checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8591,7 +8691,7 @@ func workshopJSONUnmarshal(data []byte, v interface{}) error {
 
 var improveDBAgentSystemTemplate = MustRegisterTemplate("improveDBAgentSystem", `# DB Improve Agent
 
-You improve the workflow-root `+"`db/`"+` surface for the current plan. Treat `+"`db/*.json`"+` and `+"`db/*.jsonl`"+` as durable structured state used by steps and report widgets.
+You improve the workflow-root `+"`db/`"+` surface for the current plan. Treat `+"`db/*.json`"+` and `+"`db/*.jsonl`"+` as durable structured state used by steps and report widgets, and `+"`db/assets/`"+` as durable media/file assets referenced by those JSON rows.
 
 This is a guarded maintenance pass:
 - You may read `+"`soul/`"+`, `+"`planning/`"+`, `+"`builder/`"+`, `+"`reports/`"+`, `+"`db/`"+`, selected `+"`runs/`"+`, and `+"`evaluation/`"+` evidence.
@@ -8605,7 +8705,8 @@ This is a guarded maintenance pass:
 3. **Preserve report compatibility**: If `+"`reports/report_plan.json`"+` consumes a DB file, do not break existing widget paths or JSONata queries. Prefer documenting/reporting needed report edits rather than changing reports here.
 4. **Stable JSON only**: Any edited `+"`.json`"+` file must parse with `+"`jq .`"+`. Any edited `+"`.jsonl`"+` file must remain valid line-delimited JSON.
 5. **Database shape**: Prefer arrays of objects or objects with stable top-level keys. Every persistent table needs documented purpose, primary key, merge/upsert rule, writers, consumers, group/run separation, and report widgets.
-6. **No volatile helper proliferation**: Helper files like `+"`*_rows.json`"+`, `+"`*_summary.json`"+`, `+"`flat_*.json`"+` are suspect when the same transformation can be a report widget JSONata `+"`query`"+`. Do not delete them unless explicitly instructed; flag or document the replacement path.
+6. **Asset discipline**: Store durable images, PDFs, screenshots, audio, downloads, and generated files under `+"`db/assets/`"+`. Keep metadata, provenance, MIME/type, and path references in `+"`db/*.json`"+`. Do not embed large base64 blobs in JSON.
+7. **No volatile helper proliferation**: Helper files like `+"`*_rows.json`"+`, `+"`*_summary.json`"+`, `+"`flat_*.json`"+` are suspect when the same transformation can be a report widget JSONata `+"`query`"+`. Do not delete them unless explicitly instructed; flag or document the replacement path.
 
 ## Context
 
@@ -8619,9 +8720,9 @@ This is a guarded maintenance pass:
 
 1. Read `+"`soul/soul.md`"+` if present.
 2. Read `+"`planning/plan.json`"+` and `+"`planning/step_config.json`"+` if present. Map steps that write, save, track, accumulate, append, dedupe, or report data.
-3. Read `+"`reports/report_plan.json`"+` if present. Map widgets to `+"`db/*.json`"+` sources and fields/queries.
+3. Read `+"`reports/report_plan.json`"+` if present. Map widgets to `+"`db/*.json`"+` sources, `+"`db/assets/`"+` references, and fields/queries.
 4. Read `+"`db/README.md`"+` if present.
-5. List `+"`db/`"+` and sample relevant JSON/JSONL files. Do not load huge files wholesale; use `+"`jq`"+`, `+"`head`"+`, `+"`tail`"+`, or slices.
+5. List `+"`db/`"+` and `+"`db/assets/`"+`; sample relevant JSON/JSONL files and asset metadata. Do not load huge files wholesale; use `+"`jq`"+`, `+"`head`"+`, `+"`tail`"+`, or slices.
 
 ## Allowed Work By Mode
 
@@ -8694,10 +8795,10 @@ This is a **read-only review**:
 6. **Use evidence when available**: If a target run folder is provided, use run outputs/logs/eval reports to test whether the current workflow decisions were actually justified.
 7. **Do not drift into full redesign**: You may suggest a concrete correction, but the primary task is to review and explain what is wrong with the current decision.
 8. **Check portability and secrecy**: Flag plan-visible secrets, user-specific values, absolute paths, run-folder-specific values, and brittle environment assumptions.
-9. **Check persistent-store discipline**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations as per-topic markdown; normally written by step agents in direct-write mode; agent mode only when explicitly requested), `+"`"+`db/*.json`+"`"+` (structured durable tables/results for cross-run state and Report UI widgets). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing per-run state in knowledgebase, writing report data only to run folders, or failing to declare `+"`"+`knowledgebase_contribution`+"`"+` / `+"`"+`db/README.md`+"`"+` contracts when steps produce persistent facts.
+9. **Check persistent-store discipline**: Stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`knowledgebase/context/`"+` (user-supplied runtime business context), `+"`"+`knowledgebase/notes/`+"`"+` (workflow-discovered durable narrative observations), `+"`"+`db/*.json`+"`"+` (structured durable tables/results for cross-run state and Report UI widgets), and `+"`db/assets/`"+` (durable media/file assets referenced by db rows or reports). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing user-owned context in notes, writing report data only to run folders, embedding assets in JSON, or failing to declare `+"`"+`knowledgebase_contribution`+"`"+` / `+"`"+`db/README.md`+"`"+` contracts when steps produce persistent facts.
 10. **Check learning discipline**: A step should write learnings only when it has reusable HOW-to-run knowledge worth capturing across runs, and it must have a concrete `+"`"+`learning_objective`+"`"+`. Prefer `+"`"+`learnings_write_method=\"direct\"`+"`"+`; `+"`"+`agent`+"`"+` is only for explicit user request. Browser-based steps should not be promoted to `+"`"+`learn_code`+"`"+`. `+"`"+`learn_code`+"`"+` should appear only after explicit user request, highly deterministic behavior, 10+ scenario-covering successful runs, and no recent harden/replan pass still changing the behavior.
-11. **Check KB discipline**: KB writes require a useful `+"`"+`knowledgebase_contribution`+"`"+`, correct read/write access, and preferably `+"`"+`knowledgebase_write_method=\"direct\"`+"`"+`. The KB should contain durable narrative observations about the domain, not execution recipes, raw rows, or volatile run state. If `+"`"+`knowledgebase/notes/_index.json`+"`"+` exists, it must point to coherent topic notes.
-12. **Check db discipline**: `+"`"+`db/*.json`+"`"+` should look like a small database surface, not loose dumps: documented in `+"`"+`db/README.md`+"`"+`, stable JSON shape, primary key, merge/upsert rule, writer ownership, group/run separation, and compatible report consumers.
+11. **Check KB discipline**: KB writes require a useful `+"`"+`knowledgebase_contribution`+"`"+`, correct read/write access, and preferably `+"`"+`knowledgebase_write_method=\"direct\"`+"`"+`. `+"`knowledgebase/context/`"+` should contain user-supplied runtime context; `+"`knowledgebase/notes/`"+` should contain workflow-discovered durable narrative observations, not execution recipes, raw rows, or volatile run state. If `+"`"+`knowledgebase/notes/_index.json`+"`"+` exists, it must point to coherent topic notes.
+12. **Check db discipline**: `+"`"+`db/*.json`+"`"+` should look like a small database surface, not loose dumps: documented in `+"`"+`db/README.md`+"`"+`, stable JSON shape, primary key, merge/upsert rule, writer ownership, group separation, compatible report consumers, and correct references to durable assets under `+"`db/assets/`"+`.
 13. **Check lock consistency**: Three locks freeze workflow state — `+"`"+`lock_learnings`+"`"+` (per-step: freezes SKILL.md + skips learning agent), `+"`"+`lock_code`+"`"+` (per-step, learn_code only: freezes `+"`"+`learnings/{step-id}/main.py`+"`"+` against fix-loop rewrites), `+"`"+`lock_knowledgebase`+"`"+` (workflow-level: freezes post-step KB update agent). Flag inconsistency like `+"`"+`lock_code=true`+"`"+` without the learn_code evidence gate or `+"`"+`lock_learnings=true`+"`"+` with stale/mismatched learning metadata. If a step description has meaningfully changed since the last review, recommend clearing `+"`"+`description_reviewed`+"`"+` and re-reviewing before keeping the locks.
 
 ## STEP BOUNDARY STANDARD
@@ -8734,9 +8835,10 @@ Review these files/directories when present. Stay read-only:
 - `+"`learnings/_global/SKILL.md`"+`: check whether HOW-to-run learnings match current step descriptions and do not duplicate task instructions.
 - `+"`learnings/{step-id}/.learning_metadata.json`"+`: inspect for every step with learning writes or `+"`lock_learnings=true`"+`. Check `+"`successful_runs`"+`, `+"`description_hash_runs`"+`, `+"`consecutive_no_new_learning_runs`"+`, `+"`auto_locked_at`"+`, `+"`auto_lock_reason`"+`, `+"`auto_unlocked_at`"+`, and latest detection history. Flag locks without enough same-description evidence, locks whose metadata was auto-unlocked, missing metadata for locked learning, or metadata whose description hash/streak contradicts step_config.
 - `+"`learnings/{step-id}/main.py`"+` and `+"`learnings/{step-id}/script_metadata.json`"+`: inspect for learn_code/scripted steps. For `+"`code_exec`"+` steps, verify `+"`learnings/{step-id}/main.py`"+` does NOT exist; if it does, flag it as a stale artifact that should be deleted because code_exec never runs or maintains persistent main.py.
+- `+"`knowledgebase/context/context.md`"+`: check whether user-supplied runtime context is present when steps appear to rely on chat memory, and verify optimizer-owned notes did not absorb user-owned rules/preferences that belong here.
 - `+"`knowledgebase/notes/_index.json`"+` and relevant `+"`knowledgebase/notes/*.md`"+`: check topic registry, stale/duplicated notes, and whether steps that produce domain facts have matching KB contribution contracts.
-- `+"`db/README.md`"+` and `+"`db/*.json`"+`: check schema documentation, stable row shape, primary keys, merge/upsert rules, writer ownership, group separation, and report compatibility.
-- `+"`reports/report_plan.json`"+`: check whether widgets source durable `+"`db/*.json`"+` / KB notes / built-in APIs rather than volatile run paths, whether referenced fields exist, and whether derived report helper files could be collapsed into widget-level JSONata `+"`query`"+` expressions.
+- `+"`db/README.md`"+`, `+"`db/*.json`"+`, and `+"`db/assets/`"+`: check schema documentation, stable row shape, primary keys, merge/upsert rules, writer ownership, group separation, durable asset metadata/provenance, and report compatibility.
+- `+"`reports/report_plan.json`"+`: check whether widgets source durable `+"`db/*.json`"+`, `+"`db/assets/`"+` references, KB context/notes, or built-in APIs rather than volatile run paths, whether referenced fields exist, and whether derived report helper files could be collapsed into widget-level JSONata `+"`query`"+` expressions.
 - `+"`builder/review.md`"+`: read if present to avoid repeating already-known findings and to see unresolved prior review items.
 
 {{if .TargetRunFolder}}## OPTIONAL RUN EVIDENCE
@@ -8764,7 +8866,7 @@ Review the plan through these lenses:
 7. **Portability & secrecy** — Does the current plan leak secrets or overfit to one user, machine, run, or folder structure?
 8. **Learning quality** — For every learning-enabled step, is there a good reason, a concrete objective, direct write method unless explicitly requested otherwise, and no stale/stretched learning scope?
 9. **KB quality** — Are KB producer/consumer steps correctly declared, and do notes/index files contain durable domain knowledge rather than run logs or execution recipes?
-10. **DB quality** — Are `+"`"+`db/*.json`+"`"+` files documented, keyed, merge-safe, group-safe, and connected to report consumers?
+10. **DB quality** — Are `+"`"+`db/*.json`+"`"+` files documented, keyed, merge-safe, group-safe, connected to report consumers, and correctly referencing durable files under `+"`db/assets/`"+` when assets exist?
 11. **Report wiring** — Are report widgets backed by durable sources with matching fields and clear ownership? Are widgets using the JSONata `+"`query`"+` feature where it would avoid helper files like `+"`*_rows.json`"+`, `+"`*_summary.json`"+`, `+"`flat_*.json`"+`, or a `+"`step-generate-report`"+` flatten step?
 12. **Operational risk** — Which current choices are most likely to fail, confuse the agent, or create maintenance burden later?
 
@@ -8840,6 +8942,7 @@ last_synced_at: <RFC3339 timestamp or none>
    - `+"`planning/step_config.json`"+`
    - `+"`learnings/{step-id}/main.py`"+` and `+"`learnings/{step-id}/script_metadata.json`"+` if present
    - `+"`learnings/_global/SKILL.md`"+` once, searching for old/new step names, output names, and stale durable instructions
+   - `+"`knowledgebase/context/context.md`"+` if the step consumes user-supplied runtime context
    - `+"`knowledgebase/notes/_index.json`"+` and only relevant topic markdown files if KB access/contribution changed or the step produces/consumes durable facts
    - `+"`reports/report_plan.json`"+` if output/db/report-facing fields changed
    - `+"`evaluation/evaluation_plan.json`"+` and `+"`evaluation/step_config.json`"+` if output, success behavior, validation, or scoring expectations changed
@@ -8907,7 +9010,7 @@ You are a read-only reviewer of actual workflow outcomes. Your job is to determi
 
 This is a **read-only review**:
 - do not modify files
-- do not recommend success just because an eval score looks good
+- do not recommend success just because one eval step output looks good
 - separate workflow quality from evaluation quality
 
 ## RULES
@@ -9247,7 +9350,7 @@ Your job is to compare each step's **current description** with its **saved main
 4. **Anti-patterns** — hardcoded paths, hardcoded credentials, missing env var usage, non-portable code
 5. **Fabricated data** — script writes output data without actually fetching/computing it from real sources (MCP tools, APIs, input files)
 6. **MCP tool usage** — incorrect server/tool names in call_mcp(), missing API discovery, guessed parameter names instead of using get_api_spec
-7. **Persistent-store confusion** — script writes to the wrong store. Three stores: `+"`"+`learnings/`+"`"+` (HOW to run, agent-managed), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations — written by the post-step KB update agent in agent mode, or by step agents in direct-write mode; NOT by arbitrary step scripts in agent mode), `+"`"+`db/*.json`+"`"+` (structured durable tables/results for cross-run state and Report UI widgets — step-owned; upsert-by-key, never overwrite). Flag scripts that write directly under `+"`"+`knowledgebase/notes/`+"`"+` outside of direct-write mode (those should go through the KB update agent via `+"`"+`knowledgebase_contribution`+"`"+` on the step config), or that stash durable cross-run state in per-step output files when it belongs in `+"`"+`db/`+"`"+`, or that do wholesale rewrites of `+"`"+`db/`+"`"+` files instead of upsert-by-key.
+7. **Persistent-store confusion** — script writes to the wrong store. Stores: `+"`"+`learnings/`+"`"+` (HOW to run, agent-managed), `+"`knowledgebase/context/`"+` (user-supplied runtime context, never step-written), `+"`"+`knowledgebase/notes/`+"`"+` (workflow-discovered durable narrative observations — written by the post-step KB update agent in agent mode, or by step agents in direct-write mode), `+"`"+`db/*.json`+"`"+` (structured durable tables/results — step-owned; upsert-by-key, never overwrite), and `+"`db/assets/`"+` (durable media/file assets referenced by db rows/reports). Flag scripts that write directly under `+"`"+`knowledgebase/notes/`+"`"+` outside of direct-write mode, write under `+"`knowledgebase/context/`"+`, stash durable cross-run state in per-step output files when it belongs in `+"`"+`db/`+"`"+`, embed large assets in JSON instead of `+"`db/assets/`"+`, or do wholesale rewrites of `+"`"+`db/`+"`"+` files instead of upsert-by-key.
 
 This is a **read-only review** — do not modify any files.
 
@@ -9327,14 +9430,15 @@ time.sleep(15)  # Should poll with browser_snapshot instead
 
 Direct tool call (NOT via call_mcp). Uses command + args pattern.
 
-CDP mode: call agent_browser(command='tab', args=[], session='main') first. Then include the chosen tab inline in every page action, e.g. args=['tab', 't1', '-i'] for snapshot and args=['tab', 't1', ref] for click. Calls without an inline tab are rejected in shared-CDP mode.
+CDP mode: call agent_browser(command='tab', args=[], session='main') first. Choose/create a tab with the tab command. Call open with URL-only args. Then include the chosen tab inline in later page actions, e.g. args=['tab', 't1', '-i'] for snapshot and args=['tab', 't1', ref] for click. Calls without an inline tab are rejected in shared-CDP mode except open, which uses the selected tab and passes only the URL to agent-browser.
 
 **Correct patterns:**
 `+"```"+`python
 # CORRECT: Durable CSS selector (id / aria-label / testid) as the args target
 agent_browser(command='click', args=['tab', 't1', '#panAdhaarUserId'], session='main')
 agent_browser(command='fill', args=['tab', 't1', '[aria-label="Password"]', password], session='main')
-agent_browser(command='open', args=['tab', 't1', 'https://example.com'], session='main')
+agent_browser(command='tab', args=['t1'], session='main')
+agent_browser(command='open', args=['https://example.com'], session='main')
 
 # CORRECT: Snapshot+ref derived AT RUNTIME (the @e1 is parsed from the snapshot variable)
 snapshot = agent_browser(command='snapshot', args=['tab', 't1', '-i'], session='main')
@@ -9422,13 +9526,13 @@ Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are inten
 Use this hierarchy before changing the plan:
 1. `+"`soul/soul.md`"+` is the truth: objective and success criteria define what the workflow must achieve.
 2. `+"`planning/metrics.json`"+` and `+"`db/metrics_history.jsonl`"+` operationalize `+"`soul.md`"+`: metrics are numeric evidence, but they do not override the objective or success criteria.
-3. `+"`runs/iteration-0/<group>/...`"+` proves current reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did.
+3. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.md actions helped.
 4. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
-5. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and iteration-0 evidence; do not treat the current plan as proof that the workflow is correct.
-6. `+"`builder/improve.md`"+` and `+"`builder/review.md`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current iteration-0 evidence.
+5. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
+6. `+"`builder/improve.md`"+` and `+"`builder/review.md`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current run/eval/metric evidence.
 
 ## RULES
-1. **Use real evidence first**: Base every structural change on what actually happened in the target run. Do not make speculative edits when the artifacts do not support them.
+1. **Use real evidence first**: Base every structural change on what actually happened in the selected retained run window, with latest `+"`iteration-0`"+` weighted highest. Do not make speculative edits when the artifacts do not support them.
 2. **Do not rewrite the objective**: Treat the existing `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections in `+"`soul/soul.md`"+` as the north star. If they're missing, leave them unchanged and continue using the visible plan context — do NOT edit soul.md from this tool.
 3. **Rewrite the plan, not just the report**: Use plan modification tools directly. Do not stop at recommendations, and do not patch `+"`planning/plan.json`"+` by file.
 4. **Prefer minimal decisive changes**: Merge, split, add, remove, or reorder only when the run evidence justifies it.
@@ -9436,12 +9540,12 @@ Use this hierarchy before changing the plan:
 6. **Prefer the mode that matches the work**: default to `+"`code_exec`"+`. Promote to `+"`learn_code`"+` only when the user explicitly asks for it, the work is highly deterministic, and there is broad stability evidence (normally 10+ successful runs across the relevant scenarios/groups). Keep adaptive work and browser/UI automation on `+"`code_exec`"+` by default.
 7. **Preserve portability**: Remove plan-visible secrets, user-specific constants, hardcoded paths, and run-specific values when you touch affected steps.
 8. **Do not mark locks as complete just because the structure changed**: Structural replanning is separate from evidence-backed hardening.
-9. **Persistent-store aware**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations; normally written by step agents in direct-write mode; agent mode only when explicitly requested), `+"`"+`db/*.json`+"`"+` (structured durable tables/results for cross-run state and Report UI widgets; step-owned, upsert-by-key). When restructuring, use `+"`"+`update_step_config`+"`"+` to set `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` on steps that consume or produce KB facts. If run evidence shows a step stashing durable facts in output files or learnings that belong in the KB, restructure by adding a proper `+"`"+`knowledgebase_contribution`+"`"+` instead of creating new plan steps to manage state.
+9. **Persistent-store aware**: Stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/context/`+"`"+` (user-supplied runtime business context), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations discovered by the workflow; normally written by step agents in direct-write mode; agent mode only when explicitly requested), `+"`"+`db/*.json`+"`"+` (structured durable tables/results for cross-run state and Report UI widgets; step-owned, upsert-by-key), and `+"`db/assets/`"+` (durable media/file assets referenced by db rows or reports). When restructuring, use `+"`"+`update_step_config`+"`"+` to set `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` on steps that consume or produce KB facts. If a step consumes `+"`knowledgebase/context/context.md`"+`, also update that step's description to name the relevant context section/path so the runtime agent knows to read and apply it. If run evidence shows a step stashing durable facts in output files or learnings that belong in the KB, restructure by adding a proper `+"`"+`knowledgebase_contribution`+"`"+` instead of creating new plan steps to manage state.
 
 ## CONTEXT
 
 - **Workspace**: {{.WorkspacePath}}
-- **Target Run Folder**: {{.TargetRunFolder}}
+- **Latest Run Folder**: {{.TargetRunFolder}}
 {{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ Missing in soul/soul.md — do not infer it in this tool{{end}}
 {{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ Missing in soul/soul.md — rely on the best visible run/eval evidence and note this in your summary{{end}}
 
@@ -9455,11 +9559,17 @@ Use this hierarchy before changing the plan:
 
 ## RESULT SOURCES TO READ
 
-Read all relevant evidence for `+"`{{.TargetRunFolder}}`"+`:
-- execution outputs under `+"`runs/{{.TargetRunFolder}}/execution/`"+`
-- step logs under `+"`runs/{{.TargetRunFolder}}/logs/`"+`
-- validation results under `+"`runs/{{.TargetRunFolder}}/logs/`"+`
-- evaluation report at `+"`evaluation/runs/{{.TargetRunFolder}}/evaluation_report.json`"+` if it exists
+Build an evidence window before changing the plan:
+- Always include latest `+"`{{.TargetRunFolder}}`"+`.
+- Read `+"`builder/improve.md`"+`, `+"`builder/decisions.jsonl`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps to decide which older `+"`iteration-{N}`"+` folders matter.
+- Include older iterations since the last relevant harden/replan/eval/metric change, plus 1-2 runs immediately before that change when you need before/after comparison.
+- Ignore older iterations when they predate a material plan/config/eval change and no longer represent the current workflow, except as regression context.
+
+For each selected iteration/group, read relevant evidence:
+- execution outputs under `+"`runs/{iteration}/{group}/execution/`"+`
+- step logs under `+"`runs/{iteration}/{group}/logs/`"+`
+- validation results under `+"`runs/{iteration}/{group}/logs/`"+`
+- evaluation report at `+"`evaluation/runs/{iteration}/{group}/evaluation_report.json`"+` if it exists
 - output plan / final output artifacts if relevant
 
 Use targeted shell commands (`+"`find`"+`, `+"`jq`"+`, `+"`cat`"+`, `+"`head`"+`) to inspect only the files needed.
@@ -9470,8 +9580,8 @@ Prioritize this area while replanning: **{{.Focus}}**
 
 ## WORKFLOW
 
-1. Read the current plan and the target run evidence.
-2. Identify where the run failed to satisfy the objective or success criteria:
+1. Read the current plan and the selected evidence-window runs.
+2. Identify where latest behavior and relevant historical patterns fail to satisfy the objective or success criteria:
    - missing outputs
    - wrong outputs
    - redundant steps that produced no useful value
@@ -9508,7 +9618,7 @@ Return a short markdown summary with:
 - What the builder should run next to test the new plan
 `)
 
-var replanWorkflowFromResultsAgentUserTemplate = MustRegisterTemplate("replanWorkflowFromResultsAgentUser", `Replan the workflow from actual run results in "{{.TargetRunFolder}}". Read the evidence, update the plan through workflow plan modification tools, and summarize what changed. Do not patch planning/plan.json directly.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var replanWorkflowFromResultsAgentUserTemplate = MustRegisterTemplate("replanWorkflowFromResultsAgentUser", `Replan the workflow from retained run evidence. Start with latest "{{.TargetRunFolder}}", then include older iterations selected by improve.md / decisions / changelog timestamps when they show relevant trends, regressions, or before-after evidence. Read the evidence, update the plan through workflow plan modification tools, and summarize what changed. Do not patch planning/plan.json directly.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 // ============================================================================
 // Harden Workflow Agent — eval-driven hardening plus invariant cleanup
@@ -9528,17 +9638,19 @@ Every evaluation failure should leave behind a **structural artifact** — a pre
 Use this hierarchy before fixing:
 1. `+"`soul/soul.md`"+` is the truth: objective and success criteria define what the workflow must achieve.
 2. `+"`planning/metrics.json`"+` and `+"`db/metrics_history.jsonl`"+` operationalize `+"`soul.md`"+`: metrics are numeric evidence, but they do not override the objective or success criteria.
-3. `+"`runs/iteration-0/<group>/...`"+` proves current reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did.
+3. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.md actions helped.
 4. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
-5. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and iteration-0 evidence; do not treat the current plan as proof that the workflow is correct.
-6. `+"`builder/improve.md`"+` and `+"`builder/review.md`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current iteration-0 evidence.
+5. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
+6. `+"`builder/improve.md`"+` and `+"`builder/review.md`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current run/eval/metric evidence.
 
 ## PERSISTENT STORES (READ BEFORE FIXING)
 
 Workflows have three separate stores that survive across runs. Don't move content between them sideways when fixing:
 - **learnings/** — HOW to run (selectors, tool patterns, quirks). Managed by the learning agent; injected as '## Skill' into every step's prompt.
+- **knowledgebase/context/** — user-supplied runtime business context (rules, preferences, constraints, assumptions, examples). Read-only for harden/optimizer unless the user explicitly asks to curate captured context.
 - **knowledgebase/notes/** — per-topic narrative markdown the workflow has built up about its subject matter (entity-scoped or `+"`"+`pattern-*`+"`"+` topics). Plus `+"`"+`notes/_index.json`+"`"+` as a registry. Normally written by step agents in direct-write mode; written by the post-step KB update agent only when the user explicitly asked for agent mode.
 - **db/*.json** — workflow state/results (rows produced or consumed this run). Step-owned; upsert-by-key; never overwrite wholesale.
+- **db/assets/** — durable media/file assets referenced from db rows, reports, or later steps. Keep metadata/provenance in db/*.json.
 
 Per-step KB config:
 - `+"`"+`knowledgebase_access`+"`"+` — "read" | "write" | "read-write" | "none". Defaults to "none" (KB is opt-in per step).
@@ -9565,7 +9677,7 @@ Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are inten
 {{.MainPyAuthoringRules}}
 4. **Structural fixes are allowed when evidence demands them** — If the failure is caused by a missing step, obsolete step, wrong boundary, or bad ordering, use the plan modification tools (`+"`add_regular_step`"+`, `+"`add_todo_task_route`"+`, `+"`update_*`"+`, `+"`delete_*`"+`) to apply the smallest evidence-backed structural fix. If the exact plan edit cannot be expressed by the available tools, stop and report the limitation instead of patching `+"`planning/plan.json`"+` by file. Use `+"`replan_workflow_from_results`"+` only when the run/eval/metric evidence shows the workflow path itself is misaligned with the objective or success criteria and needs broader redesign across multiple steps/routes.
 5. **Preserve what works** — Do not modify steps that passed evaluation. Do not weaken existing pre-validation rules.
-6. **Mark reliable evidence** — If a step passed across ALL groups with scores >= 8, increment successful_runs via update_step_config. Use 3+ successful runs only as operational stability evidence for lock_learnings consideration; do NOT promote to `+"`learn_code`"+` or set `+"`lock_code=true`"+` unless the user explicitly asked for learn_code, the step is highly deterministic, and script/eval evidence shows 10+ successful runs across the relevant scenario/group surface. Always pass `+"`"+`review_notes`+"`"+` with a one-sentence justification citing the concrete evidence (groups passed, eval scores, pre-validation presence, clean tool usage) — future passes read this to decide whether to unlock.
+6. **Mark reliable evidence** — If a step passed across ALL groups with linked metrics at target, increment successful_runs via update_step_config. Use 3+ successful runs only as operational stability evidence for lock_learnings consideration; do NOT promote to `+"`learn_code`"+` or set `+"`lock_code=true`"+` unless the user explicitly asked for learn_code, the step is highly deterministic, and script/eval evidence shows 10+ successful runs across the relevant scenario/group surface. Always pass `+"`"+`review_notes`+"`"+` with a one-sentence justification citing the concrete evidence (groups passed, metric targets, pre-validation presence, clean tool usage) — future passes read this to decide whether to unlock.
 7. **Portability check** — When touching a step, scan for hardcoded user-specific values (account IDs, sheet URLs, paths) in descriptions and learnings. Replace with variable placeholders.
 8. **Store discipline** — If the failure evidence shows a step writing cross-run state into learnings/ or plan.json, recommend moving that content to `+"`"+`db/`+"`"+` or to the KB (via `+"`"+`knowledgebase_contribution`+"`"+`) as appropriate.
 9. **Best-practice sweep is required** — After building the failure map, inspect the workflow artifacts listed below and fix hard violations. For non-blocking concerns, append findings to your summary instead of making speculative edits.
@@ -9583,15 +9695,17 @@ Run this sweep on every harden pass. For a single-group harden, use that group's
    - For `+"`lock_learnings=true`"+`, read `+"`learnings/{step-id}/.learning_metadata.json`"+`. Check `+"`description_hash_runs >= 3`"+`; for direct learning, also require repeated no-new-learning outcomes. If metadata is missing, auto-unlocked, or contradicts step_config, unlock or correct config with review_notes.
    - For `+"`learn_code`"+` steps, avoid duplicate global learning writes unless there is HOW knowledge outside the script.
 3. **Knowledgebase**
+   - If a step needs user-supplied context from `+"`knowledgebase/context/context.md`"+`, it must have KB read access AND its step description must name the relevant section/path so the runtime agent knows to read and apply it. Fix both together.
    - KB write/read-write access requires a useful `+"`knowledgebase_contribution`"+`.
    - Prefer `+"`knowledgebase_write_method=\"direct\"`"+`; use `+"`agent`"+` only when the user explicitly requested a separate KB writer/reviewer.
-   - KB notes should contain durable domain observations, not raw rows, run logs, or execution recipes.
+   - KB notes should contain workflow-discovered durable domain observations, not raw rows, run logs, execution recipes, or user-owned runtime context that belongs under `+"`knowledgebase/context/`"+`.
 4. **Database**
    - Any step writing `+"`db/*.json`"+` must reference the target file and its schema contract in `+"`db/README.md`"+`.
    - `+"`db/*.json`"+` files need stable shape, primary key, merge/upsert rule, writer ownership, and group separation where groups can run.
+   - Durable images, PDFs, screenshots, audio, or other media/files must live under `+"`db/assets/`"+` with references and metadata in `+"`db/*.json`"+`; do not embed large base64 blobs in JSON.
    - If a failing/touched step overwrites rows wholesale or writes report data only to run folders, fix the description/code/config so it writes durable, keyed db rows.
 5. **Reports**
-   - `+"`reports/report_plan.json`"+` widgets should source durable `+"`db/*.json`"+`, KB notes, or built-in APIs, not volatile `+"`runs/`"+` paths.
+   - `+"`reports/report_plan.json`"+` widgets should source durable `+"`db/*.json`"+`, `+"`db/assets/`"+` references, KB context/notes, or built-in APIs, not volatile `+"`runs/`"+` paths.
    - Prefer widget-level JSONata `+"`query`"+` expressions over derived report helper files. The report pipeline is `+"`source/sources -> query -> path -> filter -> render`"+`; with `+"`sources`"+`, the query input is an alias-keyed object so one widget can join multiple `+"`db/*.json`"+` files. When `+"`query`"+` returns the final array/scalar, leave `+"`path`"+` empty or `+"`$`"+`.
    - If a widget reads `+"`*_rows.json`"+`, `+"`*_summary.json`"+`, `+"`flat_*.json`"+`, or depends on a `+"`step-generate-report`"+` / flatten-data step, collapse it to the canonical `+"`db/*.json`"+` source plus `+"`query`"+` when the transformation is deterministic and does not need a workflow step.
    - When a harden fix changes output/db field names, update report wiring or flag the required report change.
@@ -9602,7 +9716,7 @@ Run this sweep on every harden pass. For a single-group harden, use that group's
 ## CONTEXT
 
 - **Workspace**: {{.WorkspacePath}}
-- **Target Iteration**: {{.TargetRunFolder}}
+- **Latest Iteration**: {{.TargetRunFolder}}
 {{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{end}}
 {{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{end}}
 
@@ -9614,13 +9728,21 @@ Run this sweep on every harden pass. For a single-group harden, use that group's
 {{.StepConfigSummary}}
 {{end}}
 
-{{if .Focus}}## FOCUS
-Prioritize this area while hardening: **{{.Focus}}**
-{{end}}
+	{{if .Focus}}## FOCUS
+	Prioritize this area while hardening: **{{.Focus}}**
+	{{end}}
 
-## DATA LAYOUT
+	## EVIDENCE WINDOW
 
-All paths relative to workspace root. Replace {iter} with `+"`{{.TargetRunFolder}}`"+` and {group} with the group subfolder name.
+	Before building the failure map, select the retained runs that matter:
+	- Always include latest `+"`{{.TargetRunFolder}}`"+`.
+	- Read `+"`builder/improve.md`"+`, `+"`builder/decisions.jsonl`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps.
+	- Include older iterations since the last relevant harden/replan/eval/metric change, plus 1-2 runs immediately before that change when you need before/after comparison.
+	- Use older runs to identify recurring failures, regressions, and whether a previous fix helped. Do not let stale runs override latest evidence after a material plan/config/eval change.
+
+	## DATA LAYOUT
+
+All paths relative to workspace root. Replace {iter} with a selected retained iteration folder (always include latest `+"`{{.TargetRunFolder}}`"+`; include older `+"`iteration-{N}`"+` folders when improve.md/decision timestamps make them relevant) and {group} with the group subfolder name.
 
 ### Per-group execution data
 | Path | Contents |
@@ -9664,7 +9786,7 @@ Analysis rules:
 ### Evaluation data
 | Path | Contents |
 |------|----------|
-| `+"`evaluation/runs/{iter}/{group}/evaluation_report.json`"+` | Eval scores + reasoning per eval step |
+| `+"`evaluation/runs/{iter}/{group}/evaluation_report.json`"+` | Eval step outputs + evidence |
 | `+"`evaluation/evaluation_plan.json`"+` | Eval step definitions |
 
 ### Learnings and code (persistent across runs)
@@ -9683,8 +9805,10 @@ Analysis rules:
 | `+"`variables/variables.json`"+` | Variable groups and user-specific values that descriptions/scripts should reference by placeholder |
 | `+"`knowledgebase/notes/_index.json`"+` | KB topic registry; read this before reading topic notes |
 | `+"`knowledgebase/notes/*.md`"+` | Durable narrative domain observations |
+| `+"`knowledgebase/context/context.md`"+` | User-supplied runtime business context; read-only unless explicitly asked to curate |
 | `+"`db/README.md`"+` | Durable db schema contracts: purpose, shape, primary_key, merge_rule, writers, consumers |
 | `+"`db/*.json`"+` | Durable structured rows/results used across runs and by reports |
+| `+"`db/assets/`"+` | Durable images, PDFs, downloads, generated files, and other assets referenced by db rows/reports |
 | `+"`reports/report_plan.json`"+` | Live report widget definitions and source wiring |
 
 ### Important: todo_task orchestrator logs
@@ -9703,32 +9827,32 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
 
 {{end}}## PROCEDURE
 
-{{if .GroupName}}1. **Use the scoped group** — `+"`{{.GroupName}}`"+`. Do NOT discover other groups; ignore them entirely.
+	{{if .GroupName}}1. **Use the scoped group** — `+"`{{.GroupName}}`"+`. Do NOT discover other groups; ignore them entirely. For this group, read latest `+"`{{.TargetRunFolder}}`"+` plus older retained iterations selected by the evidence-window rules.
 
-2. **Read evaluation reports for {{.GroupName}}** — read:
-   - `+"`evaluation/runs/{{.TargetRunFolder}}/{{.GroupName}}/evaluation_report.json`"+`
-   - `+"`runs/{{.TargetRunFolder}}/{{.GroupName}}/execution/{step-id}/`"+` step output files
-   - `+"`runs/{{.TargetRunFolder}}/{{.GroupName}}/logs/{step-id}/execution/learn_code_fast_path.json`"+` for main.py results
-   - `+"`runs/{{.TargetRunFolder}}/{{.GroupName}}/logs/{step-id}/pre_validation.json`"+` for validation results
+	2. **Read evaluation reports for {{.GroupName}}** — for each selected iteration, read:
+	   - `+"`evaluation/runs/{iteration}/{{.GroupName}}/evaluation_report.json`"+`
+	   - `+"`runs/{iteration}/{{.GroupName}}/execution/{step-id}/`"+` step output files
+	   - `+"`runs/{iteration}/{{.GroupName}}/logs/{step-id}/execution/learn_code_fast_path.json`"+` for main.py results
+	   - `+"`runs/{iteration}/{{.GroupName}}/logs/{step-id}/pre_validation.json`"+` for validation results
 
-3. **Build a failure list for {{.GroupName}}** — per-step pass/fail with failure reasons. No cross-group aggregation.
+	3. **Build a failure list for {{.GroupName}}** — per-step pass/fail with failure reasons across selected iterations. No cross-group aggregation.
 
-4. **Run the best-practice sweep** — read plan/config/learnings metadata/KB/db/report/eval/variables artifacts and fix hard invariant violations using the rules above.{{else}}1. **Discover all groups** — List the subdirectories under `+"`runs/{{.TargetRunFolder}}/`"+` to find all group folders (e.g., vikas, rohit, atul). Ignore `+"`run_metadata.json`"+`.
+	4. **Run the best-practice sweep** — read plan/config/learnings metadata/KB/db/report/eval/variables artifacts and fix hard invariant violations using the rules above.{{else}}1. **Discover current groups** — List the subdirectories under `+"`runs/{{.TargetRunFolder}}/`"+` to find current group folders (e.g., vikas, rohit, atul). Ignore `+"`run_metadata.json`"+`. Then select older retained iterations using the evidence-window rules.
 
-2. **Read evaluation reports** — For each group, read:
-   - `+"`evaluation/runs/{{.TargetRunFolder}}/{group}/evaluation_report.json`"+`
-   - `+"`runs/{{.TargetRunFolder}}/{group}/execution/{step-id}/`"+` step output files
-   - `+"`runs/{{.TargetRunFolder}}/{group}/logs/{step-id}/execution/learn_code_fast_path.json`"+` for main.py results
-   - `+"`runs/{{.TargetRunFolder}}/{group}/logs/{step-id}/pre_validation.json`"+` for validation results
+	2. **Read evaluation reports** — For each current group and selected iteration, read:
+	   - `+"`evaluation/runs/{iteration}/{group}/evaluation_report.json`"+`
+	   - `+"`runs/{iteration}/{group}/execution/{step-id}/`"+` step output files
+	   - `+"`runs/{iteration}/{group}/logs/{step-id}/execution/learn_code_fast_path.json`"+` for main.py results
+	   - `+"`runs/{iteration}/{group}/logs/{step-id}/pre_validation.json`"+` for validation results
 
-3. **Build a failure map** — For each step, aggregate failures across all groups:
-   | Step ID | Groups that passed | Groups that failed | Failure reasons |{{end}}
+	3. **Build a failure map** — For each step, aggregate failures across all current groups and selected iterations:
+	   | Step ID | Iterations reviewed | Groups that passed | Groups that failed | Failure reasons | Trend/regression note |{{end}}
 
 4. **Run the best-practice sweep** — read plan/config/learnings metadata/KB/db/report/eval/variables artifacts and fix hard invariant violations using the rules above.
 
 5. **For each failing step** (ordered by failure count, worst first):
    a. Read the current step description, validation_schema, learnings, and main.py (if learn_code)
-   b. Read the actual execution output and logs {{if .GroupName}}for `+"`{{.GroupName}}`"+`{{else}}for 1-2 failing groups{{end}}
+	   b. Read the actual execution output and logs {{if .GroupName}}for `+"`{{.GroupName}}`"+` in the selected iterations{{else}}for 1-2 failing groups across the selected iterations{{end}}
    c. Categorize the failure:
       - **Output format/structure** → add pre-validation json_checks
       - **Data correctness** (wrong values, missing data) → tighten description + patch code
@@ -9737,7 +9861,7 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
    d. Apply fixes using the appropriate tools
    e. Document what you changed and why
 
-6. **For each passing step** ({{if .GroupName}}passed for `+"`{{.GroupName}}`"+`{{else}}passed ALL groups{{end}}):
+	6. **For each passing step** ({{if .GroupName}}passed for `+"`{{.GroupName}}`"+` in the selected run window{{else}}passed ALL current groups in the selected run window{{end}}):
    - If successful_runs < 3, increment via update_step_config
    - If successful_runs >= 3, set lock_learnings=true when the learning notes are stable. For learn_code steps, set lock_code=true only when the user explicitly wanted learn_code, the step is highly deterministic, and script/eval evidence shows 10+ successful runs across the relevant scenario/group surface.
    - **Unlock guard**: If you suspect the step description changed since the last review (description_reviewed may no longer reflect the current description), do NOT auto-lock. Instead flag the step as "description may have changed since last review — re-review before locking" and leave lock_learnings / lock_code at their previous values.{{if .GroupName}}
@@ -9764,7 +9888,7 @@ When adding pre-validation rules, follow this priority:
 Always prefer specific checks over generic ones. A check that catches the actual failure is worth more than ten generic existence checks.
 `)
 
-var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from evaluation results in "{{.TargetRunFolder}}"{{if .GroupName}}, scoped to group "{{.GroupName}}" only{{end}}. {{if .GroupName}}Read this group's eval report{{else}}Read all group eval reports{{end}}, identify every failing step, run the required best-practice sweep over plan/config/learnings metadata/KB/db/reports/variables/eval artifacts, and apply targeted fixes (pre-validation rules, description tightening via workflow plan tools, stale-script cleanup, config fixes, code patches for learn_code). Do not patch planning/plan.json directly. Update review_notes and locks only when the evidence supports them. Summarize all changes made and any best-practice findings left for later.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from retained run/evaluation evidence. Start with latest "{{.TargetRunFolder}}"{{if .GroupName}}, scoped to group "{{.GroupName}}" only{{end}}, then include older iterations selected by improve.md / decisions / changelog timestamps when they show relevant trends, regressions, or before-after evidence. {{if .GroupName}}Read this group's eval reports across the selected run window{{else}}Read all current group eval reports across the selected run window{{end}}, identify every failing or regressing step, run the required best-practice sweep over plan/config/learnings metadata/KB/db/reports/variables/eval artifacts, and apply targeted fixes (pre-validation rules, description tightening via workflow plan tools, stale-script cleanup, config fixes, code patches for learn_code). Do not patch planning/plan.json directly. Update review_notes and locks only when the evidence supports them. Summarize all changes made and any best-practice findings left for later.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 // HardenWorkflowAgent applies eval-driven fixes to failing steps
 type HardenWorkflowAgent struct {
@@ -10734,18 +10858,8 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 		}
 	}
 
-	scoringConfig := evalStepConfigMap[EvaluationScoringStepID]
-	appendCodeReviewTarget(
-		"evaluation_scoring",
-		EvaluationScoringStepID,
-		"Final Evaluation Scoring Agent",
-		"Aggregates evaluation step outputs into the final evaluation report and scores the workflow against the evaluation plan.",
-		nil,
-		scoringConfig,
-	)
-
 	if reviewCount == 0 {
-		return "No saved main.py scripts found to review across workflow steps, evaluation steps, or evaluation scoring.", nil
+		return "No saved main.py scripts found to review across workflow steps or evaluation steps.", nil
 	}
 
 	// Set up read-only folder guard

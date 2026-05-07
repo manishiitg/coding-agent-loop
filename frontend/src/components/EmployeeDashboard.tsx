@@ -8,17 +8,14 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
-import { agentApi } from '../services/api'
+import { agentApi, type MetricSnapshotRow, type WorkflowMetricRunSummary } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
-import type { Employee, EvaluationAggregate, EvaluationReportEntry, PhaseTokenUsageFile, TokenUsageFile, WorkflowPhaseDailyCostsEntry, WorkflowReviewDataResponse, WorkflowRunCostsEntry } from '../services/api-types'
+import type { Employee, EvaluationReportEntry, PhaseTokenUsageFile, TokenUsageFile, WorkflowPhaseDailyCostsEntry, WorkflowReviewDataResponse, WorkflowRunCostsEntry } from '../services/api-types'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import { ReportView } from './workflow/ReportViewer'
 import { useAppStore } from '../stores/useAppStore'
@@ -31,7 +28,7 @@ interface WorkflowSummary {
   totalRuns: number
   lastActive: string | null
   totalCost: number | null
-  evalPercent: number | null
+  metricsSummary: WorkflowMetricRunSummary | null
   workspacePath: string
   latestRunFolder: string | null
   scheduleCount: number
@@ -62,9 +59,10 @@ interface WorkflowReviewState {
   loading: boolean
   reviewData: WorkflowReviewDataResponse | null
   evaluation: EvaluationReportEntry | null
-  evaluations: EvaluationReportEntry[]
-  evaluationAggregate: EvaluationAggregate | null
   evaluationError: string | null
+  metrics: MetricDefinition[]
+  metricsHistory: MetricSnapshotRow[]
+  metricsError: string | null
   tokenUsage: TokenUsageFile | null
   evaluationTokenUsage: TokenUsageFile | null
   costRuns: WorkflowRunCostsEntry[]
@@ -74,6 +72,17 @@ interface WorkflowReviewState {
 
 type WorkflowsSummaryResponse = Awaited<ReturnType<typeof agentApi.getWorkflowsSummary>>
 type WorkflowApiSummary = WorkflowsSummaryResponse['workflows'][number]
+
+interface MetricDefinition {
+  id: string
+  label?: string
+  unit: string
+  direction: 'higher_better' | 'lower_better'
+  mode: 'target' | 'slo'
+  target?: number
+  floor?: number
+  ceiling?: number
+}
 
 // Avatar component
 const EmployeeAvatar: React.FC<{ name: string; color: string; size?: 'sm' | 'md' | 'lg' }> = ({ name, color, size = 'md' }) => {
@@ -103,9 +112,10 @@ const EMPTY_REVIEW_STATE: WorkflowReviewState = {
   loading: false,
   reviewData: null,
   evaluation: null,
-  evaluations: [],
-  evaluationAggregate: null,
   evaluationError: null,
+  metrics: [],
+  metricsHistory: [],
+  metricsError: null,
   tokenUsage: null,
   evaluationTokenUsage: null,
   costRuns: [],
@@ -186,33 +196,32 @@ const ReviewTabButton: React.FC<{
   </button>
 )
 
-const getEvalBadgeClasses = (_evalPercent: number): string => {
+const metricHealthText = (summary: WorkflowMetricRunSummary | null): string | null => {
+  if (!summary || summary.total <= 0) return null
+  if (summary.failed > 0) return `${summary.failed} failing`
+  if (summary.with_value < summary.total) return `${summary.with_value}/${summary.total} values`
+  if (summary.passed > 0) return `${summary.passed}/${summary.total} passing`
+  return `${summary.total} metrics`
+}
+
+const metricHealthClass = (summary: WorkflowMetricRunSummary | null): string => {
+  if (!summary || summary.total <= 0) return 'bg-muted text-muted-foreground ring-1 ring-inset ring-border'
+  if (summary.failed > 0) return 'bg-destructive/15 text-destructive'
+  if (summary.with_value < summary.total) return 'bg-warning/15 text-warning'
+  if (summary.passed > 0) return 'bg-success/15 text-success'
   return 'bg-muted text-muted-foreground ring-1 ring-inset ring-border'
 }
 
-const formatPercent = (value: number): string => `${value.toFixed(1)}%`
-
-const getScoreTextColor = (_percentage: number): string => 'text-foreground'
-
-const getScoreBarColor = (_percentage: number): string => 'bg-muted-foreground/40'
-
-// Line colors for multi-group trend chart. Cycled by group index.
-const GROUP_LINE_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#a855f7', '#ef4444', '#84cc16']
-
-// run_folder looks like "iteration-0/default-group". Split into iteration + group.
-// If there's no "/", treat the whole thing as the iteration and use "default" as group.
-interface ParsedRun {
-  iteration: string
-  group: string
-  iterationIndex: number
+const metricRowStatusClass = (row: MetricSnapshotRow): string => {
+  if (!row.has_value) return 'text-warning'
+  if (row.passed === false) return 'text-destructive'
+  if (row.passed === true) return 'text-success'
+  return 'text-muted-foreground'
 }
-const parseRunFolder = (runFolder: string): ParsedRun => {
-  const slash = runFolder.indexOf('/')
-  const iteration = slash >= 0 ? runFolder.slice(0, slash) : runFolder
-  const group = slash >= 0 ? runFolder.slice(slash + 1) : 'default'
-  const match = iteration.match(/(\d+)/)
-  const iterationIndex = match ? parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER
-  return { iteration, group, iterationIndex }
+
+const metricThresholdLabel = (row: MetricSnapshotRow): string => {
+  if (!row.threshold_kind || typeof row.threshold_value !== 'number') return 'no threshold'
+  return `${row.threshold_kind} ${row.threshold_value}`
 }
 
 export const EmployeeDashboard: React.FC = () => {
@@ -230,7 +239,6 @@ export const EmployeeDashboard: React.FC = () => {
   const [collapsedEmployeeIds, setCollapsedEmployeeIds] = useState<Set<string>>(new Set())
   const [reviewTab, setReviewTab] = useState<ReviewTab>('report')
   const [reviewState, setReviewState] = useState<WorkflowReviewState>(EMPTY_REVIEW_STATE)
-  const [selectedEvalRunFolder, setSelectedEvalRunFolder] = useState<string | null>(null)
   const [expandedEvalSteps, setExpandedEvalSteps] = useState<Set<string>>(new Set())
 
   const loadData = useCallback(async () => {
@@ -305,7 +313,7 @@ export const EmployeeDashboard: React.FC = () => {
           totalRuns: ws?.total_runs || 0,
           lastActive,
           totalCost: null,
-          evalPercent: null,
+          metricsSummary: ws?.latest_run?.metrics_summary || null,
           workspacePath: wp,
           latestRunFolder,
           scheduleCount: sched?.count || 0,
@@ -413,17 +421,27 @@ export const EmployeeDashboard: React.FC = () => {
     })
 
     try {
-      const reviewData = await agentApi.getWorkflowReviewData(workspacePath, runFolder)
+      const [reviewData, metricsResp, metricsHistoryResp] = await Promise.all([
+        agentApi.getWorkflowReviewData(workspacePath, runFolder),
+        agentApi.getAutoImprovementMetrics(workspacePath).catch(err => ({ success: false, file: { metrics: [] }, error: err instanceof Error ? err.message : 'Failed to load metrics' })),
+        agentApi.getMetricsHistory(workspacePath).catch(err => ({ success: false, rows: [], error: err instanceof Error ? err.message : 'Failed to load metric history' })),
+      ])
       const evaluationResponse = reviewData.evaluations
       const costsResponse = reviewData.costs
+      const metrics = metricsResp.success && metricsResp.file?.metrics
+        ? metricsResp.file.metrics as MetricDefinition[]
+        : []
+      const metricsHistory = metricsHistoryResp.success && Array.isArray(metricsHistoryResp.rows)
+        ? metricsHistoryResp.rows as MetricSnapshotRow[]
+        : []
+      const metricsError = metricsResp.success && metricsHistoryResp.success
+        ? null
+        : (metricsResp.error || metricsHistoryResp.error || 'Failed to load metrics')
 
       let evaluation: EvaluationReportEntry | null = null
-      let evaluations: EvaluationReportEntry[] = []
-      let evaluationAggregate: EvaluationAggregate | null = null
       let evaluationError: string | null = null
       if (evaluationResponse?.success) {
-        evaluations = Array.isArray(evaluationResponse.reports) ? evaluationResponse.reports : []
-        evaluationAggregate = evaluationResponse.aggregate || null
+        const evaluations = Array.isArray(evaluationResponse.reports) ? evaluationResponse.reports : []
         evaluation = evaluations.find(item => runFolderMatches(item.run_folder, runFolder)) || evaluations[0] || null
       } else if (evaluationResponse?.error) {
         evaluationError = evaluationResponse.error
@@ -449,9 +467,10 @@ export const EmployeeDashboard: React.FC = () => {
         loading: false,
         reviewData,
         evaluation,
-        evaluations,
-        evaluationAggregate,
         evaluationError,
+        metrics,
+        metricsHistory,
+        metricsError,
         tokenUsage,
         evaluationTokenUsage,
         costRuns,
@@ -463,9 +482,10 @@ export const EmployeeDashboard: React.FC = () => {
         loading: false,
         reviewData: null,
         evaluation: null,
-        evaluations: [],
-        evaluationAggregate: null,
         evaluationError: err instanceof Error ? err.message : 'Failed to load evaluation',
+        metrics: [],
+        metricsHistory: [],
+        metricsError: err instanceof Error ? err.message : 'Failed to load metrics',
         tokenUsage: null,
         evaluationTokenUsage: null,
         costRuns: [],
@@ -478,18 +498,6 @@ export const EmployeeDashboard: React.FC = () => {
   useEffect(() => {
     loadWorkflowReview(selectedWorkflowEntry)
   }, [loadWorkflowReview, selectedWorkflowEntry])
-
-  // Default the selected iteration to the matched/latest one when evaluations load
-  useEffect(() => {
-    if (reviewState.evaluations.length === 0) {
-      setSelectedEvalRunFolder(null)
-      return
-    }
-    const exists = reviewState.evaluations.some(e => e.run_folder === selectedEvalRunFolder)
-    if (!exists) {
-      setSelectedEvalRunFolder(reviewState.evaluation?.run_folder || reviewState.evaluations[0].run_folder)
-    }
-  }, [reviewState.evaluations, reviewState.evaluation, selectedEvalRunFolder])
 
   const handleAssign = useCallback(async (workspacePath: string | null, employeeId: string | null) => {
     if (!workspacePath) return
@@ -522,17 +530,6 @@ export const EmployeeDashboard: React.FC = () => {
   // workspace reports as most recent, with a fallback to the run whose cost
   // file has the newest updated_at if that folder isn't present in costs.
   const latestRunFolder = selectedWorkflow?.latestRunFolder || null
-  const latestEvalPercent = useMemo(() => {
-    if (reviewState.evaluations.length === 0) return null
-    const matched = latestRunFolder
-      ? reviewState.evaluations.find(e => runFolderMatches(e.run_folder, latestRunFolder))
-      : null
-    const entry = matched || [...reviewState.evaluations].sort((a, b) =>
-      (Date.parse(b.report.generated_at) || 0) - (Date.parse(a.report.generated_at) || 0)
-    )[0]
-    return entry ? Math.round(entry.report.score_percentage) : null
-  }, [reviewState.evaluations, latestRunFolder])
-
   const latestRunCost = useMemo(() => {
     if (reviewState.costRuns.length === 0) return null
     const sumCost = (usage: TokenUsageFile | null | undefined): number => {
@@ -558,31 +555,47 @@ export const EmployeeDashboard: React.FC = () => {
     if (!run) return null
     return sumCost(run.token_usage) + sumCost(run.evaluation_token_usage)
   }, [reviewState.costRuns, latestRunFolder])
-  // Evaluation trend data: one point per report. X is a numeric timestamp so
-  // points land at their real time (including multiple same-day runs).
-  // recharts needs one row per distinct x; same-timestamp rows are merged.
-  const evalTrend = useMemo(() => {
-    type Row = { ts: number; [group: string]: number | null }
-    const rowByTs = new Map<number, Row>()
-    const groupSet = new Set<string>()
 
-    for (const entry of reviewState.evaluations) {
-      const parsed = parseRunFolder(entry.run_folder)
-      groupSet.add(parsed.group)
+  const metricById = useMemo(() => {
+    return new Map(reviewState.metrics.map(metric => [metric.id, metric]))
+  }, [reviewState.metrics])
 
-      const parsedDate = new Date(entry.report.generated_at)
-      if (Number.isNaN(parsedDate.getTime())) continue
-      const ts = parsedDate.getTime()
-      const row = rowByTs.get(ts) || { ts }
-      row[parsed.group] = entry.report.score_percentage
-      rowByTs.set(ts, row)
+  const latestMetricRows = useMemo(() => {
+    const rows = reviewState.metricsHistory
+    if (rows.length === 0) return []
+
+    const matchingRunRows = latestRunFolder
+      ? rows.filter(row => runFolderMatches(row.run_folder, latestRunFolder))
+      : []
+    const candidates = matchingRunRows.length > 0 ? matchingRunRows : rows
+    const latestCompletedAt = candidates.reduce((latest, row) => row.completed_at > latest ? row.completed_at : latest, '')
+    return candidates
+      .filter(row => row.completed_at === latestCompletedAt)
+      .sort((a, b) => a.metric_id.localeCompare(b.metric_id))
+  }, [reviewState.metricsHistory, latestRunFolder])
+
+  const latestMetricsSummary = useMemo<WorkflowMetricRunSummary | null>(() => {
+    if (selectedWorkflow?.metricsSummary) return selectedWorkflow.metricsSummary
+    if (latestMetricRows.length === 0) return null
+    let withValue = 0
+    let passed = 0
+    let failed = 0
+    let unknown = 0
+    for (const row of latestMetricRows) {
+      if (row.has_value) withValue++
+      if (row.passed === true) passed++
+      else if (row.passed === false) failed++
+      else unknown++
     }
-
-    const rows = Array.from(rowByTs.values()).sort((a, b) => a.ts - b.ts)
-    const groups = Array.from(groupSet).sort()
-    return { rows, groups }
-  }, [reviewState.evaluations])
-
+    return {
+      total: latestMetricRows.length,
+      with_value: withValue,
+      passed,
+      failed,
+      unknown,
+      rows: latestMetricRows,
+    }
+  }, [selectedWorkflow?.metricsSummary, latestMetricRows])
   // Cost trend: daily totals per day, split into execution / evaluation / phase
   // (phase = workflow-builder/planning/etc, not tied to a specific run).
   const costTrend = useMemo(() => {
@@ -644,54 +657,8 @@ export const EmployeeDashboard: React.FC = () => {
   }, [reviewState.costRuns, reviewState.phaseDailyCosts])
 
   const currentEvalEntry = useMemo(() => {
-    if (!selectedEvalRunFolder) return reviewState.evaluation
-    return reviewState.evaluations.find(e => e.run_folder === selectedEvalRunFolder) || reviewState.evaluation
-  }, [reviewState.evaluation, reviewState.evaluations, selectedEvalRunFolder])
-
-  // Per-group summary: one row per group with runs, latest, best, avg. Sorted
-  // by latest score descending (worst-performing groups sink so they're easy
-  // to scan for issues; ties fall back to group name).
-  const evalGroupsSummary = useMemo(() => {
-    type GroupStats = {
-      group: string
-      runs: number
-      latest: number
-      latestRunFolder: string
-      latestGeneratedAt: string
-      best: number
-      avg: number
-    }
-    const byGroup = new Map<string, EvaluationReportEntry[]>()
-    for (const entry of reviewState.evaluations) {
-      const { group } = parseRunFolder(entry.run_folder)
-      const list = byGroup.get(group) || []
-      list.push(entry)
-      byGroup.set(group, list)
-    }
-
-    const rows: GroupStats[] = []
-    for (const [group, entries] of byGroup.entries()) {
-      const sorted = [...entries].sort((a, b) => {
-        const ta = Date.parse(a.report.generated_at) || 0
-        const tb = Date.parse(b.report.generated_at) || 0
-        return tb - ta
-      })
-      const latest = sorted[0]
-      const scores = entries.map(e => e.report.score_percentage)
-      rows.push({
-        group,
-        runs: entries.length,
-        latest: latest.report.score_percentage,
-        latestRunFolder: latest.run_folder,
-        latestGeneratedAt: latest.report.generated_at,
-        best: Math.max(...scores),
-        avg: scores.reduce((s, v) => s + v, 0) / scores.length,
-      })
-    }
-
-    rows.sort((a, b) => b.latest - a.latest || a.group.localeCompare(b.group))
-    return rows
-  }, [reviewState.evaluations])
+    return reviewState.evaluation
+  }, [reviewState.evaluation])
 
   const toggleEvalStep = useCallback((stepKey: string) => {
     setExpandedEvalSteps(prev => {
@@ -905,13 +872,13 @@ export const EmployeeDashboard: React.FC = () => {
                           No runs yet
                         </span>
                       )}
-                      {latestEvalPercent !== null && (
+                      {latestMetricsSummary && (
                         <span
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-1 ${getEvalBadgeClasses(latestEvalPercent)}`}
-                          title="Evaluation score of the latest run"
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-1 ${metricHealthClass(latestMetricsSummary)}`}
+                          title={`${latestMetricsSummary.passed} passing, ${latestMetricsSummary.failed} failing, ${latestMetricsSummary.unknown} unknown`}
                         >
                           <BarChart3 className="w-3 h-3" />
-                          Eval {latestEvalPercent}%
+                          Metrics {metricHealthText(latestMetricsSummary)}
                         </span>
                       )}
                       {latestRunCost !== null && latestRunCost > 0 && (
@@ -941,7 +908,7 @@ export const EmployeeDashboard: React.FC = () => {
                   <div>
                     <h4 className="text-base font-semibold text-foreground">Latest report</h4>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Select a workflow to review its report, evaluation, and cost.
+                      Select a workflow to review its report, metrics, and cost.
                     </p>
                   </div>
                 )}
@@ -950,7 +917,7 @@ export const EmployeeDashboard: React.FC = () => {
               <div className="border-b border-border px-5 py-3">
                 <div className="inline-flex items-center gap-1 rounded-xl bg-muted/60 p-1">
                   <ReviewTabButton active={reviewTab === 'report'} label="Report" onClick={() => setReviewTab('report')} />
-                  <ReviewTabButton active={reviewTab === 'evaluation'} label="Evaluation" onClick={() => setReviewTab('evaluation')} />
+                  <ReviewTabButton active={reviewTab === 'evaluation'} label="Metrics" onClick={() => setReviewTab('evaluation')} />
                   <ReviewTabButton active={reviewTab === 'cost'} label="Cost" onClick={() => setReviewTab('cost')} />
                 </div>
               </div>
@@ -962,7 +929,7 @@ export const EmployeeDashboard: React.FC = () => {
                   </div>
                 ) : !selectedWorkflow.latestRunFolder ? (
                   <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                    This workflow has not produced a run yet, so there is no report, evaluation, or cost data to review.
+                    This workflow has not produced a run yet, so there is no report, metrics, or cost data to review.
                   </div>
                 ) : reviewState.loading ? (
                   <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
@@ -974,226 +941,117 @@ export const EmployeeDashboard: React.FC = () => {
                     <ReportView workspacePath={selectedWorkflow.workspacePath} selectedRunFolder={selectedWorkflow.latestRunFolder} reviewData={reviewState.reviewData} />
                   </div>
                 ) : reviewTab === 'evaluation' ? (
-                  currentEvalEntry ? (
-                    (() => {
-                      const current = currentEvalEntry
-                      const currentParsed = parseRunFolder(current.run_folder)
-                      const pct = current.report.score_percentage
-                      const agg = reviewState.evaluationAggregate
-                      return (
-                        <div className="space-y-4">
-                          {/* Selected iteration/group header */}
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
-                              <div className="flex items-center justify-between">
-                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Overall Score</div>
-                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${getEvalBadgeClasses(pct)}`}>
-                                  {formatPercent(pct)}
-                                </span>
-                              </div>
-                              <div className={`mt-2 text-2xl font-semibold ${getScoreTextColor(pct)}`}>
-                                {formatPercent(pct)}
-                              </div>
-                              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted">
-                                <div
-                                  className={`h-full transition-all ${getScoreBarColor(pct)}`}
-                                  style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-                                />
-                              </div>
-                              <div className="mt-2 text-xs text-muted-foreground">
-                                {current.report.total_score} / {current.report.max_possible_score}
-                              </div>
-                            </div>
-                            <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
-                              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Selected run</div>
-                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                                <span className="rounded bg-background px-1.5 py-0.5 font-mono text-xs text-foreground ring-1 ring-border">
-                                  {currentParsed.iteration}
-                                </span>
-                                <span className="text-muted-foreground">/</span>
-                                <span className="rounded bg-background px-1.5 py-0.5 font-mono text-xs text-foreground ring-1 ring-border">
-                                  {currentParsed.group}
-                                </span>
-                              </div>
-                              <div className="mt-2 text-xs text-muted-foreground">
-                                {formatScheduleTime(current.report.generated_at)}
-                              </div>
-                              {agg && agg.total_runs > 1 && (
-                                <div className="mt-1 text-xs text-muted-foreground">
-                                  {agg.total_runs} runs · avg {formatPercent(agg.average_percentage)}
-                                </div>
-                              )}
-                            </div>
-                          </div>
+                  <div className="space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Passing</div>
+                        <div className="mt-2 text-2xl font-semibold text-foreground">{latestMetricsSummary?.passed ?? 0}</div>
+                      </div>
+                      <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Failing</div>
+                        <div className="mt-2 text-2xl font-semibold text-foreground">{latestMetricsSummary?.failed ?? 0}</div>
+                      </div>
+                      <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Unknown</div>
+                        <div className="mt-2 text-2xl font-semibold text-foreground">{latestMetricsSummary?.unknown ?? 0}</div>
+                      </div>
+                    </div>
 
-                          {/* Trend over time (line per group) */}
-                          {evalTrend.rows.length >= 1 && (
-                            <div className="rounded-xl border border-border bg-card px-4 py-3">
-                              <div className="mb-2 flex items-center justify-between">
-                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Scores over time</div>
-                                <div className="text-[11px] text-muted-foreground">
-                                  {evalTrend.rows.length} run{evalTrend.rows.length !== 1 ? 's' : ''} · {evalTrend.groups.length} group{evalTrend.groups.length !== 1 ? 's' : ''}
-                                </div>
-                              </div>
-                              <div className="h-52 w-full">
-                                <ResponsiveContainer width="100%" height="100%">
-                                  <LineChart data={evalTrend.rows} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" opacity={0.3} />
-                                    <XAxis
-                                      dataKey="ts"
-                                      type="number"
-                                      scale="time"
-                                      domain={['dataMin', 'dataMax']}
-                                      tickFormatter={v => new Date(v).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                                      fontSize={11}
-                                      tick={{ fill: 'currentColor' }}
-                                      className="text-muted-foreground"
-                                    />
-                                    <YAxis domain={[0, 100]} fontSize={11} tick={{ fill: 'currentColor' }} className="text-muted-foreground" tickFormatter={v => `${v}%`} />
-                                    <Tooltip
-                                      labelFormatter={(v: unknown) => typeof v === 'number' ? new Date(v).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : String(v)}
-                                      formatter={(value: unknown, name: unknown) => [
-                                        typeof value === 'number' ? `${value.toFixed(1)}%` : String(value),
-                                        String(name),
-                                      ]}
-                                      contentStyle={{ fontSize: 12, borderRadius: 6 }}
-                                    />
-                                    {evalTrend.groups.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
-                                    {evalTrend.groups.map((g, idx) => (
-                                      <Line
-                                        key={g}
-                                        type="monotone"
-                                        dataKey={g}
-                                        stroke={GROUP_LINE_COLORS[idx % GROUP_LINE_COLORS.length]}
-                                        strokeWidth={2}
-                                        dot={{ r: 3 }}
-                                        activeDot={{ r: 5 }}
-                                        connectNulls
-                                      />
-                                    ))}
-                                  </LineChart>
-                                </ResponsiveContainer>
-                              </div>
-                            </div>
-                          )}
+                    {reviewState.metricsError && latestMetricRows.length === 0 && (
+                      <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                        {reviewState.metricsError}
+                      </div>
+                    )}
 
-                          {/* Per-group summary */}
-                          {evalGroupsSummary.length > 0 && (
-                            <div className="overflow-hidden rounded-xl border border-border bg-card">
-                              <div className="flex items-center justify-between border-b border-border px-4 py-2">
-                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                  Groups
-                                </div>
-                                <div className="text-[11px] text-muted-foreground">
-                                  {evalGroupsSummary.length} group{evalGroupsSummary.length !== 1 ? 's' : ''}
-                                </div>
-                              </div>
-                              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-x-6 border-b border-border bg-muted/20 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                                <div>Group</div>
-                                <div className="text-right">Runs</div>
-                                <div className="text-right">Latest</div>
-                                <div className="text-right">Best</div>
-                                <div className="text-right">Avg</div>
-                              </div>
-                              <div className="divide-y divide-border">
-                                {evalGroupsSummary.map(row => {
-                                  const isCurrent = row.latestRunFolder === current.run_folder
-                                  return (
-                                    <button
-                                      key={row.group}
-                                      type="button"
-                                      onClick={() => setSelectedEvalRunFolder(row.latestRunFolder)}
-                                      className={`grid w-full grid-cols-[1fr_auto_auto_auto_auto] items-center gap-x-6 px-4 py-2 text-left text-sm transition-colors hover:bg-accent/50 ${
-                                        isCurrent ? 'bg-primary/5' : ''
-                                      }`}
-                                      title={`Latest: ${row.latestRunFolder} (${new Date(row.latestGeneratedAt).toLocaleString()})`}
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-mono text-foreground">{row.group}</span>
-                                        {isCurrent && (
-                                          <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">Selected</span>
-                                        )}
-                                      </div>
-                                      <div className="text-right text-muted-foreground">{row.runs}</div>
-                                      <div className="text-right font-medium text-foreground">{formatPercent(row.latest)}</div>
-                                      <div className="text-right text-muted-foreground">{formatPercent(row.best)}</div>
-                                      <div className="text-right text-muted-foreground">{formatPercent(row.avg)}</div>
-                                    </button>
-                                  )
-                                })}
-                              </div>
-                            </div>
-                          )}
+                    {!reviewState.metricsError && latestMetricRows.length === 0 && (
+                      <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                        No metric snapshot exists for the latest run yet.
+                      </div>
+                    )}
 
-                          {/* Step breakdown */}
-                          <div className="space-y-2">
-                            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                              Step scores ({current.report.step_scores.length})
-                            </div>
-                            {current.report.step_scores.map((step, idx) => {
-                              const stepPct = step.max_score > 0 ? (step.score / step.max_score) * 100 : 0
-                              const stepKey = `${current.run_folder}-${step.step_id}-${idx}`
-                              const isExpanded = expandedEvalSteps.has(stepKey)
-                              return (
-                                <div key={stepKey} className="overflow-hidden rounded-xl border border-border bg-card">
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleEvalStep(stepKey)}
-                                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-accent/50"
-                                  >
-                                    {isExpanded ? (
-                                      <ChevronDown className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                                    ) : (
-                                      <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                                    )}
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <span className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground">#{idx + 1}</span>
-                                        <span className="truncate text-sm font-medium text-foreground">{step.step_id}</span>
-                                      </div>
-                                      <div className="mt-1.5 flex items-center gap-2">
-                                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-                                          <div
-                                            className={`h-full transition-all ${getScoreBarColor(stepPct)}`}
-                                            style={{ width: `${Math.min(100, Math.max(0, stepPct))}%` }}
-                                          />
-                                        </div>
-                                        <span className={`text-[11px] font-medium ${getScoreTextColor(stepPct)}`}>
-                                          {step.score}/{step.max_score}
-                                        </span>
-                                      </div>
+                    {latestMetricRows.length > 0 && (
+                      <div className="overflow-hidden rounded-xl border border-border bg-card">
+                        <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 border-b border-border bg-muted/20 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                          <div>Metric</div>
+                          <div className="text-right">Value</div>
+                          <div className="text-right">Target</div>
+                        </div>
+                        <div className="divide-y divide-border">
+                          {latestMetricRows.map(row => {
+                            const metric = metricById.get(row.metric_id)
+                            return (
+                              <div key={`${row.completed_at}-${row.metric_id}`} className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 px-4 py-2.5 text-sm">
+                                <div className="min-w-0">
+                                  <div className="truncate font-medium text-foreground">{metric?.label || row.metric_id}</div>
+                                  <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                                    <span className="font-mono">{row.metric_id}</span>
+                                    {row.resolve_error && <span className="truncate text-warning">{row.resolve_error}</span>}
+                                  </div>
+                                </div>
+                                <div className={`text-right font-medium ${metricRowStatusClass(row)}`}>
+                                  {row.has_value ? `${row.value}${metric?.unit ? ` ${metric.unit}` : ''}` : 'missing'}
+                                </div>
+                                <div className="text-right text-xs text-muted-foreground">
+                                  {metricThresholdLabel(row)}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {currentEvalEntry && (
+                      <div className="space-y-2">
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Eval evidence ({currentEvalEntry.report.step_scores.length})
+                        </div>
+                        {currentEvalEntry.report.step_scores.map((step, idx) => {
+                          const stepKey = `${currentEvalEntry.run_folder}-${step.step_id}-${idx}`
+                          const isExpanded = expandedEvalSteps.has(stepKey)
+                          return (
+                            <div key={stepKey} className="overflow-hidden rounded-xl border border-border bg-card">
+                              <button
+                                type="button"
+                                onClick={() => toggleEvalStep(stepKey)}
+                                className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-accent/50"
+                              >
+                                {isExpanded ? (
+                                  <ChevronDown className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                                ) : (
+                                  <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground">#{idx + 1}</span>
+                                    <span className="truncate text-sm font-medium text-foreground">{step.step_id}</span>
+                                  </div>
+                                </div>
+                              </button>
+                              {isExpanded && (step.reasoning || step.evidence) && (
+                                <div className="space-y-3 border-t border-border bg-muted/20 px-4 py-3">
+                                  {step.reasoning && (
+                                    <div>
+                                      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Reasoning</div>
+                                      <p className="whitespace-pre-wrap text-xs text-foreground">{step.reasoning}</p>
                                     </div>
-                                  </button>
-                                  {isExpanded && (step.reasoning || step.evidence) && (
-                                    <div className="space-y-3 border-t border-border bg-muted/20 px-4 py-3">
-                                      {step.reasoning && (
-                                        <div>
-                                          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Reasoning</div>
-                                          <p className="whitespace-pre-wrap text-xs text-foreground">{step.reasoning}</p>
-                                        </div>
-                                      )}
-                                      {step.evidence && (
-                                        <div>
-                                          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Evidence</div>
-                                          <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-2 text-[11px]">
-                                            {step.evidence}
-                                          </pre>
-                                        </div>
-                                      )}
+                                  )}
+                                  {step.evidence && (
+                                    <div>
+                                      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Evidence</div>
+                                      <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-2 text-[11px]">
+                                        {step.evidence}
+                                      </pre>
                                     </div>
                                   )}
                                 </div>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )
-                    })()
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                      {reviewState.evaluationError || 'No evaluation report exists for the latest run yet.'}
-                    </div>
-                  )
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <div className="space-y-4">
                     {(() => {

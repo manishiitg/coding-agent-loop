@@ -130,6 +130,34 @@ PY`
 	}
 }
 
+func TestContainsAgentBrowserInvocationAllowsReadOnlySkillsDocs(t *testing.T) {
+	allowed := []string{
+		"agent-browser skills list",
+		"agent-browser skills get core",
+		"agent-browser skills get core --full",
+		"agent-browser skills get electron --full",
+	}
+	for _, command := range allowed {
+		if containsAgentBrowserInvocation(command) {
+			t.Fatalf("expected %q to be allowed", command)
+		}
+	}
+}
+
+func TestContainsAgentBrowserInvocationStillBlocksBrowserActions(t *testing.T) {
+	blocked := []string{
+		"agent-browser open https://example.com",
+		"agent-browser snapshot -i",
+		"agent-browser skills get core && agent-browser open https://example.com",
+		"agent-browser skills get core | cat",
+	}
+	for _, command := range blocked {
+		if !containsAgentBrowserInvocation(command) {
+			t.Fatalf("expected %q to be blocked", command)
+		}
+	}
+}
+
 func TestDetectRawChromeCDPAccessAllowsPlanTextMentioningCDPVariable(t *testing.T) {
 	command := `cat > /tmp/plan.py <<'PY'
 description = """

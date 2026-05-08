@@ -16,7 +16,7 @@ func GetToolDefinition() llmtypes.Tool {
 				"properties": map[string]interface{}{
 					"command": map[string]interface{}{
 						"type":        "string",
-						"description": "Command to execute. Common commands: open (navigate to URL), snapshot (get page elements with refs like @e1), click (click element by ref), fill (clear and type text), type (type without clearing), press (keyboard key), screenshot (capture image), wait (wait for element/text/URL/network), get (get text/html/value/attr/title/url/count), scroll (scroll page/element into view), select (dropdown option), hover (hover over element), upload (file to input), download (file by clicking), close (close browser), eval (run JavaScript), back, forward, reload. Use reset to force-kill a broken session and clear all state — do this when open/close keep failing with CDP errors, then call open again for a clean start.",
+						"description": "Command to execute. Common commands: open (navigate to URL), snapshot (get page elements with refs like @e1), click (click element by ref), fill (clear and type text), type (type without clearing), press (keyboard key), screenshot (capture image), wait (wait for element/text/URL/network), get (get text/html/value/attr/title/url/count), scroll (scroll page/element into view), select (dropdown option), hover (hover over element), upload (file to input), download (file by clicking), close (close browser), eval (run JavaScript), back, forward, reload. Use reset only to force-kill a genuinely broken browser session and clear all state. In shared CDP mode, do NOT reset for a missing-tab error; call command='tab' first, select/reuse/create a tab, then retry open with URL-only args.",
 					},
 					"args": map[string]interface{}{
 						"type": "array",

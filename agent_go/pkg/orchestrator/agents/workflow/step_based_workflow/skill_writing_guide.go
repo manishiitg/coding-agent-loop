@@ -19,7 +19,6 @@ type SystemSkill struct {
 func GetSystemSkills() []SystemSkill {
 	return []SystemSkill{
 		{Source: "anthropics/skills@skill-creator", Name: "skill-creator"},
-		{Source: "vercel-labs/agent-browser@agent-browser", Name: "agent-browser"},
 		// gws skills — install all from googleworkspace/cli
 		{Source: "googleworkspace/cli@gws-shared", Name: "gws-shared"},
 		{Source: "googleworkspace/cli@gws-gmail", Name: "gws-gmail"},

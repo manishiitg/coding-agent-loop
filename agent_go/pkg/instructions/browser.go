@@ -5,14 +5,7 @@ import (
 
 	"mcp-agent-builder-go/agent_go/pkg/browser"
 	"mcp-agent-builder-go/agent_go/pkg/common"
-	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 )
-
-// agentBrowserSkillPath returns the absolute shell path to the agent-browser SKILL.md,
-// resolved via fsutil.WorkspaceShellRoot() (honors WORKSPACE_SHELL_ROOT / WORKSPACE_DOCS_PATH).
-func agentBrowserSkillPath() string {
-	return fsutil.WorkspaceShellRoot() + "/skills/agent-browser/SKILL.md"
-}
 
 // cdpHost returns the hostname to use in CDP instructions.
 // In native mode, use localhost. In Docker mode, use host.docker.internal.
@@ -190,11 +183,11 @@ func GetAgentBrowserQuickStartInstructions() string {
 
 Call agent_browser via HTTP API:
 
-`+"```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# Basic workflow\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"search query\"])\nbrowser(\"press\", [\"Enter\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # re-snapshot after each interaction\nbrowser(\"screenshot\", [\"page.png\"])\n\n# If open/click/snapshot keep failing with CDP errors — reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears all state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```"+`
+` + "```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# Basic workflow\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"search query\"])\nbrowser(\"press\", [\"Enter\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # re-snapshot after each interaction\nbrowser(\"screenshot\", [\"page.png\"])\n\n# If the browser daemon is genuinely broken, reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears session state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```" + `
 
 Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 
-For detailed usage, read: execute_shell_command(command="cat %s")`, agentBrowserSkillPath())
+For version-matched usage docs, run: execute_shell_command(command="agent-browser skills get core")`)
 }
 
 // GetCdpBrowserInstructions returns a single merged section for CDP mode (agent_browser + CDP behaviors).
@@ -220,6 +213,7 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 - For snapshot, click, fill, eval, wait, screenshot, and other page-action commands after open, include `+"`[\"tab\", \"<tab-id-or-label>\", ...]`"+` or `+"`[\"--tab\", \"<tab-id-or-label>\", ...]`"+`.
 - Always call `+"`browser(\"tab\", [])`"+` first and reuse an existing tab when its URL/title matches the target domain or workflow
 - If no existing tab is suitable, create one new tab with a stable label: `+"`browser(\"tab\", [\"new\", \"--label\", \"<workflow-label>\", \"https://target.example\"])`"+`
+- If a command fails with `+"`CDP shared-browser mode requires selecting or creating a tab`"+`, do not treat that as CDP unavailable and do not call reset. List/select/create a tab and retry the URL-only open.
 - Do not create throwaway tabs for routine navigation. Keep a workflow's labeled tab open and navigate within it across steps/runs.
 - **Do NOT call close** unless the user asks — it will close their browser tab
 - Sessions **persist across tool calls** — you don't need to re-open pages between interactions
@@ -233,18 +227,18 @@ Use direct CDP WebSocket access only for read-only diagnostics that cannot be do
 `+"```python\nimport json, websocket\n\n# 1. List open tabs and reuse a matching tab if possible\nimport requests\ntabs = requests.get('%[1]s/json/list', headers={'Host': 'localhost'}).json()\nfor t in tabs:\n    print(f\"{t['id']}: {t['title']} - {t['url']}\")\n\n# 2. Connect to a specific tab (use suppress_origin=True)\ntarget_id = next((t['id'] for t in tabs if 'x.com' in t.get('url', '')), tabs[0]['id'])\nws = websocket.create_connection(\n    f'ws://%[2]s:9222/devtools/page/{target_id}',\n    header=['Host: localhost'], suppress_origin=True\n)\n\n# 3. Run JS on the page\nws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': 'document.title', 'returnByValue': True}}))\nresult = json.loads(ws.recv())\nprint(result['result']['result']['value'])\nws.close()\n```"+`
 **Rules for direct CDP:** Always use `+"`Host: localhost`"+` header and `+"`suppress_origin=True`"+` for WebSocket. Reuse existing targets from `+"`/json/list`"+`. Direct CDP bypasses the `+"`agent_browser`"+` tab lock, so do not use it for navigation, clicking, filling, scrolling, uploads, or multi-page loops. Do not call `+"`window.location`"+`, `+"`element.click()`"+`, `+"`Target.createTarget`"+`, `+"`/json/new`"+`, `+"`Target.closeTarget`"+`, or `+"`/json/close`"+` unless the task explicitly requires disposable raw-CDP control and the user accepts that it bypasses shared-browser locking.
 
-For detailed usage, read: execute_shell_command(command="cat %[3]s")`, cdpURL, host, agentBrowserSkillPath())
+For version-matched usage docs, run: execute_shell_command(command="agent-browser skills get core")`, cdpURL, host)
 }
 
 // GetHeadlessBrowserInstructions returns a single merged section for headless mode (agent_browser + headless behaviors).
 func GetHeadlessBrowserInstructions() string {
 	return fmt.Sprintf(`## Browser Automation (Headless Container Browser)
 
-You have the `+"`agent_browser`"+` tool controlling a **headless Chromium browser** inside a container.
+You have the ` + "`agent_browser`" + ` tool controlling a **headless Chromium browser** inside a container.
 
 Call agent_browser via HTTP API:
 
-`+"```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"search query\"])\nbrowser(\"press\", [\"Enter\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # re-snapshot after each interaction\n\n# If commands keep failing with CDP errors — reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears all state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```"+`
+` + "```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"search query\"])\nbrowser(\"press\", [\"Enter\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # re-snapshot after each interaction\n\n# If the headless browser daemon is genuinely broken, reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears headless state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```" + `
 
 Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 
@@ -255,5 +249,5 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 - Browser state is **ephemeral** — it resets between sessions
 - Handle login flows explicitly (fill credentials, handle 2FA via human_feedback if needed)
 
-For detailed usage, read: execute_shell_command(command="cat %s")`, agentBrowserSkillPath())
+For version-matched usage docs, run: execute_shell_command(command="agent-browser skills get core")`)
 }

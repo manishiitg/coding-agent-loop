@@ -115,9 +115,11 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	}
 	sessionCfg := GetSessionShellConfig(sessionID)
 
-	// Block agent-browser CLI calls via shell — catches direct calls, bash -c wrapping, piping, etc.
-	// The agent_browser tool handles CDP URL resolution, session tracking, and folder guard.
-	// Calling agent-browser directly via shell bypasses all of this.
+	// Block agent-browser browser-driving CLI calls via shell — catches direct calls,
+	// bash -c wrapping, piping, etc. The agent_browser tool handles CDP URL
+	// resolution, session tracking, and folder guard. Calling agent-browser directly
+	// via shell bypasses all of this. Read-only built-in skill commands are allowed
+	// so agents can load version-matched usage docs from the installed CLI.
 	//
 	// We strip heredoc bodies and quoted string literals before the substring check so that
 	// commands embedding the literal text "agent-browser" as data (e.g. a python3 <<PYEOF
@@ -141,7 +143,7 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			}, nil
 		}
 		return ShellCommandResult{
-			Stderr:   "ERROR: Do not call agent-browser directly via execute_shell_command. Use the agent_browser tool instead.\n\nFor direct tool call mode:\n  agent_browser(command=\"open\", args=[\"https://example.com\"], session=\"default\")\n\nFor code execution mode (MCP bridge):\n  Call get_api_spec(server_name=\"agent_browser\") to get the HTTP API spec,\n  then POST to the agent_browser endpoint via HTTP.\n\nThe agent_browser tool handles CDP connection, session management, and folder sandboxing automatically. Calling agent-browser CLI directly bypasses CDP URL resolution and will fail inside Docker.",
+			Stderr:   "ERROR: Do not call agent-browser directly via execute_shell_command for browser actions. Use the agent_browser tool instead.\n\nAllowed shell exception for docs only:\n  agent-browser skills list\n  agent-browser skills get core\n  agent-browser skills get core --full\n\nFor direct tool call mode:\n  agent_browser(command=\"open\", args=[\"https://example.com\"], session=\"default\")\n\nFor code execution mode (MCP bridge):\n  Call get_api_spec(server_name=\"agent_browser\") to get the HTTP API spec,\n  then POST to the agent_browser endpoint via HTTP.\n\nThe agent_browser tool handles CDP connection, session management, and folder sandboxing automatically. Calling agent-browser CLI directly for browser actions bypasses CDP URL resolution and will fail inside Docker.",
 			ExitCode: 1,
 		}, nil
 	}
@@ -291,7 +293,36 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 // a well-intentioned LLM, not a security boundary — adversarial constructs like
 // $(printf agent)-browser are out of scope.
 func containsAgentBrowserInvocation(cmd string) bool {
-	return strings.Contains(stripShellDataRegions(cmd), "agent-browser")
+	executableText := strings.TrimSpace(stripShellDataRegions(cmd))
+	if isAgentBrowserSkillsDocsCommand(executableText) {
+		return false
+	}
+	return strings.Contains(executableText, "agent-browser")
+}
+
+// isAgentBrowserSkillsDocsCommand allows read-only agent-browser skill discovery.
+// Browser-driving commands still must go through the managed agent_browser tool.
+func isAgentBrowserSkillsDocsCommand(cmd string) bool {
+	fields := strings.Fields(cmd)
+	if len(fields) < 3 || fields[0] != "agent-browser" || fields[1] != "skills" {
+		return false
+	}
+	switch fields[2] {
+	case "list":
+		return len(fields) == 3
+	case "get":
+		if len(fields) < 4 || strings.HasPrefix(fields[3], "-") {
+			return false
+		}
+		for _, flag := range fields[4:] {
+			if flag != "--full" {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 // detectRawChromeCDPAccess reports shell commands/scripts that talk directly to

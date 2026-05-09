@@ -133,21 +133,25 @@ A standalone macOS app is available — no Docker, no manual server setup. Each 
 
 ### First-launch error: *"Runloop is damaged and can't be opened"*
 
-The current build is **unsigned and not notarized**, so macOS Gatekeeper flags it on download. The app itself is fine — you just need to clear the quarantine flag. Pick whichever is easiest:
+The current build is **unsigned and not notarized**, so macOS Gatekeeper flags it on download. The app itself is fine — you just need to clear the quarantine flag macOS automatically attaches to downloaded files.
 
-**Option A — System Settings (GUI):**
-1. After the failed launch, open **System Settings → Privacy & Security**.
-2. Scroll to the Security section. You'll see a banner: *"Runloop was blocked because it is not from an identified developer."*
-3. Click **Open Anyway** and confirm. macOS remembers the decision; future launches work normally.
-
-**Option B — Terminal (when "Open Anyway" doesn't appear):**
+**Recommended — Terminal (works on all macOS versions):**
 ```bash
 xattr -cr /Applications/Runloop.app
 ```
-Then double-click Runloop normally. If macOS still complains, also strip the dmg:
+Then double-click Runloop. If macOS still complains, also strip the dmg you downloaded:
 ```bash
 xattr -cr ~/Downloads/Runloop-*.dmg
 ```
+`sudo` is **not** needed — you own the app since you dragged it into Applications.
+
+**System Settings (sometimes works, depends on macOS version):**
+For "damaged" verdicts on Sequoia/Tahoe, macOS often hides the "Open Anyway" button entirely, so this path frequently doesn't appear. If it does:
+1. Open **System Settings → Privacy & Security**.
+2. Scroll to the Security section. If you see *"Runloop was blocked from use…"* with an **Open Anyway** button, click it.
+3. Confirm in the dialog. macOS remembers the decision.
+
+If the button isn't there, fall back to the `xattr` command above.
 
 ### First-launch UX
 

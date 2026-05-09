@@ -54,24 +54,18 @@
   <h2>Application Settings</h2>
   
   <div class="section">
-    <label>Database Storage</label>
-    <div class="radio-group">
-      <label class="radio-label">
-        <input type="radio" name="dbType" value="sqlite" checked onchange="toggleDbFields()"> SQLite (Local File)
-      </label>
-      <label class="radio-label">
-        <input type="radio" name="dbType" value="postgres" onchange="toggleDbFields()"> PostgreSQL
-      </label>
+    <label>Workspace Folder</label>
+    <div style="display: flex; gap: 8px;">
+      <input type="text" id="docsDir" readonly style="margin-bottom: 0; cursor: default;" />
+      <button type="button" class="btn-secondary" onclick="pickDocsDir()" style="white-space: nowrap;">Change…</button>
     </div>
-    
-    <div id="pg-config" class="hidden">
-      <label>Connection String (DATABASE_URL)</label>
-      <div style="display: flex; gap: 8px;">
-        <input type="text" id="dbUrl" placeholder="postgres://user:pass@host:5432/dbname" style="margin-bottom: 0;" />
-        <button type="button" class="btn-secondary" onclick="testDbConnection()" style="white-space: nowrap;">Test</button>
-      </div>
-      <div id="connection-status" class="note" style="margin-top: 4px; min-height: 14px;">Optional. Use for centralized storage or better performance.</div>
-    </div>
+    <div class="note">All your workspace documents (plans, skills, configs, WhatsApp DB) live here. Changing requires a server restart.</div>
+  </div>
+
+  <div class="section">
+    <label>Workspace Encryption Secret (AUTH_SECRET)</label>
+    <input type="password" id="authSecret" placeholder="Used to decrypt provider-api-keys.json" />
+    <div class="note">Leave blank to use the development default. Must match the secret originally used to encrypt your provider API keys.</div>
   </div>
 
   <div class="section">
@@ -97,69 +91,28 @@
   <script>
     const { ipcRenderer } = require('electron');
 
-    function toggleDbFields() {
-      const type = document.querySelector('input[name="dbType"]:checked').value;
-      document.getElementById('pg-config').classList.toggle('hidden', type !== 'postgres');
-    }
-
     // Load initial settings
     ipcRenderer.invoke('get-settings').then(settings => {
-      if (settings.dbType) {
-        document.querySelector(`input[name="dbType"][value="${settings.dbType}"]`).checked = true;
-      }
-      document.getElementById('dbUrl').value = settings.dbUrl || '';
       document.getElementById('ghToken').value = settings.ghToken || '';
       document.getElementById('ghRepo').value = settings.ghRepo || '';
-      toggleDbFields();
+      document.getElementById('docsDir').value = settings.docsDir || '';
+      document.getElementById('authSecret').value = settings.authSecret || '';
     });
 
-    function saveSettings() {
-      const dbType = document.querySelector('input[name="dbType"]:checked').value;
-      const dbUrl = document.getElementById('dbUrl').value;
-      
-      if (dbType === 'postgres') {
-        if (!dbUrl) {
-          alert('Please enter a database connection string.');
-          return;
-        }
-        if (!dbUrl.startsWith('postgres://') && !dbUrl.startsWith('postgresql://')) {
-          alert('Connection string must start with postgres:// or postgresql://');
-          return;
-        }
-      }
-
-      const settings = {
-        dbType,
-        dbUrl,
-        ghToken: document.getElementById('ghToken').value,
-        ghRepo: document.getElementById('ghRepo').value
-      };
-      
-      ipcRenderer.send('save-settings', settings);
+    async function pickDocsDir() {
+      const chosen = await ipcRenderer.invoke('pick-docs-dir');
+      if (chosen) document.getElementById('docsDir').value = chosen;
     }
 
-    async function testDbConnection() {
-      const dbUrl = document.getElementById('dbUrl').value;
-      const statusEl = document.getElementById('connection-status');
-      
-      if (!dbUrl) {
-        statusEl.textContent = 'Please enter a connection string.';
-        statusEl.style.color = '#ff6b6b';
-        return;
-      }
+    function saveSettings() {
+      const settings = {
+        ghToken: document.getElementById('ghToken').value,
+        ghRepo: document.getElementById('ghRepo').value,
+        docsDir: document.getElementById('docsDir').value,
+        authSecret: document.getElementById('authSecret').value
+      };
 
-      statusEl.textContent = 'Testing connection...';
-      statusEl.style.color = '#bbb';
-
-      const result = await ipcRenderer.invoke('test-db-connection', dbUrl);
-      
-      if (result.success) {
-        statusEl.textContent = '✅ Connection successful!';
-        statusEl.style.color = '#4ade80';
-      } else {
-        statusEl.textContent = '❌ Connection failed: ' + result.error;
-        statusEl.style.color = '#ff6b6b';
-      }
+      ipcRenderer.send('save-settings', settings);
     }
   </script>
 </body>

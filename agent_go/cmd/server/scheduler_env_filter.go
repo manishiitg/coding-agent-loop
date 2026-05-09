@@ -1,9 +1,12 @@
 package server
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 )
 
 // schedulerWorkflowFilter is the env-driven allow/block list for cron execution
@@ -31,17 +34,79 @@ type schedulerWorkflowFilter struct {
 	rawBlockUsers []string
 }
 
+// loadSchedulerWorkflowFilter resolves allow/block lists for cron execution.
+// Source of truth is config/scheduler.json (allowed_workflows, blocked_workflows,
+// allowed_users, blocked_users). Env vars (SCHEDULER_ALLOWED_WORKFLOWS, etc.)
+// remain as a fallback when the JSON field is empty/unset, so existing
+// deployments using env vars keep working.
 func loadSchedulerWorkflowFilter() schedulerWorkflowFilter {
+	jsonAllow, jsonBlock, jsonAllowUsers, jsonBlockUsers := readSchedulerListsFromJSON()
+
+	rawAllow := pickList(jsonAllow, splitAndTrim(os.Getenv("SCHEDULER_ALLOWED_WORKFLOWS")))
+	rawBlock := pickList(jsonBlock, splitAndTrim(os.Getenv("SCHEDULER_BLOCKED_WORKFLOWS")))
+	rawAllowUsers := pickList(jsonAllowUsers, splitAndTrim(os.Getenv("SCHEDULER_ALLOWED_USERS")))
+	rawBlockUsers := pickList(jsonBlockUsers, splitAndTrim(os.Getenv("SCHEDULER_BLOCKED_USERS")))
+
 	return schedulerWorkflowFilter{
-		allow:         parseFilterList(os.Getenv("SCHEDULER_ALLOWED_WORKFLOWS")),
-		block:         parseFilterList(os.Getenv("SCHEDULER_BLOCKED_WORKFLOWS")),
-		allowUsers:    parseFilterList(os.Getenv("SCHEDULER_ALLOWED_USERS")),
-		blockUsers:    parseFilterList(os.Getenv("SCHEDULER_BLOCKED_USERS")),
-		rawAllow:      splitAndTrim(os.Getenv("SCHEDULER_ALLOWED_WORKFLOWS")),
-		rawBlock:      splitAndTrim(os.Getenv("SCHEDULER_BLOCKED_WORKFLOWS")),
-		rawAllowUsers: splitAndTrim(os.Getenv("SCHEDULER_ALLOWED_USERS")),
-		rawBlockUsers: splitAndTrim(os.Getenv("SCHEDULER_BLOCKED_USERS")),
+		allow:         toLowerSet(rawAllow),
+		block:         toLowerSet(rawBlock),
+		allowUsers:    toLowerSet(rawAllowUsers),
+		blockUsers:    toLowerSet(rawBlockUsers),
+		rawAllow:      rawAllow,
+		rawBlock:      rawBlock,
+		rawAllowUsers: rawAllowUsers,
+		rawBlockUsers: rawBlockUsers,
 	}
+}
+
+// pickList returns json values when non-empty, else falls back to env values.
+func pickList(jsonVals, envVals []string) []string {
+	if len(jsonVals) > 0 {
+		return jsonVals
+	}
+	return envVals
+}
+
+// readSchedulerListsFromJSON reads the four list fields out of
+// config/scheduler.json on disk. Returns nil slices if the file is missing or
+// unreadable — callers fall back to env vars in that case.
+func readSchedulerListsFromJSON() (allow, block, allowUsers, blockUsers []string) {
+	path := filepath.Join(fsutil.WorkspaceDocsRoot(), "config", "scheduler.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, nil, nil
+	}
+	var raw struct {
+		AllowedWorkflows []string `json:"allowed_workflows"`
+		BlockedWorkflows []string `json:"blocked_workflows"`
+		AllowedUsers     []string `json:"allowed_users"`
+		BlockedUsers     []string `json:"blocked_users"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, nil, nil, nil
+	}
+	return trimList(raw.AllowedWorkflows), trimList(raw.BlockedWorkflows), trimList(raw.AllowedUsers), trimList(raw.BlockedUsers)
+}
+
+func trimList(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if t := strings.TrimSpace(s); t != "" {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func toLowerSet(items []string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, item := range items {
+		out[strings.ToLower(item)] = struct{}{}
+	}
+	return out
 }
 
 func parseFilterList(raw string) map[string]struct{} {

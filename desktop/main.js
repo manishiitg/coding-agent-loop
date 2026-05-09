@@ -1,11 +1,10 @@
 const { app, BrowserWindow, dialog, shell, nativeTheme, Menu, Tray, ipcMain, nativeImage } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const http = require('http');
 const https = require('https');
 const detect = require('detect-port');
 const fs = require('fs');
-const { Client } = require('pg');
 
 // Dynamic ports (assigned at runtime)
 let dynamicAgentPort = 0;
@@ -17,6 +16,49 @@ const HEALTH_INITIAL_DELAY_MS = 3000;
 
 // Enforce dark mode for system UI (title bar, context menus)
 nativeTheme.themeSource = 'dark';
+
+// GUI-launched Mac apps inherit a minimal PATH (no Homebrew, no nvm, no ~/.local/bin),
+// so spawned tools like `claude`, `npx`, etc. are not found. Read PATH from the user's
+// login shell once at startup and use it for all spawned children.
+function resolveLoginEnv() {
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return {};
+  const shellBin = process.env.SHELL || '/bin/zsh';
+  // Wrap printenv with unique markers so we can isolate the env block even if
+  // the user's .zshrc/.bashrc echoes extra text to stdout (e.g. ssh-agent banners).
+  const BEGIN = '__RL_ENV_BEGIN__';
+  const END = '__RL_ENV_END__';
+  try {
+    const result = spawnSync(shellBin, ['-ilc', `printf '%s' '${BEGIN}'; /usr/bin/env -0; printf '%s' '${END}'`], {
+      encoding: 'buffer',
+      timeout: 4000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    const stdout = result.stdout ? result.stdout.toString('binary') : '';
+    const beginIdx = stdout.indexOf(BEGIN);
+    const endIdx = stdout.indexOf(END);
+    if (beginIdx === -1 || endIdx === -1) return {};
+    const block = stdout.slice(beginIdx + BEGIN.length, endIdx);
+    const out = {};
+    for (const entry of block.split('\0')) {
+      if (!entry) continue;
+      const eq = entry.indexOf('=');
+      if (eq <= 0) continue;
+      out[entry.slice(0, eq)] = entry.slice(eq + 1);
+    }
+    return out;
+  } catch (e) {
+    console.warn('[main] Failed to resolve login shell env:', e);
+    return {};
+  }
+}
+const LOGIN_ENV = resolveLoginEnv();
+// Merge into process.env so spawned children pick up PATH + API keys + any other vars
+// the user has in their login shell. Existing process.env values win (don't clobber).
+for (const [k, v] of Object.entries(LOGIN_ENV)) {
+  if (process.env[k] === undefined) process.env[k] = v;
+}
+if (LOGIN_ENV.PATH) process.env.PATH = LOGIN_ENV.PATH; // PATH must always come from login shell
+console.log('[main] Imported', Object.keys(LOGIN_ENV).length, 'env vars from login shell');
 
 let workspaceProcess = null;
 let agentProcess = null;
@@ -56,7 +98,70 @@ function loadSettings() {
   } catch (e) {
     console.error('Failed to load settings:', e);
   }
-  return { dbType: 'sqlite', dbUrl: '', ghToken: '', ghRepo: '' };
+  return { ghToken: '', ghRepo: '', docsDir: '', authSecret: '' };
+}
+
+// Show a modal asking the user for the AUTH_SECRET used to encrypt provider keys.
+// mode='unlock' (existing encrypted file) or 'create' (no file yet — just choose a secret).
+// Resolves with the entered value (empty string = skip).
+function promptAuthSecret(mode) {
+  return new Promise((resolve) => {
+    const win = new BrowserWindow({
+      width: 460,
+      height: 320,
+      resizable: false,
+      modal: true,
+      parent: mainWindow || undefined,
+      title: mode === 'unlock' ? 'Unlock Workspace Keys' : 'Set Workspace Encryption Secret',
+      webPreferences: { nodeIntegration: true, contextIsolation: false },
+    });
+    let answered = false;
+    const finish = (value) => {
+      if (answered) return;
+      answered = true;
+      ipcMain.removeListener('auth-secret-result', handler);
+      try { win.close(); } catch (_) {}
+      resolve(value);
+    };
+    const handler = (_event, value) => finish(value);
+    ipcMain.on('auth-secret-result', handler);
+    win.on('closed', () => finish(''));
+    win.loadFile(path.join(__dirname, 'auth-prompt.html'), { hash: mode });
+  });
+}
+
+// Resolve workspace docs dir on first launch.
+// Precedence: RUNLOOP_DOCS_DIR env > settings.docsDir > prompt user to pick > default (userData/workspace-docs)
+async function resolveDocsDir() {
+  if (process.env.RUNLOOP_DOCS_DIR) return process.env.RUNLOOP_DOCS_DIR;
+
+  const settings = loadSettings();
+  if (settings.docsDir && fs.existsSync(settings.docsDir)) return settings.docsDir;
+
+  // First launch (or path was deleted): ask user to choose.
+  const choice = await dialog.showMessageBox({
+    type: 'question',
+    title: 'Choose workspace folder',
+    message: 'Where should Runloop store your workspace documents?',
+    detail: 'Pick an existing folder to use, or let Runloop create a default one in your application data directory.',
+    buttons: ['Choose folder…', 'Use default'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+
+  let chosen;
+  if (choice.response === 0) {
+    const result = await dialog.showOpenDialog({
+      title: 'Select workspace-docs folder',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (!result.canceled && result.filePaths[0]) chosen = result.filePaths[0];
+  }
+  if (!chosen) chosen = path.join(app.getPath('userData'), 'workspace-docs');
+
+  fs.mkdirSync(chosen, { recursive: true });
+  saveSettings({ ...settings, docsDir: chosen });
+  return chosen;
 }
 
 function saveSettings(settings) {
@@ -66,23 +171,20 @@ function saveSettings(settings) {
 
 // IPC Handlers for Settings
 ipcMain.handle('get-settings', () => loadSettings());
-ipcMain.handle('test-db-connection', async (event, connectionString) => {
-  const client = new Client({
-    connectionString,
-    connectionTimeoutMillis: 5000, // 5s timeout
+ipcMain.handle('get-app-version', () => app.getVersion());
+ipcMain.handle('pick-docs-dir', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Select workspace-docs folder',
+    properties: ['openDirectory', 'createDirectory'],
   });
-  try {
-    await client.connect();
-    await client.query('SELECT 1');
-    await client.end();
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
+  if (result.canceled || !result.filePaths[0]) return null;
+  return result.filePaths[0];
 });
 
 ipcMain.on('save-settings', (event, settings) => {
   saveSettings(settings);
+  if (settings.docsDir) process.env.RUNLOOP_DOCS_DIR = settings.docsDir;
+  if (settings.authSecret !== undefined) process.env.AUTH_SECRET = settings.authSecret;
   if (settingsWindow) settingsWindow.close();
   
   // Restart servers to apply changes
@@ -406,7 +508,6 @@ function createTray() {
   }
 
   const trayIcon = icon.resize({ width: 18, height: 18 });
-  trayIcon.setTemplateImage(true);
 
   tray = new Tray(trayIcon);
   tray.setToolTip('Runloop');
@@ -427,7 +528,7 @@ function spawnWorkspace(userDataPath) {
     if (!fs.existsSync(bin)) {
       return reject(new Error(`Workspace server binary not found at ${bin}. Place workspace-server in desktop/resources/ for development.`));
     }
-    const docsDir = path.join(userDataPath, 'workspace-docs');
+    const docsDir = process.env.RUNLOOP_DOCS_DIR || path.join(userDataPath, 'workspace-docs');
     const dataDir = path.join(userDataPath, 'data');
     const logsDir = path.join(userDataPath, 'logs');
 
@@ -453,12 +554,14 @@ function spawnWorkspace(userDataPath) {
     if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;
     if (settings.ghRepo) env.GITHUB_REPO = settings.ghRepo;
 
-    // Use port 0 for dynamic allocation
-    const child = spawn(bin, ['server', '--port', '0', '--docs-dir', docsDir, '--data-dir', dataDir], {
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    workspaceProcess = child;
+    // Prefer fixed port 45679 so frontend localStorage stays stable across launches.
+    // detect() returns the preferred port if free, otherwise the next available one.
+    detect(45679).then((port) => {
+      const child = spawn(bin, ['server', '--port', String(port), '--docs-dir', docsDir], {
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      workspaceProcess = child;
 
     let portFound = false;
 
@@ -490,6 +593,7 @@ function spawnWorkspace(userDataPath) {
       process.stderr.write(`[workspace] ${d}`);
       logStream.write(d);
     });
+    }).catch(reject);
   });
 }
 
@@ -507,7 +611,6 @@ function spawnAgent(userDataPath) {
       fs.mkdirSync(logsDir, { recursive: true });
     }
 
-    const dbPath = path.join(userDataPath, 'chat_history.db');
     const logFile = path.join(logsDir, 'agent.log');
     const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
@@ -533,11 +636,10 @@ function spawnAgent(userDataPath) {
       }
     }
 
-    // Use port 0 for dynamic allocation
+    // Port resolved below via detect() — prefer fixed 45678 so frontend localStorage persists.
     const args = [
-      'server', 
+      'server',
       '--port', '0',
-      '--db-path', dbPath,
       '--log-file', logFile,
       '--log-level', 'debug',
       '--mcp-config', mcpConfigPath
@@ -549,71 +651,62 @@ function spawnAgent(userDataPath) {
     // (no Docker). WORKSPACE_DOCS_PATH tells the agent the real filesystem path so
     // LLM-generated shell commands (jq, cat, etc.) use the correct absolute paths.
     // This same path is passed to workspace-server via --docs-dir in spawnWorkspace().
-    const docsDir = path.join(userDataPath, 'workspace-docs');
+    const docsDir = process.env.RUNLOOP_DOCS_DIR || path.join(userDataPath, 'workspace-docs');
     const env = {
       ...process.env,
       WORKSPACE_API_URL: `http://127.0.0.1:${dynamicWorkspacePort}`,
       WORKSPACE_DOCS_PATH: docsDir,
-      DB_PATH: dbPath,
       LOG_FILE: logFile,
       WORKSPACE_ENABLE_GITHUB_SYNC: 'true'
     };
 
     if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;
 
-    if (settings.dbType === 'postgres' && settings.dbUrl) {
-      env.DATABASE_URL = settings.dbUrl;
-      env.DB_TYPE = 'postgres';
-      // Remove db-path arg if using postgres to avoid confusion (though agent priority logic handles it)
-      const dbPathIndex = args.indexOf('--db-path');
-      if (dbPathIndex !== -1) {
-        args.splice(dbPathIndex, 2);
-      }
-      args.push('--db-type', 'postgres');
-    }
+    detect(45678).then((port) => {
+      const portIdx = args.indexOf('--port');
+      args[portIdx + 1] = String(port);
 
-    const child = spawn(bin, args, {
-      cwd,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    agentProcess = child;
-    
-    // Log startup info
-    const startupMsg = `[agent] Spawning agent-server with db-path=${dbPath}, log-file=${logFile}\n`;
-    console.log(startupMsg.trim());
-    logStream.write(startupMsg);
+      const child = spawn(bin, args, {
+        cwd,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      agentProcess = child;
 
-    let portFound = false;
+      const startupMsg = `[agent] Spawning agent-server with log-file=${logFile}, port=${port}\n`;
+      console.log(startupMsg.trim());
+      logStream.write(startupMsg);
 
-    child.on('error', (err) => {
-      const msg = `[agent] spawn error: ${err}\n`;
-      console.error(msg);
-      logStream.write(msg);
-      if (!portFound) reject(err);
-    });
-    
-    child.stdout.on('data', (d) => {
-      const output = d.toString();
-      process.stdout.write(`[agent] ${output}`);
-      logStream.write(output);
-      
-      // Parse dynamic port
-      if (!portFound) {
-        const match = output.match(/DynamicPort: (\d+)/);
-        if (match) {
-          dynamicAgentPort = parseInt(match[1], 10);
-          console.log(`[main] Agent server started on dynamic port: ${dynamicAgentPort}`);
-          portFound = true;
-          resolve();
+      let portFound = false;
+
+      child.on('error', (err) => {
+        const msg = `[agent] spawn error: ${err}\n`;
+        console.error(msg);
+        logStream.write(msg);
+        if (!portFound) reject(err);
+      });
+
+      child.stdout.on('data', (d) => {
+        const output = d.toString();
+        process.stdout.write(`[agent] ${output}`);
+        logStream.write(output);
+
+        if (!portFound) {
+          const match = output.match(/DynamicPort: (\d+)/);
+          if (match) {
+            dynamicAgentPort = parseInt(match[1], 10);
+            console.log(`[main] Agent server started on port: ${dynamicAgentPort}`);
+            portFound = true;
+            resolve();
+          }
         }
-      }
-    });
-    
-    child.stderr.on('data', (d) => {
-      process.stderr.write(`[agent] ${d}`);
-      logStream.write(d);
-    });
+      });
+
+      child.stderr.on('data', (d) => {
+        process.stderr.write(`[agent] ${d}`);
+        logStream.write(d);
+      });
+    }).catch(reject);
   });
 }
 
@@ -813,7 +906,35 @@ app.whenReady().then(async () => {
   
   const userDataPath = app.getPath('userData');
 
-  // 1. (Check ports removed - not needed for dynamic ports)
+  // Resolve workspace-docs dir (prompts user on first launch if needed).
+  // Cached in process.env so spawn helpers pick it up consistently.
+  let resolvedDocsDir;
+  try {
+    resolvedDocsDir = await resolveDocsDir();
+    process.env.RUNLOOP_DOCS_DIR = resolvedDocsDir;
+    console.log(`[main] Workspace docs dir: ${resolvedDocsDir}`);
+  } catch (err) {
+    showErrorAndExit('Failed to resolve workspace folder: ' + (err.message || err));
+    return;
+  }
+
+  // Prompt the user for AUTH_SECRET on first launch (regardless of whether
+  // provider-api-keys.json exists). 'unlock' mode if a file is already there,
+  // 'create' mode if not. The secret is used to encrypt/decrypt the workspace
+  // provider key store. Actual API keys (gemini, openai, etc.) are added later
+  // via the in-app provider auth flow.
+  const settings = loadSettings();
+  if (!settings.authSecret && !process.env.AUTH_SECRET) {
+    const providerKeysPath = path.join(resolvedDocsDir, 'config', 'provider-api-keys.json');
+    const mode = fs.existsSync(providerKeysPath) ? 'unlock' : 'create';
+    const entered = await promptAuthSecret(mode);
+    if (entered) {
+      saveSettings({ ...settings, authSecret: entered });
+      process.env.AUTH_SECRET = entered;
+    }
+  } else if (settings.authSecret) {
+    process.env.AUTH_SECRET = settings.authSecret;
+  }
 
   // 2. Spawn servers (in sequence: Workspace first, then Agent)
   try {

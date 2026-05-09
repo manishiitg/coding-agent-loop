@@ -195,11 +195,17 @@ jobs:
         run: |
           set -euo pipefail
           cd desktop
-          # Sync package.json version with git tag (strip 'v' prefix)
+          # Sync package.json version with git tag (strip 'v' prefix).
+          # Use npm pkg set which is idempotent (npm version errors when target == current).
           VERSION=${GITHUB_REF#refs/tags/v}
-          echo "Syncing package.json version to $VERSION"
-          npm version $VERSION --no-git-tag-version
-          
+          CURRENT=$(node -p "require('./package.json').version")
+          echo "Tag version: $VERSION, package.json version: $CURRENT"
+          if [ "$CURRENT" != "$VERSION" ]; then
+            npm version "$VERSION" --no-git-tag-version
+          else
+            echo "package.json already at $VERSION; skipping version bump"
+          fi
+
           npm run dist -- --arm64 --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

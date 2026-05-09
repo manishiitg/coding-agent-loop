@@ -19,7 +19,10 @@ type SchedulerConfig struct {
 	PausedAt         *time.Time `json:"paused_at,omitempty"`
 	PausedBy         string     `json:"paused_by,omitempty"`
 	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
-	ExecutionEnabled bool       `json:"execution_enabled"`
+	// ExecutionEnabled controls automatic cron firing on this machine.
+	// Pointer so we can distinguish "not set in JSON" (nil → default true)
+	// from "explicit false" in scheduler.json.
+	ExecutionEnabled *bool      `json:"execution_enabled,omitempty"`
 	DisabledViaEnv   bool       `json:"disabled_via_env,omitempty"`
 	DisabledReason   string     `json:"disabled_reason,omitempty"`
 
@@ -41,8 +44,13 @@ func sanitizeSchedulerConfig(cfg *SchedulerConfig) *SchedulerConfig {
 	}
 
 	sanitized := &SchedulerConfig{
-		GloballyPaused: cfg.GloballyPaused,
-		PausedBy:       strings.TrimSpace(cfg.PausedBy),
+		GloballyPaused:   cfg.GloballyPaused,
+		PausedBy:         strings.TrimSpace(cfg.PausedBy),
+		ExecutionEnabled: cfg.ExecutionEnabled,
+		AllowedWorkflows: cfg.AllowedWorkflows,
+		BlockedWorkflows: cfg.BlockedWorkflows,
+		AllowedUsers:     cfg.AllowedUsers,
+		BlockedUsers:     cfg.BlockedUsers,
 	}
 	if cfg.GloballyPaused && cfg.PausedAt != nil {
 		pausedAt := cfg.PausedAt.UTC()
@@ -60,21 +68,30 @@ func applySchedulerRuntimeState(cfg *SchedulerConfig) *SchedulerConfig {
 		cfg = &SchedulerConfig{}
 	}
 
-	cfg.ExecutionEnabled = true
+	// ExecutionEnabled is now driven by config/scheduler.json. Default to true
+	// when the field is absent (nil pointer). Env var SCHEDULER_ENABLED=false
+	// can still force-disable on a specific machine.
 	cfg.DisabledViaEnv = false
 	cfg.DisabledReason = ""
+	if cfg.ExecutionEnabled == nil {
+		t := true
+		cfg.ExecutionEnabled = &t
+	}
 
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCHEDULER_ENABLED")), "false") {
-		cfg.ExecutionEnabled = false
+		f := false
+		cfg.ExecutionEnabled = &f
 		cfg.DisabledViaEnv = true
 		cfg.DisabledReason = "Automatic cron execution is disabled on this server because SCHEDULER_ENABLED=false. Manual runs still work."
 	}
 
-	envFilter := loadSchedulerWorkflowFilter()
-	cfg.AllowedWorkflows = envFilter.rawAllow
-	cfg.BlockedWorkflows = envFilter.rawBlock
-	cfg.AllowedUsers = envFilter.rawAllowUsers
-	cfg.BlockedUsers = envFilter.rawBlockUsers
+	// Workflow/user filters: JSON values win, fall back to env vars when JSON
+	// is empty. loadSchedulerWorkflowFilter() reads scheduler.json directly.
+	filter := loadSchedulerWorkflowFilter()
+	cfg.AllowedWorkflows = filter.rawAllow
+	cfg.BlockedWorkflows = filter.rawBlock
+	cfg.AllowedUsers = filter.rawAllowUsers
+	cfg.BlockedUsers = filter.rawBlockUsers
 
 	return cfg
 }

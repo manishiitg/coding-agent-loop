@@ -510,10 +510,6 @@ func init() {
 	ServerCmd.Flags().Int("max-turns", 500, "Maximum conversation turns")
 	ServerCmd.Flags().String("mcp-config", "configs/mcp_servers_clean.json", "MCP servers configuration path")
 
-	// Chat History Database flags
-	ServerCmd.Flags().String("db-path", "/app/chat_history.db", "SQLite database path for chat history")
-	ServerCmd.Flags().String("db-type", "sqlite", "Database type (sqlite, postgres)")
-
 	// Bind flags to viper
 	viper.BindPFlags(ServerCmd.Flags())
 
@@ -1282,12 +1278,32 @@ func runServer(cmd *cobra.Command, args []string) {
 	// pprof routes for profiling (must be before static file serving)
 	router.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
 
+	// Pre-bind listener so we can support dynamic port (port 0) and report the actual port
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", config.Host, config.Port))
+	if err != nil {
+		log.Fatalf("Failed to listen on %s:%d: %v", config.Host, config.Port, err)
+	}
+	actualPort := listener.Addr().(*net.TCPAddr).Port
+
+	// Dynamically serve runtime-config.js so the frontend learns the real ports.
+	// In packaged/desktop mode ports are dynamic (--port 0), so the static file's
+	// hardcoded values are wrong. Serve same-origin URLs for the agent API and
+	// the workspace URL passed via WORKSPACE_API_URL env var.
+	router.HandleFunc("/runtime-config.js", func(w http.ResponseWriter, r *http.Request) {
+		workspaceURL := os.Getenv("WORKSPACE_API_URL")
+		if workspaceURL == "" {
+			workspaceURL = fmt.Sprintf("http://localhost:%d", actualPort)
+		}
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Cache-Control", "no-store")
+		fmt.Fprintf(w, "window.__APP_RUNTIME_CONFIG__ = {\n  apiBaseUrl: \"http://localhost:%d\",\n  workspaceApiBaseUrl: %q\n};\n", actualPort, workspaceURL)
+	}).Methods("GET")
+
 	// Static file serving (for frontend)
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
 
 	// Create HTTP server
 	srv := &http.Server{
-		Addr:         fmt.Sprintf("%s:%d", config.Host, config.Port),
 		WriteTimeout: 0,                 // No write timeout — long-running tool calls (sub-agents) can take 30+ minutes
 		ReadTimeout:  time.Second * 30,  // Read timeout for incoming requests
 		IdleTimeout:  time.Second * 300, // 5 min idle timeout to prevent early closes during long queries
@@ -1320,14 +1336,15 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Start server in a goroutine
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed to start: %v", err)
 		}
 	}()
 
-	fmt.Printf("✅ Server started on %s:%d\n", config.Host, config.Port)
-	fmt.Printf("🔗 API endpoint: http://%s:%d/api/query\n", config.Host, config.Port)
-	fmt.Printf("📡 Polling API: http://%s:%d/api/sessions/{session_id}/events\n", config.Host, config.Port)
+	fmt.Printf("✅ Server started on %s:%d\n", config.Host, actualPort)
+	fmt.Printf("DynamicPort: %d\n", actualPort)
+	fmt.Printf("🔗 API endpoint: http://%s:%d/api/query\n", config.Host, actualPort)
+	fmt.Printf("📡 Polling API: http://%s:%d/api/sessions/{session_id}/events\n", config.Host, actualPort)
 
 	// Wait for interrupt signal to gracefully shutdown
 	c := make(chan os.Signal, 1)

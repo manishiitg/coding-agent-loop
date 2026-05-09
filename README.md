@@ -126,7 +126,15 @@ Bring your existing CLI-based coding agents into the visual orchestrator via the
 
 A standalone macOS app is available — no Docker, no manual server setup. Each release is published at [Releases](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest).
 
-### Install
+### Install (one-liner — recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash
+```
+
+Downloads the latest dmg, installs `Runloop.app` to `/Applications`, strips the macOS quarantine flag (no "damaged" warning), and launches the app. Pin a specific version with `RUNLOOP_VERSION=v1.25.6 curl -fsSL … | bash`.
+
+### Install manually
 
 1. Download `Runloop-<version>-arm64.dmg` from the latest release.
 2. Open the dmg, drag **Runloop** to Applications.

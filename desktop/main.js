@@ -98,7 +98,7 @@ function loadSettings() {
   } catch (e) {
     console.error('Failed to load settings:', e);
   }
-  return { ghToken: '', ghRepo: '', docsDir: '', authSecret: '' };
+  return { ghToken: '', ghRepo: '', docsDir: '', authSecret: '', schedulerEnabled: true };
 }
 
 // Show a modal asking the user for the AUTH_SECRET used to encrypt provider keys.
@@ -661,6 +661,10 @@ function spawnAgent(userDataPath) {
     };
 
     if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;
+
+    // Per-machine scheduler toggle. When the user disables this in Settings,
+    // automatic cron execution stops on this machine; manual runs still work.
+    if (settings.schedulerEnabled === false) env.SCHEDULER_ENABLED = 'false';
 
     detect(45678).then((port) => {
       const portIdx = args.indexOf('--port');

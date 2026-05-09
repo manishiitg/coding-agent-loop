@@ -109,14 +109,6 @@ func toLowerSet(items []string) map[string]struct{} {
 	return out
 }
 
-func parseFilterList(raw string) map[string]struct{} {
-	out := map[string]struct{}{}
-	for _, item := range splitAndTrim(raw) {
-		out[strings.ToLower(item)] = struct{}{}
-	}
-	return out
-}
-
 func splitAndTrim(raw string) []string {
 	if strings.TrimSpace(raw) == "" {
 		return nil

@@ -171,6 +171,7 @@ function saveSettings(settings) {
 
 // IPC Handlers for Settings
 ipcMain.handle('get-settings', () => loadSettings());
+ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('pick-docs-dir', async () => {
   const result = await dialog.showOpenDialog({
     title: 'Select workspace-docs folder',

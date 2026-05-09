@@ -36,6 +36,7 @@ export default function WorkspaceSidebar({
   const closeDialog = useCommandDialogStore(state => state.closeDialog)
   const [showTierModal, setShowTierModal] = useState(false)
   const [isElectron, setIsElectron] = useState(false)
+  const [appVersion, setAppVersion] = useState<string>('')
   const [osPermission, setOsPermission] = useState<NotificationPermission>('default')
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
     return localStorage.getItem('mcp_notifications_enabled') !== 'false' // Default true
@@ -43,7 +44,11 @@ export default function WorkspaceSidebar({
 
   useEffect(() => {
     // Check if running in Electron via preload API
-    setIsElectron(!!(window as any).electronAPI)
+    const electronAPI = (window as any).electronAPI
+    setIsElectron(!!electronAPI)
+    if (electronAPI?.getAppVersion) {
+      electronAPI.getAppVersion().then((v: string) => setAppVersion(v)).catch(() => {})
+    }
     
     // Initial permission check
     if ('Notification' in window) {
@@ -272,6 +277,11 @@ export default function WorkspaceSidebar({
               )}
             </div>
           </div>
+          {appVersion && (
+            <div className="px-3 pb-2 -mt-1 text-[10px] text-gray-400 dark:text-gray-500 text-right">
+              v{appVersion}
+            </div>
+          )}
         </div>
       )}
 
@@ -450,6 +460,11 @@ export default function WorkspaceSidebar({
               </>
             )}
           </div>
+          {appVersion && (
+            <div className="mt-2 text-[9px] text-gray-400 dark:text-gray-500 text-center">
+              v{appVersion}
+            </div>
+          )}
         </div>
       )}
       </div>

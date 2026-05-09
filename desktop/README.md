@@ -44,15 +44,83 @@ In this mode, Electron skips port conflict checks and server lifecycle managemen
 
 ## Build & Package (Distribution)
 
-To create a distributable `.dmg` and `.zip`:
+### Quick local build (unsigned, no GitHub upload)
 
 ```bash
 cd desktop
-npm run dist
+./dev-setup.sh                                              # only first time / when Go code changes
+CSC_IDENTITY_AUTO_DISCOVERY=false \
+  npx electron-builder --mac dmg --publish never
 ```
 
-Artifacts will be output to `desktop/dist/`.
-**Note:** The local build is unsigned. On first launch, you may need to Right-Click the app -> Open to bypass Gatekeeper.
+Artifacts go to `desktop/dist/Runloop-<version>-arm64.dmg`. Install: `open desktop/dist/Runloop-*.dmg` → drag to Applications. First launch: right-click → Open to bypass Gatekeeper.
+
+### Cutting a release via CI (publishes to GitHub Releases)
+
+Releases are built by `.github/workflows/desktop-release.yml`. The `release` job runs on tag pushes (`v*`).
+
+1. **Confirm the next version** — latest released tag wins. Check:
+
+   ```bash
+   git ls-remote --tags origin | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -3
+   ```
+
+   Pick the next semver. Auto-update only triggers if your tag is **higher** than the current "Latest".
+
+2. **Bump `package.json` `version`** to match the tag (without the `v` prefix). The CI's `npm version` step is idempotent now, so committing the bump first is safe:
+
+   ```bash
+   # in desktop/package.json, set "version": "1.25.7"
+   git add desktop/package.json
+   git commit -m "Bump desktop version to 1.25.7"
+   ```
+
+3. **(If shipping code changes)** commit them too, then push to `main`:
+
+   ```bash
+   git push origin main
+   ```
+
+4. **Tag and push**:
+
+   ```bash
+   git tag v1.25.7
+   git push origin v1.25.7
+   ```
+
+5. **Watch the workflow** (~10 min on `macos-15-intel`):
+
+   ```bash
+   gh run watch $(gh run list --workflow desktop-release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+   ```
+
+6. **Publish the draft release**. electron-builder creates the GitHub Release as a draft by default. Promote it:
+
+   ```bash
+   gh release edit v1.25.7 --draft=false
+   gh release view v1.25.7 --json url,isDraft,tagName
+   ```
+
+   Now visible at `https://github.com/<org>/<repo>/releases/tag/v1.25.7`. Auto-update in already-installed apps will offer the upgrade on next launch.
+
+### Tag pre-releases (don't disturb "Latest")
+
+```bash
+git tag v1.25.7-test1
+git push origin v1.25.7-test1
+gh release edit v1.25.7-test1 --prerelease --draft=false
+```
+
+### Versioning notes
+
+- Both jobs in `desktop-release.yml` (artifact + release) run on every push and tag respectively. The `release` job uses `npm version $TAG --no-git-tag-version` to sync `package.json` to the tag — but only if they differ (idempotent guard added in the workflow).
+- The dmg is **unsigned** (no `mac.identity` / no notarization). Existing users right-click → Open on first launch. To ship signed/notarized builds, add `mac.identity` to `package.json` and provide an Apple Developer ID + notarization credentials via repo secrets.
+
+### What goes in the dmg
+
+- `main.js`, `preload.js`, `settings.html`, `auth-prompt.html` (renderer/main)
+- `resources/agent-server`, `resources/workspace-server` (Go binaries built by `dev-setup.sh` or CI)
+- `resources/icons/`, `agent_go/configs/`, `agent_go/static/` via `extraResources` in `package.json`
 
 ## Runtime Details
 

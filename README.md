@@ -9,6 +9,15 @@
 
 **AgentForge** is a multi-model agent platform for building, orchestrating, and scheduling AI workflows across coding tools, chat channels, browser automation, and human approvals.
 
+### Install on macOS (Apple Silicon)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash
+```
+
+Downloads the latest dmg from [Releases](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest), installs to `/Applications`, clears the Gatekeeper quarantine flag, and launches the app. See the [Desktop App section](#-desktop-app-macos) below for details + manual install.
+
+
 Run **Claude Code, Codex, Gemini CLI, and open models** in one system. Build visual workflows, launch complex orchestrators, schedule recurring jobs, and route agent conversations through **Slack, WhatsApp, and the web**.
 
 AgentForge is built for teams that want more than a chat box:

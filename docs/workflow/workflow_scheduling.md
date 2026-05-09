@@ -170,7 +170,7 @@ The scheduler builds a request with:
 - `execution_options.run_mode = use_same_run`
 - `execution_options.selected_run_folder = iteration-0`
 - `execution_options.execution_strategy = start_from_beginning_no_human`
-- `execution_options.workshop_mode = schedule.workshop_mode || runner`
+- `execution_options.workshop_mode = schedule.workshop_mode || run`
 - `execution_options.enabled_group_ids = schedule.group_ids`
 
 Then it sends the configured `messages[]` one by one and waits for the workshop session to become idle after each message.
@@ -178,6 +178,8 @@ Then it sends the configured `messages[]` one by one and waits for the workshop 
 If no messages are provided, it defaults to:
 
 - `Run the full workflow using run_full_workflow tool.`
+
+Run-mode workshop schedules are not limited to full workflow execution. The configured message can ask Run mode to answer directly from KB/learnings/db/run state, execute a targeted normal step, execute an orphan utility step, or call `run_full_workflow`, depending on the scheduled job.
 
 ## Groups And Run Folders
 
@@ -201,7 +203,7 @@ Workshop schedules have one extra behavior.
 If:
 
 - `mode = workshop`
-- `workshop_mode` is `runner` or omitted
+- `workshop_mode` is `run`, legacy `runner`, or omitted
 - none of the scheduled messages explicitly invoke `run_full_report`
 
 then the scheduler tries to auto-generate the final report after the workshop message sequence completes.

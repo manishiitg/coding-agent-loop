@@ -12,28 +12,38 @@ import (
 // =====================================================================
 // metric_propose.go — handler for the propose_metric tool.
 //
-// Append-only by id. To change a metric's meaning, retire the old one
-// (retire_metric) and create a new one with a different id. There is no
-// in-place amend or version-archive machinery — that complexity was
-// removed in the metric-model simplification.
+// New metrics are added through the active metrics list. Existing metrics can
+// be amended only with an explicit amend_existing payload; the prior active
+// definition is copied to metrics.json::archive first.
 //
 // Schemas: schemas/auto-improvement.schema.json#$defs/ToolInput_propose_metric
 // =====================================================================
 
 // ProposeMetricInput is the LLM-supplied portion of a metric proposal.
 type ProposeMetricInput struct {
-	ID        string          `json:"id,omitempty"`
-	Label     string          `json:"label,omitempty"`
-	Unit      string          `json:"unit,omitempty"`
-	Direction MetricDirection `json:"direction,omitempty"`
-	Mode      MetricMode      `json:"mode,omitempty"`
-	Target    *float64        `json:"target,omitempty"`
-	Floor     *float64        `json:"floor,omitempty"`
-	Ceiling   *float64        `json:"ceiling,omitempty"`
-	Source    MetricSource    `json:"source,omitempty"`
+	ID        string              `json:"id,omitempty"`
+	Label     string              `json:"label,omitempty"`
+	Role      MetricRole          `json:"role,omitempty"`
+	Category  string              `json:"category,omitempty"`
+	Unit      string              `json:"unit,omitempty"`
+	Direction MetricDirection     `json:"direction,omitempty"`
+	Mode      MetricMode          `json:"mode,omitempty"`
+	Target    *float64            `json:"target,omitempty"`
+	Floor     *float64            `json:"floor,omitempty"`
+	Ceiling   *float64            `json:"ceiling,omitempty"`
+	Source    MetricSource        `json:"source,omitempty"`
+	Parent    string              `json:"parent,omitempty"`
+	Amend     *AmendMetricRequest `json:"amend_existing,omitempty"`
 	// SuccessCriteria should quote or summarize the soul.md success criterion
 	// this metric measures, so metric rows stay anchored to user outcomes.
 	SuccessCriteria string `json:"success_criteria,omitempty"`
+}
+
+// AmendMetricRequest must be present when propose_metric is used to change an
+// existing metric definition in place under the same metric id.
+type AmendMetricRequest struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
 }
 
 // ProposeMetricOutput is what the tool returns to the proposer LLM.
@@ -45,17 +55,18 @@ type ProposeMetricInput struct {
 // can either update the eval in the same session or accept that the metric
 // won't resolve until then.
 type ProposeMetricOutput struct {
-	MetricID string   `json:"metric_id,omitempty"`
-	Status   string   `json:"status"` // "added"
-	Warnings []string `json:"warnings,omitempty"`
+	MetricID        string   `json:"metric_id,omitempty"`
+	Status          string   `json:"status"` // "added" | "amended"
+	Version         int      `json:"version,omitempty"`
+	ArchivedVersion int      `json:"archived_version,omitempty"`
+	Warnings        []string `json:"warnings,omitempty"`
 }
 
-// ProposeMetric is the system entrypoint for defining a new metric. To
-// change an existing metric's meaning, call retire_metric on the old one
-// and ProposeMetric for a fresh metric with a new id.
+// ProposeMetric is the system entrypoint for defining or amending a metric.
+// Amending requires amend_existing so the agent has to supply an audit reason.
 //
-// Trigger is the originating slash command name (used in the audit decision
-// entry).
+// Trigger is the originating slash command name (used in the structured
+// improve.md decision entry).
 func ProposeMetric(ctx context.Context, workspacePath, trigger string, input ProposeMetricInput) (*ProposeMetricOutput, error) {
 	// Soul precondition: an objective and success_criteria must exist before
 	// metrics are defined against them. Without that anchor, metrics are
@@ -67,6 +78,8 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 	candidate := Metric{
 		ID:              strings.TrimSpace(input.ID),
 		Label:           input.Label,
+		Role:            input.Role,
+		Category:        strings.TrimSpace(input.Category),
 		Unit:            input.Unit,
 		Direction:       input.Direction,
 		Mode:            input.Mode,
@@ -75,6 +88,7 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 		Ceiling:         input.Ceiling,
 		Source:          input.Source,
 		SuccessCriteria: strings.TrimSpace(input.SuccessCriteria),
+		Parent:          strings.TrimSpace(input.Parent),
 	}
 	if err := ValidateMetric(&candidate); err != nil {
 		return nil, fmt.Errorf("invalid metric: %w", err)
@@ -97,11 +111,74 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 		file = &MetricsFile{Metrics: []Metric{}}
 	}
 
+	if input.Amend != nil {
+		targetID := strings.TrimSpace(input.Amend.ID)
+		reason := strings.TrimSpace(input.Amend.Reason)
+		if targetID == "" {
+			return nil, fmt.Errorf("amend_existing.id is required")
+		}
+		if reason == "" {
+			return nil, fmt.Errorf("amend_existing.reason is required")
+		}
+		if targetID != candidate.ID {
+			return nil, fmt.Errorf("amend_existing.id (%q) must match id (%q); to replace with a new metric id, call retire_metric then propose_metric", targetID, candidate.ID)
+		}
+		idx := -1
+		for i := range file.Metrics {
+			if file.Metrics[i].ID == candidate.ID {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return nil, fmt.Errorf("amend_existing requested for metric id %q, but it is not active in planning/metrics.json", candidate.ID)
+		}
+		prior := file.Metrics[idx]
+		priorVersion := metricVersion(prior)
+		prior.Version = priorVersion
+		candidate.Version = priorVersion + 1
+		file.Archive = append(file.Archive, MetricArchiveEntry{
+			ID:             prior.ID,
+			Version:        priorVersion,
+			ArchivedAt:     nowUTC(),
+			ArchivedReason: reason,
+			Definition:     prior,
+		})
+		file.Metrics[idx] = candidate
+
+		if err := ValidateMetricsFile(file); err != nil {
+			return nil, fmt.Errorf("metrics.json validation: %w", err)
+		}
+		if err := WriteMetricsFile(ctx, workspacePath, file); err != nil {
+			return nil, fmt.Errorf("write metrics.json: %w", err)
+		}
+
+		dec := DecisionEntry{
+			Source:         DecisionSourceAgent,
+			Trigger:        trigger,
+			Rationale:      fmt.Sprintf("metric amended: %s v%d -> v%d - %s", candidate.ID, priorVersion, candidate.Version, reason),
+			AppliedChanges: []string{"planning/metrics.json"},
+			TargetMetrics:  []string{candidate.ID},
+		}
+		if _, err := AppendDecisionEntry(ctx, workspacePath, dec); err != nil {
+			return nil, fmt.Errorf("append improve.md decision: %w", err)
+		}
+
+		return &ProposeMetricOutput{
+			MetricID:        candidate.ID,
+			Status:          "amended",
+			Version:         candidate.Version,
+			ArchivedVersion: priorVersion,
+			Warnings:        warnings,
+		}, nil
+	}
+
 	for _, m := range file.Metrics {
 		if m.ID == candidate.ID {
-			return nil, fmt.Errorf("metric id %q already exists; retire it first if you want to redefine", candidate.ID)
+			return nil, fmt.Errorf("metric id %q already exists; to change its definition, call propose_metric with amend_existing: {\"id\": %q, \"reason\": \"...\"}; to intentionally start a separate series, use a different id", candidate.ID, candidate.ID)
 		}
 	}
+	candidate.Version = metricVersion(candidate)
 	file.Metrics = append(file.Metrics, candidate)
 
 	if err := ValidateMetricsFile(file); err != nil {
@@ -119,14 +196,22 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 		TargetMetrics:  []string{candidate.ID},
 	}
 	if _, err := AppendDecisionEntry(ctx, workspacePath, dec); err != nil {
-		return nil, fmt.Errorf("append decision: %w", err)
+		return nil, fmt.Errorf("append improve.md decision: %w", err)
 	}
 
 	return &ProposeMetricOutput{
 		MetricID: candidate.ID,
 		Status:   "added",
+		Version:  candidate.Version,
 		Warnings: warnings,
 	}, nil
+}
+
+func metricVersion(m Metric) int {
+	if m.Version > 0 {
+		return m.Version
+	}
+	return 1
 }
 
 // checkEvalStepReferenceExists returns a hard error when source.type=eval_step
@@ -263,16 +348,17 @@ type RetireMetricInput struct {
 
 // RetireMetricOutput is what the tool returns to the proposer LLM.
 type RetireMetricOutput struct {
-	MetricID string `json:"metric_id"`
-	Status   string `json:"status"` // "retired"
+	MetricID        string `json:"metric_id"`
+	Status          string `json:"status"` // "retired"
+	ArchivedVersion int    `json:"archived_version,omitempty"`
 }
 
 // RetireMetric removes a metric from metrics.json::metrics[]. The metric stops
 // being collected on subsequent runs. Existing rows in db/metrics_history.jsonl
-// that reference the id are kept as-is — the decision-log entry created here
+// that reference the id are kept as-is — the improve.md decision entry created here
 // is the audit trail for what those historical values represented.
 //
-// Reason is required so the decision entry traces why the metric was removed.
+// Reason is required so the improve.md decision entry traces why the metric was removed.
 func RetireMetric(ctx context.Context, workspacePath, trigger string, input RetireMetricInput) (*RetireMetricOutput, error) {
 	if strings.TrimSpace(input.ID) == "" {
 		return nil, fmt.Errorf("retire_metric: id is required")
@@ -300,6 +386,16 @@ func RetireMetric(ctx context.Context, workspacePath, trigger string, input Reti
 		return nil, fmt.Errorf("retire_metric: metric id %q not found in active metrics", input.ID)
 	}
 	prior := file.Metrics[idx]
+	priorVersion := metricVersion(prior)
+	prior.Version = priorVersion
+
+	file.Archive = append(file.Archive, MetricArchiveEntry{
+		ID:             prior.ID,
+		Version:        priorVersion,
+		ArchivedAt:     nowUTC(),
+		ArchivedReason: strings.TrimSpace(input.Reason),
+		Definition:     prior,
+	})
 
 	// Remove from active.
 	file.Metrics = append(file.Metrics[:idx], file.Metrics[idx+1:]...)
@@ -319,11 +415,12 @@ func RetireMetric(ctx context.Context, workspacePath, trigger string, input Reti
 		TargetMetrics:  []string{prior.ID},
 	}
 	if _, err := AppendDecisionEntry(ctx, workspacePath, dec); err != nil {
-		return nil, fmt.Errorf("append decision: %w", err)
+		return nil, fmt.Errorf("append improve.md decision: %w", err)
 	}
 
 	return &RetireMetricOutput{
-		MetricID: prior.ID,
-		Status:   "retired",
+		MetricID:        prior.ID,
+		Status:          "retired",
+		ArchivedVersion: priorVersion,
 	}, nil
 }

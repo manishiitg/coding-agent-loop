@@ -132,6 +132,13 @@ function _flushEventBatch(sessionId: string) {
   useChatStore.getState()._addTabEventsImmediate(sessionId, buffer)
 }
 
+function clearPendingEventBatch(sessionId: string) {
+  const timer = _eventBatchTimers.get(sessionId)
+  if (timer) clearTimeout(timer)
+  _eventBatchTimers.delete(sessionId)
+  _eventBatchBuffers.delete(sessionId)
+}
+
 function addTabEventsBatched(sessionId: string, events: PollingEvent[]) {
   // Check if any event is "important" (completion, error, human feedback) — flush immediately
   const hasImportant = events.some(e => {
@@ -852,6 +859,7 @@ export const useChatStore = create<ChatState>()(
 
       setTabEvents: (sessionId: string, events: PollingEvent[]) => {
         console.log('[WF_DEBUG] setTabEvents CALLED', { sessionId, newCount: events.length, existingCount: get().tabEvents[sessionId]?.length ?? 0, stack: new Error().stack?.split('\n').slice(1, 4).map(s => s.trim()) })
+        clearPendingEventBatch(sessionId)
         const retainedEvents = trimLargeRetainedEvents(events)
         // Rebuild the persistent ID index for this session
         tabEventIdSets.set(sessionId, new Set(retainedEvents.map(e => e.id).filter(Boolean) as string[]))
@@ -889,6 +897,7 @@ export const useChatStore = create<ChatState>()(
       
       clearTabEvents: (sessionId: string) => {
         console.log('[WF_DEBUG] clearTabEvents CALLED', { sessionId, hadEvents: get().tabEvents[sessionId]?.length ?? 0, stack: new Error().stack?.split('\n').slice(1, 4).map(s => s.trim()) })
+        clearPendingEventBatch(sessionId)
         tabEventIdSets.delete(sessionId)
         set((state) => {
           const newTabEvents = { ...state.tabEvents }

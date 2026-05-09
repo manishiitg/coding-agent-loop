@@ -1207,19 +1207,19 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Ctrl/Cmd + 1 for Multi-agent mode
+      // Ctrl/Cmd + 1 for Workflow mode
       if ((event.ctrlKey || event.metaKey) && event.key === '1') {
         event.preventDefault()
         const { setModeCategory } = useModeStore.getState()
-        setModeCategory('multi-agent')
+        setModeCategory('workflow')
         setShowWorkflowsOverview(false)
         return
       }
-      // Ctrl/Cmd + 2 for Workflow mode
+      // Ctrl/Cmd + 2 for Chat mode
       if ((event.ctrlKey || event.metaKey) && event.key === '2') {
         event.preventDefault()
         const { setModeCategory } = useModeStore.getState()
-        setModeCategory('workflow')
+        setModeCategory('multi-agent')
         setShowWorkflowsOverview(false)
         return
       }

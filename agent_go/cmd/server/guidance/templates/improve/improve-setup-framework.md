@@ -4,7 +4,7 @@ Focus / hints from user: {{.Focus}}{{end}}
 
 DISCOVERY (read-only)
 1. Read workflow.json. Note any existing oversight_mode / decision_log_mutability.
-2. Read builder/improve.md if present — note any existing "## Workflow Profile" section.
+2. Read builder/improve.md if present — note any existing "## Workflow Profile" section, Active Improvement Index, Archive Index, and recent entries. If there is no index/retention structure yet, read the file in full.
 3. Read soul/soul.md to extract the workflow's objective and success_criteria.
 4. Read planning/plan.json — note the steps, their types, and overall structure (frozen plan vs in flux vs explore/exploit).
 5. Read evaluation/evaluation_plan.json if present — eval steps will be the natural source for many starter metrics.
@@ -58,18 +58,33 @@ Append (or replace, if a section already exists) the following section in builde
 - **Improvement cadence**: <chosen> — <one-line rationale>
 
 Behavioral implications the agent should respect on every turn:
-- <primary-type implication, e.g. "Default to harden_workflow unless evidence shows plan structure is wrong." or "Metrics drive strategy changes; use replan_workflow_from_results when outcome trends show strategy weakness.">
+- <primary-type implication, e.g. "Use harden_workflow for local reliability/contract failures; use replan_workflow_from_results when outcome trends show the workflow path or strategy is weak.">
 - <secondary-trait implication, e.g. "Because this is also human-review production, track approval/edit burden and preserve provenance.">
 - <plan-stability implication, e.g. "Do not call replan_workflow_from_results or delete_plan_steps without explicit user approval.">
 - <runtime-mode implication, e.g. "When dual: branch step behavior on the workflow's chosen runtime signal.">
 - <business-context implication, e.g. "Recognize user-supplied rules in conversation and offer capture_context.">
+
+## Active Improvement Index
+
+- **Current focus:** setup pending
+- **Open findings / hypotheses:** none yet
+- **Current metric/eval gaps:** to be filled after first eval/metric review
+- **Latest semantic change:** none
+- **Recent evidence window:** iteration-0 after the next run
+
+## Archive Index
+
+| Archive | Date range | Entries | Unresolved ids | Summary |
+| --- | --- | ---: | --- | --- |
+
+## Recent Entries
 ```
 
 STEP 3 — Set the two hard-gate fields in workflow.json
 These are the only structured framework fields; they drive real behavior.
 
 - `oversight_mode` — `manual` / `supervised` (default) / `autonomous`. Recommended defaults: deterministic + ratcheting workflow → `manual`; exploratory → `autonomous`; contextual / business-context → `supervised`.
-- `decision_log_mutability` — `append_only` (default) / `append_only_strict`. Set strict ONLY for compliance / audit workflows where the decision log is forensic.
+- `decision_log_mutability` — `append_only` (default) / `append_only_strict`. Set strict ONLY for compliance / audit workflows where structured improve.md decision entries are forensic.
 
 STEP 4 — Bootstrap metrics.json
 Behavior depends on the profile from Step 1:
@@ -77,14 +92,19 @@ Behavior depends on the profile from Step 1:
 - Primary `deterministic_harden_first` or plan stability `ratchet`/`frozen` + business context `none`: propose 3–5 SLO-mode metrics — success-rate (floor), schema/file validity, data freshness, `cost_per_run` (ceiling), `run_duration_seconds` (ceiling). Source: `telemetry` for cost/duration, `eval_step` for the rest.
 - Primary `open_metric_optimization`: propose 3–5 outcome metrics derived from success_criteria plus 1–2 operational SLOs. Outcome metrics should be target-mode where the workflow is trying to move a number; they drive experiments and replans.
 - Primary `business_context_accumulating` or business context `accumulating`: REQUIRED. Propose 3–5 outcome + rule-conformance metrics derived from success_criteria. Mix outcome metrics (mode=`target`, drive toward a value) with SLO metrics (mode=`slo`, stay above floor / below ceiling) — outcome metrics drive progress, SLOs enforce constraints.
-- Primary `compliance_audit`: propose evidence-completeness, false-negative, traceability, and policy-coverage SLOs. Prefer strict decision log mutability and supervised/manual oversight.
+- Primary `compliance_audit`: propose evidence-completeness, false-negative, traceability, and policy-coverage SLOs. Prefer strict improve-ledger mutability and supervised/manual oversight.
 - Primary `human_review_production`: propose approval-rate, revision-count/edit-burden, provenance completeness, and draft-quality metrics.
 - Primary `monitoring_alerting`: propose false-positive, false-negative/missed-alert, alert-latency, and escalation-quality metrics.
 - Primary `research_synthesis`: propose citation/source freshness, source diversity, unsupported-claim count, and synthesis-usefulness metrics.
 - Primary `creative_generative`: propose human rating, style adherence, preference-match, and variant-performance metrics; keep thresholds softer unless the user has explicit quality bars.
 - Always include `cost_per_run` and `run_duration_seconds` as telemetry SLOs when the telemetry source is supported for this workflow surface; if telemetry metrics cannot resolve yet, surface that as a framework gap rather than creating noisy broken metrics.
 
-For each proposed metric, supply id + unit + direction + mode + threshold + source + `success_criteria` (quote or summarize the soul.md success criterion it measures). Use `propose_metric` to write each one — never shell-write `planning/metrics.json` (it's folder-guarded). Common gotchas to avoid:
+Metric roles:
+- Mark only 1–4 metrics as `role="primary"`: the north-star outcome metrics and any must-not-break guardrail whose failure invalidates the workflow. These are what improvement loops optimize first.
+- Mark diagnostic, explanatory, operational, and coverage metrics as `role="secondary"`. Secondary metrics explain why primary metrics moved or prevent regressions, but they should not crowd out the primary objective.
+- Add `category` so the UI and future agents can group the signal. Use concise values such as `outcome`, `execution`, `guardrail`, `content_quality`, `strategy_learning`, `telemetry`, or a workflow-specific equivalent.
+
+For each proposed metric, supply id + label + role + category + unit + direction + mode + threshold + source + `success_criteria` (quote or summarize the soul.md success criterion it measures). Use `propose_metric` to write each one — never shell-write `planning/metrics.json` (it's folder-guarded). Common gotchas to avoid:
 - For `source.type=eval_step`, prefer explicit structured-output keys emitted by the eval step's JSON output. Legacy final-score fields are not produced by new eval runs.
 - Telemetry source: only six wired fields exist (`run.total_cost_usd`, `run.duration_seconds`, `eval.total_cost_usd`, `eval.duration_seconds`, `total.cost_usd`, `total.duration_seconds`). Other names silently return no value.
 
@@ -102,6 +122,8 @@ You're auditing existing setup, not bootstrapping. Walk through these checks and
 5.3 — **Metric definitions**
 - Read every entry in `planning/metrics.json::metrics[]`.
 - For each metric, validate: id is unique kebab.dot, unit is sensible, direction matches (e.g. `cost_per_run` should be `lower_better`), mode + threshold is consistent (target requires `target`, slo+higher_better requires `floor`, slo+lower_better requires `ceiling`).
+- For each metric, verify `role` is present and one of `primary` / `secondary`. If there are more than 4 primary metrics, recommend demoting diagnostic metrics to secondary. If there are zero primary metrics, recommend promoting the actual north-star outcome metric.
+- For each metric, verify `category` is present and useful for grouping (outcome/execution/guardrail/content_quality/strategy_learning/telemetry/etc.).
 - For each metric, verify `success_criteria` is present and clearly links to a `soul.md` success criterion. Missing linkage is a framework issue: the UI will warn because the metric is not anchored to a user outcome.
 - Does the source point at something real? `eval_step` source must reference an existing eval step id; `telemetry` source must use one of the six wired fields.
 - Are there obvious gaps — success criteria from soul.md that no metric measures? Surface as coverage suggestions (don't auto-add).
@@ -123,4 +145,11 @@ For each broken metric, name the metric, the resolve_error, and the recommended 
 5.6 — **Telemetry SLOs present?**
 - If `cost_per_run` and `run_duration_seconds` (or `total.cost_usd` / `total.duration_seconds`) aren't defined as telemetry SLOs, suggest adding them. Free signal.
 
-After STEP 5 — Record what you reviewed and recommended in `builder/improve.md` under a "## Framework review YYYY-MM-DD" subsection so the audit trail survives the session. Append a `decisions.jsonl` entry summarizing the review.
+After STEP 5 — Record what you reviewed and recommended in `builder/improve.md` under a "## Framework review YYYY-MM-DD" subsection so the audit trail survives the session. Include a structured `improve-decision` fenced JSON block summarizing the review.
+
+If existing `builder/improve.md` is already long, preserve it as the ledger but compact it after the review:
+- keep Workflow Profile, Active Improvement Index, Archive Index, and latest 10-20 detailed entries in `builder/improve.md`
+- move older resolved/no-action/repeated detailed entries to `builder/improve-archive/YYYY-MM.md`
+- preserve structured `improve-decision` blocks in the archive
+- leave Archive Index rows with date range, entry count, unresolved ids, and summary
+- keep unresolved findings, active hypotheses, current metric/eval gaps, and latest semantic plan/eval/metric changes in the root file

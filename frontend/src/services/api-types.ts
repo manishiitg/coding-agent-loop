@@ -318,6 +318,8 @@ export interface ChannelRoute {
   workspace_path: string
   // Override the manifest's workshop_mode for this channel. Empty = use manifest.
   workshop_mode?: 'builder' | 'optimizer' | 'run' | 'reporting'
+  // Opt in to detailed workflow runtime messages in the bot channel.
+  send_full_details?: boolean
 }
 
 export interface SlackConfig {
@@ -1380,20 +1382,17 @@ export interface EvaluationStepScore {
   step_id: string;
   score?: number;
   max_score?: number;
-  reasoning: string;
-  evidence: string;
+  reasoning?: string | null;
+  evidence?: string | null;
   skipped?: boolean;
-  context_output?: string;
-  output_content?: StepOutputContent;
+  context_output?: string | null;
+  output_content?: StepOutputContent | null;
 }
 
 export interface EvaluationReport {
   target_run_folder: string;
   generated_at: string;
-  total_score?: number;
-  max_possible_score?: number;
-  score_percentage?: number;
-  step_scores: EvaluationStepScore[];
+  step_scores?: EvaluationStepScore[] | null;
 }
 
 // Evaluation reports response for aggregate view
@@ -1413,7 +1412,7 @@ export interface WorkflowReviewDataResponse {
 
 export interface EvaluationReportEntry {
   run_folder: string;
-  report: EvaluationReport;
+  report: EvaluationReport | null;
 }
 
 export interface EvaluationAggregate {

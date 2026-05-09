@@ -13,8 +13,8 @@ import (
 //   <workflow>/knowledgebase/context/context.md
 //   <workflow>/knowledgebase/context/examples/
 //
-// Audit trail (formerly context/clarifications.jsonl) is now folded into
-// the unified builder/decisions.jsonl with Source=user + Trigger=capture-context.
+// Audit trail is folded into the unified builder/improve.md ledger with
+// Source=user + Trigger=capture-context.
 //
 // `knowledgebase/context/` is intentionally excluded from
 // reorganize_knowledgebase / consolidate_knowledgebase passes — user-supplied
@@ -90,9 +90,9 @@ func AppendContextRule(ctx context.Context, workspacePath, section, ruleText str
 
 // CaptureContext is the high-level helper used by the capture_context tool
 // and the /api/workflow/capture-context endpoint. It (a) appends the rule
-// text to knowledgebase/context/context.md, (b) writes a single
-// builder/decisions.jsonl entry with Source=user + Trigger=capture-context
-// + the rule-specific fields populated. Returns the persisted decision.
+// text to knowledgebase/context/context.md, (b) writes a single structured
+// builder/improve.md decision entry with Source=user + Trigger=capture-context
+// + the rule-specific fields populated. Returns the persisted entry.
 //
 // Non-empty target_metrics is the mandatory validation gate for
 // business-context capture: every persisted rule must declare what metric(s)
@@ -132,7 +132,7 @@ func CaptureContext(ctx context.Context, workspacePath, section, ruleText string
 	}
 	persistedDec, err := AppendDecisionEntry(ctx, workspacePath, dec)
 	if err != nil {
-		return dec, fmt.Errorf("append decision: %w", err)
+		return dec, fmt.Errorf("append improve.md decision: %w", err)
 	}
 	return persistedDec, nil
 }

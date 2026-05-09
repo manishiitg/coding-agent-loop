@@ -10,7 +10,7 @@ DISCOVERY
 2. If existing candidate schedules exist, call get_schedule_runs on the most relevant ones to understand whether they are active, useful, stale, too frequent, or missing coverage.
 3. Read soul/soul.md to understand objective and success criteria.
 4. Read variables/variables.json to identify valid group names and enabled groups.
-5. Read builder/improve.md in full. This is mandatory: it contains the Workflow Profile, prior actions, deferred ideas, and prior scheduled-improvement history.
+5. Read builder/improve.md's active sections. This is mandatory: it contains the Workflow Profile, Active Improvement Index, Archive Index, Recent Entries, prior actions, deferred ideas, and prior scheduled-improvement history. If the file has no retention/index structure yet, read it in full. Read only archive files referenced by unresolved ids, current focus, schedule drift, or the selected evidence window.
 6. Read builder/review.md if present. Carry unresolved `F-...` findings into the scheduled optimizer message.
 7. Read planning/metrics.json and recent db/metrics_history.jsonl rows. Metrics are evidence for harden/replan decisions; they do not create a separate action path.
 8. Read planning/changelog/ if present and compare recent plan/config changes against builder/improve.md and builder/review.md. Recent plan changes increase regression risk and require tighter improve cadence until one or two post-change runs have been reviewed.
@@ -49,17 +49,18 @@ Create or update a schedule for recurring improvement with:
 - workshop_mode="optimizer"
 - valid group_names
 - a clear name and description that make it obvious this is the frequent lightweight optimizer schedule
-- a single scheduled message whose purpose is to improve workflow quality and eval/metric quality over time by calling the canonical `improve-workflow` guided flow
+- a single scheduled message whose purpose is to improve workflow quality, eval/metric quality, KB hygiene, and learning hygiene over time by calling the canonical `improve-workflow` guided flow
 
 The optimizer schedule message must be a short wrapper around `improve-workflow`, not a duplicate copy of the improve decision model. Write the wrapper explicitly into the schedule message; the agent that fires has no other context.
 
 OPENING (every fire):
 - call get_workflow_config and inspect schedules; call get_schedule_runs for the primary run schedule and improve schedule when deciding whether cadence or group scope needs adjustment
-- read builder/improve.md in full
+- read builder/improve.md's active sections; read only referenced `builder/improve-archive/YYYY-MM.md` files when older history matters
 - read builder/review.md if present
 - read soul/soul.md
 - read planning/changelog/ if present and detect material plan/config changes since the last scheduled-improvement review
 - read variables/variables.json and confirm the configured group_names are still valid
+- carry unresolved KB and learning findings into the improvement focus when builder/review.md or builder/improve.md names stale `knowledgebase/notes/`, `learnings/_global/`, saved scripts, or plan-change drift
 - if group_names, schedule ids, cadence, or recent plan changes indicate schedule drift, prepare a concise cadence note before calling the improvement flow
 
 SCHEDULE SELF-TUNING RULES:
@@ -80,17 +81,18 @@ The focus string passed to `improve-workflow` must include:
 - this is a scheduled continuous improvement fire
 - the configured group_names
 - any unresolved `F-...` findings or recent planning/changelog concern found during opening
+- any KB/learnings hygiene concern found during opening
 - any cadence note that affects evidence freshness{{if .Focus}}
 - user focus: {{.Focus}}{{end}}
 
 POST-IMPROVEMENT CADENCE CHECK:
 After the `improve-workflow` guidance finishes, do one short schedule check:
-- if the improvement pass changed the workflow, tightened eval/metrics, or found stale evidence, update run/improve cadence if needed
+- if the improvement pass changed the workflow, tightened eval/metrics, curated KB/learnings, or found stale evidence, update run/improve cadence if needed
 - if no action was taken because there was no fresh evidence, slow cadence only when repeated recent schedule runs show no useful observation
 - append the schedule decision to builder/improve.md if the canonical improve pass did not already record it
 
 PERSISTENT IMPROVEMENT LOG
-Create or update builder/improve.md now as the durable optimization log for future scheduled improvement runs.
+Create or update builder/improve.md now as the durable optimization ledger entry point for future scheduled improvement runs.
 Bootstrap it with:
 - objective and success criteria snapshot
 - current schedule strategy
@@ -98,7 +100,14 @@ Bootstrap it with:
 - improve cadence
 - current known workflow gaps
 - current known eval/metric gaps
+- current known KB/learnings hygiene gaps
 - next improvement hypotheses
+
+If builder/improve.md is already long, compact it while preserving the ledger:
+- keep Workflow Profile, Active Improvement Index, Archive Index, and latest 10-20 detailed entries in builder/improve.md
+- move older resolved/no-action/repeated detailed entries to `builder/improve-archive/YYYY-MM.md`
+- leave Archive Index rows naming date range, entry count, unresolved ids, and summary
+- never archive away unresolved findings, active hypotheses, current schedule strategy, current metric/eval gaps, or the latest semantic plan/eval/metric change
 
 SCHEDULE CREATION RULES
 1. Do NOT delete schedules unless they are clearly redundant and safe to remove. Prefer update over delete.

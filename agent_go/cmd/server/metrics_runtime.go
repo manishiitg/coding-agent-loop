@@ -76,11 +76,32 @@ func ValidateMetricsFile(file *MetricsFile) error {
 		if err := ValidateMetric(&file.Metrics[i]); err != nil {
 			return fmt.Errorf("metrics[%d]: %w", i, err)
 		}
+		if file.Metrics[i].Version < 0 {
+			return fmt.Errorf("metrics[%d]: version cannot be negative", i)
+		}
 		id := file.Metrics[i].ID
 		if _, dup := seen[id]; dup {
 			return fmt.Errorf("metrics: duplicate id %q", id)
 		}
 		seen[id] = struct{}{}
+	}
+	for i := range file.Archive {
+		entry := &file.Archive[i]
+		if strings.TrimSpace(entry.ID) == "" {
+			return fmt.Errorf("archive[%d]: id is required", i)
+		}
+		if entry.Version <= 0 {
+			return fmt.Errorf("archive[%d]: version must be positive", i)
+		}
+		if strings.TrimSpace(entry.ArchivedAt) == "" {
+			return fmt.Errorf("archive[%d]: archived_at is required", i)
+		}
+		if strings.TrimSpace(entry.ArchivedReason) == "" {
+			return fmt.Errorf("archive[%d]: archived_reason is required", i)
+		}
+		if err := ValidateMetric(&entry.Definition); err != nil {
+			return fmt.Errorf("archive[%d].definition: %w", i, err)
+		}
 	}
 	return nil
 }
@@ -96,6 +117,12 @@ func ValidateMetric(m *Metric) error {
 	if strings.TrimSpace(m.Unit) == "" {
 		return fmt.Errorf("unit is required")
 	}
+	switch m.Role {
+	case "", MetricRolePrimary, MetricRoleSecondary:
+	default:
+		return fmt.Errorf("invalid role %q", m.Role)
+	}
+	m.Category = strings.TrimSpace(m.Category)
 	switch m.Direction {
 	case HigherBetter, LowerBetter:
 	default:

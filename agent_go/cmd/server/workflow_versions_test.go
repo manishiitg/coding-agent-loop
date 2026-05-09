@@ -237,10 +237,10 @@ func TestWorkflowVersionPublishAndRestoreIncludesLearnings(t *testing.T) {
 
 	mockAPI := &mockWorkspaceAPI{
 		files: map[string]string{
-			workspacePath + "/planning/plan.json":        `{"version":"original-plan"}`,
-			workspacePath + "/planning/step_config.json": `{"steps":["original-config"]}`,
-			workspacePath + "/variables/variables.json":  `{"customer":"original"}`,
-			workspacePath + "/learnings/step-1/SKILL.md": "original learning",
+			workspacePath + "/planning/plan.json":           `{"version":"original-plan"}`,
+			workspacePath + "/planning/step_config.json":    `{"steps":["original-config"]}`,
+			workspacePath + "/variables/variables.json":     `{"customer":"original"}`,
+			workspacePath + "/learnings/step-1/SKILL.md":    "original learning",
 			workspacePath + "/learnings/eval-step/SKILL.md": "original eval learning",
 		},
 	}

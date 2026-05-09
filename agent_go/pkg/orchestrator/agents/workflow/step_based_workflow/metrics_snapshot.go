@@ -7,15 +7,17 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
 // =====================================================================
 // metrics_snapshot.go — per-run metric snapshotting.
 //
 // Called inline after eval step outputs are written.
-// Reads planning/metrics.json (eval-step sourced metrics only), looks up
-// each metric's value in the just-written evaluation_report.json, and
-// writes:
+// Reads planning/metrics.json, resolves eval-step metrics from the
+// just-written evaluation_report.json, resolves telemetry metrics from
+// system run/cost state, and writes:
 //
 //   runs/<runFolder>/metrics_snapshot.json   — full per-run snapshot
 //   db/metrics_history.jsonl                  — append-only time series
@@ -126,18 +128,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) snapshotRunMetrics(ctx context.Contex
 			CompletedAt: completedAt,
 			MetricID:    m.ID,
 		}
-		if m.Source.Type != "eval_step" {
-			row.ResolveError = fmt.Sprintf("source type %q not handled by inline snapshot (only eval_step)", m.Source.Type)
-			rows = append(rows, row)
-			continue
+		switch m.Source.Type {
+		case "eval_step":
+			step, ok := stepByID[m.Source.ID]
+			if !ok {
+				row.ResolveError = fmt.Sprintf("eval step %q not in evaluation_report.json", m.Source.ID)
+				applyThreshold(&row, m)
+				rows = append(rows, row)
+				continue
+			}
+			resolveMetricValueFromStep(&row, step, m.Source.Field)
+		case "telemetry":
+			resolveMetricValueFromTelemetry(&row, hcpo, runFolder, m.Source.Field)
+		default:
+			row.ResolveError = fmt.Sprintf("source type %q not handled by inline snapshot", m.Source.Type)
 		}
-		step, ok := stepByID[m.Source.ID]
-		if !ok {
-			row.ResolveError = fmt.Sprintf("eval step %q not in evaluation_report.json", m.Source.ID)
-			rows = append(rows, row)
-			continue
-		}
-		resolveMetricValueFromStep(&row, step, m.Source.Field)
 		applyThreshold(&row, m)
 		rows = append(rows, row)
 	}
@@ -289,6 +294,204 @@ func resolvePercentFromStructuredStep(row *metricSnapshotRow, step *evalStepForS
 	}
 	row.HasValue = true
 	return true
+}
+
+// resolveMetricValueFromTelemetry reads framework/system measurements for the
+// current run. These metrics intentionally do not flow through eval steps:
+// their source of truth is the orchestrator's run metadata and token/cost
+// accounting.
+func resolveMetricValueFromTelemetry(row *metricSnapshotRow, hcpo *StepBasedWorkflowOrchestrator, runFolder, field string) {
+	field = strings.TrimSpace(field)
+	if field == "" {
+		row.ResolveError = "telemetry source field is empty"
+		return
+	}
+
+	switch field {
+	case "run.total_cost_usd":
+		if v, ok := metricSnapshotTokenFileCostUSD(hcpo, runFolder, orchestrator.CostScopeExecution); ok {
+			row.Value = v
+			row.HasValue = true
+			return
+		}
+		row.ResolveError = "run cost telemetry is not available"
+	case "run.duration_seconds":
+		if dur, ok := readRunMetadataDurationSeconds(hcpo, runFolder); ok {
+			row.Value = dur
+			row.HasValue = true
+			return
+		}
+		if dur, ok := metricSnapshotTokenFileDurationSeconds(hcpo, runFolder, orchestrator.CostScopeExecution); ok {
+			row.Value = dur
+			row.HasValue = true
+			return
+		}
+		row.ResolveError = "run duration telemetry is not available"
+	case "eval.total_cost_usd":
+		if v, ok := metricSnapshotTokenFileCostUSD(hcpo, runFolder, orchestrator.CostScopeEvaluation); ok {
+			row.Value = v
+			row.HasValue = true
+			return
+		}
+		row.ResolveError = "evaluation cost telemetry is not available"
+	case "eval.duration_seconds":
+		if dur, ok := metricSnapshotTokenFileDurationSeconds(hcpo, runFolder, orchestrator.CostScopeEvaluation); ok {
+			row.Value = dur
+			row.HasValue = true
+			return
+		}
+		row.ResolveError = "evaluation duration telemetry is not available"
+	case "total.cost_usd":
+		runCost, runOK := metricSnapshotTokenFileCostUSD(hcpo, runFolder, orchestrator.CostScopeExecution)
+		evalCost, evalOK := metricSnapshotTokenFileCostUSD(hcpo, runFolder, orchestrator.CostScopeEvaluation)
+		if !runOK && !evalOK {
+			row.ResolveError = "total cost telemetry is not available"
+			return
+		}
+		row.Value = runCost + evalCost
+		row.HasValue = true
+	case "total.duration_seconds":
+		runDur, runOK := readRunMetadataDurationSeconds(hcpo, runFolder)
+		if !runOK {
+			runDur, runOK = metricSnapshotTokenFileDurationSeconds(hcpo, runFolder, orchestrator.CostScopeExecution)
+		}
+		evalDur, evalOK := metricSnapshotTokenFileDurationSeconds(hcpo, runFolder, orchestrator.CostScopeEvaluation)
+		if !runOK && !evalOK {
+			row.ResolveError = "total duration telemetry is not available"
+			return
+		}
+		row.Value = runDur + evalDur
+		row.HasValue = true
+	default:
+		row.ResolveError = fmt.Sprintf("telemetry field %q not handled by inline snapshot", field)
+	}
+}
+
+func metricSnapshotTokenFileCostUSD(hcpo *StepBasedWorkflowOrchestrator, runFolder string, scope orchestrator.CostScope) (float64, bool) {
+	tokenFile, ok := metricSnapshotTokenFileForScope(hcpo, runFolder, scope)
+	if !ok || tokenFile == nil {
+		return 0, false
+	}
+	return orchestrator.TokenUsageTotalCostUSD(tokenFile), true
+}
+
+func metricSnapshotTokenFileDurationSeconds(hcpo *StepBasedWorkflowOrchestrator, runFolder string, scope orchestrator.CostScope) (float64, bool) {
+	tokenFile, ok := metricSnapshotTokenFileForScope(hcpo, runFolder, scope)
+	if !ok || tokenFile == nil || tokenFile.CreatedAt.IsZero() || tokenFile.UpdatedAt.IsZero() {
+		return 0, false
+	}
+	dur := tokenFile.UpdatedAt.Sub(tokenFile.CreatedAt).Seconds()
+	if dur < 0 {
+		dur = 0
+	}
+	return dur, true
+}
+
+func metricSnapshotTokenFileForScope(hcpo *StepBasedWorkflowOrchestrator, runFolder string, scope orchestrator.CostScope) (*orchestrator.TokenUsageFile, bool) {
+	if hcpo == nil || hcpo.BaseOrchestrator == nil {
+		return nil, false
+	}
+	ctx := context.Background()
+	runFolder = strings.Trim(runFolder, "/")
+	group := orchestrator.ExtractGroupFolderFromRunFolder(runFolder)
+	root := path.Join("costs", string(scope), group)
+	names, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, root)
+	if err != nil || len(names) == 0 {
+		return nil, false
+	}
+	window, hasWindow := readRunMetadataWindowForSnapshot(hcpo, runFolder)
+	var merged *orchestrator.TokenUsageFile
+	for _, name := range names {
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		raw, err := hcpo.ReadWorkspaceFile(ctx, path.Join(root, name))
+		if err != nil || strings.TrimSpace(raw) == "" {
+			continue
+		}
+		var daily orchestrator.DailyGroupTokenUsageFile
+		if err := json.Unmarshal([]byte(raw), &daily); err != nil {
+			continue
+		}
+		tokenFile := daily.RunFolders[runFolder]
+		if tokenFile == nil {
+			continue
+		}
+		if hasWindow && !tokenUsageOverlapsWindow(tokenFile, window) {
+			continue
+		}
+		merged = orchestrator.MergeTokenUsageFiles(merged, tokenFile)
+	}
+	return merged, merged != nil
+}
+
+func readRunMetadataDurationSeconds(hcpo *StepBasedWorkflowOrchestrator, runFolder string) (float64, bool) {
+	metaPath := path.Join("runs", strings.Trim(runFolder, "/"), "run_metadata.json")
+	raw, err := hcpo.ReadWorkspaceFile(context.Background(), metaPath)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return 0, false
+	}
+	var meta struct {
+		CreatedAt   time.Time `json:"created_at"`
+		CompletedAt time.Time `json:"completed_at"`
+	}
+	if err := json.Unmarshal([]byte(raw), &meta); err != nil {
+		return 0, false
+	}
+	if meta.CreatedAt.IsZero() || meta.CompletedAt.IsZero() {
+		return 0, false
+	}
+	dur := meta.CompletedAt.Sub(meta.CreatedAt).Seconds()
+	if dur < 0 {
+		dur = 0
+	}
+	return dur, true
+}
+
+type metricSnapshotRunWindow struct {
+	start time.Time
+	end   time.Time
+}
+
+func readRunMetadataWindowForSnapshot(hcpo *StepBasedWorkflowOrchestrator, runFolder string) (metricSnapshotRunWindow, bool) {
+	metaPath := path.Join("runs", strings.Trim(runFolder, "/"), "run_metadata.json")
+	raw, err := hcpo.ReadWorkspaceFile(context.Background(), metaPath)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return metricSnapshotRunWindow{}, false
+	}
+	var meta struct {
+		CreatedAt   time.Time `json:"created_at"`
+		CompletedAt time.Time `json:"completed_at"`
+	}
+	if err := json.Unmarshal([]byte(raw), &meta); err != nil || meta.CreatedAt.IsZero() {
+		return metricSnapshotRunWindow{}, false
+	}
+	end := meta.CompletedAt
+	if end.IsZero() {
+		end = time.Now().UTC()
+	}
+	return metricSnapshotRunWindow{
+		start: meta.CreatedAt,
+		end:   end.Add(6 * time.Hour),
+	}, true
+}
+
+func tokenUsageOverlapsWindow(tokenFile *orchestrator.TokenUsageFile, window metricSnapshotRunWindow) bool {
+	if tokenFile == nil {
+		return false
+	}
+	start := tokenFile.CreatedAt
+	end := tokenFile.UpdatedAt
+	if start.IsZero() && end.IsZero() {
+		return true
+	}
+	if start.IsZero() {
+		start = end
+	}
+	if end.IsZero() {
+		end = start
+	}
+	return !end.Before(window.start) && !start.After(window.end)
 }
 
 // applyThreshold sets row.ThresholdKind / ThresholdValue / Passed based on

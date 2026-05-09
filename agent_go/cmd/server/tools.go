@@ -27,7 +27,7 @@ import (
 // ServerLogEntry represents a single log entry for an MCP server
 type ServerLogEntry struct {
 	Timestamp time.Time `json:"timestamp"`
-	Level     string    `json:"level"`   // "info", "error", "warn", "debug"
+	Level     string    `json:"level"` // "info", "error", "warn", "debug"
 	Message   string    `json:"message"`
 }
 
@@ -69,8 +69,8 @@ type ToolStatus struct {
 	FunctionNames []string               `json:"function_names"`
 	Tools         []mcpclient.ToolDetail `json:"tools,omitempty"` // Only populated for detailed requests
 	// OAuth detection
-	RequiresOAuth bool                   `json:"requires_oauth,omitempty"` // Auto-detected from 401 response
-	OAuthEndpoints *OAuthEndpoints       `json:"oauth_endpoints,omitempty"` // Discovered endpoints if OAuth detected
+	RequiresOAuth  bool            `json:"requires_oauth,omitempty"`  // Auto-detected from 401 response
+	OAuthEndpoints *OAuthEndpoints `json:"oauth_endpoints,omitempty"` // Discovered endpoints if OAuth detected
 }
 
 // OAuthEndpoints represents discovered OAuth endpoints
@@ -609,6 +609,20 @@ func (api *StreamingAPI) deleteDiscoveryFailedServersFile() {
 	_ = os.Remove(filePath)
 }
 
+func (api *StreamingAPI) clearDiscoveryFailure(serverName string) {
+	if _, failed := api.discoveryFailedServers[serverName]; !failed {
+		return
+	}
+
+	delete(api.discoveryFailedServers, serverName)
+	if len(api.discoveryFailedServers) == 0 {
+		api.deleteDiscoveryFailedServersFile()
+	} else {
+		api.persistDiscoveryFailedServers()
+	}
+	api.logger.Info(fmt.Sprintf("🔄 Cleared failed discovery state for %s", serverName))
+}
+
 // hasOAuthTokenFile checks whether a server's OAuth token file exists on disk.
 // Returns true if the server doesn't use OAuth or if the token file is present.
 func hasOAuthTokenFile(cfg mcpclient.MCPServerConfig) bool {
@@ -1038,7 +1052,6 @@ func (api *StreamingAPI) stopPeriodicRefresh() {
 	}
 }
 
-
 // getToolStatusForUser returns tool status with user-specific OAuth status
 // Optimized: Only checks token file existence (fast) - avoids config reload and HTTP requests
 func (api *StreamingAPI) getToolStatusForUser(status ToolStatus, userID string) ToolStatus {
@@ -1060,7 +1073,8 @@ func (api *StreamingAPI) getToolStatusForUser(status ToolStatus, userID string) 
 
 // extractMCPRemoteURL extracts the remote server URL from mcp-remote args.
 // mcp-remote is commonly used to proxy remote HTTP MCP servers via stdio:
-//   command: "npx", args: ["mcp-remote", "https://example.com/mcp"]
+//
+//	command: "npx", args: ["mcp-remote", "https://example.com/mcp"]
 func extractMCPRemoteURL(command string, args []string) string {
 	if len(args) < 2 {
 		return ""

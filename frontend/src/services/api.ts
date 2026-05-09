@@ -122,6 +122,7 @@ export interface MetricSnapshotRow {
   run_folder: string
   completed_at: string
   metric_id: string
+  metric_version?: number
   value: number
   has_value: boolean
   resolve_error?: string
@@ -922,6 +923,9 @@ export const agentApi = {
     own_jid: string;
     qr_available: boolean;
     qr_expires_at?: string;
+    link_code?: string;
+    link_code_expires_at?: string;
+    bound_chat_count?: number;
     owner_user_id?: string;
     owner_email?: string;
     owner_username?: string;
@@ -951,16 +955,16 @@ export const agentApi = {
   // Slug → workflow routing for incoming WhatsApp messages. A message that
   // starts with "@<slug> " routes to the workflow mapped for that slug.
   getWhatsAppRouting: async (): Promise<{
-    routing: Record<string, { workflow_id: string; workspace_path?: string; workshop_mode?: string }>;
+    routing: Record<string, { workflow_id: string; workspace_path?: string; workshop_mode?: string; send_full_details?: boolean }>;
   }> => {
     const response = await api.get('/api/whatsapp/routing')
     return response.data
   },
 
   updateWhatsAppRouting: async (
-    routing: Record<string, { workflow_id: string; workspace_path?: string; workshop_mode?: string }>
+    routing: Record<string, { workflow_id: string; workspace_path?: string; workshop_mode?: string; send_full_details?: boolean }>
   ): Promise<{
-    routing: Record<string, { workflow_id: string; workspace_path?: string; workshop_mode?: string }>;
+    routing: Record<string, { workflow_id: string; workspace_path?: string; workshop_mode?: string; send_full_details?: boolean }>;
   }> => {
     const response = await api.put('/api/whatsapp/routing', { routing })
     return response.data
@@ -1428,17 +1432,17 @@ export const agentApi = {
     const response = await api.get('/api/workflow/metrics-history', { params: { workspace_path: workspacePath } })
     return { ...response.data, rows: Array.isArray(response.data?.rows) ? response.data.rows : [] }
   },
-  getAutoImprovementDecisions: async (workspacePath: string): Promise<{ success: boolean; decisions: any[]; error?: string }> => {
-    const response = await api.get('/api/workflow/decisions', { params: { workspace_path: workspacePath } })
-    return { ...response.data, decisions: Array.isArray(response.data?.decisions) ? response.data.decisions : [] }
-  },
   getAutoImprovementEvalTrajectory: async (workspacePath: string): Promise<{ success: boolean; series: any[]; error?: string }> => {
     const response = await api.get('/api/workflow/eval-trajectory', { params: { workspace_path: workspacePath } })
     return { ...response.data, series: Array.isArray(response.data?.series) ? response.data.series : [] }
   },
-  getBuilderDoc: async (workspacePath: string, doc: 'improve' | 'review' | 'soul'): Promise<{ success: boolean; doc: string; path: string; exists: boolean; content: string; error?: string }> => {
-    const response = await api.get('/api/workflow/builder-doc', { params: { workspace_path: workspacePath, doc } })
+  getBuilderDoc: async (workspacePath: string, doc: 'improve' | 'review' | 'soul', filePath?: string): Promise<{ success: boolean; doc: string; path: string; exists: boolean; content: string; error?: string }> => {
+    const response = await api.get('/api/workflow/builder-doc', { params: { workspace_path: workspacePath, doc, path: filePath || '' } })
     return response.data
+  },
+  getBuilderDocArchives: async (workspacePath: string, doc: 'improve' | 'review' = 'improve'): Promise<{ success: boolean; files: Array<{ path: string; label: string }>; error?: string }> => {
+    const response = await api.get('/api/workflow/builder-doc-archives', { params: { workspace_path: workspacePath, doc } })
+    return { ...response.data, files: Array.isArray(response.data?.files) ? response.data.files : [] }
   },
   getFrameworkHealth: async (workspacePath: string): Promise<{
     success: boolean

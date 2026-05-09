@@ -412,7 +412,7 @@ You own reads and writes to the per-topic narrative files under `+"`"+`{{.NotesF
 
 ## Tools
 - `+"`"+`execute_shell_command`+"`"+` — read/jq files, write back via redirect. All paths are absolute and pre-approved by folder guard.
-- `+"`"+`diff_patch_workspace_file`+"`"+` — surgical edits for big notes files.
+- `+"`"+`diff_patch_workspace_file`+"`"+` — surgical edits for big notes files. Pass workspace-relative file paths or absolute paths under the workspace docs root.
 
 ## Safety rails
 - Apply changes incrementally. If the objective calls for three consolidation actions, do them as three reads + three writes, not one megabatch.

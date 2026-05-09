@@ -21,7 +21,7 @@ Optimizer actions are deliberately small in number:
 
 - `builder`: creates and debugs workflow structure. Builder defaults steps to `code_exec`; learn-code promotion belongs to Optimizer only after explicit user request, deterministic behavior, and 10+ scenario-covering successful runs.
 - `optimizer`: improves existing workflows from `runs/iteration-0`, eval reports, metrics, logs, `builder/improve.md`, and `builder/review.md`.
-- `run`: executes and inspects workflows. It should not mutate plan/config/KB/eval/report definitions.
+- `run`: user-facing runtime for Slack/WhatsApp and normal operation. It can answer directly from workflow state, read KB/learnings/db/run artifacts, execute normal or orphan utility steps, or run the full workflow. It should not mutate plan/config/eval/report definitions; durable user-owned runtime context is captured through `capture_context`.
 - Reporting authoring is available in Builder and Optimizer through report-plan tools. The legacy Reporting mode remains for compatibility.
 
 ## Guidance Tool
@@ -32,7 +32,7 @@ Slash commands are one-line UI shortcuts that call:
 get_workflow_command_guidance(kind="...", focus?)
 ```
 
-The returned guidance is the source of truth for the command. Mode validation lives in the guidance registry.
+The returned guidance is the source of truth for the command. Mode validation lives in the guidance registry. Slash-command callers should pass the conversation or request text before the slash command as `focus`, so guidance can apply the user's recent constraints and "based on what we just discussed" intent.
 
 Current guidance kinds:
 
@@ -48,7 +48,7 @@ improve-setup-framework
 improve-workflow
 improve-eval
 improve-continuously
-report-improve
+improve-report
 ```
 
 ## Key Slash Commands
@@ -66,7 +66,7 @@ report-improve
 | `/improve-workflow` | Optimizer | Read prior improve/review logs, run/eval/metric/log evidence, then choose harden, replan, eval-plan improvement, metric cleanup, or no action. |
 | `/improve-eval` | Optimizer | Improve evaluation coverage and rubric quality. |
 | `/improve-continuously` | Optimizer | Create/update frequent Run-mode and Optimizer-mode schedules. |
-| `/report-improve` | Builder, Optimizer | Improve report layout, color, density, and widget/data wiring. |
+| `/improve-report` | Builder, Optimizer | Improve report layout, color, density, and widget/data wiring. |
 
 ## Common Tool Groups
 
@@ -85,7 +85,7 @@ report-improve
 
 `/improve-continuously` creates or updates two workshop schedules:
 
-- Run schedule: `mode="workshop"`, `workshop_mode="run"`, message calls `run_full_workflow(group_name=...)`.
+- Run schedule: `mode="workshop"`, `workshop_mode="run"`, message can call `run_full_workflow(group_name=...)`, execute targeted/orphan steps, or answer directly from KB/learnings/db/run state when that is the scheduled job.
 - Improve schedule: `mode="workshop"`, `workshop_mode="optimizer"`, message performs a short cadence/group-scope check, then calls `get_workflow_command_guidance(kind="improve-workflow", ...)` and follows that canonical improvement flow. It does not duplicate the harden/replan decision model inline.
 
 For active workflows, the improve schedule should normally run after every run or every two runs. Weekly cadence is only appropriate when the workflow itself runs weekly or the user explicitly asks for low-touch maintenance.

@@ -5,7 +5,6 @@ import {
   BookOpen,
   Settings,
   FileText,
-  BarChart3,
   DollarSign,
   Package,
   Database,
@@ -26,19 +25,16 @@ import LearningsPopup from '../LearningsPopup'
 import KBPopup from '../KBPopup'
 import DatabasePopup from '../DatabasePopup'
 import ExecutionLogsPopup from '../ExecutionLogsPopup'
-import EvaluationPopup from '../EvaluationPopup'
 import CostsPopup from '../CostsPopup'
 import WorkflowVersionsPopup from '../WorkflowVersionsPopup'
 import AutoImprovementPopup from '../AutoImprovementPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import {
-  extractGroupNameFromFolder,
   resolveGroupFolderPath
 } from '../../../utils/workflowUtils'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
-const EVAL_EXECUTION_PHASE_ID = 'evaluation-execution'
 
 const isActiveRuntimeSession = (session?: ActiveSessionInfo | null): boolean => {
   if (!session) return false
@@ -146,8 +142,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Costs popup state
   const [showCostsPopup, setShowCostsPopup] = useState(false)
 
-  // Evaluation popup state
-  const [showEvaluationPopup, setShowEvaluationPopup] = useState(false)
   const [showAutoImprovementPopup, setShowAutoImprovementPopup] = useState(false)
 
   // Versions popup state
@@ -159,7 +153,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setShowDatabasePopup(false)
     setShowExecutionLogsPopup(false)
     setShowCostsPopup(false)
-    setShowEvaluationPopup(false)
     setShowVersionsPopup(false)
     setShowAutoImprovementPopup(false)
   }, [])
@@ -355,24 +348,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       console.error('[WorkflowToolbar] Failed to stop active workflow session:', error)
     }
   }, [activeWorkflowTab, setTabHasRunningBgAgents, setTabStreaming])
-
-  const handleRunEvaluation = useCallback(async (runFolder: string) => {
-    if (!runFolder || !runFolder.includes('/')) {
-      throw new Error('Select a group-scoped run folder like iteration-2/manish before running evaluation.')
-    }
-
-    const options = buildExecutionOptions()
-    const inferredGroupName = extractGroupNameFromFolder(runFolder, variablesManifest)
-    const enabledGroupNames = inferredGroupName
-      ? [inferredGroupName]
-      : (options.enabled_group_names && options.enabled_group_names.length > 0 ? options.enabled_group_names : undefined)
-
-    onStartPhase(EVAL_EXECUTION_PHASE_ID, {
-      ...options,
-      selected_run_folder: runFolder,
-      enabled_group_names: enabledGroupNames,
-    })
-  }, [buildExecutionOptions, onStartPhase, variablesManifest])
 
   return (
     <>
@@ -594,21 +569,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
-        {/* Show Evaluation Reports - opens popup with evaluation scores */}
-        {workspacePath && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowEvaluationPopup(true)}
-                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <BarChart3 className="w-3.5 h-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Evaluation reports</p></TooltipContent>
-          </Tooltip>
-        )}
-
         {/* Show Versions - opens popup with version publish/revert */}
         {workspacePath && (
           <Tooltip>
@@ -680,21 +640,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       runFolders={runFoldersNames}
     />
 
-    {/* Evaluation Reports Popup */}
-    <EvaluationPopup
-      isOpen={showEvaluationPopup}
-      onClose={() => setShowEvaluationPopup(false)}
-      workspacePath={workspacePath || null}
-      selectedRunFolder={contextRunFolder}
-      runFolders={runFoldersNames}
-      onRunEvaluation={handleRunEvaluation}
-    />
-
     {/* Auto-improvement framework popup */}
     <AutoImprovementPopup
       isOpen={showAutoImprovementPopup}
       onClose={() => setShowAutoImprovementPopup(false)}
       workspacePath={workspacePath || null}
+      selectedRunFolder={contextRunFolder}
     />
 
     {/* Workflow Versions Popup */}

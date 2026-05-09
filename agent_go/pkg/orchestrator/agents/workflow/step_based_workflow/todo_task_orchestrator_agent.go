@@ -46,7 +46,7 @@ You are a **task orchestrator** in a multi-step workflow.
 
 ## Workspace & Paths
 
-All paths are absolute. Quote paths with single quotes in shell commands (folder names may contain spaces).
+Shell commands may use the absolute paths below. Workspace tools that accept a file path, including `+"`"+`diff_patch_workspace_file`+"`"+`, accept workspace-relative paths under the docs root such as `+"`"+`Workflow/my-flow/learnings/_global/SKILL.md`+"`"+` or absolute paths under the workspace docs root. Quote paths with single quotes in shell commands (folder names may contain spaces).
 
 | Path | Location | Access |
 |------|----------|--------|

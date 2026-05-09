@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -83,6 +84,10 @@ func validatePathInWorkspace(workspacePath, inputPath string) error {
 // normalizePathForAllowedPaths normalizes a path relative to the first matching allowed path
 // Returns the normalized path and the matching allowed path index
 func normalizePathForAllowedPaths(allowedPaths []string, inputPath string) (string, int, error) {
+	if relPath, ok := normalizeAbsoluteWorkspaceDocsPath(inputPath); ok {
+		inputPath = relPath
+	}
+
 	// Empty array means disable folder guard - return path as-is
 	if len(allowedPaths) == 0 {
 		return inputPath, -1, nil
@@ -153,4 +158,57 @@ func normalizePathForWorkspace(workspacePath, inputPath string) (string, error) 
 	}
 
 	return rel, nil
+}
+
+func normalizeAbsoluteWorkspaceDocsPath(inputPath string) (string, bool) {
+	if !filepath.IsAbs(inputPath) {
+		return "", false
+	}
+	cleanPath := filepath.Clean(inputPath)
+	for _, root := range workspaceDocsRootsForPathNormalization() {
+		root = filepath.Clean(root)
+		if cleanPath == root {
+			return ".", true
+		}
+		prefix := root + string(filepath.Separator)
+		if strings.HasPrefix(cleanPath, prefix) {
+			return strings.TrimPrefix(cleanPath, prefix), true
+		}
+	}
+	return "", false
+}
+
+func workspaceDocsRootsForPathNormalization() []string {
+	var roots []string
+	if envRoot := os.Getenv("WORKSPACE_DOCS_PATH"); envRoot != "" {
+		roots = append(roots, envRoot)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		for dir := filepath.Clean(cwd); ; dir = filepath.Dir(dir) {
+			roots = append(roots, filepath.Join(dir, "workspace-docs"))
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+		}
+	}
+	roots = append(roots, "/app/workspace-docs", "/workspace-docs")
+	return deduplicateNormalizedPaths(roots)
+}
+
+func deduplicateNormalizedPaths(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		p = filepath.Clean(strings.TrimSpace(p))
+		if p == "." || p == "" {
+			continue
+		}
+		if _, exists := seen[p]; exists {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
 }

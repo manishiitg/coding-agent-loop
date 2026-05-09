@@ -35,6 +35,9 @@ interface WhatsAppStatus {
   own_jid: string
   qr_available: boolean
   qr_expires_at?: string
+  link_code?: string
+  link_code_expires_at?: string
+  bound_chat_count?: number
   owner_user_id?: string
   owner_email?: string
   owner_username?: string
@@ -71,6 +74,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
   const [newChannelID, setNewChannelID] = useState('')
   const [newWorkflowID, setNewWorkflowID] = useState('')
   const [newWorkshopMode, setNewWorkshopMode] = useState<'' | 'builder' | 'optimizer' | 'run'>('')
+  const [newSendFullDetails, setNewSendFullDetails] = useState(false)
 
   // ── WhatsApp ──────────────────────────────────────────────────────────────
   const [waStatus, setWaStatus] = useState<WhatsAppStatus | null>(null)
@@ -85,7 +89,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
   // Routing editor state — a plain array (rather than an object keyed by slug)
   // so new/empty rows can coexist without slug collisions while the user types.
   // Converted to object shape on save.
-  type WaRouteRow = { slug: string; workflow_id: string; workshop_mode: WorkflowRouteMode }
+  type WaRouteRow = { slug: string; workflow_id: string; workshop_mode: WorkflowRouteMode; send_full_details?: boolean }
   const [waRoutes, setWaRoutes] = useState<WaRouteRow[]>([])
   const [waRoutesOriginal, setWaRoutesOriginal] = useState<WaRouteRow[]>([])
   const [waRoutesSaving, setWaRoutesSaving] = useState(false)
@@ -235,6 +239,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
         slug,
         workflow_id: r.workflow_id,
         workshop_mode: normalizeWorkflowRouteMode(r.workshop_mode),
+        send_full_details: !!r.send_full_details,
       }))
       setWaRoutes(rows)
       setWaRoutesOriginal(rows)
@@ -357,7 +362,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
     try {
       setWaRoutesSaving(true)
       setWaRoutesError(null)
-      const payload: Record<string, { workflow_id: string; workshop_mode?: string; workspace_path?: string }> = {}
+      const payload: Record<string, { workflow_id: string; workshop_mode?: string; workspace_path?: string; send_full_details?: boolean }> = {}
       for (const row of waRoutes) {
         const slug = row.slug.trim().toLowerCase()
         if (!slug) continue
@@ -372,12 +377,14 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
           workspace_path: wf?.workspace_path || '',
           workshop_mode: row.workshop_mode,
         }
+        if (row.send_full_details) payload[slug].send_full_details = true
       }
       const data = await agentApi.updateWhatsAppRouting(payload)
       const rows = Object.entries(data.routing || {}).map(([slug, r]) => ({
         slug,
         workflow_id: r.workflow_id,
         workshop_mode: normalizeWorkflowRouteMode(r.workshop_mode),
+        send_full_details: !!r.send_full_details,
       }))
       setWaRoutes(rows)
       setWaRoutesOriginal(rows)
@@ -693,6 +700,22 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                             <option value="optimizer">Optimize</option>
                                             <option value="builder">Builder</option>
                                           </select>
+                                          <label className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0" title="Send detailed workflow step/runtime messages to this channel">
+                                            <input
+                                              type="checkbox"
+                                              checked={!!r.send_full_details}
+                                              onChange={e => {
+                                                const updated = { ...slackConfig.channel_routing }
+                                                const nextRoute: ChannelRoute = { ...r }
+                                                if (e.target.checked) nextRoute.send_full_details = true
+                                                else delete nextRoute.send_full_details
+                                                updated[chId] = nextRoute
+                                                setSlackConfig({ ...slackConfig, channel_routing: updated })
+                                              }}
+                                              className="h-3.5 w-3.5"
+                                            />
+                                            Full
+                                          </label>
                                           <button
                                             onClick={() => {
                                               const updated = { ...slackConfig.channel_routing }
@@ -739,6 +762,15 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                     <option value="optimizer">Optimize</option>
                                     <option value="builder">Builder</option>
                                   </select>
+                                  <label className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0" title="Send detailed workflow step/runtime messages to this channel">
+                                    <input
+                                      type="checkbox"
+                                      checked={newSendFullDetails}
+                                      onChange={e => setNewSendFullDetails(e.target.checked)}
+                                      className="h-3.5 w-3.5"
+                                    />
+                                    Full
+                                  </label>
                                   <button
                                     onClick={() => {
                                       if (!newChannelID.trim() || !newWorkflowID) return
@@ -748,6 +780,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                         workspace_path: selectedWf?.workspace_path || '',
                                       }
                                       if (newWorkshopMode) route.workshop_mode = newWorkshopMode
+                                      if (newSendFullDetails) route.send_full_details = true
                                       setSlackConfig({
                                         ...slackConfig,
                                         channel_routing: { ...(slackConfig.channel_routing || {}), [newChannelID.trim()]: route },
@@ -755,6 +788,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                       setNewChannelID('')
                                       setNewWorkflowID('')
                                       setNewWorkshopMode('')
+                                      setNewSendFullDetails(false)
                                     }}
                                     disabled={!newChannelID.trim() || !newWorkflowID}
                                     className="p-1.5 text-primary hover:bg-primary/10 disabled:opacity-40 rounded transition-colors flex-shrink-0"
@@ -1082,6 +1116,19 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                               <option value="optimizer">Optimize</option>
                               <option value="builder">Builder</option>
                             </select>
+                            <label className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0" title="Send detailed workflow step/runtime messages to WhatsApp">
+                              <input
+                                type="checkbox"
+                                checked={!!row.send_full_details}
+                                onChange={e => {
+                                  const next = [...waRoutes]
+                                  next[idx] = { ...row, send_full_details: e.target.checked || undefined }
+                                  setWaRoutes(next)
+                                }}
+                                className="h-3.5 w-3.5"
+                              />
+                              Full
+                            </label>
                             <button
                               onClick={() => {
                                 const next = [...waRoutes]
@@ -1112,13 +1159,23 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                     <h3 className="text-sm font-medium text-foreground mb-1.5">How to chat</h3>
                     <div className="space-y-1.5 text-xs text-muted-foreground">
                       <p>
-                        Open WhatsApp → <strong>Message Yourself</strong> chat → send any message. The bot replies
-                        in that thread. Messages you send to other contacts are ignored.
+                        Open WhatsApp → <strong>Message Yourself</strong> chat, or DM the paired WhatsApp number
+                        from another phone. First send <code>link {waStatus.link_code || '123456'}</code> from that
+                        chat to bind WhatsApp's current phone/LID identity. Then send messages normally.
                       </p>
+                      {waStatus.link_code && (
+                        <p className="text-muted-foreground/80">
+                          Linked chats: {waStatus.bound_chat_count ?? 0}. Link code expires{' '}
+                          {waStatus.link_code_expires_at
+                            ? new Date(waStatus.link_code_expires_at).toLocaleString()
+                            : 'soon'}
+                          .
+                        </p>
+                      )}
                       <p className="text-muted-foreground/80">
-                        For a proper separate-bot experience (like Slack's <code>@bot</code>), pair a second
+                        For a proper separate-bot experience (like Slack's <code>@bot</code>), pair a dedicated
                         WhatsApp number — a second SIM, WhatsApp Business with a different number, or a virtual
-                        number from Twilio.
+                        number from Twilio. Only linked inbound DMs are handled as bot messages.
                       </p>
                     </div>
                   </Card>
@@ -1266,8 +1323,21 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                       <div ref={messagesEndRef} />
                     </div>
                     <div className="px-4 py-3 border-t border-border flex-shrink-0">
+                      <div className="flex items-center gap-1.5 mb-2 text-xs text-muted-foreground">
+                        <span>Commands:</span>
+                        {['@status', '@full', '@concise'].map(cmd => (
+                          <button
+                            key={cmd}
+                            type="button"
+                            onClick={() => setInput(cmd)}
+                            className="px-1.5 py-0.5 rounded bg-secondary hover:bg-accent text-foreground font-mono"
+                          >
+                            {cmd}
+                          </button>
+                        ))}
+                      </div>
                       <div className="flex gap-2">
-                        <input type="text" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()} placeholder="Type a message..." disabled={sending} className="flex-1 px-3 py-2 text-sm bg-secondary border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50" />
+                        <input type="text" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()} placeholder="Type a message... (@status, @full, @concise)" disabled={sending} className="flex-1 px-3 py-2 text-sm bg-secondary border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50" />
                         <button onClick={handleSend} disabled={!input.trim() || sending} className="px-3 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5">
                           {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                         </button>

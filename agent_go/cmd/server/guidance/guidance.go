@@ -2,6 +2,9 @@
 // slash command in the workshop UI. The text lives as embedded markdown
 // templates so it can be rendered with focus/iteration/run_folder params and
 // returned to the agent — the agent then follows the rendered prose verbatim.
+// Focus is the conversation-derived instruction or context that caused the
+// command, not just a narrow keyword. Slash-command wrappers should pass the
+// user's surrounding/preceding request into focus when available.
 //
 // The same prose is reachable from three contexts:
 //
@@ -78,17 +81,23 @@ var allKinds = map[string]kindMeta{
 	"improve-workflow":        {Group: "improve", Description: "Unified metric-driven workflow improvement: harden or replan from run/eval evidence", Modes: []string{"optimizer"}},
 	"improve-eval":            {Group: "improve", Description: "Evaluation plan changes and metric-source health checks", Modes: []string{"optimizer"}},
 	"improve-continuously":    {Group: "improve", Description: "Set up recurring run + optimizer schedules", Modes: []string{"optimizer"}},
-	"import-report":           {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"builder", "optimizer", "reporting"}},
+	"improve-report":          {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"builder", "optimizer", "reporting"}},
 }
 
-// tmplData is the typed context passed to every guidance template. New
-// fields require updating the markdown templates that consume them.
+// tmplData is the typed context passed to every guidance template. Focus is
+// the conversation-derived instruction/context for this command. New fields
+// require updating the markdown templates that consume them.
 type tmplData struct {
 	Focus        string
 	Iteration    string
 	RunFolder    string
 	WorkshopMode string
 }
+
+const pathDisciplineGuidance = `PATH DISCIPLINE
+Use absolute workspace paths for shell commands when the prompt or env exposes them (` + "`AbsWorkspacePath`" + `, ` + "`VAR_WORKSPACE_PATH`" + `, ` + "`STEP_OUTPUT_DIR`" + `, ` + "`STEP_EXECUTION_DIR`" + `). For file tools that expect workspace paths, use workflow-root-qualified paths. If the current workflow path is ` + "`Workflow/<name>`" + `, read ` + "`Workflow/<name>/runs/...`" + `, ` + "`Workflow/<name>/evaluation/...`" + `, ` + "`Workflow/<name>/planning/...`" + `, and ` + "`Workflow/<name>/db/...`" + ` rather than bare ` + "`runs/...`" + `, ` + "`evaluation/...`" + `, ` + "`planning/...`" + `, or ` + "`db/...`" + `. Bare examples in this guidance are shorthand for paths under the current workflow root. Do not use host paths outside workspace-docs.
+
+`
 
 // renderKind loads templates/<group>/<kind>.md, renders it with the supplied
 // params, and returns the rendered text. Returns an error if the kind isn't
@@ -111,7 +120,7 @@ func renderKind(kind string, data tmplData) (string, error) {
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("execute template %s: %w", rel, err)
 	}
-	return strings.TrimRight(buf.String(), "\n") + "\n", nil
+	return pathDisciplineGuidance + strings.TrimRight(buf.String(), "\n") + "\n", nil
 }
 
 // modeAllowed reports whether a kind can be invoked from a given workshop
@@ -175,7 +184,8 @@ func kindEnumWithDescriptions() string {
 func RegisterGuidanceTool(agent *mcpagent.Agent, currentMode string, logger loggerv2.Logger) {
 	desc := "Get the canonical guided-flow text for any workflow command. " +
 		"Call this tool — and follow the returned instructions verbatim — when (1) the user invokes a slash command " +
-		"like /improve-workflow or /review-plan (the slash command will name the kind to pass), (2) the user describes " +
+		"like /improve-workflow or /review-plan (the slash command will name the kind to pass; pass the surrounding " +
+		"conversation/request into focus when available), (2) the user describes " +
 		"the same intent in plain chat (\"help me improve this workflow\", \"review whether the goal is being met\", " +
 		"\"improve the eval plan\") — recognize the intent and pick the matching kind, or (3) you're running on a " +
 		"schedule and the message names a kind. The returned text is your instructions for this turn — do not paraphrase " +
@@ -193,7 +203,7 @@ func RegisterGuidanceTool(agent *mcpagent.Agent, currentMode string, logger logg
 			},
 			"focus": map[string]interface{}{
 				"type":        "string",
-				"description": "Optional. The user's free-text hint or focus area (e.g. a step id, a topic, a specific concern). Templates render this into the right places (often a 'Focus especially on:' line).",
+				"description": "Optional but strongly recommended. The conversation-derived instruction/context for this command: include the user's recent request, constraints, examples, or focus area that led to the slash command. This is how a slash command carries 'based on the conversation that just happened' into the canonical guidance.",
 			},
 			"iteration": map[string]interface{}{
 				"type":        "string",

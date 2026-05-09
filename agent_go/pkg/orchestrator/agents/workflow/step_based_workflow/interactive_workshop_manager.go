@@ -1018,7 +1018,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 	}
 
 	// Report tools — manage reports/report_plan.json and validate/preview against real db/ + KB sources.
-	// Available in builder/optimizer/reporting modes. Run mode stays read-only.
+	// Available in builder/optimizer/reporting modes. Run mode may read report data
+	// for answers, but does not author report_plan.json.
 	report := []string{
 		"get_report_plan", "upsert_report_widget", "remove_report_widget", "move_report_widget", "toggle_report_widget",
 		"set_report_theme", "set_section_layout",
@@ -1027,7 +1028,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Knowledgebase write tools — explicit graph/notes mutations. Registered only
 	// in the workflow-builder phase (server.go) and kept out of run mode. Run mode
-	// only gets capture_context for confirmed user-owned runtime context.
+	// can read KB/learnings as runtime context, but only gets capture_context for
+	// confirmed user-owned runtime context writes.
 	kb := []string{
 		"improve_kb",
 	}
@@ -1098,9 +1100,11 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, autoImprovement...)
 
 	case "run":
-		// RUN: execute the finished workflow, inspect results, and report outcomes.
-		// Merged mode (absorbs legacy 'ask'/'debugger' read-only inspection). No plan
-		// changes, no optimization, no config changes, no harden — that's Optimize.
+		// RUN: deployed/user-facing runtime for workflow-backed work, Slack, WhatsApp,
+		// and direct operational requests. It can answer directly from workflow state,
+		// run individual steps including orphan utility steps, or run the full workflow.
+		// No plan changes, no optimization, no config changes, no harden — that's
+		// Builder/Optimizer.
 		// The only framework mutation allowed here is capture_context after user
 		// confirmation, so context learned during a run is not lost.
 		// Read-only review tools stay available for outcome inspection.
@@ -1129,7 +1133,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, report...)
-		tools = append(tools, "get_workflow_command_guidance") // /import-report lives in this mode
+		tools = append(tools, "get_workflow_command_guidance") // /improve-report lives in this mode
 
 	default:
 		// Unknown mode — allow everything (no restriction)
@@ -1174,6 +1178,28 @@ func filterWorkspaceToolsByName(allTools []llmtypes.Tool, allExecutors map[strin
 	}
 
 	return filteredTools, filteredExecutors
+}
+
+func (iwm *InteractiveWorkshopManager) registerWorkshopMutationToolsForToolAgent(agent agents.OrchestratorAgent, workspacePath, agentName string, allowedToolNames []string, logger loggerv2.Logger) {
+	if agent == nil || agent.GetBaseAgent() == nil || agent.GetBaseAgent().Agent() == nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: cannot register workshop mutation tools; base agent unavailable", agentName))
+		return
+	}
+	mcpAgentRef := agent.GetBaseAgent().Agent()
+	if err := RegisterPlanModificationTools(
+		mcpAgentRef,
+		workspacePath,
+		logger,
+		iwm.controller.ReadWorkspaceFile,
+		iwm.controller.WriteWorkspaceFile,
+		iwm.controller.MoveWorkspaceFile,
+		agentName,
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register plan modification tools: %v", agentName, err))
+	}
+	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
+	mcpAgentRef.SetToolAllowList(allowedToolNames)
+	logger.Info(fmt.Sprintf("🔧 %s: registered workshop mutation tools and applied allow list (%d tools)", agentName, len(allowedToolNames)))
 }
 
 // detectWorkshopMode returns the default workshop mode when the frontend has not
@@ -1327,7 +1353,7 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		"WorkflowObjective":                 workflowObjective,
 		"WorkflowSuccessCriteria":           workflowSuccessCriteria,
 		"AvailableGroups":                   availableGroups,
-		"AbsWorkspacePath":                  GetPromptDocsRoot() + "/" + workspacePath,
+		"AbsWorkspacePath":                  absPromptWorkspacePath(workspacePath),
 		"AbsDocsRoot":                       GetPromptDocsRoot(),
 		"SpecialWorkspaceToolsInstructions": instructions.GetSpecialWorkspaceToolsInstructions(),
 		"MainPyAuthoringRules":              BuildMainPyAuthoringRules() + browserAuthoringRulesIfBrowserEnabled(iwm.controller),
@@ -1364,8 +1390,42 @@ func workshopWritePaths(workspacePath string) []string {
 		fmt.Sprintf("%s/memory", workspacePath),
 		fmt.Sprintf("%s/execution", workspacePath),
 		fmt.Sprintf("%s/variables", workspacePath),
-		fmt.Sprintf("%s/builder", workspacePath), // improve.md, review.md, decisions.jsonl
+		fmt.Sprintf("%s/builder", workspacePath), // improve.md, review.md
 	}
+}
+
+func (iwm *InteractiveWorkshopManager) setupWorkshopToolAgentSession(agentKind string, readPaths []string, writePaths []string) string {
+	sessionID := fmt.Sprintf("workshop-%s-%d", agentKind, time.Now().UnixNano())
+	workspacePath := strings.TrimSpace(iwm.controller.GetWorkspacePath())
+
+	common.SetSessionFolderGuard(sessionID, readPaths, writePaths)
+	if workspacePath != "" {
+		common.SetSessionWorkingDir(sessionID, workspacePath)
+	}
+
+	iwm.controller.GetLogger().Info(fmt.Sprintf(
+		"🔒 Workshop tool-agent session %q (%s) — cwd=%q Read=%v Write=%v",
+		sessionID, agentKind, workspacePath, readPaths, writePaths,
+	))
+	return sessionID
+}
+
+func (iwm *InteractiveWorkshopManager) configureWorkshopToolAgentSession(config *agents.OrchestratorAgentConfig, agentKind string, readPaths []string, writePaths []string) func() {
+	toolAgentSessionID := iwm.setupWorkshopToolAgentSession(agentKind, readPaths, writePaths)
+	config.MCPSessionID = toolAgentSessionID
+	config.FolderGuardReadPaths = readPaths
+	config.FolderGuardWritePaths = writePaths
+	return func() {
+		common.ClearSessionShellConfig(toolAgentSessionID)
+	}
+}
+
+func absPromptWorkspacePath(workspacePath string) string {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" {
+		return ""
+	}
+	return filepath.Join(GetPromptDocsRoot(), workspacePath)
 }
 
 func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx context.Context, workspacePath string) (agents.OrchestratorAgent, error) {
@@ -1511,7 +1571,26 @@ When you call `+"`"+`run_full_workflow`+"`"+` for a multi-group workflow, **defa
 
 **If the user is ambiguous** ("run the workflow"), default to sequential per-group and tell them: "I'm running groups one at a time so any failures isolate cleanly. Say 'run in parallel' if you'd rather fan out."
 
+{{if or (eq .WorkshopMode "run") (eq .WorkshopMode "builder")}}
+## Deployed channel workflow runtime
+
+In deployment, users may ask questions from Slack, WhatsApp, or another configured bot channel. Those messages can be routed to this existing workflow through this conversational workflow agent. The channel route selects the active workshop mode: Run, Builder, or Optimizer. If no mode is selected, bot channels default to Run mode.
+
+Respect the selected mode. When a channel-routed user message lands in Run or Builder mode for an existing workflow, treat it as a runtime request by default. Do not reinterpret ordinary operational questions as requests to redesign the workflow unless the user explicitly asks to create, edit, review, optimize, or change the workflow. For question-answer, support, investigation, RCA, lookup, or analysis workflows, the user's message is the workflow input.
+
+Runtime handling pattern:
+- Identify the relevant enabled group from the message when it names an environment, tenant, account, brand, region, or similar group dimension. If it does not, prefer the single enabled group; otherwise use the workflow's documented/default production-like group when that matches the workflow objective. Ask only when the workflow cannot safely infer the group.
+- Before running anything, read and apply the workflow's relevant runtime context when useful: `+"`soul/soul.md`"+` for intent, `+"`learnings/_global/SKILL.md`"+` for how this workflow usually operates, step-specific saved scripts for learned deterministic behavior, `+"`knowledgebase/context/`"+` and `+"`knowledgebase/notes/`"+` for business facts/rules, and `+"`db/`"+` for accumulated state.
+- If the user asks a question or a small operational task that can be completed directly from available tools, KB/learnings, db, or existing run artifacts, do it directly in Run mode and answer in plain language. Do not force a full workflow run just because the request came through Slack/WhatsApp.
+- Use `+"`run_full_workflow(group_name=\"<group>\", human_inputs=...)`"+` for the normal path. Populate human input steps with the user's original question and any available channel context such as platform, channel/thread, user, and message timestamp when the step asks for or can preserve that context.
+- Use `+"`execute_step`"+` for targeted actions, retries, debugging, filling a missing artifact after the full run has enough context, or invoking a plan-local orphan utility step when that orphan is the right tool for the user's request.
+- After execution, read the final user-facing artifacts yourself and answer in the channel with the substance of the result. Do not reply with only file paths, internal run IDs, or "check the artifact" unless the user asked for raw files.
+- In Run mode, do not change workflow design or configuration. If the run fails because of workflow structure, variables, secrets wiring, plan shape, step instructions, or report bindings, explain the failure and ask/suggest switching to Builder for repair. In Builder mode, diagnose and fix Builder-owned setup, then rerun the smallest useful scope. If the issue is eval design, hardening, metric cleanup, or systematic quality improvement, explain that it belongs in Optimizer mode.
+
+{{end}}
+
 {{if eq .WorkshopMode "builder"}}
+
 ## Reporting — Builder owns the live dashboard
 
 The workflow has a live frontend report viewer at the top toolbar's "Report" tab. Builder mode owns report widget authoring: creating dashboard widgets, themes, layouts, custom colors, and `+"`reports/report_plan.json`"+` edits. Keep report edits presentation-only: do not use dashboard work as a reason to change evaluation, hardening, metrics, or learn_code settings.
@@ -1532,9 +1611,9 @@ The workflow has a live frontend report viewer at the top toolbar's "Report" tab
 	{{if eq .WorkshopMode "run"}}
 	## Context Capture — Allowed In Run Mode
 
-	Run mode normally executes and inspects the workflow; it does not edit plan/config/eval/metrics/report artifacts. One exception is durable user-owned runtime context. If the user says something that future workflow runs should remember — rules, preferences, constraints, ICP filters, approval rules, brand voice, examples, or domain assumptions — ask whether to capture it.
+	Run mode can execute workflow-backed work directly, run individual/orphan steps, run the full workflow, and inspect results. It may read KB/learnings/db/report/run artifacts whenever they are needed to answer correctly, but it does not edit plan/config/eval/metrics/report artifacts. One exception is durable user-owned runtime context. If the user says something that future workflow runs should remember — rules, preferences, constraints, ICP filters, approval rules, brand voice, examples, or domain assumptions — ask whether to capture it.
 
-	If confirmed, call `+"`capture_context`"+` with a concise `+"`context_text`"+`, a section name, and existing `+"`target_metrics`"+`. Do not manually edit `+"`knowledgebase/context/context.md`"+` or `+"`builder/decisions.jsonl`"+`. If there are no metrics yet, tell the user setup is needed before context can be anchored and suggest switching to Optimizer for `+"`/improve-setup-framework`"+`.
+	If confirmed, call `+"`capture_context`"+` with a concise `+"`context_text`"+`, a section name, and existing `+"`target_metrics`"+`. Do not manually edit `+"`knowledgebase/context/context.md`"+`; the tool writes the structured improve.md audit entry. If there are no metrics yet, tell the user setup is needed before context can be anchored and suggest switching to Optimizer for `+"`/improve-setup-framework`"+`.
 	{{end}}
 
 	{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "reporting")}}
@@ -1555,7 +1634,7 @@ The workflow has a live frontend report viewer at the top toolbar's "Report" tab
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "reporting")}}
 ### Report plan — reports/report_plan.json
 
-{{if eq .WorkshopMode "builder"}}You are in BUILDER mode. Alongside workflow structure, you own the live frontend report defined by `+"`reports/report_plan.json`"+` — designing widgets, picking themes/layouts, and (when needed) running individual workflow steps to populate the underlying `+"`db/`"+` data the widgets bind to. Keep dashboard edits separate from evaluation/optimization work; those still belong in Optimizer.{{else if eq .WorkshopMode "optimizer"}}You are in OPTIMIZER mode. Alongside run/eval/hardening, you may maintain the live frontend report defined by `+"`reports/report_plan.json`"+` so dashboards stay aligned with current outputs, metrics, and evaluation evidence. Use report-plan tools for report edits; use optimizer tools only when the underlying workflow behavior or eval coverage actually needs to change.{{else}}You are in REPORTING mode. Your scope is the live frontend report defined by `+"`reports/report_plan.json`"+` — designing widgets, picking themes/layouts, and (when needed) running individual workflow steps to populate the underlying `+"`db/`"+` data the widgets bind to. You do NOT change the workflow plan, step config, evaluations, or KB write rules — those belong in Builder/Optimizer.{{end}}
+{{if eq .WorkshopMode "builder"}}You are in BUILDER mode. Alongside workflow structure, you own the live frontend report defined by `+"`reports/report_plan.json`"+` — designing widgets, picking themes/layouts, and (when needed) running individual workflow steps to populate the underlying `+"`db/`"+` data the widgets bind to. Keep dashboard edits separate from evaluation/optimization work; those still belong in Optimizer.{{else if eq .WorkshopMode "optimizer"}}You are in OPTIMIZER mode. Alongside run/eval/improvement, you may maintain the live frontend report defined by `+"`reports/report_plan.json`"+` so dashboards stay aligned with current outputs, metrics, and evaluation evidence. Use report-plan tools for report edits; use optimizer tools only when the underlying workflow behavior or eval coverage actually needs to change.{{else}}You are in REPORTING mode. Your scope is the live frontend report defined by `+"`reports/report_plan.json`"+` — designing widgets, picking themes/layouts, and (when needed) running individual workflow steps to populate the underlying `+"`db/`"+` data the widgets bind to. You do NOT change the workflow plan, step config, evaluations, or KB write rules — those belong in Builder/Optimizer.{{end}}
 
 **The reporting toolchain:**
 - Before move/remove/toggle operations, call `+"`get_report_plan`"+` so you have stable section, entry, row, and widget IDs.
@@ -1633,13 +1712,13 @@ Optimizer owns the eval plan: write it, validate it, run it against `+"`iteratio
 {{end}}
 
 {{if or (eq .WorkshopMode "run") (eq .WorkshopMode "reporting")}}
-## Workflow data surfaces — read-only meaning in this mode
+## Workflow data surfaces — runtime use in this mode
 
-The workflow may use three persistent stores. In this mode, use them only to understand or present results; do not redesign them.
+The workflow may use three persistent stores. In this mode, read them when they help execute, answer, or present results; do not redesign their schemas or manually rewrite their durable content.
 
-- **learnings/_global/SKILL.md**: execution know-how for step agents. Do not edit it here.
-- **knowledgebase/context/**: user-supplied runtime business context. Read only if it helps answer the user's question.
-- **knowledgebase/notes/**: durable narrative observations the workflow has accumulated. Read only if it helps answer the user's question.
+- **learnings/_global/SKILL.md**: execution know-how for step agents and Run mode itself. Read it before doing workflow-specific operational work. Do not edit it here.
+- **knowledgebase/context/**: user-supplied runtime business context. Read it if it helps execute the request or answer the user's question.
+- **knowledgebase/notes/**: durable narrative observations the workflow has accumulated. Read them if they help execute the request or answer the user's question.
 - **db/*.json + db/assets/**: persistent workflow result data and durable media/file assets. Report widgets bind to db files/assets, and Run mode summaries should translate db rows into plain English.
 
 If the user wants to change what gets stored, how db files are shaped, or how KB/learnings are written, switch to Builder or Optimizer.
@@ -1812,7 +1891,7 @@ Before moving to optimization, ensure the foundation is solid:
 ### When to redirect to another mode
 You have plan/step/config/KB/report tools here. If the user asks about:
 - **Just running the finished workflow / inspecting prior runs in plain English** → switch to **Run mode**. Builder is for design; Run is the user-friendly execution surface (also used over WhatsApp/Slack).
-- **Hardening flaky steps, the run/eval/harden loop** → switch to **Optimizer mode** once the plan structure is working.
+- **Improving existing workflows from run/eval/metric evidence** → switch to **Optimizer mode** once the plan structure is working.
 
 Don't try to handle these requests yourself — tell the user which mode owns the task and offer to switch.
 
@@ -1826,9 +1905,11 @@ Don't try to handle these requests yourself — tell the user which mode owns th
 
 **Read previous builder conversations** from `+"`builder/`"+` folder (`+"`ls -t builder/*.json | head -3`"+`) to avoid repeating failed approaches and build on previous progress.
 
-**The core optimization loop is: run → eval → harden → repeat.**
+**The core optimization loop is: run → eval → classify → act → verify.**
 
-**harden_workflow** is the primary optimization tool. It reads evaluation reports and execution outputs from a real run, fixes every failing step, and runs a best-practice sweep across plan/config/learnings/KB/db/report/eval/variables artifacts. It should repair objective invariant violations even when they were not the direct eval failure.
+Treat harden, replan, eval improvement, metric cleanup, and no-action/blocker as peer outcomes. Classify the evidence first, then choose the action whose scope matches the failure. Choose `+"`harden_workflow`"+` when the workflow path is basically right but reliability, validation, artifact shape, eval wiring, KB/db/report contracts, or local step behavior is broken. Choose `+"`replan_workflow_from_results`"+` when primary outcome metrics or success criteria show a strategy/path gap that local repair is unlikely to close.
+
+**harden_workflow** is the reliability repair tool. It reads evaluation reports and execution outputs from real runs, fixes failing steps when the path is otherwise sound, and runs a best-practice sweep across plan/config/learnings/KB/db/report/eval/variables artifacts. Use it for objective invariant violations rooted in local contracts or reliability. Use replanning for strategy or path redesign.
 - Adds pre-validation rules that would have caught the failure
 - Tightens step descriptions to be more specific
 - Applies small evidence-backed structural fixes when the failure is caused by missing/split/obsolete steps or bad step boundaries
@@ -1840,9 +1921,10 @@ Don't try to handle these requests yourself — tell the user which mode owns th
 **Optimization workflow:**
 1. **Run the workflow** — execute the full workflow or individual steps against `+"`iteration-0`"+`
 2. **Run evaluation** — `+"`run_full_evaluation(group_name=\"...\")`"+` for each group you need to score. Evaluation always targets `+"`iteration-0`"+`.
-3. **Harden** — `+"`harden_workflow(group_name=\"...\")`"+` for one group, or `+"`harden_workflow()`"+` for all groups under `+"`iteration-0`"+`
-4. **Re-run and verify** — execute again to confirm fixes work
-5. **Repeat** until all steps pass consistently
+3. **Classify** — decide whether the evidence calls for harden, replan, eval-plan improvement, metric cleanup, or no action/blocker.
+4. **Act** — call the matching tool or apply the matching bounded edit.
+5. **Re-run and verify** — execute again only when one targeted verification would materially reduce uncertainty.
+6. **Repeat** until primary metrics and success criteria are healthy, not merely until local step checks pass.
 
 **Progressive hardening loop** (when user asks to "harden loop" or "run and harden all groups"):
 Run one group at a time so each group's failures harden the workflow before the next group runs:
@@ -1850,14 +1932,14 @@ Run one group at a time so each group's failures harden the workflow before the 
 2. For each group (one by one):
    a. Execute the workflow for this group only (execute_step with group_name, or run_full_workflow with a single group)
    b. Run evaluation for this group's `+"`iteration-0`"+` results with `+"`run_full_evaluation(group_name=\"...\")`"+`
-   c. Run `+"`harden_workflow(group_name=\"...\")`"+` — fixes from this group benefit all subsequent groups
+   c. Classify the failure. For local reliability/contract failures, run `+"`harden_workflow(group_name=\"...\")`"+`. For strategy/path, measurement, or metric-definition failures, use `+"`replan_workflow_from_results`"+`, eval tools, or metric tools.
 3. After all groups have run: summarize overall scores and remaining issues
 4. If any groups still failing: repeat the loop (max 2 full iterations to prevent infinite loops)
 
-For **small evidence-backed structural fixes** (add a missing validation/extraction step, remove an obsolete step, split/merge a clearly broken boundary), `+"`harden_workflow`"+` may use the plan modification tools directly. Use `+"`replan_workflow_from_results`"+` when run/eval/metric evidence shows the workflow path itself is not aligned with the objective or success criteria — for example, it is doing the wrong business work, collecting the wrong evidence, optimizing the wrong artifact, or producing outputs that cannot satisfy a success criterion even after local hardening.
+For **small evidence-backed structural fixes** (add a missing validation/extraction step, remove an obsolete step, split/merge a clearly broken boundary), `+"`harden_workflow`"+` may use the plan modification tools directly. Use `+"`replan_workflow_from_results`"+` when run/eval/metric evidence shows the workflow path itself is misaligned with the objective or success criteria — for example, it is doing the wrong business work, collecting the wrong evidence, optimizing the wrong artifact, or producing outputs that local hardening has not made capable of satisfying a success criterion.
 
 ### When to redirect to another mode
-Optimizer is for the run/eval/harden loop. If the user asks about:
+Optimizer is for the run/eval/classify/act loop. If the user asks about:
 - **Dashboard widgets, themes, layouts, custom colors** → handle them here with the report-plan tools. Optimizer can maintain `+"`reports/report_plan.json`"+` when report changes need to reflect run/eval/metric evidence.
 - **Greenfield workflow design — adding new execution steps or defining a new workflow's structure from scratch** → switch to **Builder mode**. Optimizer hardens an existing structure.
 - **Evaluation coverage — drafting or improving `+"`evaluation/evaluation_plan.json`"+`** → handle it in Optimizer. Optimizer owns eval design, validation, scoring, and hardening.
@@ -1888,12 +1970,22 @@ Plan / step config / evaluation / KB / optimization. If the user asks to fix wha
 **RUN MODE** — You're chatting with a workflow that's already been built and tuned. Most of the time you'll be running it and answering questions about results, often over WhatsApp / Slack / a phone screen rather than a desktop terminal.
 
 ### Primary job
-Run mode is an execution and inspection surface. Optimize for these four jobs:
+Run mode is the user-facing runtime surface, including Slack and WhatsApp routes. It can do the work itself when the request is small, run one step, run an orphan utility step, or run the full workflow. Optimize for these five jobs:
 
-1. **Run the workflow** for one configured group at a time with `+"`run_full_workflow(group_name=\"...\")`"+`.
-2. **Run a specific step** with `+"`execute_step(step_id=\"...\", group_name=\"...\")`"+` when the user asks for a targeted action or retry.
-3. **Answer user questions** from current workflow state, latest run outputs, `+"`db/*.json`"+`, `+"`db/assets/`"+` references, report data, eval reports, timing/cost reviews, KB context/notes, and prior step results.
-4. **Inspect/debug execution** with `+"`list_executions`"+`, `+"`query_step`"+`, `+"`debug_step`"+`, and read-only review tools. Explain the issue and next action; do not mutate plan/config/learnings/KB/report/eval files in Run mode.
+1. **Do direct runtime work** when no workflow run is needed: use available tools plus workflow context to answer, look up, analyze, summarize, or take a small operational action.
+2. **Run the workflow** for one configured group at a time with `+"`run_full_workflow(group_name=\"...\")`"+`.
+3. **Run a specific step or orphan utility step** with `+"`execute_step(step_id=\"...\", group_name=\"...\")`"+` when the user asks for a targeted action, retry, data check, or one-off investigation.
+4. **Answer user questions** from current workflow state, latest run outputs, `+"`db/*.json`"+`, `+"`db/assets/`"+` references, report data, eval reports, timing/cost reviews, KB context/notes, learnings, saved scripts, and prior step results.
+5. **Inspect/debug execution** with `+"`list_executions`"+`, `+"`query_step`"+`, `+"`debug_step`"+`, and read-only review tools. Explain the issue and next action; do not mutate plan/config/learnings/KB/report/eval files in Run mode.
+
+### Runtime context access
+Run mode should read the workflow file system when needed. Use:
+- `+"`soul/soul.md`"+` to understand the workflow objective and success criteria.
+- `+"`learnings/_global/SKILL.md`"+` and `+"`learnings/<step-id>/main.py`"+` to understand proven operating patterns and learned deterministic scripts.
+- `+"`knowledgebase/context/`"+` and `+"`knowledgebase/notes/`"+` for business rules, examples, preferences, facts, and assumptions.
+- `+"`db/`"+`, latest `+"`runs/iteration-0/`"+`, and reports/eval artifacts for current state and outcomes.
+
+Reading these files is part of normal Run mode behavior. Writing persistent workflow design artifacts is not: do not manually edit plan/config/learnings/KB/report/eval files from Run mode. For user-confirmed durable runtime context, use `+"`capture_context`"+`.
 
 ### Audience
 The user here is usually **non-technical** — a stakeholder, a teammate, an end user. They don't read JSON, they don't know step IDs, they don't want to see file paths or `+"`jq`"+` queries. They want answers in plain English.
@@ -1906,8 +1998,9 @@ The user here is usually **non-technical** — a stakeholder, a teammate, an end
 - **No tech jargon.** "Pre-validation failed" → "the output didn't have the right fields". "Cron expression" → "scheduled for 9 AM weekdays".
 
 ### Things you do here
+- **Do the work directly** when the user's request is narrower than a workflow run. Read the relevant KB/learnings/db/run artifacts, use available tools, and answer with the result.
 - **Run the workflow** when asked: use `+"`run_full_workflow`"+` with an explicit `+"`group_name`"+`. For multi-group workflows, default to sequential one-group-at-a-time execution unless the user explicitly asks to run groups in parallel.
-- **Run one step** when asked: identify the step from the user's words, ask only if ambiguous, then call `+"`execute_step`"+` with `+"`group_name`"+`. Keep the `+"`execution_id`"+` for follow-up status checks.
+- **Run one step or orphan utility step** when asked: identify the step from the user's words, ask only if ambiguous, then call `+"`execute_step`"+` with `+"`group_name`"+`. Orphan steps are valid Run-mode tools when they are designed as manual utilities, data checks, shared route agents, or one-off investigations. Keep the `+"`execution_id`"+` for follow-up status checks.
 - **Answer status questions**: if the user asks "is it running?", "what is it doing?", "why is it stuck?", or "what happened?", first use `+"`list_executions`"+` if you don't know the execution id, then `+"`query_step(execution_id)`"+`. For completed steps, use `+"`debug_step(step_id, group_name=...)`"+` and targeted output reads.
 - **Answer result questions**: read the latest run's outputs, `+"`db/`"+` data, report-bound JSON, KB notes, and the evaluation report when useful. Lead with the answer, then give the evidence in plain language.
 - **Answer "did it work?" / "what happened?"**: give a one-paragraph human summary. Lead with the outcome (worked / partial / failed), then the headline numbers, then offer to dig deeper.
@@ -2121,7 +2214,8 @@ When a step doesn't do what it should — wrong output, missing actions, incompl
 2. If a running step appears stuck, use `+"`query_step`"+` to inspect active tool calls and summarize what it is waiting on. Do not poll in a tight loop; give the user the current status and wait for auto-notification unless they ask you to check again.
 3. If a step already completed or failed, use `+"`debug_step(step_id, group_name=...)`"+` plus targeted reads of run outputs/log summaries. For whole-run questions, use `+"`review_workflow_results`"+`, timing, and cost reviews.
 4. Explain the observed failure or data gap in plain English and offer retry/skip/help when appropriate.
-5. If fixing requires changing step descriptions, validation, config, learnings, KB, db shape, report wiring, or evaluation, tell the user to switch to Builder or Optimizer. Do not call harden_workflow or mutate workspace artifacts from Run mode.
+5. If the right action is a targeted retry, utility check, or one-off investigation, run the relevant normal or orphan step with `+"`execute_step`"+`; if the request needs the whole workflow, call `+"`run_full_workflow`"+`.
+6. If fixing requires changing step descriptions, validation, config, learnings, KB, db shape, report wiring, or evaluation, tell the user to switch to Builder or Optimizer. Do not call harden_workflow or mutate workflow design artifacts from Run mode.
 {{end}}
 
 **Root cause → Fix mapping:**
@@ -2141,7 +2235,7 @@ When a step doesn't do what it should — wrong output, missing actions, incompl
 {{if eq .WorkshopMode "builder"}}**CRITICAL: Act, don't just analyze.** Apply direct design fixes with the builder tools, then re-run to verify.
 {{else if eq .WorkshopMode "optimizer"}}**CRITICAL: Act, don't just analyze.** harden_workflow applies fixes directly. For manual fixes, use the same tools — update step descriptions, update validation_schema, edit learnings. After fixing, re-run to verify.
 {{else if eq .WorkshopMode "reporting"}}**CRITICAL: Stay in the reporting boundary.** Fix report-plan problems directly, but redirect workflow/eval/config fixes to Builder or Optimizer.
-{{else}}**CRITICAL: Stay read-only.** Diagnose clearly and run/inspect as requested, but redirect mutations to Builder or Optimizer.
+{{else}}**CRITICAL: Stay in the runtime boundary.** Do direct runtime work, run/inspect steps, and answer from workflow state as requested, but redirect workflow design/config/eval/report mutations to Builder or Optimizer.
 {{end}}
 
 {{if eq .WorkshopMode "optimizer"}}
@@ -2509,9 +2603,9 @@ Rules:
 {{else if eq .WorkshopMode "optimizer"}}
 ### Step Config & Analysis
 - **update_step_config(step_id, ...)** — Update servers, tools, skills, learning settings, execution mode, LLMs, locks, review notes, and description review state. For eval steps this writes to `+"`evaluation/step_config.json`"+`.
-- **harden_workflow(group_name?, focus?)** — The primary optimization tool. Always reads `+"`iteration-0`"+` eval reports and execution outputs. Pass `+"`group_name`"+` to scope to one group, or omit it to analyze all groups under `+"`iteration-0`"+`. It fixes every failing step and runs a best-practice sweep across plan/config/learnings/KB/db/report/eval/variables artifacts. It may clean deterministic invariant violations even when the current eval did not directly catch them. It patches main.py only for `+"`learn_code`"+` steps and deletes stale main.py files for `+"`code_exec`"+` steps.
+- **harden_workflow(group_name?, focus?)** — Reliability repair. Always reads `+"`iteration-0`"+` eval reports and execution outputs. Pass `+"`group_name`"+` to scope to one group, or omit it to analyze all groups under `+"`iteration-0`"+`. Use when the path is otherwise sound but local step behavior, validation, artifact shape, config, learnings, KB/db/report/eval wiring, or deterministic invariants are broken. It patches main.py only for `+"`learn_code`"+` steps and deletes stale main.py files for `+"`code_exec`"+` steps.
 - **Objective + success criteria** — edit `+"`soul/soul.md`"+` directly via shell (fill in the `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections). soul.md is the canonical source; plan.json no longer stores these fields. No dedicated tool — use `+"`diff_patch_workspace_file`"+` or a shell heredoc.
-- **replan_workflow_from_results(group_name?, focus?)** — Alignment rewrite: add/remove/reorder steps using actual `+"`iteration-0`"+` run/eval evidence so the workflow better satisfies `+"`soul/soul.md`"+` objective, success criteria, and any outcome metrics. Pass `+"`group_name`"+` to scope to one group. Use when the workflow path is not aligned with the desired result; use harden_workflow for local reliability, prompt/config, validation, or artifact-drift fixes.
+- **replan_workflow_from_results(group_name?, focus?)** — Alignment rewrite: add/remove/reorder steps using actual `+"`iteration-0`"+` run/eval evidence so the workflow better satisfies `+"`soul/soul.md`"+` objective, success criteria, and any outcome metrics. Pass `+"`group_name`"+` to scope to one group. Use when the workflow path is misaligned with the desired result. Use harden_workflow for local reliability, prompt/config, validation, or artifact-drift fixes.
 - **review_workflow_results(iteration?, group_name?, focus?)** — Read-only outcome review: checks whether a real run is achieving the objective and success criteria, and whether the evaluation actually measures them properly.
 - **review_workflow_timing(iteration?, group_name?, focus?)** — Read-only latency review: finds the slowest groups/steps/tools/LLM calls and recommends faster descriptions, fewer handoffs, safer step merges, or plan changes.
 - **review_workflow_costs(iteration?, group_name?, focus?)** — Read-only cost review: finds the biggest cost drivers and recommends cheaper models, fewer retries/handoffs, better descriptions, or plan changes without sacrificing success criteria.
@@ -2568,7 +2662,7 @@ Rules:
   - Tell the agent to skip or use defaults for anything unclear rather than pausing to ask
   - Never include open-ended questions or "let me know" style instructions
   - Bad: "Run the workflow and ask me which steps to optimize" — Good: "Review runs/iteration-0 for group-1, read metrics/eval/log evidence, then choose harden_workflow or replan_workflow_from_results using the scheduled decision model. Log no action if nothing is ready."
-- **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message around the exact recurring job. For `+"`/improve-continuously`"+`, the message should name the configured group_names, use only `+"`runs/iteration-0`"+` evidence for those groups, inspect run outputs plus execution/tool logs for failures, retries, wrong tool arguments, timeouts, validation errors, and stuck steps, read `+"`planning/metrics.json`"+` / `+"`db/metrics_history.jsonl`"+` / `+"`builder/improve.md`"+` / `+"`builder/review.md`"+` / recent `+"`planning/changelog/`"+` entries, and handle report-layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it. Do not default continuous improvement to weekly for active workflows: prefer an optimizer check after every workflow run, or at worst after every two runs; if cron cannot trigger on run completion, approximate with a frequent lightweight schedule that no-ops when there is no new evidence. After material plan/config changes, tighten the improve cadence for 24-48 hours or until the next one or two post-change iteration-0 runs have been reviewed.
+- **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message around the exact recurring job. For `+"`/improve-continuously`"+`, the message should name the configured group_names, use only `+"`runs/iteration-0`"+` evidence for those groups, inspect run outputs plus execution/tool logs for failures, retries, wrong tool arguments, timeouts, validation errors, and stuck steps, read `+"`planning/metrics.json`"+` / `+"`db/metrics_history.jsonl`"+` / `+"`builder/improve.md`"+` / `+"`builder/review.md`"+` / recent `+"`planning/changelog/`"+` entries, and handle report-layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it. For active workflows, prefer an optimizer check after every workflow run, or at worst after every two runs; if cron cannot trigger on run completion, approximate with a frequent lightweight schedule that no-ops when there is no new evidence. Weekly continuous improvement is appropriate for weekly or explicitly low-touch workflows. After material plan/config changes, tighten the improve cadence for 24-48 hours or until the next one or two post-change iteration-0 runs have been reviewed.
 - **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) use bounded evidence review, (2) apply at most one primary harden/replan action per fire, (3) avoid fresh workflow reruns unless verification is explicitly needed, (4) stop after recording what was applied or deferred.
 
 {{end}}
@@ -3000,13 +3094,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
 		"execute_step",
-		"Start a workflow step in the background. Returns an execution_id immediately. You will be automatically notified when it completes. Learnings follow the step's persistent config (`learnings_access`, `learnings_write_method`, `lock_learnings`). Success learnings run in background (next step starts immediately), failure learnings run sequentially (needed for retry). Optimizer mode only: set fast_path_only=true to run ONLY the saved learnings/{step-id}/main.py script with no LLM fallback when testing learn_code patches.",
+		"Start a workflow step in the background, including a normal plan step, nested route step, or plan-local orphan utility step. Returns an execution_id immediately. You will be automatically notified when it completes. Learnings follow the step's persistent config (`learnings_access`, `learnings_write_method`, `lock_learnings`). Success learnings run in background (next step starts immediately), failure learnings run sequentially (needed for retry). Optimizer mode only: set fast_path_only=true to run ONLY the saved learnings/{step-id}/main.py script with no LLM fallback when testing learn_code patches.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"step_id": map[string]interface{}{
 					"type":        "string",
-					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1', 'step1')",
+					"description": "The step ID from plan.json or orphan_steps[] (e.g., 'step-create-report', 'validate-environment') or positional reference (e.g., '1', 'step-1', 'step1')",
 				},
 				"group_name": map[string]interface{}{
 					"type":        "string",
@@ -6437,10 +6531,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register replan_workflow_from_results tool: %v", err))
 	}
 
-	// Tool 7g2: harden_workflow — eval-driven hardening plus invariant cleanup
+	// Tool 7g2: harden_workflow — reliability repair plus invariant cleanup
 	if err := mcpAgent.RegisterCustomTool(
 		"harden_workflow",
-		"Start a background agent that reads retained run evidence (latest iteration-0 plus older iteration-N runs selected by improve.md/decision timestamps), identifies failing steps and regressions, runs a best-practice sweep over workflow artifacts, and applies targeted fixes: adds pre-validation rules, tightens descriptions, deletes stale code_exec main.py files, patches main.py for learn_code steps, fixes learning/KB/db/report/eval wiring when evidence or hard invariants justify it, and updates step config. This is the primary optimization tool — it analyzes AND acts. Use replan_workflow_from_results when run/eval/metric evidence shows the workflow path itself is not aligned with the objective or success criteria and cannot be fixed by local hardening.",
+		"Start a background agent that reads retained run evidence (latest iteration-0 plus older iteration-N runs selected by improve.md/decision timestamps), identifies failing local reliability/contract regressions, runs a best-practice sweep over workflow artifacts, and applies targeted fixes: adds pre-validation rules, tightens descriptions, deletes stale code_exec main.py files, patches main.py for learn_code steps, fixes learning/KB/db/report/eval wiring when evidence or hard invariants justify it, and updates step config. Use this for reliability repair when the workflow path is basically sound. Use replan_workflow_from_results when primary metrics or success criteria show a strategy/path gap that local repair is unlikely to close.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -7879,7 +7973,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. Default to mode='workflow' for normal recurring runs. Use mode='workshop' only when the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule; then messages are required. For /improve-continuously, BOTH schedules must be workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the improve schedule uses workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, retained-run evidence window selection, metric/eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For continuous improvement, do not default to weekly for active workflows; prefer checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable.",
+		"Create a new cron schedule for this workflow. Default to mode='workflow' for normal recurring runs. Use mode='workshop' only when the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule; then messages are required. For /improve-continuously, BOTH schedules must be workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the improve schedule uses workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, retained-run evidence window selection, metric/eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For active workflows, prefer continuous-improvement checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable. Weekly cadence fits workflows that run weekly or are explicitly low-touch.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8385,7 +8479,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			"properties": map[string]interface{}{
 				"source": map[string]interface{}{
 					"type":        "string",
-					"description": "Skill source in owner/repo@skill-name format (e.g., 'anthropics/skills@skill-creator', 'vercel-labs/agent-browser@agent-browser').",
+					"description": "Skill source in owner/repo@skill-name format (e.g., 'anthropics/skills@skill-creator', 'googleworkspace/cli@gws-gmail').",
 				},
 			},
 			"required": []string{"source"},
@@ -8716,6 +8810,10 @@ This is a guarded maintenance pass:
 - Mode: {{.Mode}}
 {{if .Focus}}- Focus: {{.Focus}}{{end}}
 
+## Path Discipline
+
+For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, `+"`db/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
+
 ## Required Reads
 
 1. Read `+"`soul/soul.md`"+` if present.
@@ -8818,6 +8916,10 @@ Boundary truth: many tool calls can belong in one step; many durable contracts s
 {{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ NOT SET — treat missing success criteria as a top-level review finding{{end}}
 {{if .TargetRunFolder}}- **Target Run Folder**: {{.TargetRunFolder}}{{end}}
 
+## PATH DISCIPLINE
+
+For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, `+"`db/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
+
 {{if .PlanJSON}}## CURRENT PLAN
 `+"```json\n{{.PlanJSON}}\n```"+`
 {{else}}Read the plan from `+"`planning/plan.json`"+` using shell commands before starting the review.{{end}}
@@ -8910,6 +9012,10 @@ You have a harden-like tool surface so you can inspect workflow state deeply. Fo
 {{if .Focus}}- Focus: {{.Focus}}{{end}}
 {{if .WorkflowObjective}}- Objective: {{.WorkflowObjective}}{{else}}- Objective: not set{{end}}
 {{if .WorkflowSuccessCriteria}}- Success criteria: {{.WorkflowSuccessCriteria}}{{else}}- Success criteria: not set{{end}}
+
+## Path Discipline
+
+For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`planning/...`"+`, `+"`learnings/...`"+`, `+"`builder/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
 
 {{if .PlanJSON}}## Current Plan
 `+"```json\n{{.PlanJSON}}\n```"+`
@@ -9035,6 +9141,10 @@ This is a **read-only review**:
 {{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ NOT SET — treat missing success criteria as a top-level finding{{end}}
 {{if .TargetRunFolder}}- **Target Run Folder**: {{.TargetRunFolder}}{{else}}- **Target Run Folder**: not preset — find the latest meaningful run/eval evidence before judging outcomes{{end}}
 
+## PATH DISCIPLINE
+
+For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
+
 {{if .PlanJSON}}## CURRENT PLAN
 `+"```json\n{{.PlanJSON}}\n```"+`
 {{else}}Read the plan from `+"`planning/plan.json`"+` using shell commands before starting the review.{{end}}
@@ -9146,6 +9256,10 @@ This is a **read-only review**:
 {{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ NOT SET — treat missing objective as a top-level finding{{end}}
 {{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ NOT SET — treat missing success criteria as a top-level finding{{end}}
 {{if .TargetRunFolder}}- **Target Run Folder**: {{.TargetRunFolder}}{{else}}- **Target Run Folder**: not preset — find the latest meaningful run evidence before judging speed{{end}}
+
+## PATH DISCIPLINE
+
+For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
 
 {{if .PlanJSON}}## CURRENT PLAN
 `+"```json\n{{.PlanJSON}}\n```"+`
@@ -9260,6 +9374,10 @@ This is a **read-only review**:
 {{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ NOT SET — treat missing objective as a top-level finding{{end}}
 {{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ NOT SET — treat missing success criteria as a top-level finding{{end}}
 {{if .TargetRunFolder}}- **Target Run Folder**: {{.TargetRunFolder}}{{else}}- **Target Run Folder**: not preset — find the latest meaningful cost/run evidence before judging cost{{end}}
+
+## PATH DISCIPLINE
+
+For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, `+"`costs/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
 
 {{if .PlanJSON}}## CURRENT PLAN
 `+"```json\n{{.PlanJSON}}\n```"+`
@@ -9467,6 +9585,10 @@ agent_browser(command='click', args=['.form > div:nth-child(3)'], session='main'
 - **Workspace**: {{.WorkspacePath}}
 {{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{end}}
 
+## PATH DISCIPLINE
+
+For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`planning/...`"+`, `+"`evaluation/...`"+`, `+"`learnings/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
+
 ## STEPS TO REVIEW
 
 {{.StepsToReview}}
@@ -9520,7 +9642,7 @@ This tool is **evidence-driven and mutating**:
 - Delete steps/routes: `+"`delete_plan_steps`"+`, `+"`delete_todo_task_route`"+`
 - Update validation/config: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`
 
-Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`builder/improve.md`"+`, `+"`builder/review.md`"+`, `+"`learnings/_global/SKILL.md`"+`, learn_code `+"`main.py`"+`, KB notes, db schema docs, report plans, or decision logs.
+Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`builder/improve.md`"+`, `+"`builder/review.md`"+`, `+"`learnings/_global/SKILL.md`"+`, learn_code `+"`main.py`"+`, KB notes, db schema docs, or report plans.
 
 ## SOURCE-OF-TRUTH HIERARCHY
 Use this hierarchy before changing the plan:
@@ -9549,6 +9671,10 @@ Use this hierarchy before changing the plan:
 {{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ Missing in soul/soul.md — do not infer it in this tool{{end}}
 {{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ Missing in soul/soul.md — rely on the best visible run/eval evidence and note this in your summary{{end}}
 
+## PATH DISCIPLINE
+
+For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, `+"`builder/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
+
 {{if .PlanJSON}}## CURRENT PLAN
 `+"```json\n{{.PlanJSON}}\n```"+`
 {{else}}Read `+"`planning/plan.json`"+` before making changes.{{end}}
@@ -9561,7 +9687,7 @@ Use this hierarchy before changing the plan:
 
 Build an evidence window before changing the plan:
 - Always include latest `+"`{{.TargetRunFolder}}`"+`.
-- Read `+"`builder/improve.md`"+`, `+"`builder/decisions.jsonl`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps to decide which older `+"`iteration-{N}`"+` folders matter.
+- Read `+"`builder/improve.md`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps to decide which older `+"`iteration-{N}`"+` folders matter.
 - Include older iterations since the last relevant harden/replan/eval/metric change, plus 1-2 runs immediately before that change when you need before/after comparison.
 - Ignore older iterations when they predate a material plan/config/eval change and no longer represent the current workflow, except as regression context.
 
@@ -9663,7 +9789,7 @@ Per-step KB config:
 - Structural edits: `+"`add_regular_step`"+`, `+"`add_routing_step`"+`, `+"`add_human_input_step`"+`, `+"`add_todo_task_step`"+`, `+"`add_todo_task_route`"+`, `+"`delete_plan_steps`"+`, `+"`delete_todo_task_route`"+`
 - Validation/config edits: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`
 
-Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`learnings/_global/SKILL.md`"+`, learn_code `+"`main.py`"+`, KB notes, db schema docs, report plans, `+"`builder/improve.md`"+`, `+"`builder/review.md`"+`, or decision logs.
+Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`learnings/_global/SKILL.md`"+`, learn_code `+"`main.py`"+`, KB notes, db schema docs, report plans, `+"`builder/improve.md`"+`, or `+"`builder/review.md`"+`.
 
 ## RULES
 1. **Evidence-first, invariant-aware**: Fix every actual failure. You may also fix objective best-practice violations even on passing steps when the violation is deterministic and non-speculative: stale `+"`code_exec`"+` main.py, invalid lock state, KB/db/report contract mismatch, missing pre-validation for a produced output, hardcoded secrets/paths, or config that runtime validation would reject. Do not redesign passing behavior without evidence.
@@ -9720,6 +9846,10 @@ Run this sweep on every harden pass. For a single-group harden, use that group's
 {{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{end}}
 {{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{end}}
 
+## PATH DISCIPLINE
+
+For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, `+"`builder/...`"+`, `+"`planning/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
+
 {{if .PlanJSON}}## CURRENT PLAN
 `+"```json\n{{.PlanJSON}}\n```"+`
 {{end}}
@@ -9736,13 +9866,13 @@ Run this sweep on every harden pass. For a single-group harden, use that group's
 
 	Before building the failure map, select the retained runs that matter:
 	- Always include latest `+"`{{.TargetRunFolder}}`"+`.
-	- Read `+"`builder/improve.md`"+`, `+"`builder/decisions.jsonl`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps.
+	- Read `+"`builder/improve.md`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps.
 	- Include older iterations since the last relevant harden/replan/eval/metric change, plus 1-2 runs immediately before that change when you need before/after comparison.
 	- Use older runs to identify recurring failures, regressions, and whether a previous fix helped. Do not let stale runs override latest evidence after a material plan/config/eval change.
 
 	## DATA LAYOUT
 
-All paths relative to workspace root. Replace {iter} with a selected retained iteration folder (always include latest `+"`{{.TargetRunFolder}}`"+`; include older `+"`iteration-{N}`"+` folders when improve.md/decision timestamps make them relevant) and {group} with the group subfolder name.
+Path examples below are relative to the workflow root for readability. In actual tool calls, prefix them with `+"`{{.WorkspacePath}}/`"+` unless a tool explicitly requires workflow-root-relative paths. Replace {iter} with a selected retained iteration folder (always include latest `+"`{{.TargetRunFolder}}`"+`; include older `+"`iteration-{N}`"+` folders when improve.md/decision timestamps make them relevant) and {group} with the group subfolder name.
 
 ### Per-group execution data
 | Path | Contents |
@@ -10166,6 +10296,7 @@ func (iwm *InteractiveWorkshopManager) runImproveDBAgent(ctx context.Context, mo
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("improve-db-agent", 50, agents.OutputFormatStructured, phaseLLM)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.ServerNames = []string{mcpclient.NoServers}
+	defer iwm.configureWorkshopToolAgentSession(config, "improve-db", readPaths, writePaths)()
 
 	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
@@ -10181,6 +10312,7 @@ func (iwm *InteractiveWorkshopManager) runImproveDBAgent(ctx context.Context, mo
 
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
+		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
 		"WorkflowObjective":       workflowObjective,
 		"WorkflowSuccessCriteria": workflowSuccessCriteria,
 		"Mode":                    mode,
@@ -10289,6 +10421,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-plan-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.ServerNames = []string{mcpclient.NoServers}
+	defer iwm.configureWorkshopToolAgentSession(config, "review-plan", readPaths, []string{})()
 
 	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
@@ -10304,6 +10437,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
+		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
 		"TargetRunFolder":         targetRunFolder,
 		"PlanJSON":                planJSON,
 		"StepConfigSummary":       stepConfigSummary,
@@ -10407,6 +10541,7 @@ func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Co
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-artifact-sync-agent", 120, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
+	defer iwm.configureWorkshopToolAgentSession(config, "review-artifact-sync", readPaths, writePaths)()
 
 	allowedToolNames := []string{
 		"execute_shell_command", "diff_patch_workspace_file",
@@ -10429,6 +10564,7 @@ func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Co
 
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
+		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
 		"StepID":                  stepID,
 		"PlanJSON":                planJSON,
 		"StepConfigSummary":       stepConfigSummary,
@@ -10515,6 +10651,7 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowResultsAgent(ctx context
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-results-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.ServerNames = []string{mcpclient.NoServers}
+	defer iwm.configureWorkshopToolAgentSession(config, "review-workflow-results", readPaths, []string{})()
 
 	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
@@ -10530,6 +10667,7 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowResultsAgent(ctx context
 
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
+		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
 		"TargetRunFolder":         targetRunFolder,
 		"PlanJSON":                planJSON,
 		"StepConfigSummary":       stepConfigSummary,
@@ -10616,6 +10754,7 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowTimingAgent(ctx context.
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-timing-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.ServerNames = []string{mcpclient.NoServers}
+	defer iwm.configureWorkshopToolAgentSession(config, "review-workflow-timing", readPaths, []string{})()
 
 	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
@@ -10631,6 +10770,7 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowTimingAgent(ctx context.
 
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
+		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
 		"TargetRunFolder":         targetRunFolder,
 		"PlanJSON":                planJSON,
 		"StepConfigSummary":       stepConfigSummary,
@@ -10718,6 +10858,7 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowCostsAgent(ctx context.C
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-costs-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.ServerNames = []string{mcpclient.NoServers}
+	defer iwm.configureWorkshopToolAgentSession(config, "review-workflow-costs", readPaths, []string{})()
 
 	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
@@ -10733,6 +10874,7 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowCostsAgent(ctx context.C
 
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
+		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
 		"TargetRunFolder":         targetRunFolder,
 		"PlanJSON":                planJSON,
 		"StepConfigSummary":       stepConfigSummary,
@@ -10886,6 +11028,7 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-step-code-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.ServerNames = []string{mcpclient.NoServers}
+	defer iwm.configureWorkshopToolAgentSession(config, "review-step-code", readPaths, []string{})()
 
 	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
@@ -10901,6 +11044,7 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 
 	templateVars := map[string]string{
 		"WorkspacePath":     workspacePath,
+		"AbsWorkspacePath":  absPromptWorkspacePath(workspacePath),
 		"WorkflowObjective": workflowObjective,
 		"StepsToReview":     stepsToReview.String(),
 		"Focus":             focus,
@@ -10976,6 +11120,7 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("replan-workflow-from-results-agent", 90, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
+	defer iwm.configureWorkshopToolAgentSession(config, "replan-workflow-from-results", readPaths, writePaths)()
 
 	allowedToolNames := []string{
 		"execute_shell_command", "diff_patch_workspace_file",
@@ -11000,9 +11145,11 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 	if err != nil {
 		return "", fmt.Errorf("failed to create replan_workflow_from_results agent: %w", err)
 	}
+	iwm.registerWorkshopMutationToolsForToolAgent(agent, workspacePath, "replan-workflow-from-results", allowedToolNames, logger)
 
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
+		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
 		"TargetRunFolder":         targetRunFolder,
 		"PlanJSON":                planJSON,
 		"StepConfigSummary":       stepConfigSummary,
@@ -11106,6 +11253,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("harden-workflow-agent", 120, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
+	defer iwm.configureWorkshopToolAgentSession(config, "harden-workflow", readPaths, writePaths)()
 
 	allowedToolNames := []string{
 		"execute_shell_command", "diff_patch_workspace_file",
@@ -11130,9 +11278,11 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 	if err != nil {
 		return "", fmt.Errorf("failed to create harden_workflow agent: %w", err)
 	}
+	iwm.registerWorkshopMutationToolsForToolAgent(agent, workspacePath, "harden-workflow", allowedToolNames, logger)
 
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
+		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
 		"TargetRunFolder":         targetRunFolder,
 		"GroupName":               groupName,
 		"PlanJSON":                planJSON,
@@ -11166,6 +11316,10 @@ var backgroundTaskAgentSystemTemplate = MustRegisterTemplate("backgroundTaskAgen
 You are a background agent spawned by the workflow builder to perform a specific task. You have access to the same workspace tools as the workflow execution agents.
 
 **Workspace folder:** {{.WorkspacePath}}
+
+## Path Discipline
+
+For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`"+`. For workspace file tools that expect workspace-relative paths, use `+"`{{.WorkspacePath}}/...`"+`. Do not use bare `+"`runs/...`"+`, `+"`evaluation/...`"+`, `+"`planning/...`"+`, `+"`db/...`"+`, or similar paths unless a tool explicitly requires a path relative to the workflow root. Do not use host paths outside workspace-docs.
 
 ## Instructions
 Complete the task described in the user message below. Be thorough and specific in your output.
@@ -11333,6 +11487,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 	isCodeExecMode := iwm.controller.GetUseCodeExecutionMode()
 	config.UseCodeExecutionMode = isCodeExecMode
 	config.EnableParallelToolExecution = true
+	defer iwm.configureWorkshopToolAgentSession(config, "background-task", readPaths, writePaths)()
 
 	// --- Tools: same as default execution agent (all workspace tools) ---
 	toolsToRegister, executorsToUse := iwm.controller.prepareCustomTools(nil) // nil = default tools
@@ -11412,12 +11567,13 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 
 	// --- Template vars ---
 	templateVars := map[string]string{
-		"WorkspacePath": workspacePath,
-		"Instruction":   instruction,
-		"SkillPrompt":   skillPrompt,
-		"SecretPrompt":  secretPrompt,
-		"BrowserPrompt": browserPrompt,
-		"GWSPrompt":     gwsPrompt,
+		"WorkspacePath":    workspacePath,
+		"AbsWorkspacePath": absPromptWorkspacePath(workspacePath),
+		"Instruction":      instruction,
+		"SkillPrompt":      skillPrompt,
+		"SecretPrompt":     secretPrompt,
+		"BrowserPrompt":    browserPrompt,
+		"GWSPrompt":        gwsPrompt,
 	}
 
 	// --- Execute ---

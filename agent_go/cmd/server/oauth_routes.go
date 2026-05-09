@@ -31,6 +31,26 @@ var (
 	oauthFlowsMu sync.RWMutex
 )
 
+func deriveOAuthRedirectURI(r *http.Request) string {
+	if publicURL := os.Getenv("PUBLIC_URL"); publicURL != "" {
+		return fmt.Sprintf("%s/api/oauth/callback", strings.TrimRight(publicURL, "/"))
+	}
+
+	scheme := "http"
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = strings.TrimSpace(strings.Split(proto, ",")[0])
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+
+	host := r.Host
+	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
+		host = strings.TrimSpace(strings.Split(forwardedHost, ",")[0])
+	}
+
+	return fmt.Sprintf("%s://%s/api/oauth/callback", scheme, host)
+}
+
 // OAuthLoginRequest represents a request to start OAuth flow
 type OAuthLoginRequest struct {
 	ServerName string `json:"server_name"`
@@ -39,7 +59,7 @@ type OAuthLoginRequest struct {
 
 // OAuthDiscoveryResponse is returned when the server doesn't support DCR and needs a client_id
 type OAuthDiscoveryResponse struct {
-	Status          string   `json:"status"`                     // "needs_client_id"
+	Status          string   `json:"status"` // "needs_client_id"
 	ServerName      string   `json:"server_name"`
 	AuthURL         string   `json:"auth_url,omitempty"`         // Discovered authorization endpoint
 	TokenURL        string   `json:"token_url,omitempty"`        // Discovered token endpoint
@@ -263,20 +283,7 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 	}
 
 	// Derive redirect URI from PUBLIC_URL env var (for production) or incoming request (for local)
-	var redirectURI string
-	if publicURL := os.Getenv("PUBLIC_URL"); publicURL != "" {
-		// Remove trailing slash if present
-		if strings.HasSuffix(publicURL, "/") {
-			publicURL = publicURL[:len(publicURL)-1]
-		}
-		redirectURI = fmt.Sprintf("%s/api/oauth/callback", publicURL)
-	} else {
-		scheme := "http"
-		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-			scheme = "https"
-		}
-		redirectURI = fmt.Sprintf("%s://%s/api/oauth/callback", scheme, r.Host)
-	}
+	redirectURI := deriveOAuthRedirectURI(r)
 
 	// Use per-user token file path
 	userTokenFile := getUserTokenFilePath(userID, req.ServerName)
@@ -315,10 +322,10 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 	// Always update TokenFile to user-specific path
 	serverConfig.OAuth.TokenFile = userTokenFile
 
-	// Set redirect URL if not configured
-	if serverConfig.OAuth.RedirectURL == "" {
-		serverConfig.OAuth.RedirectURL = redirectURI
-	}
+	// Always use the current callback URL for a new flow. User configs can
+	// contain stale localhost ports from previous runs, which otherwise get
+	// sent to the OAuth provider and make the callback unreachable.
+	serverConfig.OAuth.RedirectURL = redirectURI
 
 	// Track discovered info for the "needs_client_id" response
 	var discoveredResource string
@@ -529,6 +536,14 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 		delete(api.toolStatus, req.ServerName)
 		api.toolStatusMux.Unlock()
 		api.logger.Info(fmt.Sprintf("✅ In-memory tool status cleared for %s", req.ServerName))
+
+		// OAuth success means prior auth-related discovery failures are no
+		// longer permanent. Clear the skip marker and rediscover tools now,
+		// otherwise /api/tools returns "loading" forever and the frontend keeps
+		// polling.
+		api.clearDiscoveryFailure(req.ServerName)
+		api.appendServerLog(req.ServerName, "info", "Authentication succeeded, rediscovering tools...")
+		api.startBackgroundDiscovery()
 	}()
 
 	// Return auth URL for the frontend to open

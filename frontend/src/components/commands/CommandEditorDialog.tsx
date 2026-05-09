@@ -242,7 +242,7 @@ export const CommandEditorDialog: React.FC<CommandEditorDialogProps> = ({
               className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-y font-mono"
             />
             <p className="text-xs text-muted-foreground mt-1">
-              Use <code className="px-1 bg-secondary rounded">{'{{context}}'}</code> to include text typed before the slash command.
+              Use <code className="px-1 bg-secondary rounded">{'{{context}}'}</code> to include the conversation/request text typed before the slash command.
             </p>
           </div>
         </div>

@@ -26,7 +26,8 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 	}
 
 	// Normalize absolute paths to workspace-relative before building the URL.
-	// LLMs often send absolute paths (e.g. "/app/workspace-docs/Workflow/...").
+	// LLMs often send absolute paths (e.g. "/app/workspace-docs/Workflow/..."
+	// or native desktop paths ending in "/workspace-docs/Workflow/...").
 	// The workspace HTTP handler does its own validation with the real docs-dir,
 	// but the filepath goes into the URL path so it must be relative.
 	params.Filepath = stripWorkspacePrefix(params.Filepath)
@@ -76,20 +77,57 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 }
 
 // stripWorkspacePrefix converts absolute workspace paths to relative.
-// Checks WORKSPACE_DOCS_PATH env first (desktop/Mac), then Docker defaults.
+// Checks WORKSPACE_DOCS_PATH env first (desktop/Mac), discovered local
+// workspace-docs roots next, then Docker defaults.
 func stripWorkspacePrefix(p string) string {
 	if !filepath.IsAbs(p) {
 		return p
 	}
-	var prefixes []string
-	if envRoot := os.Getenv("WORKSPACE_DOCS_PATH"); envRoot != "" {
-		prefixes = append(prefixes, strings.TrimSuffix(envRoot, "/")+"/")
-	}
-	prefixes = append(prefixes, "/app/workspace-docs/", "/workspace-docs/")
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(p, prefix) {
-			return strings.TrimPrefix(p, prefix)
+	cleanPath := filepath.Clean(p)
+	for _, root := range workspaceDocsRootsForPatch() {
+		root = filepath.Clean(root)
+		if cleanPath == root {
+			return "."
+		}
+		prefix := root + string(filepath.Separator)
+		if strings.HasPrefix(cleanPath, prefix) {
+			return strings.TrimPrefix(cleanPath, prefix)
 		}
 	}
 	return p
+}
+
+func workspaceDocsRootsForPatch() []string {
+	var roots []string
+	if envRoot := os.Getenv("WORKSPACE_DOCS_PATH"); envRoot != "" {
+		roots = append(roots, envRoot)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		for dir := filepath.Clean(cwd); ; dir = filepath.Dir(dir) {
+			roots = append(roots, filepath.Join(dir, "workspace-docs"))
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+		}
+	}
+	roots = append(roots, "/app/workspace-docs", "/workspace-docs")
+	return deduplicatePathStrings(roots)
+}
+
+func deduplicatePathStrings(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		p = filepath.Clean(strings.TrimSpace(p))
+		if p == "." || p == "" {
+			continue
+		}
+		if _, exists := seen[p]; exists {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
 }

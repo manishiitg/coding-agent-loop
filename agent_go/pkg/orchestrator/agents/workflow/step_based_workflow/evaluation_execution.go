@@ -187,7 +187,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationReportPhase(ctx context.
 		})
 	}
 	report.StepScores = append(report.StepScores, skippedStepScores...)
-	hcpo.enrichEvaluationReportWithStepOutputs(ctx, report, evalExecutionPath)
+	hcpo.enrichEvaluationReportWithStepOutputs(ctx, report, evaluationPlan, evalExecutionPath)
 
 	internalReportPath := filepath.Join(evalReportFolder, EvaluationReportFileName)
 	publishedReportPath := filepath.Join("evaluation", "runs", targetRunFolder, EvaluationReportFileName)
@@ -216,9 +216,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationReportPhase(ctx context.
 	return report, nil
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) enrichEvaluationReportWithStepOutputs(ctx context.Context, report *EvaluationReport, evalExecutionPath string) {
+func (hcpo *StepBasedWorkflowOrchestrator) enrichEvaluationReportWithStepOutputs(ctx context.Context, report *EvaluationReport, evaluationPlan *EvaluationPlan, evalExecutionPath string) {
 	if report == nil {
 		return
+	}
+	stepByID := make(map[string]*EvaluationStep)
+	if evaluationPlan != nil {
+		for _, step := range evaluationPlan.Steps {
+			if step != nil && strings.TrimSpace(step.ID) != "" {
+				stepByID[step.ID] = step
+			}
+		}
 	}
 	for _, score := range report.StepScores {
 		if score == nil || score.OutputContent != nil || score.Skipped {
@@ -228,19 +236,74 @@ func (hcpo *StepBasedWorkflowOrchestrator) enrichEvaluationReportWithStepOutputs
 		if stepFolder == "" {
 			continue
 		}
-		candidates := []string{
-			filepath.Join(evalExecutionPath, stepFolder, "output_content.json"),
-			filepath.Join(evalExecutionPath, stepFolder, "context_output.json"),
-		}
+		step := stepByID[score.StepID]
+		candidates := evaluationOutputContentCandidates(evalExecutionPath, stepFolder, step)
 		for _, candidate := range candidates {
 			raw, err := hcpo.ReadWorkspaceFile(ctx, candidate)
 			if err != nil || strings.TrimSpace(raw) == "" {
+				continue
+			}
+			if isValidationSchemaLikeJSON(raw) {
 				continue
 			}
 			score.OutputContent = buildStepOutputContent(candidate, raw)
 			break
 		}
 	}
+}
+
+func evaluationOutputContentCandidates(evalExecutionPath, stepFolder string, step *EvaluationStep) []string {
+	candidates := []string{
+		filepath.Join(evalExecutionPath, stepFolder, "output_content.json"),
+	}
+	seen := map[string]struct{}{filepath.ToSlash(candidates[0]): {}}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		candidate := filepath.Join(evalExecutionPath, stepFolder, name)
+		key := filepath.ToSlash(candidate)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		candidates = append(candidates, candidate)
+	}
+	if step != nil {
+		add(step.ContextOutput)
+		if step.PreValidation != nil {
+			for _, file := range step.PreValidation.Files {
+				add(file.FileName)
+			}
+		}
+	}
+	add("context_output.json")
+	return candidates
+}
+
+func isValidationSchemaLikeJSON(raw string) bool {
+	var obj map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &obj); err != nil {
+		return false
+	}
+	files, ok := obj["files"].([]interface{})
+	if !ok || len(files) == 0 {
+		return false
+	}
+	for _, item := range files {
+		fileObj, ok := item.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		if _, hasFileName := fileObj["file_name"]; !hasFileName {
+			return false
+		}
+		if _, hasChecks := fileObj["json_checks"]; !hasChecks {
+			return false
+		}
+	}
+	return true
 }
 
 func buildStepOutputContent(filePath string, raw string) *StepOutputContent {

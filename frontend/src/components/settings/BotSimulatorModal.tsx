@@ -481,13 +481,26 @@ export default function BotSimulatorModal({ isOpen, onClose }: BotSimulatorModal
 
             {/* Input */}
             <div className="px-4 py-3 border-t border-border">
+              <div className="flex items-center gap-1.5 mb-2 text-xs text-muted-foreground">
+                <span>Commands:</span>
+                {['@status', '@full', '@concise'].map(cmd => (
+                  <button
+                    key={cmd}
+                    type="button"
+                    onClick={() => setInput(cmd)}
+                    className="px-1.5 py-0.5 rounded bg-secondary hover:bg-accent text-foreground font-mono"
+                  >
+                    {cmd}
+                  </button>
+                ))}
+              </div>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                  placeholder="Type a message..."
+                  placeholder="Type a message... (@status, @full, @concise)"
                   disabled={sending}
                   className="flex-1 px-3 py-2 text-sm bg-secondary border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
                 />

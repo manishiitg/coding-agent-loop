@@ -8,7 +8,8 @@ import (
 )
 
 // =====================================================================
-// JSONL helpers — read/append for decisions.jsonl, clarifications.jsonl,
+// JSONL helpers — read/append for metrics_history.jsonl and other legacy
+// append-only framework files,
 // history.jsonl. The workspace API does not expose a streaming append, so
 // we read-modify-write with a sequence-aware id allocator.
 // =====================================================================

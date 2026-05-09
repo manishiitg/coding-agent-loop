@@ -1,6 +1,26 @@
 import React from 'react'
 import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, BookOpen } from 'lucide-react'
-import type { CommandDefinition } from './types'
+import type { CommandContext, CommandDefinition } from './types'
+
+function submitGuidedWorkflowCommand(
+  ctx: CommandContext,
+  kind: string,
+  options: { runFolder?: string | null } = {}
+) {
+  const focus = ctx.beforeSlash.trim()
+  const args = [
+    `kind=${JSON.stringify(kind)}`,
+    `focus=${JSON.stringify(focus)}`,
+  ]
+  if (options.runFolder !== undefined) {
+    args.push(`run_folder=${JSON.stringify(options.runFolder || '')}`)
+  }
+  ctx.onSubmit(
+    `Call get_workflow_command_guidance(${args.join(', ')}) and follow the returned instructions verbatim. ` +
+    `Treat focus as the conversation/request context that appeared before the slash command, including the user's recent constraints and intent. ` +
+    `The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`
+  )
+}
 
 export const builtinCommands: CommandDefinition[] = [
   {
@@ -12,8 +32,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: 'builder',
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="design-flow", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'design-flow')
     }
   },
   {
@@ -25,8 +44,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: 'builder',
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="ready-to-optimize", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'ready-to-optimize')
     }
   },
   {
@@ -38,8 +56,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: ['builder', 'optimizer', 'run'],
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-plan", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'review-plan')
     }
   },
   {
@@ -51,9 +68,8 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-speed", focus=${JSON.stringify(focus)}, run_folder=${JSON.stringify(runFolder || '')}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'review-speed', { runFolder })
     }
   },
   {
@@ -65,9 +81,8 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-cost", focus=${JSON.stringify(focus)}, run_folder=${JSON.stringify(runFolder || '')}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'review-cost', { runFolder })
     }
   },
   {
@@ -79,8 +94,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: ['builder', 'optimizer', 'run'],
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-config", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'review-config')
     }
   },
   {
@@ -92,8 +106,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: ['builder', 'optimizer'],
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-sync", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'review-sync')
     }
   },
   {
@@ -105,8 +118,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: ['builder', 'optimizer'],
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-kb", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'improve-kb')
     }
   },
   {
@@ -118,8 +130,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: ['builder', 'optimizer'],
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-learning", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'improve-learning')
     }
   },
   {
@@ -131,12 +142,11 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: ['builder', 'optimizer'],
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-db", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'improve-db')
     }
   },
   {
-    command: 'import-report',
+    command: 'improve-report',
     description: 'Validate reports/report_plan.json and suggest layout/color improvements',
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
@@ -144,8 +154,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: ['builder', 'optimizer', 'reporting'],
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="import-report", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'improve-report')
     }
   },
   {
@@ -157,9 +166,8 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-eval", focus=${JSON.stringify(focus)}, run_folder=${JSON.stringify(runFolder || '')}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'improve-eval', { runFolder })
     }
   },
   {
@@ -171,8 +179,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-continuously", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'improve-continuously')
     }
   },
   {
@@ -184,8 +191,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-workflow", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'improve-workflow')
     }
   },
   {
@@ -197,8 +203,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-code", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'review-code')
     }
   },
   {
@@ -357,8 +362,7 @@ After the tool returns, tell me:
     requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-setup-framework", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      submitGuidedWorkflowCommand(ctx, 'improve-setup-framework')
     }
   },
   {

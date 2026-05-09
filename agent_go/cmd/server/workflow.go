@@ -321,7 +321,7 @@ func writeFileToWorkspace(ctx context.Context, filePath, content string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
 	}

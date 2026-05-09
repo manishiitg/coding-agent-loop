@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mcp-agent-builder.local/schemas/auto-improvement.schema.json",
   "title": "Auto-Improvement Framework Schemas",
-  "description": "Canonical schemas for the auto-improvement framework. Companion to docs/workflow/auto_improvement_framework.md. Covers workflow.json extensions, planning/metrics.json, builder/decisions.jsonl entries, and the LLM-callable metric tool inputs.",
+  "description": "Canonical schemas for the auto-improvement framework. Companion to docs/workflow/auto_improvement_framework.md. Covers workflow.json extensions, planning/metrics.json, structured builder/improve.md / builder/improve-archive decision entries, and the LLM-callable metric tool inputs.",
   "$defs": {
 
     "OversightMode": {
@@ -27,6 +27,12 @@
       "type": "string",
       "enum": ["target", "slo"],
       "description": "target = drive toward a number; slo = stay above floor / below ceiling."
+    },
+
+    "MetricRole": {
+      "type": "string",
+      "enum": ["primary", "secondary"],
+      "description": "primary = the small set of north-star or must-not-break metrics that steer optimization; secondary = diagnostic/supporting metrics that explain or protect primary movement."
     },
 
     "MetricSource": {
@@ -63,6 +69,11 @@
         "label": {
           "type": "string",
           "description": "Human-readable name."
+        },
+        "role": { "$ref": "#/$defs/MetricRole" },
+        "category": {
+          "type": "string",
+          "description": "Freeform grouping for UI and optimizer reasoning, e.g. outcome, execution, guardrail, content_quality, strategy_learning, telemetry."
         },
         "unit": {
           "type": "string",
@@ -153,7 +164,7 @@
 
     "DecisionEntry": {
       "type": "object",
-      "description": "One line of builder/decisions.jsonl. Append-only.",
+      "description": "One structured improve-decision fenced block in the improve ledger: builder/improve.md for recent/current entries or builder/improve-archive/YYYY-MM.md for archived old entries. Append-only at the ledger level.",
       "additionalProperties": false,
       "required": ["ts", "id", "source", "trigger", "applied_changes"],
       "properties": {
@@ -233,20 +244,27 @@
           "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
         },
         "label": { "type": "string" },
+        "role": { "$ref": "#/$defs/MetricRole" },
+        "category": {
+          "type": "string",
+          "description": "Freeform grouping for UI and optimizer reasoning, e.g. outcome, execution, guardrail, content_quality, strategy_learning, telemetry."
+        },
         "unit": { "type": "string" },
         "direction": { "$ref": "#/$defs/MetricDirection" },
         "mode": { "$ref": "#/$defs/MetricMode" },
         "target": { "type": "number" },
-	        "floor": { "type": "number" },
-	        "ceiling": { "type": "number" },
-	        "source": { "$ref": "#/$defs/MetricSource" },
-	        "success_criteria": {
-	          "type": "string",
-	          "description": "The soul.md success criterion this metric operationalizes. Quote or summarize the exact criterion."
-	        },
-	        "parent": { "type": "string" },
+        "floor": { "type": "number" },
+        "ceiling": { "type": "number" },
+        "source": { "$ref": "#/$defs/MetricSource" },
+        "success_criteria": {
+          "type": "string",
+          "description": "The soul.md success criterion this metric operationalizes. Quote or summarize the exact criterion."
+        },
+        "parent": { "type": "string" },
         "amend_existing": {
           "type": "object",
+          "additionalProperties": false,
+          "description": "Set when amending an existing active metric id. The previous active definition is archived and the new active definition gets version+1.",
           "required": ["id", "reason"],
           "properties": {
             "id": { "type": "string" },

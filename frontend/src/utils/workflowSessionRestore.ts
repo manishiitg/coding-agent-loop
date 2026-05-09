@@ -155,11 +155,7 @@ export async function restoreWorkflowSessionChat(
     try {
       const response = await agentApi.getRecentSessionEvents(session.session_id)
       const restoredEvents = response.events || []
-      if (latestChatStore.getTabEvents(session.session_id).length > 0) {
-        latestChatStore.addTabEvents(session.session_id, restoredEvents)
-      } else {
-        latestChatStore.setTabEvents(session.session_id, restoredEvents)
-      }
+      latestChatStore.setTabEvents(session.session_id, restoredEvents)
       latestChatStore.setTabLastEventIndex(
         session.session_id,
         response.last_processed_index ?? (restoredEvents.length ? restoredEvents.length - 1 : -1),

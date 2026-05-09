@@ -156,6 +156,12 @@ func whatsappStatusHandler(svc *slackservice.WhatsAppService) http.HandlerFunc {
 			"connected": svc.IsConnected(),
 			"own_jid":   svc.OwnJID().String(),
 		}
+		access := svc.GetAccessState()
+		resp["link_code"] = access.LinkCode
+		if !access.LinkCodeExpires.IsZero() {
+			resp["link_code_expires_at"] = access.LinkCodeExpires.UTC().Format(time.RFC3339)
+		}
+		resp["bound_chat_count"] = len(access.BoundChats)
 		if code, expires := svc.GetQR(); code != "" && !expires.IsZero() {
 			resp["qr_available"] = true
 			resp["qr_expires_at"] = expires.UTC().Format(time.RFC3339)

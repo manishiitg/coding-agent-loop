@@ -45,17 +45,17 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
       const status = await oauthApi.getOAuthStatus(serverName);
       console.log(`[OAuthStatusBadge] Status for ${serverName}:`, status);
 
-      // Only call onAuthChange when validity actually changes (use ref to avoid stale closure)
+      // Trigger refresh when auth becomes valid, including the first status
+      // check after a page remount or missed polling transition.
       const prevValid = prevTokenValidRef.current;
-      const validityChanged = prevValid !== null && prevValid !== status.valid;
+      const becameValid = status.valid && prevValid !== true;
 
       setTokenValid(status.valid);
       setExpiresIn(status.expires_in);
       setHasOAuth(true);
       prevTokenValidRef.current = status.valid;
 
-      // Only trigger refresh when transitioning from invalid to valid
-      if (validityChanged && status.valid) {
+      if (becameValid) {
         console.log(`[OAuthStatusBadge] Auth changed to valid for ${serverName}, triggering refresh`);
         onAuthChange?.(status.valid);
       }

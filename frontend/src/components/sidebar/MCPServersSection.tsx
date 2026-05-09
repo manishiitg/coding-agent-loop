@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { ServerCog, Loader2, AlertCircle, Settings } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ServerCog, Loader2, AlertCircle, Settings, RefreshCw } from 'lucide-react'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import MCPConfigPopup from '../MCPConfigPopup'
 import MCPToolApiTester from '../MCPToolApiTester'
@@ -91,6 +91,18 @@ export default function MCPServersSection() {
     })
   }
 
+  useEffect(() => {
+    if (!showMCPDetails || expandedLogs.size === 0) return
+
+    const interval = window.setInterval(() => {
+      expandedLogs.forEach((serverName) => {
+        fetchServerLogs(serverName)
+      })
+    }, 3000)
+
+    return () => window.clearInterval(interval)
+  }, [expandedLogs, fetchServerLogs, showMCPDetails])
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between mb-2">
@@ -98,9 +110,22 @@ export default function MCPServersSection() {
           <ServerCog className="w-4 h-4 text-gray-600 dark:text-gray-400" />
           <span className="text-sm font-medium text-gray-900 dark:text-gray-100">MCP Servers</span>
         </div>
-        <span className="px-2 py-0.5 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">
-          {toolList.length}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="px-2 py-0.5 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">
+            {toolList.length}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              refreshTools()
+            }}
+            className="p-1 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800 transition-colors"
+            title="Refresh MCP servers"
+            aria-label="Refresh MCP servers"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingTools ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
 
 
@@ -188,8 +213,15 @@ export default function MCPServersSection() {
                       requiresOAuth={(tools[0] as any).requires_oauth}
                       onAuthChange={(valid) => {
                         if (valid) {
-                          // Refresh tools after successful OAuth authentication
-                          refreshTools();
+                          const needsDiscovery = tools[0].status !== 'ok' || (tools[0].toolsEnabled || 0) === 0
+                          if (needsDiscovery) {
+                            const nextExpandedServers = new Set(expandedServers)
+                            nextExpandedServers.add(serverName)
+                            setExpandedServers(nextExpandedServers)
+                            setExpandedLogs(prev => new Set([...prev, serverName]))
+                            fetchServerLogs(serverName)
+                            refreshTools();
+                          }
                         }
                       }}
                     />

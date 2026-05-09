@@ -42,7 +42,8 @@ const (
 	PlanStabilityFrozen  PlanStability = "frozen"
 )
 
-// DecisionLogMutability — controls whether decision-log entries can be edited.
+// DecisionLogMutability — controls whether structured improve.md decision
+// entries can be edited.
 type DecisionLogMutability string
 
 const (
@@ -59,13 +60,13 @@ const (
 	DecisionSourceSystem DecisionSource = "system"
 )
 
-// DecisionEntry is one line of builder/decisions.jsonl. Append-only.
+// DecisionEntry is one structured fenced block in builder/improve.md. Append-only.
 //
-// User context captures (formerly stored in context/clarifications.jsonl) now
-// land here too with `Source: user` + `Trigger: capture-context` + the
-// context-specific fields below (RuleAdded, RuleSection, ExamplePaths). One
-// audit log, one place to read. Agents append these directly via
-// capture_context when the user confirms durable context in chat.
+// User context captures land here too with `Source: user` +
+// `Trigger: capture-context` + the context-specific fields below (RuleAdded,
+// RuleSection, ExamplePaths). One improve.md ledger, one place to read. Agents
+// append these through capture_context when the user confirms durable context
+// in chat.
 type DecisionEntry struct {
 	Ts                  string         `json:"ts"`
 	ID                  string         `json:"id"`
@@ -103,6 +104,16 @@ const (
 	MetricModeSLO    MetricMode = "slo"
 )
 
+// MetricRole describes how strongly a metric should steer improvement.
+// Primary metrics are the small set the workflow is truly optimizing for;
+// secondary metrics explain, guard, or diagnose movement in primary metrics.
+type MetricRole string
+
+const (
+	MetricRolePrimary   MetricRole = "primary"
+	MetricRoleSecondary MetricRole = "secondary"
+)
+
 // MetricSourceType — where a metric value comes from each run.
 type MetricSourceType string
 
@@ -118,14 +129,12 @@ type MetricSource struct {
 	Field string           `json:"field,omitempty"`
 }
 
-// Metric is one entry in metrics.json::metrics[].
-//
-// Minimal model: id + threshold + a pointer to where the value lives.
-// Every metric is append-only by id; to change a metric's meaning, retire
-// the old one (retire_metric) and create a new one with a new id.
+// Metric is one active entry in metrics.json::metrics[].
 type Metric struct {
 	ID        string          `json:"id"`
 	Label     string          `json:"label,omitempty"`
+	Role      MetricRole      `json:"role,omitempty"`
+	Category  string          `json:"category,omitempty"`
 	Unit      string          `json:"unit"`
 	Direction MetricDirection `json:"direction"`
 	Mode      MetricMode      `json:"mode"`
@@ -136,11 +145,26 @@ type Metric struct {
 	// SuccessCriteria is the soul.md success-criteria text this metric operationalizes.
 	// Optional for backward compatibility; UI surfaces a warning when it is missing.
 	SuccessCriteria string `json:"success_criteria,omitempty"`
+	Parent          string `json:"parent,omitempty"`
+	Version         int    `json:"version,omitempty"`
+}
+
+// MetricArchiveEntry preserves prior definitions when an active metric is
+// amended or retired. The historical metric rows remain in metrics_history;
+// this archive explains what those older rows meant.
+type MetricArchiveEntry struct {
+	ID             string `json:"id"`
+	Version        int    `json:"version"`
+	ArchivedAt     string `json:"archived_at"`
+	ArchivedReason string `json:"archived_reason"`
+	Definition     Metric `json:"definition"`
 }
 
 // MetricsFile is the shape of <workflow>/planning/metrics.json.
 type MetricsFile struct {
-	Metrics []Metric `json:"metrics"`
+	Metrics    []Metric             `json:"metrics"`
+	Archive    []MetricArchiveEntry `json:"archive,omitempty"`
+	ActiveMode string               `json:"active_mode,omitempty"`
 }
 
 // nowUTC returns the current time in ISO-8601 UTC string form.

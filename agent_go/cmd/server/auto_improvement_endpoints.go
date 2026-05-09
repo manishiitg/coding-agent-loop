@@ -15,7 +15,6 @@ import (
 //
 // Routes (registered in server.go alongside the other api/workflow/* routes):
 //   GET  /api/workflow/eval-trajectory?workspace_path=...
-//   GET  /api/workflow/decisions?workspace_path=...
 //   GET  /api/workflow/metrics?workspace_path=...
 //
 // All read-only.
@@ -92,29 +91,6 @@ func computeEvalTrajectory(ctx context.Context, workspacePath string) ([]EvalTra
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StepID < out[j].StepID })
 	return out, nil
-}
-
-// DecisionsFeedResponse is the JSON shape of GET /api/workflow/decisions.
-type DecisionsFeedResponse struct {
-	Success   bool            `json:"success"`
-	Decisions []DecisionEntry `json:"decisions"`
-	Error     string          `json:"error,omitempty"`
-}
-
-func (api *StreamingAPI) handleGetDecisionsFeed(w http.ResponseWriter, r *http.Request) {
-	if !setupCORS(w, r, http.MethodGet) {
-		return
-	}
-	workspacePath, ok := requireWorkspacePath(w, r)
-	if !ok {
-		return
-	}
-	entries, err := ReadDecisionEntries(r.Context(), workspacePath)
-	if err != nil {
-		writeAIJSON(w, DecisionsFeedResponse{Success: false, Error: err.Error()})
-		return
-	}
-	writeAIJSON(w, DecisionsFeedResponse{Success: true, Decisions: entries})
 }
 
 // MetricsResponse is the JSON shape of GET /api/workflow/metrics.
@@ -229,6 +205,17 @@ type BuilderDocResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
+type BuilderDocArchiveFile struct {
+	Path  string `json:"path"`
+	Label string `json:"label"`
+}
+
+type BuilderDocArchivesResponse struct {
+	Success bool                    `json:"success"`
+	Files   []BuilderDocArchiveFile `json:"files"`
+	Error   string                  `json:"error,omitempty"`
+}
+
 // handleGetBuilderDoc serves the contents of builder/improve.md,
 // builder/review.md, or soul/soul.md so the AutoImprovementPopup can render
 // them inline.
@@ -242,6 +229,7 @@ func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	doc := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("doc")))
+	requestedPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	var rel string
 	switch doc {
 	case "improve":
@@ -254,6 +242,18 @@ func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "doc must be one of: improve, review, soul", http.StatusBadRequest)
 		return
 	}
+	if requestedPath != "" {
+		if doc != "improve" && doc != "review" {
+			http.Error(w, "path is only supported for improve/review archive files", http.StatusBadRequest)
+			return
+		}
+		cleanPath := path.Clean(requestedPath)
+		if !isBuilderDocArchivePath(doc, cleanPath) {
+			http.Error(w, "path must be under the matching builder/*-archive/ folder and end with .md", http.StatusBadRequest)
+			return
+		}
+		rel = cleanPath
+	}
 	full := path.Join(strings.Trim(workspacePath, "/"), rel)
 	content, exists, err := readFileFromWorkspace(r.Context(), full)
 	if err != nil {
@@ -265,6 +265,58 @@ func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeAIJSON(w, BuilderDocResponse{Success: true, Doc: doc, Path: rel, Exists: true, Content: content})
+}
+
+func (api *StreamingAPI) handleGetBuilderDocArchives(w http.ResponseWriter, r *http.Request) {
+	if !setupCORS(w, r, http.MethodGet) {
+		return
+	}
+	workspacePath, ok := requireWorkspacePath(w, r)
+	if !ok {
+		return
+	}
+	doc := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("doc")))
+	if doc == "" {
+		doc = "improve"
+	}
+	if doc != "improve" && doc != "review" {
+		http.Error(w, "doc must be one of: improve, review", http.StatusBadRequest)
+		return
+	}
+	folder := path.Join(strings.Trim(workspacePath, "/"), "builder", doc+"-archive")
+	listing, exists, err := listWorkspaceFolder(r.Context(), folder, 2)
+	if err != nil {
+		writeAIJSON(w, BuilderDocArchivesResponse{Success: false, Files: []BuilderDocArchiveFile{}, Error: err.Error()})
+		return
+	}
+	if !exists {
+		writeAIJSON(w, BuilderDocArchivesResponse{Success: true, Files: []BuilderDocArchiveFile{}})
+		return
+	}
+	var paths []string
+	collectWorkspaceFilePaths(listing, &paths)
+	files := make([]BuilderDocArchiveFile, 0, len(paths))
+	workspacePrefix := strings.Trim(workspacePath, "/") + "/"
+	for _, p := range paths {
+		rel := strings.TrimPrefix(path.Clean(filepath.ToSlash(p)), workspacePrefix)
+		if !isBuilderDocArchivePath(doc, rel) {
+			continue
+		}
+		label := strings.TrimSuffix(path.Base(rel), ".md")
+		files = append(files, BuilderDocArchiveFile{Path: rel, Label: label})
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path > files[j].Path
+	})
+	writeAIJSON(w, BuilderDocArchivesResponse{Success: true, Files: files})
+}
+
+func isBuilderDocArchivePath(doc, rel string) bool {
+	rel = path.Clean(strings.TrimSpace(rel))
+	return (doc == "improve" || doc == "review") &&
+		strings.HasPrefix(rel, "builder/"+doc+"-archive/") &&
+		strings.HasSuffix(rel, ".md") &&
+		!strings.Contains(rel, "..")
 }
 
 // --- Shared HTTP helpers ----------------------------------------------------

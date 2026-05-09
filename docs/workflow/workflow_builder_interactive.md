@@ -56,7 +56,7 @@ The builder has multiple workshop modes.
 Current backend modes:
 - `builder`
 - `optimizer`
-- `runner`
+- `run`
 - `debugger`
 - `eval`
 - `output`
@@ -83,11 +83,13 @@ Adds:
 - evaluation helpers
 - learning and step-hardening workflows
 
-### `runner`
-Use this when the workflow is already built and the user mainly wants to execute or inspect runs.
+### `run`
+Use this when the workflow is already built and the user mainly wants operational execution, Slack/WhatsApp answers, or result inspection.
 
-Allowed behavior is narrower:
-- run steps
+Allowed behavior is runtime-focused:
+- answer directly from workflow state, KB, learnings, db, and latest run artifacts
+- run normal steps
+- run orphan utility steps
 - run the full workflow
 - inspect executions
 
@@ -99,7 +101,7 @@ If the frontend does not explicitly force a workshop mode, the backend defaults 
 
 Current rule:
 - default -> `builder`
-- `optimizer`, `runner`, and reporting mode are explicit frontend/user choices
+- `optimizer`, `run`, and reporting mode are explicit frontend/user choices or bot-route settings
 
 This logic lives in [interactive_workshop_manager.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go).
 
@@ -116,7 +118,8 @@ Current behavior:
 
 This is how the product enforces boundaries like:
 - builder can modify the plan
-- runner cannot freely redesign the workflow
+- run mode can execute user-facing work, normal steps, orphan utility steps, and full workflows
+- run mode can read KB/learnings/db/run artifacts, but cannot freely redesign the workflow
 - debugger is read-heavy
 
 The tool allow-list logic is in [interactive_workshop_manager.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go).
@@ -164,9 +167,9 @@ This means builder testing always operates against the current mutable run, not 
 
 ## Full Workflow Runs From Builder
 
-In `optimizer` and `runner` modes, the builder can execute the entire workflow via `run_full_workflow(...)`.
+In `optimizer` and `run` modes, the workshop agent can execute the entire workflow via `run_full_workflow(...)`.
 
-That is still a background workflow execution, not a special toy runner.
+That is still a background workflow execution, not a special toy mode.
 
 Important behavior:
 - it runs the real workflow controller path
@@ -229,7 +232,7 @@ The same underlying workshop infrastructure also supports adjacent specialized p
 - `output`
 - `debugger`
 
-But the primary workflow-builder experience is still `workflow-builder` plus the builder/optimizer/runner workshop modes.
+But the primary workflow-builder experience is still `workflow-builder` plus the builder/optimizer/run workshop modes.
 
 ## Practical Summary
 

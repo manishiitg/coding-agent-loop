@@ -57,3 +57,39 @@ func TestBuildStepOutputContentKeepsTextOutput(t *testing.T) {
 		t.Fatalf("unexpected content: %#v", out.Content)
 	}
 }
+
+func TestEvaluationOutputContentCandidatesPreferDeclaredEvalArtifacts(t *testing.T) {
+	step := &EvaluationStep{
+		ID: "eval-variety-coverage",
+		PreValidation: &ValidationSchema{Files: []FileValidationRule{{
+			FileName:  "eval_result.json",
+			MustExist: true,
+		}}},
+	}
+	candidates := evaluationOutputContentCandidates("evaluation/runs/iteration-0/test-run/execution", "eval-variety-coverage", step)
+
+	expected := []string{
+		"evaluation/runs/iteration-0/test-run/execution/eval-variety-coverage/output_content.json",
+		"evaluation/runs/iteration-0/test-run/execution/eval-variety-coverage/eval_result.json",
+		"evaluation/runs/iteration-0/test-run/execution/eval-variety-coverage/context_output.json",
+	}
+	if len(candidates) != len(expected) {
+		t.Fatalf("expected %d candidates, got %d: %#v", len(expected), len(candidates), candidates)
+	}
+	for i := range expected {
+		if candidates[i] != expected[i] {
+			t.Fatalf("candidate[%d]: expected %q, got %q", i, expected[i], candidates[i])
+		}
+	}
+}
+
+func TestIsValidationSchemaLikeJSON(t *testing.T) {
+	schema := `{"files":[{"file_name":"eval_result.json","must_exist":true,"json_checks":[{"path":"$.score","must_exist":true}]}]}`
+	if !isValidationSchemaLikeJSON(schema) {
+		t.Fatal("expected validation schema stub to be detected")
+	}
+	result := `{"score":1,"category_distinct_30d":6}`
+	if isValidationSchemaLikeJSON(result) {
+		t.Fatal("did not expect normal result JSON to be treated as validation schema")
+	}
+}

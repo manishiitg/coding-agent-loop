@@ -1228,10 +1228,10 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Auto-improvement framework — see docs/workflow/auto_improvement_framework.md
 	apiRouter.HandleFunc("/workflow/eval-trajectory", api.handleGetEvalTrajectory).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/decisions", api.handleGetDecisionsFeed).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/metrics", api.handleGetMetrics).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/metrics-history", api.handleGetMetricsHistory).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/builder-doc", api.handleGetBuilderDoc).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/builder-doc-archives", api.handleGetBuilderDocArchives).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/framework-health", api.handleGetFrameworkHealth).Methods("GET", "OPTIONS")
 
 	// Plan and Step Config API routes

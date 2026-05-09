@@ -66,7 +66,8 @@ type ChannelRoute struct {
 	WorkspacePath string `json:"workspace_path"`
 	// WorkshopMode overrides whatever is set in the workflow manifest. Valid:
 	// "builder" | "optimizer" | "run". Empty means "use workflow default".
-	WorkshopMode string `json:"workshop_mode,omitempty"`
+	WorkshopMode    string `json:"workshop_mode,omitempty"`
+	SendFullDetails bool   `json:"send_full_details,omitempty"`
 }
 
 // ThreadID identifies a conversation thread on a platform
@@ -220,6 +221,18 @@ type BotRunningWorkflow struct {
 
 type RunningWorkflowsFunc func(userID string) []BotRunningWorkflow
 
+type BotThreadStatus struct {
+	HasSession bool
+	Status     string
+	DetailMode string
+}
+
+type BotThreadStatusFunc func(threadID ThreadID) BotThreadStatus
+
+type botThreadStatusReceiver interface {
+	SetBotThreadStatusProvider(BotThreadStatusFunc)
+}
+
 // BotConversationManager is the platform-agnostic orchestrator for bot sessions.
 // Bot conversations are unified with regular chat sessions: each Slack thread
 // / DM / web-simulator tab maps to a chat session folder with a BotMetadata
@@ -269,6 +282,8 @@ type activeBotSession struct {
 	builderDone      bool            // event filter signalled the parent session finished its own turn
 	pendingWorkflows int             // live workflows attached via SpawnListener (>0 defers cancel)
 	activeWorkflows  map[string]bool // wfSessionID set, for idempotent NotifyWorkflowEnded
+	queuedMessages   []BotIncomingMessage
+	sendFullDetails  bool
 }
 
 // NewBotConversationManager creates a new manager.
@@ -327,6 +342,31 @@ func (m *BotConversationManager) SetRunningWorkflowsFunc(fn RunningWorkflowsFunc
 	m.runningWorkflows = fn
 }
 
+func (m *BotConversationManager) BotThreadStatus(threadID ThreadID) BotThreadStatus {
+	m.mu.RLock()
+	active := m.sessions[threadID.Key()]
+	if active == nil && threadID.ThreadTS == "" && threadID.ChannelID != "" {
+		threadID.ThreadTS = threadID.ChannelID
+		active = m.sessions[threadID.Key()]
+	}
+	m.mu.RUnlock()
+	if active == nil {
+		return BotThreadStatus{DetailMode: "concise"}
+	}
+
+	active.mu.Lock()
+	defer active.mu.Unlock()
+	detailMode := "concise"
+	if active.sendFullDetails {
+		detailMode = "full"
+	}
+	return BotThreadStatus{
+		HasSession: true,
+		Status:     active.Status,
+		DetailMode: detailMode,
+	}
+}
+
 // SetUserSecretsLoader sets the function used to load decrypted user secrets for bot sessions
 func (m *BotConversationManager) SetUserSecretsLoader(fn UserSecretsLoaderFunc) {
 	m.loadUserSecrets = fn
@@ -339,6 +379,9 @@ func (m *BotConversationManager) RegisterConnector(connector BotConnector) {
 
 	name := connector.Name()
 	m.connectors[name] = connector
+	if receiver, ok := connector.(botThreadStatusReceiver); ok {
+		receiver.SetBotThreadStatusProvider(m.BotThreadStatus)
+	}
 
 	// Set up message handler
 	connector.SetMessageHandler(m.HandleIncomingMessage)
@@ -531,6 +574,10 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 		return
 	}
 
+	if m.handleBotControlWithoutSession(msg, threadID) {
+		return
+	}
+
 	go m.startNewSessionDirect(msg, threadID)
 }
 
@@ -568,6 +615,12 @@ const threadlessSessionIdleLimit = 1 * time.Hour
 // isn't drowned in old context but has enough to resolve casual
 // references ("the same issue as before", etc.).
 const staleContextTurns = 3
+
+// maxThreadlessQueuedMessages caps WhatsApp/Telegram messages received while
+// the builder is still processing the current turn. These platforms have no
+// threads, so queueing preserves user intent without letting a stuck session
+// accumulate unbounded work.
+const maxThreadlessQueuedMessages = 10
 
 // loadRecentChatTurns reads the last `n` user/assistant turns from a
 // session's conversation.json. Returns nil on any read/parse failure; the
@@ -661,15 +714,21 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	awaiting := active.awaitingUserInput
 	blockingEventType := active.blockingEventType
 	lastActivity := active.LastActivity
+	builderDone := active.builderDone
+	sendFullDetails := active.sendFullDetails
 	oldSessionID := active.SessionID
 	oldUserID := active.UserID
 	oldThreadID := active.ThreadID
 	active.mu.Unlock()
 
-	if !supportsThreads && isSessionStatusCommand(msg.Text) {
+	if isSessionStatusCommand(msg.Text) {
 		if connector := m.GetConnector(active.Platform); connector != nil {
-			connector.SendThreadMessage(context.Background(), active.ThreadID, m.formatThreadlessStatusReply(oldUserID, status, awaiting, blockingEventType))
+			connector.SendThreadMessage(context.Background(), active.ThreadID, m.formatBotStatusReply(oldUserID, status, awaiting, blockingEventType, sendFullDetails))
 		}
+		return
+	}
+	if mode, ok := parseBotDetailModeCommand(msg.Text); ok {
+		m.setActiveBotDetailMode(active, mode == "full")
 		return
 	}
 
@@ -713,10 +772,15 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 			return
 		}
 		if !supportsThreads {
-			connector := m.GetConnector(active.Platform)
-			if connector != nil {
-				connector.SendThreadMessage(context.Background(), active.ThreadID,
-					"A session is currently running. Reply 'done' to end it, or wait for it to complete.")
+			active.mu.Lock()
+			sid := active.SessionID
+			uid := active.UserID
+			active.mu.Unlock()
+			if builderDone && m.startFollowUpTurn(active, msg, sid, uid, "threadless-free") {
+				return
+			}
+			if connector := m.GetConnector(active.Platform); connector != nil {
+				m.queueThreadlessMessage(active, connector, msg)
 			}
 			return
 		}
@@ -747,16 +811,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		uid := active.UserID
 		active.mu.Unlock()
 		if m.followUpSession != nil && sid != "" {
-			log.Printf("[BOT_MANAGER] Sending follow-up to session %s: %s", sid, botTruncate(msg.Text, 80))
-			m.resetActiveForNewTurn(active)
-			go func() {
-				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
-				if err != nil {
-					log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
-				}
-			}()
+			m.startFollowUpTurn(active, msg, sid, uid, "threaded")
 		} else {
 			log.Printf("[BOT_MANAGER] Cannot send follow-up: followUpSession=%v sessionID=%s", m.followUpSession != nil, sid)
 		}
@@ -773,6 +828,121 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		}
 		go m.startNewSessionDirect(msg, threadID)
 	}
+}
+
+func (m *BotConversationManager) handleBotControlWithoutSession(msg BotIncomingMessage, threadID ThreadID) bool {
+	if !isSessionStatusCommand(msg.Text) {
+		if _, ok := parseBotDetailModeCommand(msg.Text); !ok {
+			return false
+		}
+	}
+	connector := m.GetConnector(msg.Platform)
+	if connector == nil {
+		return true
+	}
+	reply := "No active bot session in this thread."
+	if _, ok := parseBotDetailModeCommand(msg.Text); ok {
+		reply = "No active bot session in this thread. Start a workflow run first, then use `full` or `concise` to change message detail for that run."
+	}
+	connector.SendThreadMessage(context.Background(), threadID, reply)
+	return true
+}
+
+func (m *BotConversationManager) setActiveBotDetailMode(active *activeBotSession, full bool) {
+	active.mu.Lock()
+	active.sendFullDetails = full
+	filter := active.eventFilter
+	threadID := active.ThreadID
+	platform := active.Platform
+	active.LastActivity = time.Now()
+	active.mu.Unlock()
+
+	if filter != nil {
+		filter.SetSendFullDetails(full)
+	}
+	mode := "concise"
+	reply := "Concise mode on. I'll send only the workflow-builder answer plus required prompts/errors."
+	if full {
+		mode = "full"
+		reply = "Full mode on. I'll include workflow runtime details for this session."
+	}
+	log.Printf("[BOT_MANAGER] Bot detail mode set to %s for session %s", mode, active.SessionID)
+	if connector := m.GetConnector(platform); connector != nil {
+		connector.SendThreadMessage(context.Background(), threadID, reply)
+	}
+}
+
+func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg BotIncomingMessage, sessionID, userID, source string) bool {
+	if m.followUpSession == nil || sessionID == "" {
+		log.Printf("[BOT_MANAGER] Cannot send follow-up: followUpSession=%v sessionID=%s", m.followUpSession != nil, sessionID)
+		return false
+	}
+	if source == "" {
+		source = "follow-up"
+	}
+	log.Printf("[BOT_MANAGER] Sending %s to session %s: %s", source, sessionID, botTruncate(msg.Text, 80))
+	m.resetActiveForNewTurn(active)
+	active.mu.Lock()
+	active.LastActivity = time.Now()
+	active.mu.Unlock()
+	go func() {
+		followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer followCancel()
+		err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, userID, "", nil, ""), sessionID, userID)
+		if err != nil {
+			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
+		}
+	}()
+	return true
+}
+
+func (m *BotConversationManager) queueThreadlessMessage(active *activeBotSession, connector BotConnector, msg BotIncomingMessage) {
+	if connector == nil {
+		return
+	}
+	active.mu.Lock()
+	threadID := active.ThreadID
+	sessionID := active.SessionID
+	if len(active.queuedMessages) >= maxThreadlessQueuedMessages {
+		queueLen := len(active.queuedMessages)
+		active.LastActivity = time.Now()
+		active.mu.Unlock()
+		log.Printf("[BOT_MANAGER] Thread-less queue full for session %s; dropping message: %s", sessionID, botTruncate(msg.Text, 80))
+		connector.SendThreadMessage(context.Background(), threadID,
+			fmt.Sprintf("Builder is still processing your previous message. I already have %d message(s) queued; reply 'done' to end this run before sending more.", queueLen))
+		return
+	}
+	active.queuedMessages = append(active.queuedMessages, msg)
+	queueLen := len(active.queuedMessages)
+	active.LastActivity = time.Now()
+	active.mu.Unlock()
+
+	log.Printf("[BOT_MANAGER] Queued thread-less message for session %s (queue=%d): %s", sessionID, queueLen, botTruncate(msg.Text, 80))
+	reply := "Builder is processing your previous message. I queued this one and will run it next."
+	if queueLen > 1 {
+		reply = fmt.Sprintf("Builder is processing your previous message. I queued this one at position %d.", queueLen)
+	}
+	connector.SendThreadMessage(context.Background(), threadID, reply)
+}
+
+func (m *BotConversationManager) startNextQueuedMessage(active *activeBotSession) bool {
+	if m.followUpSession == nil {
+		return false
+	}
+	active.mu.Lock()
+	if active.awaitingUserInput || len(active.queuedMessages) == 0 {
+		active.mu.Unlock()
+		return false
+	}
+	msg := active.queuedMessages[0]
+	active.queuedMessages = active.queuedMessages[1:]
+	sessionID := active.SessionID
+	userID := active.UserID
+	remaining := len(active.queuedMessages)
+	active.mu.Unlock()
+
+	log.Printf("[BOT_MANAGER] Draining queued thread-less message for session %s (remaining=%d)", sessionID, remaining)
+	return m.startFollowUpTurn(active, msg, sessionID, userID, "queued-threadless")
 }
 
 // handleBlockingResponse handles a user response to a blocking event (plan_approval, human feedback, etc.)
@@ -931,17 +1101,34 @@ func isSessionEndCommand(text string) bool {
 }
 
 func isSessionStatusCommand(text string) bool {
-	normalized := botNormalizeText(text)
+	normalized := botNormalizeText(strings.TrimPrefix(strings.TrimSpace(text), "@"))
 	return normalized == "status"
 }
 
-func (m *BotConversationManager) formatThreadlessStatusReply(userID, status string, awaiting bool, blockingEventType string) string {
+func parseBotDetailModeCommand(text string) (string, bool) {
+	normalized := botNormalizeText(strings.TrimPrefix(strings.TrimSpace(text), "@"))
+	switch normalized {
+	case "full", "verbose", "details", "details on", "full details", "full on", "big", "big messages":
+		return "full", true
+	case "concise", "short", "brief", "summary", "details off", "full off", "small", "small messages":
+		return "concise", true
+	default:
+		return "", false
+	}
+}
+
+func (m *BotConversationManager) formatBotStatusReply(userID, status string, awaiting bool, blockingEventType string, sendFullDetails bool) string {
+	detail := "concise"
+	if sendFullDetails {
+		detail = "full"
+	}
+	suffix := fmt.Sprintf("\nDetail mode: %s. Use `full` or `concise` to switch.", detail)
 	if m.runningWorkflows != nil {
 		if workflows := m.runningWorkflows(userID); len(workflows) > 0 {
-			return formatRunningWorkflowsStatus(workflows)
+			return formatRunningWorkflowsStatus(workflows) + suffix
 		}
 	}
-	return formatThreadlessSessionStatus(status, awaiting, blockingEventType)
+	return formatThreadlessSessionStatus(status, awaiting, blockingEventType) + suffix
 }
 
 func formatRunningWorkflowsStatus(workflows []BotRunningWorkflow) string {
@@ -1099,16 +1286,18 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
 	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform)
+	sendFullDetails := botFullDetailsFromRequest(queryReq)
 
 	// Track as active session — bot sessions are in-memory only.
 	m.mu.Lock()
 	activeTask := &activeBotSession{
-		SessionID: newSessionID,
-		UserID:    workspaceUserID,
-		Status:    chathistory.BotSessionStatusRunning,
-		Platform:  msg.Platform,
-		ThreadID:  threadID,
-		Metadata:  botMeta,
+		SessionID:       newSessionID,
+		UserID:          workspaceUserID,
+		Status:          chathistory.BotSessionStatusRunning,
+		Platform:        msg.Platform,
+		ThreadID:        threadID,
+		Metadata:        botMeta,
+		sendFullDetails: sendFullDetails,
 	}
 	m.sessions[threadID.Key()] = activeTask
 	m.mu.Unlock()
@@ -1144,19 +1333,21 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
 	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform)
+	sendFullDetails := botFullDetailsFromRequest(queryReq)
 
 	// Track active session — bot sessions are in-memory only.
 	m.mu.Lock()
 	active := &activeBotSession{
-		SessionID:    sessionID,
-		UserID:       workspaceUserID,
-		Status:       chathistory.BotSessionStatusRunning,
-		Platform:     msg.Platform,
-		ThreadID:     threadID,
-		Metadata:     botMeta,
-		ackChannelID: msg.ChannelID,
-		ackMessageTS: msg.MessageTS,
-		LastActivity: time.Now(),
+		SessionID:       sessionID,
+		UserID:          workspaceUserID,
+		Status:          chathistory.BotSessionStatusRunning,
+		Platform:        msg.Platform,
+		ThreadID:        threadID,
+		Metadata:        botMeta,
+		ackChannelID:    msg.ChannelID,
+		ackMessageTS:    msg.MessageTS,
+		LastActivity:    time.Now(),
+		sendFullDetails: sendFullDetails,
 	}
 	m.sessions[threadID.Key()] = active
 	m.mu.Unlock()
@@ -1204,6 +1395,7 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	active.mu.Lock()
 	active.cancel = cancel
 	active.eventFilter = NewBotEventFilter(connector, active.ThreadID, active.SessionID, os.Getenv("PUBLIC_URL"), active.UserID)
+	active.eventFilter.SetSendFullDetails(active.sendFullDetails)
 	sessionID := active.SessionID
 	userID := active.UserID
 	active.mu.Unlock()
@@ -1227,6 +1419,9 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 		active.builderDone = true
 		pending := active.pendingWorkflows
 		active.mu.Unlock()
+		if m.startNextQueuedMessage(active) {
+			return
+		}
 		if pending > 0 {
 			log.Printf("[BOT_MANAGER] Builder done for %s but %d workflow(s) still running — deferring cancel", active.SessionID, pending)
 			return
@@ -1318,14 +1513,32 @@ func (m *BotConversationManager) PrepareSyntheticTurn(sessionID string) {
 	m.resetActiveForNewTurn(active)
 }
 
+func botFullDetailsFromRequest(req map[string]interface{}) bool {
+	if req == nil {
+		return false
+	}
+	v, ok := req["bot_send_full_details"]
+	if !ok {
+		return false
+	}
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		return strings.EqualFold(strings.TrimSpace(t), "true")
+	default:
+		return false
+	}
+}
+
 // SendSyntheticTurnFinalIfNeeded forwards the final assistant text produced by
 // a background auto-notification turn back to the originating bot thread.
 //
 // Most normal turns are delivered by BotEventFilter from llm_generation_end /
 // unified_completion events. Synthetic background turns can finish by only
 // persisting builder history, so this is a narrow fallback. It checks the
-// filter's per-turn mainTextSent flag first to avoid duplicate messages when
-// events were delivered normally.
+// filter's per-turn sent text first to avoid duplicate messages when events
+// were delivered normally while still allowing a later, fuller synthetic final.
 func (m *BotConversationManager) SendSyntheticTurnFinalIfNeeded(sessionID, message string) bool {
 	message = strings.TrimSpace(message)
 	if sessionID == "" || message == "" {
@@ -1345,8 +1558,8 @@ func (m *BotConversationManager) SendSyntheticTurnFinalIfNeeded(sessionID, messa
 	active.LastActivity = time.Now()
 	active.mu.Unlock()
 
-	if filter != nil && filter.HasSentMainText() {
-		log.Printf("[BOT_MANAGER] Synthetic final fallback skipped for %s: builder text already sent", sessionID)
+	if filter != nil && !filter.ShouldSendSyntheticFinal(message) {
+		log.Printf("[BOT_MANAGER] Synthetic final fallback skipped for %s: same builder text already sent", sessionID)
 		return false
 	}
 
@@ -1361,7 +1574,7 @@ func (m *BotConversationManager) SendSyntheticTurnFinalIfNeeded(sessionID, messa
 		return false
 	}
 	if filter != nil {
-		filter.MarkMainTextSent()
+		filter.MarkMainTextSent(message)
 	}
 	log.Printf("[BOT_MANAGER] Synthetic final fallback sent for %s (%d chars)", sessionID, len(message))
 	return true
@@ -1641,19 +1854,31 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 	}
 	if route != nil {
 		req["preset_query_id"] = route.WorkflowID
+		if route.SendFullDetails {
+			req["bot_send_full_details"] = true
+		}
 
 		// Prefer a per-channel override on the route; fall back to the
-		// workflow manifest's workshop_mode when the route doesn't pin one.
+		// workflow manifest's workshop_mode when the route doesn't pin one,
+		// then use Run mode for deployed bot workflow traffic.
 		workshopMode := route.WorkshopMode
 		if workshopMode == "" {
 			workshopMode = m.readManifestWorkshopMode(route.WorkspacePath)
+		}
+		if workshopMode == "" && platform != "" {
+			// Deployed bot workflows route through the conversational Workflow
+			// workshop in Run mode by default: channel questions should execute
+			// the existing workflow and return an answer, not enter workflow
+			// design. Routes/manifests can still pin Builder or another
+			// workshop mode explicitly.
+			workshopMode = "run"
 		}
 		via := "channel " + channelID
 		if presetRoute != nil {
 			via = "preset (workflow " + route.WorkflowID + ")"
 		}
 		if workshopMode != "" {
-			// Workshop builder mode — use the conversational Workflow Builder agent.
+			// Workshop mode — use the conversational Workflow Builder agent.
 			// workshop_mode must live inside execution_options so the workshop
 			// session picks it up via SetWorkshopModeOverride (server.go:4409);
 			// a top-level req["workshop_mode"] is ignored and the agent falls

@@ -31,6 +31,7 @@ type MetricSnapshotRow struct {
 	RunFolder      string   `json:"run_folder"`
 	CompletedAt    string   `json:"completed_at"`
 	MetricID       string   `json:"metric_id"`
+	MetricVersion  int      `json:"metric_version,omitempty"`
 	Value          float64  `json:"value"`
 	HasValue       bool     `json:"has_value"`
 	ResolveError   string   `json:"resolve_error,omitempty"`
@@ -69,9 +70,10 @@ func SnapshotRunMetrics(ctx context.Context, workspacePath, runFolder, status st
 	for i := range file.Metrics {
 		m := &file.Metrics[i]
 		row := MetricSnapshotRow{
-			RunFolder:   runFolder,
-			CompletedAt: completedAt,
-			MetricID:    m.ID,
+			RunFolder:     runFolder,
+			CompletedAt:   completedAt,
+			MetricID:      m.ID,
+			MetricVersion: metricVersion(*m),
 		}
 		v, hasVal, rerr := ResolveMetricValue(ctx, workspacePath, runFolder, m)
 		if rerr != nil {

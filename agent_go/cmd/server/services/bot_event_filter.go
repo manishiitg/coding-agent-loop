@@ -57,6 +57,8 @@ type BotEventFilter struct {
 	lastActivity        string // human-friendly description of current activity
 	toolCallCount       int    // total tool calls seen (for progress feel)
 	mainTextSent        bool   // true once we've sent main-level text via llm_generation_end
+	lastMainText        string // last main-level text sent to the bot thread this turn
+	sendFullDetails     bool   // opt-in: forward workflow runtime chatter to bot channel
 	onBlockingEvent     BlockingEventCallback
 	onSessionDone       SessionDoneCallback
 }
@@ -89,6 +91,15 @@ func (f *BotEventFilter) SetSessionDoneCallback(cb SessionDoneCallback) {
 	f.onSessionDone = cb
 }
 
+// SetSendFullDetails enables the verbose bot stream for sessions whose route
+// explicitly opts in. The default is concise: only builder-facing messages,
+// blocking prompts, and errors are sent to Slack/WhatsApp.
+func (f *BotEventFilter) SetSendFullDetails(enabled bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sendFullDetails = enabled
+}
+
 // ResetForNewTurn clears the one-shot completion state so a follow-up user
 // message (injected while the session is still held open, e.g. because a
 // background workflow is running) starts a fresh turn that can be tracked.
@@ -99,6 +110,7 @@ func (f *BotEventFilter) ResetForNewTurn() {
 	f.sessionDone = false
 	f.completionReceived = false
 	f.mainTextSent = false
+	f.lastMainText = ""
 	f.mu.Unlock()
 	log.Printf("[BOT_FILTER] Reset for new turn")
 }
@@ -112,10 +124,24 @@ func (f *BotEventFilter) HasSentMainText() bool {
 	return f.mainTextSent
 }
 
+// ShouldSendSyntheticFinal reports whether a persisted final builder message
+// should still be forwarded. Synthetic turns may emit an earlier builder text
+// event and later persist a more complete final answer after tool reads; only
+// suppress true duplicates, not materially different final replies.
+func (f *BotEventFilter) ShouldSendSyntheticFinal(message string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.mainTextSent {
+		return true
+	}
+	return !sameBotMainText(message, f.lastMainText)
+}
+
 // MarkMainTextSent marks the current turn as having forwarded builder text.
-func (f *BotEventFilter) MarkMainTextSent() {
+func (f *BotEventFilter) MarkMainTextSent(message string) {
 	f.mu.Lock()
 	f.mainTextSent = true
+	f.lastMainText = strings.TrimSpace(message)
 	f.mu.Unlock()
 }
 
@@ -126,8 +152,22 @@ func (f *BotEventFilter) ClearBlockingState() {
 	f.awaitingInput = false
 	f.completionReceived = false
 	f.mainTextSent = false // reset so follow-up agent's completion will be shown
+	f.lastMainText = ""
 	f.mu.Unlock()
 	log.Printf("[BOT_FILTER] Blocking state cleared, completion reset")
+}
+
+func sameBotMainText(a, b string) bool {
+	a = normalizeBotMainText(a)
+	b = normalizeBotMainText(b)
+	if a == "" || b == "" {
+		return false
+	}
+	return a == b || strings.Contains(b, a)
+}
+
+func normalizeBotMainText(s string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
 }
 
 // Start begins listening to events for a session and forwarding filtered updates to the thread
@@ -218,6 +258,10 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 	switch event.Type {
 	case "orchestrator_agent_start":
 		if kind := f.classifyBotNotification(event); kind == BotNotifyStepStarted {
+			if f.suppressWorkflowRuntimeChatter(event) {
+				log.Printf("[BOT_FILTER] orchestrator_agent_start: suppressed workflow step notice for %s", f.threadID.Platform)
+				return false
+			}
 			msg := f.formatOrchestratorAgentStart(event)
 			if msg != "" {
 				f.sendMessage(ctx, msg)
@@ -227,6 +271,10 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 
 	case "orchestrator_agent_end":
 		if kind := f.classifyBotNotification(event); kind == BotNotifyStepCompleted {
+			if f.suppressWorkflowRuntimeChatter(event) {
+				log.Printf("[BOT_FILTER] orchestrator_agent_end: suppressed workflow step notice for %s", f.threadID.Platform)
+				return false
+			}
 			msg := f.formatOrchestratorAgentEnd(event)
 			if msg != "" {
 				f.sendMessage(ctx, msg)
@@ -263,9 +311,7 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 			msg := f.formatGenerationEnd(event)
 			log.Printf("[BOT_FILTER] llm_generation_end: sending %d chars (level=%d)", len(msg), event.Data.HierarchyLevel)
 			f.sendMessage(ctx, msg)
-			f.mu.Lock()
-			f.mainTextSent = true
-			f.mu.Unlock()
+			f.MarkMainTextSent(msg)
 			return true
 		} else {
 			log.Printf("[BOT_FILTER] llm_generation_end: skipped by policy (kind=%q mainLevel=%v workflowScoped=%v level=%d)", kind, f.isMainLevel(event), f.isWorkflowScopedEvent(event), event.Data.HierarchyLevel)
@@ -313,6 +359,7 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 				if msg != "" {
 					log.Printf("[BOT_FILTER] unified_completion: sending main-level result (no prior text sent)")
 					f.sendMessage(ctx, msg)
+					f.MarkMainTextSent(msg)
 					sent = true
 				}
 			} else {
@@ -410,6 +457,21 @@ func (f *BotEventFilter) isWhatsAppWorkflowStepOnlyLocked() bool {
 	return strings.EqualFold(f.threadID.Platform, "whatsapp") && f.workflowStepStarted
 }
 
+func (f *BotEventFilter) suppressWorkflowRuntimeChatter(event BotEventData) bool {
+	f.mu.Lock()
+	sendFullDetails := f.sendFullDetails
+	f.mu.Unlock()
+	if sendFullDetails {
+		return false
+	}
+	return f.isSlackOrWhatsApp() && f.isWorkflowScopedEvent(event)
+}
+
+func (f *BotEventFilter) isSlackOrWhatsApp() bool {
+	return strings.EqualFold(f.threadID.Platform, "slack") ||
+		strings.EqualFold(f.threadID.Platform, "whatsapp")
+}
+
 func (f *BotEventFilter) isWorkflowScopedEvent(event BotEventData) bool {
 	if event.Data == nil || event.Data.Data == nil {
 		return false
@@ -439,12 +501,18 @@ func (f *BotEventFilter) isBuilderGenerationEvent(event BotEventData) bool {
 	if event.Data == nil || event.Data.Data == nil || !f.isMainLevel(event) {
 		return false
 	}
+	if f.suppressWorkflowRuntimeChatter(event) {
+		return false
+	}
 	gen, ok := event.Data.Data.(*events.LLMGenerationEndEvent)
 	return ok && strings.TrimSpace(gen.Content) != ""
 }
 
 func (f *BotEventFilter) isBuilderCompletionEvent(event BotEventData) bool {
 	if event.Data == nil || event.Data.Data == nil || !f.isMainLevel(event) {
+		return false
+	}
+	if f.suppressWorkflowRuntimeChatter(event) {
 		return false
 	}
 	uc, ok := event.Data.Data.(*events.UnifiedCompletionEvent)
@@ -656,10 +724,22 @@ func (f *BotEventFilter) formatOrchestratorAgentStart(event BotEventData) string
 	f.mu.Unlock()
 
 	group := workflowStepGroup(start.InputData)
+	var msg string
 	if group != "" {
-		return fmt.Sprintf("Step started (%s): running now [%s].", displayName, group)
+		msg = fmt.Sprintf("Step started (%s): running now [%s].", displayName, group)
+	} else {
+		msg = fmt.Sprintf("Step started (%s): running now.", displayName)
 	}
-	return fmt.Sprintf("Step started (%s): running now.", displayName)
+
+	f.mu.Lock()
+	sendFullDetails := f.sendFullDetails
+	f.mu.Unlock()
+	if sendFullDetails {
+		if userMessage := strings.TrimSpace(start.UserMessage); userMessage != "" {
+			msg += "\n\nUser message sent to agent:\n\n" + userMessage
+		}
+	}
+	return msg
 }
 
 // formatOrchestratorAgentEnd formats workflow step ends without forwarding the

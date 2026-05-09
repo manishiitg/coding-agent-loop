@@ -37,12 +37,9 @@ type EvaluationStepScore struct {
 }
 
 type EvaluationReport struct {
-	TargetRunFolder  string                `json:"target_run_folder"`
-	GeneratedAt      string                `json:"generated_at"`
-	TotalScore       int                   `json:"total_score,omitempty"`
-	MaxPossibleScore int                   `json:"max_possible_score,omitempty"`
-	ScorePercentage  float64               `json:"score_percentage,omitempty"`
-	StepScores       []EvaluationStepScore `json:"step_scores"`
+	TargetRunFolder string                `json:"target_run_folder"`
+	GeneratedAt     string                `json:"generated_at"`
+	StepScores      []EvaluationStepScore `json:"step_scores"`
 }
 
 type EvaluationReportEntry struct {

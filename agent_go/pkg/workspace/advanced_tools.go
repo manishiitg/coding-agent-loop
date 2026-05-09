@@ -179,13 +179,13 @@ func diffPatchToolDef() llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "diff_patch_workspace_file",
-			Description: "Apply a unified diff patch to a file and return the result.",
+			Description: "Apply a unified diff patch to a workspace file and return the result. The filepath may be workspace-relative or an absolute path under the workspace docs root.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"filepath": map[string]interface{}{
 						"type":        "string",
-						"description": "Path to the file to patch.",
+						"description": "Path to the file to patch. Accepts workspace-relative paths like \"Workflow/my-flow/learnings/_global/SKILL.md\" and absolute paths under the workspace docs root like \"/Users/.../workspace-docs/Workflow/my-flow/learnings/_global/SKILL.md\". Absolute paths outside the docs root are rejected.",
 					},
 					"diff": map[string]interface{}{
 						"type":        "string",

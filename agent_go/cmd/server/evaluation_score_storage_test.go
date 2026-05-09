@@ -140,11 +140,8 @@ func resetEvaluationScoreMigrationStateForTest() {
 
 func testEvaluationReport(runFolder, generatedAt string) EvaluationReport {
 	return EvaluationReport{
-		TargetRunFolder:  runFolder,
-		GeneratedAt:      generatedAt,
-		TotalScore:       8,
-		MaxPossibleScore: 10,
-		ScorePercentage:  80,
+		TargetRunFolder: runFolder,
+		GeneratedAt:     generatedAt,
 		StepScores: []EvaluationStepScore{{
 			StepID:   "eval-workflow-success",
 			Score:    8,

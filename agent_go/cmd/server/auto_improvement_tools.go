@@ -23,8 +23,9 @@ import (
 // RegisterProposeMetricTool exposes propose_metric to the proposer LLM.
 func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
 	desc := "Privileged write path for <workflow>/planning/metrics.json (which is folder-guarded against shell writes). " +
-		"Defines a new metric: supply id + unit + direction + mode + source. " +
-		"Metrics are append-only by id. To change a metric's meaning, retire the old one (retire_metric) and create a new one with a different id. " +
+		"Defines a new metric, or amends an existing metric when amend_existing is supplied. Supply id + unit + direction + mode + source. " +
+		"Also supply role when known: primary for the small set of north-star or must-not-break metrics that steer optimization, secondary for diagnostic/supporting metrics. Supply category to group the signal by area (for example outcome, execution, guardrail, content_quality, strategy_learning, telemetry). " +
+		"Existing metric ids are protected: to change one, pass amend_existing:{id,reason}; the prior active definition is archived and the metric version increments. " +
 		"Use this when harden/replan evidence needs a metric that does not yet exist, or when metric history shows a broken source definition. " +
 		"\n\nBEFORE PROPOSING — sanity-check the source: read db/metrics_history.jsonl for the latest snapshot rows of each existing metric. Any row with has_value=false carries a resolve_error explaining why. The most common gotcha is field=\"some_name\" when the eval step's report has no structured output_content — for flat eval reports (score/max_score only), use field=\"\" (percent score), field=\"score\", or field=\"max_score\". Anything else requires the eval Python to emit structured JSON output containing that key." +
 		"\n\nReturns { metric_id, status }."
@@ -36,6 +37,8 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 				"description": "Unique kebab.dot id. Pattern: ^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$.",
 			},
 			"label":     map[string]interface{}{"type": "string"},
+			"role":      map[string]interface{}{"type": "string", "enum": []string{"primary", "secondary"}, "description": "primary = north-star or must-not-break metric that directly steers improvement; secondary = diagnostic/supporting metric used to explain or protect primary movement."},
+			"category":  map[string]interface{}{"type": "string", "description": "Freeform grouping for UI and optimizer reasoning. Recommended values: outcome, execution, guardrail, content_quality, strategy_learning, telemetry."},
 			"unit":      map[string]interface{}{"type": "string", "description": "percent | usd | seconds | count | days | ratio | bps"},
 			"direction": map[string]interface{}{"type": "string", "enum": []string{"higher_better", "lower_better"}},
 			"mode":      map[string]interface{}{"type": "string", "enum": []string{"target", "slo"}},
@@ -55,6 +58,19 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 			"success_criteria": map[string]interface{}{
 				"type":        "string",
 				"description": "The soul.md success criterion this metric operationalizes. Quote or summarize the exact criterion.",
+			},
+			"parent": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional parent metric id for UI grouping. No weighted rollup.",
+			},
+			"amend_existing": map[string]interface{}{
+				"type":        "object",
+				"description": "Required when changing an existing metric id. The top-level id must match amend_existing.id. The previous active definition is copied to metrics.json::archive and the new definition gets version+1.",
+				"properties": map[string]interface{}{
+					"id":     map[string]interface{}{"type": "string", "description": "Existing active metric id to amend. Must match top-level id."},
+					"reason": map[string]interface{}{"type": "string", "description": "Why this definition/source/threshold is changing. Stored in metrics.json::archive[].archived_reason and a structured builder/improve.md decision entry."},
+				},
+				"required": []string{"id", "reason"},
 			},
 		},
 		"required": []string{"id", "unit", "direction", "mode", "source"},
@@ -91,17 +107,17 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 // reference its id remain (the archive entry preserves what they meant).
 func RegisterRetireMetricTool(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
 	desc := "Retire a metric defined in planning/metrics.json. Removes the " +
-		"metric from the active list. Subsequent runs skip the metric in the " +
+		"metric from the active list and archives its final definition. Subsequent runs skip the metric in the " +
 		"snapshot pipeline. Past db/metrics_history.jsonl rows are preserved " +
-		"as-is — the decision-log entry created by this call is the audit " +
+		"as-is — metrics.json::archive plus the structured improve.md decision entry created by this call are the audit " +
 		"trail for what those historical values represented." +
 		"\n\nCommon use cases: (1) the metric is broken — its latest snapshot " +
 		"rows in db/metrics_history.jsonl all show resolve_error (e.g. wrong " +
-		"`field` for the eval step). Retire it and propose a new metric with " +
-		"a different id and a corrected definition. (2) the metric is no " +
+		"`field` for the eval step). Prefer propose_metric with amend_existing " +
+		"when the same metric id should keep representing the same outcome with a corrected source. (2) the metric is no " +
 		"longer relevant. (3) the metric is being replaced by a better-defined " +
 		"alternative. Always pass a reason that cites the resolve_error or " +
-		"superseding metric — the decision log is the only trace future readers " +
+		"superseding metric — the improve.md ledger is the trace future readers " +
 		"have for why historical rows under this id should be interpreted." +
 		"\n\nReturns { metric_id, status }."
 	params := map[string]interface{}{
@@ -140,11 +156,11 @@ func RegisterRetireMetricTool(agent *mcpagent.Agent, workspacePath, triggerSourc
 // RegisterCaptureContextTool exposes capture_context to the optimizer/builder.
 // It is the privileged, structured path for durable user-supplied runtime
 // context. The tool validates target metric anchoring and writes both the
-// context file and decisions.jsonl audit entry.
+// context file and a structured improve.md audit entry.
 func RegisterCaptureContextTool(agent *mcpagent.Agent, workspacePath string, logger loggerv2.Logger) {
 	desc := "Capture durable user-supplied runtime business context for this workflow. " +
 		"Use only after the user confirms the item should be remembered across runs, and only when the Workflow Profile allows business-context accumulation. " +
-		"Writes to knowledgebase/context/context.md and appends a source=user, trigger=capture-context entry to builder/decisions.jsonl. " +
+		"Writes to knowledgebase/context/context.md and appends a source=user, trigger=capture-context entry to builder/improve.md. " +
 		"Every capture must name target_metrics so context stays tied to measurable outcomes. " +
 		"Use for persistent rules, preferences, constraints, assumptions, examples, ICP filters, approval rules, brand voice, or domain context that workflow steps must respect. " +
 		"Do not use for one-off instructions, general chat memory, workflow-discovered facts that belong in knowledgebase/notes, or execution recipes that belong in learnings."

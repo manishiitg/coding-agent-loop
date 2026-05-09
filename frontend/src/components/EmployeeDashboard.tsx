@@ -20,6 +20,7 @@ import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import { ReportView } from './workflow/ReportViewer'
 import { useAppStore } from '../stores/useAppStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
+import { formatStepOutputContent, hasStepOutputContent, isFinalScoringPlaceholderText, parseEvaluationPlanDetails } from '../utils/evaluationReport'
 
 interface WorkflowSummary {
   id: string
@@ -660,6 +661,14 @@ export const EmployeeDashboard: React.FC = () => {
     return reviewState.evaluation
   }, [reviewState.evaluation])
 
+  const currentEvalStepScores = useMemo(() => {
+    return Array.isArray(currentEvalEntry?.report?.step_scores) ? currentEvalEntry.report.step_scores : []
+  }, [currentEvalEntry])
+
+  const evalStepDetailsById = useMemo(() => {
+    return parseEvaluationPlanDetails(reviewState.reviewData?.evaluations?.evaluation_plan)
+  }, [reviewState.reviewData?.evaluations?.evaluation_plan])
+
   const toggleEvalStep = useCallback((stepKey: string) => {
     setExpandedEvalSteps(prev => {
       const next = new Set(prev)
@@ -1004,11 +1013,20 @@ export const EmployeeDashboard: React.FC = () => {
                     {currentEvalEntry && (
                       <div className="space-y-2">
                         <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Eval evidence ({currentEvalEntry.report.step_scores.length})
+                          Eval evidence ({currentEvalStepScores.length})
                         </div>
-                        {currentEvalEntry.report.step_scores.map((step, idx) => {
+                        {currentEvalStepScores.length === 0 && (
+                          <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
+                            This evaluation report has no step_scores. It may be from an older or incomplete eval run.
+                          </div>
+                        )}
+                        {currentEvalStepScores.map((step, idx) => {
                           const stepKey = `${currentEvalEntry.run_folder}-${step.step_id}-${idx}`
                           const isExpanded = expandedEvalSteps.has(stepKey)
+                          const outputText = formatStepOutputContent(step.output_content)
+                          const showReasoning = Boolean(step.reasoning && !isFinalScoringPlaceholderText(step.reasoning))
+                          const showEvidence = Boolean(step.evidence && !isFinalScoringPlaceholderText(step.evidence))
+                          const stepDetails = evalStepDetailsById.get(step.step_id)
                           return (
                             <div key={stepKey} className="overflow-hidden rounded-xl border border-border bg-card">
                               <button
@@ -1024,19 +1042,41 @@ export const EmployeeDashboard: React.FC = () => {
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-2">
                                     <span className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground">#{idx + 1}</span>
-                                    <span className="truncate text-sm font-medium text-foreground">{step.step_id}</span>
+                                    <span className="truncate text-sm font-medium text-foreground">{stepDetails?.title || step.step_id}</span>
+                                    {stepDetails?.title && (
+                                      <span className="truncate font-mono text-[10px] text-muted-foreground">{step.step_id}</span>
+                                    )}
                                   </div>
                                 </div>
                               </button>
-                              {isExpanded && (step.reasoning || step.evidence) && (
+                              {isExpanded && (stepDetails?.description || hasStepOutputContent(step) || showReasoning || showEvidence) && (
                                 <div className="space-y-3 border-t border-border bg-muted/20 px-4 py-3">
-                                  {step.reasoning && (
+                                  {stepDetails?.description && (
+                                    <div>
+                                      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Description</div>
+                                      <p className="whitespace-pre-wrap text-xs text-foreground">{stepDetails.description}</p>
+                                    </div>
+                                  )}
+                                  {outputText && (
+                                    <div>
+                                      <div className="mb-1 flex items-center justify-between gap-2">
+                                        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Output</div>
+                                        {step.output_content?.file_path && (
+                                          <span className="truncate font-mono text-[10px] text-muted-foreground">{step.output_content.file_path}</span>
+                                        )}
+                                      </div>
+                                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-2 text-[11px]">
+                                        {outputText}
+                                      </pre>
+                                    </div>
+                                  )}
+                                  {showReasoning && (
                                     <div>
                                       <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Reasoning</div>
                                       <p className="whitespace-pre-wrap text-xs text-foreground">{step.reasoning}</p>
                                     </div>
                                   )}
-                                  {step.evidence && (
+                                  {showEvidence && (
                                     <div>
                                       <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Evidence</div>
                                       <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-2 text-[11px]">

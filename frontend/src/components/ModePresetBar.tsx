@@ -3,7 +3,7 @@ import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, SlidersHorizonta
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
-import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
+import type { PlannerFile, PresetLLMConfig, WorkflowManifest } from '../services/api-types'
 import PresetModal from './PresetModal'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
 import MultiAgentSchedulesPopup from './scheduler/MultiAgentSchedulesPopup'
@@ -12,7 +12,7 @@ import BotConnectorModal from './settings/BotConnectorModal'
 import CostDashboard from './CostDashboard'
 import { WorkflowsOverviewPopup } from './WorkflowsOverviewPage'
 import { schedulerApi } from '../api/scheduler'
-import { agentApi } from '../services/api'
+import { agentApi, workflowManifestApi } from '../services/api'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip'
 import { useLLMStore } from '../stores'
 import { useMCPStore } from '../stores/useMCPStore'
@@ -45,17 +45,17 @@ const getModeName = (category: string) => {
 
 const MODE_PILLS = [
   {
-    key: 'multi-agent' as const,
-    label: 'Chat',
-    icon: Users,
-    activeClasses: 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-100 dark:ring-indigo-500/40',
-    inactiveClasses: 'text-gray-500 dark:text-gray-400',
-  },
-  {
     key: 'workflow' as const,
     label: 'Workflow',
     icon: Workflow,
     activeClasses: 'bg-purple-50 text-purple-700 shadow-sm ring-1 ring-purple-200 dark:bg-purple-500/20 dark:text-purple-100 dark:ring-purple-500/40',
+    inactiveClasses: 'text-gray-500 dark:text-gray-400',
+  },
+  {
+    key: 'multi-agent' as const,
+    label: 'Chat',
+    icon: Users,
+    activeClasses: 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-100 dark:ring-indigo-500/40',
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
   },
 ] as const
@@ -63,6 +63,40 @@ const MODE_PILLS = [
 const shortModelName = (modelId: string): string => {
   const name = modelId.split('/').pop() || modelId
   return name.length > 18 ? `${name.slice(0, 18)}…` : name
+}
+
+const workflowManifestToPreset = (manifest: WorkflowManifest, workspacePath: string): CustomPreset => {
+  const caps = manifest.capabilities
+  return {
+    id: manifest.id || workspacePath,
+    label: manifest.label || workspacePath.split('/').pop() || workspacePath,
+    createdAt: new Date(manifest.created_at || 0).getTime(),
+    agentMode: 'workflow',
+    selectedFolder: {
+      filepath: workspacePath,
+      content: '',
+      last_modified: manifest.updated_at || '',
+      type: 'folder',
+      children: [],
+    },
+    selectedServers: caps?.selected_servers || [],
+    selectedTools: caps?.selected_tools || [],
+    selectedSkills: caps?.selected_skills || [],
+    selectedSecrets: caps?.selected_secrets || [],
+    selectedGlobalSecretNames: caps?.selected_global_secret_names ?? null,
+    browserMode: (caps?.browser_mode || 'none') as CustomPreset['browserMode'],
+    useCodeExecutionMode: caps?.use_code_execution_mode || false,
+    llmConfig: caps?.llm_config ? {
+      provider: caps.llm_config.provider,
+      model_id: caps.llm_config.model_id,
+      learning_llm: caps.llm_config.learning_llm,
+      phase_llm: caps.llm_config.phase_llm,
+      use_knowledgebase: caps.llm_config.use_knowledgebase,
+      llm_allocation_mode: caps.llm_config.llm_allocation_mode,
+      tiered_config: caps.llm_config.tiered_config,
+    } : undefined,
+    employee_id: manifest.ownership?.employee_id ?? undefined,
+  }
 }
 
 /**
@@ -135,6 +169,7 @@ export const ModePresetBar: React.FC = () => {
   const isOrganizationView = showWorkflowsOverview
   const shouldShowScheduleHeader = selectedModeCategory === 'workflow' || isOrganizationView
   const isMultiAgentMode = selectedModeCategory === 'multi-agent'
+  const shouldShowBotConnector = selectedModeCategory === 'multi-agent' || selectedModeCategory === 'workflow' || isOrganizationView
 
   const handleModePillClick = useCallback((modeKey: 'multi-agent' | 'workflow') => {
     setModeCategory(modeKey)
@@ -257,6 +292,25 @@ export const ModePresetBar: React.FC = () => {
     setRestoreWorkspaceAfterBotConnector(false)
   }, [restoreWorkspaceAfterBotConnector, setWorkspaceMinimized])
 
+  const handleEditWorkflowPreset = useCallback(async (preset: CustomPreset) => {
+    const workspacePath = preset.selectedFolder?.filepath
+    if (!workspacePath) {
+      setEditingPreset(preset)
+      setShowPresetModal(true)
+      return
+    }
+
+    try {
+      const response = await workflowManifestApi.getWorkflowManifest(workspacePath)
+      setEditingPreset(workflowManifestToPreset(response.manifest, response.workspace_path || workspacePath))
+    } catch (error) {
+      console.error('[ModePresetBar] Failed to load latest workflow manifest before edit:', error)
+      setEditingPreset(preset)
+    }
+
+    setShowPresetModal(true)
+  }, [])
+
   // Listen for external trigger to open preset settings (e.g. from workflow toolbar)
   const showPresetSettings = useCommandDialogStore(s => s.showPresetSettings)
   useEffect(() => {
@@ -266,11 +320,10 @@ export const ModePresetBar: React.FC = () => {
         ? null
         : getActivePreset(presetModeCategory)
       if (preset) {
-        setEditingPreset(preset as CustomPreset)
-        setShowPresetModal(true)
+        handleEditWorkflowPreset(preset as CustomPreset)
       }
     }
-  }, [showPresetSettings, presetModeCategory, getActivePreset])
+  }, [showPresetSettings, presetModeCategory, getActivePreset, handleEditWorkflowPreset])
 
   // Preset click handler - now uses the global store
   const handlePresetClick = useCallback((preset: CustomPreset | PredefinedPreset) => {
@@ -557,8 +610,7 @@ export const ModePresetBar: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
-                              setEditingPreset(activePreset as CustomPreset)
-                              setShowPresetModal(true)
+                              handleEditWorkflowPreset(activePreset as CustomPreset)
                               setWorkspaceMinimized(true)
                             }}
                             className="px-2 py-1 border-l border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
@@ -640,8 +692,7 @@ export const ModePresetBar: React.FC = () => {
                                         <button
                                           onClick={(e) => {
                                             e.stopPropagation()
-                                            setEditingPreset(preset as CustomPreset)
-                                            setShowPresetModal(true)
+                                            handleEditWorkflowPreset(preset as CustomPreset)
                                             setShowPresetDropdown(false)
                                             setWorkspaceMinimized(true)
                                           }}
@@ -691,7 +742,6 @@ export const ModePresetBar: React.FC = () => {
               </Tooltip>
 
               {selectedModeCategory === 'multi-agent' && !isOrganizationView && (
-                <>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -717,17 +767,23 @@ export const ModePresetBar: React.FC = () => {
                       )}
                     </TooltipContent>
                   </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={openBotConnector}
-                        className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                      >
-                        <Bot className="w-4 h-4" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">Bot connector</TooltipContent>
-                  </Tooltip>
+              )}
+
+              {shouldShowBotConnector && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={openBotConnector}
+                      className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                    >
+                      <Bot className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Bot connector</TooltipContent>
+                </Tooltip>
+              )}
+
+              {selectedModeCategory === 'multi-agent' && !isOrganizationView && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -739,7 +795,6 @@ export const ModePresetBar: React.FC = () => {
                     </TooltipTrigger>
                     <TooltipContent side="bottom">LLM costs (global)</TooltipContent>
                   </Tooltip>
-                </>
               )}
 
               {shouldShowScheduleHeader && (
@@ -851,8 +906,8 @@ export const ModePresetBar: React.FC = () => {
                 <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2.5">Modes</p>
                 <div className="space-y-1.5">
                   {[
-                    ['Multi-Agent Mode', 'Ctrl+1'],
-                    ['Workflow Mode', 'Ctrl+2'],
+                    ['Workflow', 'Ctrl+1'],
+                    ['Chat', 'Ctrl+2'],
                     ['Organization', 'Ctrl+3'],
                   ].map(([label, key]) => (
                     <div key={key} className="flex items-center justify-between py-1">

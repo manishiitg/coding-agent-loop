@@ -122,6 +122,47 @@ Bring your existing CLI-based coding agents into the visual orchestrator via the
 
 ---
 
+## 💻 Desktop App (macOS)
+
+A standalone macOS app is available — no Docker, no manual server setup. Each release is published at [Releases](https://github.com/manishiitg/mcp-agent-builder-go/releases/latest).
+
+### Install
+
+1. Download `Runloop-<version>-arm64.dmg` from the latest release.
+2. Open the dmg, drag **Runloop** to Applications.
+
+### First-launch error: *"Runloop is damaged and can't be opened"*
+
+The current build is **unsigned and not notarized**, so macOS Gatekeeper flags it on download. The app itself is fine — you just need to clear the quarantine flag. Pick whichever is easiest:
+
+**Option A — System Settings (GUI):**
+1. After the failed launch, open **System Settings → Privacy & Security**.
+2. Scroll to the Security section. You'll see a banner: *"Runloop was blocked because it is not from an identified developer."*
+3. Click **Open Anyway** and confirm. macOS remembers the decision; future launches work normally.
+
+**Option B — Terminal (when "Open Anyway" doesn't appear):**
+```bash
+xattr -cr /Applications/Runloop.app
+```
+Then double-click Runloop normally. If macOS still complains, also strip the dmg:
+```bash
+xattr -cr ~/Downloads/Runloop-*.dmg
+```
+
+### First-launch UX
+
+On first run the app prompts for two things:
+1. **Workspace folder** — pick where your `workspace-docs/` lives (skills, configs, schedules, WhatsApp DB, encrypted provider keys). Defaults to `~/Library/Application Support/runloop-desktop/workspace-docs/`.
+2. **AUTH_SECRET** — the secret used to encrypt `provider-api-keys.json`. If you're moving from a previous setup, enter the same secret you used there. Otherwise pick a strong value and remember it (you'll need it on every machine that opens this workspace).
+
+After that, add provider API keys (OpenAI, Gemini, Anthropic, etc.) through the in-app provider auth flow. They are encrypted at rest in `<workspace-docs>/config/provider-api-keys.json`.
+
+### Why no signing?
+
+Code signing + Apple notarization requires an Apple Developer ID ($99/yr) and is on the roadmap. Until then, the manual quarantine step is unavoidable on first install.
+
+---
+
 ## 🚀 Quick Start (Local Development)
 
 ### 1. Prerequisites

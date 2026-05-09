@@ -99,7 +99,11 @@ detach_mount
 # ---- Strip quarantine -------------------------------------------------------
 
 log "Clearing quarantine attribute…"
-xattr -cr "$DEST_APP" || warn "xattr failed; you may see the 'damaged' warning on first launch."
+# Older macOS `xattr` doesn't support -r. Walk the bundle ourselves.
+# We delete only the quarantine xattr to avoid wiping any signing-related ones.
+if ! find "$DEST_APP" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null; then
+  warn "xattr cleanup had errors; if you see a 'damaged' warning on launch, run:  xattr -cr '$DEST_APP'"
+fi
 
 # ---- Done -------------------------------------------------------------------
 

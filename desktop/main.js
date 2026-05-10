@@ -706,7 +706,13 @@ function spawnAgent(userDataPath) {
       WORKSPACE_API_URL: `http://127.0.0.1:${dynamicWorkspacePort}`,
       WORKSPACE_DOCS_PATH: docsDir,
       LOG_FILE: logFile,
-      WORKSPACE_ENABLE_GITHUB_SYNC: 'true'
+      WORKSPACE_ENABLE_GITHUB_SYNC: 'true',
+      // Both servers run as native binaries on the host (no Docker). Without
+      // this, the agent assumes the workspace is in Docker and emits
+      // host.docker.internal URLs in MCP_API_URL — which the LLM-generated
+      // shell commands then fail to reach (host.docker.internal isn't
+      // resolvable on macOS without Docker Desktop running).
+      NATIVE_WORKSPACE: 'true'
     };
 
     if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;

@@ -841,8 +841,8 @@ function checkForUpdates() {
         type: 'info',
         title: 'Update Available',
         message: `Runloop ${latestVersion} is available.`,
-        detail: `You're on ${currentVersion}. Click Update to download and install in the background — Runloop will relaunch automatically when ready.`,
-        buttons: ['Update', 'Later'],
+        detail: `You're on ${currentVersion}.\n\nInstalling will quit Runloop right now, download the new version (~150 MB), and relaunch automatically. The whole thing takes ~30 seconds.\n\nAny in-progress chats or workflow runs will be interrupted.`,
+        buttons: ['Quit & Install', 'Later'],
         defaultId: 0,
         cancelId: 1,
       });
@@ -884,9 +884,27 @@ function runUpdaterAndQuit(targetVersion) {
     return;
   }
 
-  // Give the installer a moment to fork the curl, then quit so install.sh's
-  // pkill doesn't race with us.
-  setTimeout(() => app.quit(), 500);
+  // Show a non-blocking native notification so the user sees confirmation
+  // that the update started, even after the window closes.
+  try {
+    const { Notification } = require('electron');
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Updating Runloop…',
+        body: `Downloading v${targetVersion}. The app will reopen automatically in ~30 seconds.`,
+        silent: false,
+      }).show();
+    }
+  } catch (_) {}
+
+  // Tray tooltip update for ambient awareness while the app quits.
+  if (tray) {
+    try { tray.setToolTip(`Runloop — installing v${targetVersion}…`); } catch (_) {}
+  }
+
+  // Give the installer a moment to fork the curl + the user a moment to read
+  // the notification, then quit so install.sh's pkill doesn't race with us.
+  setTimeout(() => app.quit(), 1000);
 }
 
 function killChildren() {

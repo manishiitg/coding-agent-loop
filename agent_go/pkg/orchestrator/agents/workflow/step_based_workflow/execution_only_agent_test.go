@@ -36,3 +36,30 @@ func TestExecutionOnlyPromptIncludesCodeExecutionInstructions(t *testing.T) {
 		}
 	}
 }
+
+func TestExecutionOnlyUserPromptIncludesWorkshopHumanInput(t *testing.T) {
+	agent := &WorkflowExecutionOnlyAgent{}
+
+	prompt := agent.executionOnlyUserMessageProcessor(map[string]string{
+		"StepTitle":               "Write back to Notion",
+		"StepDescription":         "Publish the RCA.",
+		"StepContextDependencies": "",
+		"StepContextOutput":       "notion_writeback.json",
+		"WorkspacePath":           "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution",
+		"StepExecutionPath":       "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-writeback",
+		"IsCodeExecutionMode":     "true",
+		"IsLearnCodeMode":         "false",
+		"WorkshopHumanInput":      "post RCA q-20260509T124321-rslat as wiki page",
+	})
+
+	requiredSnippets := []string{
+		"## Human Input (Highest Priority)",
+		"execute_step(..., human_input=...)",
+		"post RCA q-20260509T124321-rslat as wiki page",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("expected prompt to contain %q\n\nPrompt:\n%s", snippet, prompt)
+		}
+	}
+}

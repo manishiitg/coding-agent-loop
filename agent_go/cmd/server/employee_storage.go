@@ -21,12 +21,8 @@ type EmployeeFile struct {
 const defaultEmployeeAvatarColor = "#6b7280"
 
 func normalizeEmployeeFile(emp EmployeeFile) EmployeeFile {
-	if emp.Role == "" && emp.Description != "" {
-		emp.Role = emp.Description
-	}
-	if emp.Description == "" && emp.Role != "" {
-		emp.Description = emp.Role
-	}
+	emp.Role = ""
+	emp.Description = ""
 	if emp.Status == "" {
 		emp.Status = "active"
 	}
@@ -70,7 +66,13 @@ func readEmployeesFile() ([]EmployeeFile, error) {
 func writeEmployeesFile(employees []EmployeeFile) error {
 	employeesMu.Lock()
 	defer employeesMu.Unlock()
-	data, err := json.MarshalIndent(employees, "", "  ")
+	sanitized := make([]EmployeeFile, len(employees))
+	for i, emp := range employees {
+		emp.Role = ""
+		emp.Description = ""
+		sanitized[i] = emp
+	}
+	data, err := json.MarshalIndent(sanitized, "", "  ")
 	if err != nil {
 		return err
 	}

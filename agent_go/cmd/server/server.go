@@ -4141,6 +4141,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				logfWithContext(queryLogCtx, "[ACTIVITY STATUS] Registered get_activity_status tool")
 
+				if err := api.registerEmployeeManagementTools(underlyingAgent); err != nil {
+					logfWithContext(queryLogCtx, "[EMPLOYEE TOOLS] Failed to register employee management tools: %v", err)
+					sendError(fmt.Sprintf("Failed to register employee management tools: %v", err), true)
+					return
+				}
+				logfWithContext(queryLogCtx, "[EMPLOYEE TOOLS] Registered employee management tools")
+
 				if err := api.registerSecretManagementTools(underlyingAgent, currentUserID, "secret_tools", nil); err != nil {
 					logfWithContext(queryLogCtx, "[SECRET TOOLS] Failed to register multi-agent secret tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent secret tools: %v", err), true)
@@ -7230,7 +7237,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 
 	syntheticMsg := fmt.Sprintf("[AUTO-NOTIFICATION] Multiple step completions:\n%s", strings.Join(parts, "\n"))
 	if strings.HasPrefix(sessionID, "bot-") {
-		syntheticMsg += "\n\n---\nYou are operating inside a chat thread on a bot connector. The user must be able to tell this is a workflow sub-agent progress update, not a normal workflow-builder chat reply. Reply with ONE short status line (target <=150 characters) using this exact prefix format: \"Step update (<sub-agent name>): <status headline>\". Use the sub-agent name from the completion entry, such as \"search-score-jobs\" or \"step-step-13-execution-score-and-shortlist-job-candidates\". Do NOT start with only \"Status: completed\". Do NOT restate, quote, or summarize the full Result block."
+		syntheticMsg += botAutoNotificationProgressDirective(api.isFinalBotAutoNotification(sessionID))
 	}
 
 	// Emit synthetic_turn_ready event for each agent
@@ -7374,7 +7381,7 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	// update — that long reply renders fine in a side panel, not in chat.
 	// Session ID format is `bot-<platform>--<uuid>` (see newBotSessionID).
 	if strings.HasPrefix(sessionID, "bot-") {
-		syntheticMsg += "\n\n---\nYou are operating inside a chat thread on a bot connector. The user must be able to tell this is a workflow sub-agent progress update, not a normal workflow-builder chat reply. Reply with ONE short status line (target <=150 characters) using this exact prefix format: \"Step update (<sub-agent name>): <status headline>\". Use the Agent name from above as the sub-agent name. Do NOT start with only \"Status: completed\". Do NOT restate, quote, or summarize the full Result block above. Examples: \"Step update (search-score-jobs): completed - 15 jobs shortlisted from 56; enriching client data next.\" / \"Step update (route-query-logs): failed - rate limit hit; retrying with backoff.\""
+		syntheticMsg += botAutoNotificationProgressDirective(api.isFinalBotAutoNotification(sessionID))
 	}
 
 	// NOTE: Don't inject syntheticMsg into conversation history here.
@@ -7396,6 +7403,24 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	// Called synchronously so handleQuery sets session busy before returning,
 	// preventing concurrent synthetic turns for the same session.
 	api.executeSyntheticTurn(sessionID, syntheticMsg)
+}
+
+func (api *StreamingAPI) isFinalBotAutoNotification(sessionID string) bool {
+	if api.botManager == nil || !strings.HasPrefix(sessionID, "bot-") {
+		return false
+	}
+	// Registrations are usually removed before the synthetic turn is injected.
+	// Treat 0 or 1 remaining mirrored sessions as the terminal notification so
+	// we stop adding the progress-only bot directive and let Run mode respond
+	// from its normal prompt/context.
+	return api.botManager.PendingWorkflowCount(sessionID) <= 1
+}
+
+func botAutoNotificationProgressDirective(final bool) string {
+	if final {
+		return ""
+	}
+	return "\n\n---\nYou are operating inside a chat thread on a bot connector. The user must be able to tell this is a workflow sub-agent progress update, not a normal workflow-builder chat reply. Reply with ONE short status line (target <=150 characters) using this exact prefix format: \"Step update (<sub-agent name>): <status headline>\". Use the Agent name or completion entry name from above as the sub-agent name. Do NOT start with only \"Status: completed\". Do NOT restate, quote, or summarize the full Result block above. Examples: \"Step update (search-score-jobs): completed - 15 jobs shortlisted from 56; enriching client data next.\" / \"Step update (route-query-logs): failed - rate limit hit; retrying with backoff.\""
 }
 
 // executeSyntheticTurn drives the stored agent directly with a synthetic message.

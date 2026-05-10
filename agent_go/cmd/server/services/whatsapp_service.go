@@ -63,7 +63,7 @@ type WhatsAppService struct {
 	// "Message Yourself" chat so the user can visually separate bot output
 	// from their own typing (both render as "from me"). Empty by default;
 	// set WHATSAPP_SELF_CHAT_PREFIX in .env to re-enable, e.g. "🤖 " or
-	// "[AgentForge] ". Read once at StartListening so live-toggling requires
+	// "[Runloop] ". Read once at StartListening so live-toggling requires
 	// a restart.
 	selfChatPrefix string
 
@@ -1890,7 +1890,7 @@ func (w *WhatsAppService) handleDMAccessLinkCommand(ctx context.Context, text, c
 	state := w.ensureLinkCode()
 	now := time.Now().UTC()
 	if state.LinkCode == "" || code != state.LinkCode || (!state.LinkCodeExpires.IsZero() && now.After(state.LinkCodeExpires)) {
-		w.sendWorkflowCommandReply(ctx, chatJID, "That WhatsApp link code is invalid or expired. Open WhatsApp settings in AgentForge and send the current code.")
+		w.sendWorkflowCommandReply(ctx, chatJID, "That WhatsApp link code is invalid or expired. Open WhatsApp settings in Runloop and send the current code.")
 		return true
 	}
 	w.bindDMChat(info)
@@ -1902,10 +1902,6 @@ func (w *WhatsAppService) handleDMAccessLinkCommand(ctx context.Context, text, c
 	w.accessMu.Unlock()
 	w.sendWorkflowCommandReply(ctx, chatJID, "Linked this WhatsApp chat. You can now send messages normally.")
 	return true
-}
-
-func (w *WhatsAppService) sendDMAccessRequired(ctx context.Context, chatJID string) {
-	w.sendWorkflowCommandReply(ctx, chatJID, "This WhatsApp chat is not linked to AgentForge yet. Open WhatsApp settings in AgentForge and send the link code shown there, for example: link 123456.")
 }
 
 // handleEvent is the whatsmeow event dispatcher. We currently care about
@@ -2016,7 +2012,6 @@ func (w *WhatsAppService) handleIncomingMessage(evt *events.Message) {
 	}
 	if !w.isAllowedDM(info) {
 		log.Printf("[WHATSAPP] skip: unlinked DM chat=%s sender=%s identities=%v", chatJID, info.Sender.String(), whatsappDMIdentityCandidates(info))
-		w.sendDMAccessRequired(context.Background(), chatJID)
 		return
 	}
 	w.bindDMChat(info)

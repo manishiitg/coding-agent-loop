@@ -564,7 +564,7 @@ export const ModePresetBar: React.FC = () => {
                 onClick={() => setShowWorkflowsOverview(!showWorkflowsOverview)}
                 className={`relative flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer ${
                   showWorkflowsOverview
-                    ? 'bg-emerald-50 text-emerald-700 shadow-sm ring-1 ring-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-100 dark:ring-emerald-500/40'
+                    ? 'bg-slate-50 text-slate-700 shadow-sm ring-1 ring-slate-200 dark:bg-slate-700/70 dark:text-slate-100 dark:ring-slate-500/50'
                     : 'text-gray-500 dark:text-gray-400'
                 }`}
                 type="button"

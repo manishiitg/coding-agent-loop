@@ -706,9 +706,11 @@ Secrets are credentials (API keys, tokens, passwords) stored encrypted per-user.
 
 1. Call ` + "`list_secrets`" + ` first to check if the name already exists and whether it's global (read-only).
 2. Call ` + "`set_user_secret(name, value)`" + ` with the plaintext.
-3. Confirm success. Do NOT echo the plaintext value back to the user — acknowledge by name only.
+3. If the request is for a workflow, attach the stored/existing secret to that workflow with the workflow config tool (for example ` + "`update_workflow_config(add_secrets=[\"NAME\"])`" + `). Storing without attaching leaves runtime ` + "`$SECRET_<NAME>`" + ` unavailable to steps.
+4. Confirm success. Do NOT echo the plaintext value back to the user — acknowledge by name only.
 
 Secret values must never be printed, echoed, logged, or pasted into another tool's arguments. If a user pastes a secret in chat, treat it as sensitive: store it, then acknowledge only by name.
+Do not tell the user to rotate the secret after a normal requested save. Recommend rotation only for a concrete exposure event such as logs, files, commits, or the wrong channel.
 `
 
 	return scheduleInstructions + `

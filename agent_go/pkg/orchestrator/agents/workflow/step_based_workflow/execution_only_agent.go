@@ -141,6 +141,14 @@ var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if 
 *Adjust your approach to avoid repeating previous failures.*
 {{end}}
 
+{{if .WorkshopHumanInput}}
+## Human Input (Highest Priority)
+The operator supplied this input with execute_step(..., human_input=...).
+You MUST incorporate it into this run. It takes priority over the default step description where they conflict.
+
+{{.WorkshopHumanInput}}
+{{end}}
+
 {{if .ValidationFeedback}}
 ### Validation Issues
 {{.ValidationFeedback}}
@@ -179,6 +187,7 @@ type WorkflowExecutionOnlyTemplate struct {
 	StepNumber               string // Step identifier (e.g., "step-8" or "step-3-if-true-0")
 	StepExecutionPath        string // Full execution folder path (e.g., "execution/step-8")
 	PreviousStepsSummary     string // Summary of previous completed steps (titles, descriptions, outputs)
+	WorkshopHumanInput       string // Operator input supplied via execute_step(human_input=...)
 	StepSuccessCriteria      string // Success criteria for the step
 	BaseDescription          string // Step description without orchestrator instructions
 	OrchestratorInstructions string // Orchestrator instructions (split from description)
@@ -411,6 +420,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		StepNumber:               templateVars["StepNumber"],
 		StepExecutionPath:        templateVars["StepExecutionPath"],
 		PreviousStepsSummary:     templateVars["PreviousStepsSummary"],
+		WorkshopHumanInput:       templateVars["WorkshopHumanInput"],
 		StepSuccessCriteria:      templateVars["StepSuccessCriteria"],
 		HasSkill:                 fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
 		IsLearnCodeMode:          fmt.Sprintf("%t", isLearnCodeMode),

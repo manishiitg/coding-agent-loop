@@ -71,10 +71,8 @@ func createEmployeeHandler() http.HandlerFunc {
 
 		var req struct {
 			Name        string `json:"name"`
-			Role        string `json:"role"`
 			Status      string `json:"status"`
 			AvatarColor string `json:"avatar_color"`
-			Description string `json:"description"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -95,10 +93,8 @@ func createEmployeeHandler() http.HandlerFunc {
 		emp := normalizeEmployeeFile(EmployeeFile{
 			ID:          uuid.New().String(),
 			Name:        req.Name,
-			Role:        req.Role,
 			Status:      req.Status,
 			AvatarColor: req.AvatarColor,
-			Description: req.Description,
 			CreatedAt:   now,
 			UpdatedAt:   now,
 		})
@@ -150,10 +146,8 @@ func updateEmployeeHandler() http.HandlerFunc {
 		id := mux.Vars(r)["id"]
 		var req struct {
 			Name        *string `json:"name"`
-			Role        *string `json:"role"`
 			Status      *string `json:"status"`
 			AvatarColor *string `json:"avatar_color"`
-			Description *string `json:"description"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -171,24 +165,14 @@ func updateEmployeeHandler() http.HandlerFunc {
 				if req.Name != nil {
 					employees[i].Name = *req.Name
 				}
-				if req.Role != nil {
-					employees[i].Role = *req.Role
-					if req.Description == nil {
-						employees[i].Description = *req.Role
-					}
-				}
 				if req.Status != nil {
 					employees[i].Status = *req.Status
 				}
 				if req.AvatarColor != nil {
 					employees[i].AvatarColor = *req.AvatarColor
 				}
-				if req.Description != nil {
-					employees[i].Description = *req.Description
-					if req.Role == nil {
-						employees[i].Role = *req.Description
-					}
-				}
+				employees[i].Role = ""
+				employees[i].Description = ""
 				employees[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
 				if err := writeEmployeesFile(employees); err != nil {

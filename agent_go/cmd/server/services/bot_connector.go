@@ -823,6 +823,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		// chat_history/<sessionID>/conversation.json keeps accumulating and
 		// the agent sees every prior turn as context.
 		if !supportsThreads && active.SessionID != "" {
+			msg.Text = m.withBotRuntimeState(active, msg.Text)
 			go m.startNewSessionDirect(msg, threadID, active.SessionID)
 			return
 		}
@@ -888,12 +889,31 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 	go func() {
 		followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer followCancel()
-		err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, userID, "", nil, ""), sessionID, userID)
+		err := m.followUpSession(followCtx, m.buildQueryRequest(m.withBotRuntimeState(active, msg.Text), userID, "", nil, ""), sessionID, userID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
 		}
 	}()
 	return true
+}
+
+func (m *BotConversationManager) withBotRuntimeState(active *activeBotSession, userText string) string {
+	if active == nil {
+		return userText
+	}
+	active.mu.Lock()
+	status := active.Status
+	builderDone := active.builderDone
+	pending := active.pendingWorkflows
+	active.mu.Unlock()
+
+	if pending > 0 {
+		return fmt.Sprintf("## Bot Connector Runtime State\n%d workflow/sub-agent item(s) are still pending for this bot conversation. If the user asks to wait or asks for status, answer based on this pending state.\n\n---\n\n## Current Message\n%s", pending, userText)
+	}
+	if builderDone || status == chathistory.BotSessionStatusCompleted || status == chathistory.BotSessionStatusFailed {
+		return fmt.Sprintf("## Bot Connector Runtime State\nNo workflow/sub-agent work is currently pending for this bot conversation. The previous builder/workflow turn status is %s. If the user asks to wait, asks for status, or asks what happened, answer from the existing conversation/results instead of promising a future ping.\n\n---\n\n## Current Message\n%s", status, userText)
+	}
+	return userText
 }
 
 func (m *BotConversationManager) queueThreadlessMessage(active *activeBotSession, connector BotConnector, msg BotIncomingMessage) {
@@ -1558,6 +1578,12 @@ func (m *BotConversationManager) SendSyntheticTurnFinalIfNeeded(sessionID, messa
 	active.LastActivity = time.Now()
 	active.mu.Unlock()
 
+	// This is a fallback path. Give the normal event filter a brief chance to
+	// mark text that was already emitted via llm_generation_end/unified_completion
+	// before deciding whether we need to send anything ourselves.
+	if filter != nil {
+		time.Sleep(250 * time.Millisecond)
+	}
 	if filter != nil && !filter.ShouldSendSyntheticFinal(message) {
 		log.Printf("[BOT_MANAGER] Synthetic final fallback skipped for %s: same builder text already sent", sessionID)
 		return false
@@ -1578,6 +1604,19 @@ func (m *BotConversationManager) SendSyntheticTurnFinalIfNeeded(sessionID, messa
 	}
 	log.Printf("[BOT_MANAGER] Synthetic final fallback sent for %s (%d chars)", sessionID, len(message))
 	return true
+}
+
+// PendingWorkflowCount returns how many mirrored workflow/sub-agent sessions
+// are still attached to a bot conversation. It is used by auto-notification
+// prompts to decide whether a completion is just progress or the final result.
+func (m *BotConversationManager) PendingWorkflowCount(sessionID string) int {
+	active := m.findActiveBySessionID(sessionID)
+	if active == nil {
+		return 0
+	}
+	active.mu.Lock()
+	defer active.mu.Unlock()
+	return active.pendingWorkflows
 }
 
 // findActiveBySessionID returns the active bot session whose SessionID matches,

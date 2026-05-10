@@ -43,6 +43,7 @@ interface ExecutionLogsPopupProps {
   runFolder: string | null
   runFolders: string[] // Available run folders (iterations and groups)
   startedAt?: string | null
+  embedded?: boolean
 }
 
 const ITERATION_ZERO_DEFAULT_FOLDER = 'iteration-0/default'
@@ -452,7 +453,8 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   workspacePath,
   runFolder: initialRunFolder,
   runFolders,
-  startedAt
+  startedAt,
+  embedded = false
 }) => {
   const runFolderOptions = useMemo(() => {
     const defaultRunFolder = getDefaultRunFolder(initialRunFolder, runFolders)
@@ -1853,12 +1855,14 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
       )
   }
 
-  if (!isOpen) return null
+  if (!embedded && !isOpen) return null
 
-  return (
-    <ModalPortal>
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
-      <div className="bg-background rounded-lg shadow-xl w-full max-w-[calc(100vw-1rem)] sm:max-w-[90vw] h-[calc(100dvh-1rem)] sm:h-[95vh] flex flex-col border border-border relative">
+  const shell = (
+      <div className={`bg-background flex flex-col border border-border relative ${
+        embedded
+          ? 'h-[calc(100vh-320px)] min-h-[520px] rounded-xl'
+          : 'rounded-lg shadow-xl w-full max-w-[calc(100vw-1rem)] sm:max-w-[90vw] h-[calc(100dvh-1rem)] sm:h-[95vh]'
+      }`}>
         {/* Header */}
         <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border sm:px-6 sm:py-4">
           <div className="flex-1 min-w-0">
@@ -1901,16 +1905,18 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
               </button>
             </div>
           </div>
-          <button 
-            onClick={onClose}
-            className="p-2 rounded-full hover:bg-accent hover:text-accent-foreground transition-colors ml-4"
-          >
-            <X className="w-5 h-5 text-muted-foreground" />
-          </button>
+          {!embedded && (
+            <button
+              onClick={onClose}
+              className="p-2 rounded-full hover:bg-accent hover:text-accent-foreground transition-colors ml-4"
+            >
+              <X className="w-5 h-5 text-muted-foreground" />
+            </button>
+          )}
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 bg-background">
+        <div className={`flex-1 overflow-y-auto bg-background ${embedded ? 'p-4' : 'p-6'}`}>
           {loading ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Loader2 className="w-8 h-8 animate-spin mb-3 text-primary" />
@@ -2025,15 +2031,25 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-border flex justify-end bg-background rounded-b-lg">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80 transition-colors text-sm font-medium"
-          >
-            Close
-          </button>
-        </div>
+        {!embedded && (
+          <div className="px-6 py-4 border-t border-border flex justify-end bg-background rounded-b-lg">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80 transition-colors text-sm font-medium"
+            >
+              Close
+            </button>
+          </div>
+        )}
       </div>
+  )
+
+  if (embedded) return shell
+
+  return (
+    <ModalPortal>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
+      {shell}
     </div>
     </ModalPortal>
   )

@@ -1,6 +1,6 @@
 # Deploy
 
-Deployment configs and scripts for AgentForge.
+Deployment configs and scripts for Runloop.
 
 | Target | Path | Description |
 |--------|------|-------------|

@@ -24,6 +24,8 @@ import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 
+const WORKSHOP_MODE_SWITCH_CONFIRM_KEY = 'workflow_workshop_mode_switch_confirm_dismissed'
+
 function WorkshopModeToggle() {
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const workflowMode = useWorkflowStore(state => state.workflowMode)
@@ -32,6 +34,8 @@ function WorkshopModeToggle() {
     return (activePresetId && state.workshopModeByPreset[activePresetId]) || state.workshopMode
   })
   const setWorkshopMode = useWorkflowStore(state => state.setWorkshopMode)
+  const [pendingMode, setPendingMode] = useState<'builder' | 'optimizer' | null>(null)
+  const [dontAskAgain, setDontAskAgain] = useState(false)
 
   const persistWorkshopMode = (mode: string) => {
     if (!activePresetId) return
@@ -41,6 +45,43 @@ function WorkshopModeToggle() {
       // Non-fatal: localStorage still tracks the mode; persist is best-effort
     })
   }
+
+  const applyWorkshopMode = (mode: 'builder' | 'optimizer') => {
+    setWorkflowMode('plan')
+    setWorkshopMode(mode)
+    persistWorkshopMode(mode)
+  }
+
+  const requestWorkshopMode = (mode: 'builder' | 'optimizer') => {
+    if (workshopMode === mode) return
+    let skipConfirm = false
+    try {
+      skipConfirm = localStorage.getItem(WORKSHOP_MODE_SWITCH_CONFIRM_KEY) === 'true'
+    } catch {
+      skipConfirm = false
+    }
+    if (skipConfirm) {
+      applyWorkshopMode(mode)
+      return
+    }
+    setDontAskAgain(false)
+    setPendingMode(mode)
+  }
+
+  const confirmModeSwitch = () => {
+    if (!pendingMode) return
+    if (dontAskAgain) {
+      try {
+        localStorage.setItem(WORKSHOP_MODE_SWITCH_CONFIRM_KEY, 'true')
+      } catch {
+        // ignore storage failures; the switch itself should still work
+      }
+    }
+    applyWorkshopMode(pendingMode)
+    setPendingMode(null)
+  }
+
+  const pendingModeLabel = pendingMode === 'optimizer' ? 'Optimize' : 'Builder'
 
   // Two visible user-facing modes. Run mode remains available for bot routes
   // (Slack/WhatsApp/etc.) and backend compatibility, but the workshop UI should
@@ -52,7 +93,7 @@ function WorkshopModeToggle() {
 
   return (
     <TooltipProvider delayDuration={120}>
-      <div className="flex items-center gap-2">
+      <div className="relative flex items-center gap-2">
         <div className="flex items-center rounded-md border border-border overflow-hidden text-xs font-medium">
           {builderModes.map(({ id, label, title, description }) => (
             <Tooltip key={id}>
@@ -60,9 +101,7 @@ function WorkshopModeToggle() {
                 <button
                   type="button"
                   onClick={() => {
-                    setWorkflowMode('plan')
-                    setWorkshopMode(id)
-                    persistWorkshopMode(id)
+                    requestWorkshopMode(id)
                   }}
                   className={`px-2.5 py-1 transition-colors ${
                     workshopMode === id
@@ -80,6 +119,41 @@ function WorkshopModeToggle() {
             </Tooltip>
           ))}
         </div>
+        {pendingMode && (
+          <div className="absolute bottom-full left-0 z-50 mb-2 w-[20rem] rounded-md border border-gray-200 bg-white p-3 text-xs shadow-lg dark:border-gray-700 dark:bg-gray-900">
+            <div className="font-semibold text-gray-900 dark:text-gray-100">
+              Switch to {pendingModeLabel}?
+            </div>
+            <div className="mt-1 leading-5 text-gray-600 dark:text-gray-300">
+              Full chat history is not passed between Builder and Optimize. The next mode receives a compact summary.
+            </div>
+            <label className="mt-2 flex items-center gap-2 text-gray-600 dark:text-gray-300">
+              <input
+                type="checkbox"
+                checked={dontAskAgain}
+                onChange={(event) => setDontAskAgain(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              Do not ask again
+            </label>
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingMode(null)}
+                className="rounded px-2 py-1 font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmModeSwitch}
+                className="rounded bg-blue-600 px-2 py-1 font-medium text-white hover:bg-blue-700"
+              >
+                Switch
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </TooltipProvider>
   )

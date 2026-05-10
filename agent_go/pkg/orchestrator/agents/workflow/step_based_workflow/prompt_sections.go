@@ -539,7 +539,7 @@ func ResolveDependencyPaths(
 //
 // Deployment modes:
 //   - Docker (default):  not set → returns "/app/workspace-docs" (volume mount inside container)
-//   - Desktop DMG (Mac): set by desktop/main.js → "~/Library/Application Support/AgentForge/workspace-docs"
+//   - Desktop DMG (Mac): set by desktop/main.js → "~/Library/Application Support/Runloop/workspace-docs"
 //     (workspace-server runs as a native binary, no Docker)
 //   - run_server_with_logging.sh: NOT set, because workspace still runs in Docker
 //

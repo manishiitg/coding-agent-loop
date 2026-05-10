@@ -95,9 +95,8 @@ type ExecutionContext struct {
 	HumanInputs map[string]string
 
 	// WorkshopHumanInput is the single-step response the builder agent supplies via
-	// execute_step(human_input="..."). Only consumed by controller_human_input.go as
-	// the substitute response for a human_input step. For prompt-level guidance to
-	// any other step type, use WorkshopExecuteOptions.Instructions instead.
+	// execute_step(human_input="..."). Human input steps consume it as the response
+	// substitute; executable steps receive it as high-priority prompt context.
 	WorkshopHumanInput string
 
 	// ConversationHistoryCapture is an optional pointer; when non-nil the execution engine

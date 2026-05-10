@@ -274,6 +274,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		previousExecutionResults,
 		allSteps,
 		orchestratorLearningHistory,
+		execCtx,
 	)
 
 	// Capture tool calls and wall-clock duration per attempt so persisted logs show
@@ -419,6 +420,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	previousExecutionResults []string,
 	allSteps []PlanStepInterface,
 	orchestratorLearningHistory string, // Persisted learnings from previous runs
+	execCtx *ExecutionContext,
 ) map[string]string {
 	// Build predefined routes list (title + ID only — use get_route_description tool for details)
 	var routesBuilder strings.Builder
@@ -524,10 +526,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	// Build previous steps summary (includes descriptions, output files, and execution results like human_input responses)
 	previousStepsSummary := hcpo.buildPreviousStepsSummary(allSteps, stepIndex, previousContextFiles, previousExecutionResults)
 
-	// Workshop-guidance for todo_task steps flows through WorkshopExecuteOptions.Instructions
-	// (appended to the step description). HumanInput is only consumed by controller_human_input.go.
-
 	templateVars["PreviousStepsSummary"] = previousStepsSummary
+	if execCtx != nil && execCtx.WorkshopHumanInput != "" {
+		templateVars["WorkshopHumanInput"] = execCtx.WorkshopHumanInput
+		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Injecting human_input into todo_task step %q prompt (%d chars)", step.GetID(), len(execCtx.WorkshopHumanInput)))
+	} else {
+		templateVars["WorkshopHumanInput"] = ""
+	}
 
 	// Add variable names and values (like orchestration step)
 	if variableNames := FormatVariableNames(hcpo.variablesManifest); variableNames != "" {

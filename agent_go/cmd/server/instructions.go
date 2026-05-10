@@ -228,18 +228,28 @@ Video understanding is available through the ` + "`read_video(filepath, query, p
 - Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using ` + "`set_provider_auth(provider=\"kimi\", api_key=\"...\")`" + ` or ` + "`set_provider_auth(provider=\"z-ai\", api_key=\"...\")`" + `; do not hand-edit the encrypted auth file.
 
 ## Employees & Workflows
-Employees are virtual team members assigned to workflows. Each employee has a ` + "`name`" + ` (a person) and a ` + "`role`" + ` (what they do) — these are **separate fields** and must not be collapsed.
+Employees are virtual team members assigned to workflows. The employee UI shows employee ` + "`name`" + ` only; do not invent or display designations unless the user explicitly asks for them.
 
 **Naming rule — read before creating any employee:**
-- ` + "`name`" + ` must be a realistic human first name (e.g., "Priya", "Arjun", "Sarah", "Marco", "Linh"). If the user did not provide names, invent them — one per employee, varied and plausible.
-- ` + "`name`" + ` must NEVER be a job title, function, or description. Strings like "HR Manager", "Software Engineer", "Data Analyst", "Marketing", "Finance Lead" are **roles**, not names.
-- Put the job title in the ` + "`role`" + ` field, and a one-sentence description of what the employee does in ` + "`description`" + `.
-- This rule applies whether you are creating employees directly, delegating the task to a sub-agent, or organizing existing workflows under employees. If the request is "organize these workflows under an employee", that means **invent a named person** and assign workflows to them — do not use the role as the person's name.
+- ` + "`name`" + ` should be the employee display name the user wants to see.
+- When the user asks to add an employee and only gives a name, save only that name.
+- If the user gives a job title or function as the employee name, keep it as the name only when that is clearly the label they want in the org page.
+- Do not add a ` + "`role`" + ` or ` + "`description`" + ` just to fill metadata.
 
 ### Quick Reference
 - Employees: ` + "`execute_shell_command(command: \"cat " + absConfig + "/employees.json\")`" + `
 - Assignments (workflow_path → employee_id): ` + "`execute_shell_command(command: \"cat " + absConfig + "/employee-workflows.json\")`" + `
 - List workflows: ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/\")`" + `
+
+### Managing employees from chat
+Use the employee tools for org employee changes:
+- ` + "`list_employees`" + ` — inspect employees and assignments.
+- ` + "`create_employee(name, avatar_color?)`" + ` — add an employee.
+- ` + "`update_employee(id, name?, avatar_color?, status?)`" + ` — edit an employee.
+- ` + "`delete_employee(id)`" + ` — remove an employee.
+- ` + "`assign_workflow_employee(workspace_path, employee_id)`" + ` — assign or unassign a workflow.
+
+Employee registry changes are live org configuration, not memory. When the user asks to add, edit, delete, or assign an employee, call the employee tool and do **not** call ` + "`save_memory`" + ` for that change.
 
 ### Workflow Structure
 Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
@@ -662,17 +672,10 @@ func buildEmployeesWorkflowsContext() string {
 		if name == "" {
 			name = emp.ID
 		}
-		role := strings.TrimSpace(emp.Role)
-		if role == "" {
-			role = strings.TrimSpace(emp.Description)
-		}
 
 		line := fmt.Sprintf("- **%s**", name)
 		if emp.ID != "" {
 			line += fmt.Sprintf(" (`%s`)", emp.ID)
-		}
-		if role != "" {
-			line += fmt.Sprintf(" — %s", role)
 		}
 		sb.WriteString(line + "\n")
 

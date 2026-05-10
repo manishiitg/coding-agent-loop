@@ -1631,6 +1631,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           console.log(`%c[WorkflowStore] switchToPreset: ${oldPresetId?.slice(0,8)} → ${presetId?.slice(0,8)}`, 'color: #2196F3; font-weight: bold')
           console.time(`[WorkflowStore] switchToPreset-${presetId?.slice(0,8)}`)
+          const restoredWorkshopMode = migrateWorkshopMode(
+            currentState.workshopModeByPreset[presetId] ?? currentState.workshopMode
+          )
 
           // Save current flat state into the old preset's slot before switching
           // This preserves all execution state (progress, groups, phase, etc.) so it's
@@ -1661,6 +1664,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
                 persistedUIState.workflowWorkspaceView ??
                 (loadWorkspaceViewByPreset()[presetId] ?? null),
               ...(persistedUIState.canvasViewMode ? { canvasViewMode: persistedUIState.canvasViewMode } : {}),
+              workshopMode: restoredWorkshopMode,
+              workflowMode: 'plan',
               _currentPresetId: presetId
             } as Partial<WorkflowStore>)
             return
@@ -1713,6 +1718,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
             currentStepId: restored.currentStepId,
             stepStatusMap: new Map(restored.stepStatusMap),
             batchProgress: restored.batchProgress,
+            workshopMode: restoredWorkshopMode,
+            workflowMode: 'plan',
             _currentPresetId: presetId
           } as Partial<WorkflowStore>)
 

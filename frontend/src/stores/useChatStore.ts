@@ -575,7 +575,7 @@ export const useChatStore = create<ChatState>()(
       sessionId: null,
       hasActiveChat: false,
       autoScroll: true,
-      eventViewModePreference: 'tree',
+      eventViewModePreference: 'flat',
       finalResponse: '',
       isCompleted: false,
       isLoadingHistory: false,

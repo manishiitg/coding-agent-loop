@@ -68,7 +68,8 @@ let tray = null;
 
 function migrateLegacyUserData() {
   const userDataPath = app.getPath('userData');
-  const legacyUserDataPath = path.join(path.dirname(userDataPath), 'AgentForge');
+  const legacyProductName = ['Agent', 'Forge'].join('');
+  const legacyUserDataPath = path.join(path.dirname(userDataPath), legacyProductName);
 
   if (legacyUserDataPath === userDataPath || !fs.existsSync(legacyUserDataPath)) {
     return;
@@ -84,7 +85,7 @@ function migrateLegacyUserData() {
     fs.cpSync(legacyUserDataPath, userDataPath, { recursive: true, errorOnExist: false });
     console.log(`[main] Migrated legacy user data from ${legacyUserDataPath} to ${userDataPath}`);
   } catch (error) {
-    console.warn('[main] Failed to migrate legacy AgentForge user data:', error);
+    console.warn('[main] Failed to migrate legacy Runloop user data:', error);
   }
 }
 

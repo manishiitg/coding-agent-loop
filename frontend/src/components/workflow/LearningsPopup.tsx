@@ -105,6 +105,30 @@ function parseLearningsResponse(learningsData: Record<string, unknown>): Record<
   return result
 }
 
+const normalizeGlobalSkillRelPath = (filepath: string): string => {
+  try {
+    filepath = decodeURIComponent(filepath)
+  } catch {
+    // keep original path
+  }
+  return filepath
+    .split(/[?#]/, 1)[0]
+    .replace(/^\/+/, '')
+    .split('/')
+    .filter(segment => segment && segment !== '.')
+    .join('/')
+}
+
+const getMarkdownLinkedGlobalPaths = (content: string): Set<string> => {
+  const linked = new Set<string>()
+  for (const match of content.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
+    const href = match[1]?.trim()
+    if (!href || href.startsWith('#') || href.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(href)) continue
+    linked.add(normalizeGlobalSkillRelPath(href))
+  }
+  return linked
+}
+
 // Get step title from plan
 function getStepTitle(plan: PlanningResponse | null, stepId: string): string {
   if (stepId === '_global') return 'Workflow Knowledge (Global)'
@@ -240,15 +264,11 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
     const globalPath = `${workspacePath}/learnings/_global`
     const resolveAbs = (raw: string): string => {
-      let p = raw
-      if (!p.startsWith(workspacePath)) {
-        const clean = p.startsWith('/') ? p.slice(1) : p
-        p = `${workspacePath}/${clean}`
-      }
-      if (!p.includes('/learnings/')) {
-        p = `${globalPath}/${p}`
-      }
-      return p
+      const clean = raw.replace(/^\/+/, '')
+      if (raw.startsWith(workspacePath) || clean.startsWith(workspacePath)) return clean
+      if (clean.includes('/learnings/_global/')) return clean
+      if (clean.startsWith('learnings/_global/')) return `${workspacePath}/${clean}`
+      return `${globalPath}/${clean}`
     }
     const relFromGlobal = (absOrRel: string): string => {
       // Strip everything up to and including "/_global/" so the display key is stable.
@@ -283,6 +303,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         walk(files)
 
         // Pull SKILL.md first for the featured markdown view.
+        let skillText = ''
         const skill = flatFiles.find(f => {
           const rel = relFromGlobal(f.filepath || '')
           return rel === 'SKILL.md'
@@ -296,6 +317,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
               const endIdx = text.indexOf('\n---', 3)
               if (endIdx !== -1) text = text.slice(endIdx + 4).trim()
             }
+            skillText = text
             setGlobalSkillContent(text)
           }
         }
@@ -303,19 +325,21 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         // Every other file (excluding SKILL.md + .learning_metadata.json + anything
         // that somehow resolved outside _global/). Grouped by directory for display;
         // content fetched on demand.
+        const linkedGlobalPaths = getMarkdownLinkedGlobalPaths(skillText)
         const dedupedByRelPath = new Map<string, { relPath: string; rawPath: string }>()
         for (const file of flatFiles) {
           const rawPath = file.filepath || ''
-          const relPath = relFromGlobal(rawPath)
+          const relPath = normalizeGlobalSkillRelPath(relFromGlobal(rawPath))
 
           if (!relPath || relPath === 'SKILL.md') continue
           if (relPath.endsWith('.learning_metadata.json')) continue
           if (relPath.endsWith('/')) continue
+          if (linkedGlobalPaths.has(relPath)) continue
           // Safety: only include files we can place under _global/. If relFromGlobal
           // didn't strip a /_global/ prefix AND the raw path doesn't look relative
           // (e.g. it's a sibling workflow folder), skip it — the listing probably
           // included a parent's content because _global/ is empty.
-          if (!rawPath.includes('/_global/') && rawPath.includes('/')) {
+          if (!rawPath.includes('/_global/') && rawPath.includes('/') && !rawPath.startsWith('references/') && !rawPath.startsWith('scripts/') && !rawPath.startsWith('assets/')) {
             // Raw path has directory separators but none of them are under _global.
             // Likely outside the target folder. Exclude to avoid confusing UI rows.
             continue
@@ -919,7 +943,12 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                   )}
                   {!globalLoading && !globalError && globalSkillContent && (
                     <div className="prose prose-sm max-w-none dark:prose-invert mb-3">
-                      <MarkdownRenderer content={globalSkillContent} maxHeight="500px" showScrollbar={true} />
+                      <MarkdownRenderer
+                        content={globalSkillContent}
+                        basePath={`${workspacePath}/learnings/_global/SKILL.md`}
+                        maxHeight="500px"
+                        showScrollbar={true}
+                      />
                     </div>
                   )}
                   {!globalLoading && !globalError && globalFiles.length > 0 && (() => {
@@ -938,7 +967,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                     return (
                       <div className="mt-2 pt-3 border-t border-border space-y-3">
                         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                          Files ({globalFiles.length})
+                          Additional files ({globalFiles.length})
                         </div>
                         {sortedDirs.map(dir => {
                           const entries = grouped.get(dir)!

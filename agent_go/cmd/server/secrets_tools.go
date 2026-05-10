@@ -107,7 +107,7 @@ func (api *StreamingAPI) registerSecretManagementTools(agent *mcpagent.Agent, us
 
 	if err := registerTool(
 		"set_user_secret",
-		"Create or update a user-owned secret. The value is AES-256-GCM encrypted with the user's key and stored server-side. Use for API keys, tokens, credentials the workflow needs. REJECTS names that collide with global (env-backed) secrets — those are managed by the operator, not the user. After creating, attach to a workflow with update_workflow_config add_secrets.",
+		"Create or update a user-owned secret. The value is AES-256-GCM encrypted with the user's key and stored server-side. Use for API keys, tokens, credentials the workflow needs. REJECTS names that collide with global (env-backed) secrets — those are managed by the operator, not the user. In workflow-builder/workshop contexts, if the user asked to add this secret to the current workflow, immediately follow this with update_workflow_config add_secrets so runtime steps receive $SECRET_<NAME>.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -142,7 +142,7 @@ func (api *StreamingAPI) registerSecretManagementTools(agent *mcpagent.Agent, us
 			if err := api.chatStore.UpsertUserSecret(ctx, userID, name, encrypted); err != nil {
 				return "", fmt.Errorf("store secret: %w", err)
 			}
-			return fmt.Sprintf("✅ Stored user secret %q (encrypted). Attach to a workflow via update_workflow_config add_secrets=[%q].", name, name), nil
+			return fmt.Sprintf("✅ Stored user secret %q (encrypted). If this is for the current workflow, attach it now with update_workflow_config add_secrets=[%q].", name, name), nil
 		},
 	); err != nil {
 		return fmt.Errorf("register set_user_secret: %w", err)

@@ -214,6 +214,14 @@ The following files from previous steps are available for reading:
 {{.StepContextDependencies}}
 {{end}}
 
+{{if .WorkshopHumanInput}}
+## Human Input (Highest Priority)
+The operator supplied this input with execute_step(..., human_input=...).
+You MUST incorporate it into this run. It takes priority over the default step description where they conflict.
+
+{{.WorkshopHumanInput}}
+{{end}}
+
 {{if .ValidationFeedback}}
 ## Pre-Validation Failed (Previous Attempt)
 {{.ValidationFeedback}}
@@ -354,6 +362,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorUserMessageP
 		"StepContextDependencies": templateVars["StepContextDependencies"],
 		"StepSuccessCriteria":     templateVars["StepSuccessCriteria"],
 		"ValidationFeedback":      templateVars["ValidationFeedback"],
+		"WorkshopHumanInput":      templateVars["WorkshopHumanInput"],
 	}
 
 	var result strings.Builder

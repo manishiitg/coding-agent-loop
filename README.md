@@ -1,4 +1,4 @@
-# 🚀 AgentForge
+# 🚀 Runloop
 
 ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/manishiitg/mcp-agent-builder-go)
 [![Security Scan](https://github.com/manishiitg/mcp-agent-builder-go/workflows/Secret%20Scan/badge.svg)](https://github.com/manishiitg/mcp-agent-builder-go/actions)
@@ -7,7 +7,7 @@
 [![React](https://img.shields.io/badge/React-19.1.1-blue.svg)](https://reactjs.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](#license--architecture-foundations)
 
-**AgentForge** is a multi-model agent platform for building, orchestrating, and scheduling AI workflows across coding tools, chat channels, browser automation, and human approvals.
+**Runloop** is a multi-model agent platform for building, orchestrating, and scheduling AI workflows across coding tools, chat channels, browser automation, and human approvals.
 
 ### Install on macOS (Apple Silicon)
 
@@ -20,19 +20,19 @@ Downloads the latest dmg from [Releases](https://github.com/manishiitg/mcp-agent
 
 Run **Claude Code, Codex, Gemini CLI, and open models** in one system. Build visual workflows, launch complex orchestrators, schedule recurring jobs, and route agent conversations through **Slack, WhatsApp, and the web**.
 
-AgentForge is built for teams that want more than a chat box:
+Runloop is built for teams that want more than a chat box:
 - Build visual agent workflows and long-running orchestrators
 - Mix and match the best coding and reasoning models for each step
 - Schedule automations, recurring jobs, and background runs
 - Keep humans in the loop with approvals, feedback, and escalation paths
 - Connect agents to Slack, WhatsApp, browsers, Google Workspace, and MCP tools
 
-## Why AgentForge
+## Why Runloop
 
 - **Multi-model by default**: Use Claude Code, Codex, Gemini CLI, OpenAI, Anthropic, Bedrock, Azure, MiniMax, OpenRouter, and open models in the same platform.
 - **Visual workflows plus real execution**: Design workflows on a canvas, then run them with tools, browser automation, memory, and evaluation built in.
 - **Built for operations, not demos**: Add scheduling, observability, validation, approvals, and secure workspace isolation from day one.
-- **Protocol-agnostic in practice**: MCP is supported, but AgentForge is broader than any single protocol, provider, or model vendor.
+- **Protocol-agnostic in practice**: MCP is supported, but Runloop is broader than any single protocol, provider, or model vendor.
 
 ## What You Can Build
 
@@ -69,7 +69,7 @@ AgentForge is built for teams that want more than a chat box:
 
 ## ⚡ Platform Overview
 
-At the core of AgentForge is the **[workflow system](docs/workflow/README.md)**, a directed step-based workflow runtime managed through the visual workflow builder.
+At the core of Runloop is the **[workflow system](docs/workflow/README.md)**, a directed step-based workflow runtime managed through the visual workflow builder.
 
 Design complex workflows visually, refine them through the interactive builder, then run them with step-level configuration, tiered LLM selection, deterministic pre-validation, evaluation runs, scheduling, cost tracking, and persistent run data.
 
@@ -115,7 +115,7 @@ Keep operators involved when workflows need approval, intervention, or additiona
 
 ### 🧩 LLM Configuration and Providers
 
-AgentForge is provider-agnostic. Users configure published LLMs in the UI, then assign them to chat sessions, workflow phases, and workflow tiers.
+Runloop is provider-agnostic. Users configure published LLMs in the UI, then assign them to chat sessions, workflow phases, and workflow tiers.
 
 - **[LLM Configuration & Resilience](docs/core/llm_configuration_and_resilience.md):** Published LLMs carry provider, model, API key, temperature, and model-specific options; the backend does not require provider keys at startup in the default mode.
 - **[Tiered LLM Allocation](docs/workflow/tiered_llm_allocation.md):** Workflow steps can use tiered model selection, with separate phase LLM configuration for planning, builder, evaluation, and debugging-style phase work.

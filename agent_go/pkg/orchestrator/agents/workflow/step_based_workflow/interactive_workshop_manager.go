@@ -2580,7 +2580,7 @@ Rules:
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "run") (eq .WorkshopMode "reporting")}}
 ### Step Execution & Inspection
-- **execute_step(step_id, group_name, instructions?, human_input?, tier?)** — Start a single step in background; returns `+"`execution_id`"+`. In Builder mode, this is the primary way to test one step after adding or editing it. Execution uses `+"`iteration-0`"+`. Pass human_input for human input steps.
+- **execute_step(step_id, group_name, instructions?, human_input?, tier?)** — Start a single step in background; returns `+"`execution_id`"+`. In Builder mode, this is the primary way to test one step after adding or editing it. Execution uses `+"`iteration-0`"+`. Pass human_input to supply high-priority operator input/custom instructions to any step type; for human_input steps, it is used as the response.
 {{if eq .WorkshopMode "optimizer"}}- **execute_step(step_id, group_name, fast_path_only=true)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
 {{end}}
 - **query_step(execution_id, tool_call_id?)** — Live status check for a running single step. Use this immediately after `+"`execute_step`"+` when debugging: it shows progress, active tool calls, and tool-call details without waiting for completion.
@@ -2693,6 +2693,10 @@ Secrets are credentials (API keys, tokens, passwords) injected into step agents 
 
 1. **Store the value** (user secrets only): `+"`set_user_secret(name=\"BUFFER_API_KEY\", value=\"<plaintext>\")`"+` — AES-GCM encrypts and stores per-user. Names that already exist as globals are rejected.
 2. **Attach to this workflow**: `+"`update_workflow_config(add_secrets=[\"BUFFER_API_KEY\"])`"+`. This step validates that a value exists (user store OR global); attaching an orphan name is rejected with an error pointing to step 1.
+
+**When the user asks you to add/save/set a secret for this workflow, complete both steps in the same turn.** Do not stop after `+"`set_user_secret`"+`; immediately call `+"`update_workflow_config(add_secrets=[...])`"+` so the next step run receives `+"`$SECRET_<NAME>`"+`. If the user only gives a name and no value, call `+"`list_secrets`"+` first and attach an existing available secret if present; otherwise ask for the value. If the user pastes a value in chat, store it and then refer to it by name only.
+
+Do **not** give boilerplate advice like "rotate this secret" after a normal user-requested save. Recommend rotation only when there is a concrete exposure reason: the value was printed into logs/output, committed to a file, sent to the wrong channel, or the user explicitly asks for security remediation.
 
 **Other secret ops:**
 - **Inspect**: `+"`list_secrets`"+` returns `+"`global`"+` (read-only names) and `+"`user`"+` (CRUD names) buckets — values are never exposed.

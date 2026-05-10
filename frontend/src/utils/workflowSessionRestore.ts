@@ -36,6 +36,19 @@ function findTabForSession(tabs: Record<string, ChatTab>, sessionId: string): Ch
   return Object.values(tabs).find(tab => tab.sessionId === sessionId)
 }
 
+function findReadOnlyRunTabForSession(
+  tabs: Record<string, ChatTab>,
+  sessionId: string,
+  metadata: NonNullable<ChatTab['metadata']>,
+): ChatTab | undefined {
+  return Object.values(tabs).find(tab => {
+    if (tab.sessionId !== sessionId || tab.metadata?.mode !== 'workflow' || !tab.metadata?.isViewOnly) return false
+    if (metadata.isScheduledRun) return tab.metadata.isScheduledRun === true
+    if (metadata.isBotRun) return tab.metadata.isBotRun === true
+    return false
+  })
+}
+
 export function isScheduledWorkflowSession(session: ActiveSessionInfo, runningWorkflow?: RunningWorkflowInfo): boolean {
   const triggeredBy = (session.triggered_by || runningWorkflow?.triggered_by || '').toLowerCase()
   const sessionId = (session.session_id || '').toLowerCase()
@@ -237,7 +250,6 @@ async function restoreReadOnlyWorkflowRunChat(
   useWorkflowStore.getState().setShowChatArea(true)
 
   const chatStore = useChatStore.getState()
-  const existingTab = findTabForSession(chatStore.chatTabs, session.session_id)
   const metadata = {
     mode: 'workflow' as const,
     phaseId: undefined,
@@ -247,6 +259,7 @@ async function restoreReadOnlyWorkflowRunChat(
     ...options.metadata,
   }
   const desiredName = options.tabName
+  const existingTab = findReadOnlyRunTabForSession(chatStore.chatTabs, session.session_id, metadata)
 
   const tabId = existingTab?.tabId ?? await chatStore.createChatTab(desiredName, metadata, session.session_id)
   chatStore.setTabMetadata(tabId, metadata)

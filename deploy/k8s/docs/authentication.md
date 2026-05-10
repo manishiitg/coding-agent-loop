@@ -1,6 +1,6 @@
 # Multi-Provider Authentication
 
-This document describes how to configure authentication for the AgentForge application deployed on Kubernetes.
+This document describes how to configure authentication for the Runloop application deployed on Kubernetes.
 
 ## Overview
 

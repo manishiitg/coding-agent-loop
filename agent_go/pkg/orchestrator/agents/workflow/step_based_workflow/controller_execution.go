@@ -1503,14 +1503,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			templateVars["VariableNames"] = variableNames
 		}
 
-		// Workshop-guidance for non-human-input steps flows through WorkshopExecuteOptions.Instructions
-		// (appended to the step description via appendInstructionsToStep). HumanInput is only
-		// consumed by controller_human_input.go as a response substitution.
-
 		// Build previous steps summary from completed steps (include execution outputs)
 		previousStepsSummary := hcpo.buildPreviousStepsSummary(allSteps, stepIndex, previousContextFiles, previousExecutionResults)
 
 		templateVars["PreviousStepsSummary"] = previousStepsSummary
+		if execCtx != nil && execCtx.WorkshopHumanInput != "" {
+			templateVars["WorkshopHumanInput"] = execCtx.WorkshopHumanInput
+			hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Injecting human_input into step %q prompt (%d chars)", step.GetID(), len(execCtx.WorkshopHumanInput)))
+		} else {
+			templateVars["WorkshopHumanInput"] = ""
+		}
 
 		// Add validation schema to template variables so execution agent knows expected file structure
 		validationSchema := getValidationSchema(step)

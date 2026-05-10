@@ -1108,22 +1108,6 @@ echo "✂️  Context Editing: $ENABLE_CONTEXT_EDITING (Threshold: ${CONTEXT_EDI
 echo "📦 Large Output Threshold: ${LARGE_OUTPUT_THRESHOLD} tokens"
 echo "📊 Debug level: $LOG_LEVEL"
 
-# Database configuration based on DATABASE_URL
-# Set USE_SQLITE=true to force SQLite for local testing (ignores DATABASE_URL)
-USE_SQLITE="${USE_SQLITE:-false}"
-DB_TYPE_FLAG="sqlite"
-if [ "$USE_SQLITE" = "true" ]; then
-    unset DATABASE_URL
-    echo "🗄️  USE_SQLITE=true — forcing SQLite (ignoring DATABASE_URL)"
-    DB_TYPE_FLAG="sqlite"
-elif [ -n "$DATABASE_URL" ]; then
-    echo "🗄️  Detected DATABASE_URL, using PostgreSQL (Supabase)"
-    DB_TYPE_FLAG="postgres"
-else
-    echo "🗄️  No DATABASE_URL found, using SQLite"
-    DB_TYPE_FLAG="sqlite"
-fi
-
 # Verify main.go exists before attempting to run
 if [ ! -f "main.go" ]; then
     echo "❌ Error: main.go not found in current directory: $(pwd)"
@@ -1238,8 +1222,6 @@ if [ "$BACKGROUND_MODE" = true ]; then
         --port "$AGENT_PORT" \
         --log-level debug \
         --debug \
-        --db-type "$DB_TYPE_FLAG" \
-        --db-path "./chat_history.db" \
         --provider "$DEEP_SEARCH_MAIN_LLM_PROVIDER" \
         --model "$DEEP_SEARCH_MAIN_LLM_MODEL" \
         --temperature "$DEEP_SEARCH_MAIN_LLM_TEMPERATURE" \
@@ -1295,8 +1277,6 @@ elif [ "$WITH_FRONTEND" = true ]; then
         --port "$AGENT_PORT" \
         --log-level debug \
         --debug \
-        --db-type "$DB_TYPE_FLAG" \
-        --db-path "./chat_history.db" \
         --provider "$DEEP_SEARCH_MAIN_LLM_PROVIDER" \
         --model "$DEEP_SEARCH_MAIN_LLM_MODEL" \
         --temperature "$DEEP_SEARCH_MAIN_LLM_TEMPERATURE" \
@@ -1328,8 +1308,6 @@ else
         --port "$AGENT_PORT" \
         --log-level debug \
         --debug \
-        --db-type "$DB_TYPE_FLAG" \
-        --db-path "./chat_history.db" \
         --provider "$DEEP_SEARCH_MAIN_LLM_PROVIDER" \
         --model "$DEEP_SEARCH_MAIN_LLM_MODEL" \
         --temperature "$DEEP_SEARCH_MAIN_LLM_TEMPERATURE" \

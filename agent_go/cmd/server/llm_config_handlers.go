@@ -38,6 +38,8 @@ var supportedLLMProviders = []string{
 	"codex-cli",
 }
 
+const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
+
 // getSupportedProviders returns the list of supported LLM providers based on environment configuration
 func getSupportedProviders() []string {
 	envValue := os.Getenv("SUPPORTED_LLM_PROVIDERS")
@@ -553,12 +555,13 @@ func validateClaudeCodeCLI() llm.APIKeyValidationResponse {
 	// Remove ANTHROPIC_API_KEY from env so Claude Code uses its own OAuth credentials
 	// instead of picking up the server's API key (which may have different billing).
 	env := os.Environ()
-	filteredEnv := make([]string, 0, len(env))
+	filteredEnv := make([]string, 0, len(env)+1)
 	for _, e := range env {
-		if !strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
+		if !strings.HasPrefix(e, "ANTHROPIC_API_KEY=") && !strings.HasPrefix(e, claudeCodeDisableAutoMemoryEnv+"=") {
 			filteredEnv = append(filteredEnv, e)
 		}
 	}
+	filteredEnv = append(filteredEnv, claudeCodeDisableAutoMemoryEnv+"=1")
 	cmd.Env = filteredEnv
 	output, err := cmd.CombinedOutput()
 	if err != nil {

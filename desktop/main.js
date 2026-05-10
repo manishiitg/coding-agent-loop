@@ -443,6 +443,51 @@ function getResourcesDir() {
   return path.join(__dirname, 'resources');
 }
 
+// Unify all agent log files under <userData>/logs/.
+//
+// The Go agent server hardcodes paths like `logs/llm_debug.log` and
+// `logs/schedule.log` (also `logs/agent_prompts/` when LOG_AGENT_PROMPTS=true)
+// relative to its cwd, which in packaged mode is the .app's Resources dir.
+// That means those logs land *inside the app bundle* and get wiped on every
+// reinstall/upgrade. We symlink Resources/logs → <userData>/logs so all log
+// files end up in the same persistent place as agent.log + workspace.log.
+//
+// Idempotent: safe to call on every launch.
+function unifyAgentLogsDir(userDataPath) {
+  if (!app.isPackaged) return; // dev runs from agent_go/, leave logs there
+  try {
+    const userLogsDir = path.join(userDataPath, 'logs');
+    const resourcesLogsDir = path.join(getResourcesDir(), 'logs');
+    fs.mkdirSync(userLogsDir, { recursive: true });
+
+    let stat;
+    try { stat = fs.lstatSync(resourcesLogsDir); } catch (_) { stat = null; }
+
+    if (stat && stat.isSymbolicLink()) {
+      const current = fs.readlinkSync(resourcesLogsDir);
+      if (current === userLogsDir) return; // already linked correctly
+      fs.unlinkSync(resourcesLogsDir);
+    } else if (stat && stat.isDirectory()) {
+      // Move any existing files into userLogsDir (don't lose old logs), then rm dir.
+      for (const entry of fs.readdirSync(resourcesLogsDir)) {
+        const src = path.join(resourcesLogsDir, entry);
+        const dst = path.join(userLogsDir, entry);
+        try {
+          if (!fs.existsSync(dst)) fs.renameSync(src, dst);
+        } catch (e) {
+          console.warn('[main] could not move existing log', entry, e.message);
+        }
+      }
+      try { fs.rmSync(resourcesLogsDir, { recursive: true, force: true }); } catch (_) {}
+    }
+
+    fs.symlinkSync(userLogsDir, resourcesLogsDir, 'dir');
+    console.log(`[main] Linked ${resourcesLogsDir} → ${userLogsDir}`);
+  } catch (err) {
+    console.warn('[main] Failed to unify logs dir:', err && err.message ? err.message : err);
+  }
+}
+
 function getBinaryPath(name) {
   const base = getResourcesDir();
   return path.join(base, name);
@@ -994,6 +1039,7 @@ app.whenReady().then(async () => {
 
   // 2. Spawn servers (in sequence: Workspace first, then Agent)
   try {
+    unifyAgentLogsDir(userDataPath);
     console.log('[main] Spawning local servers...');
     await spawnWorkspace(userDataPath);
     await spawnAgent(userDataPath);

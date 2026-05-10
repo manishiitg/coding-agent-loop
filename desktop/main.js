@@ -99,7 +99,7 @@ function loadSettings() {
   } catch (e) {
     console.error('Failed to load settings:', e);
   }
-  return { ghToken: '', ghRepo: '', docsDir: '', authSecret: '', schedulerEnabled: true };
+  return { ghToken: '', ghRepo: '', docsDir: '', authSecret: '', schedulerEnabled: true, logAgentPrompts: false };
 }
 
 // Show a modal asking the user for the AUTH_SECRET used to encrypt provider keys.
@@ -666,6 +666,12 @@ function spawnAgent(userDataPath) {
     // Per-machine scheduler toggle. When the user disables this in Settings,
     // automatic cron execution stops on this machine; manual runs still work.
     if (settings.schedulerEnabled === false) env.SCHEDULER_ENABLED = 'false';
+
+    // Debug: persist the final system prompt + user message + tool calls for
+    // every LLM call to <cwd>/logs/agent_prompts/{session_id}/. Off by default
+    // because output is verbose; useful when debugging why the LLM produced
+    // a particular shell command or chose a tool.
+    if (settings.logAgentPrompts === true) env.LOG_AGENT_PROMPTS = 'true';
 
     detect(45678).then((port) => {
       const portIdx = args.indexOf('--port');

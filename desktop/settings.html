@@ -70,6 +70,13 @@
   </div>
 
   <div class="section">
+    <label class="radio-label" style="margin-bottom: 6px;">
+      <input type="checkbox" id="logAgentPrompts" /> Log LLM prompts to disk (debug)
+    </label>
+    <div class="note">Writes the final system prompt + user message + tool calls for every LLM call to <code>logs/agent_prompts/{session}/</code> inside the app's resources directory. Verbose; only enable when debugging.</div>
+  </div>
+
+  <div class="section">
     <label>Workspace Encryption Secret (AUTH_SECRET)</label>
     <input type="password" id="authSecret" placeholder="Used to decrypt provider-api-keys.json" />
     <div class="note">Leave blank to use the development default. Must match the secret originally used to encrypt your provider API keys.</div>
@@ -105,6 +112,7 @@
       document.getElementById('docsDir').value = settings.docsDir || '';
       document.getElementById('authSecret').value = settings.authSecret || '';
       document.getElementById('schedulerEnabled').checked = settings.schedulerEnabled !== false;
+      document.getElementById('logAgentPrompts').checked = settings.logAgentPrompts === true;
     });
 
     async function pickDocsDir() {
@@ -118,7 +126,8 @@
         ghRepo: document.getElementById('ghRepo').value,
         docsDir: document.getElementById('docsDir').value,
         authSecret: document.getElementById('authSecret').value,
-        schedulerEnabled: document.getElementById('schedulerEnabled').checked
+        schedulerEnabled: document.getElementById('schedulerEnabled').checked,
+        logAgentPrompts: document.getElementById('logAgentPrompts').checked
       };
 
       ipcRenderer.send('save-settings', settings);

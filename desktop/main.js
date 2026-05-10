@@ -261,6 +261,8 @@ function createMenu() {
       submenu: [
         { role: 'about' },
         { type: 'separator' },
+        { label: 'Check for Updates…', click: () => checkForUpdates(true) },
+        { type: 'separator' },
         { label: 'Settings...', click: openSettingsWindow },
         { type: 'separator' },
         { role: 'services' },
@@ -276,6 +278,7 @@ function createMenu() {
     {
       label: 'File',
       submenu: [
+        { label: 'Check for Updates…', click: () => checkForUpdates(true) },
         { label: 'Settings...', click: openSettingsWindow },
         { type: 'separator' },
         { role: isMac ? 'close' : 'quit' }
@@ -809,9 +812,17 @@ function waitForHealth(agentUrl, workspaceUrl) {
 // it survives Runloop quitting) and quit ourselves. install.sh kills any
 // leftover Runloop processes, downloads the new dmg, replaces
 // /Applications/Runloop.app, strips quarantine, and relaunches.
-function checkForUpdates() {
+function checkForUpdates(manual = false) {
   if (!app.isPackaged) {
     console.log('[update] Skipping check — not packaged');
+    if (manual) {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Updates',
+        message: 'Update checks are disabled in development mode.',
+        buttons: ['OK'],
+      });
+    }
     return;
   }
 
@@ -826,15 +837,29 @@ function checkForUpdates() {
     let data = '';
     res.on('data', (chunk) => data += chunk);
     res.on('end', async () => {
-      if (res.statusCode !== 200) return;
+      if (res.statusCode !== 200) {
+        if (manual) {
+          dialog.showErrorBox('Update check failed', `GitHub returned HTTP ${res.statusCode}.`);
+        }
+        return;
+      }
       let release;
       try { release = JSON.parse(data); } catch (e) {
         console.error('[update] parse error:', e);
+        if (manual) dialog.showErrorBox('Update check failed', 'Could not parse GitHub response.');
         return;
       }
       const latestVersion = (release.tag_name || '').replace(/^v/, '');
       const currentVersion = app.getVersion();
       if (!latestVersion || !isNewerVersion(latestVersion, currentVersion)) {
+        if (manual) {
+          dialog.showMessageBox({
+            type: 'info',
+            title: "You're up to date",
+            message: `Runloop ${currentVersion} is the latest version.`,
+            buttons: ['OK'],
+          });
+        }
         return;
       }
       const choice = await dialog.showMessageBox({
@@ -1080,6 +1105,9 @@ app.whenReady().then(async () => {
   // 4. Create Window
   createWindow();
   checkForUpdates();
+  // Re-check every 4 hours so long-running sessions notice new releases
+  // without requiring a manual restart.
+  setInterval(() => checkForUpdates(), 4 * 60 * 60 * 1000);
 });
 
 app.on('window-all-closed', () => {

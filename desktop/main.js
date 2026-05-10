@@ -261,6 +261,8 @@ function createMenu() {
       submenu: [
         { role: 'about' },
         { type: 'separator' },
+        { label: 'Check for Updates…', click: () => checkForUpdates(true) },
+        { type: 'separator' },
         { label: 'Settings...', click: openSettingsWindow },
         { type: 'separator' },
         { role: 'services' },
@@ -276,6 +278,7 @@ function createMenu() {
     {
       label: 'File',
       submenu: [
+        { label: 'Check for Updates…', click: () => checkForUpdates(true) },
         { label: 'Settings...', click: openSettingsWindow },
         { type: 'separator' },
         { role: isMac ? 'close' : 'quit' }
@@ -660,6 +663,11 @@ function spawnAgent(userDataPath) {
     const logFile = path.join(logsDir, 'agent.log');
     const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
+    // Load settings + resolve docsDir up-front so the MCP rewrite below
+    // (and the env block further down) can both use them.
+    const settings = loadSettings();
+    const docsDir = process.env.RUNLOOP_DOCS_DIR || path.join(userDataPath, 'workspace-docs');
+
     // MCP Config handling
     const configDir = path.join(userDataPath, 'configs');
     if (!fs.existsSync(configDir)) {
@@ -682,6 +690,47 @@ function spawnAgent(userDataPath) {
       }
     }
 
+    // Rewrite relative `../workspace-docs` paths to the absolute resolved
+    // docsDir, plus ensure the Downloads subdir exists. The default MCP
+    // config (and many older user configs) hardcode `../workspace-docs/...`
+    // which only resolves when the agent's cwd is `<repo>/agent_go/`. In the
+    // packaged app the cwd is the .app's Resources dir, so the relative path
+    // points at a non-existent location and stdio MCPs fail with "chdir ...:
+    // no such file or directory". Patches both `working_dir` strings and any
+    // arg values. Idempotent.
+    try {
+      fs.mkdirSync(path.join(docsDir, 'Downloads'), { recursive: true });
+    } catch (e) {
+      console.warn('[agent] Could not ensure Downloads dir:', e.message);
+    }
+    try {
+      let raw = fs.readFileSync(mcpConfigPath, 'utf8');
+      const original = raw;
+
+      // (a) Migrate legacy relative `../workspace-docs` to absolute current docsDir.
+      raw = raw.replaceAll('../workspace-docs', docsDir);
+
+      // (b) Migrate any previously-recorded absolute docsDir to the new one.
+      // This is what makes the rewrite dynamic when the user changes their
+      // workspace folder via Settings → Workspace Folder → Change…
+      if (settings.previousDocsDir && settings.previousDocsDir !== docsDir) {
+        raw = raw.replaceAll(settings.previousDocsDir, docsDir);
+      }
+
+      if (raw !== original) {
+        fs.writeFileSync(mcpConfigPath, raw);
+        console.log(`[agent] Rewrote workspace-docs paths in mcp_servers.json → ${docsDir}`);
+      }
+    } catch (e) {
+      console.warn('[agent] Could not rewrite mcp_servers.json:', e.message);
+    }
+
+    // Remember which docsDir we just substituted so the next spawn (after a
+    // potential folder change) can migrate from it.
+    if (settings.previousDocsDir !== docsDir) {
+      saveSettings({ ...settings, previousDocsDir: docsDir });
+    }
+
     // Port resolved below via detect() — prefer fixed 45678 so frontend localStorage persists.
     const args = [
       'server',
@@ -691,19 +740,23 @@ function spawnAgent(userDataPath) {
       '--mcp-config', mcpConfigPath
     ];
 
-    // Load Settings
-    const settings = loadSettings();
-    // In desktop mode, both agent-server and workspace-server run as native binaries
-    // (no Docker). WORKSPACE_DOCS_PATH tells the agent the real filesystem path so
-    // LLM-generated shell commands (jq, cat, etc.) use the correct absolute paths.
-    // This same path is passed to workspace-server via --docs-dir in spawnWorkspace().
-    const docsDir = process.env.RUNLOOP_DOCS_DIR || path.join(userDataPath, 'workspace-docs');
+    // settings and docsDir are loaded earlier (before the MCP rewrite block).
+    // WORKSPACE_DOCS_PATH below tells the agent the real filesystem path so
+    // LLM-generated shell commands (jq, cat, etc.) use the correct absolute
+    // paths. The same docsDir is also passed to workspace-server via --docs-dir
+    // in spawnWorkspace().
     const env = {
       ...process.env,
       WORKSPACE_API_URL: `http://127.0.0.1:${dynamicWorkspacePort}`,
       WORKSPACE_DOCS_PATH: docsDir,
       LOG_FILE: logFile,
-      WORKSPACE_ENABLE_GITHUB_SYNC: 'true'
+      WORKSPACE_ENABLE_GITHUB_SYNC: 'true',
+      // Both servers run as native binaries on the host (no Docker). Without
+      // this, the agent assumes the workspace is in Docker and emits
+      // host.docker.internal URLs in MCP_API_URL — which the LLM-generated
+      // shell commands then fail to reach (host.docker.internal isn't
+      // resolvable on macOS without Docker Desktop running).
+      NATIVE_WORKSPACE: 'true'
     };
 
     if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;
@@ -809,9 +862,17 @@ function waitForHealth(agentUrl, workspaceUrl) {
 // it survives Runloop quitting) and quit ourselves. install.sh kills any
 // leftover Runloop processes, downloads the new dmg, replaces
 // /Applications/Runloop.app, strips quarantine, and relaunches.
-function checkForUpdates() {
+function checkForUpdates(manual = false) {
   if (!app.isPackaged) {
     console.log('[update] Skipping check — not packaged');
+    if (manual) {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Updates',
+        message: 'Update checks are disabled in development mode.',
+        buttons: ['OK'],
+      });
+    }
     return;
   }
 
@@ -826,23 +887,37 @@ function checkForUpdates() {
     let data = '';
     res.on('data', (chunk) => data += chunk);
     res.on('end', async () => {
-      if (res.statusCode !== 200) return;
+      if (res.statusCode !== 200) {
+        if (manual) {
+          dialog.showErrorBox('Update check failed', `GitHub returned HTTP ${res.statusCode}.`);
+        }
+        return;
+      }
       let release;
       try { release = JSON.parse(data); } catch (e) {
         console.error('[update] parse error:', e);
+        if (manual) dialog.showErrorBox('Update check failed', 'Could not parse GitHub response.');
         return;
       }
       const latestVersion = (release.tag_name || '').replace(/^v/, '');
       const currentVersion = app.getVersion();
       if (!latestVersion || !isNewerVersion(latestVersion, currentVersion)) {
+        if (manual) {
+          dialog.showMessageBox({
+            type: 'info',
+            title: "You're up to date",
+            message: `Runloop ${currentVersion} is the latest version.`,
+            buttons: ['OK'],
+          });
+        }
         return;
       }
       const choice = await dialog.showMessageBox({
         type: 'info',
         title: 'Update Available',
         message: `Runloop ${latestVersion} is available.`,
-        detail: `You're on ${currentVersion}. Click Update to download and install in the background — Runloop will relaunch automatically when ready.`,
-        buttons: ['Update', 'Later'],
+        detail: `You're on ${currentVersion}.\n\nInstalling will quit Runloop right now, download the new version (~150 MB), and relaunch automatically. The whole thing takes ~30 seconds.\n\nAny in-progress chats or workflow runs will be interrupted.`,
+        buttons: ['Quit & Install', 'Later'],
         defaultId: 0,
         cancelId: 1,
       });
@@ -884,9 +959,27 @@ function runUpdaterAndQuit(targetVersion) {
     return;
   }
 
-  // Give the installer a moment to fork the curl, then quit so install.sh's
-  // pkill doesn't race with us.
-  setTimeout(() => app.quit(), 500);
+  // Show a non-blocking native notification so the user sees confirmation
+  // that the update started, even after the window closes.
+  try {
+    const { Notification } = require('electron');
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Updating Runloop…',
+        body: `Downloading v${targetVersion}. The app will reopen automatically in ~30 seconds.`,
+        silent: false,
+      }).show();
+    }
+  } catch (_) {}
+
+  // Tray tooltip update for ambient awareness while the app quits.
+  if (tray) {
+    try { tray.setToolTip(`Runloop — installing v${targetVersion}…`); } catch (_) {}
+  }
+
+  // Give the installer a moment to fork the curl + the user a moment to read
+  // the notification, then quit so install.sh's pkill doesn't race with us.
+  setTimeout(() => app.quit(), 1000);
 }
 
 function killChildren() {
@@ -1062,6 +1155,9 @@ app.whenReady().then(async () => {
   // 4. Create Window
   createWindow();
   checkForUpdates();
+  // Re-check every 4 hours so long-running sessions notice new releases
+  // without requiring a manual restart.
+  setInterval(() => checkForUpdates(), 4 * 60 * 60 * 1000);
 });
 
 app.on('window-all-closed', () => {

@@ -663,6 +663,11 @@ function spawnAgent(userDataPath) {
     const logFile = path.join(logsDir, 'agent.log');
     const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
+    // Load settings + resolve docsDir up-front so the MCP rewrite below
+    // (and the env block further down) can both use them.
+    const settings = loadSettings();
+    const docsDir = process.env.RUNLOOP_DOCS_DIR || path.join(userDataPath, 'workspace-docs');
+
     // MCP Config handling
     const configDir = path.join(userDataPath, 'configs');
     if (!fs.existsSync(configDir)) {
@@ -685,6 +690,47 @@ function spawnAgent(userDataPath) {
       }
     }
 
+    // Rewrite relative `../workspace-docs` paths to the absolute resolved
+    // docsDir, plus ensure the Downloads subdir exists. The default MCP
+    // config (and many older user configs) hardcode `../workspace-docs/...`
+    // which only resolves when the agent's cwd is `<repo>/agent_go/`. In the
+    // packaged app the cwd is the .app's Resources dir, so the relative path
+    // points at a non-existent location and stdio MCPs fail with "chdir ...:
+    // no such file or directory". Patches both `working_dir` strings and any
+    // arg values. Idempotent.
+    try {
+      fs.mkdirSync(path.join(docsDir, 'Downloads'), { recursive: true });
+    } catch (e) {
+      console.warn('[agent] Could not ensure Downloads dir:', e.message);
+    }
+    try {
+      let raw = fs.readFileSync(mcpConfigPath, 'utf8');
+      const original = raw;
+
+      // (a) Migrate legacy relative `../workspace-docs` to absolute current docsDir.
+      raw = raw.replaceAll('../workspace-docs', docsDir);
+
+      // (b) Migrate any previously-recorded absolute docsDir to the new one.
+      // This is what makes the rewrite dynamic when the user changes their
+      // workspace folder via Settings → Workspace Folder → Change…
+      if (settings.previousDocsDir && settings.previousDocsDir !== docsDir) {
+        raw = raw.replaceAll(settings.previousDocsDir, docsDir);
+      }
+
+      if (raw !== original) {
+        fs.writeFileSync(mcpConfigPath, raw);
+        console.log(`[agent] Rewrote workspace-docs paths in mcp_servers.json → ${docsDir}`);
+      }
+    } catch (e) {
+      console.warn('[agent] Could not rewrite mcp_servers.json:', e.message);
+    }
+
+    // Remember which docsDir we just substituted so the next spawn (after a
+    // potential folder change) can migrate from it.
+    if (settings.previousDocsDir !== docsDir) {
+      saveSettings({ ...settings, previousDocsDir: docsDir });
+    }
+
     // Port resolved below via detect() — prefer fixed 45678 so frontend localStorage persists.
     const args = [
       'server',
@@ -694,13 +740,11 @@ function spawnAgent(userDataPath) {
       '--mcp-config', mcpConfigPath
     ];
 
-    // Load Settings
-    const settings = loadSettings();
-    // In desktop mode, both agent-server and workspace-server run as native binaries
-    // (no Docker). WORKSPACE_DOCS_PATH tells the agent the real filesystem path so
-    // LLM-generated shell commands (jq, cat, etc.) use the correct absolute paths.
-    // This same path is passed to workspace-server via --docs-dir in spawnWorkspace().
-    const docsDir = process.env.RUNLOOP_DOCS_DIR || path.join(userDataPath, 'workspace-docs');
+    // settings and docsDir are loaded earlier (before the MCP rewrite block).
+    // WORKSPACE_DOCS_PATH below tells the agent the real filesystem path so
+    // LLM-generated shell commands (jq, cat, etc.) use the correct absolute
+    // paths. The same docsDir is also passed to workspace-server via --docs-dir
+    // in spawnWorkspace().
     const env = {
       ...process.env,
       WORKSPACE_API_URL: `http://127.0.0.1:${dynamicWorkspacePort}`,

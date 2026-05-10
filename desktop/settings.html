@@ -63,6 +63,13 @@
   </div>
 
   <div class="section">
+    <label class="radio-label" style="margin-bottom: 6px;">
+      <input type="checkbox" id="schedulerEnabled" /> Enable scheduled workflows on this machine
+    </label>
+    <div class="note">When off, automatic cron schedules don't fire here (manual runs still work). Useful when sharing a workspace across multiple machines so only one fires the schedules.</div>
+  </div>
+
+  <div class="section">
     <label>Workspace Encryption Secret (AUTH_SECRET)</label>
     <input type="password" id="authSecret" placeholder="Used to decrypt provider-api-keys.json" />
     <div class="note">Leave blank to use the development default. Must match the secret originally used to encrypt your provider API keys.</div>
@@ -97,6 +104,7 @@
       document.getElementById('ghRepo').value = settings.ghRepo || '';
       document.getElementById('docsDir').value = settings.docsDir || '';
       document.getElementById('authSecret').value = settings.authSecret || '';
+      document.getElementById('schedulerEnabled').checked = settings.schedulerEnabled !== false;
     });
 
     async function pickDocsDir() {
@@ -109,7 +117,8 @@
         ghToken: document.getElementById('ghToken').value,
         ghRepo: document.getElementById('ghRepo').value,
         docsDir: document.getElementById('docsDir').value,
-        authSecret: document.getElementById('authSecret').value
+        authSecret: document.getElementById('authSecret').value,
+        schedulerEnabled: document.getElementById('schedulerEnabled').checked
       };
 
       ipcRenderer.send('save-settings', settings);

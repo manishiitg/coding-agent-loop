@@ -99,7 +99,7 @@ function loadSettings() {
   } catch (e) {
     console.error('Failed to load settings:', e);
   }
-  return { ghToken: '', ghRepo: '', docsDir: '', authSecret: '' };
+  return { ghToken: '', ghRepo: '', docsDir: '', authSecret: '', schedulerEnabled: true };
 }
 
 // Show a modal asking the user for the AUTH_SECRET used to encrypt provider keys.
@@ -663,6 +663,10 @@ function spawnAgent(userDataPath) {
 
     if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;
 
+    // Per-machine scheduler toggle. When the user disables this in Settings,
+    // automatic cron execution stops on this machine; manual runs still work.
+    if (settings.schedulerEnabled === false) env.SCHEDULER_ENABLED = 'false';
+
     detect(45678).then((port) => {
       const portIdx = args.indexOf('--port');
       args[portIdx + 1] = String(port);
@@ -744,49 +748,94 @@ function waitForHealth(agentUrl, workspaceUrl) {
   return new Promise((r) => setTimeout(r, HEALTH_INITIAL_DELAY_MS)).then(poll);
 }
 
+// Update flow for the unsigned macOS build.
+//
+// We don't use electron-updater / Squirrel.Mac — those assume a signed +
+// notarized app. With our ad-hoc build they fail unpredictably.
+//
+// Instead: poll GitHub Releases on startup; if a newer tag exists, prompt
+// the user. On "Update" we spawn install.sh in a *detached* shell (nohup so
+// it survives Runloop quitting) and quit ourselves. install.sh kills any
+// leftover Runloop processes, downloads the new dmg, replaces
+// /Applications/Runloop.app, strips quarantine, and relaunches.
 function checkForUpdates() {
+  if (!app.isPackaged) {
+    console.log('[update] Skipping check — not packaged');
+    return;
+  }
+
   const options = {
     hostname: 'api.github.com',
     path: '/repos/manishiitg/mcp-agent-builder-go/releases/latest',
     method: 'GET',
-    headers: { 'User-Agent': 'MCP-Agent-Builder' }
+    headers: { 'User-Agent': 'Runloop' }
   };
 
   const req = https.request(options, (res) => {
     let data = '';
     res.on('data', (chunk) => data += chunk);
-    res.on('end', () => {
-      if (res.statusCode === 200) {
-        try {
-          const release = JSON.parse(data);
-          const latestVersion = release.tag_name.replace(/^v/, '');
-          const currentVersion = app.getVersion();
-
-          // Simple semantic version comparison
-          // Assumes standard semver (e.g., 0.1.0)
-          // If complex versions are needed, use 'semver' package
-          if (latestVersion !== currentVersion && latestVersion > currentVersion) {
-            const choice = dialog.showMessageBoxSync({
-              type: 'info',
-              title: 'Update Available',
-              message: `Version ${latestVersion} is available.`,
-              detail: `You are currently on version ${currentVersion}. Would you like to download the update?`,
-              buttons: ['Download', 'Skip']
-            });
-
-            if (choice === 0) {
-              shell.openExternal(release.html_url);
-            }
-          }
-        } catch (e) {
-          console.error('Failed to parse update info:', e);
-        }
+    res.on('end', async () => {
+      if (res.statusCode !== 200) return;
+      let release;
+      try { release = JSON.parse(data); } catch (e) {
+        console.error('[update] parse error:', e);
+        return;
+      }
+      const latestVersion = (release.tag_name || '').replace(/^v/, '');
+      const currentVersion = app.getVersion();
+      if (!latestVersion || !isNewerVersion(latestVersion, currentVersion)) {
+        return;
+      }
+      const choice = await dialog.showMessageBox({
+        type: 'info',
+        title: 'Update Available',
+        message: `Runloop ${latestVersion} is available.`,
+        detail: `You're on ${currentVersion}. Click Update to download and install in the background — Runloop will relaunch automatically when ready.`,
+        buttons: ['Update', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (choice.response === 0) {
+        runUpdaterAndQuit(latestVersion);
       }
     });
   });
-  
-  req.on('error', (e) => console.error('Update check failed:', e));
+  req.on('error', (e) => console.warn('[update] check failed:', e?.message || e));
   req.end();
+}
+
+// Compare semver-ish strings (e.g. "1.25.10" vs "1.25.9"). Numeric per dotted
+// segment; missing segments treated as 0. Returns true if a > b.
+function isNewerVersion(a, b) {
+  const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x > y) return true;
+    if (x < y) return false;
+  }
+  return false;
+}
+
+function runUpdaterAndQuit(targetVersion) {
+  // Detached child shell so install.sh keeps running after we quit.
+  // RUNLOOP_VERSION pins the exact tag we just promised the user.
+  const innerCmd = `export RUNLOOP_VERSION='v${targetVersion}'; curl -fsSL https://raw.githubusercontent.com/manishiitg/mcp-agent-builder-go/main/install.sh | bash > /tmp/runloop-update.log 2>&1`;
+  const wrapped = `nohup bash -c ${JSON.stringify(innerCmd)} >/dev/null 2>&1 &`;
+
+  console.log('[update] spawning detached installer for v' + targetVersion);
+  try {
+    const child = spawn('/bin/bash', ['-lc', wrapped], { detached: true, stdio: 'ignore' });
+    child.unref();
+  } catch (err) {
+    dialog.showErrorBox('Update failed to start', String(err?.message || err));
+    return;
+  }
+
+  // Give the installer a moment to fork the curl, then quit so install.sh's
+  // pkill doesn't race with us.
+  setTimeout(() => app.quit(), 500);
 }
 
 function killChildren() {

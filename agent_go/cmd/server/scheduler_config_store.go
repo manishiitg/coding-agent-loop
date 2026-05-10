@@ -20,9 +20,11 @@ type SchedulerConfig struct {
 	PausedBy         string     `json:"paused_by,omitempty"`
 	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
 	// ExecutionEnabled controls automatic cron firing on this machine.
-	// Pointer so we can distinguish "not set in JSON" (nil → default true)
-	// from "explicit false" in scheduler.json.
-	ExecutionEnabled *bool      `json:"execution_enabled,omitempty"`
+	// Driven entirely by the SCHEDULER_ENABLED env var at runtime — the JSON
+	// field is treated as a transient "what does the server currently report"
+	// for the UI, never persisted from the file. Per-machine (not workspace-
+	// shared) so two machines on the same workspace can have different values.
+	ExecutionEnabled bool       `json:"execution_enabled"`
 	DisabledViaEnv   bool       `json:"disabled_via_env,omitempty"`
 	DisabledReason   string     `json:"disabled_reason,omitempty"`
 
@@ -46,7 +48,6 @@ func sanitizeSchedulerConfig(cfg *SchedulerConfig) *SchedulerConfig {
 	sanitized := &SchedulerConfig{
 		GloballyPaused:   cfg.GloballyPaused,
 		PausedBy:         strings.TrimSpace(cfg.PausedBy),
-		ExecutionEnabled: cfg.ExecutionEnabled,
 		AllowedWorkflows: cfg.AllowedWorkflows,
 		BlockedWorkflows: cfg.BlockedWorkflows,
 		AllowedUsers:     cfg.AllowedUsers,
@@ -68,21 +69,16 @@ func applySchedulerRuntimeState(cfg *SchedulerConfig) *SchedulerConfig {
 		cfg = &SchedulerConfig{}
 	}
 
-	// ExecutionEnabled is now driven by config/scheduler.json. Default to true
-	// when the field is absent (nil pointer). Env var SCHEDULER_ENABLED=false
-	// can still force-disable on a specific machine.
+	// ExecutionEnabled is per-machine, driven by SCHEDULER_ENABLED env var.
+	// Defaults to true; env var "false" disables. Never persisted to JSON.
+	cfg.ExecutionEnabled = true
 	cfg.DisabledViaEnv = false
 	cfg.DisabledReason = ""
-	if cfg.ExecutionEnabled == nil {
-		t := true
-		cfg.ExecutionEnabled = &t
-	}
 
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCHEDULER_ENABLED")), "false") {
-		f := false
-		cfg.ExecutionEnabled = &f
+		cfg.ExecutionEnabled = false
 		cfg.DisabledViaEnv = true
-		cfg.DisabledReason = "Automatic cron execution is disabled on this server because SCHEDULER_ENABLED=false. Manual runs still work."
+		cfg.DisabledReason = "Automatic cron execution is disabled on this machine because SCHEDULER_ENABLED=false. Manual runs still work."
 	}
 
 	// Workflow/user filters: JSON values win, fall back to env vars when JSON

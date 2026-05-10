@@ -165,6 +165,20 @@ export async function restoreWorkflowSessionChat(
       latestChatStore.updateTabSessionId(tabId, session.session_id)
     }
 
+    const hasExistingEvents = latestChatStore.getTabEvents(session.session_id).length > 0
+    // Fast path for switching back to an already-open running workflow:
+    // keep the in-memory event buffer and SSE connection intact. Re-fetching
+    // recent events here replaces the tab event array and makes Ctrl+K feel
+    // like a reload even though the workflow chat is already live.
+    if (builderTab?.sessionId === session.session_id && hasExistingEvents) {
+      latestChatStore.setTabStreaming(tabId, isActive)
+      latestChatStore.setTabCompleted(tabId, !isActive)
+      useWorkflowStore.getState().setShowChatArea(true)
+      latestChatStore.switchTab(tabId)
+      if (options.scrollToBottom !== false) requestChatScrollToBottom()
+      return tabId
+    }
+
     try {
       const response = await agentApi.getRecentSessionEvents(session.session_id)
       const restoredEvents = response.events || []

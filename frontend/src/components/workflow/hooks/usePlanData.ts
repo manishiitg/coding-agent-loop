@@ -12,10 +12,23 @@ interface PlanCacheEntry {
 }
 
 const planCache = new Map<string, PlanCacheEntry>()
+const MAX_PLAN_CACHE_ENTRIES = 5
+
+function prunePlanCache(keepWorkspacePath?: string) {
+  while (planCache.size > MAX_PLAN_CACHE_ENTRIES) {
+    const evictKey = Array.from(planCache.keys()).find(key => key !== keepWorkspacePath)
+    if (!evictKey) return
+    planCache.delete(evictKey)
+  }
+}
 
 function getPlanCacheEntry(workspacePath: string): PlanCacheEntry {
   const existing = planCache.get(workspacePath)
-  if (existing) return existing
+  if (existing) {
+    planCache.delete(workspacePath)
+    planCache.set(workspacePath, existing)
+    return existing
+  }
 
   const created: PlanCacheEntry = {
     promise: null,
@@ -23,6 +36,7 @@ function getPlanCacheEntry(workspacePath: string): PlanCacheEntry {
     timestamp: 0
   }
   planCache.set(workspacePath, created)
+  prunePlanCache(workspacePath)
   return created
 }
 

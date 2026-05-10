@@ -10,7 +10,7 @@ import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { ActiveSessionInfo, PollingEvent } from '../services/api-types'
 import { restoreSession } from '../utils/sessionRestore'
 import { isBotWorkflowSession, isScheduledWorkflowSession, restoreBotWorkflowRunChat, restoreScheduledWorkflowRunChat, restoreWorkflowSessionChat, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
-import { formatEventMemoryBytes, getEventMemoryStats, hasEventMemoryPressure, type EventMemoryStats } from '../utils/eventMemory'
+import { formatEventMemoryBytes, hasEventMemoryPressure, type EventMemoryStats } from '../utils/eventMemory'
 
 interface QuickSwitcherProps {
   isOpen: boolean
@@ -142,10 +142,29 @@ const itemActiveSession = (item: QuickSwitcherItem): ActiveSessionInfo | undefin
 
 const eventStatsSuffix = (stats?: EventMemoryStats): string => {
   if (!stats || stats.eventCount === 0) return ''
+  if (stats.sizeBytes <= 0) return ` · ${stats.eventCount.toLocaleString()} events`
   const largest = stats.largestEventType
     ? ` · largest ${stats.largestEventType} (${formatEventMemoryBytes(stats.largestEventBytes)})`
     : ''
   return ` · ${stats.eventCount.toLocaleString()} events · ${formatEventMemoryBytes(stats.sizeBytes)}${largest}`
+}
+
+const eventStatsLabel = (stats: EventMemoryStats): string => {
+  if (stats.sizeBytes <= 0) return `${stats.eventCount.toLocaleString()} events`
+  const largest = stats.largestEventType
+    ? ` · largest ${stats.largestEventType} (${formatEventMemoryBytes(stats.largestEventBytes)})`
+    : ''
+  return `${stats.eventCount.toLocaleString()} events · ${formatEventMemoryBytes(stats.sizeBytes)}${largest}`
+}
+
+const lightweightEventStats = (events: PollingEvent[] | undefined): EventMemoryStats | undefined => {
+  if (!events || events.length === 0) return undefined
+  return {
+    eventCount: events.length,
+    sizeBytes: 0,
+    largestEventBytes: 0,
+    largestEventType: '',
+  }
 }
 
 const activeSessionSuffix = (session?: ActiveSessionInfo): string => {
@@ -193,13 +212,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     let largestEventType = ''
 
     for (const events of Object.values(tabEvents)) {
-      const stats = getEventMemoryStats(events)
-      eventCount += stats.eventCount
-      sizeBytes += stats.sizeBytes
-      if (stats.largestEventBytes > largestEventBytes) {
-        largestEventBytes = stats.largestEventBytes
-        largestEventType = stats.largestEventType
-      }
+      eventCount += events.length
     }
 
     return { eventCount, sizeBytes, largestEventBytes, largestEventType } satisfies EventMemoryStats
@@ -242,8 +255,8 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     }, {})
 
     const eventStatsBySession = Object.entries(tabEvents).reduce<Record<string, EventMemoryStats>>((acc, [sessionId, events]) => {
-      const stats = getEventMemoryStats(events)
-      if (stats.eventCount > 0) acc[sessionId] = stats
+      const stats = lightweightEventStats(events)
+      if (stats) acc[sessionId] = stats
       return acc
     }, {})
     const visibleActiveSessions = activeSessions.filter(isVisibleActiveSession)
@@ -273,7 +286,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
         const presetEvents = allTabs
           .filter(tab => tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === p.id && tab.sessionId)
           .flatMap(tab => tabEvents[tab.sessionId!] || [])
-        const eventStats = presetEvents.length > 0 ? getEventMemoryStats(presetEvents) : undefined
+        const eventStats = lightweightEventStats(presetEvents)
         const activeSession = visibleActiveSessions.find(session => {
           if (!isWorkflowSession(session)) return false
           if (session.preset_query_id === p.id) return true
@@ -326,20 +339,17 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
     const eventItems: EventMemoryItem[] = Object.entries(tabEvents)
       .map<EventMemoryItem | null>(([sessionId, events]) => {
-        const stats = getEventMemoryStats(events)
-        if (stats.eventCount === 0) return null
+        const stats = lightweightEventStats(events)
+        if (!stats) return null
         const tabs = tabsBySession[sessionId] || []
         if (tabs.length > 0) return null
         const primaryTab = tabs[0]
         const tabNames = tabs.map(tab => tab.name).filter(Boolean)
-        const largest = stats.largestEventType
-          ? ` · largest ${stats.largestEventType} (${formatEventMemoryBytes(stats.largestEventBytes)})`
-          : ''
         return {
           type: 'events' as const,
           id: `events:${sessionId}`,
           label: `Orphan events: ${tabNames.length > 0 ? tabNames.join(', ') : sessionShortId(sessionId)}`,
-          subtitle: `${stats.eventCount.toLocaleString()} events · ${formatEventMemoryBytes(stats.sizeBytes)}${largest}`,
+          subtitle: eventStatsLabel(stats),
           isActive: tabs.some(tab => tab.tabId === activeTabId),
           lastAccessedAt: Math.max(0, ...tabs.map(tab => tab.lastAccessedAt || tab.createdAt || 0)),
           sessionId,
@@ -715,12 +725,16 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           <div className="flex items-center justify-between gap-3 px-4 py-2 text-[11px] text-gray-500 dark:text-gray-400">
             <div className="min-w-0 truncate">
               Events retained: <span className="font-medium text-gray-700 dark:text-gray-200">{totalEventStats.eventCount.toLocaleString()}</span>
-              <span className="mx-1.5 text-gray-300 dark:text-gray-600">·</span>
-              Memory: <span className="font-medium text-gray-700 dark:text-gray-200">{formatEventMemoryBytes(totalEventStats.sizeBytes)}</span>
-              {totalEventStats.largestEventBytes > 0 && (
+              {totalEventStats.sizeBytes > 0 && (
                 <>
                   <span className="mx-1.5 text-gray-300 dark:text-gray-600">·</span>
-                  <span className="truncate">largest {totalEventStats.largestEventType || 'n/a'} ({formatEventMemoryBytes(totalEventStats.largestEventBytes)})</span>
+                  Memory: <span className="font-medium text-gray-700 dark:text-gray-200">{formatEventMemoryBytes(totalEventStats.sizeBytes)}</span>
+                  {totalEventStats.largestEventBytes > 0 && (
+                    <>
+                      <span className="mx-1.5 text-gray-300 dark:text-gray-600">·</span>
+                      <span className="truncate">largest {totalEventStats.largestEventType || 'n/a'} ({formatEventMemoryBytes(totalEventStats.largestEventBytes)})</span>
+                    </>
+                  )}
                 </>
               )}
             </div>

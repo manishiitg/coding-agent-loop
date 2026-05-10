@@ -72,6 +72,97 @@ interface WorkflowCanvasProps {
   readOnly?: boolean
 }
 
+const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(({
+  workspacePath,
+  presetQueryId,
+  currentPhase,
+  onStartPhase,
+  onCreatePlan,
+  showChatArea = false,
+  onToggleChatArea,
+  toolbarOnly = false,
+  sharedToolbar = false,
+  paneClassName = '',
+  className = '',
+  hideToolbar = false,
+}, ref) => {
+  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  const planData = usePlanData(workspacePath)
+  const plan = planData.plan
+  const loadPlanRefresh = planData.refresh
+  const { status } = useWorkflowExecution()
+  const {
+    state: workspaceState,
+    loading: isLoadingWorkspaceState,
+    refresh: refreshWorkspaceState,
+  } = useWorkspaceState(workspacePath, selectedRunFolder)
+
+  const variablesManifest = workspaceState?.variables_manifest || null
+  const runFoldersForToolbar = React.useMemo(() => {
+    if (!workspaceState?.run_folders) return []
+    return workspaceState.run_folders.map(f => ({ name: f.name }))
+  }, [workspaceState?.run_folders])
+
+  const handleStartPhase = useCallback((phaseId: string, executionOptions?: ExecutionOptions) => {
+    if (onStartPhase) {
+      onStartPhase(phaseId, executionOptions)
+    }
+  }, [onStartPhase])
+
+  const handleRefresh = useCallback(async () => {
+    await Promise.all([
+      loadPlanRefresh(),
+      refreshWorkspaceState(),
+    ])
+  }, [loadPlanRefresh, refreshWorkspaceState])
+
+  useImperativeHandle(ref, () => ({
+    refresh: async () => {
+      await handleRefresh()
+      return null
+    },
+    getStepCount: () => plan?.steps?.length ?? 0,
+    focusStep: () => {
+      // Report mode has no flow nodes to focus.
+    },
+  }), [handleRefresh, plan])
+
+  return (
+    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'md:contents' : ''}`}>
+      {!hideToolbar && (
+        <div className={sharedToolbar && showChatArea ? 'md:col-span-2 md:row-start-1' : ''}>
+          <WorkflowToolbar
+            status={status}
+            hasPlan={Boolean(plan?.steps?.length)}
+            plan={plan || undefined}
+            currentPhase={currentPhase}
+            workspacePath={workspacePath}
+            presetQueryId={presetQueryId}
+            runFolders={runFoldersForToolbar}
+            variablesManifest={variablesManifest}
+            isLoadingWorkspaceState={isLoadingWorkspaceState}
+            onStartPhase={handleStartPhase}
+            onCreatePlan={onCreatePlan || (() => {})}
+            showChatArea={showChatArea}
+            onToggleChatArea={onToggleChatArea}
+            onRefresh={handleRefresh}
+          />
+        </div>
+      )}
+
+      <div className={`${sharedToolbar && showChatArea ? 'flex-1 md:col-start-2 md:row-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
+        {toolbarOnly ? null : (
+          <div className="h-full min-h-0 relative">
+            {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={showChatArea} />}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+})
+
+WorkflowReportCanvasInner.displayName = 'WorkflowReportCanvasInner'
+
 function FloatingWorkflowViewControls({
   viewLabel,
   showPreviewControls,
@@ -2573,9 +2664,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 // Add display name for debugging
 WorkflowCanvasInner.displayName = 'WorkflowCanvasInner'
 
-// Wrap with ReactFlowProvider for hooks to work. Memoizing this boundary keeps
-// chat/tool stream renders from repainting the canvas when workflow props are unchanged.
+// Keep Report out of the React Flow tree. Flow mode subscribes to step status,
+// node state, viewport, and layout updates; report mode only needs the toolbar
+// data plus its own report files, so it should not repaint on every chat event.
 export const WorkflowCanvasWithProvider = React.memo(forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((props, ref) => {
+  const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
+  const effectiveCanvasViewMode = props.viewMode || canvasViewMode
+
+  if (effectiveCanvasViewMode === 'report') {
+    return <WorkflowReportCanvasInner {...props} ref={ref} />
+  }
+
   return (
     <ReactFlowProvider>
       <WorkflowCanvasInner {...props} ref={ref} />

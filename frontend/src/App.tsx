@@ -368,6 +368,15 @@ function App() {
           streamingTextSizes.push({ session: sid.slice(0, 8), sizeKB: Math.round(size / 1024), chars: text.length })
         }
       }
+      const completedStreamingTextSizes: Array<{ session: string; sizeKB: number; chars: number }> = []
+      let totalCompletedStreamingBytes = 0
+      for (const [sid, text] of Object.entries(chatState.completedStreamingText || {})) {
+        if (text && text.length > 0) {
+          const size = text.length * 2
+          totalCompletedStreamingBytes += size
+          completedStreamingTextSizes.push({ session: sid.slice(0, 8), sizeKB: Math.round(size / 1024), chars: text.length })
+        }
+      }
 
       // SSE connection details
       const sseDetails: Array<{ session: string; tab: string }> = []
@@ -515,6 +524,10 @@ function App() {
       if (streamingTextSizes.length > 0) {
         console.log(`\nStreaming text buffers: ${streamingTextSizes.length} active (~${Math.round(totalStreamingBytes / 1024)} KB)`)
         console.table(streamingTextSizes)
+      }
+      if (completedStreamingTextSizes.length > 0) {
+        console.log(`\nCompleted streaming buffers: ${completedStreamingTextSizes.length} retained (~${Math.round(totalCompletedStreamingBytes / 1024)} KB)`)
+        console.table(completedStreamingTextSizes.sort((a, b) => b.sizeKB - a.sizeKB))
       }
 
       // DOM

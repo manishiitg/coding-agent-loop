@@ -6,6 +6,75 @@ import (
 	"time"
 )
 
+func TestWorkshopModeAllowsOrphanStepConfigCleanup(t *testing.T) {
+	for _, mode := range []string{"builder", "optimizer"} {
+		tools := GetToolsForWorkshopMode(mode)
+		if !containsToolName(tools, "cleanup_orphan_step_configs") {
+			t.Fatalf("expected %s mode to allow cleanup_orphan_step_configs", mode)
+		}
+	}
+}
+
+func TestWorkshopModesAllowCalendarScheduleToolWhereSchedulesAreEditable(t *testing.T) {
+	for _, mode := range []string{"builder", "optimizer"} {
+		tools := GetToolsForWorkshopMode(mode)
+		if !containsToolName(tools, "create_calendar_schedule") {
+			t.Fatalf("expected %s mode to allow create_calendar_schedule", mode)
+		}
+	}
+}
+
+func TestOptimizerToolAgentAllowsArtifactMaintenanceTools(t *testing.T) {
+	tools := optimizerToolAgentAllowedToolNames()
+	for _, name := range []string{
+		"cleanup_orphan_step_configs",
+		"validate_evaluation_plan",
+		"get_report_plan",
+		"upsert_report_widget",
+		"validate_report_plan",
+		"preview_report_render",
+		"improve_kb",
+		"improve_db",
+		"update_workflow_config",
+		"set_workflow_llm_config",
+	} {
+		if !containsToolName(tools, name) {
+			t.Fatalf("expected optimizer tool agent to allow %s", name)
+		}
+	}
+}
+
+func TestOptimizerToolAgentBlocksRecursiveAndScheduleTools(t *testing.T) {
+	tools := optimizerToolAgentAllowedToolNames()
+	for _, name := range []string{
+		"execute_step",
+		"run_full_workflow",
+		"run_full_evaluation",
+		"harden_workflow",
+		"replan_workflow_from_results",
+		"create_schedule",
+		"delete_schedule",
+		"trigger_schedule",
+		"set_user_secret",
+		"delete_user_secret",
+		"publish_workflow_version",
+		"restore_workflow_version",
+	} {
+		if containsToolName(tools, name) {
+			t.Fatalf("expected optimizer tool agent to block %s", name)
+		}
+	}
+}
+
+func containsToolName(tools []string, name string) bool {
+	for _, tool := range tools {
+		if tool == name {
+			return true
+		}
+	}
+	return false
+}
+
 func TestWorkshopSubAgentNotifierRegistersCancelableExecution(t *testing.T) {
 	registry := NewWorkshopStepRegistry()
 	notifier := &workshopSubAgentNotifier{registry: registry}

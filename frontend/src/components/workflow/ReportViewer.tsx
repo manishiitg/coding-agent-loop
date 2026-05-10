@@ -2,7 +2,7 @@
 // JSON source, and renders widgets.
 // See docs/workflow/persistent_stores_design.md.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import jsonata from 'jsonata'
 import { TextWidget } from './reportWidgets/TextWidget'
 import { MarkdownWidget } from './reportWidgets/MarkdownWidget'
@@ -287,6 +287,14 @@ type WidgetSourceInput =
   | { status: 'loading'; label: string }
   | { status: 'missing'; label: string }
 
+interface ReportDataSnapshot {
+  planSource: string | null
+  sources: SourceCache
+}
+
+const reportDataCache = new Map<string, ReportDataSnapshot>()
+const reportDataPromises = new Map<string, Promise<ReportDataSnapshot>>()
+
 function useJSONataQuery(source: unknown, query: string): JSONataQueryState {
   const [state, setState] = useState<JSONataQueryState>({ status: 'idle' })
 
@@ -327,6 +335,62 @@ function widgetSourcePaths(widget: ReportWidget): string[] {
     }
   }
   return Array.from(paths).sort()
+}
+
+function collectReportSourcePaths(planSource: string | null): string[] {
+  if (!planSource) return []
+  const plan = parseReportPlan(planSource)
+  const set = new Set<string>()
+  for (const section of plan.sections) {
+    for (const entry of section.entries) {
+      if (entry.kind === 'single') {
+        for (const source of widgetSourcePaths(entry.widget)) set.add(source)
+      } else {
+        for (const widget of entry.row.widgets) {
+          for (const source of widgetSourcePaths(widget)) set.add(source)
+        }
+      }
+    }
+  }
+  return Array.from(set).sort()
+}
+
+async function loadReportDataSnapshot(workspacePath: string, force = false): Promise<ReportDataSnapshot> {
+  if (!force) {
+    const cached = reportDataCache.get(workspacePath)
+    if (cached) return cached
+    const inFlight = reportDataPromises.get(workspacePath)
+    if (inFlight) return inFlight
+  }
+
+  const promise = (async (): Promise<ReportDataSnapshot> => {
+    const planSource = await readWorkspaceText(`${workspacePath}/reports/report_plan.json`)
+    const paths = collectReportSourcePaths(planSource)
+    const sourceEntries = await Promise.all(
+      paths.map(async (path): Promise<readonly [string, unknown]> => {
+        const content = await readWorkspaceText(`${workspacePath}/${path}`)
+        if (content === null || content.trim() === '') return [path, null] as const
+        try {
+          return [path, JSON.parse(content)] as const
+        } catch {
+          return [path, null] as const
+        }
+      })
+    )
+    const snapshot: ReportDataSnapshot = {
+      planSource,
+      sources: Object.fromEntries(sourceEntries),
+    }
+    reportDataCache.set(workspacePath, snapshot)
+    return snapshot
+  })()
+
+  reportDataPromises.set(workspacePath, promise)
+  try {
+    return await promise
+  } finally {
+    reportDataPromises.delete(workspacePath)
+  }
 }
 
 function widgetSourceLabel(widget: ReportWidget): string {
@@ -417,7 +481,7 @@ export function ReportViewer({ workspacePath, isOpen, onClose }: ReportViewerPro
 
 // Inline content — renders the report plan directly without modal chrome. Used by the
 // workflow canvas when canvasViewMode === 'report'.
-export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClose, mobilePreview = false }: ReportViewProps) {
+function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onClose, mobilePreview = false }: ReportViewProps) {
   // Three explicit preview widths plus 'auto'. The internal name 'desktop' is
   // surfaced as "Laptop" in the UI to match the user's mental model — laptop
   // viewports are what fill the full max-width shell. 'auto' falls back to the
@@ -431,8 +495,9 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
     }
   })
   const [loading, setLoading] = useState(false)
-  const [planSource, setPlanSource] = useState<string | null>(null)
-  const [sources, setSources] = useState<SourceCache>({})
+  const initialSnapshot = reportDataCache.get(workspacePath)
+  const [planSource, setPlanSource] = useState<string | null>(initialSnapshot?.planSource ?? null)
+  const [sources, setSources] = useState<SourceCache>(() => initialSnapshot?.sources ?? {})
   const [error, setError] = useState<string | null>(null)
   const [refreshNonce, setRefreshNonce] = useState(0)
   const [hiddenWidgetKeys, setHiddenWidgetKeys] = useState<Set<string>>(() => new Set())
@@ -444,35 +509,33 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
     return parseReportPlan(planSource)
   }, [planSource])
 
-  // Stable key: same set of paths → same string → effect below doesn't re-run.
-  // Using the array identity directly would recompute every render because useMemo
-  // returns a fresh Array.from each time the plan parses.
-  const referencedSourcesKey = useMemo(() => {
-    const set = new Set<string>()
-    for (const section of plan.sections) {
-      for (const entry of section.entries) {
-        if (entry.kind === 'single') {
-          for (const source of widgetSourcePaths(entry.widget)) set.add(source)
-        } else {
-          for (const w of entry.row.widgets) {
-            for (const source of widgetSourcePaths(w)) set.add(source)
-          }
-        }
-      }
-    }
-    return Array.from(set).sort().join('|')
-  }, [plan])
-
   useEffect(() => {
     if (!workspacePath) return
+    const cached = refreshNonce === 0 ? reportDataCache.get(workspacePath) : undefined
+    if (cached) {
+      setPlanSource(cached.planSource)
+      setSources(cached.sources)
+      setLoading(false)
+      setError(null)
+      return
+    }
+
     let cancelled = false
     setLoading(true)
     setError(null)
 
-    readWorkspaceText(`${workspacePath}/reports/report_plan.json`)
-      .then(jsonContent => {
+    loadReportDataSnapshot(workspacePath, refreshNonce > 0)
+      .then(snapshot => {
         if (cancelled) return
-        setPlanSource(jsonContent)
+        setPlanSource(snapshot.planSource)
+        setSources(snapshot.sources)
+      })
+      .catch(error => {
+        if (cancelled) return
+        const message = error instanceof Error ? error.message : String(error)
+        setError(message || 'Failed to load report.')
+        setPlanSource(null)
+        setSources({})
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -482,45 +545,6 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
       cancelled = true
     }
   }, [workspacePath, refreshNonce])
-
-  // Fetch sources referenced by the plan. `sources` is intentionally NOT a dep — we
-  // read it fresh via setSources' functional form and return `prev` unchanged when
-  // every referenced path is already cached, which is the no-op guard that prevents
-  // the effect from looping on its own setState.
-  useEffect(() => {
-    if (!workspacePath || referencedSourcesKey === '') return
-    const paths = referencedSourcesKey.split('|')
-    let cancelled = false
-
-    Promise.all(
-      paths.map(async (path): Promise<readonly [string, unknown]> => {
-        const content = await readWorkspaceText(`${workspacePath}/${path}`)
-        if (content === null || content.trim() === '') return [path, null] as const
-        try {
-          return [path, JSON.parse(content)] as const
-        } catch {
-          return [path, null] as const
-        }
-      })
-    ).then(results => {
-      if (cancelled) return
-      setSources(prev => {
-        let changed = false
-        const next = { ...prev }
-        for (const [path, data] of results) {
-          if (!(path in prev)) {
-            next[path] = data
-            changed = true
-          }
-        }
-        return changed ? next : prev
-      })
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [workspacePath, referencedSourcesKey, refreshNonce])
 
   useEffect(() => {
     setHiddenWidgetKeys(new Set())
@@ -819,6 +843,8 @@ export function ReportView({ workspacePath, selectedRunFolder, reviewData, onClo
     </div>
   )
 }
+
+export const ReportView = memo(ReportViewComponent)
 
 // Loading skeleton — shimmer placeholders so the layout doesn't jump when widgets
 // resolve. Uses a moving gradient overlay (keyframes defined inline) for a subtle

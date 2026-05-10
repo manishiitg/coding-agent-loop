@@ -510,11 +510,12 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
       emptyHint: 'No entries yet. Run any /review-* slash command to append the first entry.',
     },
   }[which]
-  const showArchiveList = (which === 'improve' || which === 'review') && !!onSelectPath
+  const showFileMenu = (which === 'improve' || which === 'review') && !!onSelectPath
   const activePath = selectedPath || doc?.path || ''
   const currentPath = which === 'review' ? 'builder/review.md' : 'builder/improve.md'
   const currentLabel = which === 'review' ? 'Current review' : 'Current ledger'
   const filesLabel = which === 'review' ? 'Review files' : 'Improve files'
+  const fileOptions = [{ path: currentPath, label: currentLabel }, ...archiveFiles]
 
   return (
     <div className="space-y-3">
@@ -543,54 +544,46 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
           <Loader2 className="w-4 h-4 animate-spin" /> Loading…
         </div>
       )}
-      <div className={showArchiveList ? 'grid grid-cols-[220px_minmax(0,1fr)] gap-3 items-start' : ''}>
-        {showArchiveList && (
-          <div className="border rounded-md bg-card p-2 max-h-[62vh] overflow-y-auto">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium px-2 pb-1">
-              {filesLabel}
-            </div>
-            <button
-              onClick={() => onSelectPath?.(currentPath)}
-              className={`w-full text-left px-2 py-1.5 rounded text-xs truncate ${activePath === currentPath ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-200' : 'hover:bg-accent text-foreground'}`}
-              title={currentPath}
-            >
-              {currentLabel}
-            </button>
-            <div className="mt-2 pt-2 border-t">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium px-2 pb-1">
-                Archives
-              </div>
-              {archiveFiles.length === 0 ? (
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">No archive files</div>
-              ) : archiveFiles.map((file) => (
-                <button
-                  key={file.path}
-                  onClick={() => onSelectPath?.(file.path)}
-                  className={`w-full text-left px-2 py-1.5 rounded text-xs truncate ${activePath === file.path ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-200' : 'hover:bg-accent text-foreground'}`}
-                  title={file.path}
-                >
-                  {file.label}
-                </button>
-              ))}
-            </div>
+      {showFileMenu && (
+        <div className="flex items-center justify-between gap-3 rounded-md border bg-card px-3 py-2">
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">{filesLabel}</div>
+            <div className="truncate text-xs text-muted-foreground">{activePath || currentPath}</div>
+          </div>
+          <select
+            value={activePath || currentPath}
+            onChange={(event) => onSelectPath?.(event.target.value)}
+            className="min-w-[180px] max-w-[280px] rounded-md border bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+            title={activePath || currentPath}
+          >
+            {fileOptions.map((file) => (
+              <option key={file.path} value={file.path}>
+                {file.label}
+              </option>
+            ))}
+            {archiveFiles.length === 0 && (
+              <option value="__no_archives" disabled>
+                No archive files
+              </option>
+            )}
+          </select>
+        </div>
+      )}
+      <div className="min-w-0">
+        {doc && !doc.exists && (
+          <div className="border border-dashed rounded-md p-4 text-sm text-muted-foreground">
+            {copy.emptyHint}
           </div>
         )}
-        <div className="min-w-0">
-          {doc && !doc.exists && (
-            <div className="border border-dashed rounded-md p-4 text-sm text-muted-foreground">
-              {copy.emptyHint}
-            </div>
-          )}
-          {doc && doc.exists && (
-            <div className="border rounded-md p-3 bg-card">
-              <MarkdownRenderer
-                content={doc.content}
-                disablePathLinking
-                className="!text-[12px] leading-relaxed [&_p]:!text-[12px] [&_li]:!text-[12px] [&_h1]:!text-base [&_h2]:!text-sm [&_h3]:!text-xs [&_h1]:mt-3 [&_h2]:mt-3 [&_h3]:mt-2 [&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_code]:!text-[11px] [&_pre]:!text-[11px]"
-              />
-            </div>
-          )}
-        </div>
+        {doc && doc.exists && (
+          <div className="border rounded-md p-3 bg-card">
+            <MarkdownRenderer
+              content={doc.content}
+              disablePathLinking
+              className="!text-[12px] leading-relaxed [&_p]:!text-[12px] [&_li]:!text-[12px] [&_h1]:!text-base [&_h2]:!text-sm [&_h3]:!text-xs [&_h1]:mt-3 [&_h2]:mt-3 [&_h3]:mt-2 [&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_code]:!text-[11px] [&_pre]:!text-[11px]"
+            />
+          </div>
+        )}
       </div>
     </div>
   )

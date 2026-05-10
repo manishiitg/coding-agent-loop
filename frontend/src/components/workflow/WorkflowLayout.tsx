@@ -553,7 +553,17 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [activePresetId, restoreOffer])
 
-  const offerBuilderHistoryRestore = useCallback(async (presetId: string): Promise<WorkflowBuilderSessionResponse | null> => {
+  const offerBuilderHistoryRestore = useCallback(async (
+    presetId: string,
+    options?: { skipIfLive?: boolean },
+  ): Promise<WorkflowBuilderSessionResponse | null> => {
+    if (options?.skipIfLive) {
+      const activeSessions = await useChatStore.getState().getActiveSessions(true)
+      if (activeSessions.some(session => isLiveWorkflowSessionForPreset(session, presetId, workspacePath))) {
+        return null
+      }
+    }
+
     setIsCheckingRestoreOffer(true)
     try {
       const builderHistory = await loadWorkflowBuilderSession(presetId, workspacePath ?? undefined)
@@ -598,7 +608,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     setShowChatArea(true)
 
     if (!options?.skipRestoreOffer) {
-      void offerBuilderHistoryRestore(presetId)
+      void offerBuilderHistoryRestore(presetId, { skipIfLive: true })
     }
   }, [offerBuilderHistoryRestore, setShowChatArea])
 
@@ -1550,7 +1560,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         !useChatStore.getState().getTabStreamingStatus(tab.tabId) &&
         (!tab.sessionId || useChatStore.getState().getTabEvents(tab.sessionId).length === 0)
       ) {
-        void offerBuilderHistoryRestore(activePresetId)
+        void offerBuilderHistoryRestore(activePresetId, { skipIfLive: true })
       }
       logger.debug('WorkflowLayout', `Chat-compatible phase ${phaseId} — opening tab for conversation`)
       setShowChatArea(true)

@@ -66,6 +66,7 @@ const incrementPerModeCounts = (
 // Event memory management constants - use shared constants
 const MAX_EVENTS = MAX_EVENTS_TO_PROCESS
 const MAX_RETAINED_EVENT_TEXT_CHARS = 200_000
+const MAX_COMPLETED_STREAMING_TEXT_CHARS = 60_000
 
 const truncateRetainedText = (value: string, fieldName: string): string => {
   if (value.length <= MAX_RETAINED_EVENT_TEXT_CHARS) return value
@@ -109,6 +110,12 @@ const trimLargeRetainedEventFields = (event: PollingEvent): PollingEvent => {
 
 const trimLargeRetainedEvents = (events: PollingEvent[]): PollingEvent[] => {
   return events.map(trimLargeRetainedEventFields)
+}
+
+const capCompletedStreamingText = (value: string): string => {
+  if (value.length <= MAX_COMPLETED_STREAMING_TEXT_CHARS) return value
+  const omitted = value.length - MAX_COMPLETED_STREAMING_TEXT_CHARS
+  return `[Trimmed ${omitted.toLocaleString()} chars of older streaming text to keep the UI responsive.]\n\n${value.slice(-MAX_COMPLETED_STREAMING_TEXT_CHARS)}`
 }
 
 // Persistent event ID index — avoids O(n) Set rebuild on every addTabEvents call.
@@ -906,11 +913,23 @@ export const useChatStore = create<ChatState>()(
           delete newTabEventIndices[sessionId]
           const newTabHasMoreOlderEvents = { ...state.tabHasMoreOlderEvents }
           delete newTabHasMoreOlderEvents[sessionId]
+          const newStreamingText = { ...state.streamingText }
+          delete newStreamingText[sessionId]
+          const newStreamingStatus = { ...state.streamingStatus }
+          delete newStreamingStatus[sessionId]
+          const newLastStreamingChunkIndex = { ...state.lastStreamingChunkIndex }
+          delete newLastStreamingChunkIndex[sessionId]
+          const newCompletedStreamingText = { ...state.completedStreamingText }
+          delete newCompletedStreamingText[sessionId]
 
           return {
             tabEvents: newTabEvents,
             tabEventIndices: newTabEventIndices,
-            tabHasMoreOlderEvents: newTabHasMoreOlderEvents
+            tabHasMoreOlderEvents: newTabHasMoreOlderEvents,
+            streamingText: newStreamingText,
+            streamingStatus: newStreamingStatus,
+            lastStreamingChunkIndex: newLastStreamingChunkIndex,
+            completedStreamingText: newCompletedStreamingText
           }
         })
       },
@@ -1188,9 +1207,10 @@ export const useChatStore = create<ChatState>()(
           const newCompletedStreamingText = { ...state.completedStreamingText }
           if (currentText) {
             const existing = newCompletedStreamingText[sessionId]
-            newCompletedStreamingText[sessionId] = existing
+            const nextCompletedText = existing
               ? existing + '\n\n---\n\n' + currentText
               : currentText
+            newCompletedStreamingText[sessionId] = capCompletedStreamingText(nextCompletedText)
           }
           return { streamingText: newStreamingText, streamingStatus: newStreamingStatus, lastStreamingChunkIndex: newLastIdx, completedStreamingText: newCompletedStreamingText }
         })
@@ -1645,6 +1665,11 @@ export const useChatStore = create<ChatState>()(
 
         // Clean up session-keyed resources (only if no other tab shares the session)
         if (tab.sessionId && !otherTabUsesSession) {
+          if (_streamingInactivityTimers[tab.sessionId]) {
+            clearTimeout(_streamingInactivityTimers[tab.sessionId])
+            delete _streamingInactivityTimers[tab.sessionId]
+          }
+
           const newStreamingText = { ...state.streamingText }
           delete newStreamingText[tab.sessionId]
           updates.streamingText = newStreamingText
@@ -1652,6 +1677,14 @@ export const useChatStore = create<ChatState>()(
           const newLastChunkIndex = { ...state.lastStreamingChunkIndex }
           delete newLastChunkIndex[tab.sessionId]
           updates.lastStreamingChunkIndex = newLastChunkIndex
+
+          const newStreamingStatus = { ...state.streamingStatus }
+          delete newStreamingStatus[tab.sessionId]
+          updates.streamingStatus = newStreamingStatus
+
+          const newCompletedStreamingText = { ...state.completedStreamingText }
+          delete newCompletedStreamingText[tab.sessionId]
+          updates.completedStreamingText = newCompletedStreamingText
 
           const newHasMore = { ...state.tabHasMoreOlderEvents }
           delete newHasMore[tab.sessionId]

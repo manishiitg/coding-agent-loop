@@ -990,7 +990,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
 		"update_regular_step", "update_routing_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
-		"delete_todo_task_route", "delete_plan_steps",
+		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
 		"update_validation_schema",
 		"publish_workflow_version", "restore_workflow_version",
 	}
@@ -1003,7 +1003,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Schedule tools
 	schedule := []string{
-		"create_schedule", "update_schedule",
+		"create_schedule", "create_calendar_schedule", "update_schedule",
 		"delete_schedule", "trigger_schedule", "get_schedule_runs",
 	}
 
@@ -1180,6 +1180,41 @@ func filterWorkspaceToolsByName(allTools []llmtypes.Tool, allExecutors map[strin
 	return filteredTools, filteredExecutors
 }
 
+func optimizerToolAgentAllowedToolNames() []string {
+	return []string{
+		// Workspace/file tools. Keep direct filesystem mutation narrow: use shell
+		// and diff_patch under FolderGuard, plus media/PDF readers for evidence.
+		"execute_shell_command", "diff_patch_workspace_file",
+		"read_image", "read_video", "read_pdf", "generate_text_llm", "search_web_llm",
+
+		// Read-only workflow state.
+		"get_step_prompts", "get_workflow_config", "get_llm_config", "get_cost_summary",
+		"list_skills", "search_skills", "list_published_llms", "list_provider_models",
+
+		// Step/config analysis and maintenance.
+		"update_step_config", "improve_learnings", "analyze_step", "debug_step",
+		"improve_kb", "improve_db",
+
+		// Plan and validation tools.
+		"create_plan",
+		"add_regular_step", "add_routing_step",
+		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
+		"update_regular_step", "update_routing_step",
+		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
+		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
+		"update_validation_schema", "validate_evaluation_plan",
+
+		// Workflow-level config that affects future execution.
+		"update_variable", "add_group", "update_group", "delete_group",
+		"update_workflow_config", "test_llm", "set_workflow_llm_config",
+
+		// Report artifact maintenance.
+		"get_report_plan", "upsert_report_widget", "remove_report_widget",
+		"move_report_widget", "toggle_report_widget", "set_report_theme",
+		"set_section_layout", "validate_report_plan", "preview_report_render",
+	}
+}
+
 func (iwm *InteractiveWorkshopManager) registerWorkshopMutationToolsForToolAgent(agent agents.OrchestratorAgent, workspacePath, agentName string, allowedToolNames []string, logger loggerv2.Logger) {
 	if agent == nil || agent.GetBaseAgent() == nil || agent.GetBaseAgent().Agent() == nil {
 		logger.Warn(fmt.Sprintf("⚠️ %s: cannot register workshop mutation tools; base agent unavailable", agentName))
@@ -1198,8 +1233,89 @@ func (iwm *InteractiveWorkshopManager) registerWorkshopMutationToolsForToolAgent
 		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register plan modification tools: %v", agentName, err))
 	}
 	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
+	if err := RegisterEvaluationValidationTools(
+		mcpAgentRef,
+		workspacePath,
+		logger,
+		iwm.controller.ReadWorkspaceFile,
+		iwm.controller.WriteWorkspaceFile,
+		iwm.controller.MoveWorkspaceFile,
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register evaluation validation tool: %v", agentName, err))
+	}
+	if err := RegisterReportPlanManagementTools(
+		mcpAgentRef,
+		workspacePath,
+		logger,
+		iwm.controller.ReadWorkspaceFile,
+		iwm.controller.WriteWorkspaceFile,
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register report plan management tools: %v", agentName, err))
+	}
+	if err := RegisterReportPlanValidationTools(
+		mcpAgentRef,
+		workspacePath,
+		logger,
+		iwm.controller.ReadWorkspaceFile,
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register report validation tool: %v", agentName, err))
+	}
+	if err := RegisterReportRenderPreviewTool(
+		mcpAgentRef,
+		workspacePath,
+		logger,
+		iwm.controller.ReadWorkspaceFile,
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register report preview tool: %v", agentName, err))
+	}
 	mcpAgentRef.SetToolAllowList(allowedToolNames)
 	logger.Info(fmt.Sprintf("🔧 %s: registered workshop mutation tools and applied allow list (%d tools)", agentName, len(allowedToolNames)))
+}
+
+func (iwm *InteractiveWorkshopManager) registerWorkshopReviewToolsForToolAgent(agent agents.OrchestratorAgent, workspacePath, agentName string, allowedToolNames []string, logger loggerv2.Logger) {
+	if agent == nil || agent.GetBaseAgent() == nil || agent.GetBaseAgent().Agent() == nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: cannot register workshop review tools; base agent unavailable", agentName))
+		return
+	}
+	mcpAgentRef := agent.GetBaseAgent().Agent()
+	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
+	if err := RegisterEvaluationValidationTools(
+		mcpAgentRef,
+		workspacePath,
+		logger,
+		iwm.controller.ReadWorkspaceFile,
+		iwm.controller.WriteWorkspaceFile,
+		iwm.controller.MoveWorkspaceFile,
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register evaluation validation tool: %v", agentName, err))
+	}
+	if err := RegisterReportPlanManagementTools(
+		mcpAgentRef,
+		workspacePath,
+		logger,
+		iwm.controller.ReadWorkspaceFile,
+		iwm.controller.WriteWorkspaceFile,
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register report plan management tools: %v", agentName, err))
+	}
+	if err := RegisterReportPlanValidationTools(
+		mcpAgentRef,
+		workspacePath,
+		logger,
+		iwm.controller.ReadWorkspaceFile,
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register report validation tool: %v", agentName, err))
+	}
+	if err := RegisterReportRenderPreviewTool(
+		mcpAgentRef,
+		workspacePath,
+		logger,
+		iwm.controller.ReadWorkspaceFile,
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register report preview tool: %v", agentName, err))
+	}
+	mcpAgentRef.SetToolAllowList(allowedToolNames)
+	logger.Info(fmt.Sprintf("🔧 %s: registered workshop review tools and applied allow list (%d tools)", agentName, len(allowedToolNames)))
 }
 
 // detectWorkshopMode returns the default workshop mode when the frontend has not
@@ -1620,6 +1736,7 @@ The workflow has a live frontend report viewer at the top toolbar's "Report" tab
 **When the user asks "create a report" / "build a reporting UI" / "show me X in a dashboard":**
 - The answer is almost always: **update `+"`reports/report_plan.json`"+` via the report-plan tools** — add, move, toggle, or remove widgets.
 - If the workflow has routing, todo_task predefined routes, orchestration routes, or route-specific outputs, prefer a tabbed report section: `+"`set_section_layout(mode=\"tabs\")`"+`, then give each route's widgets `+"`tab: \"<route name>\"`"+`. Use one tab per user-meaningful route so the dashboard does not mix unrelated path outputs in one long section.
+- When creating or improving a report for a routed workflow, first inspect the route list and decide the report structure from that route map. Use tabs for route-specific evidence/results by default; use a combined table only when the user explicitly wants cross-route comparison or the route outputs share the same schema.
 - Do NOT add a step that generates HTML, markdown, or any other "rendered report" artifact.
 - Do NOT write Python that produces a dashboard file. The React frontend already does this from the report plan.
 - If the user wants a NEW kind of visualization the widget grammar can't express, say so explicitly and propose either (a) a new widget type to add to the renderer, or (b) reshaping the underlying `+"`db/`"+` data to fit existing widget types. Don't silently fall back to "I'll write a Python script that makes HTML."
@@ -1641,6 +1758,7 @@ The workflow has a live frontend report viewer at the top toolbar's "Report" tab
 - Use `+"`upsert_report_widget`"+` for create/update, `+"`move_report_widget`"+` to reposition, `+"`toggle_report_widget`"+` to hide/show, and `+"`remove_report_widget`"+` to delete.
 - For one JSON file, bind widgets with `+"`source: \"db/file.json\"`"+`. For joins across db files, bind with `+"`sources: { \"alias\": \"db/file.json\", ... }`"+` and a JSONata `+"`query`"+`; the query input is an object keyed by alias (for example `+"`runs.rows`"+` and `+"`costs.rows`"+`). Prefer this over creating helper db files just to join, sum, filter, or pick latest report rows.
 - For dashboard-style layouts: call `+"`set_section_layout`"+` to put a section into CSS Grid mode (columns 1–24), then pass `+"`layout: { span }`"+` in the widget config so widgets span N columns. Use `+"`mode: \"tabs\"`"+` when a workflow has route-specific views; then pass `+"`tab: \"Route name\"`"+` to `+"`upsert_report_widget`"+` so widgets for the same route render under one tab. Prefer tabs over separate duplicate sections when routes share the same conceptual report area. Without a section layout, sections use the default flex layout.
+- Route-tab pattern: create one section for the conceptual area (for example `+"`Route Evidence`"+`, `+"`Route Results`"+`, or `+"`Agent Outputs`"+`), set that section to `+"`mode: \"tabs\"`"+`, and put every widget for a given route under the same `+"`tab`"+` value. Do not create many near-identical sections named after routes unless each route genuinely needs a different page-level narrative.
 - For per-report color palettes: call `+"`set_report_theme`"+` with `+"`brand`"+` / `+"`warm`"+` / `+"`cool`"+` for bundled themes, or pass `+"`colors: { primary, accent, card, muted, border, chart: [...] }`"+` (hex strings) for an inline custom palette — useful for brand-specific colors (HDFC red, Citi blue, etc.) that no bundled theme matches. Omit fields you don't want to override; pass null/empty to clear.
 - After every edit to `+"`reports/report_plan.json`"+`, call `+"`validate_report_plan`"+`.
 - When you need to inspect what the final report will actually show with current data, call `+"`preview_report_render`"+`.
@@ -2599,7 +2717,7 @@ Rules:
 - **Objective + success criteria** — edit `+"`soul/soul.md`"+` directly via shell (fill in the `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections). soul.md is the canonical source; plan.json no longer stores these fields. No dedicated tool — use `+"`diff_patch_workspace_file`"+` or a shell heredoc.
 - **review_workflow_timing(iteration?, group_name?, focus?)** — Read-only latency review.
 - **review_workflow_costs(iteration?, group_name?, focus?)** — Read-only cost review.
-- **get_cost_summary** — Token usage and cost breakdown
+- **get_cost_summary(run_folder?)** — Token usage and cost breakdown
 {{else if eq .WorkshopMode "optimizer"}}
 ### Step Config & Analysis
 - **update_step_config(step_id, ...)** — Update servers, tools, skills, learning settings, execution mode, LLMs, locks, review notes, and description review state. For eval steps this writes to `+"`evaluation/step_config.json`"+`.
@@ -2609,7 +2727,7 @@ Rules:
 - **review_workflow_results(iteration?, group_name?, focus?)** — Read-only outcome review: checks whether a real run is achieving the objective and success criteria, and whether the evaluation actually measures them properly.
 - **review_workflow_timing(iteration?, group_name?, focus?)** — Read-only latency review: finds the slowest groups/steps/tools/LLM calls and recommends faster descriptions, fewer handoffs, safer step merges, or plan changes.
 - **review_workflow_costs(iteration?, group_name?, focus?)** — Read-only cost review: finds the biggest cost drivers and recommends cheaper models, fewer retries/handoffs, better descriptions, or plan changes without sacrificing success criteria.
-- **get_cost_summary** — Token usage and cost breakdown
+- **get_cost_summary(run_folder?)** — Token usage and cost breakdown
 {{end}}
 
 ### Read-Only Info
@@ -2622,7 +2740,7 @@ Rules:
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
 ### Plan Modification
-- **Steps**: create_plan, add_regular_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
+- **Steps**: create_plan, add_regular_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps, cleanup_orphan_step_configs
 - **Update**: update_regular_step, update_human_input_step, update_routing_step, update_todo_task_step
 - **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
   For todo_task routes, choose one pattern per route: inline `+"`sub_agent_step`"+` for a route-specific agent, or `+"`orphan_step_ref`"+` to reuse a shared orphan step already allowlisted via `+"`shared_with.orchestrator_ids`"+`. Do not set both.
@@ -2637,7 +2755,7 @@ Rules:
 - **update_workflow_config(add_servers?, remove_servers?, add_skills?, remove_skills?, add_secrets?, remove_secrets?, run_retention_count?)** — Update workflow MCP servers, skills, secrets, or run/eval backup retention
 
 ### Schedule Management
-- **create_schedule / update_schedule / delete_schedule / trigger_schedule / get_schedule_runs**
+- **create_schedule / create_calendar_schedule / update_schedule / delete_schedule / trigger_schedule / get_schedule_runs**
 - To view existing schedules, read `+"`workflow.json`"+` via `+"`execute_shell_command`"+` — schedules are under the `+"`schedules`"+` key.
 - Each schedule entry in `+"`workflow.json`"+` has this shape:
   `+"`"+`{ "id": "...", "name": "...", "description": "...", "cron_expression": "0 9 * * 1-5", "timezone": "UTC", "enabled": true, "trigger_payload": {}, "group_names": ["confida-prod"] }`+"`"+`
@@ -3094,6 +3212,161 @@ func listWorkshopWorkspaceTree(ctx context.Context, controller *StepBasedWorkflo
 }
 
 // registerInteractiveWorkshopTools registers the custom workshop tools on the agent.
+func registerGetCostSummaryTool(iwm *InteractiveWorkshopManager, mcpAgent *mcpagent.Agent, logger loggerv2.Logger) {
+	if err := mcpAgent.RegisterCustomTool(
+		"get_cost_summary",
+		"Show token usage and cost breakdown for the current run. Displays per-step and per-model totals with USD costs.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"run_folder": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional run folder such as 'iteration-0/group-1'. If omitted, uses the currently selected run folder.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			runFolder, _ := args["run_folder"].(string)
+			runFolder = strings.TrimSpace(runFolder)
+			if runFolder == "" {
+				runFolder = strings.TrimSpace(iwm.controller.selectedRunFolder)
+			}
+			if runFolder == "" {
+				return "no run folder selected; pass run_folder like 'iteration-0/group-1'", nil
+			}
+
+			var tokenFile *orchestrator.TokenUsageFile
+			if strings.TrimSpace(runFolder) == strings.TrimSpace(iwm.controller.selectedRunFolder) {
+				tokenFile = iwm.controller.GetCurrentRunTokenUsageFile()
+			} else {
+				tokenPath := filepath.ToSlash(filepath.Join("runs", runFolder, "token_usage.json"))
+				tokenContent, err := iwm.controller.ReadWorkspaceFile(ctx, tokenPath)
+				if err != nil {
+					return fmt.Sprintf("No token usage data found at %s", tokenPath), nil
+				}
+				var parsed orchestrator.TokenUsageFile
+				if err := json.Unmarshal([]byte(tokenContent), &parsed); err != nil {
+					return fmt.Sprintf("Failed to parse %s: %v", tokenPath, err), nil
+				}
+				tokenFile = &parsed
+			}
+			if tokenFile == nil || len(tokenFile.ByModel) == 0 && len(tokenFile.ByStepAndModel) == 0 {
+				return fmt.Sprintf("No token usage data found for %s in costs/", runFolder), nil
+			}
+
+			tok := func(s string) string {
+				if s == "" {
+					return "0"
+				}
+				return s
+			}
+
+			var result strings.Builder
+			result.WriteString(fmt.Sprintf("## Cost Summary — %s\n\n", runFolder))
+
+			if len(tokenFile.ByStepAndModel) > 0 {
+				result.WriteString("### Per-Step Breakdown\n\n")
+				result.WriteString("| Step | Model | Input | Output | Cache | Cost |\n")
+				result.WriteString("|------|-------|-------|--------|-------|------|\n")
+
+				stepKeys := make([]string, 0, len(tokenFile.ByStepAndModel))
+				for k := range tokenFile.ByStepAndModel {
+					stepKeys = append(stepKeys, k)
+				}
+				sort.Strings(stepKeys)
+
+				grandTotalCost := 0.0
+				for _, stepKey := range stepKeys {
+					models := tokenFile.ByStepAndModel[stepKey]
+					modelKeys := make([]string, 0, len(models))
+					for k := range models {
+						modelKeys = append(modelKeys, k)
+					}
+					sort.Strings(modelKeys)
+					for _, modelID := range modelKeys {
+						usage := models[modelID]
+						grandTotalCost += usage.TotalCost
+						result.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | $%.4f |\n",
+							stepKey, modelID,
+							tok(usage.InputTokensM), tok(usage.OutputTokensM), tok(usage.CacheTokensM),
+							usage.TotalCost,
+						))
+					}
+				}
+				result.WriteString(fmt.Sprintf("\n**Grand total: $%.4f**\n\n", grandTotalCost))
+			}
+
+			if len(tokenFile.ByModel) > 0 {
+				result.WriteString("### Per-Model Totals\n\n")
+				result.WriteString("| Model | Input | Output | Cache R/W | Reasoning | Calls | Cost |\n")
+				result.WriteString("|-------|-------|--------|-----------|-----------|-------|------|\n")
+
+				modelKeys := make([]string, 0, len(tokenFile.ByModel))
+				for k := range tokenFile.ByModel {
+					modelKeys = append(modelKeys, k)
+				}
+				sort.Strings(modelKeys)
+
+				totalCost := 0.0
+				for _, modelID := range modelKeys {
+					usage := tokenFile.ByModel[modelID]
+					totalCost += usage.TotalCost
+					cacheRW := fmt.Sprintf("%s / %s", tok(usage.CacheReadTokensM), tok(usage.CacheWriteTokensM))
+					result.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %d | $%.4f |\n",
+						modelID,
+						tok(usage.InputTokensM), tok(usage.OutputTokensM), cacheRW,
+						tok(usage.ReasoningTokensM), usage.LLMCallCount,
+						usage.TotalCost,
+					))
+				}
+				result.WriteString(fmt.Sprintf("\n**Total: $%.4f**\n", totalCost))
+			}
+
+			phaseTokenPath := orchestrator.ResolvePhaseTokenUsagePath("")
+			phaseContent, phaseErr := iwm.controller.ReadWorkspaceFile(ctx, phaseTokenPath)
+			if phaseErr == nil {
+				var phaseFile orchestrator.PhaseTokenUsageFile
+				if err := json.Unmarshal([]byte(phaseContent), &phaseFile); err == nil && len(phaseFile.ByPhaseAndModel) > 0 {
+					result.WriteString("\n### Phase-Level Costs (planning, learning, etc.)\n\n")
+					result.WriteString("| Phase | Model | Input | Output | Cost |\n")
+					result.WriteString("|-------|-------|-------|--------|------|\n")
+
+					phaseKeys := make([]string, 0, len(phaseFile.ByPhaseAndModel))
+					for k := range phaseFile.ByPhaseAndModel {
+						phaseKeys = append(phaseKeys, k)
+					}
+					sort.Strings(phaseKeys)
+
+					phaseTotalCost := 0.0
+					for _, phase := range phaseKeys {
+						models := phaseFile.ByPhaseAndModel[phase]
+						pModelKeys := make([]string, 0, len(models))
+						for k := range models {
+							pModelKeys = append(pModelKeys, k)
+						}
+						sort.Strings(pModelKeys)
+						for _, modelID := range pModelKeys {
+							usage := models[modelID]
+							phaseTotalCost += usage.TotalCost
+							result.WriteString(fmt.Sprintf("| %s | %s | %s | %s | $%.4f |\n",
+								phase, modelID,
+								tok(usage.InputTokensM), tok(usage.OutputTokensM),
+								usage.TotalCost,
+							))
+						}
+					}
+					result.WriteString(fmt.Sprintf("\n**Phase total: $%.4f**\n", phaseTotalCost))
+				}
+			}
+
+			return result.String(), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_cost_summary tool: %v", err))
+	}
+}
+
 func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagent.Agent, logger loggerv2.Logger) {
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
@@ -6661,139 +6934,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	}
 
 	// Tool 8: get_cost_summary — parse token_usage.json and show formatted cost breakdown
-	if err := mcpAgent.RegisterCustomTool(
-		"get_cost_summary",
-		"Show token usage and cost breakdown for the current run. Displays per-step and per-model totals with USD costs.",
-		map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			runFolder := iwm.controller.selectedRunFolder
-			if runFolder == "" {
-				return "no run folder selected", nil
-			}
-
-			tokenFile := iwm.controller.GetCurrentRunTokenUsageFile()
-			if tokenFile == nil || len(tokenFile.ByModel) == 0 && len(tokenFile.ByStepAndModel) == 0 {
-				return fmt.Sprintf("No token usage data found for %s in costs/", runFolder), nil
-			}
-
-			// Helper to default empty token strings to "0"
-			tok := func(s string) string {
-				if s == "" {
-					return "0"
-				}
-				return s
-			}
-
-			var result strings.Builder
-			result.WriteString(fmt.Sprintf("## Cost Summary — %s\n\n", runFolder))
-
-			// Per-step breakdown (sorted by step key for deterministic output)
-			if len(tokenFile.ByStepAndModel) > 0 {
-				result.WriteString("### Per-Step Breakdown\n\n")
-				result.WriteString("| Step | Model | Input | Output | Cache | Cost |\n")
-				result.WriteString("|------|-------|-------|--------|-------|------|\n")
-
-				stepKeys := make([]string, 0, len(tokenFile.ByStepAndModel))
-				for k := range tokenFile.ByStepAndModel {
-					stepKeys = append(stepKeys, k)
-				}
-				sort.Strings(stepKeys)
-
-				grandTotalCost := 0.0
-				for _, stepKey := range stepKeys {
-					models := tokenFile.ByStepAndModel[stepKey]
-					modelKeys := make([]string, 0, len(models))
-					for k := range models {
-						modelKeys = append(modelKeys, k)
-					}
-					sort.Strings(modelKeys)
-					for _, modelID := range modelKeys {
-						usage := models[modelID]
-						grandTotalCost += usage.TotalCost
-						result.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | $%.4f |\n",
-							stepKey, modelID,
-							tok(usage.InputTokensM), tok(usage.OutputTokensM), tok(usage.CacheTokensM),
-							usage.TotalCost,
-						))
-					}
-				}
-				result.WriteString(fmt.Sprintf("\n**Grand total: $%.4f**\n\n", grandTotalCost))
-			}
-
-			// Per-model totals (sorted by model ID)
-			if len(tokenFile.ByModel) > 0 {
-				result.WriteString("### Per-Model Totals\n\n")
-				result.WriteString("| Model | Input | Output | Cache R/W | Reasoning | Calls | Cost |\n")
-				result.WriteString("|-------|-------|--------|-----------|-----------|-------|------|\n")
-
-				modelKeys := make([]string, 0, len(tokenFile.ByModel))
-				for k := range tokenFile.ByModel {
-					modelKeys = append(modelKeys, k)
-				}
-				sort.Strings(modelKeys)
-
-				totalCost := 0.0
-				for _, modelID := range modelKeys {
-					usage := tokenFile.ByModel[modelID]
-					totalCost += usage.TotalCost
-					cacheRW := fmt.Sprintf("%s / %s", tok(usage.CacheReadTokensM), tok(usage.CacheWriteTokensM))
-					result.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %d | $%.4f |\n",
-						modelID,
-						tok(usage.InputTokensM), tok(usage.OutputTokensM), cacheRW,
-						tok(usage.ReasoningTokensM), usage.LLMCallCount,
-						usage.TotalCost,
-					))
-				}
-				result.WriteString(fmt.Sprintf("\n**Total: $%.4f**\n", totalCost))
-			}
-
-			// Also check phase-level costs (planning, etc.)
-			phaseTokenPath := orchestrator.ResolvePhaseTokenUsagePath("")
-			phaseContent, phaseErr := iwm.controller.ReadWorkspaceFile(ctx, phaseTokenPath)
-			if phaseErr == nil {
-				var phaseFile orchestrator.PhaseTokenUsageFile
-				if err := json.Unmarshal([]byte(phaseContent), &phaseFile); err == nil && len(phaseFile.ByPhaseAndModel) > 0 {
-					result.WriteString("\n### Phase-Level Costs (planning, learning, etc.)\n\n")
-					result.WriteString("| Phase | Model | Input | Output | Cost |\n")
-					result.WriteString("|-------|-------|-------|--------|------|\n")
-
-					phaseKeys := make([]string, 0, len(phaseFile.ByPhaseAndModel))
-					for k := range phaseFile.ByPhaseAndModel {
-						phaseKeys = append(phaseKeys, k)
-					}
-					sort.Strings(phaseKeys)
-
-					phaseTotalCost := 0.0
-					for _, phase := range phaseKeys {
-						models := phaseFile.ByPhaseAndModel[phase]
-						pModelKeys := make([]string, 0, len(models))
-						for k := range models {
-							pModelKeys = append(pModelKeys, k)
-						}
-						sort.Strings(pModelKeys)
-						for _, modelID := range pModelKeys {
-							usage := models[modelID]
-							phaseTotalCost += usage.TotalCost
-							result.WriteString(fmt.Sprintf("| %s | %s | %s | %s | $%.4f |\n",
-								phase, modelID,
-								tok(usage.InputTokensM), tok(usage.OutputTokensM),
-								usage.TotalCost,
-							))
-						}
-					}
-					result.WriteString(fmt.Sprintf("\n**Phase total: $%.4f**\n", phaseTotalCost))
-				}
-			}
-
-			return result.String(), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_cost_summary tool: %v", err))
-	}
+	registerGetCostSummaryTool(iwm, mcpAgent, logger)
 
 	// === Tools: background tasks, LLM config, workflow config ===
 
@@ -8104,6 +8245,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if iwm.schedulerFuncs == nil || iwm.schedulerFuncs.CreateCalendarSchedule == nil {
 				return "Calendar schedule management not available in this session.", nil
 			}
+			if iwm.schedulerWorkspacePath == "" {
+				return "No workspace path associated with this workflow session.", nil
+			}
 			name, _ := args["name"].(string)
 			timezone, _ := args["timezone"].(string)
 			if name == "" {
@@ -9393,7 +9537,7 @@ For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`
 
 ## REQUIRED EVIDENCE TO READ
 
-1. Call `+"`get_cost_summary`"+` for the target run if available.
+1. Call `+"`get_cost_summary(run_folder=\"<target>\")`"+` for the target run if available.
 2. Read cost ledgers under:
    - `+"`costs/phase/token_usage.json`"+`
    - `+"`costs/execution/`"+`
@@ -9644,6 +9788,7 @@ This tool is **evidence-driven and mutating**:
 - Add steps/routes: `+"`add_regular_step`"+`, `+"`add_routing_step`"+`, `+"`add_human_input_step`"+`, `+"`add_todo_task_step`"+`, `+"`add_todo_task_route`"+`
 - Update steps/routes: `+"`update_regular_step`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`
 - Delete steps/routes: `+"`delete_plan_steps`"+`, `+"`delete_todo_task_route`"+`
+- Cleanup stale step configs: `+"`cleanup_orphan_step_configs`"+`
 - Update validation/config: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`
 
 Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`builder/improve.md`"+`, `+"`builder/review.md`"+`, `+"`learnings/_global/SKILL.md`"+`, learn_code `+"`main.py`"+`, KB notes, db schema docs, or report plans.
@@ -9791,6 +9936,7 @@ Per-step KB config:
 `+"`planning/plan.json`"+` is system-managed and protected by FolderGuard. You may read it with shell/JQ, but you MUST NOT use `+"`diff_patch_workspace_file`"+`, shell redirects, heredocs, or manual JSON edits to mutate it. Apply every plan/validation/config change through the workflow tools:
 - Description/step edits: `+"`update_regular_step`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`
 - Structural edits: `+"`add_regular_step`"+`, `+"`add_routing_step`"+`, `+"`add_human_input_step`"+`, `+"`add_todo_task_step`"+`, `+"`add_todo_task_route`"+`, `+"`delete_plan_steps`"+`, `+"`delete_todo_task_route`"+`
+- Cleanup stale step configs: `+"`cleanup_orphan_step_configs`"+`
 - Validation/config edits: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`
 
 Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`learnings/_global/SKILL.md`"+`, learn_code `+"`main.py`"+`, KB notes, db schema docs, report plans, `+"`builder/improve.md`"+`, or `+"`builder/review.md`"+`.
@@ -10565,6 +10711,7 @@ func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Co
 	if err != nil {
 		return "", fmt.Errorf("failed to create review_artifact_sync agent: %w", err)
 	}
+	iwm.registerWorkshopReviewToolsForToolAgent(agent, workspacePath, "review-artifact-sync", allowedToolNames, logger)
 
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
@@ -10875,6 +11022,9 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowCostsAgent(ctx context.C
 	if err != nil {
 		return "", fmt.Errorf("failed to create review_workflow_costs agent: %w", err)
 	}
+	if agent.GetBaseAgent() != nil && agent.GetBaseAgent().Agent() != nil {
+		registerGetCostSummaryTool(iwm, agent.GetBaseAgent().Agent(), logger)
+	}
 
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
@@ -11126,17 +11276,7 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 	config.ServerNames = []string{mcpclient.NoServers}
 	defer iwm.configureWorkshopToolAgentSession(config, "replan-workflow-from-results", readPaths, writePaths)()
 
-	allowedToolNames := []string{
-		"execute_shell_command", "diff_patch_workspace_file",
-		"get_step_prompts", "get_workflow_config", "get_llm_config", "get_cost_summary",
-		"update_step_config", "analyze_step",
-		"add_regular_step", "add_routing_step",
-		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
-		"update_regular_step", "update_routing_step",
-		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
-		"delete_todo_task_route", "delete_plan_steps",
-		"update_validation_schema",
-	}
+	allowedToolNames := optimizerToolAgentAllowedToolNames()
 	toolsToRegister, executorsToUse := filterWorkspaceToolsByName(iwm.controller.WorkspaceTools, iwm.controller.WorkspaceToolExecutors, allowedToolNames)
 
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
@@ -11259,17 +11399,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 	config.ServerNames = []string{mcpclient.NoServers}
 	defer iwm.configureWorkshopToolAgentSession(config, "harden-workflow", readPaths, writePaths)()
 
-	allowedToolNames := []string{
-		"execute_shell_command", "diff_patch_workspace_file",
-		"get_step_prompts", "get_workflow_config", "get_llm_config",
-		"update_step_config",
-		"add_regular_step", "add_routing_step",
-		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
-		"update_regular_step", "update_routing_step",
-		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
-		"delete_todo_task_route", "delete_plan_steps",
-		"update_validation_schema",
-	}
+	allowedToolNames := optimizerToolAgentAllowedToolNames()
 	toolsToRegister, executorsToUse := filterWorkspaceToolsByName(iwm.controller.WorkspaceTools, iwm.controller.WorkspaceToolExecutors, allowedToolNames)
 
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {

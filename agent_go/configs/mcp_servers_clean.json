@@ -4,6 +4,7 @@
       "command": "npx",
       "args": [
         "@playwright/mcp@latest",
+        "--headed",
         "--output-dir",
         "../workspace-docs/Downloads",
         "--isolated"

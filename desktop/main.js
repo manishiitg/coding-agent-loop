@@ -749,6 +749,7 @@ function spawnAgent(userDataPath) {
       ...process.env,
       WORKSPACE_API_URL: `http://127.0.0.1:${dynamicWorkspacePort}`,
       WORKSPACE_DOCS_PATH: docsDir,
+      DOCS_DIR: docsDir,
       LOG_FILE: logFile,
       WORKSPACE_ENABLE_GITHUB_SYNC: 'true',
       // Both servers run as native binaries on the host (no Docker). Without

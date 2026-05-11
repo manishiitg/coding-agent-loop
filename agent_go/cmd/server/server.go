@@ -2289,6 +2289,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				// Manifest is the source of truth for workflow-selected user secrets too.
 				req.DecryptedSecrets = api.loadSelectedUserSecrets(context.Background(), currentUserID, manifest.Capabilities.SelectedSecrets)
+
+				// Restore browser mode and selected servers from the manifest.
+				// The early browser-mode strip (above) may have removed playwright
+				// from selectedServers before the manifest was loaded.
+				if manifest.Capabilities.BrowserMode != "" && manifest.Capabilities.BrowserMode != "none" {
+					req.BrowserMode = manifest.Capabilities.BrowserMode
+				}
+				if len(manifest.Capabilities.SelectedServers) > 0 {
+					selectedServers = manifest.Capabilities.SelectedServers
+					serverList = strings.Join(selectedServers, ",")
+					logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Restored servers from manifest: %s", serverList)
+				}
 			}
 		}
 

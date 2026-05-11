@@ -729,7 +729,7 @@ func deleteScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			return
 		}
 
-		// Remove from gocron
+		// Remove from scheduler
 		_ = svc.RemoveJob(id)
 
 		if result.SourceType == "multi-agent" {

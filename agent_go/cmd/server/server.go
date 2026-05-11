@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"net"
@@ -429,6 +430,20 @@ func getBrowserMode(req QueryRequest) string {
 		}
 	}
 	return "none"
+}
+
+// resolveWorkflowBrowserSessionID computes the deterministic browser session ID
+// for a workflow+group, matching the orchestrator's resolveWorkshopBrowserSessionID.
+func resolveWorkflowBrowserSessionID(workspacePath, groupName string) string {
+	if groupName == "" {
+		groupName = "default-group"
+	}
+	safeGroupName := strings.NewReplacer("/", "-", "\\", "-", " ", "-", ":", "-").Replace(groupName)
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(strings.TrimSpace(workspacePath)))
+	_, _ = hasher.Write([]byte("::"))
+	_, _ = hasher.Write([]byte(groupName))
+	return fmt.Sprintf("workflow-browser-%x-%s", hasher.Sum64(), safeGroupName)
 }
 
 // buildChatBrowserConfig resolves the browser configuration from a QueryRequest
@@ -3416,6 +3431,33 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		logfWithContext(queryLogCtx, "[LATENCY_DEBUG] T+%dms | Agent wrapper created", time.Since(startTime).Milliseconds())
+
+		// Prime MCP server configs in the session registry for chat mode.
+		// Workflow mode does this inside the orchestrator; chat mode must do it here
+		// so that browser-scoped servers (playwright) can lazy-connect on first tool call.
+		if api.mcpConfig != nil {
+			registry := mcpclient.GetSessionRegistry()
+			for _, sName := range selectedServers {
+				if sName == mcpclient.NoServers {
+					continue
+				}
+				serverCfg, cfgErr := api.mcpConfig.GetServer(sName)
+				if cfgErr != nil {
+					continue
+				}
+				registry.StoreServerConfig(sessionID, sName, serverCfg)
+
+				// For playwright in workflow phases, bind to the same deterministic
+				// browser session that the workflow orchestrator uses. This lets the
+				// workshop chat share the browser (and login state) with workflow steps.
+				if sName == "playwright" && isWorkflowPhase && workflowPhaseFolder != "" {
+					browserSessionID := resolveWorkflowBrowserSessionID(workflowPhaseFolder, "default-group")
+					registry.StoreServerConfig(browserSessionID, sName, serverCfg)
+					registry.RegisterBrowserSessionOverride(sessionID, browserSessionID)
+					log.Printf("[MCP SESSION] Bound chat session %s to shared browser session %s for playwright", sessionID, browserSessionID)
+				}
+			}
+		}
 
 		// Add workspace tools to chat agents (multi-agent chat mode)
 		// Workflow mode handles workspace tools differently, so exclude it

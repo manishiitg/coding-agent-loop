@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-co-op/gocron/v2"
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
@@ -53,13 +52,22 @@ type ScheduleRuntimeState struct {
 	ConsecutiveFailures int        `json:"consecutive_failures"`
 }
 
-// SchedulerService manages cron job execution using gocron.
-// All schedule configuration comes from workflow.json manifests — no database dependency.
+// registeredJob is a schedule registered for wall-clock evaluation.
+type registeredJob struct {
+	sctx     *ScheduleContext
+	cronSched cron.Schedule // nil for calendar (one-time) jobs
+	runAt     *time.Time    // non-nil for calendar (one-time) jobs
+	lastFired time.Time     // truncated to the minute — prevents double-fire in the same minute
+}
+
+// SchedulerService manages cron job execution using wall-clock polling.
+// Every 60 seconds it evaluates each registered schedule's cron expression against
+// the current wall-clock time. This approach is immune to macOS App Nap and sleep/wake
+// issues that wedge monotonic-clock-based timers (like gocron).
 type SchedulerService struct {
-	api       *StreamingAPI
-	scheduler gocron.Scheduler
-	mu        sync.Mutex
-	jobIDs    map[string][]uuid.UUID // scheduleID → gocron job UUIDs
+	api  *StreamingAPI
+	mu   sync.Mutex
+	jobs map[string]*registeredJob // scheduleID → job
 
 	// In-memory runtime state per schedule (survives within server lifetime, reset on restart)
 	runtimeStates   map[string]*ScheduleRuntimeState
@@ -90,7 +98,7 @@ func (s *SchedulerService) sessionLogf(sctx *ScheduleContext, sessionID string, 
 func NewSchedulerService(api *StreamingAPI) *SchedulerService {
 	return &SchedulerService{
 		api:            api,
-		jobIDs:         make(map[string][]uuid.UUID),
+		jobs:           make(map[string]*registeredJob),
 		runtimeStates:  make(map[string]*ScheduleRuntimeState),
 		workspaceIndex: make(map[string]string),
 		userIndex:      make(map[string]string),
@@ -133,14 +141,9 @@ func (s *SchedulerService) InvalidateWorkflowManifestCache() {
 }
 
 // Start scans all workspace folders for workflow.json manifests, loads enabled schedules,
-// and starts the gocron scheduler.
+// and starts the wall-clock tick loop.
 func (s *SchedulerService) Start(ctx context.Context) error {
 	scheduleLogf("[SCHEDULER] Starting manifest-based scheduler service...")
-	scheduler, err := gocron.NewScheduler()
-	if err != nil {
-		return fmt.Errorf("failed to create scheduler: %w", err)
-	}
-	s.scheduler = scheduler
 
 	// Discover all workflows by scanning workspace-docs/Workflow/*/workflow.json
 	workflows := s.discoverWorkflows(ctx)
@@ -237,15 +240,14 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 		}
 	}
 
-	s.scheduler.Start()
 	scheduleLogf("[SCHEDULER] ✅ Started with %d schedules. Server time: %s, timezone: %s",
 		loaded, time.Now().Format(time.RFC3339), time.Now().Location().String())
 
 	// Periodically rescan multi-agent schedule files for changes (written by agents via shell)
 	go s.multiAgentRescanLoop(ctx)
 
-	// Heartbeat loop: liveness signal + macOS sleep/wake detection + per-job NextRun snapshot.
-	go s.heartbeatLoop(ctx)
+	// Wall-clock tick loop: every 60s, evaluate all registered schedules against current time.
+	go s.tickLoop(ctx)
 
 	// Wait for context cancellation
 	<-ctx.Done()
@@ -269,68 +271,58 @@ func (s *SchedulerService) multiAgentRescanLoop(ctx context.Context) {
 	}
 }
 
-// heartbeatLoop emits a liveness line every minute. Three signals on each tick:
-//   - now / gap-since-last-tick: a gap > 90s is a near-certain macOS suspend window
-//     (the goroutine timer paused with the process). Logged separately as WAKE_DETECTED
-//     so it stands out in the schedule.log when correlating to a missed fire.
-//   - per-job NextRun() from gocron: lets us see, post-wake, whether each job's timer
-//     was correctly re-armed. If a job's NextRun stays in the past tick after tick,
-//     the gocron scheduler is wedged and the process needs a restart.
-//   - registered job count: if it drops to 0 unexpectedly, we caught a deregistration bug.
-func (s *SchedulerService) heartbeatLoop(ctx context.Context) {
+// tickLoop is the wall-clock scheduler. Every 60 seconds it evaluates each
+// registered schedule against the current wall-clock time and fires any that
+// are due. Unlike timer-based schedulers (gocron), this approach is immune to
+// macOS App Nap and sleep/wake monotonic clock drift — if a job was missed
+// during sleep, it fires on the first tick after wake.
+func (s *SchedulerService) tickLoop(ctx context.Context) {
 	const interval = 60 * time.Second
 	const wakeThreshold = 90 * time.Second
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	last := time.Now()
+	lastTick := time.Now()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case t := <-ticker.C:
-			gap := t.Sub(last)
+			gap := t.Sub(lastTick)
 			if gap > wakeThreshold {
-				scheduleLogf("[SCHEDULER] 💤 WAKE_DETECTED gap=%s now=%s prev_tick=%s (likely macOS suspend; rebuilding gocron to re-arm timers)",
-					gap.Round(time.Second), t.Format(time.RFC3339), last.Format(time.RFC3339))
-				if err := s.rebuildAfterWake(ctx); err != nil {
-					scheduleLogf("[SCHEDULER] ❌ rebuildAfterWake failed: %v", err)
-				}
+				scheduleLogf("[SCHEDULER] 💤 WAKE_DETECTED gap=%s now=%s prev_tick=%s",
+					gap.Round(time.Second), t.Format(time.RFC3339), lastTick.Format(time.RFC3339))
 			}
 
-			// Build reverse index gocronJobID → scheduleID for friendly logging.
 			s.mu.Lock()
-			jobToSched := make(map[uuid.UUID]string, len(s.jobIDs))
-			for sid, ids := range s.jobIDs {
-				for _, id := range ids {
-					jobToSched[id] = sid
+			parts := make([]string, 0, len(s.jobs))
+			var toFire []*registeredJob
+			for sid, job := range s.jobs {
+				if job.cronSched != nil {
+					next := job.cronSched.Next(job.lastFired)
+					if !next.After(t) {
+						toFire = append(toFire, job)
+					}
+					parts = append(parts, fmt.Sprintf("%s next=%s", sid, job.cronSched.Next(t).UTC().Format(time.RFC3339)))
+				} else if job.runAt != nil {
+					if !job.runAt.After(t) && job.lastFired.Before(*job.runAt) {
+						toFire = append(toFire, job)
+					}
+					parts = append(parts, fmt.Sprintf("%s at=%s", sid, job.runAt.UTC().Format(time.RFC3339)))
 				}
 			}
 			s.mu.Unlock()
 
-			jobs := s.scheduler.Jobs()
-			parts := make([]string, 0, len(jobs))
-			stale := 0
-			for _, j := range jobs {
-				sid, ok := jobToSched[j.ID()]
-				if !ok {
-					sid = j.ID().String()
-				}
-				next, err := j.NextRun()
-				if err != nil {
-					parts = append(parts, fmt.Sprintf("%s next=ERR(%v)", sid, err))
-					continue
-				}
-				if !next.IsZero() && next.Before(t) {
-					stale++
-				}
-				parts = append(parts, fmt.Sprintf("%s next=%s", sid, next.UTC().Format(time.RFC3339)))
+			scheduleLogf("[SCHEDULER] ❤️ heartbeat now=%s gap=%s jobs=%d due=%d | %s",
+				t.Format(time.RFC3339), gap.Round(time.Second), len(parts), len(toFire), strings.Join(parts, ", "))
+
+			for _, job := range toFire {
+				job.lastFired = t.Truncate(time.Minute)
+				go s.triggerSchedule(job.sctx)
 			}
 
-			scheduleLogf("[SCHEDULER] ❤️ heartbeat now=%s gap=%s jobs=%d stale_next_run=%d | %s",
-				t.Format(time.RFC3339), gap.Round(time.Second), len(jobs), stale, strings.Join(parts, ", "))
-			last = t
+			lastTick = t
 		}
 	}
 }
@@ -360,7 +352,7 @@ func (s *SchedulerService) rescanMultiAgentSchedules(ctx context.Context) {
 
 			// Check if already loaded with same enabled state
 			s.mu.Lock()
-			_, isLoaded := s.jobIDs[sched.ID]
+			_, isLoaded := s.jobs[sched.ID]
 			s.mu.Unlock()
 
 			if sched.Enabled && !isLoaded {
@@ -448,97 +440,28 @@ func buildMultiAgentScheduleContext(userID string, sched WorkflowSchedule, caps 
 
 // Stop shuts down the scheduler.
 func (s *SchedulerService) Stop() {
-	if s.scheduler != nil {
-		if err := s.scheduler.Shutdown(); err != nil {
-			scheduleLogf("[SCHEDULER] Error shutting down: %v", err)
-		}
-	}
-}
-
-// rebuildAfterWake swaps in a fresh gocron scheduler and re-registers every
-// known schedule. Used when the heartbeat detects a clock gap consistent with
-// macOS suspend: gocron's monotonic-clock-based timers may be wedged with
-// past next_run values that never re-arm, so we throw the instance away and
-// build a new one from the current manifests.
-func (s *SchedulerService) rebuildAfterWake(ctx context.Context) error {
-	newScheduler, err := gocron.NewScheduler()
-	if err != nil {
-		return fmt.Errorf("failed to create new scheduler: %w", err)
-	}
-
 	s.mu.Lock()
-	oldScheduler := s.scheduler
-	s.scheduler = newScheduler
-	s.jobIDs = make(map[string][]uuid.UUID)
+	s.jobs = make(map[string]*registeredJob)
 	s.mu.Unlock()
-
-	if oldScheduler != nil {
-		if err := oldScheduler.Shutdown(); err != nil {
-			scheduleLogf("[SCHEDULER] rebuildAfterWake: error shutting down old scheduler: %v", err)
-		}
-	}
-
-	s.InvalidateWorkflowManifestCache()
-
-	loaded := 0
-	workflows := s.discoverWorkflows(ctx)
-	for _, wf := range workflows {
-		for _, sched := range wf.Manifest.Schedules {
-			if !sched.Enabled {
-				continue
-			}
-			sctx := buildScheduleContext(wf.WorkspacePath, wf.Manifest, sched)
-			if err := s.LoadSchedule(sctx); err != nil {
-				scheduleLogf("[SCHEDULER] rebuildAfterWake: failed to load schedule %s (%s): %v", sched.ID, sched.Name, err)
-				continue
-			}
-			loaded++
-		}
-	}
-
-	if maScheds, err := DiscoverMultiAgentSchedules(ctx); err == nil {
-		for _, ma := range maScheds {
-			for _, sched := range MergeBuiltinSchedules(ma.ScheduleFile.Schedules) {
-				if !sched.Enabled {
-					continue
-				}
-				sctx := buildMultiAgentScheduleContext(ma.UserID, sched, ma.ScheduleFile.Capabilities)
-				if err := s.LoadSchedule(sctx); err != nil {
-					scheduleLogf("[SCHEDULER] rebuildAfterWake: failed to load multi-agent schedule %s (%s) for user %s: %v", sched.ID, sched.Name, ma.UserID, err)
-					continue
-				}
-				loaded++
-			}
-		}
-	}
-
-	newScheduler.Start()
-	scheduleLogf("[SCHEDULER] ✅ rebuildAfterWake complete: %d schedules re-armed", loaded)
-	return nil
+	scheduleLogf("[SCHEDULER] Stopped")
 }
 
-// LoadSchedule registers a schedule in gocron from a ScheduleContext.
+
+// LoadSchedule registers a schedule for wall-clock evaluation from a ScheduleContext.
 func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	sched := sctx.Schedule
 
-	// Remove existing gocron jobs if any.
-	if existingIDs, ok := s.jobIDs[sched.ID]; ok {
-		for _, existingID := range existingIDs {
-			if err := s.scheduler.RemoveJob(existingID); err != nil {
-				s.logf(sctx, "[SCHEDULER] Warning: failed to remove old gocron job for %s: %v", sched.ID, err)
-			}
-		}
-		delete(s.jobIDs, sched.ID)
-	}
+	// Remove existing registration if any.
+	delete(s.jobs, sched.ID)
 
 	if !sched.Enabled {
 		return nil
 	}
 
-	// Env filter: skip cron registration for workflows or users excluded on this
+	// Env filter: skip registration for workflows or users excluded on this
 	// machine. Manual TriggerNow still works (mirrors SCHEDULER_ENABLED=false).
 	envFilter := loadSchedulerWorkflowFilter()
 	if sctx.SourceType == "workflow" {
@@ -557,37 +480,50 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 
 	scheduleType := scheduleTypeOrDefault(sched.ScheduleType)
 	var nextRun *time.Time
+	sctxCopy := *sctx
 
 	if scheduleType == "calendar" {
-		jobIDs, calendarNextRun, err := s.loadCalendarScheduleJobs(sctx)
-		if err != nil {
-			return err
+		// Calendar schedules: register one job per future calendar item.
+		for _, item := range sched.CalendarItems {
+			runAt, err := calendarItemRunTime(sched, item)
+			if err != nil || !runAt.After(time.Now().UTC()) {
+				continue
+			}
+			if nextRun == nil || runAt.Before(*nextRun) {
+				runAtCopy := runAt
+				nextRun = &runAtCopy
+			}
+			itemCopy := item
+			itemSctx := sctxCopy
+			itemSctx.Schedule = scheduleWithCalendarItem(sched, itemCopy)
+			calID := fmt.Sprintf("%s__cal__%s_%s", sched.ID, item.Date, item.Time)
+			s.jobs[calID] = &registeredJob{
+				sctx:  &itemSctx,
+				runAt: &runAt,
+			}
 		}
-		if len(jobIDs) == 0 {
-			s.logf(sctx, "[SCHEDULER] Calendar schedule %s (%s) has no future items; not registering jobs", sched.ID, sched.Name)
-		} else {
-			s.jobIDs[sched.ID] = jobIDs
+		if nextRun == nil {
+			s.logf(sctx, "[SCHEDULER] Calendar schedule %s (%s) has no future items; not registering", sched.ID, sched.Name)
 		}
-		nextRun = calendarNextRun
 	} else {
-		// Build cron expression with an explicit timezone prefix. gocron defaults
-		// unprefixed cron jobs to time.Local, which makes UTC schedules fire in the
-		// server timezone while next_run_at is calculated as UTC.
-		cronExpr := buildScheduleCronExpression(sched.CronExpression, sched.Timezone)
-
-		sctxCopy := *sctx
-		gocronJob, err := s.scheduler.NewJob(
-			gocron.CronJob(cronExpr, false),
-			gocron.NewTask(func() {
-				s.triggerSchedule(&sctxCopy)
-			}),
-			gocron.WithSingletonMode(gocron.LimitModeReschedule),
-		)
+		// Cron schedules: parse the expression and register for wall-clock eval.
+		loc, err := time.LoadLocation(scheduleTimezoneOrDefault(sched.Timezone))
 		if err != nil {
-			return fmt.Errorf("failed to create gocron job: %w", err)
+			loc = time.UTC
 		}
+		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+		cronSched, err := parser.Parse(sched.CronExpression)
+		if err != nil {
+			return fmt.Errorf("failed to parse cron expression %q: %w", sched.CronExpression, err)
+		}
+		// Wrap with timezone-aware location
+		cronSched = &tzSchedule{inner: cronSched, loc: loc}
 
-		s.jobIDs[sched.ID] = []uuid.UUID{gocronJob.ID()}
+		s.jobs[sched.ID] = &registeredJob{
+			sctx:      &sctxCopy,
+			cronSched: cronSched,
+			lastFired: time.Now().Add(-30 * time.Second), // don't fire immediately on registration
+		}
 		nextRun = getNextRunTime(sched.CronExpression, sched.Timezone)
 	}
 
@@ -622,42 +558,16 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	return nil
 }
 
-func (s *SchedulerService) loadCalendarScheduleJobs(sctx *ScheduleContext) ([]uuid.UUID, *time.Time, error) {
-	now := time.Now().UTC()
-	jobIDs := []uuid.UUID{}
-	var nextRun *time.Time
-
-	for _, item := range sctx.Schedule.CalendarItems {
-		runAt, err := calendarItemRunTime(sctx.Schedule, item)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !runAt.After(now) {
-			continue
-		}
-		if nextRun == nil || runAt.Before(*nextRun) {
-			runAtCopy := runAt
-			nextRun = &runAtCopy
-		}
-
-		itemCopy := item
-		sctxCopy := *sctx
-		sctxCopy.Schedule = scheduleWithCalendarItem(sctx.Schedule, itemCopy)
-		gocronJob, err := s.scheduler.NewJob(
-			gocron.OneTimeJob(gocron.OneTimeJobStartDateTime(runAt)),
-			gocron.NewTask(func() {
-				s.triggerSchedule(&sctxCopy)
-			}),
-			gocron.WithSingletonMode(gocron.LimitModeReschedule),
-		)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create calendar job for %s at %s: %w", sctx.Schedule.ID, runAt.Format(time.RFC3339), err)
-		}
-		jobIDs = append(jobIDs, gocronJob.ID())
-	}
-
-	return jobIDs, nextRun, nil
+// tzSchedule wraps a cron.Schedule to evaluate in a specific timezone.
+type tzSchedule struct {
+	inner cron.Schedule
+	loc   *time.Location
 }
+
+func (tz *tzSchedule) Next(t time.Time) time.Time {
+	return tz.inner.Next(t.In(tz.loc))
+}
+
 
 // ReloadSchedule reloads a schedule from its manifest after it's been updated.
 func (s *SchedulerService) ReloadSchedule(ctx context.Context, workspacePath string, scheduleID string) error {
@@ -673,7 +583,7 @@ func (s *SchedulerService) ReloadSchedule(ctx context.Context, workspacePath str
 		}
 	}
 
-	// Schedule not found — remove it from gocron
+	// Schedule not found — remove it
 	return s.RemoveJob(scheduleID)
 }
 
@@ -693,19 +603,18 @@ func (s *SchedulerService) ReloadMultiAgentSchedule(ctx context.Context, userID 
 	return s.RemoveJob(scheduleID)
 }
 
-// RemoveJob removes a schedule from gocron.
+// RemoveJob removes a schedule from the tick loop.
 func (s *SchedulerService) RemoveJob(id string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if existingIDs, ok := s.jobIDs[id]; ok {
-		for _, existingID := range existingIDs {
-			if err := s.scheduler.RemoveJob(existingID); err != nil {
-				return fmt.Errorf("failed to remove gocron job: %w", err)
-			}
+	delete(s.jobs, id)
+	// Also remove calendar sub-jobs (keyed as id__cal__date_time)
+	prefix := id + "__cal__"
+	for k := range s.jobs {
+		if strings.HasPrefix(k, prefix) {
+			delete(s.jobs, k)
 		}
-		delete(s.jobIDs, id)
 	}
+	s.mu.Unlock()
 
 	s.workspaceIndexMu.Lock()
 	delete(s.workspaceIndex, id)
@@ -962,7 +871,7 @@ func (s *SchedulerService) StopRunningJob(scheduleID string) {
 	scheduleLogf("[SCHEDULER] Stopped job %s (session: %s)", scheduleID, sessionID)
 }
 
-// triggerSchedule is called by gocron when a cron fires.
+// triggerSchedule is called by the tick loop when a schedule is due.
 func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 	schedID := sctx.Schedule.ID
 	now := time.Now()

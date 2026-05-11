@@ -2075,9 +2075,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		selectedServers = req.Servers
 	}
 
-	// Strip browser-specific MCP servers (playwright) when no browser is selected.
-	// These servers only work when a browser is active; including them otherwise causes errors.
-	if req.BrowserMode == "" || req.BrowserMode == "none" {
+	// Strip browser-specific MCP servers (playwright) when no browser is selected in chat mode.
+	// Workflow modes get their browser config from workflow.json, not from the request.
+	if (req.BrowserMode == "" || req.BrowserMode == "none") && req.AgentMode != "workflow_phase" && req.AgentMode != "workflow" {
 		var filteredForBrowser []string
 		for _, s := range selectedServers {
 			if s != "playwright" {
@@ -2290,16 +2290,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Manifest is the source of truth for workflow-selected user secrets too.
 				req.DecryptedSecrets = api.loadSelectedUserSecrets(context.Background(), currentUserID, manifest.Capabilities.SelectedSecrets)
 
-				// Restore browser mode and selected servers from the manifest.
-				// The early browser-mode strip (above) may have removed playwright
-				// from selectedServers before the manifest was loaded.
-				if manifest.Capabilities.BrowserMode != "" && manifest.Capabilities.BrowserMode != "none" {
-					req.BrowserMode = manifest.Capabilities.BrowserMode
-				}
+				// Manifest is the source of truth for servers and browser mode.
 				if len(manifest.Capabilities.SelectedServers) > 0 {
 					selectedServers = manifest.Capabilities.SelectedServers
 					serverList = strings.Join(selectedServers, ",")
-					logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Restored servers from manifest: %s", serverList)
+				}
+				if manifest.Capabilities.BrowserMode != "" {
+					req.BrowserMode = manifest.Capabilities.BrowserMode
 				}
 			}
 		}

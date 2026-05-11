@@ -14,6 +14,7 @@ import {
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { useChatStore } from '../../../stores/useChatStore'
+import { useAuthStore } from '../../../stores/useAuthStore'
 import type { ActiveSessionInfo, VariablesManifest } from '../../../services/api-types'
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
@@ -32,6 +33,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../
 import {
   resolveGroupFolderPath
 } from '../../../utils/workflowUtils'
+import { hasWorkflowWriteAccess } from '../../../utils/workflowPermissions'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -82,6 +84,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 }) => {
   // Normalize runFolders to avoid repeated null checks throughout the component
   const folders = useMemo(() => runFolders ?? [], [runFolders])
+  const canWriteWorkflow = useAuthStore(state => hasWorkflowWriteAccess(state.user, state.isMultiUserMode))
 
   // Workspace store for opening folders
   const fetchFiles = useWorkspaceStore(state => state.fetchFiles)
@@ -360,33 +363,35 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Left side - workflow context */}
       <div className="flex min-w-0 flex-1 items-center gap-x-3 gap-y-1.5 flex-wrap">
         <div className="flex min-w-0 items-center gap-x-3 gap-y-1.5 flex-wrap">
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Mode
-          </span>
-          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm">
-              <button
-                onClick={() => {
-                  const store = useWorkflowStore.getState()
-                  if (isBuilderPaneVisible) {
-                    store.setShowChatArea(false)
-                    return
-                  }
-                  store.setWorkflowWorkspaceView('builder')
-                  store.setShowWorkspacePane(false)
-                  store.setShowChatArea(true)
-                  onStartPhase('workflow-builder')
-                }}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                  isBuilderModeActive
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                }`}
-              >
-                Builder
-              </button>
-          </div>
-        </div>
+          {canWriteWorkflow && (
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                Mode
+              </span>
+              <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm">
+                <button
+                  onClick={() => {
+                    const store = useWorkflowStore.getState()
+                    if (isBuilderPaneVisible) {
+                      store.setShowChatArea(false)
+                      return
+                    }
+                    store.setWorkflowWorkspaceView('builder')
+                    store.setShowWorkspacePane(false)
+                    store.setShowChatArea(true)
+                    onStartPhase('workflow-builder')
+                  }}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                    isBuilderModeActive
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                  }`}
+                >
+                  Builder
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
@@ -480,7 +485,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
         {/* Auto-improvement framework — metrics, trajectory, decisions */}
-        {workspacePath && (
+        {canWriteWorkflow && workspacePath && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -525,7 +530,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         )}
 
         {/* Show Learnings - opens popup with learning metadata */}
-        {workspacePath && (
+        {canWriteWorkflow && workspacePath && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -570,7 +575,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         )}
 
         {/* Show Versions - opens popup with version publish/revert */}
-        {workspacePath && (
+        {canWriteWorkflow && workspacePath && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -585,17 +590,19 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         )}
 
         {/* Workflow Settings Button — opens the preset settings modal from the top header */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => useCommandDialogStore.getState().openDialog('presetSettings')}
-              className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-            >
-              <Settings className="w-3.5 h-3.5" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom"><p>Settings</p></TooltipContent>
-        </Tooltip>
+        {canWriteWorkflow && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => useCommandDialogStore.getState().openDialog('presetSettings')}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <Settings className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Settings</p></TooltipContent>
+          </Tooltip>
+        )}
 
         </TooltipProvider>
       </div>

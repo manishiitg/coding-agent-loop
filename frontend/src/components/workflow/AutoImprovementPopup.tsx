@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import {
   X,
   Loader2,
@@ -43,6 +43,18 @@ interface AutoImprovementPopupProps {
 type Tab = 'metrics' | 'evaluation' | 'soul' | 'improve' | 'review'
 type BuilderDocKind = 'soul' | 'improve' | 'review'
 type BuilderDoc = { exists: boolean; content: string; path: string }
+
+const emptyDocLoadingState = (): Record<BuilderDocKind, boolean> => ({
+  soul: false,
+  improve: false,
+  review: false,
+})
+
+const emptyDocErrorState = (): Record<BuilderDocKind, string | null> => ({
+  soul: null,
+  improve: null,
+  review: null,
+})
 
 interface BuilderDocArchiveFile {
   path: string
@@ -602,8 +614,9 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
   const [reviewArchiveFiles, setReviewArchiveFiles] = useState<BuilderDocArchiveFile[]>([])
   const [selectedImprovePath, setSelectedImprovePath] = useState('builder/improve.md')
   const [selectedReviewPath, setSelectedReviewPath] = useState('builder/review.md')
-  const [docLoading, setDocLoading] = useState<BuilderDocKind | null>(null)
-  const [docError, setDocError] = useState<string | null>(null)
+  const [docLoading, setDocLoading] = useState<Record<BuilderDocKind, boolean>>(emptyDocLoadingState)
+  const [docError, setDocError] = useState<Record<BuilderDocKind, string | null>>(emptyDocErrorState)
+  const docRequestSeq = useRef<Record<BuilderDocKind, number>>({ soul: 0, improve: 0, review: 0 })
   const [frameworkHealth, setFrameworkHealth] = useState<{
     soul_exists: boolean
     objective_ok: boolean
@@ -656,19 +669,26 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
 
   const fetchDoc = useCallback(async (which: BuilderDocKind, filePath?: string) => {
     if (!workspacePath) return
-    setDocLoading(which)
-    setDocError(null)
+    const requestSeq = docRequestSeq.current[which] + 1
+    docRequestSeq.current[which] = requestSeq
+    setDocLoading((prev) => ({ ...prev, [which]: true }))
+    setDocError((prev) => ({ ...prev, [which]: null }))
     try {
       const res = await agentApi.getBuilderDoc(workspacePath, which, filePath)
+      if (docRequestSeq.current[which] !== requestSeq) return
       const payload = { exists: !!res.exists, content: res.content || '', path: res.path || '' }
       if (which === 'soul') setSoulDoc(payload)
       else if (which === 'improve') setImproveDoc(payload)
       else setReviewDoc(payload)
-      if (!res.success && res.error) setDocError(res.error)
+      if (!res.success && res.error) setDocError((prev) => ({ ...prev, [which]: res.error || null }))
     } catch (err) {
-      setDocError(err instanceof Error ? err.message : String(err))
+      if (docRequestSeq.current[which] === requestSeq) {
+        setDocError((prev) => ({ ...prev, [which]: err instanceof Error ? err.message : String(err) }))
+      }
     } finally {
-      setDocLoading(null)
+      if (docRequestSeq.current[which] === requestSeq) {
+        setDocLoading((prev) => ({ ...prev, [which]: false }))
+      }
     }
   }, [workspacePath])
 
@@ -678,11 +698,37 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
       const res = await agentApi.getBuilderDocArchives(workspacePath, which)
       if (which === 'improve') setImproveArchiveFiles(res.success ? res.files : [])
       else setReviewArchiveFiles(res.success ? res.files : [])
-      if (!res.success && res.error) setDocError(res.error)
+      if (!res.success && res.error) setDocError((prev) => ({ ...prev, [which]: res.error || null }))
     } catch (err) {
-      setDocError(err instanceof Error ? err.message : String(err))
+      setDocError((prev) => ({ ...prev, [which]: err instanceof Error ? err.message : String(err) }))
     }
   }, [workspacePath])
+
+  // Bust cached docs whenever the workspace switches or the popup re-opens.
+  useEffect(() => {
+    docRequestSeq.current = {
+      soul: docRequestSeq.current.soul + 1,
+      improve: docRequestSeq.current.improve + 1,
+      review: docRequestSeq.current.review + 1,
+    }
+    setSoulDoc(null)
+    setImproveDoc(null)
+    setReviewDoc(null)
+    setImproveArchiveFiles([])
+    setReviewArchiveFiles([])
+    setSelectedImprovePath('builder/improve.md')
+    setSelectedReviewPath('builder/review.md')
+    setDocLoading(emptyDocLoadingState())
+    setDocError(emptyDocErrorState())
+  }, [workspacePath, isOpen])
+
+  useEffect(() => {
+    if (!isOpen || !workspacePath) return
+    fetchDoc('improve')
+    fetchDoc('review')
+    fetchDocArchives('improve')
+    fetchDocArchives('review')
+  }, [isOpen, workspacePath, fetchDoc, fetchDocArchives])
 
   useEffect(() => {
     if (!isOpen || !workspacePath) return
@@ -700,18 +746,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
       }
     }
   }, [isOpen, workspacePath, tab, soulDoc, improveDoc, selectedImprovePath, reviewDoc, selectedReviewPath, fetchDoc, fetchDocArchives])
-
-  // Bust the cached docs whenever the workspace switches or the popup re-opens.
-  useEffect(() => {
-    setSoulDoc(null)
-    setImproveDoc(null)
-    setReviewDoc(null)
-    setImproveArchiveFiles([])
-    setReviewArchiveFiles([])
-    setSelectedImprovePath('builder/improve.md')
-    setSelectedReviewPath('builder/review.md')
-    setDocError(null)
-  }, [workspacePath, isOpen])
 
   if (!isOpen) return null
 
@@ -812,8 +846,8 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
               <BuilderDocPanel
                 which={tab}
                 doc={tab === 'soul' ? soulDoc : tab === 'improve' ? improveDoc : reviewDoc}
-                loading={docLoading === tab}
-                error={docError}
+                loading={docLoading[tab]}
+                error={docError[tab]}
                 onRefresh={() => {
                   if (tab === 'improve') fetchDocArchives('improve')
                   if (tab === 'review') fetchDocArchives('review')

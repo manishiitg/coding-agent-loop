@@ -30,6 +30,10 @@ func workspaceProxyHandler() http.Handler {
 	log.Printf("[WORKSPACE PROXY] Proxying /api/wp/* → %s", wsURL)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isWorkflowWorkspaceProxyWrite(r) && !currentUserCanWriteWorkflows(r) {
+			writeWorkflowPermissionDenied(w, "write")
+			return
+		}
 		// Strip /api/wp prefix: /api/wp/api/documents → /api/documents
 		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/api/wp")
 		if r.URL.Path == "" {
@@ -39,4 +43,23 @@ func workspaceProxyHandler() http.Handler {
 		r.Host = target.Host
 		proxy.ServeHTTP(w, r)
 	})
+}
+
+func isWorkflowWorkspaceProxyWrite(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+	default:
+		return false
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/wp")
+	if decoded, err := url.PathUnescape(path); err == nil {
+		path = decoded
+	}
+	path = strings.TrimPrefix(path, "/")
+
+	return strings.HasPrefix(path, "api/documents/Workflow/") ||
+		path == "api/documents/Workflow" ||
+		strings.HasPrefix(path, "api/folders/Workflow/") ||
+		path == "api/folders/Workflow"
 }

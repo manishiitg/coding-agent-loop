@@ -4,20 +4,19 @@ import type { WorkshopMode } from '../commands/types'
 import type { AgentConfigs } from '../utils/stepConfigMatching'
 
 // Migrate any persisted legacy workshop mode values to the current visible
-// 2-mode workshop UI set (builder / optimizer). Older personas fold in:
+// 3-mode workshop UI set (builder / optimizer / run). Older personas fold in:
 //   'eval' / 'output'                      → 'builder'
-//   'ask' / 'debugger' / 'runner' / 'run'  → 'builder'
+//   'ask' / 'debugger' / 'runner'          → 'run'
 //   'reporting'                            → 'builder'
 //   anything else / unrecognized           → 'builder'
 // Reporting authoring is now merged into Builder to avoid session resets when
-// switching between workflow design and dashboard edits. Run mode remains a
-// backend/bot-routing mode, not a visible workshop chat mode.
+// switching between workflow design and dashboard edits.
 function migrateWorkshopMode(raw: unknown): WorkshopMode {
   switch (raw) {
     case 'builder':
     case 'optimizer':
-      return raw
     case 'run':
+      return raw
     case 'reporting':
       return 'builder'
     case 'eval':
@@ -26,7 +25,7 @@ function migrateWorkshopMode(raw: unknown): WorkshopMode {
     case 'ask':
     case 'debugger':
     case 'runner':
-      return 'builder'
+      return 'run'
     default:
       return 'builder'
   }
@@ -554,7 +553,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
         try {
           const saved = localStorage.getItem(WORKSHOP_MODE_BY_PRESET_KEY)
           if (saved) {
-            // Migrate any persisted legacy mode values from the 6-mode era to the new 4-mode set.
+            // Migrate any persisted legacy mode values from the older persona set.
             return migrateWorkshopModeMap(JSON.parse(saved))
           }
         } catch (error) {
@@ -576,7 +575,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
               console.error('[WorkflowStore] Failed to save workshopModeByPreset:', error)
             }
           }
-          // After 6→4 consolidation, workflowMode is always 'plan' for any workshop mode.
+          // Workflow workshop personas all live under workflowMode='plan'.
           // Eval/output editing happens inside Builder mode now.
           return {
             workshopMode: normalizedMode,

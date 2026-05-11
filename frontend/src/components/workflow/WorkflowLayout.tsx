@@ -9,8 +9,10 @@ import ChatArea, { type ChatAreaRef } from '../ChatArea'
 import { WorkflowChatTabs } from './WorkflowChatTabs'
 import { useRunningWorkflowsStore, useShowRunningDrawer } from '../../stores/useRunningWorkflowsStore'
 import { useAppStore } from '../../stores/useAppStore'
+import { useAuthStore } from '../../stores/useAuthStore'
 import { sanitizeDisplayNameForFolder } from '../../utils/workflowUtils'
 import { logger } from '../../utils/logger'
+import { hasWorkflowWriteAccess } from '../../utils/workflowPermissions'
 import {
   REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
   REPORT_PREVIEW_PREFERENCE_KEY,
@@ -1505,6 +1507,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [activePresetId, minimizeWorkflow, selectedRunFolder, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs])
 
+  const canWriteWorkflow = useAuthStore(state => hasWorkflowWriteAccess(state.user, state.isMultiUserMode))
+
   // Note: Query submission is now handled via chatAreaCallbackRef when ChatArea mounts
   // No need for useEffect with setTimeout - callback ref is the proper React pattern
 
@@ -1524,6 +1528,13 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
 
     if (!activePresetId) return
+
+    const requestedWorkshopMode = executionOptions?.workshop_mode
+    const isWriteWorkflowPhase = phaseId === 'workflow-builder' && requestedWorkshopMode !== 'run'
+    if (isWriteWorkflowPhase && !canWriteWorkflow) {
+      logger.warn('WorkflowLayout', 'Blocked workflow builder phase for read-only workflow user')
+      return
+    }
 
     const phase = getPhaseById(phaseId)
     const phaseName = phase?.title || phaseId
@@ -1582,10 +1593,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     // Show ChatArea (triggers mount if not already shown)
     setShowChatArea(true)
-  }, [activePresetId, setCurrentWorkflowPhase, setShowChatArea, getPhaseById, setWorkflowWorkspaceView, offerBuilderHistoryRestore])
+  }, [activePresetId, canWriteWorkflow, setCurrentWorkflowPhase, setShowChatArea, getPhaseById, setWorkflowWorkspaceView, offerBuilderHistoryRestore])
 
   // Handle create plan - always opens Workflow Builder.
   const handleCreatePlan = useCallback(() => {
+    if (!canWriteWorkflow) {
+      logger.warn('WorkflowLayout', 'Blocked create plan for read-only workflow user')
+      return
+    }
     // Ensure we're in workflow mode before creating plan (only if we have an active preset)
     if (activePresetId) {
       const currentMode = useModeStore.getState().selectedModeCategory
@@ -1600,7 +1615,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     logger.debug('WorkflowLayout', 'Create plan requested, starting workflow builder phase:', phaseId)
     setShowChatArea(true)
     handleStartPhase(phaseId)
-  }, [handleStartPhase, setShowChatArea, activePresetId])
+  }, [canWriteWorkflow, handleStartPhase, setShowChatArea, activePresetId])
 
   const handleToggleChatArea = useCallback(() => {
     const newShow = !showChatArea

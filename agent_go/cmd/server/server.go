@@ -814,6 +814,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/auth/logout", api.handleLogout).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/auth/me", api.handleGetCurrentUser).Methods("GET")
 	apiRouter.HandleFunc("/auth/mode", api.handleGetAuthMode).Methods("GET")
+	apiRouter.HandleFunc("/auth/users", requireWorkflowOwnerAccess(api.handleListAuthUsers)).Methods("GET", "OPTIONS")
 	// Multi-provider OAuth routes
 	apiRouter.HandleFunc("/auth/start", api.handleAuthStart).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/auth/callback", api.handleAuthCallback).Methods("GET")
@@ -1191,7 +1192,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	SchedulerRoutes(router, schedulerSvc)
 
 	// Workflow API routes
-	apiRouter.HandleFunc("/workflow/create", api.handleCreateWorkflow).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/create", requireWorkflowWriteAccess(api.handleCreateWorkflow)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/status", api.handleGetWorkflowStatus).Methods("GET")
 	apiRouter.HandleFunc("/workflow/update", api.handleUpdateWorkflow).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/constants", orchtypes.HandleWorkflowConstants).Methods("GET")
@@ -1211,11 +1212,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/run-folders", api.handleGetRunFolders).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/run-folder", api.handleCreateRunFolder).Methods("POST", "OPTIONS")
 	// /workflow/progress endpoint removed — steps_done.json progress tracking no longer consumed by frontend
-	apiRouter.HandleFunc("/workflow/run-folder", api.handleDeleteRunFolder).Methods("DELETE", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/learnings", api.handleDeleteStepLearnings).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/run-folder", requireWorkflowWriteAccess(api.handleDeleteRunFolder)).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/learnings", requireWorkflowWriteAccess(api.handleDeleteStepLearnings)).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/learnings/all", api.handleGetAllStepLearnings).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/variable-groups", api.handleGetVariableGroups).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/variable-groups", api.handleUpdateVariableGroups).Methods("POST", "PUT", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/variable-groups", requireWorkflowWriteAccess(api.handleUpdateVariableGroups)).Methods("POST", "PUT", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/logs", api.handleGetExecutionLogs).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/logs/file", api.handleGetLogFile).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/costs", api.handleGetCosts).Methods("GET", "OPTIONS")
@@ -1231,11 +1232,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/framework-health", api.handleGetFrameworkHealth).Methods("GET", "OPTIONS")
 
 	// Plan and Step Config API routes
-	apiRouter.HandleFunc("/workflow/plan/update-step", api.handleUpdatePlanStep).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/plan/update-step-config", api.handleUpdateStepConfig).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/plan/batch-update-steps", api.handleBatchUpdateSteps).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/plan/delete-step", api.handleDeleteStep).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/plan/add-step", api.handleAddStep).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/plan/update-step", requireWorkflowWriteAccess(api.handleUpdatePlanStep)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/plan/update-step-config", requireWorkflowWriteAccess(api.handleUpdateStepConfig)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/plan/batch-update-steps", requireWorkflowWriteAccess(api.handleBatchUpdateSteps)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/plan/delete-step", requireWorkflowWriteAccess(api.handleDeleteStep)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/plan/add-step", requireWorkflowWriteAccess(api.handleAddStep)).Methods("POST", "OPTIONS")
 	// Dynamic report system (docs/workflow/persistent_stores_design.md section 2).
 	// No backend wrappers — the frontend ReportViewer reads reports/report_plan.json
 	// and db/*.json / knowledgebase/*.json directly via the workspace service's
@@ -1243,20 +1244,20 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Workflow Version API routes
 	apiRouter.HandleFunc("/workflow/versions", api.handleListVersions).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/versions/publish", api.handlePublishVersion).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/versions/revert", api.handleRevertVersion).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/versions", api.handleDeleteVersion).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/versions/publish", requireWorkflowWriteAccess(api.handlePublishVersion)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/versions/revert", requireWorkflowWriteAccess(api.handleRevertVersion)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/versions", requireWorkflowWriteAccess(api.handleDeleteVersion)).Methods("DELETE", "OPTIONS")
 
 	// Manifest-backed workflow API routes (file-backed workflow definitions)
 	apiRouter.HandleFunc("/workflows/summary", api.handleGetWorkflowsSummary).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/overview", api.handleGetWorkflowsOverview).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifests", api.handleListWorkflowManifests).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", api.handleGetWorkflowManifest).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflows/manifest", api.handleCreateWorkflowManifest).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflows/manifest", api.handleUpdateWorkflowManifest).Methods("PUT", "OPTIONS")
-	apiRouter.HandleFunc("/workflows/manifest", api.handleDeleteWorkflowManifest).Methods("DELETE", "OPTIONS")
-	apiRouter.HandleFunc("/workflows/folder", api.handleDeleteWorkflowFolder).Methods("DELETE", "OPTIONS")
-	apiRouter.HandleFunc("/workflows/manifest/duplicate", api.handleDuplicateWorkflowManifest).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/manifest", requireWorkflowWriteAccess(api.handleCreateWorkflowManifest)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/manifest", requireWorkflowWriteAccess(api.handleUpdateWorkflowManifest)).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/manifest", requireWorkflowWriteAccess(api.handleDeleteWorkflowManifest)).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/folder", requireWorkflowWriteAccess(api.handleDeleteWorkflowFolder)).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/manifest/duplicate", requireWorkflowWriteAccess(api.handleDuplicateWorkflowManifest)).Methods("POST", "OPTIONS")
 
 	// Skills API routes (from skill_routes.go)
 	RegisterSkillRoutes(apiRouter, api)
@@ -2102,6 +2103,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	currentUserID := GetUserIDFromContext(r.Context())
 	queryLogCtx := requestLogContext(r.Context(), req, sessionID)
 	logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] HTTP handler: currentUserID=%q (from auth context)", currentUserID)
+
+	if !enforceWorkflowQueryAccess(r, &req) {
+		logfWithContext(queryLogCtx, "[WORKFLOW_PERMISSION] Denied workflow query: agent_mode=%s phase=%s workshop_mode=%s", req.AgentMode, req.PhaseID, func() string {
+			if req.ExecutionOptions == nil {
+				return ""
+			}
+			return req.ExecutionOptions.WorkshopMode
+		}())
+		writeWorkflowPermissionDenied(w, "write")
+		return
+	}
 
 	// Chat sessions are in-memory only — tracked via activeSessions map
 	// below. No persistent session metadata.

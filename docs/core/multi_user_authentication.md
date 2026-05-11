@@ -76,6 +76,30 @@ AUTH_USERS=admin:password123,user1:secret456
 - Users defined directly in environment
 - Good for development and simple deployments
 
+### Workflow Permissions
+
+Workflows stay in the shared `Workflow/` folder. Per-user access controls only decide which workflow modes a user can use:
+
+- `read`: run mode only
+- `write`: run, builder, and optimizer modes
+- `owner`: write access plus workflow access administration endpoints
+
+If no workflow permission variables are configured, all authenticated users keep full owner-level workflow access for backward compatibility.
+
+**Configuration:**
+```bash
+WORKFLOW_USER_PERMISSIONS=admin:owner,user1:read,user2:write
+```
+
+You can also use list-based variables:
+```bash
+WORKFLOW_OWNER_USERS=admin
+WORKFLOW_WRITE_USERS=user2
+WORKFLOW_READ_USERS=user1
+```
+
+Entries can match the auth username, user ID, or email address. The owner-only `GET /api/auth/users` endpoint returns the current `AUTH_USERS` list with each user's workflow access.
+
 ### Cognito Provider
 
 OAuth authentication via AWS Cognito hosted UI.
@@ -272,6 +296,10 @@ The agent backend enforces additional restrictions before shell commands reach t
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `AUTH_USERS` | Yes | Comma-separated `user:pass` pairs |
+| `WORKFLOW_USER_PERMISSIONS` | No | Comma-separated `user:read/write/owner` entries for workflow mode access |
+| `WORKFLOW_OWNER_USERS` | No | Comma-separated users with owner workflow access |
+| `WORKFLOW_WRITE_USERS` | No | Comma-separated users with builder/optimizer workflow access |
+| `WORKFLOW_READ_USERS` | No | Comma-separated users limited to run mode |
 
 #### Cognito Provider
 

@@ -30,10 +30,14 @@ type AuthResponse struct {
 
 // UserInfo represents public user information
 type UserInfo struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	Email    string `json:"email,omitempty"`
-	Provider string `json:"provider,omitempty"`
+	ID                      string `json:"id"`
+	Username                string `json:"username"`
+	Email                   string `json:"email,omitempty"`
+	Provider                string `json:"provider,omitempty"`
+	WorkflowAccess          string `json:"workflow_access,omitempty"`
+	CanRunWorkflows         bool   `json:"can_run_workflows"`
+	CanWriteWorkflows       bool   `json:"can_write_workflows"`
+	CanManageWorkflowAccess bool   `json:"can_manage_workflow_access"`
 }
 
 // AuthModeResponse represents the response for GET /api/auth/mode
@@ -139,10 +143,10 @@ func (api *StreamingAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 		token, _ := GenerateJWT(GetDefaultUserID(), "user", "")
 		json.NewEncoder(w).Encode(AuthResponse{
 			Token: token,
-			User: UserInfo{
+			User: userInfoWithWorkflowPermissions(UserInfo{
 				ID:       GetDefaultUserID(),
 				Username: "user",
-			},
+			}),
 		})
 		return
 	}
@@ -202,12 +206,12 @@ func (api *StreamingAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[AUTH] User %s logged in successfully via provider %s", extUser.Username, extUser.Provider)
 	json.NewEncoder(w).Encode(AuthResponse{
 		Token: token,
-		User: UserInfo{
+		User: userInfoWithWorkflowPermissions(UserInfo{
 			ID:       userID,
 			Username: extUser.Username,
 			Email:    extUser.Email,
 			Provider: extUser.Provider,
-		},
+		}),
 	})
 }
 
@@ -335,12 +339,12 @@ func (api *StreamingAPI) handleAuthCallback(w http.ResponseWriter, r *http.Reque
 	log.Printf("[AUTH] User %s authenticated via OAuth provider %s", extUser.Username, extUser.Provider)
 	json.NewEncoder(w).Encode(AuthResponse{
 		Token: token,
-		User: UserInfo{
+		User: userInfoWithWorkflowPermissions(UserInfo{
 			ID:       userID,
 			Username: extUser.Username,
 			Email:    extUser.Email,
 			Provider: extUser.Provider,
-		},
+		}),
 	})
 }
 
@@ -379,13 +383,17 @@ func (api *StreamingAPI) handleGetCurrentUser(w http.ResponseWriter, r *http.Req
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	response := map[string]interface{}{
 		"id":             user.UserID,
 		"username":       user.Username,
 		"email":          user.Email,
 		"provider":       user.Provider,
 		"is_bot_manager": isBotManager(user.Email),
-	})
+	}
+	for key, value := range workflowPermissionResponseFields(workflowPermissionInfoForClaims(user)) {
+		response[key] = value
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 // handleGetAuthMode returns the current authentication mode and available providers

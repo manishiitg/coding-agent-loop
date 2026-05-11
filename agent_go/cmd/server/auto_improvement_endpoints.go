@@ -324,7 +324,7 @@ func isBuilderDocArchivePath(doc, rel string) bool {
 func setupCORS(w http.ResponseWriter, r *http.Request, method string) bool {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", method+", OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Session-ID, X-User-ID")
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return false

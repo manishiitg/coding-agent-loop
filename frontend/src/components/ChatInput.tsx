@@ -23,10 +23,14 @@ import WorkflowSelectionDialog from './WorkflowSelectionDialog'
 import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
+import { useAuthStore } from '../stores/useAuthStore'
+import { hasWorkflowWriteAccess } from '../utils/workflowPermissions'
 
 const WORKSHOP_MODE_SWITCH_CONFIRM_KEY = 'workflow_workshop_mode_switch_confirm_dismissed'
+type VisibleWorkshopMode = 'builder' | 'optimizer' | 'run'
 
 function WorkshopModeToggle() {
+  const canWriteWorkflow = useAuthStore(state => hasWorkflowWriteAccess(state.user, state.isMultiUserMode))
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const workflowMode = useWorkflowStore(state => state.workflowMode)
   const setWorkflowMode = useWorkflowStore(state => state.setWorkflowMode)
@@ -34,8 +38,15 @@ function WorkshopModeToggle() {
     return (activePresetId && state.workshopModeByPreset[activePresetId]) || state.workshopMode
   })
   const setWorkshopMode = useWorkflowStore(state => state.setWorkshopMode)
-  const [pendingMode, setPendingMode] = useState<'builder' | 'optimizer' | null>(null)
+  const [pendingMode, setPendingMode] = useState<VisibleWorkshopMode | null>(null)
   const [dontAskAgain, setDontAskAgain] = useState(false)
+
+  useEffect(() => {
+    if (!canWriteWorkflow && workshopMode !== 'run') {
+      setWorkflowMode('plan')
+      setWorkshopMode('run')
+    }
+  }, [canWriteWorkflow, setWorkflowMode, setWorkshopMode, workshopMode])
 
   const persistWorkshopMode = (mode: string) => {
     if (!activePresetId) return
@@ -46,13 +57,15 @@ function WorkshopModeToggle() {
     })
   }
 
-  const applyWorkshopMode = (mode: 'builder' | 'optimizer') => {
+  const applyWorkshopMode = (mode: VisibleWorkshopMode) => {
     setWorkflowMode('plan')
     setWorkshopMode(mode)
-    persistWorkshopMode(mode)
+    if (canWriteWorkflow) {
+      persistWorkshopMode(mode)
+    }
   }
 
-  const requestWorkshopMode = (mode: 'builder' | 'optimizer') => {
+  const requestWorkshopMode = (mode: VisibleWorkshopMode) => {
     if (workshopMode === mode) return
     let skipConfirm = false
     try {
@@ -81,15 +94,13 @@ function WorkshopModeToggle() {
     setPendingMode(null)
   }
 
-  const pendingModeLabel = pendingMode === 'optimizer' ? 'Optimize' : 'Builder'
+  const pendingModeLabel = pendingMode === 'optimizer' ? 'Optimize' : pendingMode === 'run' ? 'Run' : 'Builder'
 
-  // Two visible user-facing modes. Run mode remains available for bot routes
-  // (Slack/WhatsApp/etc.) and backend compatibility, but the workshop UI should
-  // not expose it as a chat persona.
   const builderModes = [
     { id: 'builder' as const, label: 'Builder', title: 'Builder', description: 'Design the workflow plan, step config, and live report dashboard.' },
     { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize', description: 'Harden existing steps — run, evaluate, fix, repeat until reliable.' },
-  ]
+    { id: 'run' as const, label: 'Run', title: 'Run', description: 'Use the workflow without builder or optimizer write tools.' },
+  ].filter(mode => canWriteWorkflow || mode.id === 'run')
 
   return (
     <TooltipProvider delayDuration={120}>

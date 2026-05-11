@@ -1757,11 +1757,21 @@ export interface AuthUser {
   email?: string
   provider?: string
   is_bot_manager?: boolean
+  workflow_access?: 'read' | 'write' | 'owner'
+  can_run_workflows?: boolean
+  can_write_workflows?: boolean
+  can_manage_workflow_access?: boolean
+  workflow_permissions_enabled?: boolean
 }
 
 export interface AuthResponse {
   token: string
   user: AuthUser
+}
+
+export interface AuthUsersResponse {
+  users: AuthUser[]
+  total: number
 }
 
 export interface AuthProvider {
@@ -1822,6 +1832,11 @@ export const authApi = {
   // Get current user info
   getCurrentUser: async (): Promise<AuthUser> => {
     const response = await api.get('/api/auth/me')
+    return response.data
+  },
+
+  listUsers: async (): Promise<AuthUsersResponse> => {
+    const response = await api.get('/api/auth/users')
     return response.data
   },
 }

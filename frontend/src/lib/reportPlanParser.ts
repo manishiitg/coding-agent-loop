@@ -371,8 +371,11 @@ function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
     if (typeof source.message === 'string') widget.message = source.message
   } else if (widget.kind === 'pivot') {
     if (typeof source.rowsField === 'string') widget.rowsField = source.rowsField
+    else if (typeof source.rows === 'string') widget.rowsField = source.rows
     if (typeof source.columnsField === 'string') widget.columnsField = source.columnsField
+    else if (typeof source.columns === 'string') widget.columnsField = source.columns
     if (typeof source.valuesField === 'string') widget.valuesField = source.valuesField
+    else if (typeof source.values === 'string') widget.valuesField = source.values
     if (typeof source.aggregate === 'string' && KNOWN_PIVOT_AGGREGATE_SET.has(source.aggregate.toLowerCase())) widget.aggregate = source.aggregate.toLowerCase() as ReportPivotAggregate
     if (typeof source.format === 'string' && KNOWN_FORMATTER_SET.has(source.format)) widget.format = source.format as ReportFormatterName
     if (typeof source.heatmap === 'boolean') widget.heatmap = source.heatmap

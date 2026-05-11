@@ -21,7 +21,7 @@ export function PivotWidget({ source, widget }: { source: unknown; widget: Repor
       <WidgetError
         widget={widget}
         message="pivot requires rows, columns, and values fields."
-        hint="Set `rows: <field>`, `columns: <field>`, `values: <field>`; optionally `aggregate: sum|avg|count|min|max|first`."
+        hint="Set `rowsField`, `columnsField`, and `valuesField`; optionally `aggregate: sum|avg|count|min|max|first`."
       />
     )
   }

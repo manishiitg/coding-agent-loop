@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { X, ArrowDown, List, ListTree, MessageSquare, Radio } from 'lucide-react'
+import { X, ArrowDown, List, ListTree, Radio } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
@@ -16,7 +16,6 @@ interface WorkflowTabItemProps {
   sessionStatus: TabSessionStatus | undefined
   onTabClick: (tabId: string) => void
   onTabClose: (e: React.MouseEvent, tabId: string) => void
-  onMakeInteractive: (e: React.MouseEvent, tabId: string) => void
 }
 
 const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
@@ -25,7 +24,6 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   sessionStatus,
   onTabClick,
   onTabClose,
-  onMakeInteractive,
 }) => {
   const indicatorColor = useMemo(() => {
     if (tab.isStreaming) return 'bg-green-500 animate-pulse'
@@ -69,17 +67,6 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
 
       {/* Tab Name */}
       <span className="min-w-0 max-w-[14rem] truncate whitespace-nowrap">{tab.name}</span>
-
-      {tab.metadata?.isViewOnly && (tab.metadata?.isScheduledRun || tab.metadata?.isBotRun) && (
-        <button
-          onClick={(e) => onMakeInteractive(e, tab.tabId)}
-          className="ml-0.5 rounded p-0.5 text-blue-600 opacity-80 hover:bg-blue-100 hover:opacity-100 dark:text-blue-300 dark:hover:bg-blue-900/40"
-          title="Interact in Workflow Builder"
-          aria-label="Interact in Workflow Builder"
-        >
-          <MessageSquare className="w-3 h-3" />
-        </button>
-      )}
 
       {/* Close Button */}
       <button
@@ -167,40 +154,6 @@ export const WorkflowChatTabs: React.FC = () => {
     await closeTab(tabId)
   }, [closeTab])
 
-  const handleMakeInteractive = useCallback((e: React.MouseEvent, tabId: string) => {
-    e.stopPropagation()
-    const chatStore = useChatStore.getState()
-    const tab = chatStore.getTab(tabId)
-    if (!tab) return
-
-    chatStore.setTabMetadata(tabId, {
-      mode: 'workflow',
-      phaseId: 'workflow-builder',
-      phaseName: 'Workflow Builder',
-      presetQueryId: tab.metadata?.presetQueryId,
-      isViewOnly: false,
-      isScheduledRun: false,
-      scheduledJobName: undefined,
-      isBotRun: false,
-      botPlatform: undefined,
-    })
-    useChatStore.setState((state) => {
-      const current = state.chatTabs[tabId]
-      if (!current) return state
-      return {
-        chatTabs: {
-          ...state.chatTabs,
-          [tabId]: {
-            ...current,
-            name: 'Workflow Builder',
-          },
-        },
-      }
-    })
-    switchTab(tabId)
-    setShowChatArea(true)
-  }, [setShowChatArea, switchTab])
-
   // Close chat area when all workflow tabs are closed (but not on first render)
   useEffect(() => {
     if (!hasRenderedRef.current) {
@@ -229,7 +182,6 @@ export const WorkflowChatTabs: React.FC = () => {
               sessionStatus={tabSessionStatus[tab.tabId]}
               onTabClick={handleTabClick}
               onTabClose={handleTabClose}
-              onMakeInteractive={handleMakeInteractive}
             />
           ))}
         </div>

@@ -10,6 +10,7 @@ import {
   Database,
   Table2,
   Beaker,
+  ShieldCheck,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
@@ -28,12 +29,13 @@ import DatabasePopup from '../DatabasePopup'
 import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import CostsPopup from '../CostsPopup'
 import WorkflowVersionsPopup from '../WorkflowVersionsPopup'
+import WorkflowAccessPopup from '../WorkflowAccessPopup'
 import AutoImprovementPopup from '../AutoImprovementPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import {
   resolveGroupFolderPath
 } from '../../../utils/workflowUtils'
-import { hasWorkflowWriteAccess } from '../../../utils/workflowPermissions'
+import { hasWorkflowWriteAccess, hasWorkflowOwnerAccess } from '../../../utils/workflowPermissions'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -85,6 +87,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Normalize runFolders to avoid repeated null checks throughout the component
   const folders = useMemo(() => runFolders ?? [], [runFolders])
   const canWriteWorkflow = useAuthStore(state => hasWorkflowWriteAccess(state.user, state.isMultiUserMode))
+  const canManageAccess = useAuthStore(state => state.isMultiUserMode && hasWorkflowOwnerAccess(state.user, state.isMultiUserMode))
 
   // Workspace store for opening folders
   const fetchFiles = useWorkspaceStore(state => state.fetchFiles)
@@ -149,6 +152,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Versions popup state
   const [showVersionsPopup, setShowVersionsPopup] = useState(false)
+  const [showAccessPopup, setShowAccessPopup] = useState(false)
 
   const closeAllPopups = useCallback(() => {
     setShowLearningsPopup(false)
@@ -589,6 +593,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
+        {/* Workflow Access (multi-user mode only, owners only) */}
+        {canManageAccess && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowAccessPopup(true)}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Workflow Access</p></TooltipContent>
+          </Tooltip>
+        )}
+
         {/* Workflow Settings Button — opens the preset settings modal from the top header */}
         {canWriteWorkflow && (
           <Tooltip>
@@ -664,6 +683,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         if (onRefresh) await onRefresh()
         fetchFiles()
       }}
+    />
+
+    {/* Workflow Access Popup (multi-user owners only) */}
+    <WorkflowAccessPopup
+      isOpen={showAccessPopup}
+      onClose={() => setShowAccessPopup(false)}
     />
     </>
   )

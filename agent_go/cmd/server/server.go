@@ -830,6 +830,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/auth/me", api.handleGetCurrentUser).Methods("GET")
 	apiRouter.HandleFunc("/auth/mode", api.handleGetAuthMode).Methods("GET")
 	apiRouter.HandleFunc("/auth/users", requireWorkflowOwnerAccess(api.handleListAuthUsers)).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/user-permissions", requireWorkflowOwnerAccess(api.handleListWorkflowUserPermissions)).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/user-permissions", requireWorkflowOwnerAccess(api.handleUpsertWorkflowUserPermission)).Methods("PUT", "POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/user-permissions", requireWorkflowOwnerAccess(api.handleDeleteWorkflowUserPermission)).Methods("DELETE")
 	// Multi-provider OAuth routes
 	apiRouter.HandleFunc("/auth/start", api.handleAuthStart).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/auth/callback", api.handleAuthCallback).Methods("GET")
@@ -3701,9 +3704,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[CHAT MODE FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, read-only: %v, blocked-write: %v)", perUserChatsWrite, perUserMemWrite, workflowReadOnlyFolders, fileContextBlockedWriteFolders)
 			}
 
-			// Apply skill folder guard if skills are selected (read-only access to selected skills only)
-			if len(req.SelectedSkills) > 0 {
-				log.Printf("[SKILL FOLDER GUARD] Applied skill folder restriction - only selected skills accessible: %v", req.SelectedSkills)
+			// Apply skill folder guard if filesystem skills are selected (read-only access to selected skills only).
+			// Runtime-only skills such as agent-browser are exposed through tools/prompts, not skills/<name>/SKILL.md.
+			if filesystemSkills := filesystemSelectedSkills(req.SelectedSkills); len(filesystemSkills) > 0 {
+				log.Printf("[SKILL FOLDER GUARD] Applied skill folder restriction - only selected skills accessible: %v", filesystemSkills)
 			}
 
 			log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for chat mode", len(workspaceTools))
@@ -7663,9 +7667,10 @@ func buildCapabilitiesContext(req QueryRequest) *virtualtools.CapabilitiesContex
 		HasBrowser:     hasBrowser,
 	}
 
-	// Load skill summaries
+	// Load filesystem skill summaries. Runtime-only skills such as agent-browser
+	// are represented by browser tools and browser prompts instead.
 	workspaceAPIURL := getWorkspaceAPIURL()
-	for _, folderName := range req.SelectedSkills {
+	for _, folderName := range filesystemSelectedSkills(req.SelectedSkills) {
 		skill, err := skills.GetSkill(workspaceAPIURL, folderName)
 		if err != nil {
 			log.Printf("[CAPABILITIES] Warning: Failed to load skill %s: %v", folderName, err)
@@ -7938,7 +7943,13 @@ func (api *StreamingAPI) getAllActiveSessions() []*ActiveSessionInfo {
 
 // cleanupInactiveSessions runs periodically to:
 // 1. Mark running sessions as inactive if no events for 10 minutes
-// 2. Remove completed/inactive sessions from map after 30 minutes (to prevent memory leaks)
+// 2. Evict event store buffers (large SSE buffers) for sessions idle >30 minutes
+// 3. Fully delete sessions from activeSessions after 24 hours
+//
+// The session entry is intentionally kept alive for 24 hours (not the old 30 minutes) so
+// that verifySessionAccess continues to accept follow-up messages. Evicting a session from
+// activeSessions causes the frontend to start a new session with no history, silently
+// losing conversation context.
 func (api *StreamingAPI) cleanupInactiveSessions() {
 	ticker := time.NewTicker(2 * time.Minute) // Check every 2 minutes
 	defer ticker.Stop()
@@ -7947,8 +7958,10 @@ func (api *StreamingAPI) cleanupInactiveSessions() {
 		api.activeSessionsMux.Lock()
 		now := time.Now()
 		inactivityTimeout := 10 * time.Minute
-		completedSessionRetention := 30 * time.Minute
+		eventBufferRetention := 30 * time.Minute
+		sessionRetention := 24 * time.Hour
 		sessionsToMarkInactive := make([]string, 0)
+		sessionsToEvictEventBuffer := make([]string, 0)
 		sessionsToDelete := make([]string, 0)
 
 		for sessionID, session := range api.activeSessions {
@@ -7956,25 +7969,28 @@ func (api *StreamingAPI) cleanupInactiveSessions() {
 			if session.Status == "running" && now.Sub(session.LastActivity) >= inactivityTimeout {
 				sessionsToMarkInactive = append(sessionsToMarkInactive, sessionID)
 			}
-			// Delete completed/inactive sessions after 30 minutes to prevent memory leaks
-			// These sessions have already been saved to the database
-			if (session.Status == "completed" || session.Status == "inactive" || session.Status == "stopped" || session.Status == "error") && now.Sub(session.LastActivity) >= completedSessionRetention {
+			isTerminal := session.Status == "completed" || session.Status == "inactive" || session.Status == "stopped" || session.Status == "error"
+			age := now.Sub(session.LastActivity)
+			// Evict SSE event buffers after 30 min to free streaming memory.
+			if isTerminal && age >= eventBufferRetention {
+				sessionsToEvictEventBuffer = append(sessionsToEvictEventBuffer, sessionID)
+			}
+			// Fully delete session entry after 24 hours.
+			if isTerminal && age >= sessionRetention {
 				sessionsToDelete = append(sessionsToDelete, sessionID)
 			}
 		}
 
-		// Delete old sessions within the lock
 		for _, sessionID := range sessionsToDelete {
 			if session, exists := api.activeSessions[sessionID]; exists {
-				status := session.Status
 				delete(api.activeSessions, sessionID)
-				log.Printf("[ACTIVE_SESSION] Cleanup: Removed old %s session %s from memory (>30 min old)", status, sessionID)
+				log.Printf("[ACTIVE_SESSION] Cleanup: Removed old %s session %s from memory (>24h)", session.Status, sessionID)
 			}
 		}
 
 		api.activeSessionsMux.Unlock()
 
-		for _, sessionID := range sessionsToDelete {
+		for _, sessionID := range sessionsToEvictEventBuffer {
 			if api.eventStore != nil {
 				api.eventStore.RemoveSession(sessionID)
 				log.Printf("[ACTIVE_SESSION] Cleanup: Removed event buffer for session %s", sessionID)

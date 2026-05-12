@@ -49,7 +49,7 @@ Use this decision model. Classify the evidence first, then choose the smallest a
 
 2. **Replan** when the workflow path is misaligned with the objective, success criteria, or outcome metrics.
    Examples: wrong business work, missing required capability, wrong output artifact, wrong evidence collected, step ordering/boundaries prevent success, outputs still miss a criterion after local hardening, or primary outcome metrics remain weak across retained runs while secondary reliability/guardrail metrics are healthy.
-   Action: call `replan_workflow_from_results(group_name?, focus?)`.
+   Action: call `replan_workflow_from_results(group_name?, focus?)`. If the replan keeps or converts any step to `code_exec`, ensure stale `learnings/<step-id>/main.py` is removed so future agents do not confuse ephemeral code_exec with reusable learn_code.
 
 3. **Eval-plan improvement** when the workflow behavior may be fine or unknown, but the measurement layer is weak.
    Examples: success criterion has no eval coverage, eval rationale contradicts the visible output, scoring is too lenient/strict, eval structured output does not expose fields used by metrics, eval step lacks a validation schema, or eval reports give false confidence.

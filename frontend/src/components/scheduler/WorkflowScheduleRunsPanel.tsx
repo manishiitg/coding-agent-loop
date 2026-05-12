@@ -4,7 +4,7 @@ import cronstrue from 'cronstrue'
 import {
   X, Play, Trash2, Clock, CheckCircle, XCircle, Minus, Loader,
   Terminal, Pause, Calendar, ClipboardCheck, AlertTriangle,
-  ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Square, Radio, Search, FileText, MessageSquare, Workflow
+  ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Square, Radio, Search, FileText, MessageSquare
 } from 'lucide-react'
 import { schedulerApi } from '../../api/scheduler'
 import { agentApi } from '../../services/api'
@@ -1117,50 +1117,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     onClose()
   }, [onClose])
 
-  const openWorkflowBuilderForSchedule = useCallback(async (
-    presetQueryId?: string,
-  ) => {
-    if (!presetQueryId) return
-
-    useGlobalPresetStore.getState().setActivePreset('workflow', presetQueryId)
-    useWorkflowStore.getState().setShowChatArea(true)
-
-    const chatStore = useChatStore.getState()
-    const existingBuilderTab = Object.values(chatStore.chatTabs).find(tab =>
-      tab.metadata?.mode === 'workflow' &&
-      tab.metadata?.presetQueryId === presetQueryId &&
-      tab.metadata?.phaseId === 'workflow-builder'
-    )
-
-    const builderMetadata = {
-      mode: 'workflow' as const,
-      phaseId: 'workflow-builder',
-      phaseName: 'Workflow Builder',
-      presetQueryId,
-      isViewOnly: false,
-      isScheduledRun: false,
-      scheduledJobName: undefined,
-    }
-
-    if (existingBuilderTab) {
-      chatStore.setTabMetadata(existingBuilderTab.tabId, builderMetadata)
-      if (existingBuilderTab.name !== 'Workflow Builder') {
-        useChatStore.setState((state) => {
-          const t = state.chatTabs[existingBuilderTab.tabId]
-          if (!t) return state
-          return { chatTabs: { ...state.chatTabs, [existingBuilderTab.tabId]: { ...t, name: 'Workflow Builder' } } }
-        })
-      }
-      chatStore.switchTab(existingBuilderTab.tabId)
-      onClose()
-      return
-    }
-
-    const tabId = await chatStore.createChatTab('Workflow Builder', builderMetadata)
-    chatStore.switchTab(tabId)
-    onClose()
-  }, [onClose])
-
   const handleStopRun = async (job: ScheduledJob) => {
     if (!window.confirm('Stop this running execution?')) return
     try {
@@ -2232,19 +2188,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                             ? 'Open run in chat (read-only)'
                                             : 'Restore to chat (read-only)'}
                                         </TooltipContent>
-                                      </Tooltip>
-                                    )}
-                                    {run.status === 'running' && job.preset_query_id && (
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <button
-                                            onClick={() => openWorkflowBuilderForSchedule(job.preset_query_id)}
-                                            className="p-1 text-violet-500 hover:text-violet-400 transition-colors"
-                                          >
-                                            <Workflow className="w-3 h-3" />
-                                          </button>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="left">Open workflow builder</TooltipContent>
                                       </Tooltip>
                                     )}
                                     {/* Stop button for running jobs */}

@@ -783,6 +783,7 @@ Use this access to create and update custom skills. You can read other folders t
 // "do not use tools" policy and the requirement to read skills before acting.
 // docsRoot is the shell-visible workspace root for absolute paths.
 func buildSkillPrompt(selectedSkills []string, workspaceAPIURL, docsRoot string, isOrchestrator bool) string {
+	selectedSkills = filesystemSelectedSkills(selectedSkills)
 	if len(selectedSkills) == 0 {
 		return ""
 	}
@@ -848,6 +849,21 @@ Then read any supporting files (scripts, templates, examples) referenced in the 
 	}
 
 	return strings.Join(promptParts, "\n")
+}
+
+func filesystemSelectedSkills(selectedSkills []string) []string {
+	filtered := make([]string, 0, len(selectedSkills))
+	for _, skill := range selectedSkills {
+		if isRuntimeOnlySkill(skill) {
+			continue
+		}
+		filtered = append(filtered, skill)
+	}
+	return filtered
+}
+
+func isRuntimeOnlySkill(skill string) bool {
+	return skill == "agent-browser"
 }
 
 // GetSubAgentBuilderInstructions returns the custom instructions for Sub-Agent Builder agents

@@ -3212,7 +3212,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             />
                             <div>
                               <div className="text-sm font-medium text-gray-100">Local Chrome (CDP)</div>
-                              <div className="text-xs text-gray-400 mt-0.5">Connect to your real Chrome browser.</div>
+                              <div className="text-xs text-gray-400 mt-0.5">Connects to your real Chrome browser and may bring Chrome to the foreground.</div>
                             </div>
                           </label>
 
@@ -3261,6 +3261,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         {/* Right: context panel */}
                         <div className="w-80 flex-shrink-0 rounded-lg bg-gray-800/60 border border-gray-700 p-3 flex flex-col gap-3">
                           {browserMode === 'cdp' && (<>
+                            <div className="rounded-md border border-amber-700/60 bg-amber-950/30 px-2.5 py-2 text-xs text-amber-200">
+                              CDP drives visible Chrome. It can steal focus while you type. Use headless mode for background runs, or use a dedicated automation Chrome/profile/port for schedules.
+                            </div>
                             <div className="space-y-2">
                               <div className="flex items-center gap-2">
                                 <label className="text-xs text-gray-400 whitespace-nowrap">Port:</label>

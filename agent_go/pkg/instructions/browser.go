@@ -208,6 +208,7 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 
 ### CDP-Specific Behaviors
 - The user can **see everything you do** in their browser — actions are visible in real-time
+- CDP controls a visible, real Chrome window. Navigation, tab switching, clicks, fills, uploads, and some snapshots may bring Chrome to the foreground and interrupt the user's typing. For unattended schedules or background work, prefer headless mode or a dedicated automation Chrome/profile/port instead of the user's primary Chrome.
 - The browser may have **existing cookies, login sessions, and tabs** — leverage authenticated sessions without re-logging in
 - `+"`open`"+` must use URL-only args: `+"`browser(\"open\", [\"https://target.example\"])`"+`. Do not call `+"`open`"+` with `+"`[\"tab\", \"t1\", url]`"+`.
 - For snapshot, click, fill, eval, wait, screenshot, and other page-action commands after open, include `+"`[\"tab\", \"<tab-id-or-label>\", ...]`"+` or `+"`[\"--tab\", \"<tab-id-or-label>\", ...]`"+`.

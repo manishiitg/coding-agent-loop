@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"sort"
@@ -55,6 +56,15 @@ func loadWorkflowPermissionConfig() workflowPermissionConfig {
 			if ok {
 				cfg.entries[key] = level
 			}
+		}
+	}
+
+	// File-backed grants override env. Failing to read the file is non-fatal —
+	// we fall back to env-only behavior (logged elsewhere if needed).
+	if persisted, err := readWorkflowUserPermissionsFile(); err == nil {
+		for k, v := range persisted {
+			cfg.configured = true
+			cfg.entries[k] = v
 		}
 	}
 
@@ -305,4 +315,86 @@ func (api *StreamingAPI) handleListAuthUsers(w http.ResponseWriter, r *http.Requ
 		"users": out,
 		"total": len(out),
 	})
+}
+
+type workflowUserPermissionResponse struct {
+	UserKey        string `json:"user_key"`
+	WorkflowAccess string `json:"workflow_access"`
+}
+
+func (api *StreamingAPI) handleListWorkflowUserPermissions(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	entries, err := listWorkflowUserPermissions()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to read permissions: %v", err), http.StatusInternalServerError)
+		return
+	}
+	out := make([]workflowUserPermissionResponse, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, workflowUserPermissionResponse{
+			UserKey:        e.UserKey,
+			WorkflowAccess: string(e.Access),
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"permissions": out,
+		"total":       len(out),
+	})
+}
+
+type workflowUserPermissionUpsertRequest struct {
+	UserKey        string `json:"user_key"`
+	WorkflowAccess string `json:"workflow_access"`
+}
+
+func (api *StreamingAPI) handleUpsertWorkflowUserPermission(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	var req workflowUserPermissionUpsertRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid JSON body: %v", err), http.StatusBadRequest)
+		return
+	}
+	key := normalizeWorkflowPermissionKey(req.UserKey)
+	if key == "" {
+		http.Error(w, "user_key is required", http.StatusBadRequest)
+		return
+	}
+	level, ok := parseWorkflowAccessLevel(req.WorkflowAccess)
+	if !ok {
+		http.Error(w, "workflow_access must be one of read|write|owner", http.StatusBadRequest)
+		return
+	}
+	if err := upsertWorkflowUserPermission(key, level); err != nil {
+		http.Error(w, fmt.Sprintf("failed to save permission: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(workflowUserPermissionResponse{
+		UserKey:        key,
+		WorkflowAccess: string(level),
+	})
+}
+
+func (api *StreamingAPI) handleDeleteWorkflowUserPermission(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	key := normalizeWorkflowPermissionKey(r.URL.Query().Get("user_key"))
+	if key == "" {
+		http.Error(w, "user_key query param is required", http.StatusBadRequest)
+		return
+	}
+	if err := deleteWorkflowUserPermission(key); err != nil {
+		http.Error(w, fmt.Sprintf("failed to delete permission: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

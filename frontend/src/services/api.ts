@@ -1839,6 +1839,36 @@ export const authApi = {
     const response = await api.get('/api/auth/users')
     return response.data
   },
+
+  listWorkflowUserPermissions: async (): Promise<WorkflowUserPermissionsResponse> => {
+    const response = await api.get('/api/workflow/user-permissions')
+    return response.data
+  },
+
+  upsertWorkflowUserPermission: async (
+    userKey: string,
+    workflowAccess: 'read' | 'write' | 'owner'
+  ): Promise<WorkflowUserPermission> => {
+    const response = await api.put('/api/workflow/user-permissions', {
+      user_key: userKey,
+      workflow_access: workflowAccess,
+    })
+    return response.data
+  },
+
+  deleteWorkflowUserPermission: async (userKey: string): Promise<void> => {
+    await api.delete(`/api/workflow/user-permissions?user_key=${encodeURIComponent(userKey)}`)
+  },
+}
+
+export interface WorkflowUserPermission {
+  user_key: string
+  workflow_access: 'read' | 'write' | 'owner'
+}
+
+export interface WorkflowUserPermissionsResponse {
+  permissions: WorkflowUserPermission[]
+  total: number
 }
 
 // --- Workflow manifest API ---

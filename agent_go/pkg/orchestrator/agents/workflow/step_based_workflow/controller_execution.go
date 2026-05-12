@@ -1818,17 +1818,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 				// Decide whether to continue the prior conversation or start fresh.
 				// Continuation reuses the existing agent + feeds validation feedback as a
-				// user message — cheaper and keeps the agent's working memory. Skip on:
-				//  - first attempt (nothing to continue from)
-				//  - missing agent / empty history
-				//  - learn_code mode (its inner fix loop owns conversation shape and
-				//    creates its own repair agents; continuing would mix authoring turns
-				//    with validation fix turns)
-				shouldContinue := retryAttempt > 1 &&
-					executionAgent != nil &&
-					len(executionConversationHistory) > 0 &&
-					!isLearnCodeMode &&
-					!learnCodeActiveInAnyAttempt
+				// user message — cheaper and keeps the agent's working memory.
+				//
+				// In normal flow, the ONLY trigger that lands in the fresh-agent branch
+				// AFTER a pre-validation failure is learn_code: its authoring turns must
+				// not mix with validation-fix turns, and its inner fix loop creates its
+				// own repair agents. Attempt #1 also takes the fresh path, but with no
+				// validation feedback (it's just the initial execution).
+				//
+				// The agent / history guards below are defensive — they catch an
+				// Execute() that errored before producing any LLM turns (saved in the
+				// `err != nil` branch above without running pre-validation). They are
+				// not the primary semantic; see the learn_code condition for that.
+				mustRestartForLearnCode := isLearnCodeMode || learnCodeActiveInAnyAttempt
+				shouldContinue := retryAttempt > 1 && !mustRestartForLearnCode
+				if shouldContinue && (executionAgent == nil || len(executionConversationHistory) == 0) {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step %d attempt %d: continuation requested but agent/history missing — falling back to fresh agent", stepIndex+1, retryAttempt))
+					shouldContinue = false
+				}
 
 				if adaptiveTierEnabled {
 					executionAgentCtx = context.WithValue(executionAgentCtx, WorkshopTierOverrideKey, int(attemptTier))

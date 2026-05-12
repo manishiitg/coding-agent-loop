@@ -839,7 +839,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         <div className="flex-1">
                           <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Connect to Local Chrome (CDP)</div>
                           <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                            Agent connects to your real Chrome browser so you can watch it navigate in real-time.
+                            Agent connects to your real Chrome browser. Chrome may come to the foreground while it works.
                           </div>
                         </div>
                       </label>
@@ -885,6 +885,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     {/* CDP configuration sub-panel */}
                     {browserMode === 'cdp' && (
                       <div className="p-3 rounded-lg bg-gray-100 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700">
+                        <div className="mb-3 rounded-md border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                          CDP drives visible Chrome and can steal keyboard focus. Use headless mode for background runs, or use a dedicated automation Chrome/profile/port for schedules.
+                        </div>
                         <div className="flex flex-col gap-4 items-stretch xl:flex-row">
                           {/* Left: port + status */}
                           <div className="flex-1 space-y-3">

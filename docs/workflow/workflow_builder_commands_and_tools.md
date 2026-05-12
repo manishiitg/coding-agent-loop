@@ -12,8 +12,8 @@ Workflow improvement has three layers:
 
 Optimizer actions are deliberately small in number:
 
-- `harden_workflow(group_name?, focus?)`: use when the workflow path is basically right, but prompts, config, validation, KB, learnings, db/report wiring, eval coverage, or metric wiring need repair.
-- `replan_workflow_from_results(group_name?, focus?)`: use when run/eval/metric evidence shows the workflow path is not aligned with `soul.md` success criteria or outcome metrics.
+- `harden_workflow(group_name?, focus?)`: use when the workflow path is basically right, but prompts, config, validation, KB, learnings, db/report wiring, eval coverage, or metric wiring need repair. It should delete stale `learnings/{step-id}/main.py` for `code_exec` steps and only patch `main.py` for `learn_code`.
+- `replan_workflow_from_results(group_name?, focus?)`: use when run/eval/metric evidence shows the workflow path is not aligned with `soul.md` success criteria or outcome metrics. If replan keeps or converts a step to `code_exec`, it should remove stale `learnings/{step-id}/main.py` and clear `lock_code`.
 - Eval-plan improvement: use when eval coverage, scoring, structured output, validation schema, or metric-to-eval wiring is weak enough that measurement cannot be trusted.
 - `propose_metric` / `retire_metric`: use only for metric-definition cleanup.
 

@@ -117,6 +117,8 @@ Connect the agent's browser tools to your real Chrome browser via Chrome DevTool
 
 By default, browser-based MCP servers (like `playwright` or `agent-browser`) run an isolated, headless browser inside a container. By using **CDP mode**, you can point these tools to a Chrome instance running on your host machine.
 
+**Foreground behavior:** CDP is connected to a visible real Chrome window. Browser actions may bring Chrome to the foreground and steal keyboard focus from the user. This is expected for shared visible Chrome and is separate from tab isolation. Use headless mode for background-safe runs, or run schedules against a dedicated automation Chrome profile/port instead of the user's primary Chrome.
+
 ### How it Works
 
 1. **Launch Chrome with Remote Debugging**: You start Chrome on your host with a specific port (default `9222`).

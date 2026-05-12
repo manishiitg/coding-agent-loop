@@ -27,8 +27,8 @@ Use this hierarchy when deciding what is true:
 
 Then choose one bounded action:
 
-- `harden_workflow(group_name?, focus?)`: the workflow path is basically right, but prompts, config, validation, KB, learnings, db/report wiring, eval coverage, or metric wiring need repair.
-- `replan_workflow_from_results(group_name?, focus?)`: the workflow path is not aligned with success criteria or outcome metrics.
+- `harden_workflow(group_name?, focus?)`: the workflow path is basically right, but prompts, config, validation, KB, learnings, db/report wiring, eval coverage, or metric wiring need repair. Harden removes stale `learnings/{step-id}/main.py` for `code_exec` steps; only `learn_code` steps should retain reusable `main.py`.
+- `replan_workflow_from_results(group_name?, focus?)`: the workflow path is not aligned with success criteria or outcome metrics. When replan keeps or converts a step to `code_exec`, it should remove stale `learnings/{step-id}/main.py` and clear `lock_code` to avoid confusing future improvement agents.
 - Eval-plan improvement: evaluation coverage, scoring, structured output, validation schema, or metric-to-eval wiring is weak enough that measurement cannot be trusted.
 - `propose_metric` or `retire_metric`: the metric definition is missing, stale, duplicated, unresolved, or no longer tied to the goal. Use `propose_metric` with `amend_existing:{id,reason}` to correct an existing metric definition/source under the same id; the previous definition is archived and the version increments.
 - No action: evidence is weak, recent changes need more runs, or the workflow is already aligned.

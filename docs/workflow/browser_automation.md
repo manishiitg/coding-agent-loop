@@ -101,6 +101,8 @@ The probe JS body is identical across backends. Only the wrapper differs:
 
 When a workflow uses `agent_browser` in CDP mode, it is controlling the user's real Chrome through a shared CDP port. Chrome tabs are global to that browser, so the workflow must not rely on agent-browser's "latest active tab" behavior. The project wrapper enforces an explicit tab on every page action.
 
+CDP is not a background-isolated mode. Because it drives a visible, user-profile Chrome window, tab selection, navigation, clicks, fills, uploads, and sometimes snapshots may bring Chrome to the foreground and interrupt typing in Codex or another app. Use CDP only when the workflow needs the user's real logged-in browser or a site blocks headless automation. For schedules and unattended work, prefer headless mode or a dedicated automation Chrome profile/port that the user does not use interactively.
+
 ### Required flow
 
 1. List tabs first:

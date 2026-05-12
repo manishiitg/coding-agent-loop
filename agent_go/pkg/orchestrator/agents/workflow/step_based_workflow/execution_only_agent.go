@@ -149,6 +149,9 @@ You MUST incorporate it into this run. It takes priority over the default step d
 {{.WorkshopHumanInput}}
 {{end}}
 
+{{/* Only renders on learn_code retries. Pure code_exec pre-validation failures
+     take the continuation path (buildValidationContinuationUserMessage), which
+     sends a follow-up user message instead of re-rendering this template. */}}
 {{if .ValidationFeedback}}
 ### Validation Issues
 {{.ValidationFeedback}}

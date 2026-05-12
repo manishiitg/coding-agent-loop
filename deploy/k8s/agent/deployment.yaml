@@ -28,8 +28,13 @@ spec:
     spec:
       terminationGracePeriodSeconds: 60
       serviceAccountName: default
+      # fsGroup=1001 (appgroup) so kubelet chowns the agent-db PVC mounts to the
+      # non-root user the container runs as. Without this, the SQLite-backed
+      # WhatsApp session store (in /app/cache/) and any other PVC write path
+      # fails with EACCES because the PVC volume is root-owned by default.
       securityContext:
-        {}
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: agent
           securityContext:

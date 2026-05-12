@@ -20,7 +20,7 @@ export const ModeInfoPanel: React.FC<ModeInfoPanelProps> = ({ minimized = false 
 
   if (minimized) {
     return (
-      <div className="p-2">
+      <div className="p-2 relative">
         <button
           onClick={() => setExpanded(!expanded)}
           className="w-full flex items-center justify-center p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
@@ -28,10 +28,12 @@ export const ModeInfoPanel: React.FC<ModeInfoPanelProps> = ({ minimized = false 
         >
           <HelpCircle className="w-4 h-4" />
         </button>
-        
-        {/* Expanded content in minimized mode */}
+
+        {/* Expanded content pops OUT of the narrow sidebar as a floating panel
+            anchored to the right of the help button. Without absolute positioning
+            the panel rendered inline and got clipped by the sidebar's narrow width. */}
         {expanded && (
-          <div className="mt-2 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg p-4">
+          <div className="absolute left-full bottom-0 ml-2 z-50 w-80 max-h-[80vh] overflow-y-auto bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg p-4 shadow-xl">
             {/* Header */}
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">

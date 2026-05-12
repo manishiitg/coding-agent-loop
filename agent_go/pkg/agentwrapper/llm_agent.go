@@ -996,6 +996,37 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 				case textChan <- chunk.Content:
 				}
 			}
+			// Kimi Code CLI executes its builtin tools inside the subprocess — they never
+			// reach executor/handlers.go, so toolcalllog never fires. Emit tool_call events
+			// directly from the stream chunks so they appear in the UI.
+			if w.config.Provider == "kimi" && w.agent != nil {
+				switch chunk.Type {
+				case llmtypes.StreamChunkTypeToolCallStart:
+					ev := events.NewToolCallStartEventWithCorrelation(
+						1,
+						chunk.ToolName,
+						events.ToolParams{Arguments: chunk.ToolArgs},
+						"kimi-cli",
+						string(w.agent.TraceID),
+						string(w.agent.TraceID),
+					)
+					ev.ToolCallID = chunk.ToolCallID
+					w.agent.EmitTypedEvent(ctx, ev)
+				case llmtypes.StreamChunkTypeToolCallEnd:
+					ev := events.NewToolCallEndEventWithTokenUsageAndModel(
+						1,
+						chunk.ToolName,
+						chunk.ToolResult,
+						"kimi-cli",
+						chunk.ToolDuration,
+						"",
+						0, 0, 0,
+						w.config.ModelID,
+					)
+					ev.ToolCallID = chunk.ToolCallID
+					w.agent.EmitTypedEvent(ctx, ev)
+				}
+			}
 			// Chain to previous callback if any
 			if prevCallback != nil {
 				prevCallback(chunk)

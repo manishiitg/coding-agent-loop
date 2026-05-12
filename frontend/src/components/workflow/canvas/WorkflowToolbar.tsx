@@ -367,35 +367,33 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Left side - workflow context */}
       <div className="flex min-w-0 flex-1 items-center gap-x-3 gap-y-1.5 flex-wrap">
         <div className="flex min-w-0 items-center gap-x-3 gap-y-1.5 flex-wrap">
-          {canWriteWorkflow && (
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Mode
-              </span>
-              <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm">
-                <button
-                  onClick={() => {
-                    const store = useWorkflowStore.getState()
-                    if (isBuilderPaneVisible) {
-                      store.setShowChatArea(false)
-                      return
-                    }
-                    store.setWorkflowWorkspaceView('builder')
-                    store.setShowWorkspacePane(false)
-                    store.setShowChatArea(true)
-                    onStartPhase('workflow-builder')
-                  }}
-                  className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                    isBuilderModeActive
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                  }`}
-                >
-                  Builder
-                </button>
-              </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              Mode
+            </span>
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm">
+              <button
+                onClick={() => {
+                  const store = useWorkflowStore.getState()
+                  if (isBuilderPaneVisible) {
+                    store.setShowChatArea(false)
+                    return
+                  }
+                  store.setWorkflowWorkspaceView('builder')
+                  store.setShowWorkspacePane(false)
+                  store.setShowChatArea(true)
+                  onStartPhase('workflow-builder')
+                }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  isBuilderModeActive
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                }`}
+              >
+                Builder
+              </button>
             </div>
-          )}
+          </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
@@ -488,8 +486,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-        {/* Auto-improvement framework — metrics, trajectory, decisions */}
-        {canWriteWorkflow && workspacePath && (
+        {/* Auto-improvement framework — metrics, trajectory, decisions (read-only safe for run users) */}
+        {workspacePath && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -533,8 +531,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
-        {/* Show Learnings - opens popup with learning metadata */}
-        {canWriteWorkflow && workspacePath && (
+        {/* Show Learnings - opens popup with learning metadata (read-only safe) */}
+        {workspacePath && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -578,8 +576,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
-        {/* Show Versions - opens popup with version publish/revert */}
-        {canWriteWorkflow && workspacePath && (
+        {/* Show Versions - read-only list view safe; publish/revert backend-gated */}
+        {workspacePath && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -608,7 +606,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
-        {/* Workflow Settings Button — opens the preset settings modal from the top header */}
+        {/* Workflow Settings — write-only (read users don't see this) */}
         {canWriteWorkflow && (
           <Tooltip>
             <TooltipTrigger asChild>

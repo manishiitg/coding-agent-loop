@@ -943,7 +943,12 @@ export const agentApi = {
   // query param forces the <img> to re-fetch when the QR rotates.
   getWhatsAppPairURL: (size = 384, bust?: number): string => {
     const b = bust ?? Date.now()
-    return `${API_BASE_URL}/api/whatsapp/pair?size=${size}&_=${b}`
+    // <img src=...> can't carry an Authorization header. Multi-user mode requires
+    // a JWT, so fall back to the `?token=` query-param path that AuthMiddleware
+    // already supports for SSE/EventSource clients.
+    const token = getAuthToken()
+    const tokenParam = token ? `&token=${encodeURIComponent(token)}` : ''
+    return `${API_BASE_URL}/api/whatsapp/pair?size=${size}&_=${b}${tokenParam}`
   },
 
   // Drops the paired account and restarts the connector with a fresh QR.

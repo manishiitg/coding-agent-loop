@@ -72,3 +72,10 @@ data:
   COGNITO_CLIENT_ID: "2gahrd23uppdrlil01naotmvme"
   COGNITO_DOMAIN: "mcpagent-auth.auth.ap-south-1.amazoncognito.com"
   AWS_REGION: "ap-south-1"
+
+  # WhatsApp bot connector (whatsmeow). Default is enabled; the SQLite session
+  # store path must be on a writable mount. /app/cache is mounted from
+  # agent-db-pvc (rw) — workspace-docs/ is read-only from the agent's perspective
+  # so the default resolution would fail with EACCES.
+  WHATSAPP_ENABLED: "true"
+  WHATSAPP_SESSION_DB: "/app/cache/whatsapp-session.db"

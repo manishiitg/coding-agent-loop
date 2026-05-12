@@ -33,12 +33,10 @@ import { useWorkspaceState } from '../hooks/useWorkspaceState'
 import { useWorkflowStore, type CanvasViewMode } from '../../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useChatStore } from '../../../stores/useChatStore'
-import { useAuthStore } from '../../../stores/useAuthStore'
 import { agentApi } from '../../../services/api'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import type { VariablesManifest } from '../../../services/api-types'
 import { buildGroupFolderPath } from '../../../utils/workflowUtils'
-import { hasWorkflowWriteAccess } from '../../../utils/workflowPermissions'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 
 // Duration to show highlights before clearing (in ms)
@@ -1005,7 +1003,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 }, ref) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const canWriteWorkflow = useAuthStore(state => hasWorkflowWriteAccess(state.user, state.isMultiUserMode))
   const { setViewport, getNode, updateNode, fitView, getViewport } = useReactFlow()
   const hasInitializedView = React.useRef(false)
 
@@ -2536,7 +2533,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 Create a plan to visualize your workflow
               </p>
             </div>
-            {canWriteWorkflow && onCreatePlan && (
+            {onCreatePlan && (
               <button
                 onClick={onCreatePlan}
                 className="px-6 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 font-medium"

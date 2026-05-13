@@ -5,13 +5,12 @@ import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
 import MCPServersSection from './sidebar/MCPServersSection'
 import { SkillsSection } from './skills'
 import { SecretsSection } from './secrets'
-import { SubAgentsSection } from './subagents'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useMCPStore, useLLMStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
-import { Bot, Download, KeyRound, LogOut, PanelLeftClose, ServerCog, User, Bell, BellOff, WandSparkles } from 'lucide-react'
+import { Download, KeyRound, LogOut, PanelLeftClose, ServerCog, User, Bell, BellOff, WandSparkles } from 'lucide-react'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { playNotificationSound } from '../utils/sound'
@@ -132,7 +131,11 @@ export default function WorkspaceSidebar({
 
   return (
     <TooltipProvider>
-      <div className="w-full h-full bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700 flex flex-col shadow-lg dark:shadow-2xl relative z-30">
+      <div
+        data-tour="left-sidebar"
+        data-testid="tour-left-sidebar"
+        className="w-full h-full bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700 flex flex-col shadow-lg dark:shadow-2xl relative z-30"
+      >
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 flex items-center justify-between h-16">
         {!minimized && <SidebarHeader />}
@@ -169,20 +172,26 @@ export default function WorkspaceSidebar({
           <div className="p-3 space-y-3">
 
             {/* LLM Configuration */}
-            <LLMConfigurationSummary
-              minimized={minimized}
-            />
+            <div data-tour="sidebar-llm-settings" data-testid="tour-sidebar-llm-settings">
+              <LLMConfigurationSummary
+                minimized={minimized}
+              />
+            </div>
             {/* MCP Servers */}
-            <MCPServersSection />
+            <div data-tour="sidebar-mcp-servers" data-testid="tour-sidebar-mcp-servers">
+              <MCPServersSection />
+            </div>
 
             {/* Skills */}
-            <SkillsSection />
+            <div data-tour="sidebar-skills" data-testid="tour-sidebar-skills">
+              <SkillsSection />
+            </div>
 
             {/* Secrets */}
-            <SecretsSection />
+            <div data-tour="sidebar-secrets" data-testid="tour-sidebar-secrets">
+              <SecretsSection />
+            </div>
 
-            {/* Sub-Agent Templates */}
-            <SubAgentsSection />
             {/* Download App Promo - Only in Browser */}
             {!isElectron && (
               <div className="mt-auto pt-2">
@@ -293,15 +302,19 @@ export default function WorkspaceSidebar({
           title="Click to expand sidebar"
         >
           {/* LLM Configuration Icon */}
-          <LLMConfigurationSummary
-            minimized={true}
-          />
+          <div data-tour="sidebar-llm-settings" data-testid="tour-sidebar-llm-settings">
+            <LLMConfigurationSummary
+              minimized={true}
+            />
+          </div>
 
 
           {/* MCP Servers Icon */}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
+                data-tour="sidebar-mcp-servers"
+                data-testid="tour-sidebar-mcp-servers"
                 onClick={(e) => {
                   e.stopPropagation()
                   setShowMCPDetails(!showMCPDetails)
@@ -321,6 +334,8 @@ export default function WorkspaceSidebar({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
+                data-tour="sidebar-skills"
+                data-testid="tour-sidebar-skills"
                 onClick={(e) => {
                   e.stopPropagation()
                   onToggleMinimize()
@@ -340,6 +355,8 @@ export default function WorkspaceSidebar({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
+                data-tour="sidebar-secrets"
+                data-testid="tour-sidebar-secrets"
                 onClick={(e) => {
                   e.stopPropagation()
                   onToggleMinimize()
@@ -352,25 +369,6 @@ export default function WorkspaceSidebar({
             </TooltipTrigger>
             <TooltipContent side="right">
               <p>Secrets</p>
-            </TooltipContent>
-          </Tooltip>
-
-          {/* Sub-Agent Templates Icon */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onToggleMinimize()
-                }}
-                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-                title="Sub-Agent Templates"
-              >
-                <Bot className="w-5 h-5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <p>Sub-Agent Templates</p>
             </TooltipContent>
           </Tooltip>
 

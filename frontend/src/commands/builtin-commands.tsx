@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, BookOpen } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, BookOpen, History } from 'lucide-react'
 import type { CommandContext, CommandDefinition } from './types'
 
 function submitGuidedWorkflowCommand(
@@ -23,6 +23,18 @@ function submitGuidedWorkflowCommand(
 }
 
 export const builtinCommands: CommandDefinition[] = [
+  {
+    command: 'resume',
+    description: 'Attach a previous chat conversation as context',
+    icon: <History className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
+    source: 'builtin',
+    execute: (ctx) => {
+      ctx.openResumeDialog?.()
+    }
+  },
   {
     command: 'design-flow',
     description: 'Validate context dependency chain between steps',
@@ -226,29 +238,6 @@ export const builtinCommands: CommandDefinition[] = [
       const message = ctx.beforeSlash
         ? `${ctx.beforeSlash}\n\n${skillContext}`
         : `I want to build a skill based on our conversation. ${skillContext}`
-      ctx.onSubmit(message)
-    }
-  },
-  {
-    command: 'build-subagent',
-    description: 'Build a new sub-agent template',
-    icon: <Bot className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const currentSkills = ctx.tabConfig?.selectedSkills || []
-      if (!currentSkills.includes('subagent-creator') && !currentSkills.includes('custom/subagent-creator')) {
-        ctx.setTabConfig(ctx.activeTabId, { selectedSkills: [...currentSkills, 'custom/subagent-creator'] })
-      }
-      const wsStore = ctx.getWorkspaceStore()
-      const expanded = new Set(wsStore.expandedFolders)
-      expanded.add('subagents')
-      expanded.add('subagents/custom')
-      wsStore.setExpandedFolders(expanded)
-      const saContext = 'You are in Sub-Agent Builder mode. Create a new sub-agent template in subagents/custom/. Follow the SUBAGENT.md format with YAML frontmatter (name, description, default_reasoning_level) and markdown instructions.'
-      const message = ctx.beforeSlash
-        ? `${ctx.beforeSlash}\n\n${saContext}`
-        : `I want to build a sub-agent template. ${saContext}`
       ctx.onSubmit(message)
     }
   },

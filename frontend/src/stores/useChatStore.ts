@@ -230,10 +230,11 @@ export interface TabSessionStatus {
   lastActivity: string | null
 }
 
-// Pasted long-text becomes an attachment chip rather than inline text.
+// Pasted text can become an attachment chip rather than inline text.
 // Stored per-tab; serialized into the outgoing message as fenced blocks.
 export interface PastedAttachment {
   id: string
+  marker?: string
   content: string
   chars: number
   lines: number
@@ -247,7 +248,6 @@ export interface ChatTabConfig {
   selectedServers: string[]  // Selected MCP servers
   selectedSkills: string[]  // Selected skills to include in chat
   selectedSecrets: string[]  // Selected secret IDs to inject into chat
-  selectedSubAgents: string[]  // Selected sub-agent templates for delegation
   llmConfig: ExtendedLLMConfiguration  // LLM configuration (provider, model, etc.)
   fileContext: FileContextItem[]  // Files/folders in context
   enableContextSummarization?: boolean  // Context summarization setting
@@ -349,7 +349,6 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
     enableImageGeneration: appStore?.lastEnableImageGeneration ?? false,
     enableGWSAccess: appStore?.lastGWSAccess ?? false,
     selectedSkills: appStore?.lastSelectedSkills ?? [],
-    selectedSubAgents: appStore?.lastSelectedSubAgents ?? [],
     delegationTierConfig: undefined,
     queuedMessages: [],
     pastedAttachments: [],
@@ -1934,14 +1933,12 @@ export const useChatStore = create<ChatState>()(
         if (tabMode === 'multi-agent') {
           type SyncUpdate = {
             lastSelectedSkills?: string[]
-            lastSelectedSubAgents?: string[]
             lastBrowserMode?: 'none' | 'headless' | 'cdp' | 'playwright'
             lastEnableImageGeneration?: boolean
             lastGWSAccess?: boolean
           }
           const sync: SyncUpdate = {}
           if (configUpdate.selectedSkills !== undefined) sync.lastSelectedSkills = configUpdate.selectedSkills
-          if (configUpdate.selectedSubAgents !== undefined) sync.lastSelectedSubAgents = configUpdate.selectedSubAgents
           if (configUpdate.browserMode !== undefined) sync.lastBrowserMode = configUpdate.browserMode
           if (configUpdate.enableImageGeneration !== undefined) sync.lastEnableImageGeneration = configUpdate.enableImageGeneration
           if (configUpdate.enableGWSAccess !== undefined) sync.lastGWSAccess = configUpdate.enableGWSAccess

@@ -141,8 +141,6 @@ export interface AgentQueryRequest {
   enable_context_editing?: boolean // Enable context editing (dynamic context reduction)
   // Selected skills to include in the chat context
   selected_skills?: string[] // Array of skill folder names
-  // Selected sub-agent templates for delegation
-  selected_subagents?: string[] // Array of sub-agent template folder names
   // Delegation tier configuration: Maps reasoning levels to specific provider/model pairs
   delegation_tier_config?: DelegationTierConfig
   // Decrypted secrets to pass to backend (injected into agent system prompt, never in query text)
@@ -698,7 +696,6 @@ export interface ChatSessionConfig {
   }>;
   workflow_metadata?: WorkflowMetadata; // Workflow-specific metadata (for background workflows)
   selected_skills?: string[]; // Selected skill folder names
-  selected_subagents?: string[]; // Selected sub-agent template folder names
   delegation_tier_config?: DelegationTierConfig; // Delegation tier model config
 }
 
@@ -761,6 +758,18 @@ export interface ChatHistoryConversation {
   agent_mode?: string;
   conversation_history: ChatHistoryMessage[];
   updated_at?: string;
+}
+
+export interface ChatHistorySession {
+  session_id: string;
+  agent_mode?: string;
+  status?: string;
+  query?: string;
+  user_id?: string;
+  conversation_path?: string;
+  created_at?: string;
+  updated_at?: string;
+  message_count?: number;
 }
 
 export interface ListChatSessionsResponse {

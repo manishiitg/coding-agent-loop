@@ -25,6 +25,9 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   onTabClick,
   onTabClose,
 }) => {
+  const displayName = tab.metadata?.phaseId === 'workflow-builder' && tab.name === 'Workflow Builder'
+    ? 'Chat'
+    : tab.name
   const indicatorColor = useMemo(() => {
     if (tab.isStreaming) return 'bg-green-500 animate-pulse'
 
@@ -66,7 +69,7 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
       )}
 
       {/* Tab Name */}
-      <span className="min-w-0 max-w-[14rem] truncate whitespace-nowrap">{tab.name}</span>
+      <span className="min-w-0 max-w-[14rem] truncate whitespace-nowrap">{displayName}</span>
 
       {/* Close Button */}
       <button
@@ -124,23 +127,32 @@ export const WorkflowChatTabs: React.FC = () => {
   })
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
 
-  // Filter to only show workflow tabs for the active preset.
-  // Strict match — untagged tabs (no presetQueryId) are treated as orphans and hidden,
-  // because the previous "include if untagged" fallback caused tabs to leak across
-  // every preset whenever a session couldn't be tied back to its source preset.
+  // Filter to workflow tabs for the active preset, but always keep the active
+  // workflow tab visible. Scheduled-run restores can briefly lack a preset match
+  // while the tab is being created/switched, and hiding the active tab makes the
+  // restore look like it failed.
   const activeWorkflowTabs = useMemo(() => {
     const allTabs = Object.values(chatTabs)
     const matched = allTabs.filter(tab =>
       tab.metadata?.mode === 'workflow' &&
       tab.metadata.presetQueryId === activePresetId
     )
-    const visible = matched.length > 0 ? matched : allTabs.filter(tab =>
-      tab.metadata?.mode === 'workflow' &&
-      tab.metadata?.phaseId === 'workflow-builder' &&
-      !tab.metadata?.presetQueryId
-    )
+    const activeTab = activeTabId ? chatTabs[activeTabId] : undefined
+    const activeWorkflowTab = activeTab?.metadata?.mode === 'workflow' ? activeTab : undefined
+
+    const visibleById = new Map<string, ChatTab>()
+    matched.forEach(tab => visibleById.set(tab.tabId, tab))
+    if (activeWorkflowTab) visibleById.set(activeWorkflowTab.tabId, activeWorkflowTab)
+
+    const visible = visibleById.size > 0
+      ? Array.from(visibleById.values())
+      : allTabs.filter(tab =>
+          tab.metadata?.mode === 'workflow' &&
+          tab.metadata?.phaseId === 'workflow-builder' &&
+          !tab.metadata?.presetQueryId
+        )
     return visible.sort((a, b) => a.createdAt - b.createdAt)
-  }, [chatTabs, activePresetId])
+  }, [chatTabs, activePresetId, activeTabId])
 
   // Skip auto-close on initial mount
   const hasRenderedRef = useRef(false)

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-type DialogName = 'skillImport' | 'mcpDetails' | 'mcpConfig' | 'models' | 'delegationTiers' | 'presetSettings' | 'subAgentImport'
+type DialogName = 'skillImport' | 'mcpDetails' | 'mcpConfig' | 'models' | 'delegationTiers' | 'presetSettings'
 
 interface CommandDialogState {
   showSkillImport: boolean
@@ -9,7 +9,6 @@ interface CommandDialogState {
   showModels: boolean
   showDelegationTiers: boolean
   showPresetSettings: boolean
-  showSubAgentImport: boolean
   openDialog: (dialog: DialogName) => void
   closeDialog: (dialog: DialogName) => void
   closeAll: () => void
@@ -22,7 +21,6 @@ const dialogKeyMap: Record<DialogName, keyof CommandDialogState> = {
   models: 'showModels',
   delegationTiers: 'showDelegationTiers',
   presetSettings: 'showPresetSettings',
-  subAgentImport: 'showSubAgentImport',
 }
 
 export const useCommandDialogStore = create<CommandDialogState>()((set) => ({
@@ -32,7 +30,6 @@ export const useCommandDialogStore = create<CommandDialogState>()((set) => ({
   showModels: false,
   showDelegationTiers: false,
   showPresetSettings: false,
-  showSubAgentImport: false,
   openDialog: (dialog) => set({ [dialogKeyMap[dialog]]: true }),
   closeDialog: (dialog) => set({ [dialogKeyMap[dialog]]: false }),
   closeAll: () => set({
@@ -42,6 +39,5 @@ export const useCommandDialogStore = create<CommandDialogState>()((set) => ({
     showModels: false,
     showDelegationTiers: false,
     showPresetSettings: false,
-    showSubAgentImport: false,
   }),
 }))

@@ -79,7 +79,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   )
 })
 import { agentApi, workflowManifestApi } from '../../services/api'
-import { type ActiveSessionInfo, type ExecutionOptions, type PollingEvent, type WorkflowBuilderSessionResponse } from '../../services/api-types'
+import { type ActiveSessionInfo, type ExecutionOptions, type PollingEvent } from '../../services/api-types'
 import { getRawEventData } from '../../generated/event-types'
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
 // hydrateTabEvents removed - no longer hydrating inactive tabs on reload to prevent page hang
@@ -101,6 +101,8 @@ function isLiveWorkflowSessionForPreset(session: ActiveSessionInfo, presetId: st
     session.has_running_background_agents === true ||
     (session.running_background_agent_count ?? 0) > 0 ||
     status === 'running' ||
+    status === 'active' ||
+    status === 'in_progress' ||
     status === 'paused' ||
     status === 'waiting' ||
     status === 'waiting_feedback'
@@ -290,76 +292,11 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
   }
 }
 
-async function loadWorkflowBuilderSession(
-  presetQueryId?: string,
-  workspacePath?: string | null
-): Promise<WorkflowBuilderSessionResponse | null> {
-  if (!presetQueryId && !workspacePath) return null
-
-  const session = await agentApi.getWorkflowBuilderSession(presetQueryId, workspacePath ?? undefined)
-  if (!session?.session_id || session.source === 'none') return null
-  return session
-}
-
-function applyRestoredConversationContext(tabId: string, conversationPath?: string): void {
-  const path = conversationPath?.trim()
-  if (!path) return
-
-  const store = useChatStore.getState()
-  const config = store.getTabConfig(tabId)
-  const existingFileContext = config?.fileContext || []
-  const fileContext = existingFileContext.some(item => item.path === path)
-    ? existingFileContext
-    : [
-        ...existingFileContext,
-        {
-          name: path.split('/').pop() || 'previous-conversation.json',
-          path,
-          type: 'file' as const,
-        },
-      ]
-
-  store.setTabConfig(tabId, {
-    fileContext,
-    restoredConversationPath: path,
-    restoredConversationSummary: undefined,
-  })
-}
-
-function formatRestoreOfferTime(value?: string): string {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-function restoreOfferFileName(offer: WorkflowRestoreOffer): string {
-  if (offer.kind !== 'builder-history') return 'previous conversation'
-  return offer.session.workflow_name || 'previous builder chat'
-}
-
 interface WorkflowLayoutProps {
   className?: string
   onCreatePlan?: () => void
   onNewChat: () => void
 }
-
-type WorkflowRestoreOffer =
-  | {
-      kind: 'builder-history'
-      presetId: string
-      session: WorkflowBuilderSessionResponse
-    }
-  | {
-      kind: 'existing-tabs'
-      presetId: string
-      tabs: ChatTab[]
-    }
 
 /**
  * Main layout component for workflow mode
@@ -418,6 +355,20 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [isRestoringWorkflowSessions, setIsRestoringWorkflowSessions])
   // Track the previous preset ID for auto-minimize on preset switch
   const previousPresetIdRef = useRef<string | null>(null)
+  const pendingReadOnlyRestoreRef = useRef<{ presetId: string | null; tabId: string } | null>(null)
+  useEffect(() => {
+    const handleReadOnlyRestore = (event: Event) => {
+      const detail = (event as CustomEvent<{ presetId?: string | null; tabId?: string }>).detail
+      if (!detail?.tabId) return
+      pendingReadOnlyRestoreRef.current = {
+        presetId: detail.presetId ?? null,
+        tabId: detail.tabId,
+      }
+    }
+
+    window.addEventListener('workflow-readonly-run-restored', handleReadOnlyRestore)
+    return () => window.removeEventListener('workflow-readonly-run-restored', handleReadOnlyRestore)
+  }, [])
   // NOTE: During workflow execution, we no longer auto-fetch workspace files (response is 2-3MB).
   // New files are added incrementally via addFileToTree from workspace_file_operation events.
   // The Workspace component shows a "Refresh" banner when needsRefresh is set.
@@ -482,21 +433,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const activeWorkflowPreset = getActivePreset('workflow')
   const activeWorkflowWorkspacePath = activeWorkflowPreset?.selectedFolder?.filepath ?? null
-  const activeBuilderTabRestoreKey = useChatStore(state => {
+  const showResumeHint = useChatStore(state => {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : null
     if (
       !tab ||
       tab.metadata?.mode !== 'workflow' ||
       tab.metadata?.phaseId !== 'workflow-builder' ||
-      tab.isStreaming
+      tab.metadata?.isViewOnly ||
+      tab.isStreaming ||
+      tab.config?.restoredConversationPath
     ) {
-      return null
+      return false
     }
-    const hasRestoredConversation = !!tab.config?.restoredConversationPath
-    return `${tab.metadata?.presetQueryId || ''}:${tabId}:${hasRestoredConversation ? '1' : '0'}`
+    const eventCount = tab.sessionId ? (state.tabEvents[tab.sessionId]?.length || 0) : 0
+    return eventCount === 0
   })
-  const builderRestoreOfferAttemptRef = useRef<string | null>(null)
 
   // Keep the last concrete workspace path for the active preset during manifest
   // refreshes. A transient null here unmounts the report pane and makes toolbar
@@ -534,62 +486,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       return 'auto'
     }
   })
-  const [restoreOffer, setRestoreOffer] = useState<WorkflowRestoreOffer | null>(null)
-  const [isCheckingRestoreOffer, setIsCheckingRestoreOffer] = useState(false)
-  const handledRestoreOfferKeysRef = useRef<Set<string>>(new Set())
 
-  const restoreOfferKey = useCallback((presetId: string, sessionId?: string): string => {
-    return `${presetId}:${sessionId || 'unknown'}`
-  }, [])
-  const visibleRestoreOffer = restoreOffer?.presetId === activePresetId ? restoreOffer : null
-  const restoreOfferFile = visibleRestoreOffer ? restoreOfferFileName(visibleRestoreOffer) : ''
-  const restoreOfferTime = visibleRestoreOffer?.kind === 'builder-history'
-    ? formatRestoreOfferTime(visibleRestoreOffer.session.updated_at)
-    : ''
-
-  useEffect(() => {
-    if (restoreOffer && activePresetId && restoreOffer.presetId !== activePresetId) {
-      setRestoreOffer(null)
-    }
-  }, [activePresetId, restoreOffer])
-
-  const offerBuilderHistoryRestore = useCallback(async (
-    presetId: string,
-    options?: { skipIfLive?: boolean },
-  ): Promise<WorkflowBuilderSessionResponse | null> => {
-    if (options?.skipIfLive) {
-      const activeSessions = await useChatStore.getState().getActiveSessions(true)
-      if (activeSessions.some(session => isLiveWorkflowSessionForPreset(session, presetId, workspacePath))) {
-        return null
-      }
-    }
-
-    setIsCheckingRestoreOffer(true)
-    try {
-      const builderHistory = await loadWorkflowBuilderSession(presetId, workspacePath ?? undefined)
-        .catch(err => {
-          console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
-          return null
-        })
-
-      if (builderHistory?.source === 'workspace' && !handledRestoreOfferKeysRef.current.has(restoreOfferKey(presetId, builderHistory.session_id))) {
-        setRestoreOffer({
-          kind: 'builder-history',
-          presetId,
-          session: builderHistory
-        })
-      }
-
-      return builderHistory
-    } finally {
-      setIsCheckingRestoreOffer(false)
-    }
-  }, [workspacePath, restoreOfferKey])
-
-  const createFreshWorkflowBuilderTab = useCallback(async (presetId: string, options?: { skipRestoreOffer?: boolean }) => {
+  const createFreshWorkflowBuilderTab = useCallback(async (presetId: string) => {
     const chatStore = useChatStore.getState()
     const oldTabs = Object.values(chatStore.chatTabs).filter(tab =>
       tab.metadata?.mode === 'workflow' &&
+      tab.metadata?.phaseId === 'workflow-builder' &&
       tab.metadata?.presetQueryId === presetId &&
       !chatStore.getTabStreamingStatus(tab.tabId)
     )
@@ -606,151 +508,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     })
     chatStore.switchTab(tabId)
     setShowChatArea(true)
-
-    if (!options?.skipRestoreOffer) {
-      void offerBuilderHistoryRestore(presetId, { skipIfLive: true })
-    }
-  }, [offerBuilderHistoryRestore, setShowChatArea])
-
-  useEffect(() => {
-    if (!activePresetId || !activeBuilderTabRestoreKey || restoreOffer) return
-    const [presetId, tabId, hasRestoredConversation] = activeBuilderTabRestoreKey.split(':')
-    if (presetId !== activePresetId || !tabId || hasRestoredConversation === '1') return
-
-    const attemptKey = `${activePresetId}:${tabId}:${workspacePath || ''}`
-    if (builderRestoreOfferAttemptRef.current === attemptKey) return
-    builderRestoreOfferAttemptRef.current = attemptKey
-
-    void (async () => {
-      const activeSessions = await useChatStore.getState().getActiveSessions(true)
-      if (activeSessions.some(session => isLiveWorkflowSessionForPreset(session, activePresetId, workspacePath))) {
-        return
-      }
-      await offerBuilderHistoryRestore(activePresetId)
-    })()
-  }, [activePresetId, activeBuilderTabRestoreKey, offerBuilderHistoryRestore, restoreOffer, workspacePath])
-
-  const restoreBuilderHistory = useCallback(async (
-    presetId: string,
-    builderHistory: WorkflowBuilderSessionResponse
-  ) => {
-    const chatStore = useChatStore.getState()
-    const currentTabs = Object.values(chatStore.chatTabs).filter(tab =>
-      tab.metadata?.mode === 'workflow' &&
-      tab.metadata?.presetQueryId === presetId &&
-      !chatStore.getTabStreamingStatus(tab.tabId)
-    )
-    for (const tab of currentTabs) {
-      await chatStore.closeTab(tab.tabId, false)
-    }
-
-    const tabId = await chatStore.createChatTab('Workflow Builder', {
-      mode: 'workflow',
-      phaseId: 'workflow-builder',
-      phaseName: 'Workflow Builder',
-      presetQueryId: presetId
-    }, builderHistory.session_id)
-
-    chatStore.setTabCompleted(tabId, false)
-    chatStore.setTabStreaming(tabId, false)
-    applyRestoredConversationContext(tabId, builderHistory.conversation_path)
-    chatStore.switchTab(tabId)
-    setShowChatArea(true)
   }, [setShowChatArea])
-
-  const restoreExistingWorkflowTabs = useCallback(async (
-    tabs: ChatTab[],
-    presetId: string
-  ) => {
-    const chatStore = useChatStore.getState()
-    const currentTabs = Object.values(chatStore.chatTabs).filter(tab =>
-      tab.metadata?.mode === 'workflow' &&
-      tab.metadata?.presetQueryId === presetId &&
-      !chatStore.getTabStreamingStatus(tab.tabId)
-    )
-    for (const tab of currentTabs) {
-      await chatStore.closeTab(tab.tabId, false)
-    }
-
-    const restoredTabs: ChatTab[] = []
-
-    for (const tab of tabs) {
-      const tabId = await chatStore.createChatTab(tab.name, {
-        ...tab.metadata,
-        presetQueryId: presetId
-      }, tab.sessionId || undefined)
-      const restoredTab = chatStore.getTab(tabId)
-      if (restoredTab) restoredTabs.push(restoredTab)
-    }
-
-    const builderTab = restoredTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
-
-    if (builderTab?.sessionId && chatStore.getTabEvents(builderTab.sessionId).length === 0) {
-      const builderHistory = await loadWorkflowBuilderSession(presetId, workspacePath ?? undefined)
-        .catch(err => {
-          console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
-          return null
-        })
-      if (builderHistory && builderHistory.source !== 'workspace') {
-        if (builderHistory.session_id && builderHistory.session_id !== builderTab.sessionId) {
-          chatStore.updateTabSessionId(builderTab.tabId, builderHistory.session_id)
-        }
-        chatStore.setTabCompleted(builderTab.tabId, false)
-        chatStore.setTabStreaming(builderTab.tabId, false)
-        applyRestoredConversationContext(builderTab.tabId, builderHistory.conversation_path)
-      }
-    }
-
-    await rehydrateWorkflowTabs(restoredTabs)
-
-    const streamingTab = restoredTabs.find(t => chatStore.getTabStreamingStatus(t.tabId))
-    const targetTab = builderTab || streamingTab || restoredTabs[0]
-    chatStore.switchTab(targetTab.tabId)
-    setShowChatArea(true)
-  }, [workspacePath, rehydrateWorkflowTabs, setShowChatArea])
-
-  const handleRestorePreviousWorkflowConversation = useCallback(() => {
-    const offer = visibleRestoreOffer
-    if (!offer) return
-
-    if (offer.kind === 'builder-history') {
-      handledRestoreOfferKeysRef.current.add(restoreOfferKey(offer.presetId, offer.session.session_id))
-    }
-    setRestoreOffer(null)
-    setIsRestoringWorkflowSessions(true)
-    const work = offer.kind === 'builder-history'
-      ? restoreBuilderHistory(offer.presetId, offer.session)
-      : restoreExistingWorkflowTabs(offer.tabs, offer.presetId)
-
-    work.catch(error => {
-      console.warn('[WorkflowReconnect] Failed to restore previous workflow conversation:', error)
-    }).finally(() => {
-      setIsRestoringWorkflowSessions(false)
-    })
-  }, [visibleRestoreOffer, restoreBuilderHistory, restoreExistingWorkflowTabs, setIsRestoringWorkflowSessions, restoreOfferKey])
-
-  const handleDismissRestoreOffer = useCallback(() => {
-    if (visibleRestoreOffer?.kind === 'builder-history') {
-      handledRestoreOfferKeysRef.current.add(restoreOfferKey(visibleRestoreOffer.presetId, visibleRestoreOffer.session.session_id))
-    }
-    setRestoreOffer(null)
-  }, [visibleRestoreOffer, restoreOfferKey])
-
-  useEffect(() => {
-    const handleWorkflowChatUserStarted = (event: Event) => {
-      if (!restoreOffer) return
-      const detail = (event as CustomEvent<{ presetQueryId?: string }>).detail
-      if (detail?.presetQueryId && detail.presetQueryId !== restoreOffer.presetId) return
-
-      if (restoreOffer.kind === 'builder-history') {
-        handledRestoreOfferKeysRef.current.add(restoreOfferKey(restoreOffer.presetId, restoreOffer.session.session_id))
-      }
-      setRestoreOffer(null)
-    }
-
-    window.addEventListener('workflow-chat-user-started', handleWorkflowChatUserStarted)
-    return () => window.removeEventListener('workflow-chat-user-started', handleWorkflowChatUserStarted)
-  }, [restoreOffer, restoreOfferKey])
 
   useEffect(() => {
     const syncReportPreviewPreference = () => {
@@ -1001,8 +759,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [activeSessionId])
 
-  // Auto-minimize the workspace sidebar when the user *enters* Report, and
-  // restore it when they leave, if Report was the reason it got hidden.
+  // Auto-minimize the file workspace sidebar when entering Report so the report
+  // has room. Do not reopen it on exit: workflow switches can unmount/remount
+  // this layout, and auto-reopening makes the workspace look default-open.
   //
   // Act only on workflowWorkspaceView transitions. While Report is active the
   // user is free to manually reopen the workspace — re-running this effect on
@@ -1028,13 +787,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       return
     }
 
-    if (
-      workflowWorkspaceView !== 'report' &&
-      prev === 'report' &&
-      reportAutoMinimizedWorkspaceRef.current
-    ) {
+    if (workflowWorkspaceView !== 'report' && prev === 'report') {
       reportAutoMinimizedWorkspaceRef.current = false
-      setWorkspaceMinimized(false)
     }
   }, [selectedModeCategory, workflowWorkspaceView, workspaceMinimized, setWorkspaceMinimized])
 
@@ -1042,7 +796,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     return () => {
       if (reportAutoMinimizedWorkspaceRef.current) {
         reportAutoMinimizedWorkspaceRef.current = false
-        useAppStore.getState().setWorkspaceMinimized(false)
       }
     }
   }, [])
@@ -1135,7 +888,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [activeSessionId, processPlanUpdateEvents])
 
   // Track reconnection by preset to prevent duplicate tabs while still allowing
-  // Ctrl+K workflow switches to run the builder restore decision for that preset.
+  // Ctrl+K workflow switches to run the reconnect decision for that preset.
   const reconnectedPresetIdsRef = useRef<Set<string>>(new Set())
 
   // Reconnect workflow tabs on page refresh and first visit to each workflow preset.
@@ -1149,7 +902,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     const reconnectWorkflowTabs = async () => {
       reconnectedPresetIdsRef.current.add(activePresetId)
-      setRestoreOffer(null)
       // Wait for zustand to rehydrate persisted tabs from localStorage.
       // Without this, chatTabs is empty and dedup fails → duplicate tabs.
       await waitForChatStoreHydration()
@@ -1192,22 +944,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // Add active sessions that belong to this preset. We read the
         // running-workflow registry (workflow-owned storage) instead of
         // reaching into the chat session metadata.
-        // Strict match: the session must have a matching preset_query_id in the
-        // registry. Unknown/missing preset → exclude. Previously this defaulted
-        // to "attach to current preset", which silently leaked scheduled runs
-        // and orphaned workflow_phase sessions across workflows whenever the
-        // in-memory registry didn't know about them (server restart, older
-        // sessions, missing preset field).
+        // Match live sessions through preset ID first, then workspace path.
+        // This covers older workflow_phase sessions where the tracker knows the
+        // workspace but not the preset ID, without attaching unknown sessions to
+        // whatever workflow happens to be active.
         // Fallback: if no registry lookup resolved a preset, allow the session
         // through only when its persisted chat tab already binds it to the
         // current preset (so reload doesn't drop a tab the user has been using).
         const chatTabsById = useChatStore.getState().chatTabs
         for (const s of activeWorkflowSessions) {
-          let belongsToPreset = false
+          let belongsToPreset = isLiveWorkflowSessionForPreset(s, activePresetId, workspacePath)
           try {
             const running = await agentApi.getRunningWorkflow(s.session_id)
             if (running.preset_query_id) {
               belongsToPreset = running.preset_query_id === activePresetId
+            } else if (workspacePath && running.workspace_path) {
+              belongsToPreset = normalizeWorkflowPath(running.workspace_path) === normalizeWorkflowPath(workspacePath)
             }
           } catch {
             /* registry miss — fall through to persisted-tab check below */
@@ -1342,29 +1094,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           setShowChatArea(true)
         }
 
-        // 6. If no tabs were created/restored, check if ANY workflow tabs exist for this preset.
-        //    If not, auto-create a default "Workflow Builder" tab so the user sees something.
+        // 6. If no tabs were created/restored, show an empty Workflow Builder tab.
+        // Previous conversations are attached explicitly with /resume instead of
+        // auto-querying builder history during every workflow switch.
         if (!lastTabId) {
           const store = useChatStore.getState()
           if (existingWorkflowTabs.length === 0) {
-            const builderHistory = await loadWorkflowBuilderSession(activePresetId, workspacePath ?? undefined)
-              .catch(err => {
-                console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
-                return null
-              })
-            if (builderHistory?.source === 'workspace') {
-              setRestoreOffer({
-                kind: 'builder-history',
-                presetId: activePresetId,
-                session: builderHistory
-              })
-              await createFreshWorkflowBuilderTab(activePresetId, { skipRestoreOffer: true })
-              return
-            }
-            if (builderHistory) {
-              await restoreBuilderHistory(activePresetId, builderHistory)
-              return
-            }
             const defaultTabId = await createChatTab('Workflow Builder', {
               mode: 'workflow',
               phaseId: 'workflow-builder',
@@ -1385,32 +1120,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 setShowChatArea(true)
                 return
               }
-              const hasOnlyEmptyBuilderTabs = existingWorkflowTabs.every(tab =>
-                tab.metadata?.phaseId === 'workflow-builder' &&
-                !store.getTabStreamingStatus(tab.tabId) &&
-                (!tab.sessionId || getTabEvents(tab.sessionId).length === 0)
-              )
-              if (hasOnlyEmptyBuilderTabs) {
-                const builderHistory = await loadWorkflowBuilderSession(activePresetId, workspacePath ?? undefined)
-                  .catch(err => {
-                    console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
-                    return null
-                  })
-                if (builderHistory?.source === 'workspace') {
-                  setRestoreOffer({
-                    kind: 'builder-history',
-                    presetId: activePresetId,
-                    session: builderHistory
-                  })
-                  await createFreshWorkflowBuilderTab(activePresetId, { skipRestoreOffer: true })
-                  return
-                }
-                if (builderHistory) {
-                  await restoreBuilderHistory(activePresetId, builderHistory)
-                  return
-                }
-              }
-              await restoreExistingWorkflowTabs(existingWorkflowTabs, activePresetId)
+              switchTab(existingWorkflowTabs[0].tabId)
+              setShowChatArea(true)
               return
             }
           }
@@ -1424,7 +1135,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     const timeoutId = setTimeout(reconnectWorkflowTabs, 500)
     return () => clearTimeout(timeoutId)
-  }, [activePresetId, workspacePath, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs, createFreshWorkflowBuilderTab, restoreBuilderHistory, restoreExistingWorkflowTabs])
+  }, [activePresetId, workspacePath, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs, createFreshWorkflowBuilderTab])
 
 
   // Auto-minimize workflows when switching to a different preset
@@ -1470,12 +1181,23 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         .sort((a, b) => b.createdAt - a.createdAt)
 
       if (newPresetTabs.length > 0) {
-        // Prefer the builder tab when entering a preset; execution tabs remain available
-        // but should not steal focus just because they were last active.
-        const builderTab = newPresetTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
-        const streamingTab = newPresetTabs.find(t => chatStore.getTabStreamingStatus(t.tabId))
-        const targetTab = builderTab || streamingTab || newPresetTabs[0]
-        console.log(`[WorkflowLayout] Switching to tab: ${targetTab.tabId.slice(0,8)} (${newPresetTabs.length} tabs for preset, builder=${!!builderTab}, streaming=${!!streamingTab})`)
+        const pendingReadOnlyRestore = pendingReadOnlyRestoreRef.current
+        const restoredReadOnlyTab = pendingReadOnlyRestore?.presetId === activePresetId
+          ? newPresetTabs.find(t => t.tabId === pendingReadOnlyRestore.tabId && t.metadata?.isViewOnly)
+          : undefined
+        pendingReadOnlyRestoreRef.current = null
+        // Prefer a read-only Schedule/Bot tab only for the immediate restore action.
+        // Normal preset switches should not keep reopening stale scheduled-run tabs.
+        const interactiveTabs = newPresetTabs.filter(t => !t.metadata?.isViewOnly)
+        if (!restoredReadOnlyTab && interactiveTabs.length === 0) {
+          void createFreshWorkflowBuilderTab(activePresetId)
+          console.timeEnd(`[WorkflowLayout] preset-switch-effect-${activePresetId?.slice(0,8)}`)
+          return
+        }
+        const streamingTab = interactiveTabs.find(t => chatStore.getTabStreamingStatus(t.tabId))
+        const builderTab = interactiveTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
+        const targetTab = restoredReadOnlyTab || streamingTab || builderTab || interactiveTabs[0] || newPresetTabs[0]
+        console.log(`[WorkflowLayout] Switching to tab: ${targetTab.tabId.slice(0,8)} (${newPresetTabs.length} tabs for preset, restoredReadOnly=${!!restoredReadOnlyTab}, streaming=${!!streamingTab}, builder=${!!builderTab})`)
         chatStore.switchTab(targetTab.tabId)
         setShowChatArea(true)
 
@@ -1503,7 +1225,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       // Update the ref for non-preset-change re-fires (dep changes only)
       previousPresetIdRef.current = activePresetId
     }
-  }, [activePresetId, minimizeWorkflow, selectedRunFolder, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs])
+  }, [activePresetId, minimizeWorkflow, selectedRunFolder, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs, createFreshWorkflowBuilderTab])
 
   // Note: Query submission is now handled via chatAreaCallbackRef when ChatArea mounts
   // No need for useEffect with setTimeout - callback ref is the proper React pattern
@@ -1555,13 +1277,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     // For chat-compatible phases, just open the tab without auto-submitting a query.
     // The user will type naturally in the chat input.
     if (isChatCompatiblePhase(phaseId)) {
-      if (
-        phaseId === 'workflow-builder' &&
-        !useChatStore.getState().getTabStreamingStatus(tab.tabId) &&
-        (!tab.sessionId || useChatStore.getState().getTabEvents(tab.sessionId).length === 0)
-      ) {
-        void offerBuilderHistoryRestore(activePresetId, { skipIfLive: true })
-      }
       logger.debug('WorkflowLayout', `Chat-compatible phase ${phaseId} — opening tab for conversation`)
       setShowChatArea(true)
       return
@@ -1582,7 +1297,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     // Show ChatArea (triggers mount if not already shown)
     setShowChatArea(true)
-  }, [activePresetId, setCurrentWorkflowPhase, setShowChatArea, getPhaseById, setWorkflowWorkspaceView, offerBuilderHistoryRestore])
+  }, [activePresetId, setCurrentWorkflowPhase, setShowChatArea, getPhaseById, setWorkflowWorkspaceView])
 
   // Handle create plan - always opens Workflow Builder.
   const handleCreatePlan = useCallback(() => {
@@ -1691,7 +1406,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         {showChatArea && !workspacePaneVisible && canvasElement}
 
         {showChatArea && (
-          <div className={`${chatPaneVisibilityClass} min-h-0 min-w-0 flex-col bg-background transition-all duration-300 ${
+          <div data-tour="workflow-chat-pane" data-testid="tour-workflow-chat-pane" className={`${chatPaneVisibilityClass} min-h-0 min-w-0 flex-col bg-background transition-all duration-300 ${
             workspacePaneVisible
               ? `border-b border-border md:col-start-1 md:row-start-2 md:border-b-0 md:border-r ${shouldUseMobileReportPane ? 'flex-1 md:flex-[1.35]' : 'flex-1 basis-1/2'}`
               : 'flex-1'
@@ -1707,35 +1422,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               </div>
             )}
 
-            {!visibleRestoreOffer && isCheckingRestoreOffer && (
+            {showResumeHint && (
               <div className="flex shrink-0 items-center gap-1.5 border-b border-border bg-muted/20 px-2 py-1">
-                <div className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground"></div>
-                <span className="truncate text-[11px] leading-4 text-muted-foreground">Checking previous chat...</span>
-              </div>
-            )}
-
-            {visibleRestoreOffer && (
-              <div className="flex shrink-0 items-center justify-between gap-1.5 border-b border-border bg-muted/30 px-2 py-1">
-                <span className="min-w-0 truncate text-[11px] leading-4 text-muted-foreground">
-                  Restore chat: <span className="font-medium text-foreground">{restoreOfferFile}</span>
-                  {restoreOfferTime ? <span> · last chat {restoreOfferTime}</span> : null}
+                <span className="truncate text-[11px] leading-4 text-muted-foreground">
+                  Need older context? Type <span className="font-mono text-foreground">/resume</span> to attach a previous chat thread.
                 </span>
-                <div className="flex shrink-0 items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={handleDismissRestoreOffer}
-                    className="rounded px-1.5 py-0.5 text-[11px] font-medium leading-4 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  >
-                    Dismiss
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleRestorePreviousWorkflowConversation}
-                    className="rounded bg-primary px-1.5 py-0.5 text-[11px] font-medium leading-4 text-primary-foreground transition-colors hover:bg-primary/90"
-                  >
-                    Restore
-                  </button>
-                </div>
               </div>
             )}
 

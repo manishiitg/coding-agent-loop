@@ -1022,9 +1022,11 @@ func getScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
 					runs, total, err = ListMultiAgentScheduleRuns(r.Context(), result.UserID, id, limit, offset)
 				} else {
 					workspacePath = result.WorkspacePath
+					_ = svc.reconcileWorkflowScheduleRuns(r.Context(), workspacePath, id)
 					runs, total, err = ListScheduleRuns(r.Context(), workspacePath, id, limit, offset)
 				}
 			} else {
+				_ = svc.reconcileWorkflowScheduleRuns(r.Context(), workspacePath, id)
 				runs, total, err = ListScheduleRuns(r.Context(), workspacePath, id, limit, offset)
 			}
 		}

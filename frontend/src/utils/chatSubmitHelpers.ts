@@ -179,9 +179,6 @@ export function buildQueryRequestPayload(params: {
     selected_skills: isChatWithExtras && currentTab?.config?.selectedSkills?.length
       ? currentTab.config.selectedSkills
       : undefined,
-    selected_subagents: isChatWithExtras && currentTab?.config?.selectedSubAgents?.length
-      ? currentTab.config.selectedSubAgents
-      : undefined,
     enable_context_editing: enableContextEditing,
     decrypted_secrets: (isChatWithExtras || selectedModeCategory === 'workflow') && decryptedSecrets?.length ? decryptedSecrets : undefined,
     selected_global_secrets: (isChatWithExtras || selectedModeCategory === 'workflow')

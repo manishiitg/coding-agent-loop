@@ -54,7 +54,7 @@ type ScheduleRuntimeState struct {
 
 // registeredJob is a schedule registered for wall-clock evaluation.
 type registeredJob struct {
-	sctx     *ScheduleContext
+	sctx      *ScheduleContext
 	cronSched cron.Schedule // nil for calendar (one-time) jobs
 	runAt     *time.Time    // non-nil for calendar (one-time) jobs
 	lastFired time.Time     // truncated to the minute — prevents double-fire in the same minute
@@ -446,7 +446,6 @@ func (s *SchedulerService) Stop() {
 	scheduleLogf("[SCHEDULER] Stopped")
 }
 
-
 // LoadSchedule registers a schedule for wall-clock evaluation from a ScheduleContext.
 func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	s.mu.Lock()
@@ -568,7 +567,6 @@ func (tz *tzSchedule) Next(t time.Time) time.Time {
 	return tz.inner.Next(t.In(tz.loc))
 }
 
-
 // ReloadSchedule reloads a schedule from its manifest after it's been updated.
 func (s *SchedulerService) ReloadSchedule(ctx context.Context, workspacePath string, scheduleID string) error {
 	manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
@@ -645,6 +643,7 @@ func (s *SchedulerService) GetRuntimeState(scheduleID string) ScheduleRuntimeSta
 	}
 
 	if workspacePath := s.GetWorkspaceForSchedule(scheduleID); workspacePath != "" {
+		_ = s.reconcileWorkflowScheduleRuns(context.Background(), workspacePath, scheduleID)
 		runs, err := ReadScheduleRuns(context.Background(), workspacePath)
 		if err == nil {
 			return mergeRuntimeStateWithRuns(merged, scheduleID, runs)
@@ -652,6 +651,77 @@ func (s *SchedulerService) GetRuntimeState(scheduleID string) ScheduleRuntimeSta
 	}
 
 	return merged
+}
+
+func (s *SchedulerService) reconcileWorkflowScheduleRuns(ctx context.Context, workspacePath, scheduleID string) error {
+	if s == nil || s.api == nil || strings.TrimSpace(workspacePath) == "" {
+		return nil
+	}
+
+	runs, err := ReadScheduleRuns(ctx, workspacePath)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	changed := false
+	for i := range runs {
+		if runs[i].Status != "running" {
+			continue
+		}
+		if scheduleID != "" && runs[i].ScheduleID != scheduleID {
+			continue
+		}
+
+		status, errMsg, shouldFinalize := s.reconciledScheduleRunStatus(&runs[i], now)
+		if !shouldFinalize {
+			continue
+		}
+
+		runs[i].Status = status
+		runs[i].Error = errMsg
+		durationMs := now.Sub(runs[i].StartedAt).Milliseconds()
+		if durationMs < 0 {
+			durationMs = 0
+		}
+		runs[i].DurationMs = &durationMs
+		runs[i].CompletedAt = &now
+		changed = true
+	}
+
+	if !changed {
+		return nil
+	}
+	return WriteScheduleRuns(ctx, workspacePath, runs)
+}
+
+func (s *SchedulerService) reconciledScheduleRunStatus(run *ScheduleRunEntry, now time.Time) (string, string, bool) {
+	if run == nil {
+		return "", "", false
+	}
+
+	if strings.TrimSpace(run.SessionID) == "" {
+		if now.Sub(run.StartedAt) > 10*time.Minute {
+			return "error", "interrupted: no session id recorded", true
+		}
+		return "", "", false
+	}
+
+	session, exists := s.api.getActiveSession(run.SessionID)
+	if !exists {
+		return "error", "interrupted: session not active", true
+	}
+
+	switch session.Status {
+	case "running":
+		return "", "", false
+	case "completed":
+		return "success", "", true
+	case "error", "stopped", "inactive", "dismissed":
+		return "error", fmt.Sprintf("session ended with status %s", session.Status), true
+	default:
+		return "", "", false
+	}
 }
 
 func mergeRuntimeStateWithRuns(state ScheduleRuntimeState, scheduleID string, runs []ScheduleRunEntry) ScheduleRuntimeState {
@@ -1406,6 +1476,21 @@ func (s *SchedulerService) waitForWorkflowComplete(ctx context.Context, sessionI
 					detectedFolder = s.api.latestTrackedRunFolderForSession(sessionID)
 				}
 				return detectedFolder, nil
+			}
+
+			if session, exists := s.api.getActiveSession(sessionID); exists {
+				switch session.Status {
+				case "completed":
+					if detectedFolder == "" {
+						detectedFolder = s.api.latestTrackedRunFolderForSession(sessionID)
+					}
+					return detectedFolder, nil
+				case "error", "stopped", "inactive", "dismissed":
+					if detectedFolder == "" {
+						detectedFolder = s.api.latestTrackedRunFolderForSession(sessionID)
+					}
+					return detectedFolder, fmt.Errorf("session ended with status %s", session.Status)
+				}
 			}
 		}
 	}

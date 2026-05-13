@@ -79,9 +79,12 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
   // ── WhatsApp ──────────────────────────────────────────────────────────────
   const [waStatus, setWaStatus] = useState<WhatsAppStatus | null>(null)
   const [waError, setWaError] = useState<string | null>(null)
-  // qrBust changes to force <img> to re-fetch the PNG. Bumped when polling
+  // qrBust changes to force the QR fetch to reload. Bumped when polling
   // detects the QR has rotated or the pairing state transitions.
   const [qrBust, setQrBust] = useState<number>(() => Date.now())
+  const [qrImageURL, setQrImageURL] = useState<string | null>(null)
+  const [qrLoading, setQrLoading] = useState(false)
+  const [qrError, setQrError] = useState<string | null>(null)
   const [unpairConfirm, setUnpairConfirm] = useState(false)
   const [unpairing, setUnpairing] = useState(false)
   const waPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -256,6 +259,52 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
       }
     }
   }, [isOpen, activeSection])
+
+  useEffect(() => {
+    if (!isOpen || activeSection !== 'whatsapp' || !waStatus?.enabled || waStatus.paired || !waStatus.qr_available) {
+      setQrLoading(false)
+      setQrError(null)
+      setQrImageURL(prev => {
+        if (prev) URL.revokeObjectURL(prev)
+        return null
+      })
+      return
+    }
+
+    let cancelled = false
+    setQrLoading(true)
+    setQrError(null)
+    agentApi.getWhatsAppPairQR(384, qrBust)
+      .then(blob => {
+        if (cancelled) return
+        const nextURL = URL.createObjectURL(blob)
+        setQrImageURL(prev => {
+          if (prev) URL.revokeObjectURL(prev)
+          return nextURL
+        })
+      })
+      .catch(err => {
+        if (cancelled) return
+        setQrImageURL(prev => {
+          if (prev) URL.revokeObjectURL(prev)
+          return null
+        })
+        setQrError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => {
+        if (!cancelled) setQrLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen, activeSection, waStatus?.enabled, waStatus?.paired, waStatus?.qr_available, qrBust])
+
+  useEffect(() => {
+    return () => {
+      if (qrImageURL) URL.revokeObjectURL(qrImageURL)
+    }
+  }, [qrImageURL])
 
   // ── Simulate: auto-scroll ─────────────────────────────────────────────────
   useEffect(() => {
@@ -949,8 +998,8 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                         <p className="text-xs text-muted-foreground">
                           Remove <code className="px-1 py-0.5 bg-muted rounded">WHATSAPP_ENABLED=false</code> from
                           the server's <code className="px-1 py-0.5 bg-muted rounded">.env</code> and restart the
-                          agent. The connector is enabled by default, and the session file path can be overridden via{' '}
-                          <code className="px-1 py-0.5 bg-muted rounded">WHATSAPP_SESSION_DB</code>.
+                          agent. The connector is enabled by default, and the per-user session directory can be
+                          overridden via <code className="px-1 py-0.5 bg-muted rounded">WHATSAPP_SESSION_DIR</code>.
                         </p>
                       </div>
                     </div>
@@ -1003,13 +1052,31 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                       <h3 className="text-sm font-medium text-foreground">Scan to pair</h3>
                       {waStatus.qr_available ? (
                         <>
-                          <img
-                            src={agentApi.getWhatsAppPairURL(384, qrBust)}
-                            alt="WhatsApp pairing QR"
-                            width={256}
-                            height={256}
-                            className="rounded border border-border bg-white p-2"
-                          />
+                          {qrImageURL ? (
+                            <img
+                              src={qrImageURL}
+                              alt="WhatsApp pairing QR"
+                              width={256}
+                              height={256}
+                              className="rounded border border-border bg-white p-2"
+                            />
+                          ) : (
+                            <div className="flex h-64 w-64 items-center justify-center rounded border border-border bg-muted/30 p-4 text-center">
+                              {qrLoading ? (
+                                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  Loading QR…
+                                </div>
+                              ) : qrError ? (
+                                <div className="flex flex-col items-center gap-2 text-sm text-red-700 dark:text-red-300">
+                                  <AlertCircle className="w-5 h-5" />
+                                  <span>{qrError}</span>
+                                </div>
+                              ) : (
+                                <span className="text-sm text-muted-foreground">QR not available yet.</span>
+                              )}
+                            </div>
+                          )}
                           <p className="text-xs text-muted-foreground text-center max-w-sm">
                             Open WhatsApp on your phone. <strong>Android</strong>: ⋮ menu → Linked Devices → Link a
                             device. <strong>iPhone</strong>: Settings → Linked Devices → Link Device. Then scan this

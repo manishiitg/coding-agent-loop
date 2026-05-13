@@ -523,6 +523,8 @@ export const GlobalActivityMonitor: React.FC = () => {
     <div ref={containerRef} className="relative">
       <button
         type="button"
+        data-tour="active-work-switcher"
+        data-testid="tour-active-work-switcher"
         onClick={handleHeaderClick}
         className="relative flex items-center gap-2 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-700/50 dark:bg-blue-900/20 dark:text-blue-200 dark:hover:bg-blue-900/35"
         aria-label={visibleSessions.length === 1 ? 'Open active work' : 'Open active work in command center'}

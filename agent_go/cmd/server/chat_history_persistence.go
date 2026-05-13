@@ -13,14 +13,15 @@ import (
 
 // ChatHistorySession is the metadata returned by the list endpoint.
 type ChatHistorySession struct {
-	SessionID    string `json:"session_id"`
-	AgentMode    string `json:"agent_mode"`
-	Status       string `json:"status"`
-	Query        string `json:"query,omitempty"`
-	UserID       string `json:"user_id"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
-	MessageCount int    `json:"message_count"`
+	SessionID        string `json:"session_id"`
+	AgentMode        string `json:"agent_mode"`
+	Status           string `json:"status"`
+	Query            string `json:"query,omitempty"`
+	UserID           string `json:"user_id"`
+	ConversationPath string `json:"conversation_path"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+	MessageCount     int    `json:"message_count"`
 }
 
 // chatHistoryRoot returns the workspace-relative path to a user's chat_history root.
@@ -121,12 +122,13 @@ func ListChatHistorySessions(userID string, limit, offset int) ([]ChatHistorySes
 		}
 
 		sessions = append(sessions, ChatHistorySession{
-			SessionID:    raw.SessionID,
-			AgentMode:    raw.AgentMode,
-			Query:        query,
-			UserID:       userID,
-			UpdatedAt:    raw.UpdatedAt,
-			MessageCount: len(raw.History),
+			SessionID:        raw.SessionID,
+			AgentMode:        raw.AgentMode,
+			Query:            query,
+			UserID:           userID,
+			ConversationPath: convPath,
+			UpdatedAt:        raw.UpdatedAt,
+			MessageCount:     len(raw.History),
 		})
 	}
 

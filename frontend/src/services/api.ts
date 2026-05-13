@@ -10,6 +10,7 @@ import type {
   MCPServerConfig,
   ChatSession,
   ChatHistoryConversation,
+  ChatHistorySession,
   ListChatSessionsResponse,
   GetSessionEventsResponse,
   CreateChatSessionRequest,
@@ -629,6 +630,11 @@ export const agentApi = {
     return response.data
   },
 
+  listChatHistorySessions: async (limit = 80, offset = 0): Promise<{ sessions: ChatHistorySession[] }> => {
+    const response = await api.get('/api/chat-history/sessions', { params: { limit, offset } })
+    return response.data
+  },
+
   // Reconnect to an active session
   reconnectSession: async (sessionId: string): Promise<ReconnectSessionResponse> => {
     const response = await api.post(`/api/sessions/${sessionId}/reconnect`)
@@ -935,20 +941,26 @@ export const agentApi = {
     return response.data
   },
 
-  // Returns the URL to the PNG QR. Callers embed this in an <img> — the
-  // image body is streamed directly from the backend (served fresh each
-  // request; no caching). Prefixed with API_BASE_URL because in dev mode
-  // the Vite server and the agent run on different origins; a relative
-  // path would resolve against the Vite origin and 404. A cache-buster
-  // query param forces the <img> to re-fetch when the QR rotates.
+  // Returns the URL to the PNG QR. Kept for callers that need a direct URL.
   getWhatsAppPairURL: (size = 384, bust?: number): string => {
     const b = bust ?? Date.now()
-    // <img src=...> can't carry an Authorization header. Multi-user mode requires
-    // a JWT, so fall back to the `?token=` query-param path that AuthMiddleware
-    // already supports for SSE/EventSource clients.
     const token = getAuthToken()
     const tokenParam = token ? `&token=${encodeURIComponent(token)}` : ''
     return `${API_BASE_URL}/api/whatsapp/pair?size=${size}&_=${b}${tokenParam}`
+  },
+
+  // Fetches the QR PNG and preserves backend error text. This avoids the
+  // <img>-tag failure mode where 409/503 responses only render as a broken image.
+  getWhatsAppPairQR: async (size = 384, bust?: number): Promise<Blob> => {
+    const response = await fetch(agentApi.getWhatsAppPairURL(size, bust), {
+      method: 'GET',
+      cache: 'no-store',
+    })
+    if (!response.ok) {
+      const text = (await response.text()).trim()
+      throw new Error(text || `WhatsApp pairing QR failed (${response.status})`)
+    }
+    return response.blob()
   },
 
   // Drops the paired account and restarts the connector with a fresh QR.

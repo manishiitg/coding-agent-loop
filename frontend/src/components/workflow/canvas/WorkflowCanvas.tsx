@@ -128,9 +128,9 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
   }), [handleRefresh, plan])
 
   return (
-    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'md:contents' : ''}`}>
+    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'contents' : ''}`}>
       {!hideToolbar && (
-        <div className={sharedToolbar && showChatArea ? 'md:col-span-2 md:row-start-1' : ''}>
+        <div className={sharedToolbar && showChatArea ? 'col-start-1 row-start-1 md:col-span-2' : ''}>
           <WorkflowToolbar
             status={status}
             hasPlan={Boolean(plan?.steps?.length)}
@@ -150,7 +150,7 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
         </div>
       )}
 
-      <div className={`${sharedToolbar && showChatArea ? 'flex-1 md:col-start-2 md:row-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
+      <div data-tour="workflow-canvas-pane" data-testid="tour-workflow-canvas-pane" className={`${sharedToolbar && showChatArea ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
         {toolbarOnly ? null : (
           <div className="h-full min-h-0 relative">
             {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={showChatArea} />}
@@ -2500,9 +2500,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const hasPlan = !!(plan && plan.steps && plan.steps.length > 0)
   if (!hasPlan) {
     return (
-      <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className} ${sharedToolbar && showChatArea ? 'md:contents' : ''}`}>
+      <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className} ${sharedToolbar && showChatArea ? 'contents' : ''}`}>
         {!hideToolbar && (
-          <div className={sharedToolbar && showChatArea ? 'md:col-span-2 md:row-start-1' : ''}>
+          <div className={sharedToolbar && showChatArea ? 'col-start-1 row-start-1 md:col-span-2' : ''}>
             <WorkflowToolbar
               status={status}
               hasPlan={false}
@@ -2520,7 +2520,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             />
           </div>
         )}
-        <div className={`${sharedToolbar && showChatArea ? 'flex-1 md:col-start-2 md:row-start-2' : 'flex-1'} ${paneClassName} flex min-h-0 items-center justify-center`}>
+        <div className={`${sharedToolbar && showChatArea ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} flex min-h-0 items-center justify-center`}>
           <div className="flex flex-col items-center gap-4 text-center">
             <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
               <span className="text-3xl">📋</span>
@@ -2548,9 +2548,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }
 
   return (
-    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'md:contents' : ''}`} ref={reactFlowWrapper}>
+    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'contents' : ''}`} ref={reactFlowWrapper}>
       {!hideToolbar && (
-        <div className={sharedToolbar && showChatArea ? 'md:col-span-2 md:row-start-1' : ''}>
+        <div className={sharedToolbar && showChatArea ? 'col-start-1 row-start-1 md:col-span-2' : ''}>
           <WorkflowToolbar
             status={status}
             hasPlan={true}
@@ -2570,7 +2570,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         </div>
       )}
 
-      <div className={`${sharedToolbar && showChatArea ? 'flex-1 md:col-start-2 md:row-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
+      <div data-tour="workflow-canvas-pane" data-testid="tour-workflow-canvas-pane" className={`${sharedToolbar && showChatArea ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
         {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
         {toolbarOnly ? null : effectiveCanvasViewMode === 'report' ? (
           <div className="h-full min-h-0 relative">

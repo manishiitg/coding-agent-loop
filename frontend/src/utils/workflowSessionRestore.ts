@@ -25,6 +25,8 @@ function isActiveWorkflowSession(session: ActiveSessionInfo): boolean {
     session.has_running_background_agents === true ||
     (session.running_background_agent_count ?? 0) > 0 ||
     status === 'running' ||
+    status === 'active' ||
+    status === 'in_progress' ||
     status === 'paused' ||
     status === 'idle' ||
     status === 'waiting' ||
@@ -273,6 +275,21 @@ async function restoreReadOnlyWorkflowRunChat(
     ...options.metadata,
   }
   const desiredName = options.tabName
+
+  if (presetId) {
+    const emptyBuilderTabs = Object.values(chatStore.chatTabs).filter(tab =>
+      tab.metadata?.mode === 'workflow' &&
+      tab.metadata?.phaseId === 'workflow-builder' &&
+      tab.metadata?.presetQueryId === presetId &&
+      !chatStore.getTabStreamingStatus(tab.tabId) &&
+      (!tab.sessionId || chatStore.getTabEvents(tab.sessionId).length === 0)
+    )
+
+    for (const tab of emptyBuilderTabs) {
+      await chatStore.closeTab(tab.tabId, false)
+    }
+  }
+
   const existingTab = findReadOnlyRunTabForSession(chatStore.chatTabs, session.session_id, metadata)
 
   const tabId = existingTab?.tabId ?? await chatStore.createChatTab(desiredName, metadata, session.session_id)
@@ -317,6 +334,9 @@ async function restoreReadOnlyWorkflowRunChat(
   }
 
   chatStore.switchTab(tabId)
+  window.dispatchEvent(new CustomEvent('workflow-readonly-run-restored', {
+    detail: { presetId, tabId }
+  }))
   if (options.scrollToBottom !== false) requestChatScrollToBottom()
   return tabId
 }

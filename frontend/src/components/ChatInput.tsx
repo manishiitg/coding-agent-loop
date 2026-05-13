@@ -1,7 +1,7 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
 
 const DBG = '[skill-popup]'
-import { Send, Square, Code2, Sparkles, Wand2, Loader2, Search, Globe, Layers, X, History, Bot, Server, Download, Paperclip } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Wand2, Loader2, Search, Globe, Layers, X, History, Bot, Server, Download, Paperclip, CalendarClock, MessageSquare } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -12,7 +12,6 @@ import type { TokenUsageEvent } from '../generated/events'
 import ServerSelectionDropdown from './ServerSelectionDropdown'
 import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
 import SecretSelectionDropdown from './secrets/SecretSelectionDropdown'
-import SubAgentSelectionDropdown from './subagents/SubAgentSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
@@ -28,6 +27,18 @@ import { hasWorkflowWriteAccess } from '../utils/workflowPermissions'
 
 const WORKSHOP_MODE_SWITCH_CONFIRM_KEY = 'workflow_workshop_mode_switch_confirm_dismissed'
 type VisibleWorkshopMode = 'builder' | 'optimizer' | 'run'
+
+const removePasteMarkersFromText = (text: string, markers: string[]) => {
+  return markers.reduce((next, marker) => {
+    const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return next
+      .replace(new RegExp(escaped, 'g'), '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n[ \t]+/g, '\n')
+      .trim()
+  }, text)
+}
 
 function WorkshopModeToggle() {
   const canWriteWorkflow = useAuthStore(state => hasWorkflowWriteAccess(state.user, state.isMultiUserMode))
@@ -170,13 +181,12 @@ function WorkshopModeToggle() {
   )
 }
 import InlineSelectionPopup from './InlineSelectionPopup'
-import type { InlineSelectionItem } from './InlineSelectionPopup'
+import type { InlineSelectionFilterTab, InlineSelectionItem } from './InlineSelectionPopup'
 import SkillImportDialog from './skills/SkillImportDialog'
-import SubAgentImportDialog from './subagents/SubAgentImportDialog'
 import { MCPConfigPopup } from './MCPConfigPopup'
 import MCPDetailsModal from './MCPDetailsModal'
 import LLMConfigurationModal from './LLMConfigurationModal'
-import type { PlannerFile, PollingEvent, LLMProvider } from '../services/api-types'
+import type { PlannerFile, PollingEvent, LLMProvider, ChatHistorySession } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
@@ -186,14 +196,45 @@ import { usePresetApplication, useGlobalPresetStore } from '../stores/useGlobalP
 import { useModeStore } from '../stores/useModeStore'
 import { agentApi, getApiBaseUrl } from '../services/api'
 import { skillsApi } from '../api/skills'
-import { subagentsApi } from '../api/subagents'
 import type { Skill } from '../types/skills'
-import type { SubAgent } from '../types/subagents'
 
 // MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown
 // Managed by dedicated UI controls in ChatInput (browser/GWS icons), not MCP dropdown.
 const DEDICATED_MCP_SERVERS = new Set(['playwright', 'gws'])
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
+
+const formatResumeChatTime = (value?: string): string => {
+  if (!value) return 'Unknown time'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Unknown time'
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+const resumeChatTitle = (session: ChatHistorySession): string => {
+  const query = session.query?.replace(/\s+/g, ' ').trim()
+  if (query) return query.length > 140 ? `${query.slice(0, 140)}...` : query
+  return `${(session.agent_mode || 'chat').replace(/_/g, ' ')} ${session.session_id.slice(0, 8)}`
+}
+
+const resumeChatConversationPath = (session: ChatHistorySession): string => {
+  if (session.conversation_path) return session.conversation_path
+  const userId = session.user_id || 'default'
+  return `_users/${userId}/chat_history/${session.session_id}/conversation.json`
+}
+
+type ResumeSessionKind = 'chat' | 'schedule' | 'bot'
+type ResumeFilter = ResumeSessionKind | 'all'
+
+const getResumeSessionKind = (session: ChatHistorySession): ResumeSessionKind => {
+  if (session.session_id.startsWith('schedule-cron--')) return 'schedule'
+  if (session.session_id.startsWith('bot-')) return 'bot'
+  return 'chat'
+}
 
 export interface ActiveAgentInfo {
   id: string
@@ -691,6 +732,35 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Memoize to prevent unnecessary re-renders when other config values change
   const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
   const chatPastedAttachments = useMemo(() => tabConfig?.pastedAttachments || [], [tabConfig?.pastedAttachments])
+
+  // Get input text from tab config (source of truth for persistence)
+  const storedInputText = tabConfig?.inputText || ''
+
+  // Local state for immediate UI updates (prevents Zustand updates on every keystroke)
+  const [localInputText, setLocalInputText] = useState(storedInputText)
+  const inputText = localInputText
+
+  // Debounce ref for syncing to store
+  const syncToStoreTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Sync local state FROM store when store changes externally (preset sync, etc.)
+  useLayoutEffect(() => {
+    // Only sync if store value differs and we're not in the middle of typing
+    if (storedInputText !== localInputText && !syncToStoreTimeoutRef.current) {
+      setLocalInputText(storedInputText)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storedInputText]) // Intentionally exclude localInputText to avoid loops
+
+  // Cleanup timeout refs on unmount
+  useEffect(() => {
+    return () => {
+      if (syncToStoreTimeoutRef.current) {
+        clearTimeout(syncToStoreTimeoutRef.current)
+      }
+    }
+  }, [])
+
   // Use ?? instead of || to preserve false values (user's selection)
   // Only default to false if the value is undefined/null (not explicitly set)
   const effectiveProviderForSteer = useMemo(() => {
@@ -803,28 +873,57 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [activeTabId, setTabConfig])
   
-  const addPastedAttachment = useCallback((content: string) => {
-    if (!activeTabId) return
+  const addPastedAttachment = useCallback((content: string): string | null => {
+    if (!activeTabId) return null
+    const existingAttachments = useChatStore.getState().getTabConfig(activeTabId)?.pastedAttachments || chatPastedAttachments
+    const maxPasteNumber = existingAttachments.reduce((max, item, index) => {
+      const match = item.marker?.match(/^\[paste(\d+)\]$/)
+      const number = match ? Number(match[1]) : index + 1
+      return Number.isFinite(number) ? Math.max(max, number) : max
+    }, 0)
+    const marker = `[paste${maxPasteNumber + 1}]`
     const lines = content.split('\n').length
     const item = {
       id: `paste_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      marker,
       content,
       chars: content.length,
       lines,
       createdAt: Date.now(),
     }
-    setTabConfig(activeTabId, { pastedAttachments: [...chatPastedAttachments, item] })
+    setTabConfig(activeTabId, { pastedAttachments: [...existingAttachments, item] })
+    return marker
   }, [activeTabId, chatPastedAttachments, setTabConfig])
 
   const removePastedAttachment = useCallback((id: string) => {
     if (!activeTabId) return
-    setTabConfig(activeTabId, { pastedAttachments: chatPastedAttachments.filter(p => p.id !== id) })
-  }, [activeTabId, chatPastedAttachments, setTabConfig])
+    const attachment = chatPastedAttachments.find(p => p.id === id)
+    const marker = attachment?.marker
+    const nextInputText = marker ? removePasteMarkersFromText(inputText, [marker]) : inputText
+    setLocalInputText(nextInputText)
+    prevInputTextRef.current = nextInputText
+    if (syncToStoreTimeoutRef.current) {
+      clearTimeout(syncToStoreTimeoutRef.current)
+      syncToStoreTimeoutRef.current = null
+    }
+    setTabConfig(activeTabId, {
+      inputText: nextInputText,
+      pastedAttachments: chatPastedAttachments.filter(p => p.id !== id)
+    })
+  }, [activeTabId, chatPastedAttachments, inputText, setTabConfig])
 
   const clearPastedAttachments = useCallback(() => {
     if (!activeTabId) return
-    setTabConfig(activeTabId, { pastedAttachments: [] })
-  }, [activeTabId, setTabConfig])
+    const markers = chatPastedAttachments.map((p, index) => p.marker || `[paste${index + 1}]`)
+    const nextInputText = removePasteMarkersFromText(inputText, markers)
+    setLocalInputText(nextInputText)
+    prevInputTextRef.current = nextInputText
+    if (syncToStoreTimeoutRef.current) {
+      clearTimeout(syncToStoreTimeoutRef.current)
+      syncToStoreTimeoutRef.current = null
+    }
+    setTabConfig(activeTabId, { inputText: nextInputText, pastedAttachments: [] })
+  }, [activeTabId, chatPastedAttachments, inputText, setTabConfig])
 
   const addFileToContext = useCallback((file: { name: string; path: string; type: 'file' | 'folder' }) => {
     if (activeTabId && activeTab) {
@@ -927,34 +1026,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Get preset info for multi-agent mode
   const { getActivePreset, activePresetIds } = usePresetApplication()
   
-  // Get input text from tab config (source of truth for persistence)
-  const storedInputText = tabConfig?.inputText || ''
-
-  // Local state for immediate UI updates (prevents Zustand updates on every keystroke)
-  const [localInputText, setLocalInputText] = useState(storedInputText)
-  const inputText = localInputText
-
-  // Debounce ref for syncing to store
-  const syncToStoreTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-
-  // Sync local state FROM store when store changes externally (preset sync, etc.)
-  useLayoutEffect(() => {
-    // Only sync if store value differs and we're not in the middle of typing
-    if (storedInputText !== localInputText && !syncToStoreTimeoutRef.current) {
-      setLocalInputText(storedInputText)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storedInputText]) // Intentionally exclude localInputText to avoid loops
-
-  // Cleanup timeout refs on unmount
-  useEffect(() => {
-    return () => {
-      if (syncToStoreTimeoutRef.current) {
-        clearTimeout(syncToStoreTimeoutRef.current)
-      }
-    }
-  }, [])
-
   // Auto-check GWS auth when popup opens
   useEffect(() => {
     if (showGWSPopup && !gwsChatAuthStatus && !gwsChatChecking) {
@@ -1176,31 +1247,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [activeTabId, setTabConfig])
 
 
-  // Use tab-specific sub-agent templates - memoize to prevent re-renders
-  const selectedSubAgents = useMemo(() => tabConfig?.selectedSubAgents || [], [tabConfig?.selectedSubAgents])
-
-  // Sub-agent template operations (update tab config)
-  const onSubAgentToggle = useCallback((folderName: string) => {
-    if (activeTabId) {
-      const newSubAgents = selectedSubAgents.includes(folderName)
-        ? selectedSubAgents.filter(s => s !== folderName)
-        : [...selectedSubAgents, folderName]
-      setTabConfig(activeTabId, { selectedSubAgents: newSubAgents })
-    }
-  }, [activeTabId, selectedSubAgents, setTabConfig])
-
-  const onSelectAllSubAgents = useCallback((allNames: string[]) => {
-    if (activeTabId) {
-      setTabConfig(activeTabId, { selectedSubAgents: allNames })
-    }
-  }, [activeTabId, setTabConfig])
-
-  const onClearAllSubAgents = useCallback(() => {
-    if (activeTabId) {
-      setTabConfig(activeTabId, { selectedSubAgents: [] })
-    }
-  }, [activeTabId, setTabConfig])
-
   const {
     availableLLMs,
     getCurrentLLMOption,
@@ -1210,7 +1256,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   } = useLLMStore()
 
   const { scrollToFile } = useWorkspaceStore()
-  const { showSkillImport, showSubAgentImport, showMCPDetails, showMCPConfig, showModels, openDialog, closeDialog } = useCommandDialogStore()
+  const { showSkillImport, showMCPDetails, showMCPConfig, showModels, openDialog, closeDialog } = useCommandDialogStore()
 
   // LLM selection (always update tab config)
   const onPrimaryLLMSelect = useCallback((llm: LLMOption) => {
@@ -1326,6 +1372,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [commandDialogPosition, setCommandDialogPosition] = useState({ bottom: 0, left: 0 })
   const [commandSearchQuery, setCommandSearchQuery] = useState('')
   const [slashPosition, setSlashPosition] = useState(-1) // Position of / in text
+  const [showResumeDialog, setShowResumeDialog] = useState(false)
+  const [resumeDialogPosition, setResumeDialogPosition] = useState({ bottom: 0, left: 0 })
+  const [resumeSessions, setResumeSessions] = useState<ChatHistorySession[]>([])
+  const [resumeSessionsLoading, setResumeSessionsLoading] = useState(false)
+  const [resumeFilter, setResumeFilter] = useState<ResumeFilter>('chat')
 
   // Command editor dialog state
   const [showCommandEditor, setShowCommandEditor] = useState(false)
@@ -1349,17 +1400,51 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [serverPopupSearchQuery, setServerPopupSearchQuery] = useState('')
   const [dollarPosition, setDollarPosition] = useState(-1)
 
-  // ^ sub-agent inline popup state
-  const [showSubAgentPopup, setShowSubAgentPopup] = useState(false)
-  const [subAgentPopupPosition, setSubAgentPopupPosition] = useState({ bottom: 0, left: 0 })
-  const [subAgentPopupSearchQuery, setSubAgentPopupSearchQuery] = useState('')
-  const [caretPosition, setCaretPosition] = useState(-1)
-
   // Lazy-loaded data for inline popups
   const [allSkills, setAllSkills] = useState<Skill[]>([])
-  const [allSubAgents, setAllSubAgents] = useState<SubAgent[]>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
-  const [subAgentsLoading, setSubAgentsLoading] = useState(false)
+
+  const openResumeDialog = useCallback(() => {
+    if (selectedModeCategory !== 'workflow') {
+      addToast('/resume is only available in workflow chat', 'info')
+      return
+    }
+
+    const rect = textareaRef.current?.getBoundingClientRect()
+    setResumeDialogPosition({
+      bottom: rect ? window.innerHeight - rect.top + 8 : 96,
+      left: rect ? rect.left + window.scrollX : 24,
+    })
+    setShowCommandDialog(false)
+    setSlashPosition(-1)
+    setCommandSearchQuery('')
+    setResumeFilter('chat')
+    setShowResumeDialog(true)
+  }, [addToast, selectedModeCategory])
+
+  useEffect(() => {
+    if (!showResumeDialog) return
+    let cancelled = false
+    setResumeSessionsLoading(true)
+    agentApi.listChatHistorySessions(100)
+      .then(response => {
+        if (cancelled) return
+        const sessions = [...(response.sessions || [])].sort((a, b) =>
+          Date.parse(b.updated_at || b.created_at || '') - Date.parse(a.updated_at || a.created_at || '')
+        )
+        setResumeSessions(sessions)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResumeSessions([])
+          addToast('Failed to load previous chats', 'error')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setResumeSessionsLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [addToast, showResumeDialog])
 
   // Auto-resize textarea based on content
   const adjustTextareaHeight = useCallback(() => {
@@ -1480,24 +1565,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [showSkillPopup])
 
-  // Lazy-load sub-agents when ^ popup opens (always re-fetch to pick up new custom sub-agents)
-  useEffect(() => {
-    if (showSubAgentPopup) {
-      setSubAgentsLoading(true)
-      subagentsApi.listSubAgents()
-        .then(res => setAllSubAgents(res.subagents || []))
-        .catch(() => {})
-        .finally(() => setSubAgentsLoading(false))
-    }
-  }, [showSubAgentPopup])
-
   // Consolidated query selection logic — pasted attachments are prepended as
   // fenced blocks so the LLM sees them as distinct sections, separate from the
   // user's typed message.
   const queryToSubmit = useMemo(() => {
     if (!chatPastedAttachments.length) return inputText
     const blocks = chatPastedAttachments.map((p, i) => {
-      const header = `[Pasted attachment ${i + 1} — ${p.lines} line${p.lines === 1 ? '' : 's'}, ${p.chars} char${p.chars === 1 ? '' : 's'}]`
+      const marker = p.marker || `[paste${i + 1}]`
+      const header = `${marker} Pasted text (${p.lines} line${p.lines === 1 ? '' : 's'}, ${p.chars} char${p.chars === 1 ? '' : 's'})`
       return `${header}\n\`\`\`\n${p.content}\n\`\`\``
     }).join('\n\n')
     const typed = inputText.trim()
@@ -1570,36 +1645,74 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [isMultiAgentMode, showWorkflowsOverview, addToast])
 
-  // Long pastes (multi-line, or beyond a few words) become an attachment chip
-  // instead of being inserted inline. Short single-line pastes (URLs, file
-  // refs, short phrases) keep the native paste behavior.
+  // If the user has already typed surrounding text, keep pasted content out of
+  // the textarea and insert a stable marker the message can refer to.
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const pasted = e.clipboardData?.getData('text') ?? ''
     if (!pasted) return
-    const isLong = pasted.length >= 80 || pasted.includes('\n')
-    if (!isLong) return
+
+    const textarea = e.currentTarget
+    const start = textarea.selectionStart ?? inputText.length
+    const end = textarea.selectionEnd ?? inputText.length
+    const before = inputText.slice(0, start)
+    const after = inputText.slice(end)
+    const textWithoutSelection = before + after
+
+    if (!textWithoutSelection.trim()) return
+
     e.preventDefault()
-    addPastedAttachment(pasted)
-  }, [addPastedAttachment])
+    const marker = addPastedAttachment(pasted)
+    if (!marker) return
+
+    const markerPrefix = before && !/\s$/.test(before) ? ' ' : ''
+    const markerSuffix = after && !/^\s/.test(after) ? ' ' : ''
+    const markerText = `${markerPrefix}${marker}${markerSuffix}`
+    const newValue = `${before}${markerText}${after}`
+    const cursorPosition = before.length + markerText.length
+
+    setLocalInputText(newValue)
+    prevInputTextRef.current = newValue
+    if (syncToStoreTimeoutRef.current) {
+      clearTimeout(syncToStoreTimeoutRef.current)
+      syncToStoreTimeoutRef.current = null
+    }
+    if (activeTabId) {
+      setTabConfig(activeTabId, { inputText: newValue })
+    }
+
+    setTimeout(() => {
+      textarea.focus()
+      textarea.setSelectionRange(cursorPosition, cursorPosition)
+      adjustTextareaHeight()
+    }, 0)
+  }, [activeTabId, addPastedAttachment, adjustTextareaHeight, inputText, setTabConfig])
 
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
     const previousValue = prevInputTextRef.current
+    const nextPastedAttachments = chatPastedAttachments.filter(p => !p.marker || newValue.includes(p.marker))
+    const pastedAttachmentsChanged = nextPastedAttachments.length !== chatPastedAttachments.length
 
     // Update local state immediately for fast UI response
     setLocalInputText(newValue)
 
-    // Debounce sync to Zustand store (300ms delay)
     if (syncToStoreTimeoutRef.current) {
       clearTimeout(syncToStoreTimeoutRef.current)
-    }
-    syncToStoreTimeoutRef.current = setTimeout(() => {
-      if (activeTabId) {
-        setTabConfig(activeTabId, { inputText: newValue })
-      }
       syncToStoreTimeoutRef.current = null
-    }, 300)
+    }
+
+    if (pastedAttachmentsChanged && activeTabId) {
+      setTabConfig(activeTabId, { inputText: newValue, pastedAttachments: nextPastedAttachments })
+    } else {
+      // Debounce sync to Zustand store (300ms delay)
+      syncToStoreTimeoutRef.current = setTimeout(() => {
+        if (activeTabId) {
+          setTabConfig(activeTabId, { inputText: newValue })
+        }
+        syncToStoreTimeoutRef.current = null
+      }, 300)
+    }
 
     // Update ref for next comparison
     prevInputTextRef.current = newValue
@@ -1710,7 +1823,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const lastHashIndex = textBeforeCursor.lastIndexOf('#')
     const lastExclamationIndex = textBeforeCursor.lastIndexOf('!')
     const lastDollarIndex = textBeforeCursor.lastIndexOf('$')
-    const lastCaretIndex = textBeforeCursor.lastIndexOf('^')
 
     // If @ appears before the current /, the / is part of a path (e.g. "@ workflow /") — stay in file dialog
     const slashIsPartOfAtPath = lastAtIndex >= 0 && lastSlashIndex > lastAtIndex
@@ -1720,7 +1832,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const hashDistance = lastHashIndex >= 0 ? cursorPosition - lastHashIndex : Infinity
     const exclamationDistance = lastExclamationIndex >= 0 ? cursorPosition - lastExclamationIndex : Infinity
     const dollarDistance = lastDollarIndex >= 0 ? cursorPosition - lastDollarIndex : Infinity
-    const caretDistance = lastCaretIndex >= 0 ? cursorPosition - lastCaretIndex : Infinity
 
     // Check if # is a markdown heading (at line start AND followed by a space) — don't trigger dialog for headings
     // e.g. "# Heading" is a heading, but "#workflow" is a workflow trigger
@@ -1729,7 +1840,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const hashIsHeading = hashIsAtLineStart && charAfterHash === ' '
 
     // Find the closest trigger to cursor
-    const closestTrigger = Math.min(slashDistance, atDistance, hashDistance, exclamationDistance, dollarDistance, caretDistance)
+    const closestTrigger = Math.min(slashDistance, atDistance, hashDistance, exclamationDistance, dollarDistance)
 
     // Check for / command (only when / is not part of an @ path)
     if (!slashIsPartOfAtPath && lastSlashIndex >= 0 && closestTrigger === slashDistance) {
@@ -1798,7 +1909,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         setShowFileDialog(false)
         setShowWorkflowDialog(false)
         setShowServerPopup(false)
-        setShowSubAgentPopup(false)
 
         const textarea = e.target
         const rect = textarea.getBoundingClientRect()
@@ -1825,7 +1935,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         setShowFileDialog(false)
         setShowWorkflowDialog(false)
         setShowSkillPopup(false)
-        setShowSubAgentPopup(false)
 
         const textarea = e.target
         const rect = textarea.getBoundingClientRect()
@@ -1837,33 +1946,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         setShowServerPopup(false)
         setDollarPosition(-1)
         setServerPopupSearchQuery('')
-      }
-    }
-    // Check for ^ sub-agent trigger
-    else if (lastCaretIndex >= 0 && closestTrigger === caretDistance) {
-      const textAfterCaret = textBeforeCursor.substring(lastCaretIndex + 1)
-      const hasValidCaret = textAfterCaret === '' || textAfterCaret.match(/^[a-zA-Z0-9_-]*$/)
-
-      if (hasValidCaret) {
-        setCaretPosition(lastCaretIndex)
-        setSubAgentPopupSearchQuery(textAfterCaret)
-        setShowSubAgentPopup(true)
-        setShowCommandDialog(false)
-        setShowFileDialog(false)
-        setShowWorkflowDialog(false)
-        setShowSkillPopup(false)
-        setShowServerPopup(false)
-
-        const textarea = e.target
-        const rect = textarea.getBoundingClientRect()
-        setSubAgentPopupPosition({
-          bottom: window.innerHeight - rect.top + 8,
-          left: rect.left + window.scrollX
-        })
-      } else {
-        setShowSubAgentPopup(false)
-        setCaretPosition(-1)
-        setSubAgentPopupSearchQuery('')
       }
     }
     // Check for @ symbol and update file dialog state (only if no other dialog active and workspace access is enabled)
@@ -1915,9 +1997,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setShowServerPopup(false)
       setDollarPosition(-1)
       setServerPopupSearchQuery('')
-      setShowSubAgentPopup(false)
-      setCaretPosition(-1)
-      setSubAgentPopupSearchQuery('')
     }
 
     // Debounce file reference removal check (500ms delay)
@@ -1961,7 +2040,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
       fileRemovalTimeoutRef.current = null
     }, 500)
-  }, [chatFileContext, removeFileFromContext, showCommandDialog, showWorkflowDialog, activeTabId, setTabConfig, adjustTextareaHeight, isWorkflowPhaseChat])
+  }, [chatFileContext, chatPastedAttachments, removeFileFromContext, showCommandDialog, showWorkflowDialog, activeTabId, setTabConfig, adjustTextareaHeight, isWorkflowPhaseChat])
 
   // Handle manual summarization
   // If messageToSendAfter is provided, it will be sent as a user message after summarization completes
@@ -2115,6 +2194,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       onSubmit: queueAwareOnSubmit,
       setInputText,
       openDialog,
+      openResumeDialog,
       setTabConfig,
       addToast,
       handleSummarize,
@@ -2126,7 +2206,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       workshopMode: effectiveModes.workshopMode,
       workflowPhaseId
     }
-  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, onSubmit, openDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
+  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, onSubmit, openDialog, openResumeDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
 
   const getCommandValidationError = useCallback((cmd: CommandDefinition, beforeSlash: string) => {
     if (!cmd.validate) return null
@@ -2188,7 +2268,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If any selection dialog is open, let it handle keyboard events
-    if (showCommandDialog || showFileDialog || showWorkflowDialog || showSkillPopup || showServerPopup || showSubAgentPopup) {
+    if (showCommandDialog || showFileDialog || showWorkflowDialog || showResumeDialog || showSkillPopup || showServerPopup) {
       // Prevent default for arrow keys, enter, escape so textarea doesn't move cursor
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape'].includes(e.key)) {
         e.preventDefault()
@@ -2254,7 +2334,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showSkillPopup, showServerPopup, showSubAgentPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, activeTabId, tabConfig?.queuedMessages, setTabConfig, getSubmitBlockReason, addToast])
+  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, activeTabId, tabConfig?.queuedMessages, setTabConfig, getSubmitBlockReason, addToast])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -2452,6 +2532,39 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     setFileSearchQuery('')
     textareaRef.current?.focus()
   }, [])
+
+  const handleResumeDialogClose = useCallback(() => {
+    setShowResumeDialog(false)
+    textareaRef.current?.focus()
+  }, [])
+
+  const handleResumeChatSelect = useCallback((sessionId: string) => {
+    if (!activeTabId) return
+    const session = resumeSessions.find(item => item.session_id === sessionId)
+    if (!session) return
+
+    const path = resumeChatConversationPath(session)
+    const existingContext = useChatStore.getState().getTabConfig(activeTabId)?.fileContext || chatFileContext
+    const nextFileContext = existingContext.some((item: { path: string }) => item.path === path)
+      ? existingContext
+      : [
+          ...existingContext,
+          {
+            name: resumeChatTitle(session),
+            path,
+            type: 'file' as const,
+          },
+        ]
+
+    setTabConfig(activeTabId, {
+      fileContext: nextFileContext,
+      restoredConversationPath: path,
+      restoredConversationSummary: undefined,
+    })
+    setShowResumeDialog(false)
+    addToast('Previous chat added to context', 'success')
+    setTimeout(() => textareaRef.current?.focus(), 0)
+  }, [activeTabId, addToast, chatFileContext, resumeSessions, setTabConfig])
 
   const handleWorkflowSelect = useCallback((workflow: { presetId: string; label: string; workspacePath: string }) => {
     if (!textareaRef.current || hashPosition === -1 || !activeTabId) return
@@ -2683,32 +2796,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     setTimeout(() => textareaRef.current?.focus(), 0)
   }, [dollarPosition, inputText, serverPopupSearchQuery, activeTabId, setTabConfig])
 
-  // Inline sub-agent popup: toggle sub-agent (stays open for multi-select)
-  const handleSubAgentPopupToggle = useCallback((folderName: string) => {
-    onSubAgentToggle(folderName)
-  }, [onSubAgentToggle])
-
-  // Close sub-agent popup: remove trigger text and close
-  const handleSubAgentPopupClose = useCallback(() => {
-    if (caretPosition >= 0) {
-      const before = inputText.substring(0, caretPosition)
-      const after = inputText.substring(caretPosition + 1 + subAgentPopupSearchQuery.length)
-      const newText = (before + after).replace(/  +/g, ' ')
-      setLocalInputText(newText)
-      if (syncToStoreTimeoutRef.current) {
-        clearTimeout(syncToStoreTimeoutRef.current)
-        syncToStoreTimeoutRef.current = null
-      }
-      if (activeTabId) {
-        setTabConfig(activeTabId, { inputText: newText })
-      }
-    }
-    setShowSubAgentPopup(false)
-    setCaretPosition(-1)
-    setSubAgentPopupSearchQuery('')
-    setTimeout(() => textareaRef.current?.focus(), 0)
-  }, [caretPosition, inputText, subAgentPopupSearchQuery, activeTabId, setTabConfig])
-
   // Memoized items arrays for inline popups
   const skillPopupItems: InlineSelectionItem[] = useMemo(() => {
     const seen = new Set<string>()
@@ -2735,21 +2822,53 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }))
   , [availableServers, manualSelectedServers])
 
-  const subAgentPopupItems: InlineSelectionItem[] = useMemo(() => {
-    const seen = new Set<string>()
-    return allSubAgents
-      .filter(sa => {
-        if (seen.has(sa.folder_name)) return false
-        seen.add(sa.folder_name)
-        return true
-      })
-      .map(sa => ({
-        id: sa.folder_name,
-        name: sa.frontmatter.name,
-        description: sa.frontmatter.description,
-        isSelected: selectedSubAgents.includes(sa.folder_name)
-      }))
-  }, [allSubAgents, selectedSubAgents])
+  const resumeKindCounts = useMemo(() => {
+    return resumeSessions.reduce<Record<ResumeSessionKind, number>>((counts, session) => {
+      counts[getResumeSessionKind(session)] += 1
+      return counts
+    }, { chat: 0, schedule: 0, bot: 0 })
+  }, [resumeSessions])
+
+  const resumeFilterTabs: InlineSelectionFilterTab[] = useMemo(() => [
+    { id: 'chat', label: 'Chats', count: resumeKindCounts.chat, icon: <MessageSquare className="h-3.5 w-3.5" /> },
+    { id: 'schedule', label: 'Schedules', count: resumeKindCounts.schedule, icon: <CalendarClock className="h-3.5 w-3.5" /> },
+    { id: 'bot', label: 'Bots', count: resumeKindCounts.bot, icon: <Bot className="h-3.5 w-3.5" /> },
+    { id: 'all', label: 'All', count: resumeSessions.length, icon: <History className="h-3.5 w-3.5" /> },
+  ], [resumeKindCounts, resumeSessions.length])
+
+  const resumeFooterSummary = useMemo(() => {
+    return `${resumeKindCounts.chat} chats · ${resumeKindCounts.schedule} schedules · ${resumeKindCounts.bot} bots`
+  }, [resumeKindCounts])
+
+  const resumeChatItems: InlineSelectionItem[] = useMemo(() => {
+    const contextPaths = new Set(chatFileContext.map(item => item.path))
+    const visibleSessions = resumeFilter === 'all'
+      ? resumeSessions
+      : resumeSessions.filter(session => getResumeSessionKind(session) === resumeFilter)
+
+    return visibleSessions.map(session => {
+      const path = resumeChatConversationPath(session)
+      const kind = getResumeSessionKind(session)
+      const botProvider = kind === 'bot' ? session.session_id.match(/^bot-([^-]+)--/)?.[1] : undefined
+      const mode = botProvider || (session.agent_mode || 'chat').replace(/_/g, ' ')
+      const messageCount = session.message_count ?? 0
+      const countLabel = messageCount > 0 ? `${messageCount} message${messageCount === 1 ? '' : 's'}` : 'conversation'
+      const leadingIcon =
+        kind === 'schedule'
+          ? <CalendarClock className="h-4 w-4 text-amber-500" />
+          : kind === 'bot'
+            ? <Bot className="h-4 w-4 text-violet-500" />
+            : <MessageSquare className="h-4 w-4 text-sky-500" />
+      return {
+        id: session.session_id,
+        name: resumeChatTitle(session),
+        description: `${formatResumeChatTime(session.updated_at || session.created_at)} · ${mode} · ${countLabel}`,
+        isSelected: contextPaths.has(path),
+        leadingIcon,
+        badge: kind === 'schedule' ? 'scheduled' : kind === 'bot' ? 'bot' : undefined,
+      }
+    })
+  }, [chatFileContext, resumeFilter, resumeSessions])
 
   // When user presses → on a folder in the file dialog, set search context to that folder (input after @ becomes folder path)
   const handleNavigateIntoFolder = useCallback((folderPath: string) => {
@@ -2778,7 +2897,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (isWorkflowPhaseChat) {
       return 'Chat with the workflow builder... (@ files, / commands, # workflows)'
     }
-    const baseHints = "@ files, / commands, # workflows, ! skills, $ servers, ^ agents"
+    const baseHints = "@ files, / commands, # workflows, ! skills, $ servers"
     if (!tabSessionId && canBootstrapMultiAgentTab) return `Ask anything... chat will initialize on send (${baseHints})`
     if (isMultiAgentMode) return `Ask anything... (${baseHints})`
     return `Ask anything... (${baseHints})`
@@ -2791,7 +2910,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const jobName = activeTab?.metadata?.scheduledJobName
     const botPlatform = activeTab?.metadata?.botPlatform
     return (
-      <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
+      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-center gap-2 py-1 text-xs text-muted-foreground">
           <History className="w-3.5 h-3.5" />
           <span>
@@ -2816,18 +2935,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
                 <Paperclip className="w-3 h-3 inline-block mr-0.5 -mt-0.5" />
-                Pasted:
+                Pasted text:
               </span>
               {chatPastedAttachments.map((p, index) => {
-                const preview = p.content.slice(0, 240).replace(/\s+/g, ' ').trim()
+                const marker = p.marker || `[paste${index + 1}]`
                 const sizeLabel = p.chars >= 1024 ? `${(p.chars / 1024).toFixed(1)}KB` : `${p.chars}ch`
                 return (
                   <div key={p.id} className="flex items-center gap-0.5">
                     <span
                       className="text-xs text-gray-700 dark:text-gray-300 font-mono"
-                      title={preview + (p.content.length > 240 ? '…' : '')}
+                      title={`${marker} pasted text, ${p.lines} line${p.lines === 1 ? '' : 's'}, ${p.chars} character${p.chars === 1 ? '' : 's'}`}
                     >
-                      #{index + 1} · {p.lines}L · {sizeLabel}
+                      {marker} · {p.lines}L · {sizeLabel}
                     </span>
                     <button
                       type="button"
@@ -2931,7 +3050,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
 
       {/* Input Form */}
-      <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
+      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
         <form onSubmit={handleSubmit} className="space-y-2">
           <div className="space-y-1">
             {/* Queued messages indicator */}
@@ -2969,6 +3088,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             )}
             {/* Show text input */}
             <Textarea
+              data-tour="chat-input-box"
               ref={textareaRef}
               value={inputText}
               onChange={handleTextChange}
@@ -3002,7 +3122,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
                 {/* Server and LLM Selection — hidden in workflow phase chat (servers come from preset) */}
                 {(
-                  <div className="flex items-center gap-2">
+                  <div data-tour="chat-input-tools" data-testid="tour-chat-input-tools" className="flex items-center gap-2">
 
                       <>
                         {!hideExtras && (
@@ -3024,16 +3144,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             onClearAll={onClearAllSkills}
                             disabled={isStreaming || isSummarizing}
                             onImportClick={() => openDialog('skillImport')}
-                          />
-                        )}
-                        {!hideExtras && isMultiAgentMode && (
-                          <SubAgentSelectionDropdown
-                            selectedSubAgents={selectedSubAgents}
-                            onSubAgentToggle={onSubAgentToggle}
-                            onSelectAll={onSelectAllSubAgents}
-                            onClearAll={onClearAllSubAgents}
-                            disabled={isStreaming || isSummarizing}
-                            onImportClick={() => openDialog('subAgentImport')}
                           />
                         )}
                       </>
@@ -3062,6 +3172,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     {/* Browser Access Toggle — hidden in workflow mode */}
                     {!hideExtras && <button
                       type="button"
+                      data-tour="chat-browser-tools"
+                      data-testid="tour-chat-browser-tools"
                       onClick={() => {
                         if (browserMode === 'none') {
                           // Enabling browser: show config popup and default to headless
@@ -3119,6 +3231,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     {!hideExtras && (
                     <button
                       type="button"
+                      data-tour="chat-gws-tools"
+                      data-testid="tour-chat-gws-tools"
                       onClick={() => setShowGWSPopup(true)}
                       disabled={isStreaming || isSummarizing}
                       className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
@@ -3649,6 +3763,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     <div className="relative">
                       <button
                         type="button"
+                        data-tour="chat-active-agents"
+                        data-testid="tour-chat-active-agents"
                         onClick={() => setShowActiveAgentsPanel(prev => !prev)}
                         className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
                       >
@@ -3716,7 +3832,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       <span>Summarizing...</span>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-1">
+                    <div data-tour="chat-send-controls" data-testid="tour-chat-send-controls" className="flex items-center gap-1">
                       {/* Workshop mode toggle: Build / Optimize / Run */}
                       {workflowPhaseId === 'workflow-builder' && !isOrganizationContext && (
                         <WorkshopModeToggle />
@@ -3836,6 +3952,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         onDeleteCommand={handleDeleteCommand}
       />
 
+      <InlineSelectionPopup
+        isOpen={showResumeDialog}
+        onClose={handleResumeDialogClose}
+        onToggleItem={handleResumeChatSelect}
+        items={resumeChatItems}
+        searchQuery=""
+        position={resumeDialogPosition}
+        title="Attach Previous Context"
+        icon={<History className="w-4 h-4 text-muted-foreground" />}
+        emptyMessage="No previous context found"
+        isLoading={resumeSessionsLoading}
+        filterTabs={resumeFilterTabs}
+        activeFilterId={resumeFilter}
+        onFilterChange={id => setResumeFilter(id as ResumeFilter)}
+        footerSummary={resumeFooterSummary}
+        searchPlaceholder="Search previous context..."
+        widthClassName="w-[min(720px,calc(100vw-32px))] max-w-[720px]"
+        enterHint="Enter to attach"
+      />
+
       {/* Command Editor Dialog */}
       <CommandEditorDialog
         isOpen={showCommandEditor}
@@ -3890,20 +4026,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         emptyMessage="No MCP servers available"
       />
 
-      {/* Inline Sub-Agent Selection Popup */}
-      <InlineSelectionPopup
-        isOpen={showSubAgentPopup}
-        onClose={handleSubAgentPopupClose}
-        onToggleItem={handleSubAgentPopupToggle}
-        items={subAgentPopupItems}
-        searchQuery={subAgentPopupSearchQuery}
-        position={subAgentPopupPosition}
-        title="Sub-Agents"
-        icon={<Bot className="w-4 h-4 text-muted-foreground" />}
-        emptyMessage="No sub-agent templates available"
-        isLoading={subAgentsLoading}
-      />
-
       {/* Slash command dialogs */}
       {showSkillImport && (
         <SkillImportDialog
@@ -3912,12 +4034,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         />
       )}
 
-      {showSubAgentImport && (
-        <SubAgentImportDialog
-          onClose={() => closeDialog('subAgentImport')}
-          onSuccess={() => closeDialog('subAgentImport')}
-        />
-      )}
       {showMCPDetails && (
         <MCPDetailsModal
           onClose={() => closeDialog('mcpDetails')}

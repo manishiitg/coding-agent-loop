@@ -301,8 +301,8 @@ type StreamingAPI struct {
 	botManager *slackservice.BotConversationManager
 
 	// Web simulator connector for testing bot flow without Slack
-	webSimulator *slackservice.WebSimulatorConnector
-	whatsappSvc  *slackservice.WhatsAppService
+	webSimulator    *slackservice.WebSimulatorConnector
+	whatsappManager *slackservice.WhatsAppServiceManager
 
 	// API token for bearer auth on per-tool endpoints (code execution mode)
 	apiToken string
@@ -359,8 +359,6 @@ type QueryRequest struct {
 	// session; empty for chat-UI sessions. Drives channel-specific system
 	// prompt additions (formatting rules), so bot replies render correctly.
 	BotPlatform string `json:"bot_platform,omitempty"`
-	// Selected sub-agent templates to make available for delegation
-	SelectedSubAgents []string `json:"selected_subagents,omitempty"` // Array of sub-agent template folder names
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
 	DelegationTierConfig *virtualtools.DelegationTierConfig `json:"delegation_tier_config,omitempty"`
 	// Decrypted secrets to inject into agent system prompt
@@ -1147,10 +1145,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	api.webSimulator = webSimulator
 	log.Printf("✅ Web bot simulator enabled")
 
-	// Register WhatsApp connector unless explicitly disabled. Pairing is a
-	// one-time QR scan; the session DB persists state between restarts.
-	// Set WHATSAPP_ENABLED=false to disable and optionally WHATSAPP_SESSION_DB
-	// to override the default session DB path.
+	// Register WhatsApp connector unless explicitly disabled. Each workspace
+	// user gets a separate WhatsApp Web client and session DB under the
+	// session directory, so users can pair their own bot accounts independently.
+	// Set WHATSAPP_ENABLED=false to disable and optionally WHATSAPP_SESSION_DIR
+	// to override the default session directory.
 	//
 	// DB usage note: this server otherwise avoids databases and persists to
 	// workspace/ files only. WhatsApp is an intentional exception because
@@ -1161,25 +1160,29 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Deleting the file and re-pairing via QR fully restores functionality.
 	whatsappEnabled := strings.ToLower(strings.TrimSpace(os.Getenv("WHATSAPP_ENABLED")))
 	if whatsappEnabled != "false" && whatsappEnabled != "0" {
-		dbPath := os.Getenv("WHATSAPP_SESSION_DB")
-		if dbPath == "" {
-			dbPath = filepath.Join(fsutil.WorkspaceDocsRoot(), "config", "whatsapp-session.db")
+		sessionDir := os.Getenv("WHATSAPP_SESSION_DIR")
+		if sessionDir == "" {
+			if legacyDBPath := strings.TrimSpace(os.Getenv("WHATSAPP_SESSION_DB")); legacyDBPath != "" {
+				sessionDir = filepath.Join(filepath.Dir(legacyDBPath), "whatsapp-sessions")
+			} else {
+				sessionDir = filepath.Join(fsutil.WorkspaceDocsRoot(), "config", "whatsapp-sessions")
+			}
 		}
-		whatsappSvc := slackservice.NewWhatsAppService(dbPath)
-		botManager.RegisterConnector(whatsappSvc)
-		api.whatsappSvc = whatsappSvc
-		if err := whatsappSvc.StartListening(context.Background()); err != nil {
+		whatsappManager := slackservice.NewWhatsAppServiceManager(sessionDir)
+		botManager.RegisterConnector(whatsappManager)
+		api.whatsappManager = whatsappManager
+		if err := whatsappManager.StartListening(context.Background()); err != nil {
 			log.Printf("❌ WhatsApp service failed to start: %v", err)
 		} else {
-			log.Printf("✅ WhatsApp bot mode enabled (db=%s)", dbPath)
+			log.Printf("✅ WhatsApp bot mode enabled (session_dir=%s)", sessionDir)
 		}
 	}
 
 	// Register bot routes
 	BotRoutes(router, api)
 	BotSimulatorRoutes(router, api)
-	if api.whatsappSvc != nil {
-		WhatsAppRoutes(router, api.whatsappSvc)
+	if api.whatsappManager != nil {
+		WhatsAppRoutes(router, api.whatsappManager)
 	}
 
 	// Set activity callback for event store to update session LastActivity when events are added
@@ -2990,6 +2993,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					status = trackedExecutionStatusCanceled
 				}
 				api.completeTrackedExecution(queryID, status, rootCauseError, nil)
+				api.removeSessionQueryID(sessionID, queryID)
 				completionEvent := events.Event{
 					ID:        fmt.Sprintf("workflow_completion_error_%s_%d", queryID, time.Now().UnixNano()),
 					Type:      string(unifiedevents.EventTypeUnifiedCompletion),
@@ -3031,6 +3035,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[WORKFLOW DEBUG] Workflow execution completed for query %s", queryID)
 				// Workflow completion events are now handled by the workflow orchestrator itself
 				api.completeTrackedExecution(queryID, trackedExecutionStatusCompleted, "", nil)
+				api.removeSessionQueryID(sessionID, queryID)
 
 				// Update active session status to completed
 				log.Printf("[WORKFLOW COMPLETION] Updating session %s status to completed", sessionID)
@@ -5910,6 +5915,34 @@ func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 	}
 }
 
+// removeSessionQueryID removes a completed workflow query from the session ->
+// query index used by stop/reconnect/scheduler wait logic.
+func (api *StreamingAPI) removeSessionQueryID(sessionID, queryID string) {
+	if sessionID == "" || queryID == "" {
+		return
+	}
+
+	api.sessionQueryIDMux.Lock()
+	defer api.sessionQueryIDMux.Unlock()
+
+	queryIDs := api.sessionQueryIDs[sessionID]
+	if len(queryIDs) == 0 {
+		return
+	}
+
+	next := queryIDs[:0]
+	for _, qid := range queryIDs {
+		if qid != queryID {
+			next = append(next, qid)
+		}
+	}
+	if len(next) == 0 {
+		delete(api.sessionQueryIDs, sessionID)
+		return
+	}
+	api.sessionQueryIDs[sessionID] = next
+}
+
 // handleDismissSession marks a session as dismissed so it won't be auto-restored on page refresh.
 func (api *StreamingAPI) handleDismissSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -7683,21 +7716,6 @@ func buildCapabilitiesContext(req QueryRequest) *virtualtools.CapabilitiesContex
 		})
 	}
 
-	// Load sub-agent template summaries
-	for _, folderName := range req.SelectedSubAgents {
-		sa, err := subagents.GetSubAgent(workspaceAPIURL, folderName)
-		if err != nil {
-			log.Printf("[CAPABILITIES] Warning: Failed to load sub-agent template %s: %v", folderName, err)
-			continue
-		}
-		caps.SubAgentTemplates = append(caps.SubAgentTemplates, virtualtools.SubAgentTemplateSummary{
-			Name:                  sa.Frontmatter.Name,
-			Description:           sa.Frontmatter.Description,
-			FolderName:            folderName,
-			DefaultReasoningLevel: sa.Frontmatter.DefaultReasoningLevel,
-		})
-	}
-
 	return caps
 }
 
@@ -7918,22 +7936,25 @@ func (api *StreamingAPI) getActiveSession(sessionID string) (*ActiveSessionInfo,
 	return session, exists
 }
 
-// getAllActiveSessions returns all active sessions (filtered by activity - 10 minute timeout)
+// getAllActiveSessions returns live sessions plus retained terminal sessions.
 func (api *StreamingAPI) getAllActiveSessions() []*ActiveSessionInfo {
 	api.activeSessionsMux.RLock()
 	defer api.activeSessionsMux.RUnlock()
 
 	now := time.Now()
 	inactivityTimeout := 10 * time.Minute
-	recentCompletionWindow := 30 * time.Minute
+	sessionRetention := 24 * time.Hour
 	sessions := make([]*ActiveSessionInfo, 0, len(api.activeSessions))
 
 	for _, session := range api.activeSessions {
 		// Include running sessions that have been active within the last 10 minutes
 		if session.Status == "running" && now.Sub(session.LastActivity) < inactivityTimeout {
 			sessions = append(sessions, session)
-		} else if session.Status == "completed" && now.Sub(session.LastActivity) < recentCompletionWindow {
-			// Also include recently completed sessions (within 30 minutes) for page refresh restore
+			continue
+		}
+
+		isTerminal := session.Status == "completed" || session.Status == "inactive" || session.Status == "stopped" || session.Status == "error"
+		if isTerminal && now.Sub(session.LastActivity) < sessionRetention {
 			sessions = append(sessions, session)
 		}
 	}
@@ -7943,7 +7964,7 @@ func (api *StreamingAPI) getAllActiveSessions() []*ActiveSessionInfo {
 
 // cleanupInactiveSessions runs periodically to:
 // 1. Mark running sessions as inactive if no events for 10 minutes
-// 2. Evict event store buffers (large SSE buffers) for sessions idle >30 minutes
+// 2. Evict event store buffers when the retained session expires
 // 3. Fully delete sessions from activeSessions after 24 hours
 //
 // The session entry is intentionally kept alive for 24 hours (not the old 30 minutes) so
@@ -7958,8 +7979,8 @@ func (api *StreamingAPI) cleanupInactiveSessions() {
 		api.activeSessionsMux.Lock()
 		now := time.Now()
 		inactivityTimeout := 10 * time.Minute
-		eventBufferRetention := 30 * time.Minute
 		sessionRetention := 24 * time.Hour
+		eventBufferRetention := sessionRetention
 		sessionsToMarkInactive := make([]string, 0)
 		sessionsToEvictEventBuffer := make([]string, 0)
 		sessionsToDelete := make([]string, 0)

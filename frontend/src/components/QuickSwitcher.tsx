@@ -79,6 +79,7 @@ const EMPTY_RECENT_PRESET_ACCESSED_AT: Record<string, number> = {}
 
 const isWorkflowSession = (session: ActiveSessionInfo): boolean => {
   return session.agent_mode === 'workflow' ||
+    session.agent_mode === 'workflow_phase' ||
     !!session.workflow_name ||
     !!session.workflow_label ||
     !!session.workspace_path ||
@@ -88,6 +89,8 @@ const isWorkflowSession = (session: ActiveSessionInfo): boolean => {
 const isVisibleActiveSession = (session: ActiveSessionInfo): boolean => {
   const status = (session.status || '').toLowerCase()
   return status === 'running' ||
+    status === 'active' ||
+    status === 'in_progress' ||
     status === 'paused' ||
     status === 'waiting' ||
     status === 'waiting_feedback' ||
@@ -119,8 +122,53 @@ const activeSessionStatusLabel = (session: ActiveSessionInfo): string => {
 
 const sessionShortId = (sessionId: string): string => sessionId.slice(0, 8)
 
+const normalizeWorkspacePath = (path?: string): string => (path || '').replace(/\/+$/, '')
+
 const findTabForSession = (tabs: Record<string, ChatTab>, sessionId: string): ChatTab | undefined => {
   return Object.values(tabs).find(tab => tab.sessionId === sessionId)
+}
+
+const workflowSessionMatchesPreset = (
+  session: ActiveSessionInfo,
+  preset: CustomPreset | PredefinedPreset,
+  tabs: Record<string, ChatTab>,
+): boolean => {
+  if (!isWorkflowSession(session)) return false
+  if (session.preset_query_id === preset.id) return true
+  if (
+    normalizeWorkspacePath(session.workspace_path) &&
+    normalizeWorkspacePath(session.workspace_path) === normalizeWorkspacePath(preset.selectedFolder?.filepath)
+  ) return true
+  const tab = findTabForSession(tabs, session.session_id)
+  return tab?.metadata?.presetQueryId === preset.id
+}
+
+const workflowSessionPriority = (session: ActiveSessionInfo): number => {
+  const status = (session.status || '').toLowerCase()
+  let score = 0
+  // Workflow rows should reopen the interactive builder/execution chat first.
+  // Scheduled/Bot runs remain restorable as active rows, but they should not
+  // steal the main workflow preset switch and leave the builder looking empty.
+  if (isScheduledWorkflowSession(session) || isBotWorkflowSession(session)) score += 100
+  if (session.needs_user_input) score -= 30
+  if (session.has_running_background_agents || (session.running_background_agent_count ?? 0) > 0) score -= 20
+  if (status === 'running' || status === 'active' || status === 'in_progress') score -= 10
+  return score
+}
+
+const pickWorkflowActiveSession = (
+  sessions: ActiveSessionInfo[],
+  preset: CustomPreset | PredefinedPreset,
+  tabs: Record<string, ChatTab>,
+): ActiveSessionInfo | undefined => {
+  return sessions
+    .filter(isVisibleActiveSession)
+    .filter(session => workflowSessionMatchesPreset(session, preset, tabs))
+    .sort((a, b) => {
+      const priorityDelta = workflowSessionPriority(a) - workflowSessionPriority(b)
+      if (priorityDelta !== 0) return priorityDelta
+      return Date.parse(b.last_activity || b.created_at || '') - Date.parse(a.last_activity || a.created_at || '')
+    })[0]
 }
 
 const itemTypeRank = (item: QuickSwitcherItem): number => {
@@ -287,12 +335,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           .filter(tab => tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === p.id && tab.sessionId)
           .flatMap(tab => tabEvents[tab.sessionId!] || [])
         const eventStats = lightweightEventStats(presetEvents)
-        const activeSession = visibleActiveSessions.find(session => {
-          if (!isWorkflowSession(session)) return false
-          if (session.preset_query_id === p.id) return true
-          const tab = findTabForSession(chatTabs, session.session_id)
-          return tab?.metadata?.presetQueryId === p.id
-        })
+        const activeSession = pickWorkflowActiveSession(visibleActiveSessions, p, chatTabs)
         return {
           type: 'workflow' as const,
           id: `workflow:${p.id}`,
@@ -314,7 +357,12 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       .filter(session => {
         const tab = findTabForSession(chatTabs, session.session_id)
         if (tab && !tab.metadata?.isOrganizationAssistant) return false
-        if (isWorkflowSession(session) && session.preset_query_id && workflowPresets.some(preset => preset.id === session.preset_query_id)) return false
+        if (
+          isWorkflowSession(session) &&
+          !isScheduledWorkflowSession(session) &&
+          !isBotWorkflowSession(session) &&
+          workflowPresets.some(preset => workflowSessionMatchesPreset(session, preset, chatTabs))
+        ) return false
         return true
       })
       .map(session => {
@@ -548,13 +596,16 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
     presetStore.applyPreset(item.preset, 'workflow')
 
-    if (item.activeSession) {
-      if (isScheduledWorkflowSession(item.activeSession)) {
-        await restoreScheduledWorkflowRunChat(item.activeSession, { preset: item.preset })
-      } else if (isBotWorkflowSession(item.activeSession)) {
-        await restoreBotWorkflowRunChat(item.activeSession, { preset: item.preset })
+    const refreshedActiveSession = item.activeSession ||
+      pickWorkflowActiveSession(await useChatStore.getState().getActiveSessions(true), item.preset, useChatStore.getState().chatTabs)
+
+    if (refreshedActiveSession) {
+      if (isScheduledWorkflowSession(refreshedActiveSession)) {
+        await restoreScheduledWorkflowRunChat(refreshedActiveSession, { preset: item.preset })
+      } else if (isBotWorkflowSession(refreshedActiveSession)) {
+        await restoreBotWorkflowRunChat(refreshedActiveSession, { preset: item.preset })
       } else {
-        await restoreWorkflowSessionChat(item.activeSession, { preset: item.preset })
+        await restoreWorkflowSessionChat(refreshedActiveSession, { preset: item.preset })
       }
       console.timeEnd('[QuickSwitcher] workflow-switch-total')
       onClose()

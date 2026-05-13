@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, SlidersHorizontal, Bot, Building2, PanelRightOpen } from 'lucide-react'
+import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, SlidersHorizontal, Bot, Building2, PanelRightOpen, HelpCircle } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -20,6 +20,9 @@ import { useAppStore } from '../stores/useAppStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { GlobalActivityMonitor } from './GlobalActivityMonitor'
+import WorkflowWalkthrough from './workflow/WorkflowWalkthrough'
+
+const WORKFLOW_WALKTHROUGH_DISMISSED_KEY = 'workflow_walkthrough_dismissed'
 
 const getModeIcon = (category: string) => {
   switch (category) {
@@ -161,6 +164,8 @@ export const ModePresetBar: React.FC = () => {
   const [restoreWorkspaceAfterTierModal, setRestoreWorkspaceAfterTierModal] = useState(false)
   const [restoreWorkspaceAfterBotConnector, setRestoreWorkspaceAfterBotConnector] = useState(false)
   const [showWorkflowsPopup, setShowWorkflowsPopup] = useState(false)
+  const [showWorkflowWalkthrough, setShowWorkflowWalkthrough] = useState(false)
+  const [workflowWalkthroughOpenToken, setWorkflowWalkthroughOpenToken] = useState(0)
   const showWorkflowsOverview = useAppStore(s => s.showWorkflowsOverview)
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
   const setSelectedFile = useWorkspaceStore(state => state.setSelectedFile)
@@ -170,6 +175,36 @@ export const ModePresetBar: React.FC = () => {
   const shouldShowScheduleHeader = selectedModeCategory === 'workflow' || isOrganizationView
   const isMultiAgentMode = selectedModeCategory === 'multi-agent'
   const shouldShowBotConnector = selectedModeCategory === 'multi-agent' || selectedModeCategory === 'workflow' || isOrganizationView
+
+  const openWorkflowWalkthrough = useCallback(() => {
+    setWorkflowWalkthroughOpenToken(token => token + 1)
+    setShowWorkflowWalkthrough(true)
+  }, [])
+
+  const closeWorkflowWalkthrough = useCallback(() => {
+    setShowWorkflowWalkthrough(false)
+    try {
+      localStorage.setItem(WORKFLOW_WALKTHROUGH_DISMISSED_KEY, 'true')
+    } catch {
+      // Ignore storage failures; the walkthrough can still close for this session.
+    }
+  }, [])
+
+  useEffect(() => {
+    const handleOpenWalkthrough = () => openWorkflowWalkthrough()
+    window.addEventListener('open-workflow-walkthrough', handleOpenWalkthrough)
+    return () => window.removeEventListener('open-workflow-walkthrough', handleOpenWalkthrough)
+  }, [openWorkflowWalkthrough])
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(WORKFLOW_WALKTHROUGH_DISMISSED_KEY) !== 'true') {
+        setShowWorkflowWalkthrough(true)
+      }
+    } catch {
+      // If storage is unavailable, users can still launch it from the header.
+    }
+  }, [])
 
   const handleModePillClick = useCallback((modeKey: 'multi-agent' | 'workflow') => {
     setModeCategory(modeKey)
@@ -536,7 +571,13 @@ export const ModePresetBar: React.FC = () => {
           {/* Left: Mode Indicator */}
           <div className="flex items-center gap-3">
             {/* Segmented control — single bordered container, active segment elevated */}
-            <div className="flex items-center bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg p-0.5" role="tablist" aria-label="Select mode">
+            <div
+              data-tour="top-mode-switcher"
+              data-testid="tour-top-mode-switcher"
+              className="flex items-center bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg p-0.5"
+              role="tablist"
+              aria-label="Select mode"
+            >
               {MODE_PILLS.map((mode) => {
                 const isActive = selectedModeCategory === mode.key && !showWorkflowsOverview
                 const Icon = mode.icon
@@ -583,7 +624,11 @@ export const ModePresetBar: React.FC = () => {
                 if (selectedModeCategory === 'workflow' && !isOrganizationView) {
                   return (
                     <div className="relative flex items-center">
-                      <div className="flex items-center bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md overflow-hidden">
+                      <div
+                        data-tour="workflow-add-edit"
+                        data-testid="tour-workflow-add-edit"
+                        className="flex items-center bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md overflow-hidden"
+                      >
                         <button
                           onClick={handlePresetDropdownToggle}
                           className="flex items-center gap-2 px-3 py-1 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
@@ -732,6 +777,20 @@ export const ModePresetBar: React.FC = () => {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
+                    onClick={openWorkflowWalkthrough}
+                    data-testid="open-walkthrough-button"
+                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                    aria-label="Open walkthrough"
+                  >
+                    <HelpCircle className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Walkthrough</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
                     onClick={() => setShowShortcuts(true)}
                     className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
                   >
@@ -772,10 +831,12 @@ export const ModePresetBar: React.FC = () => {
               {shouldShowBotConnector && (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <button
-                      onClick={openBotConnector}
-                      className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    >
+                  <button
+                    onClick={openBotConnector}
+                    data-tour="bot-connector"
+                    data-testid="tour-bot-connector"
+                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                  >
                       <Bot className="w-4 h-4" />
                     </button>
                   </TooltipTrigger>
@@ -803,6 +864,8 @@ export const ModePresetBar: React.FC = () => {
                     <TooltipTrigger asChild>
                       <button
                         onClick={() => setShowRunsPanel(true)}
+                        data-tour="workflow-schedules"
+                        data-testid="tour-workflow-schedules"
                         className={`relative flex items-center gap-2 px-2 py-1 rounded-md transition-colors ${
                           runningScheduledWorkflowCount > 0
                             ? 'text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30'
@@ -853,6 +916,8 @@ export const ModePresetBar: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setWorkspaceMinimized(false)}
+                      data-tour="workspace-open"
+                      data-testid="open-workspace-button"
                       className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
                       aria-label="Open workspace"
                       title="Open workspace"
@@ -1011,6 +1076,12 @@ export const ModePresetBar: React.FC = () => {
       <WorkflowsOverviewPopup
         isOpen={showWorkflowsPopup}
         onClose={() => setShowWorkflowsPopup(false)}
+      />
+
+      <WorkflowWalkthrough
+        isOpen={showWorkflowWalkthrough}
+        onClose={closeWorkflowWalkthrough}
+        openToken={workflowWalkthroughOpenToken}
       />
 
     </>

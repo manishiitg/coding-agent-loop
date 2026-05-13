@@ -40,11 +40,10 @@ interface AppState {
   setUseCodeExecutionMode: (enabled: boolean) => void
   // Last-used tab settings — inherited by new tabs
   lastSelectedSkills: string[]
-  lastSelectedSubAgents: string[]
   lastBrowserMode: 'none' | 'headless' | 'cdp' | 'playwright'
   lastEnableImageGeneration: boolean
   lastGWSAccess: boolean
-  syncLastTabSettings: (update: Partial<Pick<AppState, 'lastSelectedSkills' | 'lastSelectedSubAgents' | 'lastBrowserMode' | 'lastEnableImageGeneration' | 'lastGWSAccess'>>) => void
+  syncLastTabSettings: (update: Partial<Pick<AppState, 'lastSelectedSkills' | 'lastBrowserMode' | 'lastEnableImageGeneration' | 'lastGWSAccess'>>) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -153,7 +152,6 @@ export const useAppStore = create<AppState>()(
         },
 
         lastSelectedSkills: [],
-        lastSelectedSubAgents: [],
         lastBrowserMode: 'none',
         lastEnableImageGeneration: false,
         lastGWSAccess: false,
@@ -174,7 +172,6 @@ export const useAppStore = create<AppState>()(
         selectedPresetId: state.selectedPresetId,
         useCodeExecutionMode: state.useCodeExecutionMode,
         lastSelectedSkills: state.lastSelectedSkills,
-        lastSelectedSubAgents: state.lastSelectedSubAgents,
         lastBrowserMode: state.lastBrowserMode,
         lastEnableImageGeneration: state.lastEnableImageGeneration,
         lastGWSAccess: state.lastGWSAccess
@@ -186,6 +183,7 @@ export const useAppStore = create<AppState>()(
         migrate: (persistedState: unknown, _version: number) => {
           const state = persistedState as Record<string, unknown>
           delete state.delegationMode
+          delete state.lastSelectedSubAgents
           if (state.showWorkflowsOverview === undefined) {
             state.showWorkflowsOverview = false
           }

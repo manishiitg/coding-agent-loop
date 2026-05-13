@@ -11,6 +11,7 @@ import {
   Table2,
   Beaker,
   ShieldCheck,
+  HelpCircle,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
@@ -39,7 +40,6 @@ import { hasWorkflowWriteAccess, hasWorkflowOwnerAccess } from '../../../utils/w
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
-
 const isActiveRuntimeSession = (session?: ActiveSessionInfo | null): boolean => {
   if (!session) return false
   const status = (session.status || '').toLowerCase()
@@ -73,6 +73,7 @@ interface WorkflowToolbarProps {
 
 export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   status,
+  hasPlan,
   plan,
   workspacePath,
   presetQueryId,
@@ -364,74 +365,56 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       relative z-10
       ${className}
     `}>
-      {/* Left side - workflow context */}
+      {/* Left side - primary workflow views */}
       <div className="flex min-w-0 flex-1 items-center gap-x-3 gap-y-1.5 flex-wrap">
-        <div className="flex min-w-0 items-center gap-x-3 gap-y-1.5 flex-wrap">
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              Mode
-            </span>
-            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm">
+        <div className="flex min-w-full items-center gap-2 sm:min-w-0">
+          <div
+            data-tour="workflow-view-switcher"
+            data-testid="tour-workflow-view-switcher"
+            className="inline-flex w-full items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm sm:w-auto"
+          >
+            <button
+              onClick={() => {
+                const store = useWorkflowStore.getState()
+                store.setWorkflowWorkspaceView('builder')
+                store.setShowWorkspacePane(false)
+                store.setShowChatArea(true)
+                onStartPhase('workflow-builder')
+              }}
+              className={`min-w-0 flex-1 rounded-md px-3 py-1 text-xs font-medium transition-all sm:flex-none ${
+                isBuilderModeActive
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+              }`}
+            >
+              Chat
+            </button>
+            {hasPlan && (
               <button
                 onClick={() => {
                   const store = useWorkflowStore.getState()
-                  if (isBuilderPaneVisible) {
-                    store.setShowChatArea(false)
-                    return
-                  }
-                  store.setWorkflowWorkspaceView('builder')
-                  store.setShowWorkspacePane(false)
-                  store.setShowChatArea(true)
-                  onStartPhase('workflow-builder')
-                }}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                  isBuilderModeActive
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                }`}
-              >
-                Builder
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            View
-          </span>
-          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm">
-              <button
-                onClick={() => {
-                  const store = useWorkflowStore.getState()
-                  if (canvasViewMode === 'flow' && showWorkspacePane && showChatArea) {
-                    store.setShowWorkspacePane(false)
-                    return
-                  }
                   store.setWorkflowWorkspaceView('flow')
                   store.setShowWorkspacePane(true)
                   store.setCanvasViewMode('flow')
                 }}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                className={`min-w-0 flex-1 rounded-md px-3 py-1 text-xs font-medium transition-all sm:flex-none ${
                   isFlowWorkspace
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
                 }`}
               >
-                Flow
+                Plan
               </button>
+            )}
+            {workspacePath && (
               <button
                 onClick={() => {
                   const store = useWorkflowStore.getState()
-                  if (canvasViewMode === 'report' && showWorkspacePane && showChatArea) {
-                    store.setShowWorkspacePane(false)
-                    return
-                  }
                   store.setWorkflowWorkspaceView('report')
                   store.setShowWorkspacePane(true)
                   store.setCanvasViewMode('report')
                 }}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                className={`min-w-0 flex-1 rounded-md px-3 py-1 text-xs font-medium transition-all sm:flex-none ${
                   isReportWorkspace
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
@@ -439,6 +422,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               >
                 Report
               </button>
+            )}
           </div>
         </div>
 
@@ -449,6 +433,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             Status
           </span>
           <div
+            data-tour="workflow-status"
+            data-testid="tour-workflow-status"
             className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold ${workflowActivityStatus.className}`}
           >
             <span className={`h-1.5 w-1.5 rounded-full ${workflowActivityStatus.dotClassName}`} />
@@ -484,8 +470,20 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       </div>
 
       {/* Right side - View controls */}
-      <div className="ml-auto flex shrink-0 items-center gap-1">
+      <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => window.dispatchEvent(new Event('open-workflow-walkthrough'))}
+              className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom"><p>Walkthrough</p></TooltipContent>
+        </Tooltip>
+
         {/* Auto-improvement framework — metrics, trajectory, decisions (read-only safe for run users) */}
         {workspacePath && (
           <Tooltip>

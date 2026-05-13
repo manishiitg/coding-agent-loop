@@ -23,6 +23,7 @@ export interface CommandContext {
   onSubmit: (msg: string) => void
   setInputText: (text: string) => void
   openDialog: (name: any) => void
+  openResumeDialog?: () => void
   setTabConfig: (tabId: string, config: any) => void
   addToast: (msg: string, type: 'success' | 'error' | 'info') => void
   handleSummarize: (ctx?: string) => void

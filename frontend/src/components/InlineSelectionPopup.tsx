@@ -8,6 +8,15 @@ export interface InlineSelectionItem {
   name: string
   description?: string
   isSelected: boolean
+  leadingIcon?: React.ReactNode
+  badge?: string
+}
+
+export interface InlineSelectionFilterTab {
+  id: string
+  label: string
+  count?: number
+  icon?: React.ReactNode
 }
 
 interface InlineSelectionPopupProps {
@@ -21,6 +30,13 @@ interface InlineSelectionPopupProps {
   icon: React.ReactNode
   emptyMessage: string
   isLoading?: boolean
+  filterTabs?: InlineSelectionFilterTab[]
+  activeFilterId?: string
+  onFilterChange?: (id: string) => void
+  footerSummary?: string
+  searchPlaceholder?: string
+  widthClassName?: string
+  enterHint?: string
 }
 
 export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
@@ -33,7 +49,14 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
   title,
   icon,
   emptyMessage,
-  isLoading = false
+  isLoading = false,
+  filterTabs,
+  activeFilterId,
+  onFilterChange,
+  footerSummary,
+  searchPlaceholder,
+  widthClassName = 'min-w-[300px] max-w-[400px]',
+  enterHint = 'Enter to toggle'
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [localQuery, setLocalQuery] = useState('')
@@ -158,7 +181,7 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
 
   return (
     <div
-      className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg min-w-[300px] max-w-[400px]"
+      className={`fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg ${widthClassName}`}
       style={{ bottom: `${position.bottom}px`, left: `${position.left}px` }}
     >
       {/* Header */}
@@ -176,7 +199,7 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
           <input
             ref={searchInputRef}
             type="text"
-            placeholder={`Search ${title.toLowerCase()}...`}
+            placeholder={searchPlaceholder || `Search ${title.toLowerCase()}...`}
             value={localQuery}
             onChange={e => setLocalQuery(e.target.value)}
             onKeyDown={e => {
@@ -191,12 +214,15 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
                 }
               } else if (e.key === 'ArrowDown') {
                 e.preventDefault()
+                e.stopPropagation()
                 setSelectedIndex(prev => Math.min(prev + 1, filteredItemsRef.current.length - 1))
               } else if (e.key === 'ArrowUp') {
                 e.preventDefault()
+                e.stopPropagation()
                 setSelectedIndex(prev => Math.max(prev - 1, 0))
               } else if (e.key === 'Escape') {
                 e.preventDefault()
+                e.stopPropagation()
                 onCloseRef.current()
               }
             }}
@@ -204,6 +230,46 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
           />
         </div>
       </div>
+
+      {filterTabs && filterTabs.length > 0 && activeFilterId && onFilterChange && (
+        <div className="px-3 py-2 border-b border-border bg-background">
+          <div className="inline-flex max-w-full rounded-lg border border-border bg-secondary/60 p-0.5 shadow-sm">
+            {filterTabs.map(tab => {
+              const active = tab.id === activeFilterId
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  data-testid={`inline-selection-filter-${tab.id}`}
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => onFilterChange(tab.id)}
+                  className={`flex min-w-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                    active
+                      ? 'bg-background text-foreground shadow-sm ring-1 ring-border'
+                      : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
+                  }`}
+                >
+                  {tab.icon && (
+                    <span className={active ? 'text-primary' : 'text-muted-foreground'}>
+                      {tab.icon}
+                    </span>
+                  )}
+                  <span className="truncate">{tab.label}</span>
+                  {typeof tab.count === 'number' && (
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] leading-none ${
+                      active
+                        ? 'bg-primary/10 text-primary'
+                        : 'bg-background/80 text-muted-foreground'
+                    }`}>
+                      {tab.count}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Item list */}
       <div ref={listRef} className="overflow-y-auto max-h-64">
@@ -220,6 +286,7 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
           filteredItems.map((item, index) => (
             <div
               key={`${item.id}-${index}`}
+              data-testid={`inline-selection-item-${item.id}`}
               className={`px-3 py-2 cursor-pointer flex items-center gap-2 text-sm transition-colors ${
                 index === selectedIndex
                   ? 'bg-primary/10 text-primary border-l-2 border-primary'
@@ -227,9 +294,19 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
               }`}
               onMouseDown={e => { e.preventDefault(); onToggleItem(item.id) }}
             >
+              {item.leadingIcon && (
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground">
+                  {item.leadingIcon}
+                </div>
+              )}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className="font-medium">{item.name}</span>
+                  <span className="min-w-0 truncate font-medium">{item.name}</span>
+                  {item.badge && (
+                    <span className="shrink-0 text-[10px] px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-medium leading-none">
+                      {item.badge}
+                    </span>
+                  )}
                   {item.id.startsWith('custom/') && (
                     <span className="text-[10px] px-1 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 font-medium leading-none">custom</span>
                   )}
@@ -246,9 +323,14 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
 
       {/* Footer */}
       <div className="px-3 py-2 border-t border-border bg-secondary text-xs text-muted-foreground">
+        {footerSummary && (
+          <div className="mb-1 truncate" data-testid="inline-selection-footer-summary">
+            {footerSummary}
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <span>↑↓ navigate</span>
-          <span>Enter to toggle • Esc to close</span>
+          <span>{enterHint} • Esc to close</span>
         </div>
       </div>
     </div>

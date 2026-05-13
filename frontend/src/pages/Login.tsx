@@ -289,19 +289,20 @@ export function Login() {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <label htmlFor="username" className="text-sm font-medium text-foreground">
-                    {selectedProvider === 'supabase' ? 'Email' : 'Username'}
+                    Email
                   </label>
                   <div className="relative">
                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input
                       id="username"
                       name="username"
-                      type={selectedProvider === 'supabase' ? 'email' : 'text'}
+                      type="email"
+                      autoComplete="email"
                       required
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       className="pl-10 h-11"
-                      placeholder={selectedProvider === 'supabase' ? 'you@example.com' : 'Enter your username'}
+                      placeholder="you@example.com"
                     />
                   </div>
                 </div>
@@ -316,6 +317,7 @@ export function Login() {
                       id="password"
                       name="password"
                       type="password"
+                      autoComplete="current-password"
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}

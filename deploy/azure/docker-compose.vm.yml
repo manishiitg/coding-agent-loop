@@ -47,7 +47,7 @@ services:
     image: ${ACR_NAME}.azurecr.io/mcp-agent:latest
     restart: always
     # Override CMD to use the injected config file (mcp_config.json -> mcp_servers_clean_user.json)
-    command: ["./mcp-agent", "server", "--host", "0.0.0.0", "--port", "8000", "--log-file", "/app/logs/server_debug.log", "--log-level", "debug", "--mcp-config", "configs/mcp_servers_clean_user.json", "--db-type", "postgres"]
+    command: ["./mcp-agent", "server", "--host", "0.0.0.0", "--port", "8000", "--log-file", "/app/logs/server_debug.log", "--log-level", "debug", "--mcp-config", "configs/mcp_servers_clean_user.json"]
     volumes:
       # Share workspace docs with agent (Mounted Data Disk)
       - /data/docs:/app/workspace-docs

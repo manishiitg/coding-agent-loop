@@ -61,6 +61,20 @@ if [[ "$TARGET" == "all" || "$TARGET" == "frontend" ]]; then
   $SSH "echo 'window.__APP_RUNTIME_CONFIG__ = {};' > $REMOTE/src/frontend-dist/runtime-config.js"
 fi
 
+# Copy run-agent.sh so the server always has the latest version
+if [[ "$TARGET" == "all" || "$TARGET" == "agent" ]]; then
+  scp -i "$KEY" -o StrictHostKeyChecking=no "$SCRIPT_DIR/run-agent.sh" "root@$VM:/opt/mcp-agent/run-agent.sh"
+  ssh -i "$KEY" -o StrictHostKeyChecking=no "root@$VM" "chmod +x /opt/mcp-agent/run-agent.sh"
+fi
+
+# Install Supabase keep-alive cron job (daily ping to prevent free-tier pausing)
+scp -i "$KEY" -o StrictHostKeyChecking=no "$SCRIPT_DIR/supabase-keepalive.sh" "root@$VM:/opt/mcp-agent/supabase-keepalive.sh"
+ssh -i "$KEY" -o StrictHostKeyChecking=no "root@$VM" "
+  chmod +x /opt/mcp-agent/supabase-keepalive.sh
+  # Add cron job if not already present
+  (crontab -l 2>/dev/null | grep -v supabase-keepalive; echo '0 6 * * * /opt/mcp-agent/supabase-keepalive.sh') | crontab -
+"
+
 # --- Server-side: fix replaces, rebuild, restart ---
 echo "==> Building and restarting on server..."
 $SSH bash -s "$TARGET" << 'REMOTE_SCRIPT'

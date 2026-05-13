@@ -3,6 +3,8 @@
 }
 
 {DOMAIN} {
+    encode gzip
+
     # Reverse proxy for Workspace API
     handle_path /workspace* {
         reverse_proxy workspace-api:8080

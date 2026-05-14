@@ -231,6 +231,30 @@ export interface LLMDefaultsResponse {
   locked_providers?: string[]
 }
 
+export interface LLMDiscoveryCandidate {
+  id: string
+  provider: LLMProvider
+  model_id: string
+  model_name?: string
+  label: string
+  kind: 'local_cli' | 'api'
+  detection_source: string
+  auth_source?: string
+  auth_configured: boolean
+  runtime_command?: string
+  runtime_available?: boolean
+  usable: boolean
+  recommended: boolean
+  reason: string
+  setup_hint?: string
+  options?: string[]
+}
+
+export interface LLMDiscoveryResponse {
+  candidates: LLMDiscoveryCandidate[]
+  notes: string[]
+}
+
 // API Key Validation Request/Response
 export interface APIKeyValidationRequest {
   provider: LLMProvider

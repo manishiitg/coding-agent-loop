@@ -6,6 +6,7 @@ import MCPServersSection from './sidebar/MCPServersSection'
 import { SkillsSection } from './skills'
 import { SecretsSection } from './secrets'
 import LLMConfigurationModal from './LLMConfigurationModal'
+import LLMDiscoveryOnboardingModal from './LLMDiscoveryOnboardingModal'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useMCPStore, useLLMStore } from '../stores'
@@ -14,6 +15,9 @@ import { Download, KeyRound, LogOut, PanelLeftClose, ServerCog, User, Bell, Bell
 import { useAuthStore } from '../stores/useAuthStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { playNotificationSound } from '../utils/sound'
+
+const FORCE_LLM_DISCOVERY_ONBOARDING_FOR_TESTING = false
+const LLM_DISCOVERY_ONBOARDING_DISMISSED_KEY = 'llm_discovery_onboarding_dismissed'
 
 interface WorkspaceSidebarProps {
   // Minimize functionality
@@ -28,18 +32,45 @@ export default function WorkspaceSidebar({
   
   // Store subscriptions
   const { showMCPDetails, setShowMCPDetails } = useMCPStore()
-  const { showLLMModal, setShowLLMModal, delegationTierConfig } = useLLMStore()
+  const {
+    showLLMModal,
+    setShowLLMModal,
+    delegationTierConfig,
+    savedLLMs,
+    defaultsLoaded,
+    primaryConfig,
+    agentConfig,
+    chatPrimaryConfig,
+    chatAgentConfig,
+    workflowPrimaryConfig,
+    workflowAgentConfig,
+  } = useLLMStore()
   const { user, logout, isMultiUserMode } = useAuthStore()
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const showDelegationTiersDialog = useCommandDialogStore(state => state.showDelegationTiers)
   const closeDialog = useCommandDialogStore(state => state.closeDialog)
   const [showTierModal, setShowTierModal] = useState(false)
+  const [showLLMDiscoveryModal, setShowLLMDiscoveryModal] = useState(false)
   const [isElectron, setIsElectron] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
   const [osPermission, setOsPermission] = useState<NotificationPermission>('default')
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
     return localStorage.getItem('mcp_notifications_enabled') !== 'false' // Default true
   })
+
+  const hasConfiguredLLM =
+    savedLLMs.length > 0 ||
+    [primaryConfig, chatPrimaryConfig, workflowPrimaryConfig].some(config => Boolean(config?.provider && config?.model_id?.trim())) ||
+    [agentConfig, chatAgentConfig, workflowAgentConfig].some(config => Boolean(config?.primary?.provider && config?.primary?.model_id?.trim()))
+
+  const openLLMDiscoveryModal = () => {
+    setShowLLMDiscoveryModal(true)
+  }
+
+  const closeLLMDiscoveryModal = () => {
+    localStorage.setItem(LLM_DISCOVERY_ONBOARDING_DISMISSED_KEY, 'true')
+    setShowLLMDiscoveryModal(false)
+  }
 
   useEffect(() => {
     // Check if running in Electron via preload API
@@ -120,14 +151,36 @@ export default function WorkspaceSidebar({
     }
   }, [showDelegationTiersDialog, selectedModeCategory, closeDialog])
 
+  // First-run LLM setup: if no model is configured yet, prefer discovery over
+  // the advanced tier configuration modal.
+  useEffect(() => {
+    if (FORCE_LLM_DISCOVERY_ONBOARDING_FOR_TESTING) {
+      setShowLLMDiscoveryModal(true)
+      return
+    }
+    if (!defaultsLoaded || hasConfiguredLLM) return
+    if (localStorage.getItem(LLM_DISCOVERY_ONBOARDING_DISMISSED_KEY) === 'true') return
+    setShowLLMDiscoveryModal(true)
+  }, [defaultsLoaded, hasConfiguredLLM])
+
   // Auto-show tier config modal when entering multi-agent mode without tiers configured
   useEffect(() => {
+    if (FORCE_LLM_DISCOVERY_ONBOARDING_FOR_TESTING) {
+      setShowLLMDiscoveryModal(true)
+      return
+    }
     if (selectedModeCategory !== 'multi-agent') return
+    if (!hasConfiguredLLM) {
+      if (localStorage.getItem(LLM_DISCOVERY_ONBOARDING_DISMISSED_KEY) !== 'true') {
+        setShowLLMDiscoveryModal(true)
+      }
+      return
+    }
     const hasTiers = delegationTierConfig && (delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low)
     if (!hasTiers) {
       setShowTierModal(true)
     }
-  }, [selectedModeCategory, delegationTierConfig])
+  }, [selectedModeCategory, delegationTierConfig, hasConfiguredLLM])
 
   return (
     <TooltipProvider>
@@ -471,6 +524,14 @@ export default function WorkspaceSidebar({
       <LLMConfigurationModal
         isOpen={showLLMModal}
         onClose={() => setShowLLMModal(false)}
+        onOpenDiscovery={openLLMDiscoveryModal}
+      />
+
+      {/* LLM Discovery Onboarding Modal */}
+      <LLMDiscoveryOnboardingModal
+        isOpen={showLLMDiscoveryModal}
+        onClose={closeLLMDiscoveryModal}
+        onAdvancedSetup={() => setShowLLMModal(true)}
       />
 
       {/* Delegation Tier Configuration Modal */}

@@ -6,6 +6,7 @@ import type {
   APIKeyValidationResponse,
   DelegationTierConfig,
   SavedLLM,
+  LLMDiscoveryResponse,
 } from './api-types'
 
 export interface ModelMetadata {
@@ -52,6 +53,12 @@ export const llmConfigService = {
   // Get LLM configuration defaults from backend
   getLLMDefaults: async (): Promise<LLMDefaultsResponse> => {
     const response = await llmConfigApi.get('/api/llm-config/defaults')
+    return response.data
+  },
+
+  // Discover local CLI providers and server/workspace auth without making model calls
+  discoverLLMSetup: async (): Promise<LLMDiscoveryResponse> => {
+    const response = await llmConfigApi.get('/api/llm-config/discovery')
     return response.data
   },
 

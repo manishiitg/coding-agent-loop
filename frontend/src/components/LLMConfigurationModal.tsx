@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { X, Settings, Lock } from 'lucide-react'
+import { X, Settings, Lock, WandSparkles } from 'lucide-react'
 import { Button } from './ui/Button'
 import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore, useAppStore, useChatStore } from '../stores'
@@ -23,6 +23,7 @@ import { PROVIDER_ORDER, getProviderDisplayInfo, type ProviderType } from '../ut
 interface LLMConfigurationModalProps {
   isOpen: boolean
   onClose: () => void
+  onOpenDiscovery?: () => void
 }
 
 // Providers that use API keys (excludes claude-code which uses local CLI)
@@ -73,7 +74,7 @@ const FALLBACK_AUDIO_PROVIDER_ITEMS: Array<{
   },
 ]
 
-export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurationModalProps) {
+export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery }: LLMConfigurationModalProps) {
   const activeTabId = useChatStore(state => state.activeTabId)
   const setTabConfig = useChatStore(state => state.setTabConfig)
   const getTabConfig = useChatStore(state => state.getTabConfig)
@@ -522,9 +523,25 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 {currentMode === 'workflow' ? 'Workflow' : 'Chat'}
               </span>
             </div>
-            <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0 hover:bg-secondary">
-              <X className="w-4 h-4" />
-            </Button>
+            <div className="flex items-center gap-2">
+              {onOpenDiscovery && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    onClose()
+                    onOpenDiscovery()
+                  }}
+                  className="dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:hover:text-white"
+                >
+                  <WandSparkles className="w-4 h-4 mr-2" />
+                  Discover setup
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0 hover:bg-secondary">
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
 
           {/* Content */}

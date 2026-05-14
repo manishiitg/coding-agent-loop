@@ -1541,3 +1541,37 @@
     transform: scale(0.95);
   }
 }
+
+/* LLM discovery modal rows use explicit theme colors because the VS Code
+   theme overrides remap generic Tailwind bg/hover utilities globally. */
+.llm-discovery-candidate[data-selected="false"] {
+  background-color: hsl(0 0% 100%) !important;
+}
+
+.llm-discovery-candidate[data-selected="false"]:hover {
+  background-color: hsl(0 0% 96%) !important;
+}
+
+.llm-discovery-candidate[data-selected="true"] {
+  background-color: hsl(200 100% 96%) !important;
+}
+
+.llm-discovery-candidate[data-selected="true"]:hover {
+  background-color: hsl(200 100% 93%) !important;
+}
+
+.dark .llm-discovery-candidate[data-selected="false"] {
+  background-color: hsl(0 0% 15%) !important;
+}
+
+.dark .llm-discovery-candidate[data-selected="false"]:hover {
+  background-color: hsl(0 0% 20%) !important;
+}
+
+.dark .llm-discovery-candidate[data-selected="true"] {
+  background-color: hsl(200 40% 18%) !important;
+}
+
+.dark .llm-discovery-candidate[data-selected="true"]:hover {
+  background-color: hsl(200 40% 22%) !important;
+}

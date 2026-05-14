@@ -1,23 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Trash2, Box, DollarSign, Thermometer, CheckCircle, Play, Loader2, RefreshCw } from 'lucide-react'
+import { Trash2, Box, DollarSign, Thermometer, CheckCircle, RefreshCw } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
-import { useLLMStore, useChatStore, useAppStore } from '../../stores'
+import { useLLMStore } from '../../stores'
 import { llmConfigService, type ModelMetadata } from '../../services/llm-config-api'
 import type { SavedLLM } from '../../services/api-types'
-
-const COMPLEX_PROMPT = `I require a rigorous, multi-vector technical analysis of the Model Context Protocol (MCP) landscape. This task is designed to test your ability to synthesize conflicting data sources.
-1. **Initialization**: Verify if 'FILE_NAME' exists in the root workspace. Delete it if present to ensure a clean slate.
-2. **Specification Extraction (Playwright)**: Navigate to 'https://modelcontextprotocol.io/docs/concepts/architecture'. Precisely extract the definitions of 'Prompts', 'Resources', and 'Tools'. Then, visit the GitHub repository (find the link on the page) and identify the most recent commit message related to the 'SDK' or core protocol.
-3. **Ecosystem & Sentiment Analysis (Context7)**: Perform a targeted search for "MCP vs OpenAI Plugins" and "Anthropic MCP adoption". Identify at least two distinct architectural differences between MCP and OpenAI's deprecated plugin system.
-4. **Implementation & Gap Analysis**: Search for "building an MCP server in Python". Compare the official documentation's "Quickstart" steps with a recent community tutorial or blog post. Detail any discrepancies in setup commands or required dependencies.
-5. **Report Generation**: Compile a highly technical report in 'FILE_NAME' (in the root) containing:
-   - **Executive Abstract**: A synthesis of the protocol's current maturity.
-   - **Architecture & Versioning**: The definitions from step 2 and the latest SDK activity.
-   - **Comparative Architecture**: The MCP vs Plugins comparison from step 3.
-   - **Developer Experience Audit**: The friction points found in step 4 (Docs vs Reality).
-6. **Termination**: Ensure all browser contexts are closed upon completion.
-Execute this sequentially and with high attention to detail.`
 
 // Helper to format context window size
 const formatContextWindow = (tokens?: number): string => {
@@ -48,11 +35,8 @@ interface LibraryTabProps {
 }
 
 export function LibraryTab({ onSelect }: LibraryTabProps) {
-  const { savedLLMs, deleteSavedLLM, agentConfig, setShowLLMModal, setAzureConfig, azureConfig, defaultPublishedLLMsLocked, loadDefaultsFromBackend } = useLLMStore()
-  const { createChatTab, setTabConfig } = useChatStore()
-  const { setAgentMode } = useAppStore()
+  const { savedLLMs, deleteSavedLLM, agentConfig, defaultPublishedLLMsLocked, loadDefaultsFromBackend } = useLLMStore()
   const [metadataMap, setMetadataMap] = useState<Record<string, ModelMetadata>>({})
-  const [testStatus, setTestStatus] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
 
   // Check if a saved LLM matches the current primary
@@ -79,57 +63,6 @@ export function LibraryTab({ onSelect }: LibraryTabProps) {
     fetchMetadata()
   }, [])
 
-  const handleTestComplexPrompt = async (llm: SavedLLM) => {
-    // Show message
-    setTestStatus(`Initiating complex agent task with ${llm.name}...`)
-
-    // Switch to Simple/Chat Mode
-    setAgentMode('simple')
-
-    // Published LLMs no longer carry secrets; Azure auth is loaded from workspace-backed
-    // provider config and still needs to be present in the store for runtime execution.
-    if (llm.provider === 'azure' && azureConfig.endpoint && azureConfig.api_key) {
-      setAzureConfig({
-        ...azureConfig,
-        provider: 'azure',
-        model_id: llm.model_id,
-        api_key: azureConfig.api_key,
-        endpoint: azureConfig.endpoint,
-        region: azureConfig.region,
-        options: llm.options,
-        temperature: llm.temperature
-      })
-    }
-
-    // Create a new tab
-    const tabId = await createChatTab(`Test: ${llm.name}`, { mode: 'multi-agent' })
-
-    // Generate dynamic filename
-    const safeModelName = llm.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()
-    const fileName = `research-${safeModelName}.md`
-    const prompt = COMPLEX_PROMPT.replace(/FILE_NAME/g, fileName)
-
-    // Configure the tab
-    setTabConfig(tabId, {
-      inputText: prompt,
-      autoRun: true,
-      selectedServers: ['playwright', 'context7'],
-      llmConfig: {
-        provider: llm.provider,
-        model_id: llm.model_id,
-        options: llm.options,
-        fallback_models: [],
-        cross_provider_fallback: undefined
-      }
-    })
-
-    // Close quickly after setting up the tab
-    setTimeout(() => {
-        setShowLLMModal(false)
-        setTestStatus(null)
-    }, 500)
-  }
-
   const handleRefreshLibrary = async () => {
     setIsRefreshing(true)
     try {
@@ -154,16 +87,6 @@ export function LibraryTab({ onSelect }: LibraryTabProps) {
           <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
         </Button>
       </div>
-
-      {testStatus && (
-        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 flex items-center gap-3 text-blue-700 dark:text-blue-300 animate-in fade-in slide-in-from-top-2">
-          <Loader2 className="w-5 h-5 animate-spin" />
-          <div className="flex-1">
-            <p className="font-medium">{testStatus}</p>
-            <p className="text-xs opacity-80 mt-0.5">Closing configuration window to show you the chat...</p>
-          </div>
-        </div>
-      )}
 
       <div className="text-sm text-muted-foreground mb-4">
         Use Publish in Provider tabs to save configurations here. Select one as Primary LLM.
@@ -249,17 +172,6 @@ export function LibraryTab({ onSelect }: LibraryTabProps) {
 
                   {/* Action buttons */}
                   <div className="flex flex-col gap-2 flex-shrink-0">
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      onClick={() => handleTestComplexPrompt(llm)} 
-                      className="whitespace-nowrap text-xs h-7 px-2"
-                      title="Test Complex Agentic Prompt"
-                      disabled={testStatus !== null}
-                    >
-                      <Play className="w-3 h-3 mr-1" />
-                      Test Agent
-                    </Button>
                     {onSelect && !isCurrentPrimary && (
                       <Button size="sm" variant="default" onClick={() => onSelect(llm)} className="whitespace-nowrap">
                         Set as Primary

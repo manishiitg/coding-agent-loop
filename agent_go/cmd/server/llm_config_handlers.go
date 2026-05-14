@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -267,6 +268,234 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	return keys
 }
 
+type llmDiscoveryCandidate struct {
+	ID               string   `json:"id"`
+	Provider         string   `json:"provider"`
+	ModelID          string   `json:"model_id"`
+	ModelName        string   `json:"model_name,omitempty"`
+	Label            string   `json:"label"`
+	Kind             string   `json:"kind"`
+	DetectionSource  string   `json:"detection_source"`
+	AuthSource       string   `json:"auth_source,omitempty"`
+	AuthConfigured   bool     `json:"auth_configured"`
+	RuntimeCommand   string   `json:"runtime_command,omitempty"`
+	RuntimeAvailable *bool    `json:"runtime_available,omitempty"`
+	Usable           bool     `json:"usable"`
+	Recommended      bool     `json:"recommended"`
+	Reason           string   `json:"reason"`
+	SetupHint        string   `json:"setup_hint,omitempty"`
+	Options          []string `json:"options,omitempty"`
+}
+
+type llmDiscoveryResponse struct {
+	Candidates []llmDiscoveryCandidate `json:"candidates"`
+	Notes      []string                `json:"notes"`
+}
+
+func providerDisplayLabel(provider string) string {
+	switch provider {
+	case "codex-cli":
+		return "OpenAI Codex CLI"
+	case "claude-code":
+		return "Claude Code"
+	case "gemini-cli":
+		return "Gemini CLI"
+	case "openai":
+		return "OpenAI API"
+	case "anthropic":
+		return "Anthropic API"
+	case "vertex":
+		return "Gemini / Vertex"
+	case "openrouter":
+		return "OpenRouter"
+	case "bedrock":
+		return "Amazon Bedrock"
+	case "azure":
+		return "Azure AI"
+	case "z-ai":
+		return "Z.AI"
+	case "kimi":
+		return "Kimi"
+	case "minimax":
+		return "MiniMax"
+	case "minimax-coding-plan":
+		return "MiniMax Coding Plan"
+	default:
+		return provider
+	}
+}
+
+func modelNameForProviderModel(provider, modelID string) string {
+	for _, metadata := range utils.GetAllModelMetadata() {
+		if metadata == nil {
+			continue
+		}
+		if strings.EqualFold(metadata.Provider, provider) && metadata.ModelID == modelID {
+			if metadata.ModelName != "" {
+				return metadata.ModelName
+			}
+			return metadata.ModelID
+		}
+	}
+	return modelID
+}
+
+func discoveryCandidateKind(provider string) string {
+	switch provider {
+	case "codex-cli", "claude-code", "gemini-cli", "kimi":
+		return "local_cli"
+	default:
+		return "api"
+	}
+}
+
+func discoveryModelOptions(provider string) []string {
+	switch provider {
+	case "codex-cli":
+		return []string{"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"}
+	case "claude-code":
+		return []string{"claude-code"}
+	case "gemini-cli":
+		return []string{"auto", "pro", "flash", "flash-lite"}
+	case "kimi":
+		return []string{"kimi-code", "kimi-k2.6"}
+	default:
+		return nil
+	}
+}
+
+func shouldUseKimiCodeDiscoveryCLITransport() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("KIMI_CODE_TRANSPORT"))) {
+	case "":
+		return true
+	case "cli", "native", "kimi-cli", "kimi-code-cli":
+		return true
+	case "http", "api", "anthropic", "anthropic-http", "off", "false", "0":
+		return false
+	default:
+		return true
+	}
+}
+
+func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
+	keys := MergedProviderAPIKeys(ctx)
+	supported := getSupportedProviders()
+	supportedSet := make(map[string]bool, len(supported))
+	for _, provider := range supported {
+		supportedSet[provider] = true
+	}
+
+	providerOrder := []string{
+		"codex-cli",
+		"claude-code",
+		"gemini-cli",
+		"kimi",
+		"openai",
+		"anthropic",
+		"vertex",
+		"openrouter",
+		"bedrock",
+		"azure",
+		"z-ai",
+		"minimax",
+		"minimax-coding-plan",
+	}
+
+	candidates := make([]llmDiscoveryCandidate, 0, len(providerOrder))
+	for _, provider := range providerOrder {
+		if !supportedSet[provider] {
+			continue
+		}
+
+		authConfigured, authSource := providerAuthConfigured(provider, keys)
+		usable, runtimeCommand, runtimeOK := providerUsable(provider, authConfigured)
+		modelID := llm.GetDefaultModel(llm.Provider(provider))
+		if provider == "kimi" {
+			modelID = "kimi-code"
+			if shouldUseKimiCodeDiscoveryCLITransport() {
+				runtimeCommand = "kimi"
+				runtimeOK = runtimeAvailable(runtimeCommand)
+				usable = runtimeOK != nil && *runtimeOK
+				if usable {
+					authConfigured = true
+					authSource = "Kimi Code CLI login"
+				}
+			}
+		}
+		if modelID == "" {
+			continue
+		}
+
+		discovered := authConfigured || usable
+		if runtimeOK != nil && *runtimeOK {
+			discovered = true
+		}
+		if !discovered {
+			continue
+		}
+
+		kind := discoveryCandidateKind(provider)
+		source := "Environment or workspace auth"
+		if runtimeOK != nil && *runtimeOK {
+			source = "Local CLI"
+		}
+
+		reason := "Ready to enable."
+		setupHint := ""
+		if !usable {
+			switch provider {
+			case "codex-cli":
+				setupHint = "Run codex login or set CODEX_API_KEY, then test again."
+			case "claude-code":
+				setupHint = "Run claude to finish Claude Code authentication, then test again."
+			case "gemini-cli":
+				setupHint = "Set GEMINI_API_KEY or finish Gemini CLI authentication, then test again."
+			default:
+				setupHint = "Provider auth was not detected in the server environment or workspace provider keys."
+			}
+			reason = "Detected, but setup may be incomplete."
+		}
+
+		candidates = append(candidates, llmDiscoveryCandidate{
+			ID:               provider + ":" + modelID,
+			Provider:         provider,
+			ModelID:          modelID,
+			ModelName:        modelNameForProviderModel(provider, modelID),
+			Label:            providerDisplayLabel(provider),
+			Kind:             kind,
+			DetectionSource:  source,
+			AuthSource:       authSource,
+			AuthConfigured:   authConfigured,
+			RuntimeCommand:   runtimeCommand,
+			RuntimeAvailable: runtimeOK,
+			Usable:           usable,
+			Recommended:      usable,
+			Reason:           reason,
+			SetupHint:        setupHint,
+			Options:          discoveryModelOptions(provider),
+		})
+	}
+
+	return llmDiscoveryResponse{
+		Candidates: candidates,
+		Notes: []string{
+			"Discovery only checks installed runtimes and configured auth. It does not send prompts or spend provider credits.",
+			"Environment variables are read from the backend server process, not unrelated terminal tabs opened after startup.",
+		},
+	}
+}
+
+// handleDiscoverLLMSetup reports local/provider LLM setup candidates without running model calls.
+func (api *StreamingAPI) handleDiscoverLLMSetup(w http.ResponseWriter, r *http.Request) {
+	response := buildLLMDiscovery(r.Context())
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode LLM discovery response", http.StatusInternalServerError)
+		return
+	}
+}
+
 // stripSecretsFromMap recursively removes api_key, endpoint, and other sensitive fields from m (for locked mode).
 // endpoint is stripped so Azure tenant URLs (e.g. https://tenant-name.openai.azure.com/) are not sent to the client.
 func stripSecretsFromMap(m map[string]interface{}) {
@@ -512,11 +741,68 @@ func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	api.populateValidationCredentialsFromMergedKeys(r.Context(), &req)
 	log.Printf("Received API key validation request for provider: %s", req.Provider)
 	response := validateProviderConfig(req)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context.Context, req *llm.APIKeyValidationRequest) {
+	if req == nil {
+		return
+	}
+	keys := MergedProviderAPIKeys(ctx)
+	if keys == nil {
+		return
+	}
+	setAPIKey := func(key *string) {
+		if req.APIKey == "" && key != nil {
+			req.APIKey = strings.TrimSpace(*key)
+		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(req.Provider)) {
+	case "openrouter":
+		setAPIKey(keys.OpenRouter)
+	case "openai":
+		setAPIKey(keys.OpenAI)
+	case "anthropic":
+		setAPIKey(keys.Anthropic)
+	case "vertex":
+		setAPIKey(keys.Vertex)
+	case "gemini-cli":
+		setAPIKey(keys.GeminiCLI)
+	case "codex-cli":
+		setAPIKey(keys.CodexCLI)
+	case "minimax":
+		setAPIKey(keys.MiniMax)
+	case "minimax-coding-plan":
+		setAPIKey(keys.MiniMaxCodingPlan)
+	case "elevenlabs":
+		setAPIKey(keys.ElevenLabs)
+	case "deepgram":
+		setAPIKey(keys.Deepgram)
+	case "z-ai":
+		setAPIKey(keys.ZAI)
+	case "kimi":
+		setAPIKey(keys.Kimi)
+	case "azure":
+		if keys.Azure != nil {
+			if req.APIKey == "" {
+				req.APIKey = strings.TrimSpace(keys.Azure.APIKey)
+			}
+			if strings.TrimSpace(keys.Azure.Endpoint) != "" {
+				if req.Options == nil {
+					req.Options = map[string]interface{}{}
+				}
+				if _, ok := req.Options["endpoint"]; !ok {
+					req.Options["endpoint"] = strings.TrimSpace(keys.Azure.Endpoint)
+				}
+			}
+		}
+	}
 }
 
 func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidationResponse {
@@ -527,8 +813,63 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 		return validateGeminiCLI(req.APIKey)
 	case "codex-cli":
 		return validateCodexCLI(req.APIKey)
+	case "kimi":
+		if req.ModelID == "kimi-code" && shouldUseKimiCodeDiscoveryCLITransport() && strings.TrimSpace(req.APIKey) == "" {
+			return validateKimiCodeCLI()
+		}
+		return llm.ValidateAPIKey(req)
 	default:
 		return llm.ValidateAPIKey(req)
+	}
+}
+
+func validateKimiCodeCLI() llm.APIKeyValidationResponse {
+	log.Printf("[KIMI-CODE VALIDATION] Starting CLI validation")
+
+	kimiPath, err := exec.LookPath("kimi")
+	if err != nil {
+		log.Printf("[KIMI-CODE VALIDATION] CLI not found on PATH: %v", err)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Kimi CLI not found. Install Kimi Code and run 'kimi login'.",
+		}
+	}
+	log.Printf("[KIMI-CODE VALIDATION] CLI found at: %s", kimiPath)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "kimi", "--print", "Say hello in one short sentence.")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errMsg := strings.TrimSpace(string(output))
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("[KIMI-CODE VALIDATION] CLI test timed out")
+			return llm.APIKeyValidationResponse{
+				Valid:   false,
+				Message: "Kimi CLI timed out after 60s. Check that you are authenticated (run 'kimi login').",
+			}
+		}
+		log.Printf("[KIMI-CODE VALIDATION] CLI test failed: %v — output: %s", err, errMsg)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Kimi CLI error: %s", errMsg),
+		}
+	}
+
+	responseText := strings.TrimSpace(string(output))
+	if responseText == "" {
+		log.Printf("[KIMI-CODE VALIDATION] CLI returned empty response")
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Kimi CLI returned an empty response. Check authentication with 'kimi login'.",
+		}
+	}
+
+	log.Printf("[KIMI-CODE VALIDATION SUCCESS] Got response: %s", responseText)
+	return llm.APIKeyValidationResponse{
+		Valid:   true,
+		Message: fmt.Sprintf("Kimi CLI is working. Response: %s", responseText),
 	}
 }
 
@@ -732,7 +1073,29 @@ func validateCodexCLI(apiKey string) llm.APIKeyValidationResponse {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "codex", "exec", "--full-auto", "--skip-git-repo-check", "-c", `model_reasoning_effort="medium"`, "Say hello in one short sentence.")
+	outputFile, err := os.CreateTemp("", "codex-cli-validation-*.txt")
+	if err != nil {
+		log.Printf("[CODEX-CLI VALIDATION] Failed to create output temp file: %v", err)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Could not create a temporary file for Codex CLI validation.",
+		}
+	}
+	outputPath := outputFile.Name()
+	_ = outputFile.Close()
+	defer os.Remove(outputPath)
+
+	cmd := exec.CommandContext(ctx,
+		"codex",
+		"exec",
+		"--sandbox", "workspace-write",
+		"--skip-git-repo-check",
+		"--output-last-message", outputPath,
+		"-c", `model_reasoning_effort="medium"`,
+		"Say hello in one short sentence.",
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	// Only pass API key if explicitly provided from frontend.
 	// Do NOT fall back to OPENAI_API_KEY — Codex CLI has its own auth
 	// (via `codex login` stored in ~/.codex/auth.json) which should be preferred.
@@ -742,9 +1105,12 @@ func validateCodexCLI(apiKey string) llm.APIKeyValidationResponse {
 	if apiKey != "" {
 		cmd.Env = append(os.Environ(), "CODEX_API_KEY="+apiKey)
 	}
-	output, err := cmd.CombinedOutput()
+	output, err := cmd.Output()
 	if err != nil {
-		errMsg := string(output)
+		errMsg := stderr.String()
+		if strings.TrimSpace(errMsg) == "" {
+			errMsg = string(output)
+		}
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Printf("[CODEX-CLI VALIDATION] CLI test timed out")
 			return llm.APIKeyValidationResponse{
@@ -759,7 +1125,11 @@ func validateCodexCLI(apiKey string) llm.APIKeyValidationResponse {
 		}
 	}
 
-	responseText := strings.TrimSpace(string(output))
+	responseBytes, readErr := os.ReadFile(outputPath)
+	responseText := strings.TrimSpace(string(responseBytes))
+	if readErr != nil || responseText == "" {
+		responseText = strings.TrimSpace(string(output))
+	}
 	if responseText == "" {
 		log.Printf("[CODEX-CLI VALIDATION] CLI returned empty response")
 		return llm.APIKeyValidationResponse{

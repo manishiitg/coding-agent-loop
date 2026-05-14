@@ -841,6 +841,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/cdp-check", api.handleCdpCheck).Methods("GET")
 	apiRouter.HandleFunc("/downloads/chrome-cdp-macOS.zip", api.handleChromeCdpDownload).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
+	apiRouter.HandleFunc("/llm-config/discovery", api.handleDiscoverLLMSetup).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/models/metadata", api.handleGetModelMetadata).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/azure/deployments", api.handleGetAzureDeployedModels).Methods("POST")
 	apiRouter.HandleFunc("/llm-config/validate-key", api.handleValidateAPIKey).Methods("POST")

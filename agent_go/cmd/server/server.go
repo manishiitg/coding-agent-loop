@@ -65,6 +65,7 @@ import (
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/agent/prompt"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 )
 
 // ServerCmd represents the server command
@@ -600,6 +601,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Clean up stale agent-browser runtime state (dead PID files, sockets)
 	// to prevent "CDP response channel closed" errors on first browser use.
 	browser.CleanupStaleRuntimeState()
+	cleanupClaudeCodeExperimentalSessions("startup")
 
 	// Start background reaper: kills browser sessions idle for >15 min so
 	// Chrome/daemon processes don't accumulate and exhaust memory.
@@ -834,6 +836,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Multi-provider OAuth routes
 	apiRouter.HandleFunc("/auth/start", api.handleAuthStart).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/auth/callback", api.handleAuthCallback).Methods("GET")
+	apiRouter.HandleFunc("/auth/desktop/connect", api.handleDesktopConnect).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/auth/desktop/exchange", api.handleDesktopConnectExchange).Methods("POST", "OPTIONS")
 
 	apiRouter.HandleFunc("/query", api.handleQuery).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
@@ -1388,6 +1392,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Kill all active browser daemons and Chrome processes so they don't linger
 	fmt.Println("🧹 Killing all browser sessions...")
 	browser.KillAllTrackedSessions()
+	cleanupClaudeCodeExperimentalSessions("shutdown")
 
 	// Create a deadline for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -1399,6 +1404,15 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Println("✅ Server shutdown complete")
+}
+
+func cleanupClaudeCodeExperimentalSessions(phase string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := llmproviders.CleanupClaudeCodeExperimentalSessions(ctx); err != nil {
+		log.Printf("[CLAUDE-CODE] %s cleanup failed: %v", phase, err)
+	}
 }
 
 // GetAPIURL returns the base URL for the API server

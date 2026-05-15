@@ -78,25 +78,23 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
     return (
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-            <div className="relative group">
-              <div className="absolute top-0 right-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={handleCopy}
-                  className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                  title="Copy markdown"
-                >
-                  {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-              {isJSON ? (
-                <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap">
-                  {JSON.stringify(parsedJSON, null, 2)}
-                </pre>
-              ) : (
-                <ConversationMarkdownRenderer content={event.final_result} maxHeight="none" />
-              )}
+          <div className="relative group rounded-md border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800/70">
+            <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                onClick={handleCopy}
+                className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                title="Copy markdown"
+              >
+                {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
             </div>
+            {isJSON ? (
+              <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap">
+                {JSON.stringify(parsedJSON, null, 2)}
+              </pre>
+            ) : (
+              <ConversationMarkdownRenderer content={event.final_result} maxHeight="none" framed={false} />
+            )}
           </div>
           <div className="flex items-center gap-2 mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500">
             {event.duration && <span>{formatDuration(event.duration)}</span>}

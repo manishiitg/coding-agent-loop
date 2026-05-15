@@ -33,6 +33,29 @@ for cmd in curl hdiutil xattr; do
   command -v "$cmd" >/dev/null 2>&1 || die "Required command '$cmd' not found in PATH."
 done
 
+ensure_tmux() {
+  if command -v tmux >/dev/null 2>&1; then
+    local version major
+    version="$(tmux -V 2>/dev/null || true)"
+    major="$(printf '%s\n' "$version" | sed -E 's/^tmux ([0-9]+).*/\1/')"
+    if [ "$major" -ge 3 ] 2>/dev/null; then
+      log "Claude Code experimental runtime dependency found: ${version}"
+      return 0
+    fi
+    warn "Claude Code experimental runtime dependency ${version:-unknown} found, but version 3.x or newer is required."
+  fi
+
+  if command -v brew >/dev/null 2>&1; then
+    log "Installing/upgrading Claude Code experimental runtime dependency with Homebrew…"
+    brew upgrade tmux || brew install tmux || warn "Install failed. Claude Code experimental mode will not work until you install tmux 3.x or newer: brew install tmux"
+    return 0
+  fi
+
+  warn "Claude Code experimental mode requires tmux 3.x or newer. Install Homebrew, then run: brew install tmux"
+}
+
+ensure_tmux
+
 # ---- Resolve version --------------------------------------------------------
 
 VERSION="${RUNLOOP_VERSION:-}"

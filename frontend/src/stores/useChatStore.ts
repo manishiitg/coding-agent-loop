@@ -13,6 +13,7 @@ import { useLLMStore } from './useLLMStore'
 import { MAX_EVENTS_TO_PROCESS, CLEANUP_THRESHOLD } from '../constants/events'
 import { logger } from '../utils/logger'
 import { compareEventsChronologically, compareEventsReverseChronologically } from '../utils/eventOrdering'
+import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 
 // Active sessions cache TTL (30 seconds - shorter than polling interval to allow force refresh)
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
@@ -116,6 +117,17 @@ const capCompletedStreamingText = (value: string): string => {
   if (value.length <= MAX_COMPLETED_STREAMING_TEXT_CHARS) return value
   const omitted = value.length - MAX_COMPLETED_STREAMING_TEXT_CHARS
   return `[Trimmed ${omitted.toLocaleString()} chars of older streaming text to keep the UI responsive.]\n\n${value.slice(-MAX_COMPLETED_STREAMING_TEXT_CHARS)}`
+}
+
+const isStreamingStatusChunk = (chunk: string): boolean => {
+  const trimmed = chunk.trim()
+  return (
+    chunk.includes('⏳') ||
+    chunk.includes('⚠️ Gemini') ||
+    trimmed === 'Claude Code is working...' ||
+    trimmed === 'Calling api-bridge...' ||
+    /^Called api-bridge(?: \d+ times)?$/.test(trimmed)
+  )
 }
 
 // Persistent event ID index — avoids O(n) Set rebuild on every addTabEvents call.
@@ -1152,8 +1164,9 @@ export const useChatStore = create<ChatState>()(
             ? (() => { const c = { ...state.completedStreamingText }; delete c[sessionId]; return c })()
             : state.completedStreamingText
 
-          // Route heartbeat/status messages (⏳/⚠️ Gemini) to streamingStatus instead of streamingText
-          const isStatusMessage = chunk.includes('⏳') || chunk.includes('⚠️ Gemini')
+          // Route heartbeat/provider progress messages to streamingStatus instead of streamingText.
+          // This keeps the visible response area focused on assistant markdown.
+          const isStatusMessage = isStreamingStatusChunk(chunk)
           if (isStatusMessage) {
             return {
               streamingStatus: {
@@ -2221,7 +2234,7 @@ export const useChatStore = create<ChatState>()(
       
       }),
       {
-        name: 'chat-store',
+        name: getWorkspaceScopedStorageKey('chat-store'),
         partialize: (state) => ({
           // Persist workflow and multi-agent tabs (for reconnection)
           // Only persist tabs created within the last 24 hours to prevent stale tabs

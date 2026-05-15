@@ -13,6 +13,22 @@ function formatWorkshopIteration(iteration?: number, inputIteration?: string): s
   return null
 }
 
+function isMessageSequenceItemEvent(event: OrchestratorAgentStartEvent): boolean {
+  return event.metadata?.message_sequence_item === true ||
+    event.metadata?.message_sequence_item === 'true' ||
+    event.agent_name?.startsWith('message-sequence-') === true
+}
+
+function isWorkflowStepExecutionEvent(event: OrchestratorAgentStartEvent): boolean {
+  const agentName = event.agent_name || ''
+  return agentName.startsWith('step-') && agentName.includes('-execution-')
+}
+
+function isSequenceWorkEvent(event: OrchestratorAgentStartEvent): boolean {
+  const agentName = (event.agent_name || '').toLowerCase()
+  return isWorkflowStepExecutionEvent(event) && agentName.includes('sequence')
+}
+
 interface OrchestratorAgentStartEventDisplayProps {
   event: OrchestratorAgentStartEvent;
   isCollapsed?: boolean;
@@ -53,6 +69,9 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
 
   const agentType = (event as unknown as { agent_type?: string })?.agent_type
   const isEvaluationAgent = isEvaluationAgentEvent(event)
+  const isMessageSequenceItem = isMessageSequenceItemEvent(event)
+  const isSequenceWork = isSequenceWorkEvent(event)
+  const isWorkflowStepExecution = isWorkflowStepExecutionEvent(event)
   const isWorkshopStep = agentType?.startsWith('workshop-')
   const isBackgroundAgent = agentType === 'workshop-background-task'
   const isWorkshopStepExecution = agentType === 'workshop-step-execution'
@@ -66,6 +85,9 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     : ''
 
   const getLabel = () => {
+    if (isMessageSequenceItem) return 'Sequence Item'
+    if (isSequenceWork) return 'Sequence Work'
+    if (isWorkflowStepExecution) return 'Step'
     if (isEvaluationAgent && agentType === 'evaluation_scoring') return 'Evaluation Scoring'
     if (isEvaluationAgent && (agentType === 'todo_planner_execution' || agentType === 'generic_execution' || agentType === 'workshop-step-execution')) return 'Evaluation Step'
     if (isEvaluationAgent) return 'Evaluation Agent'
@@ -86,6 +108,8 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   }
 
   const getAgentIcon = () => {
+    if (isMessageSequenceItem) return '👤'
+    if (isWorkflowStepExecution) return '▶️'
     if (isEvaluationAgent) return '🧪'
     if (agentType === 'workshop-step-execution') return '▶️'
     if (agentType === 'workshop-step-learning') return '📚'
@@ -104,6 +128,8 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   }
 
   const getAgentColor = () => {
+    if (isMessageSequenceItem) return 'slate'
+    if (isWorkflowStepExecution) return 'cyan'
     if (isEvaluationAgent) return 'blue'
     if (agentType === 'workshop-step-execution') return 'cyan'
     if (agentType === 'workshop-step-learning') return 'amber'
@@ -233,7 +259,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
                   {modeLabel ? ` | ${modeLabel}` : null}
                   {workshopMeta
                     ? ` | ${workshopMeta}`
-                    : ` | Model: ${modelDisplayName} | Servers: ${event.servers_count} | Max Turns: ${event.max_turns}`}
+                    : ` | Model: ${modelDisplayName}`}
                   {event.step_index !== undefined && ` | Step: ${event.step_index}`}
                   {toolCallCount !== undefined && toolCallCount > 0 && ` | Tools: ${toolCallCount}`}
                   {latestToolLabel && ` | Tool: ${latestToolLabel}`}

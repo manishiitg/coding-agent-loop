@@ -1,7 +1,7 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
 
 const DBG = '[skill-popup]'
-import { Send, Square, Code2, Sparkles, Wand2, Loader2, Search, Globe, Layers, X, History, Bot, Server, Download, Paperclip, CalendarClock, MessageSquare } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Wand2, Loader2, Search, Globe, Layers, X, History, Bot, Server, Download, Paperclip, CalendarClock, MessageSquare, Trash2 } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -1025,6 +1025,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Get preset info for multi-agent mode
   const { getActivePreset, activePresetIds } = usePresetApplication()
+
+  const activeWorkflowWorkspacePath = useMemo(() => {
+    if (selectedModeCategory !== 'workflow') return undefined
+    const workflowPreset = getActivePreset('workflow') as { selectedFolder?: PlannerFile } | null
+    if (workflowPreset?.selectedFolder?.filepath) return workflowPreset.selectedFolder.filepath
+    if (!activePresetIds.workflow) return undefined
+    return useWorkflowManifestStore.getState().getWorkflowById(activePresetIds.workflow)?.workspace_path
+  }, [activePresetIds.workflow, getActivePreset, selectedModeCategory])
   
   // Auto-check GWS auth when popup opens
   useEffect(() => {
@@ -1376,6 +1384,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [resumeDialogPosition, setResumeDialogPosition] = useState({ bottom: 0, left: 0 })
   const [resumeSessions, setResumeSessions] = useState<ChatHistorySession[]>([])
   const [resumeSessionsLoading, setResumeSessionsLoading] = useState(false)
+  const [resumeCleanupLoading, setResumeCleanupLoading] = useState(false)
   const [resumeFilter, setResumeFilter] = useState<ResumeFilter>('chat')
 
   // Command editor dialog state
@@ -1426,7 +1435,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!showResumeDialog) return
     let cancelled = false
     setResumeSessionsLoading(true)
-    agentApi.listChatHistorySessions(100)
+    agentApi.listChatHistorySessions(100, 0, activeWorkflowWorkspacePath)
       .then(response => {
         if (cancelled) return
         const sessions = [...(response.sessions || [])].sort((a, b) =>
@@ -1444,7 +1453,34 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         if (!cancelled) setResumeSessionsLoading(false)
       })
     return () => { cancelled = true }
-  }, [addToast, showResumeDialog])
+  }, [activeWorkflowWorkspacePath, addToast, showResumeDialog])
+
+  const handleResumeCleanupOldChats = useCallback(async () => {
+    const scopeLabel = activeWorkflowWorkspacePath || 'all chats'
+    const confirmed = window.confirm(`Delete conversations older than 14 days from ${scopeLabel}? This cannot be undone.`)
+    if (!confirmed) return
+
+    setResumeCleanupLoading(true)
+    try {
+      const response = await agentApi.cleanupChatHistorySessions(14, activeWorkflowWorkspacePath)
+      const deletedCount = response.result?.deleted_count ?? 0
+      addToast(
+        deletedCount === 0
+          ? 'No conversations older than 14 days'
+          : `Deleted ${deletedCount} old conversation${deletedCount === 1 ? '' : 's'}`,
+        'success'
+      )
+      const refreshed = await agentApi.listChatHistorySessions(100, 0, activeWorkflowWorkspacePath)
+      const sessions = [...(refreshed.sessions || [])].sort((a, b) =>
+        Date.parse(b.updated_at || b.created_at || '') - Date.parse(a.updated_at || a.created_at || '')
+      )
+      setResumeSessions(sessions)
+    } catch {
+      addToast('Failed to delete old conversations', 'error')
+    } finally {
+      setResumeCleanupLoading(false)
+    }
+  }, [activeWorkflowWorkspacePath, addToast])
 
   // Auto-resize textarea based on content
   const adjustTextareaHeight = useCallback(() => {
@@ -1580,7 +1616,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [inputText, chatPastedAttachments])
 
   const canBootstrapMultiAgentTab = isMultiAgentMode && !showWorkflowsOverview && !isOrganizationAssistant
-  const hasSubmitTarget = Boolean(tabSessionId || canBootstrapMultiAgentTab)
+  // Workflow builder tabs are intentionally created before their backend session.
+  // ChatArea assigns the session id on first submit, so the input must not block
+  // empty builder tabs just because reports/session rehydration are still loading.
+  const canBootstrapWorkflowPhaseTab = isWorkflowMode && isWorkflowPhaseChat && !!activeTab && !isViewOnly
+  const hasSubmitTarget = Boolean(tabSessionId || canBootstrapMultiAgentTab || canBootstrapWorkflowPhaseTab)
   const canQueueWhileStreaming = useMemo(() => {
     return Boolean(queryToSubmit?.trim() && isStreaming && tabSessionId)
   }, [queryToSubmit, isStreaming, tabSessionId])
@@ -2888,7 +2928,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Check if query is valid (view-only tabs cannot submit)
   const hasValidQuery = Boolean(inputText?.trim())
-  const inputDisabled = isSummarizing || isViewOnly || (!tabSessionId && !canBootstrapMultiAgentTab)
+  const inputDisabled = isSummarizing || isViewOnly || (!tabSessionId && !canBootstrapMultiAgentTab && !canBootstrapWorkflowPhaseTab)
   const submitButtonDisabled = !hasValidQuery || !hasSubmitTarget || isViewOnly || isCdpDisconnected || isPlaywrightMissing
   
   // Memoized placeholder
@@ -2898,10 +2938,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return 'Chat with the workflow builder... (@ files, / commands, # workflows)'
     }
     const baseHints = "@ files, / commands, # workflows, ! skills, $ servers"
-    if (!tabSessionId && canBootstrapMultiAgentTab) return `Ask anything... chat will initialize on send (${baseHints})`
+    if (!tabSessionId && (canBootstrapMultiAgentTab || canBootstrapWorkflowPhaseTab)) return `Ask anything... chat will initialize on send (${baseHints})`
     if (isMultiAgentMode) return `Ask anything... (${baseHints})`
     return `Ask anything... (${baseHints})`
-  }, [isViewOnly, isMultiAgentMode, isWorkflowPhaseChat, workflowPhaseId, tabSessionId, canBootstrapMultiAgentTab])
+  }, [isViewOnly, isMultiAgentMode, isWorkflowPhaseChat, workflowPhaseId, tabSessionId, canBootstrapMultiAgentTab, canBootstrapWorkflowPhaseTab])
 
   // For view-only (restored) tabs, show a minimal indicator instead of the full input form
   if (isViewOnly) {
@@ -3913,7 +3953,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                     ? 'Chrome CDP not reachable. Check connection.'
                                     : isPlaywrightMissing
                                       ? 'Playwright MCP server not found. Add it in MCP Settings.'
-                                      : !tabSessionId
+                                      : !tabSessionId && !canBootstrapWorkflowPhaseTab && !canBootstrapMultiAgentTab
                                         ? 'Session not ready yet'
                                         : 'Send message'
                               }
@@ -3967,6 +4007,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         activeFilterId={resumeFilter}
         onFilterChange={id => setResumeFilter(id as ResumeFilter)}
         footerSummary={resumeFooterSummary}
+        footerActions={
+          <button
+            type="button"
+            onMouseDown={e => e.preventDefault()}
+            onClick={handleResumeCleanupOldChats}
+            disabled={resumeCleanupLoading || resumeSessionsLoading}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
+            title="Delete conversations older than 14 days"
+          >
+            {resumeCleanupLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+            Delete &gt;14d
+          </button>
+        }
         searchPlaceholder="Search previous context..."
         widthClassName="w-[min(720px,calc(100vw-32px))] max-w-[720px]"
         enterHint="Enter to attach"

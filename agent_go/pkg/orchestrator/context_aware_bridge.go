@@ -269,6 +269,31 @@ func (c *ContextAwareEventBridge) ClearCurrentStepID() {
 	c.logger.Info("🧹 Cleared current step ID")
 }
 
+func addMetadataToEvent(event *events.AgentEvent, extra map[string]any) {
+	if len(extra) == 0 {
+		return
+	}
+	eventData, ok := event.Data.(interface {
+		GetBaseEventData() *events.BaseEventData
+	})
+	if !ok {
+		return
+	}
+	baseData := eventData.GetBaseEventData()
+	if baseData == nil {
+		return
+	}
+
+	newMeta := make(map[string]any, len(baseData.Metadata)+len(extra))
+	for k, v := range baseData.Metadata {
+		newMeta[k] = v
+	}
+	for k, v := range extra {
+		newMeta[k] = v
+	}
+	baseData.Metadata = newMeta
+}
+
 // HandleEvent implements AgentEventListener interface
 func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
 	// Tag events with correlation ID from context (for parallel agent grouping).
@@ -281,6 +306,15 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 		} else if agentSessionID, ok := ctx.Value(AgentSessionIDKey).(string); ok && agentSessionID != "" {
 			event.CorrelationID = agentSessionID
 		}
+	}
+
+	if sequenceItem, ok := ctx.Value(orchevents.MessageSequenceItemContextKey).(orchevents.MessageSequenceItemContext); ok {
+		addMetadataToEvent(event, map[string]any{
+			"message_sequence_item":      true,
+			"message_sequence_step_id":   sequenceItem.StepID,
+			"message_sequence_item_id":   sequenceItem.ItemID,
+			"message_sequence_item_type": sequenceItem.ItemType,
+		})
 	}
 
 	// Tag events with workshop_step_id in metadata (without changing CorrelationID).

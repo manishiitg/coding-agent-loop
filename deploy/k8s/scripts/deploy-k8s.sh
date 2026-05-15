@@ -294,19 +294,26 @@ if ! kubectl get namespace "$NAMESPACE" &> /dev/null; then
     kubectl create namespace "$NAMESPACE"
 fi
 
-# Deploy shared resources first
-echo -e "${GREEN}[1] Deploying shared resources...${NC}"
-if [ -f "$K8S_DIR/shared/configmap.yaml" ]; then
-    kubectl apply -f "$K8S_DIR/shared/configmap.yaml"
-    echo -e "${GREEN}✓ ConfigMap applied${NC}"
-fi
-
 # Function to extract value from .env file (handles spaces and quotes)
 extract_env_value() {
     local key=$1
     local env_file=$2
     grep "^${key}" "$env_file" | sed 's/^[^=]*[[:space:]]*=[[:space:]]*//' | sed "s/^['\"]//;s/['\"]$//" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | head -1
 }
+
+# Deploy shared resources first
+echo -e "${GREEN}[1] Deploying shared resources...${NC}"
+if [ -f "$K8S_DIR/shared/configmap.yaml" ]; then
+    kubectl apply -f "$K8S_DIR/shared/configmap.yaml"
+    if [ -f "$K8S_DIR/.env" ]; then
+        DESKTOP_APP_ONLY_UI_OVERRIDE=$(extract_env_value "DESKTOP_APP_ONLY_UI" "$K8S_DIR/.env")
+        if [ "$DESKTOP_APP_ONLY_UI_OVERRIDE" = "true" ] || [ "$DESKTOP_APP_ONLY_UI_OVERRIDE" = "false" ]; then
+            kubectl patch configmap mcpagent-shared-config -n "$NAMESPACE" --type merge -p "{\"data\":{\"DESKTOP_APP_ONLY_UI\":\"$DESKTOP_APP_ONLY_UI_OVERRIDE\"}}"
+            echo -e "${GREEN}✓ DESKTOP_APP_ONLY_UI set from deploy/k8s/.env: ${DESKTOP_APP_ONLY_UI_OVERRIDE}${NC}"
+        fi
+    fi
+    echo -e "${GREEN}✓ ConfigMap applied${NC}"
+fi
 
 # Create/update secret from deploy/k8s/.env
 SECRET_NAME="prod-mcpagent-secret"

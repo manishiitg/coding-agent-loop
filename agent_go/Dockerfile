@@ -72,6 +72,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
     bash \
+    tmux \
     jq \
     ripgrep \
     python3 \
@@ -146,7 +147,7 @@ RUN if [ "$INSTALL_GEMINI_CLI" = "true" ]; then \
 RUN pip3 install --break-system-packages uv pypdf
 
 # Verify npx and docker are available
-RUN which npx && which docker && npm --version && npx --version && docker --version
+RUN which npx && which docker && which tmux && npm --version && npx --version && docker --version
 
 # Verify ripgrep and jq
 RUN which rg && which jq && rg --version && jq --version

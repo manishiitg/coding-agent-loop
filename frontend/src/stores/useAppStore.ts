@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AgentMode } from './types'
 import { useModeStore, type ModeCategory } from './useModeStore'
+import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 
 interface AppState {
   // Agent configuration
@@ -161,7 +162,7 @@ export const useAppStore = create<AppState>()(
         }
       },
       {
-        name: 'app-store',
+        name: getWorkspaceScopedStorageKey('app-store'),
         partialize: (state) => ({
         // Only persist user preferences and important state
         agentMode: state.agentMode,

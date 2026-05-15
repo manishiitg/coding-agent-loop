@@ -986,9 +986,9 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// Plan modification tools
 	planMod := []string{
 		"create_plan",
-		"add_regular_step", "add_routing_step",
+		"add_regular_step", "add_message_sequence_step", "add_routing_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
-		"update_regular_step", "update_routing_step",
+		"update_regular_step", "update_message_sequence_step", "update_routing_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
 		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
 		"update_validation_schema",
@@ -1197,9 +1197,9 @@ func optimizerToolAgentAllowedToolNames() []string {
 
 		// Plan and validation tools.
 		"create_plan",
-		"add_regular_step", "add_routing_step",
+		"add_regular_step", "add_message_sequence_step", "add_routing_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
-		"update_regular_step", "update_routing_step",
+		"update_regular_step", "update_message_sequence_step", "update_routing_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
 		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
 		"update_validation_schema", "validate_evaluation_plan",
@@ -2225,7 +2225,17 @@ Every step reads from prior steps and writes for downstream steps:
 
 **Example**: A step that "processes tax form pages" should have sub-agents for known page types (income, deductions, credits) rather than one generic agent handling all pages.
 
-### Step 5: Design Validation
+### Step 5: When to Use Message Sequence
+
+Use `+"`message_sequence`"+` only when the user explicitly wants one persistent agent conversation with a known ordered queue of user messages.
+
+- Break one large task into small user_message items: one instruction per turn.
+- Add learning / knowledgebase / db update items as user messages at the exact point they should happen.
+- Add explicit reference-check, hallucination-check, critique, or self-validation items when reliability needs it.
+- Reads for KB, db, and learnings are always available. Writes are item-scoped through `+"`write_access`"+`.
+- Python `+"`code`"+` items are for deterministic parsing/transforms. On success, the next user_message gets script path, output paths, and summarized logs as prepended context.
+
+### Step 6: Design Validation
 
 Every step MUST have a **validation_schema** — the automated gate that pass/fails the step:
 - Check file existence, required fields, value types, patterns, and lengths
@@ -2234,7 +2244,7 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 
 Step-level `+"`success_criteria`"+` is deprecated. Rely on a strong `+"`description`"+` plus `+"`validation_schema`"+` instead.
 
-### Step 6: Think About Failure Modes
+### Step 7: Think About Failure Modes
 
 - If a step might fail due to external factors (login, API), add clear error handling in the description
 - If a step's output needs semantic validation (not just structural), add a separate validation step after it
@@ -2252,6 +2262,7 @@ Step-level `+"`success_criteria`"+` is deprecated. Rely on a strong `+"`descript
 
 - **Regular** (type: "regular"): Standard task. Executes an agent that produces a context_output file.
 - **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes**. Each route can either define an inline **sub_agent_step** or reuse a plan-local orphan definition via **orphan_step_ref**. Route sub-agents are usually **regular** steps, but can also be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
+- **Message Sequence** (type: "message_sequence"): Persistent single-agent conversation with ordered `+"`items`"+`. Use short user_message items, optional prevalidation items, and optional Python code items. The sequence can resume and receive a new user message without replaying the queue.
 - **Routing / Orchestration** (type: "routing"): N-way LLM-based routing. Has an **orchestration_step** and **orchestration_routes** — each route has a **sub_agent_step**.
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports: 'text', 'yesno', 'multiple_choice'. Can route based on response.
 - **Orphan** (is_orphan: true): Not part of the main execution flow. Orphan steps are plan-local reusable definitions and manual utility agents. Use them for data checks, environment validation, one-off investigations, or shared sub-agent definitions that multiple orchestrators in the same plan may reuse. Reuse is explicit: an orphan step must declare `+"`shared_with.orchestrator_ids`"+`, and a todo_task route must point to it with `+"`orphan_step_ref`"+`. Do not assume every orphan step is shared with every orchestrator.
@@ -2506,7 +2517,7 @@ The step **description** in plan.json is the primary instruction the execution a
 - **Incorporate patterns from learnings**: If learnings consistently capture the same pattern (e.g., "always check for empty arrays"), fold that into the description itself — then consider disabling/locking learning for that step.
 - **Keep the boundary coherent**: The description may include many tool calls or sub-actions, but it should still serve one durable output contract. If it starts mixing unrelated outputs, validation gates, retry domains, stores, or approval/routing decisions, split at those boundaries.
 
-**How to update**: Use the plan modification tools (`+"`update_regular_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, or `+"`update_validation_schema`"+`) to update step descriptions and validation. Do not patch `+"`planning/plan.json`"+` directly; it is system-managed and guarded. The change takes effect on the next execution.
+**How to update**: Use the plan modification tools (`+"`update_regular_step`"+`, `+"`update_message_sequence_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, or `+"`update_validation_schema`"+`) to update step descriptions and validation. Do not patch `+"`planning/plan.json`"+` directly; it is system-managed and guarded. The change takes effect on the next execution.
 
 **Description review bookkeeping is required**: After you change or approve a description, immediately call `+"`update_step_config`"+` to record:
 - `+"`description_reviewed`"+` + `+"`review_notes`"+`
@@ -2698,7 +2709,7 @@ Rules:
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "run") (eq .WorkshopMode "reporting")}}
 ### Step Execution & Inspection
-- **execute_step(step_id, group_name, instructions?, human_input?, tier?)** — Start a single step in background; returns `+"`execution_id`"+`. In Builder mode, this is the primary way to test one step after adding or editing it. Execution uses `+"`iteration-0`"+`. Pass human_input to supply high-priority operator input/custom instructions to any step type; for human_input steps, it is used as the response.
+- **execute_step(step_id, group_name, instructions?, human_input?, tier?, message_sequence_restart?)** — Start a single step in background; returns `+"`execution_id`"+`. In Builder mode, this is the primary way to test one step after adding or editing it. Execution uses `+"`iteration-0`"+`. For message_sequence, pass human_input to resume with one new user message, or message_sequence_restart=true to start from scratch. For human_input steps, human_input is used as the response. For other executable steps, human_input is high-priority custom context.
 {{if eq .WorkshopMode "optimizer"}}- **execute_step(step_id, group_name, fast_path_only=true)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
 {{end}}
 - **query_step(execution_id, tool_call_id?)** — Live status check for a running single step. Use this immediately after `+"`execute_step`"+` when debugging: it shows progress, active tool calls, and tool-call details without waiting for completion.
@@ -2740,8 +2751,8 @@ Rules:
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
 ### Plan Modification
-- **Steps**: create_plan, add_regular_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps, cleanup_orphan_step_configs
-- **Update**: update_regular_step, update_human_input_step, update_routing_step, update_todo_task_step
+- **Steps**: create_plan, add_regular_step, add_message_sequence_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps, cleanup_orphan_step_configs
+- **Update**: update_regular_step, update_message_sequence_step, update_human_input_step, update_routing_step, update_todo_task_step
 - **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
   For todo_task routes, choose one pattern per route: inline `+"`sub_agent_step`"+` for a route-specific agent, or `+"`orphan_step_ref`"+` to reuse a shared orphan step already allowlisted via `+"`shared_with.orchestrator_ids`"+`. Do not set both.
 - **Validation**: update_validation_schema
@@ -3389,7 +3400,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"human_input": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional human input/custom instructions for the step agent. Injected as high-priority '🚨 HUMAN FEEDBACK (CRITICAL)' context that takes precedence over other instructions. Use this to guide the agent's behavior, override defaults, or provide clarifications. Works for all step types (execution, todo_task, etc.).",
+					"description": "Optional human input/custom instructions for the step agent. For message_sequence steps with an existing session, this is sent as the next user message and the configured queue is not replayed unless message_sequence_restart=true. For human_input steps, it is used as the response. For other executable steps, it is injected as high-priority context.",
+				},
+				"message_sequence_restart": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Message_sequence steps only. If true, archive any existing session and run the configured item queue from scratch. If false/omitted and human_input is provided, resume the existing conversation with human_input as the next user message.",
 				},
 				"tier": map[string]interface{}{
 					"type":        "string",
@@ -3485,18 +3500,25 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					fastPathOnly = b
 				}
 			}
+			messageSequenceRestart := false
+			if val, ok := args["message_sequence_restart"]; ok && val != nil {
+				if b, ok := val.(bool); ok {
+					messageSequenceRestart = b
+				}
+			}
 			if fastPathOnly && iwm.currentWorkshopModeFromConfigs(nil) == "builder" {
 				return "fast_path_only is optimizer-only. Builder mode tests steps through code_exec with execute_step(step_id, group_name) and leaves learn_code/main.py fast-path debugging to Optimizer mode.", nil
 			}
 
 			execOpts := &WorkshopExecuteOptions{
-				GroupName:       resolvedGroupName,
-				Iteration:       iteration,
-				RunFolder:       runFolder,
-				SavedScriptOnly: fastPathOnly,
-				Instructions:    instructions,
-				HumanInput:      humanInput,
-				Tier:            tierValue,
+				GroupName:              resolvedGroupName,
+				Iteration:              iteration,
+				RunFolder:              runFolder,
+				SavedScriptOnly:        fastPathOnly,
+				Instructions:           instructions,
+				HumanInput:             humanInput,
+				Tier:                   tierValue,
+				MessageSequenceRestart: messageSequenceRestart,
 			}
 
 			// Resolve flexible step ID (handles "1", "step-1", "step1" etc.)
@@ -9785,8 +9807,8 @@ This tool is **evidence-driven and mutating**:
 ## PLAN EDITING TOOL RULE
 
 `+"`planning/plan.json`"+` is system-managed and protected by FolderGuard. You may read it with shell/JQ, but you MUST NOT use `+"`diff_patch_workspace_file`"+`, shell redirects, heredocs, or manual JSON edits to mutate it. Apply every plan change through the workflow plan tools:
-- Add steps/routes: `+"`add_regular_step`"+`, `+"`add_routing_step`"+`, `+"`add_human_input_step`"+`, `+"`add_todo_task_step`"+`, `+"`add_todo_task_route`"+`
-- Update steps/routes: `+"`update_regular_step`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`
+- Add steps/routes: `+"`add_regular_step`"+`, `+"`add_message_sequence_step`"+`, `+"`add_routing_step`"+`, `+"`add_human_input_step`"+`, `+"`add_todo_task_step`"+`, `+"`add_todo_task_route`"+`
+- Update steps/routes: `+"`update_regular_step`"+`, `+"`update_message_sequence_step`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`
 - Delete steps/routes: `+"`delete_plan_steps`"+`, `+"`delete_todo_task_route`"+`
 - Cleanup stale step configs: `+"`cleanup_orphan_step_configs`"+`
 - Update validation/config: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`
@@ -9934,8 +9956,8 @@ Per-step KB config:
 ## PLAN EDITING TOOL RULE
 
 `+"`planning/plan.json`"+` is system-managed and protected by FolderGuard. You may read it with shell/JQ, but you MUST NOT use `+"`diff_patch_workspace_file`"+`, shell redirects, heredocs, or manual JSON edits to mutate it. Apply every plan/validation/config change through the workflow tools:
-- Description/step edits: `+"`update_regular_step`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`
-- Structural edits: `+"`add_regular_step`"+`, `+"`add_routing_step`"+`, `+"`add_human_input_step`"+`, `+"`add_todo_task_step`"+`, `+"`add_todo_task_route`"+`, `+"`delete_plan_steps`"+`, `+"`delete_todo_task_route`"+`
+- Description/step edits: `+"`update_regular_step`"+`, `+"`update_message_sequence_step`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`
+- Structural edits: `+"`add_regular_step`"+`, `+"`add_message_sequence_step`"+`, `+"`add_routing_step`"+`, `+"`add_human_input_step`"+`, `+"`add_todo_task_step`"+`, `+"`add_todo_task_route`"+`, `+"`delete_plan_steps`"+`, `+"`delete_todo_task_route`"+`
 - Cleanup stale step configs: `+"`cleanup_orphan_step_configs`"+`
 - Validation/config edits: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`
 

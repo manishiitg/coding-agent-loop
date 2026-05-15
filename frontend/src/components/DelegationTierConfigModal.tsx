@@ -1,10 +1,11 @@
-import { useState } from 'react'
-import { X, Brain, Zap, Gauge, Server, Shield, FolderOpen, Sparkles, Tag, Plus, Trash2, Crown, RefreshCw } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { X, Brain, Zap, Gauge, Server, Shield, FolderOpen, Sparkles, Tag, Plus, Trash2, Crown, RefreshCw, SlidersHorizontal } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useLLMStore } from '../stores'
 import type { DelegationTierConfig, TierModel, CustomTierModel } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
+import ModalPortal from './ui/ModalPortal'
 
 // Generate a slug from the first 4 words of a description, guarding against reserved names
 const descToSlug = (desc: string): string => {
@@ -53,6 +54,13 @@ type BuiltInTierKey = 'main' | 'high' | 'medium' | 'low'
 export default function DelegationTierConfigModal({ isOpen, onClose }: DelegationTierConfigModalProps) {
   const { availableLLMs, delegationTierConfig, setDelegationTierConfig, loadDelegationTierDefaults } = useLLMStore()
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+
+  useEffect(() => {
+    if (isOpen) {
+      setShowAdvanced(false)
+    }
+  }, [isOpen])
 
   if (!isOpen) return null
 
@@ -61,6 +69,26 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
 
   const updateConfig = (next: DelegationTierConfig | null) => {
     setDelegationTierConfig(next)
+  }
+
+  const sharedTierModel = delegationTierConfig?.main || delegationTierConfig?.high || delegationTierConfig?.medium || delegationTierConfig?.low
+  const sharedSelectedLLM: LLMOption | null = sharedTierModel
+    ? {
+        provider: sharedTierModel.provider,
+        model: sharedTierModel.model_id,
+        label: `${sharedTierModel.provider} - ${sharedTierModel.model_id}`,
+        description: 'model for all agents',
+      }
+    : null
+
+  const handleSharedLLMSelect = (llm: LLMOption) => {
+    const tier: TierModel = { provider: llm.provider, model_id: llm.model }
+    updateConfig({
+      main: tier,
+      high: tier,
+      medium: tier,
+      low: tier,
+    })
   }
 
   const handleRefresh = async () => {
@@ -168,9 +196,10 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+    <ModalPortal>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
-        className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-5xl mx-4 max-h-[90vh] flex flex-col"
+        className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-5xl max-h-[calc(100vh-2rem)] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -198,9 +227,9 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
         </div>
 
         {/* Two-column body — scrollable */}
-        <div className="flex divide-x divide-gray-200 dark:divide-slate-700 overflow-y-auto min-h-0">
+        <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-gray-200 dark:divide-slate-700 overflow-y-auto min-h-0">
           {/* Left: How it works + features */}
-          <div className="w-2/5 p-5 space-y-4 shrink-0">
+          <div className="w-full md:w-2/5 p-5 space-y-4 shrink-0">
             <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">How it works</h3>
               <div className="text-sm text-gray-600 dark:text-gray-300 space-y-1">
@@ -228,9 +257,55 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
           </div>
 
           {/* Right: Tier config */}
-          <div className="w-3/5 p-5 overflow-y-auto">
+          <div className="w-full md:w-3/5 p-5 overflow-y-auto">
+            {!showAdvanced && (
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Choose one model</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                    This model will be used for planning, orchestration, and all delegated agent work.
+                  </p>
+                  <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-4">
+                    <LLMSelectionDropdown
+                      availableLLMs={availableLLMs}
+                      selectedLLM={sharedSelectedLLM}
+                      onLLMSelect={handleSharedLLMSelect}
+                      inModal={true}
+                      openDirection="down"
+                      title="Select model for all agents"
+                    />
+                    {sharedTierModel && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-3">
+                        Internally this applies the same model everywhere.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(true)}
+                  className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                >
+                  <SlidersHorizontal className="w-4 h-4" />
+                  Advanced tier setup
+                </button>
+              </div>
+            )}
 
             {/* Main Agent section */}
+            {showAdvanced && (
+              <>
+            <div className="flex justify-end mb-4">
+              <button
+                type="button"
+                onClick={() => setShowAdvanced(false)}
+                className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+              >
+                Use simple setup
+              </button>
+            </div>
+
             <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Main Agent</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
               The orchestrator that creates the plan and coordinates sub-agents. Defaults to the global/tab LLM if not set.
@@ -483,6 +558,8 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                 })}
               </div>
             </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -492,5 +569,6 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }

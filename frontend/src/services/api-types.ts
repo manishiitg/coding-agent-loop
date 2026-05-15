@@ -790,10 +790,18 @@ export interface ChatHistorySession {
   status?: string;
   query?: string;
   user_id?: string;
+  workspace_path?: string;
   conversation_path?: string;
   created_at?: string;
   updated_at?: string;
   message_count?: number;
+}
+
+export interface ChatHistoryCleanupResult {
+  deleted_count: number;
+  deleted_paths: string[];
+  cutoff: string;
+  scope: string;
 }
 
 export interface ListChatSessionsResponse {

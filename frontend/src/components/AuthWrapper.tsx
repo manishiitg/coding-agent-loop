@@ -5,6 +5,9 @@ import { AuthCallback } from '../pages/AuthCallback'
 import { SharedFile } from '../pages/SharedFile'
 import { SharedFolder } from '../pages/SharedFolder'
 import { Loader2 } from 'lucide-react'
+import { WorkspaceConnectionSwitcher } from './WorkspaceConnectionSwitcher'
+import { DesktopAppOnlyGate } from './DesktopAppOnlyGate'
+import { isDesktopAppOnlyMode } from '../services/api'
 
 interface AuthWrapperProps {
   children: React.ReactNode
@@ -101,6 +104,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   if (!isMultiUserModeChecked || isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900">
+        <WorkspaceConnectionSwitcher placement="auth" />
         <div className="text-center">
           <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-500" />
           <p className="mt-4 text-gray-600 dark:text-gray-400">Loading...</p>
@@ -111,14 +115,26 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
 
   // Single-user mode: no auth required, render children directly
   if (!isMultiUserMode) {
+    if (isDesktopAppOnlyMode() && !(window as any).electronAPI) {
+      return <DesktopAppOnlyGate />
+    }
     return <>{children}</>
   }
 
   // Multi-user mode: require authentication (login only, no registration)
   if (!isAuthenticated) {
-    return <Login />
+    return (
+      <>
+        <WorkspaceConnectionSwitcher placement="auth" />
+        <Login />
+      </>
+    )
   }
 
   // Authenticated: render children
+  if (isDesktopAppOnlyMode() && !(window as any).electronAPI) {
+    return <DesktopAppOnlyGate />
+  }
+
   return <>{children}</>
 }

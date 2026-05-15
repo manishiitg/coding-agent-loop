@@ -8,6 +8,8 @@ import { SecretsSection } from './secrets'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import LLMDiscoveryOnboardingModal from './LLMDiscoveryOnboardingModal'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
+import { WorkspaceConnectionSwitcher } from './WorkspaceConnectionSwitcher'
+import { DesktopConnectButton } from './DesktopConnectButton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useMCPStore, useLLMStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
@@ -274,6 +276,10 @@ export default function WorkspaceSidebar({
       {/* User Info & Logout - Bottom Section (Expanded) */}
       {!minimized && (
         <div className="border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+          <div className="border-b border-gray-200 p-3 dark:border-slate-700">
+            <WorkspaceConnectionSwitcher placement="sidebar-bottom" />
+            {!isElectron && <DesktopConnectButton />}
+          </div>
           <div className="p-3 flex items-center justify-between gap-2">
             {isMultiUserMode && user && (
               <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -430,25 +436,31 @@ export default function WorkspaceSidebar({
 
           {/* Download App Icon - Only in Browser */}
           {!isElectron && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <a
-                  href="https://github.com/manishiitg/mcp-agent-builder-go/releases/latest"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-2 text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
-                >
-                  <Download className="w-5 h-5" />
-                </a>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <p>Download Mac App</p>
-              </TooltipContent>
-            </Tooltip>
+            <>
+              <DesktopConnectButton variant="icon" />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <a
+                    href="https://github.com/manishiitg/mcp-agent-builder-go/releases/latest"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-2 text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <Download className="w-5 h-5" />
+                  </a>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  <p>Download Mac App</p>
+                </TooltipContent>
+              </Tooltip>
+            </>
           )}
 
           {/* User Info & Logout - Bottom (Minimized) */}
           <div className="border-t border-gray-200 dark:border-slate-700 pt-3 flex flex-col items-center gap-2">
+            <WorkspaceConnectionSwitcher placement="sidebar-minimized" />
+
             {isElectron && (
               <Tooltip>
                 <TooltipTrigger asChild>

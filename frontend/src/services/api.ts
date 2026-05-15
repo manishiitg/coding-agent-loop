@@ -3,6 +3,7 @@ import axios from 'axios'
 import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
 import { useChatStore } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
+import { getActiveWorkspaceProfile, useWorkspaceConnectionStore } from '../stores/useWorkspaceConnectionStore'
 import type {
   AgentQueryRequest,
   AgentQueryResponse,
@@ -11,6 +12,7 @@ import type {
   ChatSession,
   ChatHistoryConversation,
   ChatHistorySession,
+  ChatHistoryCleanupResult,
   ListChatSessionsResponse,
   GetSessionEventsResponse,
   CreateChatSessionRequest,
@@ -103,6 +105,7 @@ export type {
 type RuntimeConfig = {
   apiBaseUrl?: string
   workspaceApiBaseUrl?: string
+  desktopAppOnly?: boolean | string
 }
 
 export interface WorkflowOverviewRunFolderDetail {
@@ -188,17 +191,24 @@ async function refreshRuntimeConfigFromScript(): Promise<boolean> {
       const text = await response.text()
       const apiBaseUrl = text.match(/apiBaseUrl:\s*["']([^"']+)["']/)?.[1]
       const workspaceApiBaseUrl = text.match(/workspaceApiBaseUrl:\s*["']([^"']+)["']/)?.[1]
-      if (!apiBaseUrl && !workspaceApiBaseUrl) return false
+      const desktopAppOnlyMatch = text.match(/desktopAppOnly:\s*(true|false|["'][^"']+["'])/)
+      const desktopAppOnlyRaw = desktopAppOnlyMatch?.[1]
+      const desktopAppOnly = desktopAppOnlyRaw
+        ? desktopAppOnlyRaw.replace(/^["']|["']$/g, '')
+        : undefined
+      if (!apiBaseUrl && !workspaceApiBaseUrl && desktopAppOnly === undefined) return false
 
       const previous = getRuntimeConfig()
       const next: RuntimeConfig = {
         ...previous,
         ...(apiBaseUrl ? { apiBaseUrl } : {}),
         ...(workspaceApiBaseUrl ? { workspaceApiBaseUrl } : {}),
+        ...(desktopAppOnly !== undefined ? { desktopAppOnly: desktopAppOnly === 'true' } : {}),
       }
       const changed =
         next.apiBaseUrl !== previous.apiBaseUrl ||
-        next.workspaceApiBaseUrl !== previous.workspaceApiBaseUrl
+        next.workspaceApiBaseUrl !== previous.workspaceApiBaseUrl ||
+        next.desktopAppOnly !== previous.desktopAppOnly
 
       ;(window as AppWindow).__APP_RUNTIME_CONFIG__ = next
       if (changed) {
@@ -217,6 +227,20 @@ async function refreshRuntimeConfigFromScript(): Promise<boolean> {
   return runtimeConfigRefreshPromise
 }
 
+function isTruthyRuntimeFlag(value: boolean | string | undefined): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') return value.toLowerCase() === 'true'
+  return false
+}
+
+export function isDesktopAppOnlyMode(): boolean {
+  const runtime = getRuntimeConfig()
+  if (runtime.desktopAppOnly !== undefined) {
+    return isTruthyRuntimeFlag(runtime.desktopAppOnly)
+  }
+  return isTruthyRuntimeFlag(import.meta.env.VITE_DESKTOP_APP_ONLY_UI)
+}
+
 function logResolvedUrlOnce(key: string, payload: Record<string, unknown>) {
   if (typeof window === 'undefined') return
   const appWindow = window as AppWindow
@@ -231,6 +255,16 @@ function logResolvedUrlOnce(key: string, payload: Record<string, unknown>) {
 }
 
 export function getApiBaseUrl(): string {
+  const activeWorkspace = getActiveWorkspaceProfile()
+  if (activeWorkspace.type === 'remote' && activeWorkspace.apiBaseUrl) {
+    logResolvedUrlOnce('apiBaseUrl', {
+      source: 'workspace-profile',
+      workspaceId: activeWorkspace.id,
+      resolved: activeWorkspace.apiBaseUrl,
+    })
+    return activeWorkspace.apiBaseUrl
+  }
+
   const runtime = getRuntimeConfig()
   if (runtime.apiBaseUrl) {
     logResolvedUrlOnce('apiBaseUrl', { source: 'runtime-config', resolved: runtime.apiBaseUrl, runtime })
@@ -261,6 +295,16 @@ export function getApiBaseUrl(): string {
 }
 
 function getWorkspaceApiBaseUrl(): string {
+  const activeWorkspace = getActiveWorkspaceProfile()
+  if (activeWorkspace.type === 'remote' && activeWorkspace.workspaceApiBaseUrl) {
+    logResolvedUrlOnce('workspaceApiBaseUrl', {
+      source: 'workspace-profile',
+      workspaceId: activeWorkspace.id,
+      resolved: activeWorkspace.workspaceApiBaseUrl,
+    })
+    return activeWorkspace.workspaceApiBaseUrl
+  }
+
   const runtime = getRuntimeConfig()
   if (runtime.workspaceApiBaseUrl) {
     logResolvedUrlOnce('workspaceApiBaseUrl', { source: 'runtime-config', resolved: runtime.workspaceApiBaseUrl, runtime })
@@ -435,15 +479,25 @@ export function setSessionId(sessionId: string): void {
 const AUTH_TOKEN_KEY = 'auth_token'
 
 export function getAuthToken(): string | null {
-  return localStorage.getItem(AUTH_TOKEN_KEY)
+  const activeWorkspace = getActiveWorkspaceProfile()
+  if (activeWorkspace.token) return activeWorkspace.token
+
+  // One-time compatibility fallback for pre-workspace local installs.
+  if (activeWorkspace.id === 'local') {
+    return localStorage.getItem(AUTH_TOKEN_KEY)
+  }
+  return null
 }
 
 export function setAuthToken(token: string): void {
-  localStorage.setItem(AUTH_TOKEN_KEY, token)
+  useWorkspaceConnectionStore.getState().setActiveWorkspaceToken(token)
 }
 
 export function clearAuthToken(): void {
-  localStorage.removeItem(AUTH_TOKEN_KEY)
+  useWorkspaceConnectionStore.getState().setActiveWorkspaceToken(undefined)
+  if (getActiveWorkspaceProfile().id === 'local') {
+    localStorage.removeItem(AUTH_TOKEN_KEY)
+  }
 }
 
 // --- Axios request interceptor to inject session ID and auth token ---
@@ -630,8 +684,17 @@ export const agentApi = {
     return response.data
   },
 
-  listChatHistorySessions: async (limit = 80, offset = 0): Promise<{ sessions: ChatHistorySession[] }> => {
-    const response = await api.get('/api/chat-history/sessions', { params: { limit, offset } })
+  listChatHistorySessions: async (limit = 80, offset = 0, workspacePath?: string): Promise<{ sessions: ChatHistorySession[] }> => {
+    const params: Record<string, string | number> = { limit, offset }
+    if (workspacePath) params.workspace_path = workspacePath
+    const response = await api.get('/api/chat-history/sessions', { params })
+    return response.data
+  },
+
+  cleanupChatHistorySessions: async (olderThanDays = 14, workspacePath?: string): Promise<{ success: boolean; result: ChatHistoryCleanupResult }> => {
+    const params: Record<string, string | number> = { older_than_days: olderThanDays }
+    if (workspacePath) params.workspace_path = workspacePath
+    const response = await api.delete('/api/chat-history/sessions/cleanup', { params })
     return response.data
   },
 
@@ -1808,6 +1871,12 @@ export interface OAuthStartResponse {
   state: string
 }
 
+export interface DesktopConnectResponse {
+  connect_url: string
+  server_url: string
+  expires_at: string
+}
+
 export const authApi = {
   // Get authentication mode and available providers
   getAuthMode: async (): Promise<AuthModeResponse> => {
@@ -1839,6 +1908,24 @@ export const authApi = {
       params: { code, state }
     })
     return response.data
+  },
+
+  createDesktopConnect: async (): Promise<DesktopConnectResponse> => {
+    const response = await api.post('/api/auth/desktop/connect')
+    return response.data
+  },
+
+  exchangeDesktopConnect: async (serverUrl: string, code: string): Promise<AuthResponse> => {
+    const response = await fetch(`${serverUrl.replace(/\/+$/, '')}/api/auth/desktop/exchange`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(text || `Desktop connect failed (${response.status})`)
+    }
+    return response.json()
   },
 
   // Logout

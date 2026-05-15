@@ -30,6 +30,9 @@ spec:
             {}
           image: 414085459896.dkr.ecr.ap-south-1.amazonaws.com/mcpagent-frontend:latest
           imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: mcpagent-shared-config
           ports:
             - containerPort: 80
               name: http

@@ -88,6 +88,11 @@ if [[ "$TARGET" == "all" || "$TARGET" == "agent" ]]; then
   # Keep CLI tools used by the bare-metal agent up to date. The agent shells out
   # to these, so if any is missing the call fails with "not found" (code 127).
   # Running on every agent deploy ensures they're installed and fresh.
+  if ! command -v tmux >/dev/null 2>&1; then
+    echo "    Installing tmux for Claude Code interactive provider..."
+    apt-get update >/dev/null
+    apt-get install -y --no-install-recommends tmux >/dev/null
+  fi
   echo "    Updating bare-metal CLI tools (agent-browser, claude, gemini)..."
   npm install -g agent-browser@latest @anthropic-ai/claude-code@latest @google/gemini-cli@latest 2>&1 | tail -3
 

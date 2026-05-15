@@ -44,6 +44,139 @@ const hasWorkspacePrefix = (path: string): boolean => workspacePrefixes.some(pre
 
 const hasExplicitUrlProtocol = (href: string): boolean => /^[a-z][a-z0-9+.-]*:/i.test(href)
 
+const splitPipeTableCells = (line: string): string[] => {
+  const trimmed = line.trim()
+  if (!trimmed.startsWith('|')) return []
+  return trimmed.replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim())
+}
+
+const isPipeTableSeparator = (line: string): boolean => {
+  const cells = splitPipeTableCells(line)
+  return cells.length >= 2 && cells.every(cell => /^:?-{3,}:?$/.test(cell))
+}
+
+const isPipeTableRow = (line: string): boolean => {
+  const cells = splitPipeTableCells(line)
+  return cells.length >= 2 && cells.some(cell => cell.length > 0) && !isPipeTableSeparator(line)
+}
+
+const pipeTableSeparatorFor = (line: string): string => {
+  const cells = splitPipeTableCells(line)
+  return `| ${cells.map(() => '---').join(' | ')} |`
+}
+
+const isBoxTableBorderLine = (line: string): boolean => {
+  const trimmed = line.trim()
+  return /^[┌┬┐├┼┤└┴┘─]+$/.test(trimmed)
+}
+
+const splitBoxTableCells = (line: string): string[] => {
+  const trimmed = line.trim()
+  if (!trimmed.startsWith('│') || !trimmed.includes('│')) return []
+  return trimmed
+    .replace(/^│/, '')
+    .replace(/│$/, '')
+    .split('│')
+    .map(cell => cell.trim())
+}
+
+const flushBoxTable = (output: string[], boxRows: string[][]) => {
+  if (boxRows.length < 2) {
+    for (const row of boxRows) output.push(`│ ${row.join(' │ ')} │`)
+    return
+  }
+
+  const header = boxRows[0]
+  output.push(`| ${header.join(' | ')} |`)
+  output.push(`| ${header.map(() => '---').join(' | ')} |`)
+  for (const row of boxRows.slice(1)) {
+    output.push(`| ${row.join(' | ')} |`)
+  }
+}
+
+const normalizeBoxDrawingTables = (value: string): string => {
+  const lines = value.split('\n')
+  const output: string[] = []
+  let inFence = false
+  let boxRows: string[][] = []
+  let sawBoxBorder = false
+
+  const flush = () => {
+    if (boxRows.length > 0 && sawBoxBorder) {
+      flushBoxTable(output, boxRows)
+    } else {
+      for (const row of boxRows) output.push(`│ ${row.join(' │ ')} │`)
+    }
+    boxRows = []
+    sawBoxBorder = false
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    const isFence = trimmed.startsWith('```') || trimmed.startsWith('~~~')
+
+    if (isFence) {
+      flush()
+      inFence = !inFence
+      output.push(line)
+      continue
+    }
+    if (inFence) {
+      output.push(line)
+      continue
+    }
+
+    if (isBoxTableBorderLine(line)) {
+      sawBoxBorder = true
+      continue
+    }
+
+    const cells = splitBoxTableCells(line)
+    if (cells.length >= 2) {
+      boxRows.push(cells)
+      continue
+    }
+
+    flush()
+    output.push(line)
+  }
+
+  flush()
+  return output.join('\n')
+}
+
+const normalizeLooseMarkdownTables = (value: string): string => {
+  const lines = value.split('\n')
+  const output: string[] = []
+  let inFence = false
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const trimmed = line.trim()
+    const isFence = trimmed.startsWith('```') || trimmed.startsWith('~~~')
+
+    output.push(line)
+
+    if (isFence) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence || !isPipeTableRow(line)) continue
+
+    const nextLine = lines[i + 1] || ''
+    const previousOutputLine = output[output.length - 2] || ''
+    if (
+      isPipeTableRow(nextLine) &&
+      !isPipeTableSeparator(nextLine) &&
+      !isPipeTableSeparator(previousOutputLine)
+    ) {
+      output.push(pipeTableSeparatorFor(line))
+    }
+  }
+
+  return output.join('\n')
+}
+
 const isLikelyRelativeWorkspaceFile = (href: string): boolean => {
   if (!href || href.startsWith('#') || href.startsWith('//') || hasExplicitUrlProtocol(href)) return false
   const path = stripLinkFragmentAndQuery(href).replace(/^\/+/, '')
@@ -412,6 +545,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     // Replace YAML-like frontmatter/blocks with a custom code block
     // Matches content between --- and --- where the content looks like key-value pairs
     let processed = content.replace(/(^|\n)---\n([a-zA-Z0-9_-]+:[\s\S]+?)\n---(\n|$)/g, '$1\n```tool-definition\n$2\n```\n$3')
+    processed = normalizeBoxDrawingTables(processed)
+    processed = normalizeLooseMarkdownTables(processed)
 
     // 2. Auto-link workspace paths (skip when disablePathLinking is true)
     if (disablePathLinking) return processed
@@ -695,6 +830,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             // For code blocks, use SyntaxHighlighter
             const language = match[1]
             const codeString = String(children).replace(/\n$/, '')
+
+            if (['text', 'txt', 'plain', 'plaintext', 'terminal'].includes(language.toLowerCase())) {
+              return (
+                <pre className="my-3 max-w-full overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-gray-700 dark:text-gray-300">
+                  {codeString}
+                </pre>
+              )
+            }
             
             // Detect dark mode
             const isDark = document.documentElement.classList.contains('dark') || 
@@ -864,9 +1007,12 @@ export const SystemMarkdownRenderer: React.FC<{ content: string; maxHeight?: str
   </div>
 )
 
-export const ConversationMarkdownRenderer: React.FC<{ content: string; maxHeight?: string; disablePathLinking?: boolean }> = ({ content, maxHeight = "384px", disablePathLinking }) => (
-  <div className={`border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 overflow-y-auto overflow-x-hidden min-w-0`} style={{ maxHeight }}>
-    <div className="p-3 min-w-0">
+export const ConversationMarkdownRenderer: React.FC<{ content: string; maxHeight?: string; disablePathLinking?: boolean; framed?: boolean }> = ({ content, maxHeight = "384px", disablePathLinking, framed = true }) => (
+  <div
+    className={`${framed ? 'border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800' : ''} overflow-y-auto overflow-x-hidden min-w-0`}
+    style={{ maxHeight }}
+  >
+    <div className={`${framed ? 'p-3' : 'p-0'} min-w-0`}>
       <MarkdownRenderer content={content} disablePathLinking={disablePathLinking} />
     </div>
   </div>

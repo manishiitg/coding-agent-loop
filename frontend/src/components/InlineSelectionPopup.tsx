@@ -34,6 +34,7 @@ interface InlineSelectionPopupProps {
   activeFilterId?: string
   onFilterChange?: (id: string) => void
   footerSummary?: string
+  footerActions?: React.ReactNode
   searchPlaceholder?: string
   widthClassName?: string
   enterHint?: string
@@ -54,6 +55,7 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
   activeFilterId,
   onFilterChange,
   footerSummary,
+  footerActions,
   searchPlaceholder,
   widthClassName = 'min-w-[300px] max-w-[400px]',
   enterHint = 'Enter to toggle'
@@ -323,9 +325,18 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
 
       {/* Footer */}
       <div className="px-3 py-2 border-t border-border bg-secondary text-xs text-muted-foreground">
-        {footerSummary && (
-          <div className="mb-1 truncate" data-testid="inline-selection-footer-summary">
-            {footerSummary}
+        {(footerSummary || footerActions) && (
+          <div className="mb-1 flex items-center justify-between gap-2">
+            {footerSummary && (
+              <div className="min-w-0 truncate" data-testid="inline-selection-footer-summary">
+                {footerSummary}
+              </div>
+            )}
+            {footerActions && (
+              <div className="shrink-0">
+                {footerActions}
+              </div>
+            )}
           </div>
         )}
         <div className="flex items-center justify-between">

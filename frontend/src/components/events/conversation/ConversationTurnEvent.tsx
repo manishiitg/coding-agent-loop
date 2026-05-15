@@ -70,7 +70,7 @@ export const ConversationTurnEventDisplay: React.FC<ConversationTurnEventProps> 
           <div className="mt-3 border-t border-blue-200 dark:border-blue-700 pt-3">
             <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">💬 Last Message:</div>
             <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-              <ConversationMarkdownRenderer content={event.question} />
+              <ConversationMarkdownRenderer content={event.question} framed={false} />
             </div>
           </div>
         )}
@@ -234,7 +234,7 @@ export const ConversationTurnEventDisplay: React.FC<ConversationTurnEventProps> 
             
             {/* Question with markdown rendering - always shown */}
             <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-              <ConversationMarkdownRenderer content={event.question} />
+              <ConversationMarkdownRenderer content={event.question} framed={false} />
             </div>
           </div>
         )}

@@ -211,8 +211,9 @@ func shouldSkipAuth(path string) bool {
 		"/api/auth/login",
 		"/api/auth/register",
 		"/api/auth/mode",
-		"/api/auth/start",     // OAuth flow initiation (must be public)
-		"/api/auth/callback",  // Multi-provider auth callback
+		"/api/auth/start",    // OAuth flow initiation (must be public)
+		"/api/auth/callback", // Multi-provider auth callback
+		"/api/auth/desktop/exchange",
 		"/api/auth/providers", // Get available auth providers
 		"/api/health",
 		"/api/capabilities",

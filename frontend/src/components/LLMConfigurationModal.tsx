@@ -19,6 +19,7 @@ import { APIKeyProviderSection } from './APIKeyProviderSection'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 import { LibraryTab } from './llm/LibraryTab'
 import { PROVIDER_ORDER, getProviderDisplayInfo, type ProviderType } from '../utils/llmDisplay'
+import ModalPortal from './ui/ModalPortal'
 
 interface LLMConfigurationModalProps {
   isOpen: boolean
@@ -508,8 +509,9 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
 
   return (
     <TooltipProvider>
+      <ModalPortal>
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4">
-        <div className="bg-background border border-border rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+        <div className="bg-background border border-border rounded-lg shadow-xl w-full max-w-4xl max-h-[calc(100vh-2rem)] flex flex-col">
           {/* Header */}
           <div className="flex items-center justify-between p-6 border-b border-border flex-shrink-0">
             <div className="flex items-center gap-3">
@@ -909,6 +911,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
           </div>
         </div>
       </div>
+      </ModalPortal>
     </TooltipProvider>
   )
 }

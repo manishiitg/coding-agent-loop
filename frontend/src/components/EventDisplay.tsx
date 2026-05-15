@@ -32,13 +32,20 @@ const getMarkdownComponents = (compact: boolean) => ({
   ul: ({ children }: { children?: React.ReactNode }) => <ul className={`list-disc ${compact ? 'pl-4 mb-2 space-y-0.5' : 'pl-5 mb-2.5 space-y-1'} text-gray-800 dark:text-gray-200`}>{children}</ul>,
   ol: ({ children }: { children?: React.ReactNode }) => <ol className={`list-decimal ${compact ? 'pl-4 mb-2 space-y-0.5' : 'pl-5 mb-2.5 space-y-1'} text-gray-800 dark:text-gray-200`}>{children}</ol>,
   li: ({ children }: { children?: React.ReactNode }) => <li className={`${compact ? 'text-xs' : 'text-xs'} text-gray-800 dark:text-gray-200 leading-relaxed`}>{children}</li>,
-  code: ({ children }: { children?: React.ReactNode }) => (
-    <code className={`bg-gray-100 dark:bg-gray-800 ${compact ? 'px-1 py-0.5' : 'px-1.5 py-0.5'} rounded ${compact ? 'text-[10px]' : 'text-xs'} font-mono text-gray-800 dark:text-gray-200`}>
-      {children}
-    </code>
-  ),
+  code: ({ children, className, inline }: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) => {
+    const language = /language-(\w+)/.exec(className || '')?.[1]?.toLowerCase()
+    const isPlainBlock = !inline && ['text', 'txt', 'plain', 'plaintext', 'terminal'].includes(language || '')
+    if (isPlainBlock) {
+      return <code className="font-sans text-inherit">{children}</code>
+    }
+    return (
+      <code className={`bg-gray-100 dark:bg-neutral-800 ${compact ? 'px-1 py-0.5' : 'px-1.5 py-0.5'} rounded ${compact ? 'text-[10px]' : 'text-xs'} font-mono text-gray-800 dark:text-gray-200`}>
+        {children}
+      </code>
+    )
+  },
   pre: ({ children }: { children?: React.ReactNode }) => (
-    <pre className={`bg-gray-100 dark:bg-gray-800 ${compact ? 'p-2 my-2' : 'p-3 my-2.5'} rounded ${compact ? 'text-[10px]' : 'text-xs'} font-mono overflow-x-auto text-gray-800 dark:text-gray-200`}>
+    <pre className={`bg-transparent ${compact ? 'p-0 my-2' : 'p-0 my-2.5'} ${compact ? 'text-[10px]' : 'text-[11px]'} whitespace-pre-wrap overflow-x-auto text-gray-800 dark:text-gray-200 leading-5`}>
       {children}
     </pre>
   ),
@@ -218,11 +225,11 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
 
       {/* Streaming Text Display - shows LLM output as it generates */}
       {(currentStreamingText || currentStreamingStatus) && (
-        <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 shadow-sm min-w-0">
+        <Card className="border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-neutral-900/40 shadow-sm min-w-0">
           <CardContent className={`${compact ? 'p-2' : 'p-3'} min-w-0`}>
             <div className="flex items-center gap-1.5 mb-1">
-              <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
-              <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-blue-600 dark:text-blue-400 font-medium`}>
+              <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" />
+              <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-600 dark:text-gray-400 font-medium`}>
                 Generating...
               </span>
             </div>
@@ -231,11 +238,11 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                   {currentStreamingText}
                 </ReactMarkdown>
-                <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
+                <span className="inline-block w-1.5 h-3 bg-gray-500 animate-pulse ml-0.5" />
               </div>
             )}
             {currentStreamingStatus && (
-              <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-blue-500 dark:text-blue-400 italic mt-1 opacity-75`}>
+              <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-500 dark:text-gray-400 italic mt-1 opacity-75`}>
                 {currentStreamingStatus}
               </div>
             )}

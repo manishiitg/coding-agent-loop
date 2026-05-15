@@ -43,8 +43,6 @@ export function AgentStartEventComponent({ event }: AgentStartEventProps) {
                   {event.use_code_execution_mode && ' | Code Exec'}
                   {' | Model: '}{modelDisplayName}
                   {' | Provider: '}{event.provider || 'Unknown'}
-                  {(event.metadata?.max_turns !== undefined) &&
-                    ` | Max Turns: ${event.metadata.max_turns as number}`}
                 </span>
               )}
             </div>

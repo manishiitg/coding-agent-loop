@@ -1147,6 +1147,44 @@ update_mmx_cli_if_requested() {
 
 update_mmx_cli_if_requested || exit 1
 
+ensure_tmux_for_claude_code() {
+    if command -v tmux &> /dev/null; then
+        local version major
+        version="$(tmux -V 2>/dev/null || true)"
+        major="$(printf '%s\n' "$version" | sed -E 's/^tmux ([0-9]+).*/\1/')"
+        if [ "$major" -ge 3 ] 2>/dev/null; then
+            echo "✅ Claude Code experimental runtime dependency available: $version"
+            return 0
+        fi
+        echo "⚠️  Claude Code experimental runtime dependency ${version:-unknown} found, but version 3.x or newer is required."
+    fi
+
+    echo "📦 Installing/upgrading Claude Code experimental runtime dependency..."
+    if [[ "$(uname -s)" == "Darwin" ]] && command -v brew &> /dev/null; then
+        brew upgrade tmux || brew install tmux
+    elif command -v apt-get &> /dev/null; then
+        if [ "$(id -u)" -eq 0 ]; then
+            apt-get update && apt-get install -y --no-install-recommends tmux
+        elif command -v sudo &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends tmux
+        fi
+    fi
+
+    if command -v tmux &> /dev/null; then
+        version="$(tmux -V 2>/dev/null || true)"
+        major="$(printf '%s\n' "$version" | sed -E 's/^tmux ([0-9]+).*/\1/')"
+        if [ "$major" -ge 3 ] 2>/dev/null; then
+            echo "✅ Claude Code experimental runtime dependency installed: $version"
+        else
+            echo "⚠️  Claude Code experimental runtime dependency ${version:-unknown} is still below 3.x. Claude Code provider will fail until tmux is upgraded."
+        fi
+    else
+        echo "⚠️  Claude Code experimental runtime dependency is still missing. Claude Code provider will fail until tmux is installed."
+    fi
+}
+
+ensure_tmux_for_claude_code
+
 # Always update agent-browser to latest on startup so browser automation stays current.
 echo "📦 Updating agent-browser to latest..."
 npm install -g agent-browser@latest 2>&1 | tail -3

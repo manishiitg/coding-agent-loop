@@ -122,6 +122,10 @@ gh release edit v1.25.7-test1 --prerelease --draft=false
 - `resources/agent-server`, `resources/workspace-server` (Go binaries built by `dev-setup.sh` or CI)
 - `resources/icons/`, `agent_go/configs/`, `agent_go/static/` via `extraResources` in `package.json`
 
+### Host prerequisites
+
+- Claude Code experimental mode requires `tmux` 3.x or newer as a local runtime dependency. The curl installer attempts `brew install tmux` when Homebrew is available; otherwise install it manually with `brew install tmux`.
+
 ## Runtime Details
 
 ### Window and Server Lifecycle

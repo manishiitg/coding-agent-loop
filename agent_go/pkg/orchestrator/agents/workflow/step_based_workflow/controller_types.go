@@ -99,6 +99,10 @@ type ExecutionContext struct {
 	// substitute; executable steps receive it as high-priority prompt context.
 	WorkshopHumanInput string
 
+	// MessageSequenceRestart forces a message_sequence step to archive any existing
+	// session and run its configured item queue from scratch.
+	MessageSequenceRestart bool
+
 	// ConversationHistoryCapture is an optional pointer; when non-nil the execution engine
 	// writes the agent's full conversation history into it after Execute() returns.
 	// This is used by sub-agent callers (e.g., get_sub_agent_conversation tool) to

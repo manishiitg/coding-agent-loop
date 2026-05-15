@@ -855,10 +855,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Improved auto-scroll for new events
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     if (!chatContentRef.current) return;
-    
-    const element = chatContentRef.current;
-    const targetScrollTop = element.scrollHeight - element.clientHeight;
-    
+
     // Mark that we're performing programmatic scrolling
     isProgrammaticScrollRef.current = true
     
@@ -869,6 +866,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     
     // Use requestAnimationFrame for smoother scrolling
     requestAnimationFrame(() => {
+      const element = chatContentRef.current
+      if (!element) return
+
+      const targetScrollTop = element.scrollHeight - element.clientHeight
       element.scrollTo({
         top: targetScrollTop,
         behavior
@@ -945,17 +946,24 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
   }, [scrollToBottom, setAutoScroll])
 
-  // Auto-scroll when streaming text first appears (brings the "Generating..." card into view)
-  const hasStreamingText = useChatStore(state =>
-    activeSessionId ? !!state.streamingText[activeSessionId] : false
-  )
-  const prevHasStreamingTextRef = useRef(false)
+  // Auto-scroll while the live "Generating..." card grows. New streaming chunks
+  // update the existing card instead of appending events, so displayEvents.length
+  // does not change and the normal event-scroll effect will not fire.
+  const streamingAutoScrollSignal = useChatStore(state => {
+    if (!activeSessionId) return ''
+    const textLength = state.streamingText[activeSessionId]?.length || 0
+    const statusLength = state.streamingStatus[activeSessionId]?.length || 0
+    return textLength > 0 || statusLength > 0 ? `${textLength}:${statusLength}` : ''
+  })
   useEffect(() => {
-    if (hasStreamingText && !prevHasStreamingTextRef.current && autoScroll && chatContentRef.current) {
-      scrollToBottom('smooth')
+    if (!streamingAutoScrollSignal || !autoScroll || !chatContentRef.current) {
+      return
     }
-    prevHasStreamingTextRef.current = hasStreamingText
-  }, [hasStreamingText, autoScroll, scrollToBottom])
+
+    scrollToBottom('instant')
+    const timer = setTimeout(() => scrollToBottom('instant'), 50)
+    return () => clearTimeout(timer)
+  }, [streamingAutoScrollSignal, autoScroll, scrollToBottom])
 
 
   // Update refs when values change (for global observer)

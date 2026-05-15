@@ -1,10 +1,11 @@
 import { useState, useCallback } from 'react'
-import { X, Brain, Zap, Gauge, Cpu, Loader2, RefreshCw } from 'lucide-react'
+import { X, Brain, Zap, Gauge, Cpu, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useLLMStore } from '../stores'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
+import ModalPortal from './ui/ModalPortal'
 import type { AgentLLMConfig, AgentLLMFallback, PresetLLMConfig } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import type { CustomPreset } from '../types/preset'
@@ -35,6 +36,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const [tier2, setTier2] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_2 ?? existing?.tiered_config?.tier_2 ?? null)
   const [tier3, setTier3] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_3 ?? existing?.tiered_config?.tier_3 ?? null)
   const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(manifestLLM?.phase_llm ?? existing?.phase_llm ?? null)
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   if (!activePreset) return null
 
@@ -57,6 +59,17 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
     model_id: opt.model,
     ...(fallbacks && fallbacks.length > 0 ? { fallbacks } : {}),
   })
+
+  const sharedWorkflowLLM = tier1 ?? tier2 ?? tier3 ?? phaseLLM
+  const sharedSelectedLLM = findOption(sharedWorkflowLLM)
+
+  const handleSharedWorkflowLLMSelect = (opt: LLMOption) => {
+    const next = toAgentLLM(opt)
+    setTier1(next)
+    setTier2(next)
+    setTier3(next)
+    setPhaseLLM(next)
+  }
 
   const addFallback = (setter: React.Dispatch<React.SetStateAction<AgentLLMConfig | null>>, opt: LLMOption) => {
     setter(prev => {
@@ -152,9 +165,10 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   ]
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+    <ModalPortal>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
-        className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col"
+        className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-4xl max-h-[calc(100vh-2rem)] flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -162,7 +176,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
           <div>
             <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Workflow LLM Configuration</h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-              <span className="font-medium text-purple-500">{activePreset.label}</span> — tiered models &amp; fallbacks
+              <span className="font-medium text-purple-500">{activePreset.label}</span> — model selection
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -184,30 +198,88 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Body */}
-        <div className="flex divide-x divide-gray-200 dark:divide-slate-700 overflow-y-auto min-h-0">
+        <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-gray-200 dark:divide-slate-700 overflow-y-auto min-h-0">
           {/* Left — how tiers are used */}
-          <div className="w-2/5 p-5 space-y-4 shrink-0">
+          <div className="w-full md:w-2/5 p-5 space-y-4 shrink-0">
             <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">Auto-selection rules</h3>
-              <div className="text-sm text-gray-600 dark:text-gray-300 space-y-1.5">
-                <p><span className="font-medium">Tier 1</span> — first execution (no learnings yet) + initial extraction</p>
-                <p><span className="font-medium">Tier 2</span> — execution once learnings exist + refinement</p>
-                <p><span className="font-medium">Tier 3</span> — validation (always) + mature refinement (2+ runs)</p>
-                <p><span className="font-medium">Phase LLM</span> — planning, eval design, debugging, anonymization. Independent of tier assignment.</p>
-              </div>
+              {showAdvanced ? (
+                <>
+                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">Auto-selection rules</h3>
+                  <div className="text-sm text-gray-600 dark:text-gray-300 space-y-1.5">
+                    <p><span className="font-medium">Tier 1</span> — first execution (no learnings yet) + initial extraction</p>
+                    <p><span className="font-medium">Tier 2</span> — execution once learnings exist + refinement</p>
+                    <p><span className="font-medium">Tier 3</span> — validation (always) + mature refinement (2+ runs)</p>
+                    <p><span className="font-medium">Phase LLM</span> — planning, eval design, debugging, anonymization. Independent of tier assignment.</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">How it works</h3>
+                  <div className="text-sm text-gray-600 dark:text-gray-300 space-y-1.5">
+                    <p>Pick one model for this workflow.</p>
+                    <p>The workflow will use it for execution, learning, validation, planning, and debugging.</p>
+                    <p>Use advanced setup only when different jobs need different models.</p>
+                  </div>
+                </>
+              )}
             </div>
-            <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-4">
+            {showAdvanced && <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">Fallbacks</h3>
               <p className="text-sm text-gray-600 dark:text-gray-300">
                 Each tier can have ordered fallback models. If the primary model fails, the system tries fallbacks in order before returning an error.
               </p>
-            </div>
+            </div>}
           </div>
 
-          {/* Right — tier config */}
-          <div className="w-3/5 p-5 space-y-4 overflow-y-auto">
+          {/* Right — model config */}
+          <div className="w-full md:w-3/5 p-5 space-y-4 overflow-y-auto">
+            {!showAdvanced && (
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Choose one workflow model</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                    This model will be used for execution, learning, validation, and workflow phase work.
+                  </p>
+                  <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-4">
+                    <LLMSelectionDropdown
+                      availableLLMs={availableLLMs}
+                      selectedLLM={sharedSelectedLLM}
+                      onLLMSelect={handleSharedWorkflowLLMSelect}
+                      inModal={true}
+                      openDirection="down"
+                      title="Select model for workflow"
+                    />
+                    {sharedWorkflowLLM && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-3">
+                        Internally this applies the same model everywhere.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(true)}
+                  className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                >
+                  <SlidersHorizontal className="w-4 h-4" />
+                  Advanced workflow LLM setup
+                </button>
+              </div>
+            )}
 
             {/* Tier 1 / 2 / 3 */}
+            {showAdvanced && (
+              <>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(false)}
+                  className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                >
+                  Use simple setup
+                </button>
+              </div>
             {TIERS.map(({ label, desc, icon: Icon, color, value, setter }) => (
               <div key={label} className="border border-gray-200 dark:border-slate-600 rounded-lg p-3">
                 <div className="flex items-center justify-between mb-2">
@@ -281,6 +353,8 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                 placeholder={tier1 ? `Defaults to Tier 1 (${tier1.model_id})` : 'Select phase agent model'}
               />
             </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -294,6 +368,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }
 

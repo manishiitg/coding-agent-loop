@@ -7,19 +7,21 @@ import (
 
 func TestAllSchemaFunctionsReturnValidJSON(t *testing.T) {
 	schemas := map[string]func() string{
-		"UpdateRegularStep":     getUpdateRegularStepSchema,
-		"DeletePlanSteps":       getDeletePlanStepsSchema,
-		"AddRegularStep":        getAddRegularStepSchema,
-		"AddRoutingStep":        getAddRoutingStepSchema,
-		"UpdateRoutingStep":     getUpdateRoutingStepSchema,
-		"AddHumanInputStep":     getAddHumanInputStepSchema,
-		"AddTodoTaskStep":       getAddTodoTaskStepSchema,
-		"UpdateTodoTaskStep":    getUpdateTodoTaskStepSchema,
-		"AddTodoTaskRoute":      getAddTodoTaskRouteSchema,
-		"UpdateTodoTaskRoute":   getUpdateTodoTaskRouteSchema,
-		"DeleteTodoTaskRoute":   getDeleteTodoTaskRouteSchema,
-		"UpdateHumanInputStep":  getUpdateHumanInputStepSchema,
-		"UpdateValidationSchema": getUpdateValidationSchemaSchema,
+		"UpdateRegularStep":         getUpdateRegularStepSchema,
+		"DeletePlanSteps":           getDeletePlanStepsSchema,
+		"AddRegularStep":            getAddRegularStepSchema,
+		"AddMessageSequenceStep":    getAddMessageSequenceStepSchema,
+		"UpdateMessageSequenceStep": getUpdateMessageSequenceStepSchema,
+		"AddRoutingStep":            getAddRoutingStepSchema,
+		"UpdateRoutingStep":         getUpdateRoutingStepSchema,
+		"AddHumanInputStep":         getAddHumanInputStepSchema,
+		"AddTodoTaskStep":           getAddTodoTaskStepSchema,
+		"UpdateTodoTaskStep":        getUpdateTodoTaskStepSchema,
+		"AddTodoTaskRoute":          getAddTodoTaskRouteSchema,
+		"UpdateTodoTaskRoute":       getUpdateTodoTaskRouteSchema,
+		"DeleteTodoTaskRoute":       getDeleteTodoTaskRouteSchema,
+		"UpdateHumanInputStep":      getUpdateHumanInputStepSchema,
+		"UpdateValidationSchema":    getUpdateValidationSchemaSchema,
 	}
 	for name, fn := range schemas {
 		var v interface{}

@@ -220,6 +220,44 @@ export interface TodoTaskPlanStep extends CommonStepFields {
   next_step_id?: string;                    // ID of step after todo task completes (or "end")
 }
 
+export interface MessageSequenceWriteAccess {
+  knowledgebase?: boolean;
+  db?: boolean;
+  learnings?: boolean;
+}
+
+export interface MessageSequenceFailurePolicy {
+  action?: 'stop_step' | 'repair_with_llm' | 'repair_same_session' | string;
+  max_retries?: number;
+}
+
+export interface MessageSequenceItem {
+  id: string;
+  type: 'user_message' | 'code' | 'prevalidation' | string;
+  kind?: 'execution' | 'learning' | 'knowledgebase' | 'db' | 'check' | 'critique' | 'self_validation' | 'reference_check' | 'hallucination_check' | 'code_review' | string;
+  title?: string;
+  message?: string;
+  runtime?: 'python' | 'python3' | string;
+  script_path?: string;
+  input_files?: string[];
+  input_json?: Record<string, unknown>;
+  output_files?: string[];
+  write_access?: MessageSequenceWriteAccess;
+  on_failure?: MessageSequenceFailurePolicy | string;
+  save_repaired_script?: boolean;
+  validation_schema?: ValidationSchema;
+  prevalidation?: ValidationSchema;
+}
+
+export interface MessageSequencePlanStep extends CommonStepFields {
+  type: 'message_sequence';
+  items?: MessageSequenceItem[];
+  session_mode?: string;
+  conversation_scope?: string;
+  reentry_policy?: string;
+  next_step_id?: string;
+}
+
 // Human input step (asks question to human and blocks for input)
 export interface HumanInputPlanStep extends CommonStepFields {
   type: 'human_input';
@@ -251,7 +289,7 @@ export interface RoutingPlanStep extends CommonStepFields {
 }
 
 // Discriminated union type for all step types
-export type PlanStep = RegularPlanStep | ConditionalPlanStep | HumanInputPlanStep | TodoTaskPlanStep | RoutingPlanStep;
+export type PlanStep = RegularPlanStep | ConditionalPlanStep | HumanInputPlanStep | TodoTaskPlanStep | MessageSequencePlanStep | RoutingPlanStep;
 
 // PlanRoutingRoute represents a possible route/sub-agent for planning
 export interface PlanRoutingRoute {
@@ -286,6 +324,10 @@ export function isHumanInputStep(step: PlanStep): step is HumanInputPlanStep {
 
 export function isTodoTaskStep(step: PlanStep): step is TodoTaskPlanStep {
   return step.type === 'todo_task';
+}
+
+export function isMessageSequenceStep(step: PlanStep): step is MessageSequencePlanStep {
+  return step.type === 'message_sequence';
 }
 
 export function isRoutingStep(step: PlanStep): step is RoutingPlanStep {

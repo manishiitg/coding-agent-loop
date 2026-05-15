@@ -249,6 +249,7 @@ const (
 	StepTypeHumanInput  StepType = "human_input"
 	StepTypeTodoTask    StepType = "todo_task"
 	StepTypeRouting     StepType = "routing"
+	StepTypeMessageSeq  StepType = "message_sequence"
 )
 
 // CommonStepFields contains fields shared by all step types
@@ -556,6 +557,73 @@ func (h *HumanInputPlanStep) MarshalJSON() ([]byte, error) {
 	return json.Marshal((*Alias)(h))
 }
 
+// MessageSequenceWriteAccess controls temporary write access for a single sequence item.
+// Read access to KB, DB, and global learnings is always available for the whole sequence.
+type MessageSequenceWriteAccess struct {
+	Knowledgebase bool `json:"knowledgebase,omitempty"`
+	DB            bool `json:"db,omitempty"`
+	Learnings     bool `json:"learnings,omitempty"`
+}
+
+type MessageSequenceFailurePolicy struct {
+	Action     string `json:"action,omitempty"` // "stop_step" | "repair_with_llm" | "repair_same_session"
+	MaxRetries int    `json:"max_retries,omitempty"`
+}
+
+func (p *MessageSequenceFailurePolicy) UnmarshalJSON(data []byte) error {
+	var action string
+	if err := json.Unmarshal(data, &action); err == nil {
+		p.Action = action
+		return nil
+	}
+	type alias MessageSequenceFailurePolicy
+	return json.Unmarshal(data, (*alias)(p))
+}
+
+type MessageSequenceItem struct {
+	ID               string                       `json:"id"`
+	Type             string                       `json:"type"` // "user_message" | "code" | "prevalidation"
+	Kind             string                       `json:"kind,omitempty"`
+	Title            string                       `json:"title,omitempty"`
+	Message          string                       `json:"message,omitempty"`
+	Runtime          string                       `json:"runtime,omitempty"`
+	ScriptPath       string                       `json:"script_path,omitempty"`
+	InputFiles       []string                     `json:"input_files,omitempty"`
+	InputJSON        map[string]interface{}       `json:"input_json,omitempty"`
+	OutputFiles      []string                     `json:"output_files,omitempty"`
+	WriteAccess      MessageSequenceWriteAccess   `json:"write_access,omitempty"`
+	OnFailure        MessageSequenceFailurePolicy `json:"on_failure,omitempty"`
+	SaveRepaired     bool                         `json:"save_repaired_script,omitempty"`
+	ValidationSchema *ValidationSchema            `json:"validation_schema,omitempty"`
+	Prevalidation    *ValidationSchema            `json:"prevalidation,omitempty"`
+}
+
+type MessageSequencePlanStep struct {
+	Type StepType `json:"type"`
+	CommonStepFields
+	Items             []MessageSequenceItem `json:"items,omitempty"`
+	SessionMode       string                `json:"session_mode,omitempty"`
+	ConversationScope string                `json:"conversation_scope,omitempty"`
+	ReentryPolicy     string                `json:"reentry_policy,omitempty"`
+	NextStepID        string                `json:"next_step_id,omitempty"`
+	AgentConfigs      *AgentConfigs         `json:"-"`
+}
+
+func (m *MessageSequencePlanStep) GetID() string                           { return m.ID }
+func (m *MessageSequencePlanStep) GetTitle() string                        { return m.Title }
+func (m *MessageSequencePlanStep) GetDescription() string                  { return m.Description }
+func (m *MessageSequencePlanStep) GetContextDependencies() []string        { return m.ContextDependencies }
+func (m *MessageSequencePlanStep) GetContextOutput() FlexibleContextOutput { return m.ContextOutput }
+func (m *MessageSequencePlanStep) GetValidationSchema() *ValidationSchema  { return m.ValidationSchema }
+func (m *MessageSequencePlanStep) StepType() StepType                      { return StepTypeMessageSeq }
+func (m *MessageSequencePlanStep) GetCommonFields() CommonStepFields       { return m.CommonStepFields }
+
+func (m *MessageSequencePlanStep) MarshalJSON() ([]byte, error) {
+	m.Type = StepTypeMessageSeq
+	type Alias MessageSequencePlanStep
+	return json.Marshal((*Alias)(m))
+}
+
 // TodoTaskPlanStep represents a todo task orchestrator step that manages a dynamic todo list
 // It combines predefined sub-agents (with learning/prevalidation) and an optional generic execution agent
 // The main orchestrator creates/assigns tasks, then delegates to appropriate agents
@@ -728,7 +796,7 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 	}
 
 	if stepWithType.Type == "" {
-		return nil, fmt.Errorf("%s %d is missing required 'type' field (must be: regular, conditional, human_input, todo_task, or routing)", label, index)
+		return nil, fmt.Errorf("%s %d is missing required 'type' field (must be: regular, conditional, human_input, todo_task, routing, or message_sequence)", label, index)
 	}
 
 	switch stepWithType.Type {
@@ -762,8 +830,14 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 			return nil, fmt.Errorf("failed to parse routing %s %d: %w", label, index, err)
 		}
 		return &step, nil
+	case "message_sequence":
+		var step MessageSequencePlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse message_sequence %s %d: %w", label, index, err)
+		}
+		return &step, nil
 	default:
-		return nil, fmt.Errorf("unknown step type %q in %s %d (must be: regular, conditional, human_input, todo_task, or routing)", stepWithType.Type, label, index)
+		return nil, fmt.Errorf("unknown step type %q in %s %d (must be: regular, conditional, human_input, todo_task, routing, or message_sequence)", stepWithType.Type, label, index)
 	}
 }
 
@@ -880,6 +954,11 @@ type PartialPlanStep struct {
 	IfNoNextStepID   string            `json:"if_no_next_step_id,omitempty"`  // Optional: Updated if_no_next_step_id (for yesno)
 	OptionRoutes     map[string]string `json:"option_routes,omitempty"`       // Optional: Updated option routes (for multiple_choice)
 	ValidationSchema *ValidationSchema `json:"validation_schema,omitempty"`   // Optional: Updated validation schema
+	// Message sequence fields
+	Items             []MessageSequenceItem `json:"items,omitempty"`
+	SessionMode       string                `json:"session_mode,omitempty"`
+	ConversationScope string                `json:"conversation_scope,omitempty"`
+	ReentryPolicy     string                `json:"reentry_policy,omitempty"`
 }
 
 // planFileMutex ensures thread-safe access to plan.json
@@ -1153,6 +1232,87 @@ func getAddRegularStepSchema() string {
 			}
 		},
 		"required": ["id", "title", "description", "context_dependencies", "context_output", "insert_after_step_id", "validation_schema", "reason"]
+	}`
+}
+
+func getAddMessageSequenceStepSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"id": {"type": "string", "description": "REQUIRED: Stable URL-friendly step ID."},
+			"title": {"type": "string", "description": "REQUIRED: Short title for the message sequence step."},
+			"description": {"type": "string", "description": "REQUIRED: Overall objective for the sequence. Keep the detailed work split into items[]."},
+			"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "REQUIRED: Prior context files this sequence depends on. Use [] if none."},
+			"context_output": {"type": "string", "description": "REQUIRED: Summary/result file contract for later steps."},
+			"items": {
+				"type": "array",
+				"description": "REQUIRED: Ordered queue. Prefer multiple short user_message items over one large prompt. Add dedicated learning/kb/db/check items where useful.",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": {"type": "string"},
+						"type": {"type": "string", "description": "user_message, code, or prevalidation"},
+						"kind": {"type": "string", "description": "execution, learning, knowledgebase, db, check, critique, self_validation, reference_check, hallucination_check, code_review"},
+						"title": {"type": "string"},
+						"message": {"type": "string", "description": "For user_message items: concise instruction for one turn. The runtime keeps the same agent conversation."},
+						"runtime": {"type": "string", "description": "For code items: python."},
+						"script_path": {"type": "string", "description": "For code items: workspace-relative source script to execute."},
+						"input_files": {"type": "array", "items": {"type": "string"}},
+						"input_json": {"type": "object"},
+						"output_files": {"type": "array", "items": {"type": "string"}},
+						"write_access": {
+							"type": "object",
+							"description": "Item-scoped writes only. Reads for kb/db/learnings are always open.",
+							"properties": {
+								"knowledgebase": {"type": "boolean"},
+								"db": {"type": "boolean"},
+								"learnings": {"type": "boolean"}
+							}
+						},
+						"on_failure": {
+							"type": "object",
+							"properties": {
+								"action": {"type": "string", "description": "stop_step or repair_with_llm"},
+								"max_retries": {"type": "number"}
+							}
+						},
+						"save_repaired_script": {"type": "boolean"},
+						"validation_schema": {"type": "object"},
+						"prevalidation": {"type": "object"}
+					},
+					"required": ["id", "type"]
+				}
+			},
+			"session_mode": {"type": "string", "description": "Usually persistent."},
+			"conversation_scope": {"type": "string", "description": "Usually step_instance."},
+			"reentry_policy": {"type": "string", "description": "Usually resume_existing."},
+			"next_step_id": {"type": "string", "description": "Optional next step ID or end."},
+			"insert_after_step_id": {"type": "string", "description": "REQUIRED: Existing step ID to insert after, or empty string to insert first."},
+			"validation_schema": {"type": "object"},
+			"reason": {"type": "string", "description": "REQUIRED: One-sentence rationale for why this sequence step is being added."}
+		},
+		"required": ["id", "title", "description", "context_dependencies", "context_output", "items", "insert_after_step_id", "reason"]
+	}`
+}
+
+func getUpdateMessageSequenceStepSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"existing_step_id": {"type": "string", "description": "REQUIRED: ID of the message_sequence step to update."},
+			"title": {"type": "string"},
+			"description": {"type": "string"},
+			"context_dependencies": {"type": "array", "items": {"type": "string"}},
+			"context_output": {"type": "string"},
+			"items": {"type": "array", "items": {"type": "object"}, "description": "Replace the ordered item queue."},
+			"session_mode": {"type": "string"},
+			"conversation_scope": {"type": "string"},
+			"reentry_policy": {"type": "string"},
+			"next_step_id": {"type": "string"},
+			"validation_schema": {"type": "object"},
+			"reason": {"type": "string", "description": "REQUIRED: One-sentence rationale for this update."}
+		},
+		"required": ["existing_step_id", "reason"]
 	}`
 }
 
@@ -1916,6 +2076,12 @@ func convertMapToStep(stepMap map[string]interface{}) (PlanStepInterface, error)
 			return nil, fmt.Errorf("failed to parse routing step: %w", err)
 		}
 		typedStep = &step
+	case "message_sequence":
+		var step MessageSequencePlanStep
+		if err := json.Unmarshal(stepJSON, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse message_sequence step: %w", err)
+		}
+		typedStep = &step
 	default:
 		return nil, fmt.Errorf("unknown step type %q", stepType)
 	}
@@ -1979,8 +2145,15 @@ func unmarshalStepFromJSON(stepData json.RawMessage) (PlanStepInterface, error) 
 		}
 		step.Type = StepTypeRouting
 		typedStep = &step
+	case "message_sequence":
+		var step MessageSequencePlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse message_sequence step: %w", err)
+		}
+		step.Type = StepTypeMessageSeq
+		typedStep = &step
 	default:
-		return nil, fmt.Errorf("unknown step type %q (must be: regular, conditional, human_input, todo_task, or routing)", stepType)
+		return nil, fmt.Errorf("unknown step type %q (must be: regular, conditional, human_input, todo_task, routing, or message_sequence)", stepType)
 	}
 
 	return typedStep, nil
@@ -2212,6 +2385,8 @@ func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSche
 		s.ValidationSchema = schema
 	case *RoutingPlanStep:
 		s.ValidationSchema = schema
+	case *MessageSequencePlanStep:
+		s.ValidationSchema = schema
 	}
 }
 
@@ -2314,6 +2489,20 @@ func compareNestedStepFields(oldStep PlanStepInterface, newStep PlanStepInterfac
 	switch oldS := oldStep.(type) {
 	case *RegularPlanStep:
 		// No type-specific fields to diff (loop fields removed)
+
+	case *MessageSequencePlanStep:
+		if newS, ok := newStep.(*MessageSequencePlanStep); ok {
+			oldItemsJSON, _ := json.Marshal(oldS.Items)
+			newItemsJSON, _ := json.Marshal(newS.Items)
+			if string(oldItemsJSON) != string(newItemsJSON) {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".items",
+					OldValue: string(oldItemsJSON),
+					NewValue: string(newItemsJSON),
+				})
+			}
+		}
 
 	case *ConditionalPlanStep:
 		if newS, ok := newStep.(*ConditionalPlanStep); ok {
@@ -2529,6 +2718,40 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		if partialUpdate.OptionRoutes != nil {
 			updated.OptionRoutes = partialUpdate.OptionRoutes
+		}
+		if partialUpdate.ValidationSchema != nil {
+			updated.ValidationSchema = partialUpdate.ValidationSchema
+		}
+		return &updated
+
+	case *MessageSequencePlanStep:
+		updated := *step
+		if partialUpdate.Title != "" {
+			updated.Title = partialUpdate.Title
+		}
+		if partialUpdate.Description != "" {
+			updated.Description = partialUpdate.Description
+		}
+		if partialUpdate.ContextDependencies != nil {
+			updated.ContextDependencies = partialUpdate.ContextDependencies
+		}
+		if partialUpdate.ContextOutput != "" {
+			updated.ContextOutput = FlexibleContextOutput(partialUpdate.ContextOutput)
+		}
+		if partialUpdate.Items != nil {
+			updated.Items = partialUpdate.Items
+		}
+		if partialUpdate.SessionMode != "" {
+			updated.SessionMode = partialUpdate.SessionMode
+		}
+		if partialUpdate.ConversationScope != "" {
+			updated.ConversationScope = partialUpdate.ConversationScope
+		}
+		if partialUpdate.ReentryPolicy != "" {
+			updated.ReentryPolicy = partialUpdate.ReentryPolicy
+		}
+		if partialUpdate.NextStepID != "" {
+			updated.NextStepID = partialUpdate.NextStepID
 		}
 		if partialUpdate.ValidationSchema != nil {
 			updated.ValidationSchema = partialUpdate.ValidationSchema
@@ -2759,6 +2982,45 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			OldValue: oldOutput.String(),
 			NewValue: partialUpdate.ContextOutput,
 		})
+	}
+	if partialUpdate.Items != nil {
+		changedFields = append(changedFields, "items")
+		oldItemsJSON := "[]"
+		if sequenceStep, ok := existingStep.(*MessageSequencePlanStep); ok {
+			oldBytes, _ := json.Marshal(sequenceStep.Items)
+			oldItemsJSON = string(oldBytes)
+		}
+		newBytes, _ := json.Marshal(partialUpdate.Items)
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "items",
+			OldValue: oldItemsJSON,
+			NewValue: string(newBytes),
+		})
+	}
+	if partialUpdate.SessionMode != "" {
+		changedFields = append(changedFields, "session_mode")
+		oldValue := ""
+		if sequenceStep, ok := existingStep.(*MessageSequencePlanStep); ok {
+			oldValue = sequenceStep.SessionMode
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{StepID: partialUpdate.ExistingStepID, Field: "session_mode", OldValue: oldValue, NewValue: partialUpdate.SessionMode})
+	}
+	if partialUpdate.ConversationScope != "" {
+		changedFields = append(changedFields, "conversation_scope")
+		oldValue := ""
+		if sequenceStep, ok := existingStep.(*MessageSequencePlanStep); ok {
+			oldValue = sequenceStep.ConversationScope
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{StepID: partialUpdate.ExistingStepID, Field: "conversation_scope", OldValue: oldValue, NewValue: partialUpdate.ConversationScope})
+	}
+	if partialUpdate.ReentryPolicy != "" {
+		changedFields = append(changedFields, "reentry_policy")
+		oldValue := ""
+		if sequenceStep, ok := existingStep.(*MessageSequencePlanStep); ok {
+			oldValue = sequenceStep.ReentryPolicy
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{StepID: partialUpdate.ExistingStepID, Field: "reentry_policy", OldValue: oldValue, NewValue: partialUpdate.ReentryPolicy})
 	}
 	// Loop fields ignored (feature removed)
 	// Conditional step fields
@@ -3146,6 +3408,74 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 
 		logger.Info(fmt.Sprintf("✅ Updated regular step '%s' in plan", partialUpdate.ExistingStepID))
 		return fmt.Sprintf("Successfully updated regular step '%s' in the plan", partialUpdate.ExistingStepID), nil
+	}
+}
+
+func createUpdateMessageSequenceStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		reason, err := requireReason(args)
+		if err != nil {
+			return "", err
+		}
+		stepJSON, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal step: %w", err)
+		}
+		var partialUpdate PartialPlanStep
+		if err := json.Unmarshal(stepJSON, &partialUpdate); err != nil {
+			return "", fmt.Errorf("failed to parse step: %w", err)
+		}
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+		existingStep, _, _ := findStepByID(plan.Steps, partialUpdate.ExistingStepID)
+		if existingStep == nil {
+			existingStep, _, _ = findStepByID(plan.OrphanSteps, partialUpdate.ExistingStepID)
+		}
+		if _, ok := existingStep.(*MessageSequencePlanStep); existingStep != nil && !ok {
+			return "", fmt.Errorf("step %q is %T, not message_sequence", partialUpdate.ExistingStepID, existingStep)
+		}
+
+		fieldChanges := make([]PlanFieldChange, 0)
+		stepIndex, _, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
+		if err != nil {
+			return "", err
+		}
+		updatedStep, _, _ := findStepByID(plan.Steps, partialUpdate.ExistingStepID)
+		if updatedStep == nil {
+			updatedStep, _, _ = findStepByID(plan.OrphanSteps, partialUpdate.ExistingStepID)
+		}
+		if sequenceStep, ok := updatedStep.(*MessageSequencePlanStep); ok {
+			if err := validateMessageSequenceStepFieldsTyped(sequenceStep); err != nil {
+				return "", fmt.Errorf("validation failed: %w", err)
+			}
+		}
+		if err := validatePlanStepIDs(plan.Steps); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := validateStepIDUniqueness(plan); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write plan: %w", err)
+		}
+		logPlanChange(ctx, workspacePath, PlanChangelogEntry{
+			Tool:    "update_message_sequence_step",
+			Reason:  reason,
+			StepIDs: []string{partialUpdate.ExistingStepID},
+			Changes: fieldChanges,
+		}, readFile, writeFile, logger)
+		if unlockLearningsFunc != nil && stepIndex >= 0 {
+			if err := unlockLearningsFunc(ctx, partialUpdate.ExistingStepID, stepIndex); err != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to unlock learnings for updated message_sequence step %s: %v", partialUpdate.ExistingStepID, err))
+			}
+		}
+		logger.Info(fmt.Sprintf("✅ Updated message_sequence step '%s' in plan", partialUpdate.ExistingStepID))
+		return fmt.Sprintf("Successfully updated message_sequence step '%s' in the plan", partialUpdate.ExistingStepID), nil
 	}
 }
 
@@ -3722,6 +4052,10 @@ func createAddRegularStepExecutor(workspacePath string, logger loggerv2.Logger, 
 	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "regular", unlockLearningsFunc)
 }
 
+func createAddMessageSequenceStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
+	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "message_sequence", unlockLearningsFunc)
+}
+
 // createAddHumanInputStepExecutor creates an executor function for add_human_input_step tool
 func createAddHumanInputStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "human_input", unlockLearningsFunc)
@@ -3772,6 +4106,58 @@ func validateTodoTaskStepFieldsTyped(step *TodoTaskPlanStep) error {
 	return nil
 }
 
+func validateMessageSequenceStepFieldsTyped(step *MessageSequencePlanStep) error {
+	if step == nil {
+		return fmt.Errorf("message_sequence step is nil")
+	}
+	if strings.TrimSpace(step.ID) == "" {
+		return fmt.Errorf("message_sequence step (title: %q) is missing required id field", step.Title)
+	}
+	if strings.TrimSpace(step.Title) == "" {
+		return fmt.Errorf("message_sequence step (ID: %s) is missing required title field", step.ID)
+	}
+	if strings.TrimSpace(step.Description) == "" {
+		return fmt.Errorf("message_sequence step (title: %q, ID: %s) is missing required description field", step.Title, step.ID)
+	}
+	if len(step.Items) == 0 {
+		return fmt.Errorf("message_sequence step (title: %q, ID: %s) must include at least one item", step.Title, step.ID)
+	}
+	seen := make(map[string]bool, len(step.Items))
+	for i, item := range step.Items {
+		if strings.TrimSpace(item.ID) == "" {
+			return fmt.Errorf("message_sequence step %q item[%d] is missing required id", step.ID, i)
+		}
+		if seen[item.ID] {
+			return fmt.Errorf("message_sequence step %q has duplicate item id %q", step.ID, item.ID)
+		}
+		seen[item.ID] = true
+		itemType := strings.TrimSpace(item.Type)
+		if itemType == "" {
+			itemType = "user_message"
+		}
+		switch itemType {
+		case "user_message":
+			if strings.TrimSpace(item.Message) == "" {
+				return fmt.Errorf("message_sequence step %q item %q is a user_message but message is empty", step.ID, item.ID)
+			}
+		case "code":
+			if strings.TrimSpace(item.ScriptPath) == "" {
+				return fmt.Errorf("message_sequence step %q item %q is code but script_path is empty", step.ID, item.ID)
+			}
+			if item.Runtime != "" && item.Runtime != "python" && item.Runtime != "python3" {
+				return fmt.Errorf("message_sequence step %q item %q has unsupported runtime %q; only python is supported", step.ID, item.ID, item.Runtime)
+			}
+		case "prevalidation":
+			if item.ValidationSchema == nil && item.Prevalidation == nil && step.ValidationSchema == nil {
+				return fmt.Errorf("message_sequence step %q item %q is prevalidation but no validation_schema/prevalidation exists", step.ID, item.ID)
+			}
+		default:
+			return fmt.Errorf("message_sequence step %q item %q has unsupported type %q", step.ID, item.ID, item.Type)
+		}
+	}
+	return nil
+}
+
 func setStepIdentity(step PlanStepInterface, id, title string) error {
 	switch s := step.(type) {
 	case *RegularPlanStep:
@@ -3800,6 +4186,11 @@ func setStepIdentity(step PlanStepInterface, id, title string) error {
 			s.Title = title
 		}
 	case *RoutingPlanStep:
+		s.ID = id
+		if strings.TrimSpace(s.Title) == "" {
+			s.Title = title
+		}
+	case *MessageSequencePlanStep:
 		s.ID = id
 		if strings.TrimSpace(s.Title) == "" {
 			s.Title = title
@@ -4021,6 +4412,12 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 					return "", fmt.Errorf("validation failed: %w", err)
 				}
 			}
+		case "message_sequence":
+			if sequenceStep, ok := typedStep.(*MessageSequencePlanStep); ok {
+				if err := validateMessageSequenceStepFieldsTyped(sequenceStep); err != nil {
+					return "", fmt.Errorf("validation failed: %w", err)
+				}
+			}
 		}
 
 		// Read current plan
@@ -4171,7 +4568,7 @@ func createCreatePlanExecutor(workspacePath string, logger loggerv2.Logger, read
 		}
 
 		logger.Info(fmt.Sprintf("🆕 Created new empty plan.json at %s", planPath))
-		return fmt.Sprintf("Created empty plan.json at %s. Add steps with add_regular_step / add_human_input_step / add_todo_task_step / add_routing_step. For the first step, pass insert_after_step_id=\"\" to insert at the beginning.", planPath), nil
+		return fmt.Sprintf("Created empty plan.json at %s. Add steps with add_regular_step / add_message_sequence_step / add_human_input_step / add_todo_task_step / add_routing_step. For the first step, pass insert_after_step_id=\"\" to insert at the beginning.", planPath), nil
 	}
 }
 
@@ -4201,7 +4598,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"create_plan",
-		"Initialize an empty planning/plan.json for a new workflow. Call this FIRST when the workflow has no plan.json yet, before using add_regular_step / add_human_input_step / add_todo_task_step / add_routing_step to populate it. Refuses to overwrite an existing plan.json. Takes no arguments. Note: workflow objective lives in soul/soul.md — edit that file separately; plan.json no longer stores it.",
+		"Initialize an empty planning/plan.json for a new workflow. Call this FIRST when the workflow has no plan.json yet, before using add_regular_step / add_message_sequence_step / add_human_input_step / add_todo_task_step / add_routing_step to populate it. Refuses to overwrite an existing plan.json. Takes no arguments. Note: workflow objective lives in soul/soul.md — edit that file separately; plan.json no longer stores it.",
 		createPlanParams,
 		createCreatePlanExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
@@ -4294,6 +4691,21 @@ func registerPlanModificationTools(
 		return fmt.Errorf("failed to register add_regular_step tool: %w", err)
 	}
 
+	messageSequenceSchema := getAddMessageSequenceStepSchema()
+	messageSequenceParams, err := parseSchemaForToolParameters(messageSequenceSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse message sequence step schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"add_message_sequence_step",
+		"Add a message_sequence step to the plan. Use this only when the user asks for a persistent single-agent conversation with an ordered queue of short user messages, optional prevalidation items, and optional Python code items. Reads for KB/db/learnings are always open; writes are item-scoped through write_access. Prefer small focused user messages, and add reference-check, hallucination-check, critique, or self-validation messages where helpful.",
+		messageSequenceParams,
+		createAddMessageSequenceStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register add_message_sequence_step tool: %w", err)
+	}
+
 	// NOTE: add_conditional_step tool removed (deprecated in favor of decision/routing).
 	// Schema, executor, and execution code kept for backward compatibility with existing workflows.
 
@@ -4361,6 +4773,21 @@ func registerPlanModificationTools(
 		"workflow",
 	); err != nil {
 		return fmt.Errorf("failed to register update_routing_step tool: %w", err)
+	}
+
+	messageSequenceUpdateSchema := getUpdateMessageSequenceStepSchema()
+	messageSequenceUpdateParams, err := parseSchemaForToolParameters(messageSequenceUpdateSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse update_message_sequence_step schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"update_message_sequence_step",
+		"Update a message_sequence step in the plan. Provide existing_step_id and only the fields to change. Replacing items changes the configured queue; an existing runtime session will still resume unless explicitly restarted by execution controls.",
+		messageSequenceUpdateParams,
+		createUpdateMessageSequenceStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register update_message_sequence_step tool: %w", err)
 	}
 
 	// NOTE: conditional branch tools removed (deprecated in favor of decision/routing).

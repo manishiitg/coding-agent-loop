@@ -2890,6 +2890,11 @@ func isRoutingStep(step PlanStepInterface) bool {
 	return ok
 }
 
+func isMessageSequenceStep(step PlanStepInterface) bool {
+	_, ok := step.(*MessageSequencePlanStep)
+	return ok
+}
+
 // getAgentConfigs returns AgentConfigs from a PlanStepInterface
 func getAgentConfigs(step PlanStepInterface) *AgentConfigs {
 	switch s := step.(type) {
@@ -2904,6 +2909,8 @@ func getAgentConfigs(step PlanStepInterface) *AgentConfigs {
 	case *EvaluationStep:
 		return s.AgentConfigs
 	case *RoutingPlanStep:
+		return s.AgentConfigs
+	case *MessageSequencePlanStep:
 		return s.AgentConfigs
 	default:
 		return nil
@@ -3351,6 +3358,38 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			}
 
 			// Default: continue to next sequential step
+			continue
+		}
+
+		if isMessageSequenceStep(step) {
+			hcpo.GetLogger().Info(fmt.Sprintf("💬 Starting message sequence step execution: %s", step.GetTitle()))
+			stepPath := fmt.Sprintf("step-%d", i+1)
+			callOptions := messageSequenceCallOptions{
+				Source: "configured_queue",
+			}
+			if execCtx != nil {
+				callOptions.Restart = execCtx.MessageSequenceRestart
+				if strings.TrimSpace(execCtx.WorkshopHumanInput) != "" {
+					callOptions.Source = "builder_resume"
+					callOptions.ReentryMessage = execCtx.WorkshopHumanInput
+				}
+			}
+			executionResult, _, err := hcpo.executeMessageSequenceStep(ctx, step, i, stepPath, progress, execCtx, breakdownSteps, callOptions)
+			if err != nil {
+				hcpo.GetLogger().Error(fmt.Sprintf("❌ Message sequence step %d execution failed: %v", i+1, err), nil)
+				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "message-sequence-step-execution", fmt.Sprintf("Execute message sequence step: %s", step.GetTitle()), err.Error(), i, iteration)
+				return fmt.Errorf("message sequence step %d execution failed: %w", i+1, err)
+			}
+			previousExecutionResults = append(previousExecutionResults, executionResult)
+			hcpo.addCompletedStepIndex(progress, i)
+			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after message sequence step: %v", err))
+			}
+			if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
+				hcpo.GetLogger().Info(fmt.Sprintf("🎯 Single step mode: completed target step %d, stopping execution", i+1))
+				hcpo.SetRunSingleStepMode(false, -1)
+				break
+			}
 			continue
 		}
 

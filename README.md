@@ -46,7 +46,7 @@ Runloop is built for teams that want more than a chat box:
 
 ### Coding and LLM Models
 
-- **Claude Code** via the `@anthropic-ai/claude-code` CLI
+- **Claude Code** via the `@anthropic-ai/claude-code` CLI experimental mode
 - **Codex-style agentic models** through OpenAI and Azure AI Foundry
 - **Gemini CLI** via the `@google-gemini/gemini-cli`
 - **Open-source and frontier models** through OpenRouter, Bedrock, Vertex AI, and direct provider integrations
@@ -125,7 +125,7 @@ Runloop is provider-agnostic. Users configure published LLMs in the UI, then ass
 
 #### 🛠️ Local CLI Agents
 Bring your existing CLI-based coding agents into the visual orchestrator via the **[MCP Bridge Layer](docs/core/mcp_bridge_layer.md)**:
-*   **Claude Code**: Native integration with the `@anthropic-ai/claude-code` CLI.
+*   **Claude Code**: Native integration with the `@anthropic-ai/claude-code` CLI through experimental interactive sessions.
 *   **Gemini CLI**: Integration with the `@google-gemini/gemini-cli`.
 *   **State Persistence**: Support for `--resume` functionality, allowing the visual orchestrator to maintain long-running coding sessions across CLI restarts.
 

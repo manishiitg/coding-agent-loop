@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AgentMode } from './types'
+import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 
 export type ModeCategory = 'workflow' | 'multi-agent' | null
 
@@ -144,7 +145,7 @@ export const useModeStore = create<ModeState>()(
         }
       },
       {
-        name: 'mode-store',
+        name: getWorkspaceScopedStorageKey('mode-store'),
         version: 2,
         partialize: (state) => ({
           selectedModeCategory: state.selectedModeCategory,

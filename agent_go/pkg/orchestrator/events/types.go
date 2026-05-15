@@ -34,6 +34,18 @@ type parentExecutionIDKeyType struct{}
 
 var ParentExecutionIDKey = parentExecutionIDKeyType{}
 
+// MessageSequenceItemContextKey marks an execution-only agent as an internal
+// message_sequence item run rather than a user-visible sub-agent.
+type messageSequenceItemContextKeyType struct{}
+
+var MessageSequenceItemContextKey = messageSequenceItemContextKeyType{}
+
+type MessageSequenceItemContext struct {
+	StepID   string
+	ItemID   string
+	ItemType string
+}
+
 // Orchestrator Event Types
 // These events are specific to the orchestrator application and are not part of the core mcpagent library
 const (

@@ -3,7 +3,7 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { Folder, Plus, X, Settings, Sparkles, Code2, Info, Search, Download, Trash2 } from 'lucide-react';
+import { Folder, Plus, X, Settings, Sparkles, Code2, Info, Search, Download, Trash2, SlidersHorizontal } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
 import { SkillSelectionSection } from './skills/SkillSelectionSection';
@@ -111,6 +111,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [tier1Fallbacks, setTier1Fallbacks] = useState<AgentLLMFallback[]>([]);
   const [tier2Fallbacks, setTier2Fallbacks] = useState<AgentLLMFallback[]>([]);
   const [tier3Fallbacks, setTier3Fallbacks] = useState<AgentLLMFallback[]>([]);
+  const [showWorkflowLLMAdvanced, setShowWorkflowLLMAdvanced] = useState(false);
 
   const { selectedModeCategory, getAgentModeFromCategory } = useModeStore();
   const primaryConfig = useLLMStore(state => state.primaryConfig);
@@ -231,6 +232,24 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const effectiveTier2LLM = useMemo<AgentLLMConfig | null>(() => tier2LLM || defaultAgentLLM, [tier2LLM, defaultAgentLLM]);
   const effectiveTier3LLM = useMemo<AgentLLMConfig | null>(() => tier3LLM || defaultAgentLLM, [tier3LLM, defaultAgentLLM]);
 
+  const handleSharedWorkflowLLMSelect = useCallback((llm: LLMOption) => {
+    const selected: AgentLLMConfig = {
+      provider: llm.provider as AgentLLMConfig['provider'],
+      model_id: llm.model
+    };
+    setLlmConfig({
+      provider: llm.provider as LLMProvider,
+      model_id: llm.model
+    });
+    setTier1LLM(selected);
+    setTier2LLM(selected);
+    setTier3LLM(selected);
+    setPhaseLLM(selected);
+    setTier1Fallbacks([]);
+    setTier2Fallbacks([]);
+    setTier3Fallbacks([]);
+  }, []);
+
   useEffect(() => {
     if (editingPreset) {
       console.log('[PresetModal] Loading preset:', editingPreset);
@@ -277,6 +296,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setTier1Fallbacks(presetLLM.tiered_config?.tier_1?.fallbacks || []);
       setTier2Fallbacks(presetLLM.tiered_config?.tier_2?.fallbacks || []);
       setTier3Fallbacks(presetLLM.tiered_config?.tier_3?.fallbacks || []);
+      setShowWorkflowLLMAdvanced(false);
     } else {
       setLabel('');
       setQuery('');
@@ -308,6 +328,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setTier1Fallbacks([]);
       setTier2Fallbacks([]);
       setTier3Fallbacks([]);
+      setShowWorkflowLLMAdvanced(false);
     }
   }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory, makeWorkflowFolder, sanitizeWorkflowFolderName]);
 
@@ -543,6 +564,51 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     Agent LLM Configuration
                   </label>
                   <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md space-y-4">
+                    {!showWorkflowLLMAdvanced && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                          Workflow model
+                        </label>
+                        <LLMSelectionDropdown
+                          availableLLMs={availableLLMs}
+                          selectedLLM={(() => {
+                            const selected = phaseLLM || effectiveTier1LLM || defaultAgentLLM;
+                            if (!selected) return currentLLMOption;
+                            return availableLLMs.find(llm =>
+                              llm.provider === selected.provider && llm.model === selected.model_id
+                            ) || currentLLMOption;
+                          })()}
+                          onLLMSelect={handleSharedWorkflowLLMSelect}
+                          onRefresh={loadDefaultsFromBackend}
+                          disabled={false}
+                          inModal={true}
+                          openDirection="down"
+                        />
+                        <div className="text-xs text-gray-500 mt-2">
+                          Used for execution, learning, validation, planning, and debugging.
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowWorkflowLLMAdvanced(true)}
+                          className="mt-3 inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                        >
+                          <SlidersHorizontal className="w-3.5 h-3.5" />
+                          Advanced workflow LLM setup
+                        </button>
+                      </div>
+                    )}
+
+                    {showWorkflowLLMAdvanced && (
+                      <>
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setShowWorkflowLLMAdvanced(false)}
+                            className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                          >
+                            Use simple setup
+                          </button>
+                        </div>
                     {[
                           { label: 'Tier 1 - High Reasoning', tooltip: 'Used for first-time execution (no learnings yet) and initial learning extraction.', desc: 'Most capable model for complex first-time tasks.', llm: tier1LLM, setLLM: setTier1LLM, fallbacks: tier1Fallbacks, setFallbacks: setTier1Fallbacks, num: 1 },
                           { label: 'Tier 2 - Medium Reasoning', tooltip: 'Used for execution with existing learnings and learning refinement.', desc: 'Balanced model for tasks with existing learnings.', llm: tier2LLM, setLLM: setTier2LLM, fallbacks: tier2Fallbacks, setFallbacks: setTier2Fallbacks, num: 2 },
@@ -665,6 +731,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           <div>Validation: Always Tier 3</div>
                           <div>Phase Agent: Independent — always uses the configured Phase LLM above</div>
                         </div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

@@ -159,6 +159,11 @@ if ! command -v node &>/dev/null; then
   curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
   apt-get install -y --no-install-recommends nodejs
 fi
+if ! command -v tmux &>/dev/null; then
+  echo "==> Installing tmux for Claude Code interactive provider..."
+  apt-get update
+  apt-get install -y --no-install-recommends tmux
+fi
 echo "==> Installing CLI tools (agent-browser, claude, gemini)..."
 npm install -g agent-browser@latest @anthropic-ai/claude-code@latest @google/gemini-cli@latest
 

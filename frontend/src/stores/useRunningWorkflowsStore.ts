@@ -12,6 +12,7 @@ import {
   hasWorkflowCompletion,
   hasWorkflowError
 } from '../utils/workflowEventProcessor'
+import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 
 // Running workflow interface for tracking active workflows
 export interface RunningWorkflow {
@@ -36,7 +37,8 @@ export interface RunningWorkflow {
 // Helper functions for persistence
 const loadRunningWorkflowsFromStorage = (): RunningWorkflow[] => {
   try {
-    const saved = localStorage.getItem(STORAGE_KEYS.RUNNING_WORKFLOWS)
+    const storageKey = getWorkspaceScopedStorageKey(STORAGE_KEYS.RUNNING_WORKFLOWS)
+    const saved = localStorage.getItem(storageKey)
     if (saved) {
       const workflows = JSON.parse(saved) as RunningWorkflow[]
       const now = Date.now()
@@ -55,7 +57,7 @@ const loadRunningWorkflowsFromStorage = (): RunningWorkflow[] => {
         .filter(wf => wf.status === 'running')
 
       // Persist cleaned state back
-      localStorage.setItem(STORAGE_KEYS.RUNNING_WORKFLOWS, JSON.stringify(cleaned))
+      localStorage.setItem(storageKey, JSON.stringify(cleaned))
       return cleaned
     }
   } catch (error) {
@@ -66,7 +68,7 @@ const loadRunningWorkflowsFromStorage = (): RunningWorkflow[] => {
 
 const saveRunningWorkflowsToStorage = (workflows: RunningWorkflow[]) => {
   try {
-    localStorage.setItem(STORAGE_KEYS.RUNNING_WORKFLOWS, JSON.stringify(workflows))
+    localStorage.setItem(getWorkspaceScopedStorageKey(STORAGE_KEYS.RUNNING_WORKFLOWS), JSON.stringify(workflows))
   } catch (error) {
     console.error('[RunningWorkflowsStore] Failed to save to localStorage:', error)
   }

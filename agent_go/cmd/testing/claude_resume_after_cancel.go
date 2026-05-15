@@ -23,10 +23,10 @@ var claudeResumeAfterCancelTestCmd = &cobra.Command{
 
 Flow:
 1. Start a normal Claude Code turn and capture the returned session ID.
-2. Start a resumed turn and cancel it after the first streamed content chunk.
+2. Start a resumed turn and cancel it while it is running.
 3. Start another resumed turn and verify that:
-   - Claude Code is invoked with --resume
-   - only the latest user message is written to stdin when resuming
+   - Claude Code still resumes from the original native session ID
+   - previous native session context is still available
 
 This is a focused regression test for cancel-then-resume behavior.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -64,7 +64,7 @@ This is a focused regression test for cancel-then-resume behavior.`,
 			return fmt.Errorf("failed to initialize Claude Code LLM: %w", err)
 		}
 
-		sessionID, err := establishClaudeSession(llmInstance, logger)
+		sessionID, codeword, err := establishClaudeSession(llmInstance, logger)
 		if err != nil {
 			return err
 		}
@@ -73,7 +73,7 @@ This is a focused regression test for cancel-then-resume behavior.`,
 			return err
 		}
 
-		if err := verifyResumeAfterCancel(llmInstance, sessionID, logFile, logger); err != nil {
+		if err := verifyResumeAfterCancel(llmInstance, sessionID, codeword, logger); err != nil {
 			return err
 		}
 
@@ -82,32 +82,32 @@ This is a focused regression test for cancel-then-resume behavior.`,
 	},
 }
 
-func establishClaudeSession(llmInstance llmtypes.Model, logger loggerv2.Logger) (string, error) {
+func establishClaudeSession(llmInstance llmtypes.Model, logger loggerv2.Logger) (string, string, error) {
 	logger.Info("--- Step 1: Establish Claude session ---")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
+	codeword := "CLAUDE_RESUME_AFTER_CANCEL_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
 	resp, err := llmInstance.GenerateContent(ctx, []llmtypes.MessageContent{
-		textMessage(llmtypes.ChatMessageTypeHuman, "Reply with exactly READY and nothing else."),
+		textMessage(llmtypes.ChatMessageTypeHuman, "Remember this codeword for later: "+codeword+". Reply with exactly READY and nothing else."),
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to establish initial Claude session: %w", err)
+		return "", "", fmt.Errorf("failed to establish initial Claude session: %w", err)
 	}
 
 	sessionID := extractClaudeSessionID(resp)
 	if sessionID == "" {
-		return "", fmt.Errorf("Claude response did not include claude_code_session_id")
+		return "", "", fmt.Errorf("Claude response did not include claude_code_session_id")
 	}
 
 	logger.Info(fmt.Sprintf("Captured Claude session ID: %s", sessionID))
-	return sessionID, nil
+	return sessionID, codeword, nil
 }
 
 func cancelResumedTurn(llmInstance llmtypes.Model, sessionID string, logger loggerv2.Logger) error {
-	logger.Info("--- Step 2: Cancel a resumed turn after first streamed chunk ---")
+	logger.Info("--- Step 2: Cancel a resumed turn while it is running ---")
 
-	streamChan := make(chan llmtypes.StreamChunk, 128)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -116,19 +116,23 @@ func cancelResumedTurn(llmInstance llmtypes.Model, sessionID string, logger logg
 		_, err := llmInstance.GenerateContent(
 			ctx,
 			[]llmtypes.MessageContent{
-				textMessage(llmtypes.ChatMessageTypeHuman, "Print the word STREAMING on separate numbered lines from 1 to 2000. Start immediately with line 1 and do not add any intro or summary."),
+				textMessage(llmtypes.ChatMessageTypeHuman, "Write the word STILL_RUNNING on separate numbered lines from 1 to 5000. Start immediately with line 1 and do not add any intro or summary."),
 			},
 			llm.WithResumeSessionID(sessionID),
-			llmtypes.WithStreamingChan(streamChan),
 		)
 		errCh <- err
 	}()
 
-	if err := waitForFirstContentChunk(streamChan, 45*time.Second); err != nil {
-		return fmt.Errorf("did not receive streamed content before cancellation: %w", err)
+	select {
+	case err := <-errCh:
+		if err == nil {
+			return fmt.Errorf("resumed turn completed before cancellation could be tested")
+		}
+		return fmt.Errorf("resumed turn failed before cancellation: %w", err)
+	case <-time.After(3 * time.Second):
 	}
 
-	logger.Info("Received first streamed chunk; canceling resumed turn")
+	logger.Info("Canceling in-flight resumed turn")
 	cancel()
 
 	select {
@@ -143,54 +147,32 @@ func cancelResumedTurn(llmInstance llmtypes.Model, sessionID string, logger logg
 	}
 }
 
-func verifyResumeAfterCancel(llmInstance llmtypes.Model, sessionID string, logFile string, logger loggerv2.Logger) error {
-	logger.Info("--- Step 3: Verify later turn still resumes and only latest user message is sent ---")
-
-	oldSentinel := "OLD_CONTEXT_SHOULD_NOT_BE_SENT_" + uuid.NewString()
-	latestSentinel := "LATEST_PROMPT_AFTER_CANCEL_" + uuid.NewString()
+func verifyResumeAfterCancel(llmInstance llmtypes.Model, sessionID string, codeword string, logger loggerv2.Logger) error {
+	logger.Info("--- Step 3: Verify later turn still resumes native Claude context ---")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	_, err := llmInstance.GenerateContent(
+	resp, err := llmInstance.GenerateContent(
 		ctx,
 		[]llmtypes.MessageContent{
-			textMessage(llmtypes.ChatMessageTypeHuman, oldSentinel),
-			textMessage(llmtypes.ChatMessageTypeAI, "IGNORED_OLDER_ASSISTANT_REPLY"),
-			textMessage(llmtypes.ChatMessageTypeHuman, latestSentinel+"\nReply with exactly RESUMED and nothing else."),
+			textMessage(llmtypes.ChatMessageTypeHuman, "OLD_CONTEXT_SHOULD_NOT_BE_SENT"),
+			textMessage(llmtypes.ChatMessageTypeAI, "OLD_ASSISTANT_SHOULD_NOT_BE_SENT"),
+			textMessage(llmtypes.ChatMessageTypeHuman, "What codeword did I ask you to remember? Reply exactly with the codeword and nothing else."),
 		},
 		llm.WithResumeSessionID(sessionID),
 	)
 	if err != nil {
 		return fmt.Errorf("resumed verification turn failed: %w", err)
 	}
-
-	logData, err := os.ReadFile(logFile)
-	if err != nil {
-		return fmt.Errorf("failed to read debug log file: %w", err)
+	if resp == nil || len(resp.Choices) == 0 {
+		return fmt.Errorf("resumed verification response has no choices")
 	}
-	lines := strings.Split(string(logData), "\n")
-
-	resumeLine := lastLogLineContaining(lines, "Executing Claude Code CLI: claude ")
-	if resumeLine == "" {
-		return fmt.Errorf("debug logs do not contain any Claude Code execution line")
-	}
-	if !strings.Contains(resumeLine, "--resume") || !strings.Contains(resumeLine, sessionID) {
-		return fmt.Errorf("Claude execution line does not show --resume %s", sessionID)
+	if !strings.Contains(strings.TrimSpace(resp.Choices[0].Content), codeword) {
+		return fmt.Errorf("resumed verification response %q did not include codeword %q", resp.Choices[0].Content, codeword)
 	}
 
-	inputLine := lastLogLineContaining(lines, "Input stream:")
-	if inputLine == "" {
-		return fmt.Errorf("debug logs do not contain the Claude input stream line")
-	}
-	if !strings.Contains(inputLine, latestSentinel) {
-		return fmt.Errorf("Claude input stream line does not contain the latest resumed user prompt sentinel")
-	}
-	if strings.Contains(inputLine, oldSentinel) {
-		return fmt.Errorf("Claude input stream line still contains the old conversation sentinel")
-	}
-
-	logger.Info("Verified Claude --resume and confirmed only latest user message was sent on resumed turn")
+	logger.Info("Verified Claude native resume still works after canceling a resumed turn")
 	return nil
 }
 

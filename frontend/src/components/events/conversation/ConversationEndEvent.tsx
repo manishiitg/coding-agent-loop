@@ -81,7 +81,7 @@ export const ConversationEndEventDisplay: React.FC<ConversationEndEventProps> = 
             {/* Expanded question with markdown rendering */}
             {isQuestionExpanded && (
               <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-                <ConversationMarkdownRenderer content={event.question} />
+                <ConversationMarkdownRenderer content={event.question} framed={false} />
               </div>
             )}
           </div>
@@ -96,7 +96,7 @@ export const ConversationEndEventDisplay: React.FC<ConversationEndEventProps> = 
             
             {/* Full result with markdown rendering - always visible */}
             <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
-              <ConversationMarkdownRenderer content={event.result} />
+              <ConversationMarkdownRenderer content={event.result} framed={false} />
             </div>
           </div>
         )}

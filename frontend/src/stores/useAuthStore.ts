@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { authApi, getAuthToken, setAuthToken, clearAuthToken } from '../services/api'
 import type { AuthUser, AuthProvider } from '../services/api'
+import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 
 // Key for storing OAuth state in sessionStorage
 const OAUTH_STATE_KEY = 'oauth_state'
@@ -193,7 +194,7 @@ export const useAuthStore = create<AuthState>()(
         clearError: () => set({ error: null }),
       }),
       {
-        name: 'auth-storage',
+        name: getWorkspaceScopedStorageKey('auth-storage'),
         partialize: (state) => ({
           // Only persist user data, not loading/error states
           user: state.user,

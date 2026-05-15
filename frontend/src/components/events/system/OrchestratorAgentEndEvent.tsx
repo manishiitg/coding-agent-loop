@@ -4,6 +4,22 @@ import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer';
 import { formatDuration } from '../../../utils/duration';
 import { isEvaluationAgentEvent } from './eventDisplayUtils';
 
+function isMessageSequenceItemEvent(event: OrchestratorAgentEndEvent): boolean {
+  return event.metadata?.message_sequence_item === true ||
+    event.metadata?.message_sequence_item === 'true' ||
+    event.agent_name?.startsWith('message-sequence-') === true
+}
+
+function isWorkflowStepExecutionEvent(event: OrchestratorAgentEndEvent): boolean {
+  const agentName = event.agent_name || ''
+  return agentName.startsWith('step-') && agentName.includes('-execution-')
+}
+
+function isSequenceWorkEvent(event: OrchestratorAgentEndEvent): boolean {
+  const agentName = (event.agent_name || '').toLowerCase()
+  return isWorkflowStepExecutionEvent(event) && agentName.includes('sequence')
+}
+
 interface OrchestratorAgentEndEventDisplayProps {
   event: OrchestratorAgentEndEvent;
 }
@@ -13,6 +29,9 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
   // the actual agent completion is already shown by the inner agent's end event
   const agentType = (event as unknown as { agent_type?: string })?.agent_type
   const isEvaluationAgent = isEvaluationAgentEvent(event)
+  const isMessageSequenceItem = isMessageSequenceItemEvent(event)
+  const isSequenceWork = isSequenceWorkEvent(event)
+  const isWorkflowStepExecution = isWorkflowStepExecutionEvent(event)
   if (agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning' || agentType === 'workshop-background-task') {
     return null
   }
@@ -24,6 +43,9 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
 
   const getLabel = () => {
     const t = (event as unknown as { agent_type?: string })?.agent_type
+    if (isMessageSequenceItem) return 'Sequence Item'
+    if (isSequenceWork) return 'Sequence Work'
+    if (isWorkflowStepExecution) return 'Step'
     if (isEvaluationAgent && t === 'evaluation_scoring') return 'Evaluation Scoring'
     if (isEvaluationAgent && (t === 'todo_planner_execution' || t === 'generic_execution')) return 'Evaluation Step'
     if (isEvaluationAgent) return 'Evaluation Agent'
@@ -41,6 +63,8 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
 
   const getAgentIcon = () => {
     const t = (event as unknown as { agent_type?: string })?.agent_type
+    if (isMessageSequenceItem) return '👤'
+    if (isWorkflowStepExecution) return '✅'
     if (isEvaluationAgent) return '🧪'
     if (t === 'plan_breakdown') return '🔍'
     if (t === 'planning') return '📋'
@@ -53,6 +77,8 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
 
   const getAgentColor = () => {
     const t = (event as unknown as { agent_type?: string })?.agent_type
+    if (isMessageSequenceItem) return 'slate'
+    if (isWorkflowStepExecution) return 'cyan'
     if (isEvaluationAgent) return 'blue'
     if (t === 'plan_breakdown') return 'emerald'
     if (t === 'planning') return 'blue'
@@ -102,6 +128,20 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
           border: 'border-indigo-200 dark:border-indigo-800',
           text: 'text-indigo-700 dark:text-indigo-300',
           textSecondary: 'text-indigo-600 dark:text-indigo-400'
+        };
+      case 'slate':
+        return {
+          bg: 'bg-slate-900/40 dark:bg-slate-900/40',
+          border: 'border-slate-700 dark:border-slate-700',
+          text: 'text-slate-300 dark:text-slate-300',
+          textSecondary: 'text-slate-400 dark:text-slate-400'
+        };
+      case 'cyan':
+        return {
+          bg: 'bg-cyan-950/30 dark:bg-cyan-950/30',
+          border: 'border-cyan-800 dark:border-cyan-800',
+          text: 'text-cyan-400 dark:text-cyan-400',
+          textSecondary: 'text-cyan-500 dark:text-cyan-500'
         };
       default:
         return {

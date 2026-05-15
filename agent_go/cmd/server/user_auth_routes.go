@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -59,11 +60,25 @@ type MultiProviderOAuthStartResponse struct {
 	State   string `json:"state"`
 }
 
+type DesktopConnectResponse struct {
+	ConnectURL string `json:"connect_url"`
+	ServerURL  string `json:"server_url"`
+	ExpiresAt  string `json:"expires_at"`
+}
+
+type DesktopConnectExchangeRequest struct {
+	Code string `json:"code"`
+}
+
 // OAuth state management for CSRF protection
 var (
 	oauthStates     = make(map[string]*oauthStateEntry)
 	oauthStatesMu   sync.RWMutex
 	stateExpiration = 10 * time.Minute
+
+	desktopConnectCodes      = make(map[string]*desktopConnectEntry)
+	desktopConnectCodesMu    sync.Mutex
+	desktopConnectExpiration = 5 * time.Minute
 )
 
 type oauthStateEntry struct {
@@ -72,9 +87,16 @@ type oauthStateEntry struct {
 	CreatedAt   time.Time
 }
 
+type desktopConnectEntry struct {
+	User      UserClaims
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
 func init() {
 	// Start cleanup goroutine for expired states
 	go cleanupExpiredStates()
+	go cleanupExpiredDesktopConnectCodes()
 }
 
 func cleanupExpiredStates() {
@@ -91,10 +113,32 @@ func cleanupExpiredStates() {
 	}
 }
 
+func cleanupExpiredDesktopConnectCodes() {
+	ticker := time.NewTicker(1 * time.Minute)
+	for range ticker.C {
+		desktopConnectCodesMu.Lock()
+		now := time.Now()
+		for code, entry := range desktopConnectCodes {
+			if now.After(entry.ExpiresAt) {
+				delete(desktopConnectCodes, code)
+			}
+		}
+		desktopConnectCodesMu.Unlock()
+	}
+}
+
 func generateState() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return base64.URLEncoding.EncodeToString(b)
+}
+
+func generateDesktopConnectCode() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 func storeState(state, provider, redirectURI string) {
@@ -119,6 +163,32 @@ func validateAndConsumeState(state string) (*oauthStateEntry, bool) {
 		return nil, false
 	}
 	delete(oauthStates, state)
+	return entry, true
+}
+
+func storeDesktopConnectCode(code string, user *UserClaims) time.Time {
+	expiresAt := time.Now().Add(desktopConnectExpiration)
+	desktopConnectCodesMu.Lock()
+	defer desktopConnectCodesMu.Unlock()
+	desktopConnectCodes[code] = &desktopConnectEntry{
+		User:      *user,
+		CreatedAt: time.Now(),
+		ExpiresAt: expiresAt,
+	}
+	return expiresAt
+}
+
+func consumeDesktopConnectCode(code string) (*desktopConnectEntry, bool) {
+	desktopConnectCodesMu.Lock()
+	defer desktopConnectCodesMu.Unlock()
+	entry, ok := desktopConnectCodes[code]
+	if !ok {
+		return nil, false
+	}
+	delete(desktopConnectCodes, code)
+	if time.Now().After(entry.ExpiresAt) {
+		return nil, false
+	}
 	return entry, true
 }
 
@@ -348,6 +418,70 @@ func (api *StreamingAPI) handleAuthCallback(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func (api *StreamingAPI) handleDesktopConnect(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, `{"error": "Not authenticated"}`, http.StatusUnauthorized)
+		return
+	}
+
+	code, err := generateDesktopConnectCode()
+	if err != nil {
+		log.Printf("[AUTH] Failed to generate desktop connect code: %v", err)
+		http.Error(w, `{"error": "Failed to generate connect code"}`, http.StatusInternalServerError)
+		return
+	}
+
+	serverURL := getBaseURL(r)
+	expiresAt := storeDesktopConnectCode(code, user)
+	connectURL := fmt.Sprintf("runloop://connect?server=%s&code=%s", url.QueryEscape(serverURL), url.QueryEscape(code))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(DesktopConnectResponse{
+		ConnectURL: connectURL,
+		ServerURL:  serverURL,
+		ExpiresAt:  expiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func (api *StreamingAPI) handleDesktopConnectExchange(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var req DesktopConnectExchangeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Code) == "" {
+		http.Error(w, `{"error": "Code is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	entry, ok := consumeDesktopConnectCode(strings.TrimSpace(req.Code))
+	if !ok {
+		http.Error(w, `{"error": "Invalid or expired connect code"}`, http.StatusUnauthorized)
+		return
+	}
+
+	user := entry.User
+	token, err := GenerateJWTWithProvider(user.UserID, user.Username, user.Email, user.Provider)
+	if err != nil {
+		log.Printf("[AUTH] Failed to generate desktop connect token: %v", err)
+		http.Error(w, `{"error": "Failed to generate token"}`, http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(AuthResponse{
+		Token: token,
+		User: userInfoWithWorkflowPermissions(UserInfo{
+			ID:       user.UserID,
+			Username: user.Username,
+			Email:    user.Email,
+			Provider: user.Provider,
+		}),
+	})
+}
+
 // handleLogout handles user logout
 // Since we use stateless JWTs, logout is handled client-side by clearing the token
 func (api *StreamingAPI) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -414,13 +548,22 @@ func (api *StreamingAPI) handleGetAuthMode(w http.ResponseWriter, r *http.Reques
 
 // getBaseURL extracts the base URL from the request for generating callback URLs
 func getBaseURL(r *http.Request) string {
+	if publicURL := strings.TrimSpace(os.Getenv("PUBLIC_URL")); publicURL != "" {
+		return strings.TrimRight(publicURL, "/")
+	}
+
 	scheme := "https"
 	if r.TLS == nil {
 		scheme = "http"
 	}
 	// Check for X-Forwarded-Proto header (common behind reverse proxies)
 	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
-		scheme = proto
+		scheme = strings.TrimSpace(strings.Split(proto, ",")[0])
 	}
-	return fmt.Sprintf("%s://%s", scheme, r.Host)
+
+	host := r.Host
+	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
+		host = strings.TrimSpace(strings.Split(forwardedHost, ",")[0])
+	}
+	return fmt.Sprintf("%s://%s", scheme, host)
 }

@@ -45,6 +45,7 @@ import { useChatStore } from './useChatStore'
 import { useGlobalPresetStore } from './useGlobalPresetStore'
 import { resolveGroupFolderPath } from '../utils/workflowUtils'
 import { normalizeRunFolder } from '../utils/workflowStateNormalization'
+import { getRawActiveWorkspaceId, getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 
 export type WorkflowWorkspaceView = 'builder' | 'report' | 'flow' | null
 
@@ -60,6 +61,29 @@ const CANVAS_VIEW_MODE_KEY = 'workflow_canvas_view_mode'
 const WORKSHOP_MODE_BY_PRESET_KEY = 'workflow_workshop_mode_by_preset'
 const WORKSPACE_VIEW_BY_PRESET_KEY = 'workflow_workspace_view_by_preset'
 const WORKFLOW_UI_STATE_BY_PRESET_KEY = 'workflow_ui_state_by_preset'
+
+function workflowStorageKey(key: string): string {
+  return getWorkspaceScopedStorageKey(key)
+}
+
+function getWorkflowStorageItem(key: string): string | null {
+  const scoped = window.localStorage.getItem(workflowStorageKey(key))
+  if (scoped !== null) return scoped
+
+  // Preserve existing local users' state after introducing workspace scoping.
+  if (getRawActiveWorkspaceId() === 'local') {
+    return window.localStorage.getItem(key)
+  }
+  return null
+}
+
+function setWorkflowStorageItem(key: string, value: string): void {
+  window.localStorage.setItem(workflowStorageKey(key), value)
+}
+
+function removeWorkflowStorageItem(key: string): void {
+  window.localStorage.removeItem(workflowStorageKey(key))
+}
 
 type PersistedWorkflowUIState = {
   showChatArea?: boolean
@@ -84,7 +108,7 @@ function normalizeWorkflowWorkspaceView(view: unknown): WorkflowWorkspaceView {
 
 function loadWorkspaceViewByPreset(): Record<string, WorkflowWorkspaceView> {
   try {
-    const saved = localStorage.getItem(WORKSPACE_VIEW_BY_PRESET_KEY)
+    const saved = getWorkflowStorageItem(WORKSPACE_VIEW_BY_PRESET_KEY)
     if (saved) {
       const parsed = JSON.parse(saved)
       if (parsed && typeof parsed === 'object') {
@@ -111,7 +135,7 @@ function persistWorkspaceViewForPreset(presetId: string | null, view: WorkflowWo
     } else {
       current[presetId] = normalizedView
     }
-    localStorage.setItem(WORKSPACE_VIEW_BY_PRESET_KEY, JSON.stringify(current))
+    setWorkflowStorageItem(WORKSPACE_VIEW_BY_PRESET_KEY, JSON.stringify(current))
   } catch (error) {
     console.error('[WorkflowStore] Failed to save workspaceViewByPreset:', error)
   }
@@ -119,7 +143,7 @@ function persistWorkspaceViewForPreset(presetId: string | null, view: WorkflowWo
 
 function loadWorkflowUIStateByPreset(): Record<string, PersistedWorkflowUIState> {
   try {
-    const saved = localStorage.getItem(WORKFLOW_UI_STATE_BY_PRESET_KEY)
+    const saved = getWorkflowStorageItem(WORKFLOW_UI_STATE_BY_PRESET_KEY)
     if (!saved) return {}
     const parsed = JSON.parse(saved)
     if (!parsed || typeof parsed !== 'object') return {}
@@ -163,7 +187,7 @@ function persistWorkflowUIStateForPreset(
           : normalizeWorkflowWorkspaceView(patch.workflowWorkspaceView),
     }
     current[presetId] = next
-    localStorage.setItem(WORKFLOW_UI_STATE_BY_PRESET_KEY, JSON.stringify(current))
+    setWorkflowStorageItem(WORKFLOW_UI_STATE_BY_PRESET_KEY, JSON.stringify(current))
   } catch (error) {
     console.error('[WorkflowStore] Failed to save workflowUIStateByPreset:', error)
   }
@@ -431,7 +455,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       selectedRunFolder: (() => {
         try {
           // First try combined format
-          const groupData = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+          const groupData = getWorkflowStorageItem(SELECTED_GROUP_IDS_KEY)
           if (groupData) {
             const parsed = JSON.parse(groupData)
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.runFolder) {
@@ -439,7 +463,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             }
           }
           // Fallback to separate key
-          const saved = localStorage.getItem(SELECTED_RUN_FOLDER_KEY)
+          const saved = getWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY)
           if (saved) {
             return saved
           }
@@ -468,7 +492,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Now stored in combined format: { groupIds: [...], runFolder: "..." }
       selectedGroupIds: (() => {
         try {
-          const saved = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+          const saved = getWorkflowStorageItem(SELECTED_GROUP_IDS_KEY)
           if (saved) {
             const parsed = JSON.parse(saved)
             // Handle new format: { groupIds: [...], runFolder: "..." }
@@ -491,7 +515,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Current running group (persists across page refreshes via localStorage)
       currentRunningGroupId: (() => {
         try {
-          const saved = localStorage.getItem(CURRENT_RUNNING_GROUP_ID_KEY)
+          const saved = getWorkflowStorageItem(CURRENT_RUNNING_GROUP_ID_KEY)
           if (saved) {
             return saved
           }
@@ -519,7 +543,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Layout direction (persists across page refreshes via localStorage)
       layoutDirection: (() => {
         try {
-          const saved = localStorage.getItem(LAYOUT_DIRECTION_KEY)
+          const saved = getWorkflowStorageItem(LAYOUT_DIRECTION_KEY)
           if (saved === 'LR' || saved === 'TB') {
             return saved
           }
@@ -531,7 +555,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Canvas view mode (persists across page refreshes via localStorage)
       canvasViewMode: (() => {
         try {
-          const saved = localStorage.getItem(CANVAS_VIEW_MODE_KEY)
+          const saved = getWorkflowStorageItem(CANVAS_VIEW_MODE_KEY)
           if (saved === 'flow' || saved === 'report') {
             return saved
           }
@@ -551,7 +575,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       workshopMode: 'builder' as const,
       workshopModeByPreset: (() => {
         try {
-          const saved = localStorage.getItem(WORKSHOP_MODE_BY_PRESET_KEY)
+          const saved = getWorkflowStorageItem(WORKSHOP_MODE_BY_PRESET_KEY)
           if (saved) {
             // Migrate any persisted legacy mode values from the older persona set.
             return migrateWorkshopModeMap(JSON.parse(saved))
@@ -570,7 +594,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             : state.workshopModeByPreset
           if (presetId) {
             try {
-              localStorage.setItem(WORKSHOP_MODE_BY_PRESET_KEY, JSON.stringify(updated))
+              setWorkflowStorageItem(WORKSHOP_MODE_BY_PRESET_KEY, JSON.stringify(updated))
             } catch (error) {
               console.error('[WorkflowStore] Failed to save workshopModeByPreset:', error)
             }
@@ -703,7 +727,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           if (!currentSelection && defaultRunFolder) {
             set({ selectedRunFolder: defaultRunFolder })
             try {
-              localStorage.setItem(SELECTED_RUN_FOLDER_KEY, defaultRunFolder)
+              setWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY, defaultRunFolder)
             } catch { /* ignore */ }
           }
 
@@ -725,9 +749,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
               // Persist to localStorage
               try {
                 if (newSelection) {
-                  localStorage.setItem(SELECTED_RUN_FOLDER_KEY, newSelection)
+                  setWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY, newSelection)
                 } else {
-                  localStorage.removeItem(SELECTED_RUN_FOLDER_KEY)
+                  removeWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY)
                 }
               } catch (error) {
                 console.error('[WorkflowStore] Failed to save selectedRunFolder to localStorage:', error)
@@ -754,12 +778,12 @@ export const useWorkflowStore = create<WorkflowStore>()(
         // Note: startPoint is NOT persisted - it's calculated from progress
         try {
           // Update combined format
-          const existingData = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+          const existingData = getWorkflowStorageItem(SELECTED_GROUP_IDS_KEY)
           if (existingData) {
             const parsed = JSON.parse(existingData)
             if (parsed && typeof parsed === 'object') {
               parsed.runFolder = normalized
-              localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(parsed))
+              setWorkflowStorageItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(parsed))
             }
           } else if (normalized) {
             // Create new combined format if it doesn't exist
@@ -769,14 +793,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               presetId: (state as any)._currentPresetId
             }
-            localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
+            setWorkflowStorageItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
           }
 
           // Also update separate key for backward compatibility
           if (normalized) {
-            localStorage.setItem(SELECTED_RUN_FOLDER_KEY, normalized)
+            setWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY, normalized)
           } else {
-            localStorage.removeItem(SELECTED_RUN_FOLDER_KEY)
+            removeWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY)
           }
         } catch (error) {
           console.error('[WorkflowStore] Failed to save selectedRunFolder to localStorage:', error)
@@ -885,7 +909,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             presetId: (state as any)._currentPresetId
           }
-          localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
+          setWorkflowStorageItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
         } catch (error) {
           console.error('[WorkflowStore] Failed to persist group selection:', error)
         }
@@ -905,7 +929,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             presetId: (state as any)._currentPresetId
           }
-          localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
+          setWorkflowStorageItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
         } catch (error) {
           console.error('[WorkflowStore] Failed to persist group selection:', error)
         }
@@ -917,7 +941,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
         // Clear from localStorage
         try {
-          localStorage.removeItem(SELECTED_GROUP_IDS_KEY)
+          removeWorkflowStorageItem(SELECTED_GROUP_IDS_KEY)
         } catch (error) {
           console.error('[WorkflowStore] Failed to clear group selection:', error)
         }
@@ -933,7 +957,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           let canRestoreLegacyKeys = true
 
           // Restore selectedGroupIds and selectedRunFolder from combined storage
-          const savedGroupData = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+          const savedGroupData = getWorkflowStorageItem(SELECTED_GROUP_IDS_KEY)
           if (savedGroupData) {
             const parsed = JSON.parse(savedGroupData)
             // Handle new format: { groupIds: [...], runFolder: "..." }
@@ -963,7 +987,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           // Also check separate runFolder key (backward compatibility)
           if (!updates.selectedRunFolder && canRestoreLegacyKeys && !currentPresetId) {
-            const savedRunFolder = localStorage.getItem(SELECTED_RUN_FOLDER_KEY)
+            const savedRunFolder = getWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY)
             if (savedRunFolder) {
               updates.selectedRunFolder = savedRunFolder
               hasChanges = true
@@ -972,7 +996,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           // Restore currentRunningGroupId
           const savedCurrentGroup = canRestoreLegacyKeys && !currentPresetId
-            ? localStorage.getItem(CURRENT_RUNNING_GROUP_ID_KEY)
+            ? getWorkflowStorageItem(CURRENT_RUNNING_GROUP_ID_KEY)
             : null
           if (savedCurrentGroup) {
             updates.currentRunningGroupId = savedCurrentGroup
@@ -993,9 +1017,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
         // Persist to localStorage
         try {
           if (groupName) {
-            localStorage.setItem(CURRENT_RUNNING_GROUP_ID_KEY, groupName)
+            setWorkflowStorageItem(CURRENT_RUNNING_GROUP_ID_KEY, groupName)
           } else {
-            localStorage.removeItem(CURRENT_RUNNING_GROUP_ID_KEY)
+            removeWorkflowStorageItem(CURRENT_RUNNING_GROUP_ID_KEY)
           }
         } catch (error) {
           console.error('[WorkflowStore] Failed to save currentRunningGroupId to localStorage:', error)
@@ -1037,7 +1061,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
         // Persist currentRunningGroupId to localStorage
         try {
-          localStorage.setItem(CURRENT_RUNNING_GROUP_ID_KEY, groupName)
+          setWorkflowStorageItem(CURRENT_RUNNING_GROUP_ID_KEY, groupName)
         } catch (error) {
           console.error('[WorkflowStore] Failed to save currentRunningGroupId to localStorage:', error)
         }
@@ -1049,9 +1073,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
         // Persist selectedRunFolder to localStorage
         try {
           if (normalizedFolder) {
-            localStorage.setItem(SELECTED_RUN_FOLDER_KEY, normalizedFolder)
+            setWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY, normalizedFolder)
           } else {
-            localStorage.removeItem(SELECTED_RUN_FOLDER_KEY)
+            removeWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY)
           }
         } catch (error) {
           console.error('[WorkflowStore] Failed to save selectedRunFolder to localStorage:', error)
@@ -1115,7 +1139,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           // Clear from localStorage
           try {
-            localStorage.removeItem(CURRENT_RUNNING_GROUP_ID_KEY)
+            removeWorkflowStorageItem(CURRENT_RUNNING_GROUP_ID_KEY)
           } catch (error) {
             console.error('[WorkflowStore] Failed to clear currentRunningGroupId from localStorage:', error)
           }
@@ -1201,7 +1225,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       setLayoutDirection: (direction: LayoutDirection) => {
         try {
-          localStorage.setItem(LAYOUT_DIRECTION_KEY, direction)
+          setWorkflowStorageItem(LAYOUT_DIRECTION_KEY, direction)
         } catch (error) {
           console.error('[WorkflowStore] Failed to save layout direction to localStorage:', error)
         }
@@ -1210,7 +1234,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       setCanvasViewMode: (mode: CanvasViewMode) => {
         try {
-          localStorage.setItem(CANVAS_VIEW_MODE_KEY, mode)
+          setWorkflowStorageItem(CANVAS_VIEW_MODE_KEY, mode)
         } catch {
           // ignore
         }
@@ -1466,7 +1490,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             : state.workshopModeByPreset
           if (presetId) {
             try {
-              localStorage.setItem(WORKSHOP_MODE_BY_PRESET_KEY, JSON.stringify(updated))
+              setWorkflowStorageItem(WORKSHOP_MODE_BY_PRESET_KEY, JSON.stringify(updated))
             } catch (error) {
               console.error('[WorkflowStore] Failed to save workshopModeByPreset:', error)
             }
@@ -1531,7 +1555,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           try {
             // Load from combined format first
-            const groupDataStr = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+            const groupDataStr = getWorkflowStorageItem(SELECTED_GROUP_IDS_KEY)
             if (groupDataStr) {
               const parsed = JSON.parse(groupDataStr)
               // Handle new format: { groupIds: [...], runFolder: "..." }
@@ -1558,14 +1582,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
             // Fallback to separate runFolder key if not in combined format
             if (!savedRunFolder && canRestoreLegacyKeys) {
-              const runFolderStr = localStorage.getItem(SELECTED_RUN_FOLDER_KEY)
+              const runFolderStr = getWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY)
               if (runFolderStr) {
                 savedRunFolder = runFolderStr
               }
             }
 
             const currentGroupStr = canRestoreLegacyKeys
-              ? localStorage.getItem(CURRENT_RUNNING_GROUP_ID_KEY)
+              ? getWorkflowStorageItem(CURRENT_RUNNING_GROUP_ID_KEY)
               : null
             if (currentGroupStr) {
               savedCurrentRunningGroupId = currentGroupStr
@@ -1604,7 +1628,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
         // Check if localStorage has data for the same preset (page reload scenario)
         let storedPresetId: string | null = null
         try {
-          const groupDataStr = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+          const groupDataStr = getWorkflowStorageItem(SELECTED_GROUP_IDS_KEY)
           if (groupDataStr) {
             const parsed = JSON.parse(groupDataStr)
             if (parsed && typeof parsed === 'object' && parsed.presetId) {
@@ -1725,9 +1749,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
           // Only clear localStorage when there's no saved state (first time visiting this preset)
           if (!savedState) {
             try {
-              localStorage.removeItem(SELECTED_GROUP_IDS_KEY)
-              localStorage.removeItem(CURRENT_RUNNING_GROUP_ID_KEY)
-              localStorage.removeItem(SELECTED_RUN_FOLDER_KEY)
+              removeWorkflowStorageItem(SELECTED_GROUP_IDS_KEY)
+              removeWorkflowStorageItem(CURRENT_RUNNING_GROUP_ID_KEY)
+              removeWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY)
             } catch (error) {
               console.error('[WorkflowStore] Failed to clear group localStorage on preset switch:', error)
             }
@@ -1759,9 +1783,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
         // Clear group-related localStorage when resetting execution state
         try {
-          localStorage.removeItem(SELECTED_GROUP_IDS_KEY)
-          localStorage.removeItem(CURRENT_RUNNING_GROUP_ID_KEY)
-          localStorage.removeItem(SELECTED_RUN_FOLDER_KEY)
+          removeWorkflowStorageItem(SELECTED_GROUP_IDS_KEY)
+          removeWorkflowStorageItem(CURRENT_RUNNING_GROUP_ID_KEY)
+          removeWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY)
         } catch (error) {
           console.error('[WorkflowStore] Failed to clear group localStorage on reset:', error)
         }

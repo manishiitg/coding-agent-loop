@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from './api'
+import { getApiBaseUrl, getAuthToken } from './api'
 import type { SSEEventMessage, SSEStatusMessage } from './api-types'
 import { logger } from '../utils/logger'
 
@@ -53,7 +53,7 @@ export class SSEConnection {
     }
 
     // EventSource can't send Authorization headers, so pass JWT as query param
-    const authToken = localStorage.getItem('auth_token')
+    const authToken = getAuthToken()
     if (authToken) {
       params.set('token', authToken)
     }

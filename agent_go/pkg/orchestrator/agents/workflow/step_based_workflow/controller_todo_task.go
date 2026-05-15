@@ -904,6 +904,10 @@ func cloneStepWithDelegationOverrides(
 		stepCopy := *s
 		applyDelegationOverridesToCommonFields(&stepCopy.CommonStepFields, instructions)
 		return &stepCopy, nil
+	case *MessageSequencePlanStep:
+		stepCopy := *s
+		applyDelegationOverridesToCommonFields(&stepCopy.CommonStepFields, instructions)
+		return &stepCopy, nil
 	case *TodoTaskPlanStep:
 		stepCopy := *s
 		applyDelegationOverridesToCommonFields(&stepCopy.CommonStepFields, instructions)
@@ -961,6 +965,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutedSubAgentStep(
 		}
 
 		return "Nested todo task completed successfully", capturedHistory, nil
+	}
+
+	if isMessageSequenceStep(stepToExecute) {
+		reentryMessage := strings.TrimSpace(stepToExecute.GetDescription())
+		executionResult, capturedHistory, err := hcpo.executeMessageSequenceStep(
+			ctx,
+			stepToExecute,
+			stepIndex,
+			subAgentStepPath,
+			progress,
+			localExecCtx,
+			allSteps,
+			messageSequenceCallOptions{
+				Source:         "orchestrator_reentry",
+				ReentryMessage: reentryMessage,
+			},
+		)
+		return executionResult, capturedHistory, err
 	}
 
 	executionResult, _, err := hcpo.executeSingleStep(

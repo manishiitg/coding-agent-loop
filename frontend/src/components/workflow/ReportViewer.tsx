@@ -500,9 +500,11 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   const [sources, setSources] = useState<SourceCache>(() => initialSnapshot?.sources ?? {})
   const [error, setError] = useState<string | null>(null)
   const [refreshNonce, setRefreshNonce] = useState(0)
+  const [initialLoadDeferred, setInitialLoadDeferred] = useState(false)
   const [hiddenWidgetKeys, setHiddenWidgetKeys] = useState<Set<string>>(() => new Set())
   const [isExportingReport, setIsExportingReport] = useState(false)
   const reportExportRef = useRef<HTMLDivElement>(null)
+  const refreshWorkspaceRef = useRef<string | null>(null)
 
   const plan: ParsedReportPlan = useMemo(() => {
     if (!planSource) return { sections: [] }
@@ -511,8 +513,10 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
 
   useEffect(() => {
     if (!workspacePath) return
-    const cached = refreshNonce === 0 ? reportDataCache.get(workspacePath) : undefined
+    const isExplicitRefreshForWorkspace = refreshNonce > 0 && refreshWorkspaceRef.current === workspacePath
+    const cached = !isExplicitRefreshForWorkspace ? reportDataCache.get(workspacePath) : undefined
     if (cached) {
+      setInitialLoadDeferred(false)
       setPlanSource(cached.planSource)
       setSources(cached.sources)
       setLoading(false)
@@ -520,11 +524,24 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       return
     }
 
+    if (mobilePreview && !isExplicitRefreshForWorkspace) {
+      // In the workflow split view, chat is the primary surface. Loading an
+      // uncached report can parse/render large JSON files on the main thread,
+      // which makes the builder input feel unclickable during workflow switches.
+      setInitialLoadDeferred(true)
+      setPlanSource(null)
+      setSources({})
+      setLoading(false)
+      setError(null)
+      return
+    }
+
     let cancelled = false
+    setInitialLoadDeferred(false)
     setLoading(true)
     setError(null)
 
-    loadReportDataSnapshot(workspacePath, refreshNonce > 0)
+    loadReportDataSnapshot(workspacePath, isExplicitRefreshForWorkspace)
       .then(snapshot => {
         if (cancelled) return
         setPlanSource(snapshot.planSource)
@@ -544,15 +561,17 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     return () => {
       cancelled = true
     }
-  }, [workspacePath, refreshNonce])
+  }, [workspacePath, refreshNonce, mobilePreview])
 
   useEffect(() => {
     setHiddenWidgetKeys(new Set())
   }, [workspacePath, planSource, refreshNonce])
 
   const handleRefresh = () => {
+    setInitialLoadDeferred(false)
     setError(null)
     setSources({})
+    refreshWorkspaceRef.current = workspacePath
     setRefreshNonce(prev => prev + 1)
   }
 
@@ -693,7 +712,27 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
             {loading && <ReportSkeleton />}
             {error && <div className="text-destructive">Failed to load report: {error}</div>}
 
-            {!loading && !error && !hasAnyContent && (
+            {!loading && !error && initialLoadDeferred && (
+              <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/70 bg-card/70 px-4 py-8 text-center shadow-sm sm:px-6 sm:py-10">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary sm:h-14 sm:w-14">
+                  <BarChart3 className="h-6 w-6" />
+                </div>
+                <div className="space-y-1">
+                  <div className="text-base font-semibold text-foreground">Report not loaded</div>
+                  <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Refresh When Needed</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Load report
+                </button>
+              </div>
+            )}
+
+            {!loading && !error && !initialLoadDeferred && !hasAnyContent && (
               <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/70 bg-card/70 px-4 py-8 text-center shadow-sm sm:px-6 sm:py-10">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary sm:h-14 sm:w-14">
                   <BarChart3 className="h-6 w-6" />

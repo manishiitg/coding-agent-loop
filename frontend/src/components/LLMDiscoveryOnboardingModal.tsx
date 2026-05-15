@@ -4,6 +4,7 @@ import { Button } from './ui/Button'
 import { llmConfigService } from '../services/llm-config-api'
 import type { LLMDiscoveryCandidate, LLMModel, SavedLLM, TierModel } from '../services/api-types'
 import { useLLMStore } from '../stores'
+import ModalPortal from './ui/ModalPortal'
 
 interface LLMDiscoveryOnboardingModalProps {
   isOpen: boolean
@@ -207,9 +208,10 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+    <ModalPortal>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
-        className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-3xl mx-4 max-h-[88vh] flex flex-col"
+        className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-3xl max-h-[calc(100vh-2rem)] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-700 shrink-0">
@@ -401,5 +403,6 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }

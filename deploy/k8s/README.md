@@ -42,6 +42,11 @@ LANGFUSE_HOST=<langfuse-host>
 # GitHub Sync (optional)
 GITHUB_TOKEN=<github-token>
 GITHUB_REPO=<owner/repo>
+
+# Frontend runtime switch (optional)
+# true: after browser login, show only the Mac app download/connect screen
+# false: allow the full browser UI
+DESKTOP_APP_ONLY_UI=true
 ```
 
 ### ConfigMap (shared/configmap.yaml)
@@ -50,6 +55,7 @@ GITHUB_REPO=<owner/repo>
 - `MODEL`: Model ID (gemini-3.0-flash)
 - `MAX_TURNS`: Max conversation turns
 - `TRACING_PROVIDER`: Observability provider
+- `DESKTOP_APP_ONLY_UI`: When `true`, authenticated browser users see only the Mac app download/connect screen. Electron/DMG users are not blocked. `deploy/k8s/.env` can override this value during deploy.
 - **LLM lock (restricted mode):**
   - `SUPPORTED_LLM_PROVIDERS`: Comma-separated list of providers to show in UI (e.g. `vertex` for Gemini-only). Omit or leave empty for all six.
   - `LLM_CONFIG_LOCKED`: Set to `true` to lock LLM config: server uses env only, frontend shows "LLM settings are locked by admin", no editable modal. API keys are never sent to the client.

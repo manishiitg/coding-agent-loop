@@ -58,6 +58,10 @@ data:
   # Public URL for shareable workspace file links in bot messages
   PUBLIC_URL: "https://analytics-agent.citymall.live"
 
+  # Web UI gate. When true, authenticated browser users see only the Mac app
+  # download/connect screen instead of the full in-browser application UI.
+  DESKTOP_APP_ONLY_UI: "true"
+
   # Bot manager emails — comma-separated emails that can see Human Feedback Connectors in the sidebar.
   # If empty/unset, all users can see them (backwards compatible).
   BOT_MANAGER_EMAILS: "manish.prakash@citymall.live"

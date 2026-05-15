@@ -30,7 +30,7 @@ export const OrchestratorStartEventDisplay: React.FC<
             <div className="text-sm font-medium text-yellow-700 dark:text-yellow-300">
               {getLabel()} Started{" "}
               <span className="text-xs font-normal text-yellow-600 dark:text-yellow-400">
-                | Agents: {event.agents_count} | Servers: {event.servers_count}
+                | Agents: {event.agents_count}
                 {event.execution_mode && ` | Mode: ${event.execution_mode === 'parallel_execution' ? 'Parallel' : 'Sequential'}`}
                 {event.configuration &&
                   ` | Config: ${event.configuration.length > 20 ? `${event.configuration.substring(0, 20)}...` : event.configuration}`}

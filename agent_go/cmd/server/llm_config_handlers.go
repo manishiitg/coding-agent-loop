@@ -28,8 +28,6 @@ var supportedLLMProviders = []string{
 	"vertex",
 	"anthropic",
 	"azure",
-	"z-ai",
-	"kimi",
 	"minimax",
 	"elevenlabs",
 	"deepgram",
@@ -37,6 +35,7 @@ var supportedLLMProviders = []string{
 	"gemini-cli",
 	"codex-cli",
 	"cursor-cli",
+	"opencode-cli",
 }
 
 const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
@@ -44,7 +43,7 @@ const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
 func isPublishedLLMProviderAllowed(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "gemini-cli", "codex-cli", "cursor-cli":
+		"claude-code", "gemini-cli", "codex-cli", "cursor-cli", "opencode-cli":
 		return true
 	default:
 		return false
@@ -55,6 +54,7 @@ func fallbackPublishedLLMProviderAndModel() (string, string) {
 	for _, provider := range []string{
 		"codex-cli",
 		"cursor-cli",
+		"opencode-cli",
 		"claude-code",
 		"gemini-cli",
 		"bedrock",
@@ -284,6 +284,9 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	if s := os.Getenv("CURSOR_API_KEY"); s != "" {
 		keys.CursorCLI = &s
 	}
+	if s := os.Getenv("OPENCODE_API_KEY"); s != "" {
+		keys.OpenCodeCLI = &s
+	}
 	if s := os.Getenv("MINIMAX_API_KEY"); s != "" {
 		keys.MiniMax = &s
 	}
@@ -337,6 +340,8 @@ func providerDisplayLabel(provider string) string {
 		return "OpenAI Codex CLI"
 	case "cursor-cli":
 		return "Cursor CLI"
+	case "opencode-cli":
+		return "OpenCode CLI"
 	case "claude-code":
 		return "Claude Code"
 	case "gemini-cli":
@@ -379,7 +384,7 @@ func modelNameForProviderModel(provider, modelID string) string {
 
 func discoveryCandidateKind(provider string) string {
 	switch provider {
-	case "codex-cli", "cursor-cli", "claude-code", "gemini-cli":
+	case "codex-cli", "cursor-cli", "opencode-cli", "claude-code", "gemini-cli":
 		return "local_cli"
 	default:
 		return "api"
@@ -392,6 +397,8 @@ func discoveryModelOptions(provider string) []string {
 		return []string{"codex-cli", "high", "medium", "low"}
 	case "cursor-cli":
 		return []string{"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"}
+	case "opencode-cli":
+		return []string{"opencode-cli", "openai/gpt-5.1", "anthropic/claude-sonnet-4-5"}
 	case "claude-code":
 		return []string{"claude-code", "high", "medium", "low"}
 	case "gemini-cli":
@@ -408,6 +415,8 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 			return "Install Codex CLI so the codex command is available on the backend PATH."
 		case "cursor-cli":
 			return "Install Cursor CLI so the cursor-agent command is available on the backend PATH."
+		case "opencode-cli":
+			return "Install OpenCode CLI so the opencode command is available on the backend PATH, or set OPENCODE_BIN."
 		case "claude-code":
 			return "Install Claude Code so the claude command is available on the backend PATH."
 		case "gemini-cli":
@@ -422,6 +431,8 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 		return "Run codex login or set CODEX_API_KEY, then test again."
 	case "cursor-cli":
 		return "Run cursor-agent login or set CURSOR_API_KEY, then test again."
+	case "opencode-cli":
+		return "Run opencode auth/login or set OPENCODE_API_KEY, then test again."
 	case "claude-code":
 		return "Run claude to finish Claude Code authentication, then test again."
 	case "gemini-cli":
@@ -442,6 +453,7 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 	providerOrder := []string{
 		"codex-cli",
 		"cursor-cli",
+		"opencode-cli",
 		"claude-code",
 		"gemini-cli",
 		"openai",
@@ -583,7 +595,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	// 3) Auto-generate defaults from AvailableModels for locked providers
 	var entries []map[string]interface{}
 	defaults := llm.GetLLMDefaults()
-	providers := []string{"codex-cli", "cursor-cli", "claude-code", "gemini-cli", "azure", "bedrock", "openai", "anthropic", "vertex"}
+	providers := []string{"codex-cli", "cursor-cli", "opencode-cli", "claude-code", "gemini-cli", "azure", "bedrock", "openai", "anthropic", "vertex"}
 
 	for _, p := range providers {
 		// If provider is locked (or global lock is on), include its available models
@@ -693,6 +705,7 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 		"azure_config":          defaults.AzureConfig,
 		"zai_config":            defaults.ZAIConfig,
 		"kimi_config":           defaults.KimiConfig,
+		"opencode_cli_config":   defaults.OpenCodeConfig,
 		"minimax_config":        defaults.MinimaxConfig,
 		"elevenlabs_config":     defaults.ElevenLabsConfig,
 		"deepgram_config":       defaults.DeepgramConfig,
@@ -731,6 +744,8 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 				stripSecrets("zai_config")
 			case "kimi":
 				stripSecrets("kimi_config")
+			case "opencode-cli":
+				stripSecrets("opencode_cli_config")
 			case "vertex":
 				stripSecrets("vertex_config")
 			case "minimax":
@@ -833,6 +848,8 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 		setAPIKey(keys.CodexCLI)
 	case "cursor-cli":
 		setAPIKey(keys.CursorCLI)
+	case "opencode-cli":
+		setAPIKey(keys.OpenCodeCLI)
 	case "minimax":
 		setAPIKey(keys.MiniMax)
 	case "elevenlabs":
@@ -878,11 +895,40 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 		return validateCodexCLI(req.APIKey)
 	case "cursor-cli":
 		return validateCursorCLI(req.APIKey, req.ModelID)
+	case "opencode-cli":
+		return validateOpenCodeCLI(req.APIKey, req.ModelID, req.Options)
 	case "kimi":
 		return llm.ValidateAPIKey(req)
 	default:
 		return llm.ValidateAPIKey(req)
 	}
+}
+
+// validateOpenCodeCLI validates OpenCode CLI through the shared tmux adapter path.
+func validateOpenCodeCLI(apiKey, modelID string, options map[string]interface{}) llm.APIKeyValidationResponse {
+	if _, err := runtimeAvailableForProvider("opencode-cli"); err != nil {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: err.Error(),
+		}
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "tmux not found. OpenCode CLI integration requires tmux for interactive mode.",
+		}
+	}
+
+	req := llm.APIKeyValidationRequest{
+		Provider: "opencode-cli",
+		APIKey:   apiKey,
+		ModelID:  modelID,
+		Options:  options,
+	}
+	if strings.TrimSpace(req.ModelID) == "" {
+		req.ModelID = "opencode-cli"
+	}
+	return llm.ValidateAPIKey(req)
 }
 
 // validateClaudeCodeCLI validates the Claude Code CLI by checking it exists and sending a test prompt

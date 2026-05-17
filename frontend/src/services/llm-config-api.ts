@@ -24,6 +24,65 @@ export interface ModelMetadata {
   supports_thinking_level?: boolean
   thinking_levels?: string[]
   supports_thinking_budget?: boolean
+  model_selection_mode?: 'fixed_tier' | 'dynamic'
+}
+
+// --- Provider Manifest types (API-driven provider discovery) ---
+
+export interface ProviderManifestEntry {
+  id: string
+  display_name: string
+  description: string
+  kind: 'local_cli' | 'api'
+  integration_kind: 'coding_agent' | 'api_model' | 'audio_provider'
+  model_selection_mode: 'fixed_tier' | 'dynamic'
+  auth_description: string
+  runtime_command?: string
+  runtime_available?: boolean
+  auth_configured: boolean
+  auth_source?: string
+  usable: boolean
+  setup_hint?: string
+  requires_api_key: boolean
+  supports_dynamic_models: boolean
+  default_model_id: string
+  models: ModelMetadata[]
+  capabilities: string[]
+  api_key_env?: string
+  api_key_url?: string
+}
+
+export interface IntegrationKindInfo {
+  label: string
+  description: string
+}
+
+export interface ProviderManifestResponse {
+  providers: ProviderManifestEntry[]
+  integration_kinds: Record<string, IntegrationKindInfo>
+  provider_order: string[]
+}
+
+export interface DynamicModelEntry {
+  model_id: string
+  model_name: string
+  group?: string
+  is_default?: boolean
+  context_window?: number
+  cost_input?: number
+  cost_output?: number
+}
+
+export interface DynamicModelsResponse {
+  provider: string
+  model_selection_mode: string
+  models: DynamicModelEntry[]
+  groups?: string[]
+  supports_custom_model?: boolean
+  custom_model_hint?: string
+  source: string
+  cached_at?: string
+  cache_ttl_seconds?: number
 }
 
 export interface GetModelMetadataResponse {
@@ -64,7 +123,7 @@ export const llmConfigService = {
 
   // Validate API key with backend
   validateAPIKey: async (request: APIKeyValidationRequest): Promise<APIKeyValidationResponse> => {
-    const response = await llmConfigApi.post('/api/llm-config/validate-key', request)
+    const response = await llmConfigApi.post('/api/llm-config/validate-key', request, { timeout: 120000 })
     return response.data
   },
 
@@ -80,6 +139,18 @@ export const llmConfigService = {
       endpoint,
       api_key: apiKey
     })
+    return response.data
+  },
+
+  // Get comprehensive provider manifest (replaces hardcoded provider info)
+  getProviderManifest: async (): Promise<ProviderManifestResponse> => {
+    const response = await llmConfigApi.get('/api/llm-config/providers')
+    return response.data
+  },
+
+  // Get dynamic model list for a provider (cursor-cli, opencode-cli, etc.)
+  getProviderModels: async (provider: string): Promise<DynamicModelsResponse> => {
+    const response = await llmConfigApi.get(`/api/llm-config/providers/${provider}/models`)
     return response.data
   },
 

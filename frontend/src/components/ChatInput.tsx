@@ -832,11 +832,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     workflowPhasePreset?.llmConfig?.provider,
   ])
   const isCLIProvider = useMemo(
-    () => effectiveProviderForSteer === 'claude-code' || effectiveProviderForSteer === 'gemini-cli' || effectiveProviderForSteer === 'codex-cli' || effectiveProviderForSteer === 'cursor-cli',
+    () => effectiveProviderForSteer === 'claude-code' || effectiveProviderForSteer === 'gemini-cli' || effectiveProviderForSteer === 'codex-cli' || effectiveProviderForSteer === 'cursor-cli' || effectiveProviderForSteer === 'opencode-cli',
     [effectiveProviderForSteer]
   )
   const supportsLiveCodingAgentInput = useMemo(
-    () => effectiveProviderForSteer === 'claude-code' || effectiveProviderForSteer === 'gemini-cli' || effectiveProviderForSteer === 'codex-cli' || effectiveProviderForSteer === 'cursor-cli',
+    () => effectiveProviderForSteer === 'claude-code' || effectiveProviderForSteer === 'gemini-cli' || effectiveProviderForSteer === 'codex-cli' || effectiveProviderForSteer === 'cursor-cli' || effectiveProviderForSteer === 'opencode-cli',
     [effectiveProviderForSteer]
   )
   const canShowSteer = useMemo(() => canSteer && !isCLIProvider, [canSteer, isCLIProvider])
@@ -1291,7 +1291,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       // CLI providers always require code execution mode
-      if (llm.provider === 'claude-code' || llm.provider === 'gemini-cli' || llm.provider === 'codex-cli' || llm.provider === 'cursor-cli') {
+      if (llm.provider === 'claude-code' || llm.provider === 'gemini-cli' || llm.provider === 'codex-cli' || llm.provider === 'cursor-cli' || llm.provider === 'opencode-cli') {
         setTabConfig(activeTabId, { llmConfig: newConfig, useCodeExecutionMode: true })
       } else {
         setTabConfig(activeTabId, { llmConfig: newConfig })

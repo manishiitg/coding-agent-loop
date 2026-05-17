@@ -27,7 +27,9 @@ type StoredProviderKeys struct {
 	Kimi              string               `json:"kimi,omitempty"`
 	Vertex            string               `json:"vertex,omitempty"`
 	GeminiCLI         string               `json:"gemini_cli,omitempty"`
+	CodexCLI          string               `json:"codex_cli,omitempty"`
 	CursorCLI         string               `json:"cursor_cli,omitempty"`
+	OpenCodeCLI       string               `json:"opencode_cli,omitempty"`
 	MiniMax           string               `json:"minimax,omitempty"`
 	MiniMaxCodingPlan string               `json:"minimax_coding_plan,omitempty"`
 	ElevenLabs        string               `json:"elevenlabs,omitempty"`
@@ -119,8 +121,14 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	if keys.GeminiCLI != "" {
 		m["gemini_cli"] = keys.GeminiCLI
 	}
+	if keys.CodexCLI != "" {
+		m["codex_cli"] = keys.CodexCLI
+	}
 	if keys.CursorCLI != "" {
 		m["cursor_cli"] = keys.CursorCLI
+	}
+	if keys.OpenCodeCLI != "" {
+		m["opencode_cli"] = keys.OpenCodeCLI
 	}
 	if keys.MiniMax != "" {
 		m["minimax"] = keys.MiniMax
@@ -176,8 +184,14 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if keys.GeminiCLI != "" {
 		result.GeminiCLI = &keys.GeminiCLI
 	}
+	if keys.CodexCLI != "" {
+		result.CodexCLI = &keys.CodexCLI
+	}
 	if keys.CursorCLI != "" {
 		result.CursorCLI = &keys.CursorCLI
+	}
+	if keys.OpenCodeCLI != "" {
+		result.OpenCodeCLI = &keys.OpenCodeCLI
 	}
 	if keys.MiniMax != "" {
 		result.MiniMax = &keys.MiniMax
@@ -204,8 +218,14 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if result.GeminiCLI != nil {
 		loaded = append(loaded, "gemini-cli")
 	}
+	if result.CodexCLI != nil {
+		loaded = append(loaded, "codex-cli")
+	}
 	if result.CursorCLI != nil {
 		loaded = append(loaded, "cursor-cli")
+	}
+	if result.OpenCodeCLI != nil {
+		loaded = append(loaded, "opencode-cli")
 	}
 	if result.OpenAI != nil {
 		loaded = append(loaded, "openai")
@@ -268,17 +288,18 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		return env
 	}
 	result := &llm.ProviderAPIKeys{
-		OpenAI:     pick(envKeys.OpenAI, wsKeys.OpenAI),
-		Anthropic:  pick(envKeys.Anthropic, wsKeys.Anthropic),
-		ZAI:        pick(envKeys.ZAI, wsKeys.ZAI),
-		Kimi:       pick(envKeys.Kimi, wsKeys.Kimi),
-		Vertex:     pick(envKeys.Vertex, wsKeys.Vertex),
-		GeminiCLI:  pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
-		CodexCLI:   pick(envKeys.CodexCLI, wsKeys.CodexCLI),
-		CursorCLI:  pick(envKeys.CursorCLI, wsKeys.CursorCLI),
-		MiniMax:    pick(envKeys.MiniMax, wsKeys.MiniMax),
-		ElevenLabs: pick(envKeys.ElevenLabs, wsKeys.ElevenLabs),
-		Deepgram:   pick(envKeys.Deepgram, wsKeys.Deepgram),
+		OpenAI:      pick(envKeys.OpenAI, wsKeys.OpenAI),
+		Anthropic:   pick(envKeys.Anthropic, wsKeys.Anthropic),
+		ZAI:         pick(envKeys.ZAI, wsKeys.ZAI),
+		Kimi:        pick(envKeys.Kimi, wsKeys.Kimi),
+		Vertex:      pick(envKeys.Vertex, wsKeys.Vertex),
+		GeminiCLI:   pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
+		CodexCLI:    pick(envKeys.CodexCLI, wsKeys.CodexCLI),
+		CursorCLI:   pick(envKeys.CursorCLI, wsKeys.CursorCLI),
+		OpenCodeCLI: pick(envKeys.OpenCodeCLI, wsKeys.OpenCodeCLI),
+		MiniMax:     pick(envKeys.MiniMax, wsKeys.MiniMax),
+		ElevenLabs:  pick(envKeys.ElevenLabs, wsKeys.ElevenLabs),
+		Deepgram:    pick(envKeys.Deepgram, wsKeys.Deepgram),
 	}
 	// Bedrock / Azure: workspace wins if present, else env
 	if wsKeys.Bedrock != nil {
@@ -408,16 +429,18 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 	}
 
 	merged := &StoredProviderKeys{
-		OpenAI:     pick(existing.OpenAI, incoming.OpenAI),
-		Anthropic:  pick(existing.Anthropic, incoming.Anthropic),
-		ZAI:        pick(existing.ZAI, incoming.ZAI),
-		Kimi:       pick(existing.Kimi, incoming.Kimi),
-		Vertex:     pick(existing.Vertex, incoming.Vertex),
-		GeminiCLI:  pick(existing.GeminiCLI, incoming.GeminiCLI),
-		CursorCLI:  pick(existing.CursorCLI, incoming.CursorCLI),
-		MiniMax:    pick(existing.MiniMax, incoming.MiniMax),
-		ElevenLabs: pick(existing.ElevenLabs, incoming.ElevenLabs),
-		Deepgram:   pick(existing.Deepgram, incoming.Deepgram),
+		OpenAI:      pick(existing.OpenAI, incoming.OpenAI),
+		Anthropic:   pick(existing.Anthropic, incoming.Anthropic),
+		ZAI:         pick(existing.ZAI, incoming.ZAI),
+		Kimi:        pick(existing.Kimi, incoming.Kimi),
+		Vertex:      pick(existing.Vertex, incoming.Vertex),
+		GeminiCLI:   pick(existing.GeminiCLI, incoming.GeminiCLI),
+		CodexCLI:    pick(existing.CodexCLI, incoming.CodexCLI),
+		CursorCLI:   pick(existing.CursorCLI, incoming.CursorCLI),
+		OpenCodeCLI: pick(existing.OpenCodeCLI, incoming.OpenCodeCLI),
+		MiniMax:     pick(existing.MiniMax, incoming.MiniMax),
+		ElevenLabs:  pick(existing.ElevenLabs, incoming.ElevenLabs),
+		Deepgram:    pick(existing.Deepgram, incoming.Deepgram),
 	}
 
 	// Bedrock / Azure: incoming wins if present, else keep existing

@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest, AgentLLMConfiguration, SavedLLM, LLMModel, DelegationTierConfig, LLMProvider } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import type { StoreActions } from './types'
-import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
+import { llmConfigService, type ModelMetadata, type ProviderManifestEntry, type DynamicModelsResponse } from '../services/llm-config-api'
 import { agentApi } from '../services/api'
 import { providerKeysApi, type StoredProviderKeys } from '../api/scheduler'
 
@@ -24,12 +24,11 @@ const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
   'vertex',
   'anthropic',
   'azure',
-  'z-ai',
-  'kimi',
   'claude-code',
   'gemini-cli',
   'codex-cli',
   'cursor-cli',
+  'opencode-cli',
   'minimax',
   'elevenlabs',
   'deepgram',
@@ -44,6 +43,7 @@ const PUBLISHED_LLM_ALLOWED_PROVIDERS = new Set<LLMProvider>([
   'gemini-cli',
   'codex-cli',
   'cursor-cli',
+  'opencode-cli',
 ])
 
 function isPublishedLLMProviderAllowed(provider?: string): provider is LLMProvider {
@@ -137,7 +137,9 @@ function hasStoredProviderKeys(keys?: StoredProviderKeys | null): boolean {
     keys?.kimi ||
     keys?.vertex ||
     keys?.gemini_cli ||
+    keys?.codex_cli ||
     keys?.cursor_cli ||
+    keys?.opencode_cli ||
     keys?.minimax ||
     keys?.elevenlabs ||
     keys?.deepgram ||
@@ -189,6 +191,8 @@ function extractStoredProviderKeysFromState(state: {
     if (llm.provider === 'z-ai' && llm.api_key && !keys.zai) keys.zai = llm.api_key
     if (llm.provider === 'kimi' && llm.api_key && !keys.kimi) keys.kimi = llm.api_key
     if (llm.provider === 'vertex' && llm.api_key && !keys.vertex) keys.vertex = llm.api_key
+    if (llm.provider === 'codex-cli' && llm.api_key && !keys.codex_cli) keys.codex_cli = llm.api_key
+    if (llm.provider === 'opencode-cli' && llm.api_key && !keys.opencode_cli) keys.opencode_cli = llm.api_key
     if (llm.provider === 'minimax' && llm.api_key && !keys.minimax) keys.minimax = llm.api_key
     if (llm.provider === 'bedrock' && llm.region && !keys.bedrock) keys.bedrock = { region: llm.region }
     if (llm.provider === 'azure' && llm.endpoint && llm.api_key && !keys.azure) {
@@ -281,6 +285,14 @@ interface LLMState extends StoreActions {
   supportedProviders: LLMProvider[]
   providerCapabilities: Partial<Record<LLMProvider, string[]>>
   isProviderSupported: (provider: string) => boolean
+
+  // Provider manifest (API-driven provider discovery)
+  providerManifest: ProviderManifestEntry[]
+  providerManifestLoaded: boolean
+  providerManifestLoading: boolean
+  loadProviderManifest: () => Promise<void>
+  getProviderInfo: (id: string) => ProviderManifestEntry | undefined
+  getProviderDynamicModels: (provider: string) => Promise<DynamicModelsResponse | null>
 
   // Delegation tier configuration
   delegationTierConfig: DelegationTierConfig | null
@@ -499,6 +511,40 @@ export const useLLMStore = create<LLMState>()(
         isLoadingLLMs: false,
         error: null,
         defaultsLoaded: false,
+
+        // Provider manifest (API-driven)
+        providerManifest: [],
+        providerManifestLoaded: false,
+        providerManifestLoading: false,
+
+        loadProviderManifest: async () => {
+          if (get().providerManifestLoading) return
+          set({ providerManifestLoading: true })
+          try {
+            const manifest = await llmConfigService.getProviderManifest()
+            set({
+              providerManifest: manifest.providers,
+              providerManifestLoaded: true,
+              providerManifestLoading: false,
+            })
+          } catch (error) {
+            console.warn('Failed to load provider manifest:', error)
+            set({ providerManifestLoading: false })
+          }
+        },
+
+        getProviderInfo: (id: string) => {
+          return get().providerManifest.find(p => p.id === id)
+        },
+
+        getProviderDynamicModels: async (provider: string) => {
+          try {
+            return await llmConfigService.getProviderModels(provider)
+          } catch (error) {
+            console.warn(`Failed to load dynamic models for ${provider}:`, error)
+            return null
+          }
+        },
 
         // Delegation tier config
         delegationTierConfig: null,
@@ -1057,7 +1103,7 @@ export const useLLMStore = create<LLMState>()(
               availableElevenLabsModels: defaults.available_models.elevenlabs || [],
               availableDeepgramModels: defaults.available_models.deepgram || [],
               supportedProviders: (() => {
-                const sp = (defaults.supported_providers || SUPPORTED_PROVIDERS_FALLBACK).filter(provider => provider !== 'openrouter' && provider !== 'minimax-coding-plan')
+                const sp = (defaults.supported_providers || SUPPORTED_PROVIDERS_FALLBACK).filter(provider => provider !== 'openrouter' && provider !== 'z-ai' && provider !== 'kimi' && provider !== 'minimax-coding-plan')
                 console.log('[useLLMStore] supported_providers from backend:', defaults.supported_providers, '→ using:', sp)
                 return sp
               })(),
@@ -1076,6 +1122,9 @@ export const useLLMStore = create<LLMState>()(
               get().setWorkflowPrimaryConfig({ provider: first.provider, model_id: first.model_id, fallback_models: [], cross_provider_fallback: undefined })
               get().setAgentConfig({ primary: first, fallbacks: [] })
             }
+
+            // Load provider manifest in parallel (non-blocking)
+            get().loadProviderManifest()
 
             // Refresh availableLLMs from savedLLMs (Published LLMs)
             get().refreshAvailableLLMs()

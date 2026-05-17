@@ -1,16 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, CheckCircle, Loader2, RefreshCw, Settings, Terminal, X, KeyRound } from 'lucide-react'
+import { AlertCircle, CheckCircle, Loader2, RefreshCw, Settings, Terminal, X, KeyRound, ChevronDown } from 'lucide-react'
 import { Button } from './ui/Button'
-import { llmConfigService } from '../services/llm-config-api'
+import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 import type { LLMDiscoveryCandidate, LLMModel, SavedLLM, TierModel } from '../services/api-types'
 import { useLLMStore } from '../stores'
 import ModalPortal from './ui/ModalPortal'
-import {
-  getProviderIntegrationInfo,
-  getProviderIntegrationKind,
-  type LLMIntegrationKind,
-} from '../utils/llmDisplay'
-import { CodingAgentCapabilities } from './llm/CodingAgentCapabilities'
+import { getProviderIntegrationKind } from '../utils/llmDisplay'
 
 interface LLMDiscoveryOnboardingModalProps {
   isOpen: boolean
@@ -23,136 +18,32 @@ type CandidateTestState = {
   message?: string
 }
 
-type DiscoveryIntegrationKind = Exclude<LLMIntegrationKind, 'audio_provider'>
+type ReadinessLevel = 'ready' | 'needs_setup' | 'not_detected'
 
-const DISCOVERY_INTEGRATION_ORDER: DiscoveryIntegrationKind[] = ['coding_agent', 'api_model']
-
-function candidateSortValue(candidate: LLMDiscoveryCandidate): number {
-  if (candidate.usable && candidate.kind === 'local_cli') return 0
-  if (candidate.usable) return 1
-  if (candidate.kind === 'local_cli') return 2
-  return 3
+function candidateReadiness(candidate: LLMDiscoveryCandidate): ReadinessLevel {
+  if (candidate.kind === 'local_cli' && candidate.runtime_available === false) return 'not_detected'
+  if (!candidate.usable) return 'needs_setup'
+  return 'ready'
 }
 
-function candidateSubtitle(candidate: LLMDiscoveryCandidate): string {
-  if (candidate.kind === 'local_cli') {
-    return ''
-  }
-
-  const parts: string[] = []
-  parts.push(candidate.model_name || candidate.model_id)
-  if (candidate.runtime_command) {
-    if (candidate.runtime_available === false) {
-      parts.push(`${candidate.runtime_command} missing`)
-    } else {
-      parts.push(`${candidate.runtime_command} found`)
-    }
-  }
-  if (!candidateIsDisabled(candidate) && candidate.auth_source) {
-    parts.push(candidate.auth_source)
-  }
-  return parts.filter(Boolean).join(' · ')
-}
-
-function candidateIsDisabled(candidate: LLMDiscoveryCandidate): boolean {
-  return candidate.kind === 'local_cli' && candidate.runtime_available === false
-}
-
-function candidateHeaderDetail(candidate: LLMDiscoveryCandidate): string {
-  if (candidate.kind === 'local_cli') {
-    return ''
-  }
-  return candidate.model_name || candidate.model_id
-}
-
-function shouldShowStatusReason(candidate: LLMDiscoveryCandidate, testState: CandidateTestState): boolean {
-  if (candidate.kind === 'local_cli') {
-    return false
-  }
-  if (candidateIsDisabled(candidate) || !candidate.usable) {
-    return true
-  }
-  return testState.status === 'testing' || testState.status === 'invalid'
-}
-
-function candidateCardStatus(candidate: LLMDiscoveryCandidate, testState: CandidateTestState) {
-  if (testState.status === 'testing') {
-    return {
-      label: 'Testing',
-      badgeClass: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
-      iconClass: 'text-blue-500',
-      reason: 'Checking this setup now.',
-    }
-  }
-  if (testState.status === 'valid') {
-    return {
-      label: 'Verified',
-      badgeClass: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300',
-      iconClass: 'text-green-500',
-      reason: candidate.kind === 'local_cli' ? 'CLI login was verified.' : 'Provider auth was verified.',
-    }
-  }
-  if (testState.status === 'invalid') {
-    return {
-      label: 'Failed',
-      badgeClass: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
-      iconClass: 'text-red-500',
-      reason: 'Test failed. Check the setup hint below.',
-    }
-  }
-  if (candidateIsDisabled(candidate)) {
-    return {
-      label: 'Not detected',
-      badgeClass: 'bg-gray-100 text-gray-600 dark:bg-slate-700 dark:text-slate-300',
-      iconClass: 'text-gray-400 dark:text-slate-500',
-      reason: 'CLI runtime was not found on this machine.',
-    }
-  }
-  if (!candidate.usable) {
-    return {
-      label: 'Needs setup',
-      badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
-      iconClass: 'text-amber-500',
-      reason: candidate.reason,
-    }
-  }
-  if (candidate.kind === 'local_cli') {
-    return {
-      label: 'Installed',
-      badgeClass: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
-      iconClass: 'text-blue-500',
-      reason: 'CLI runtime was detected. Use Test to verify login before enabling.',
-    }
-  }
-  return {
-    label: 'Configured',
-    badgeClass: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
-    iconClass: 'text-blue-500',
-    reason: 'Provider auth was detected. Use Test to verify it before enabling.',
-  }
-}
-
-function modelForCandidate(candidate: LLMDiscoveryCandidate): LLMModel {
+function modelForCandidate(candidate: LLMDiscoveryCandidate, selectedModelId?: string): LLMModel {
   const options: Record<string, unknown> = {}
-  if (candidate.provider === 'codex-cli') {
-    options.reasoning_effort = 'medium'
-  }
-  if (candidate.provider === 'claude-code') {
-    options.reasoning_effort = 'high'
-  }
+  if (candidate.provider === 'codex-cli') options.reasoning_effort = 'medium'
+  if (candidate.provider === 'claude-code') options.reasoning_effort = 'high'
 
   return {
     provider: candidate.provider,
-    model_id: candidate.model_id,
+    model_id: selectedModelId || candidate.model_id,
     ...(Object.keys(options).length > 0 ? { options } : {}),
   }
 }
 
-function publishedName(candidate: LLMDiscoveryCandidate): string {
+function publishedName(candidate: LLMDiscoveryCandidate, selectedModelId?: string): string {
   if (candidate.provider === 'codex-cli') return 'Codex CLI'
   if (candidate.provider === 'cursor-cli') return 'Cursor CLI'
+  if (candidate.provider === 'opencode-cli') return 'OpenCode CLI'
   if (candidate.provider === 'claude-code') return 'Claude Code'
-  if (candidate.provider === 'gemini-cli') return `Gemini CLI (${candidate.model_id})`
+  if (candidate.provider === 'gemini-cli') return `Gemini CLI (${selectedModelId || candidate.model_id})`
   return candidate.label
 }
 
@@ -166,60 +57,55 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
     refreshAvailableLLMs,
     loadDefaultsFromBackend,
     defaultsLoaded,
+    providerManifestLoaded,
+    loadProviderManifest,
   } = useLLMStore()
 
   const [candidates, setCandidates] = useState<LLMDiscoveryCandidate[]>([])
-  const [notes, setNotes] = useState<string[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [isEnabling, setIsEnabling] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [testStates, setTestStates] = useState<Record<string, CandidateTestState>>({})
+  const [enablingId, setEnablingId] = useState<string | null>(null)
+  const [showNotDetected, setShowNotDetected] = useState(false)
+  const [metadata, setMetadata] = useState<ModelMetadata[]>([])
 
-  const sortedCandidates = useMemo(
-    () => [...candidates].sort((a, b) => candidateSortValue(a) - candidateSortValue(b) || a.label.localeCompare(b.label)),
-    [candidates]
-  )
+  const isCodingAgent = (c: LLMDiscoveryCandidate) =>
+    getProviderIntegrationKind(c.provider, c.model_id) === 'coding_agent'
 
-  const candidateGroups = useMemo(() => {
-    return DISCOVERY_INTEGRATION_ORDER.map(kind => ({
-      kind,
-      candidates: sortedCandidates.filter(candidate => getProviderIntegrationKind(candidate.provider, candidate.model_id) === kind),
-    })).filter(group => group.candidates.length > 0)
-  }, [sortedCandidates])
-
-  const selectedCandidate = useMemo(
-    () =>
-      sortedCandidates.find(candidate => candidate.id === selectedId && !candidateIsDisabled(candidate)) ||
-      sortedCandidates.find(candidate => !candidateIsDisabled(candidate)) ||
-      null,
-    [selectedId, sortedCandidates]
-  )
-  const integrationIcons: Record<DiscoveryIntegrationKind, typeof Terminal> = {
-    coding_agent: Terminal,
-    api_model: KeyRound,
-  }
+  const grouped = useMemo(() => {
+    const readyCLI: LLMDiscoveryCandidate[] = []
+    const readyAPI: LLMDiscoveryCandidate[] = []
+    const needsSetup: LLMDiscoveryCandidate[] = []
+    const notDetected: LLMDiscoveryCandidate[] = []
+    for (const c of candidates) {
+      const level = candidateReadiness(c)
+      if (level === 'ready') {
+        if (isCodingAgent(c)) readyCLI.push(c)
+        else readyAPI.push(c)
+      } else if (level === 'needs_setup') {
+        needsSetup.push(c)
+      } else {
+        notDetected.push(c)
+      }
+    }
+    return { readyCLI, readyAPI, needsSetup, notDetected }
+  }, [candidates])
 
   const loadDiscovery = async () => {
     setIsLoading(true)
     setError(null)
     setSuccess(null)
     try {
-      if (!defaultsLoaded) {
-        await loadDefaultsFromBackend()
-      }
-      const response = await llmConfigService.discoverLLMSetup()
-      const nextCandidates = response.candidates || []
-      setCandidates(nextCandidates)
-      setNotes(response.notes || [])
+      if (!defaultsLoaded) await loadDefaultsFromBackend()
+      if (!providerManifestLoaded) loadProviderManifest()
+      const [response, metaResponse] = await Promise.all([
+        llmConfigService.discoverLLMSetup(),
+        llmConfigService.getModelMetadata().catch(() => ({ models: [] })),
+      ])
+      setCandidates(response.candidates || [])
+      setMetadata(metaResponse.models || [])
       setTestStates({})
-      const recommended = nextCandidates
-        .filter(candidate => candidate.usable && !candidateIsDisabled(candidate))
-        .sort((a, b) => candidateSortValue(a) - candidateSortValue(b))[0] ||
-        nextCandidates.find(candidate => !candidateIsDisabled(candidate)) ||
-        null
-      setSelectedId(recommended && !candidateIsDisabled(recommended) ? recommended.id : null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to discover local LLM setup.')
     } finally {
@@ -228,70 +114,41 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
   }
 
   useEffect(() => {
-    if (isOpen) {
-      loadDiscovery()
-    }
+    if (isOpen) loadDiscovery()
   }, [isOpen])
 
   if (!isOpen) return null
 
-  const validateCandidate = async (candidate: LLMDiscoveryCandidate) => {
-    const validation = await llmConfigService.validateAPIKey({
-      provider: candidate.provider,
-      model_id: candidate.model_id,
-    })
-    if (!validation.valid) {
-      throw new Error(validation.message || validation.error || `${candidate.label} is not ready yet.`)
-    }
-    return validation.message || `${candidate.label} is working.`
-  }
-
-  const testCandidate = async (candidate: LLMDiscoveryCandidate) => {
+  const enableCandidate = async (candidate: LLMDiscoveryCandidate) => {
+    setEnablingId(candidate.id)
     setError(null)
     setSuccess(null)
-    setTestStates(prev => ({
-      ...prev,
-      [candidate.id]: { status: 'testing' },
-    }))
+    setTestStates(prev => ({ ...prev, [candidate.id]: { status: 'testing' } }))
 
     try {
-      const message = await validateCandidate(candidate)
-      setTestStates(prev => ({
-        ...prev,
-        [candidate.id]: { status: 'valid', message },
-      }))
-    } catch (err) {
-      setTestStates(prev => ({
-        ...prev,
-        [candidate.id]: { status: 'invalid', message: err instanceof Error ? err.message : 'Connection test failed.' },
-      }))
-    }
-  }
+      const validation = await llmConfigService.validateAPIKey({
+        provider: candidate.provider,
+        model_id: candidate.model_id,
+      })
+      if (!validation.valid) {
+        throw new Error(validation.message || validation.error || `${candidate.label} is not ready.`)
+      }
 
-  const enableCandidate = async () => {
-    if (!selectedCandidate) return
+      setTestStates(prev => ({ ...prev, [candidate.id]: { status: 'valid', message: validation.message } }))
 
-    setIsEnabling(true)
-    setError(null)
-    setSuccess(null)
-
-    try {
-      const validationMessage = await validateCandidate(selectedCandidate)
-      setTestStates(prev => ({
-        ...prev,
-        [selectedCandidate.id]: { status: 'valid', message: validationMessage },
-      }))
-
-      const llmModel = modelForCandidate(selectedCandidate)
+      const modelId = candidate.model_id
+      const llmModel = modelForCandidate(candidate, modelId)
       const alreadyPublished = savedLLMs.some(
         (saved: SavedLLM) => saved.provider === llmModel.provider && saved.model_id === llmModel.model_id
       )
       if (!alreadyPublished) {
+        const modelMeta = metadata.find(m => m.model_id === modelId && m.provider === candidate.provider)
         await saveLLM(
           llmModel,
-          publishedName(selectedCandidate),
-          selectedCandidate.model_name || selectedCandidate.model_id,
-          selectedCandidate.kind === 'local_cli' ? 'none' : 'api_key'
+          publishedName(candidate, modelId),
+          modelMeta?.model_name || candidate.model_name || modelId,
+          candidate.kind === 'local_cli' ? 'none' : 'api_key',
+          modelMeta || undefined
         )
       } else {
         await refreshAvailableLLMs()
@@ -305,271 +162,256 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
         cross_provider_fallback: undefined,
       })
       setAgentConfig({ primary: llmModel, fallbacks: [] })
-      setDelegationTierConfig({
-        main: tier,
-        high: tier,
-        medium: tier,
-        low: tier,
-      })
+      setDelegationTierConfig({ main: tier, high: tier, medium: tier, low: tier })
 
-      setSuccess(`${publishedName(selectedCandidate)} is enabled for multi-agent mode.`)
+      setSuccess(`${publishedName(candidate, modelId)} is enabled and ready to use.`)
     } catch (err) {
+      setTestStates(prev => ({
+        ...prev,
+        [candidate.id]: { status: 'invalid', message: err instanceof Error ? err.message : 'Failed.' },
+      }))
       setError(err instanceof Error ? err.message : 'Failed to enable this model.')
     } finally {
-      setIsEnabling(false)
+      setEnablingId(null)
     }
   }
 
+
   return (
     <ModalPortal>
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div
-        className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-5xl max-h-[calc(100vh-2rem)] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-700 shrink-0">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Set Up Models</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-              We check this machine for coding CLIs and configured provider auth. Test one to verify it works before enabling.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={loadDiscovery}
-              disabled={isLoading}
-              className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors disabled:opacity-50"
-              title="Run discovery again"
-            >
-              <RefreshCw className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} />
-            </button>
-            <button
-              onClick={onClose}
-              className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-              aria-label="Close"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        <div className="p-6 overflow-y-auto min-h-0">
-          {isLoading && (
-            <div className="flex items-center gap-3 text-sm text-gray-600 dark:text-gray-300 py-8">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              Checking local CLIs and configured provider auth...
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+        <div
+          className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[calc(100vh-2rem)] flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-5 border-b border-gray-200 dark:border-slate-700 shrink-0">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Set Up Models</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                Pick a provider and model to get started. We detected what's available on this machine.
+              </p>
             </div>
-          )}
-
-          {!isLoading && sortedCandidates.length === 0 && (
-            <div className="border border-dashed border-gray-300 dark:border-slate-600 rounded-lg p-5">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-amber-500 mt-0.5" />
-                <div>
-                  <h3 className="font-medium text-gray-900 dark:text-gray-100">No ready model setup was detected</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                    Install Codex, Cursor CLI, Claude Code, Gemini CLI, or add a provider key in advanced setup.
-                  </p>
-                </div>
-              </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={loadDiscovery}
+                disabled={isLoading}
+                className="p-2 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                title="Re-scan"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+              </button>
+              <button
+                onClick={onClose}
+                className="p-2 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-slate-700 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-          )}
+          </div>
 
-          {!isLoading && sortedCandidates.length > 0 && (
-            <div className="space-y-5">
-              <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-200">
-                Coding CLIs are shown even when missing. Detected means the CLI or credentials are present; testing verifies login, model access, and basic provider connectivity.
+          {/* Content */}
+          <div className="p-6 overflow-y-auto min-h-0 flex-1">
+            {isLoading && (
+              <div className="flex flex-col items-center justify-center py-16 text-gray-500 dark:text-gray-400">
+                <Loader2 className="w-6 h-6 animate-spin mb-3" />
+                <p className="text-sm">Scanning for installed CLIs and provider credentials...</p>
               </div>
-              {candidateGroups.map(group => {
-                const integrationInfo = getProviderIntegrationInfo(group.candidates[0]?.provider, group.candidates[0]?.model_id)
-                const IntegrationIcon = integrationIcons[group.kind]
-                return (
-                  <section key={group.kind} className="overflow-hidden rounded-md border border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-800">
-                    <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
-                      <div className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-wide ${integrationInfo.toneClass}`}>
-                        <IntegrationIcon className="w-4 h-4" />
-                        {integrationInfo.label}
-                      </div>
-                      <span className="rounded bg-white px-1.5 py-0.5 text-[11px] text-gray-500 dark:bg-slate-800 dark:text-slate-400">
-                        {group.candidates.length}
-                      </span>
-                    </div>
-                    <div className="grid gap-3 p-3 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
-                      {group.candidates.map(candidate => {
-                        const disabled = candidateIsDisabled(candidate)
-                        const selected = !disabled && selectedCandidate?.id === candidate.id
+            )}
+
+            {!isLoading && candidates.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <AlertCircle className="w-10 h-10 text-amber-400 mb-3" />
+                <h3 className="font-medium text-gray-900 dark:text-gray-100 mb-1">No providers detected</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md">
+                  Install a coding CLI (Codex, Cursor, Claude Code, Gemini, OpenCode) or configure an API provider key.
+                </p>
+              </div>
+            )}
+
+            {!isLoading && candidates.length > 0 && (
+              <div className="space-y-5">
+                {/* Coding Agents — ready */}
+                {grouped.readyCLI.length > 0 && (
+                  <section>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2 flex items-center gap-1.5">
+                      <Terminal className="w-3.5 h-3.5" />
+                      Coding Agents
+                    </h3>
+                    <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                      {grouped.readyCLI.map(candidate => {
                         const testState = testStates[candidate.id] || { status: 'idle' as const }
-                        const cardStatus = candidateCardStatus(candidate, testState)
-                        const headerDetail = candidateHeaderDetail(candidate)
-                        const subtitle = candidateSubtitle(candidate)
+                        const isEnabling = enablingId === candidate.id
                         return (
                           <div
                             key={candidate.id}
-                            data-selected={selected ? 'true' : 'false'}
-                            role="button"
-                            aria-disabled={disabled}
-                            tabIndex={disabled ? -1 : 0}
-                            aria-label={`Select ${candidate.label}`}
-                            onClick={() => {
-                              if (!disabled) {
-                                setSelectedId(candidate.id)
-                              }
-                            }}
-                            onKeyDown={(event) => {
-                              if (!disabled && (event.key === 'Enter' || event.key === ' ')) {
-                                event.preventDefault()
-                                setSelectedId(candidate.id)
-                              }
-                            }}
-                            className={`llm-discovery-candidate flex min-h-[136px] w-full flex-col text-left border rounded-lg p-3 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800 ${
-                              disabled
-                                ? 'cursor-not-allowed border-gray-200 bg-gray-50 opacity-70 dark:border-slate-700 dark:bg-slate-900/40'
-                                : selected
-                                ? 'border-blue-500 bg-blue-50/70 ring-1 ring-blue-500 dark:bg-blue-950/20'
-                                : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50 dark:border-slate-600 dark:bg-slate-800 dark:hover:border-slate-500 dark:hover:bg-slate-700/40'
-                            }`}
+                            className="flex items-center justify-between gap-2 border border-gray-200 dark:border-slate-600 rounded px-3 py-1.5 bg-white dark:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-500 transition-colors"
                           >
-                            <div className="flex min-h-0 flex-1 flex-col">
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex min-w-0 items-start gap-2">
-                                  <IntegrationIcon className={`mt-0.5 h-5 w-5 shrink-0 ${cardStatus.iconClass}`} />
-                                  <div className="min-w-0">
-                                    <h3 className="truncate font-medium text-gray-900 dark:text-gray-100">{candidate.label}</h3>
-                                    {headerDetail && (
-                                      <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">{headerDetail}</p>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="shrink-0">
-                                  <span className={`rounded-full px-2 py-0.5 text-xs ${cardStatus.badgeClass}`}>{cardStatus.label}</span>
-                                </div>
-                              </div>
-
-                              <div className="mt-3 space-y-2">
-                                {subtitle && (
-                                  <p className="truncate text-xs text-gray-500 dark:text-gray-400">{subtitle}</p>
+                            <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{candidate.label}</span>
+                            {testState.status === 'invalid' ? (
+                              <span className="text-[10px] text-red-500 shrink-0" title={testState.message}>Failed</span>
+                            ) : (
+                              <button
+                                onClick={() => enableCandidate(candidate)}
+                                disabled={isEnabling || enablingId !== null}
+                                className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50 shrink-0"
+                              >
+                                {isEnabling ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : testState.status === 'valid' ? (
+                                  <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                                ) : (
+                                  'Enable'
                                 )}
-                                {shouldShowStatusReason(candidate, testState) && (
-                                  <p className="text-xs text-gray-500 dark:text-gray-400">{cardStatus.reason}</p>
-                                )}
-                                {getProviderIntegrationKind(candidate.provider, candidate.model_id) === 'coding_agent' && (
-                                  <CodingAgentCapabilities provider={candidate.provider} modelId={candidate.model_id} compact />
-                                )}
-                                {candidate.kind !== 'local_cli' && candidate.setup_hint && (
-                                  <p className="text-xs text-amber-600 dark:text-amber-300">{candidate.setup_hint}</p>
-                                )}
-                                {candidate.kind !== 'local_cli' && testState.status === 'valid' && testState.message && (
-                                  <p className="text-xs text-green-600 dark:text-green-400">{testState.message}</p>
-                                )}
-                                {candidate.kind !== 'local_cli' && testState.status === 'invalid' && testState.message && (
-                                  <p className="text-xs text-red-600 dark:text-red-400">{testState.message}</p>
-                                )}
-                              </div>
-
-                              <div className="mt-auto flex justify-end pt-3">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:hover:text-white"
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    if (disabled) return
-                                    setSelectedId(candidate.id)
-                                    testCandidate(candidate)
-                                  }}
-                                  disabled={disabled || testState.status === 'testing'}
-                                >
-                                  {disabled ? (
-                                    'Install first'
-                                  ) : testState.status === 'testing' ? (
-                                    <>
-                                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                                      Testing
-                                    </>
-                                  ) : testState.status === 'valid' ? (
-                                    <>
-                                      <CheckCircle className="w-4 h-4 mr-1 text-green-500" />
-                                      Test again
-                                    </>
-                                  ) : testState.status === 'invalid' ? (
-                                    <>
-                                      <AlertCircle className="w-4 h-4 mr-1 text-red-500" />
-                                      Retry
-                                    </>
-                                  ) : (
-                                    'Test'
-                                  )}
-                                </Button>
-                              </div>
-                            </div>
+                              </button>
+                            )}
                           </div>
                         )
                       })}
                     </div>
                   </section>
-                )
-              })}
-            </div>
-          )}
+                )}
 
-          {notes.length > 0 && (
-            <div className="mt-4 text-xs text-gray-500 dark:text-gray-400 space-y-1">
-              {notes.map(note => <p key={note}>{note}</p>)}
-            </div>
-          )}
+                {/* API Providers — ready */}
+                {grouped.readyAPI.length > 0 && (
+                  <section>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2 flex items-center gap-1.5">
+                      <KeyRound className="w-3.5 h-3.5" />
+                      API Providers
+                    </h3>
+                    <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                      {grouped.readyAPI.map(candidate => {
+                        const testState = testStates[candidate.id] || { status: 'idle' as const }
+                        const isEnabling = enablingId === candidate.id
+                        return (
+                          <div
+                            key={candidate.id}
+                            className="flex items-center justify-between gap-2 border border-gray-200 dark:border-slate-600 rounded px-3 py-1.5 bg-white dark:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-500 transition-colors"
+                          >
+                            <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{candidate.label}</span>
+                            {testState.status === 'invalid' ? (
+                              <span className="text-[10px] text-red-500 shrink-0" title={testState.message}>Failed</span>
+                            ) : (
+                              <button
+                                onClick={() => enableCandidate(candidate)}
+                                disabled={isEnabling || enablingId !== null}
+                                className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50 shrink-0"
+                              >
+                                {isEnabling ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : testState.status === 'valid' ? (
+                                  <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                                ) : (
+                                  'Enable'
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </section>
+                )}
 
-          {error && (
-            <div className="mt-4 flex items-start gap-2 text-sm text-red-600 dark:text-red-400">
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
+                {/* Needs setup */}
+                {grouped.needsSetup.length > 0 && (
+                  <section>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2 flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
+                      Needs Setup
+                    </h3>
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {grouped.needsSetup.map(candidate => (
+                        <div
+                          key={candidate.id}
+                          className="border border-gray-200 dark:border-slate-700 rounded px-2.5 py-2 bg-gray-50 dark:bg-slate-800/50"
+                        >
+                          <div className="flex items-center gap-2">
+                            {isCodingAgent(candidate) ? (
+                              <Terminal className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                            ) : (
+                              <KeyRound className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                            )}
+                            <h4 className="text-xs font-medium text-gray-900 dark:text-gray-100 truncate">{candidate.label}</h4>
+                          </div>
+                          {(candidate.setup_hint || candidate.reason) && (
+                            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 ml-5.5 line-clamp-1">
+                              {candidate.setup_hint || candidate.reason}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
 
-          {success && (
-            <div className="mt-4 flex items-start gap-2 text-sm text-green-600 dark:text-green-400">
-              <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>{success}</span>
-            </div>
-          )}
-        </div>
+                {/* Not detected — collapsed */}
+                {grouped.notDetected.length > 0 && (
+                  <section>
+                    <button
+                      onClick={() => setShowNotDetected(!showNotDetected)}
+                      className="text-sm font-semibold text-gray-500 dark:text-gray-400 flex items-center gap-2 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+                    >
+                      <ChevronDown className={`w-4 h-4 transition-transform ${showNotDetected ? '' : '-rotate-90'}`} />
+                      Not detected ({grouped.notDetected.length})
+                    </button>
+                    {showNotDetected && (
+                      <div className="mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                        {grouped.notDetected.map(candidate => (
+                          <div
+                            key={candidate.id}
+                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-400 dark:text-slate-500 rounded border border-dashed border-gray-200 dark:border-slate-700"
+                          >
+                            <Terminal className="w-3 h-3 shrink-0" />
+                            <span className="truncate">{candidate.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                )}
+              </div>
+            )}
 
-        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 dark:border-slate-700 shrink-0">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              if (onAdvancedSetup) {
-                onAdvancedSetup()
-                return
-              }
-              onClose()
-            }}
-          >
-            <Settings className="w-4 h-4 mr-2" />
-            Advanced setup
-          </Button>
-          <div className="flex items-center gap-2">
+            {/* Status messages */}
+            {error && (
+              <div className="mt-4 flex items-start gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40 rounded-lg p-3">
+                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+            {success && (
+              <div className="mt-4 flex items-start gap-2 text-sm text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900/40 rounded-lg p-3">
+                <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>{success}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 dark:border-slate-700 shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                if (onAdvancedSetup) { onAdvancedSetup(); return }
+                onClose()
+              }}
+            >
+              <Settings className="w-4 h-4 mr-2" />
+              Advanced setup
+            </Button>
             <Button
               variant="outline"
               size="sm"
-              className="dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:hover:text-white"
+              className="dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
               onClick={onClose}
             >
-              Close
-            </Button>
-            <Button
-              size="sm"
-              onClick={enableCandidate}
-              disabled={!selectedCandidate || isEnabling}
-            >
-              {isEnabling && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Test and enable
+              {success ? 'Done' : 'Skip for now'}
             </Button>
           </div>
         </div>
       </div>
-    </div>
     </ModalPortal>
   )
 }

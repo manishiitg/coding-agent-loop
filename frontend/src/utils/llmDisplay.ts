@@ -15,6 +15,7 @@ export type ProviderType =
   | 'gemini-cli'
   | 'codex-cli'
   | 'cursor-cli'
+  | 'opencode-cli'
   | 'minimax'
   | 'minimax-coding-plan'
   | 'elevenlabs'
@@ -58,7 +59,7 @@ export const LLM_INTEGRATION_DISPLAY_INFO: Record<LLMIntegrationKind, LLMIntegra
   },
 }
 
-const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli'])
+const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'opencode-cli'])
 const AUDIO_PROVIDER_PROVIDERS = new Set(['elevenlabs', 'deepgram'])
 
 const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
@@ -122,6 +123,11 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
     authDescription: 'Local CLI (API key optional)',
     colorClass: 'text-slate-600 dark:text-slate-300',
   },
+  'opencode-cli': {
+    name: 'OpenCode CLI',
+    authDescription: 'Local CLI (API key optional)',
+    colorClass: 'text-cyan-600 dark:text-cyan-400',
+  },
   minimax: {
     name: 'MiniMax',
     authDescription: 'API Key',
@@ -147,6 +153,7 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
 export const PROVIDER_ORDER: ProviderType[] = [
   'codex-cli',
   'cursor-cli',
+  'opencode-cli',
   'claude-code',
   'gemini-cli',
   'bedrock',

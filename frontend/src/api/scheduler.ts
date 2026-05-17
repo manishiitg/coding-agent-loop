@@ -72,7 +72,9 @@ export interface StoredProviderKeys {
   kimi?: string
   vertex?: string
   gemini_cli?: string
+  codex_cli?: string
   cursor_cli?: string
+  opencode_cli?: string
   minimax?: string
   minimax_coding_plan?: string
   elevenlabs?: string

@@ -70,10 +70,11 @@ import (
 )
 
 var (
-	cleanupClaudeCodeProviderSessions = llmproviders.CleanupClaudeCodeExperimentalSessions
-	cleanupCodexCLIProviderSessions   = llmproviders.CleanupCodexCLIInteractiveSessions
-	cleanupGeminiCLIProviderSessions  = llmproviders.CleanupGeminiCLIInteractiveSessions
-	cleanupCursorCLIProviderSessions  = llmproviders.CleanupCursorCLIInteractiveSessions
+	cleanupClaudeCodeProviderSessions  = llmproviders.CleanupClaudeCodeExperimentalSessions
+	cleanupCodexCLIProviderSessions    = llmproviders.CleanupCodexCLIInteractiveSessions
+	cleanupGeminiCLIProviderSessions   = llmproviders.CleanupGeminiCLIInteractiveSessions
+	cleanupCursorCLIProviderSessions   = llmproviders.CleanupCursorCLIInteractiveSessions
+	cleanupOpenCodeCLIProviderSessions = llmproviders.CleanupOpenCodeCLIInteractiveSessions
 )
 
 // ServerCmd represents the server command
@@ -859,6 +860,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/llm-config/validate-key", api.handleValidateAPIKey).Methods("POST")
 	apiRouter.HandleFunc("/image-gen/test", api.handleTestImageGen).Methods("POST")
 	apiRouter.HandleFunc("/llm-config/delegation-tiers", api.handleGetDelegationTierDefaults).Methods("GET")
+	apiRouter.HandleFunc("/llm-config/providers", api.handleGetProviderManifest).Methods("GET")
+	apiRouter.HandleFunc("/llm-config/providers/{provider}/models", api.handleGetProviderModels).Methods("GET")
 	apiRouter.HandleFunc("/session/cancel-turn", api.handleCancelCurrentTurn).Methods("POST")
 	apiRouter.HandleFunc("/session/stop", api.handleStopSession).Methods("POST")
 	apiRouter.HandleFunc("/session/clear", api.handleClearSession).Methods("POST")
@@ -1441,6 +1444,7 @@ func cleanupCodingAgentInteractiveSessions(phase string) {
 	cleanupProvider("CODEX-CLI", cleanupCodexCLIProviderSessions)
 	cleanupProvider("GEMINI-CLI", cleanupGeminiCLIProviderSessions)
 	cleanupProvider("CURSOR-CLI", cleanupCursorCLIProviderSessions)
+	cleanupProvider("OPENCODE-CLI", cleanupOpenCodeCLIProviderSessions)
 }
 
 func (api *StreamingAPI) cancelActiveWorkForShutdown() {
@@ -8488,6 +8492,22 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 			log.Printf("[STEER] Cursor CLI live input unavailable for session %s, falling back to agent queue: %v", sessionID, err)
 		}
 	}
+	if runningAgent.GetProvider() == llm.ProviderOpenCodeCLI {
+		steerCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := llmproviders.SendOpenCodeCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
+			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
+			log.Printf("[STEER] Sent live message to OpenCode CLI session %s: %.80s", sessionID, req.Message)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "Steer message sent to coding agent",
+			})
+			return
+		} else {
+			log.Printf("[STEER] OpenCode CLI live input unavailable for session %s, falling back to agent queue: %v", sessionID, err)
+		}
+	}
 
 	if err := r.Context().Err(); err != nil {
 		log.Printf("[STEER] Request canceled before queued steer fallback for session %s: %v", sessionID, err)
@@ -9431,7 +9451,7 @@ func (api *StreamingAPI) buildLLMToolsCallbacks() *todo_creation_human.LLMToolsC
 				return "provider is required.", nil
 			}
 			if !isPublishedLLMProviderAllowed(provider) {
-				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
+				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, opencode-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
 			validationOptions := cloneOptionsMap(options)

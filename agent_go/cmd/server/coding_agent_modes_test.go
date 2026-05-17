@@ -154,6 +154,7 @@ func TestRecordLiveCodingAgentUserMessageCapturesVisibleEvent(t *testing.T) {
 		{name: "codex cli", provider: llm.ProviderCodexCLI},
 		{name: "gemini cli", provider: llm.ProviderGeminiCLI},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI},
+		{name: "opencode cli", provider: llm.ProviderOpenCodeCLI},
 	}
 
 	for _, tt := range tests {

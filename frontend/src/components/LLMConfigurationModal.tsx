@@ -4,17 +4,10 @@ import { Button } from './ui/Button'
 import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore, useAppStore } from '../stores'
 import type { LLMConfiguration, ExtendedLLMConfiguration, AgentLLMConfiguration } from '../services/api-types'
-import { AnthropicSection } from './AnthropicSection'
-import { BedrockSection } from './BedrockSection'
-import { OpenAISection } from './OpenAISection'
-import { VertexSection } from './VertexSection'
-import { AzureSection } from './AzureSection'
-import { ClaudeCodeSection } from './ClaudeCodeSection'
-import { GeminiCLISection } from './GeminiCLISection'
-import { CodexCLISection } from './CodexCLISection'
-import { CursorCLISection } from './CursorCLISection'
+import { CodingAgentSection } from './llm/CodingAgentSection'
+import { APIProviderSection } from './llm/APIProviderSection'
 import { APIKeyProviderSection } from './APIKeyProviderSection'
-import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
+import { llmConfigService, type ModelMetadata, type ProviderManifestEntry } from '../services/llm-config-api'
 import { LibraryTab } from './llm/LibraryTab'
 import { PROVIDER_ORDER, getProviderDisplayInfo, getProviderIntegrationKind, type ProviderType } from '../utils/llmDisplay'
 import ModalPortal from './ui/ModalPortal'
@@ -115,12 +108,14 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
     testAPIKey,
     defaultsLoaded,
     loadDefaultsFromBackend,
-    refreshAvailableLLMs,
     // Supported providers filter
     isProviderSupported,
     providerCapabilities,
     llmConfigLocked,
-    lockedProviders
+    lockedProviders,
+    providerManifest,
+    providerManifestLoaded,
+    loadProviderManifest,
   } = useLLMStore()
 
   const isProviderLocked = (provider: ProviderType) =>
@@ -129,7 +124,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
   const getProviderForTab = (tab: TabType): APIKeyProviderType | null => {
     if (tab === 'audio-gemini') return 'vertex'
     if (tab === 'audio-minimax') return 'minimax'
-    if (tab === 'library' || tab === 'claude-code' || tab === 'gemini-cli' || tab === 'codex-cli' || tab === 'cursor-cli') return null
+    if (tab === 'library' || tab === 'claude-code' || tab === 'gemini-cli' || tab === 'codex-cli' || tab === 'cursor-cli' || tab === 'opencode-cli') return null
     if (HIDDEN_CHAT_PROVIDER_TABS.has(tab as ProviderType)) return null
     return tab as APIKeyProviderType
   }
@@ -303,12 +298,19 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
 
   const [activeTab, setActiveTab] = useState<TabType>('library')
 
-  // Load defaults when modal opens
+  // Load defaults and manifest when modal opens
   useEffect(() => {
     if (isOpen && !defaultsLoaded) {
       loadDefaultsFromBackend()
     }
-  }, [isOpen, defaultsLoaded, loadDefaultsFromBackend])
+    if (isOpen && !providerManifestLoaded) {
+      loadProviderManifest()
+    }
+  }, [isOpen, defaultsLoaded, loadDefaultsFromBackend, providerManifestLoaded, loadProviderManifest])
+
+  const getManifestEntry = useCallback((providerId: string): ProviderManifestEntry | undefined => {
+    return providerManifest.find(p => p.id === providerId)
+  }, [providerManifest])
 
   // Handle API key testing
   const handleTestAPIKey = useCallback(async (provider: APIKeyProviderType, apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => {
@@ -589,60 +591,24 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
               })()}
 
               {/* Editable provider sections (only when not locked) */}
-              {activeTab === 'bedrock' && !isProviderLocked('bedrock') && (
-                <BedrockSection
-                  config={bedrockConfig}
-                  onUpdate={(config) => handleProviderConfigUpdate('bedrock', config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('bedrock', apiKey, modelId, options, temperature)}
-                  apiKeyStatus={apiKeyStatus.bedrock}
-                  apiKeyError={apiKeyErrors.bedrock}
-                  metadata={metadata}
-                />
-              )}
-
-              {activeTab === 'openai' && !isProviderLocked('openai') && (
-                <OpenAISection
-                  config={openaiConfig}
-                  onUpdate={(config) => handleProviderConfigUpdate('openai', config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('openai', apiKey, modelId, options, temperature)}
-                  apiKeyStatus={apiKeyStatus.openai}
-                  apiKeyError={apiKeyErrors.openai}
-                  metadata={metadata}
-                />
-              )}
-
-              {activeTab === 'vertex' && !isProviderLocked('vertex') && (
-                <VertexSection
-                  config={vertexConfig}
-                  onUpdate={(config) => handleProviderConfigUpdate('vertex', config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('vertex', apiKey, modelId, options, temperature)}
-                  apiKeyStatus={apiKeyStatus.vertex}
-                  apiKeyError={apiKeyErrors.vertex}
-                  metadata={metadata}
-                />
-              )}
-
-              {activeTab === 'anthropic' && !isProviderLocked('anthropic') && (
-                <AnthropicSection
-                  config={anthropicConfig}
-                  onUpdate={(config) => handleProviderConfigUpdate('anthropic', config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('anthropic', apiKey, modelId, options, temperature)}
-                  apiKeyStatus={apiKeyStatus.anthropic}
-                  apiKeyError={apiKeyErrors.anthropic}
-                  metadata={metadata}
-                />
-              )}
-
-              {activeTab === 'azure' && !isProviderLocked('azure') && (
-                <AzureSection
-                  config={azureConfig}
-                  onUpdate={(config) => handleProviderConfigUpdate('azure', config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('azure', apiKey, modelId, options, temperature)}
-                  apiKeyStatus={apiKeyStatus.azure}
-                  apiKeyError={apiKeyErrors.azure}
-                  metadata={metadata}
-                />
-              )}
+              {/* API provider sections — unified component driven by manifest */}
+              {apiProviderTabs.includes(activeTab as ProviderType) && !isProviderLocked(activeTab as ProviderType) && (() => {
+                const entry = getManifestEntry(activeTab as string)
+                const providerKey = activeTab as APIKeyProviderType
+                const configEntry = providerConfigMap[providerKey]
+                if (!entry || !configEntry) return <div className="text-sm text-muted-foreground py-8 text-center">Loading provider info...</div>
+                return (
+                  <APIProviderSection
+                    provider={entry}
+                    config={configEntry.config}
+                    onUpdate={(config) => handleProviderConfigUpdate(providerKey, config)}
+                    onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey(providerKey, apiKey, modelId, options, temperature)}
+                    apiKeyStatus={apiKeyStatus[providerKey]}
+                    apiKeyError={apiKeyErrors[providerKey]}
+                    metadata={metadata}
+                  />
+                )
+              })()}
 
               {activeTab === 'audio-gemini' && !isProviderLocked('vertex') && (
                 <APIKeyProviderSection
@@ -735,40 +701,12 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
                 />
               )}
 
-              {activeTab === 'claude-code' && (
-                <ClaudeCodeSection metadata={metadata} />
-              )}
-
-              {activeTab === 'gemini-cli' && (
-                <GeminiCLISection
-                  metadata={metadata}
-                  onModelChange={(modelId) => {
-                    if (modePrimaryConfig.provider === 'gemini-cli') {
-                      const newPrimaryConfig: LLMConfiguration = {
-                        provider: 'gemini-cli',
-                        model_id: modelId,
-                        fallback_models: modePrimaryConfig.fallback_models || [],
-                        cross_provider_fallback: modePrimaryConfig.cross_provider_fallback
-                      }
-                      setModePrimaryConfig(newPrimaryConfig)
-                      if (modeAgentConfig) {
-                        setModeAgentConfig({
-                          ...modeAgentConfig,
-                          primary: { provider: 'gemini-cli', model_id: modelId, options: modeAgentConfig.primary.options }
-                        })
-                      }
-                    }
-                  }}
-                />
-              )}
-
-              {activeTab === 'codex-cli' && (
-                <CodexCLISection metadata={metadata} />
-              )}
-
-              {activeTab === 'cursor-cli' && (
-                <CursorCLISection metadata={metadata} />
-              )}
+              {/* Coding agent sections — unified component driven by manifest */}
+              {codingAgentProviderTabs.includes(activeTab as ProviderType) && (() => {
+                const entry = getManifestEntry(activeTab as string)
+                if (!entry) return <div className="text-sm text-muted-foreground py-8 text-center">Loading provider info...</div>
+                return <CodingAgentSection provider={entry} />
+              })()}
             </div>
           </div>
 

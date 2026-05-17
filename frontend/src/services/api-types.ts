@@ -16,6 +16,7 @@ export type LLMProvider =
   | 'gemini-cli'
   | 'codex-cli'
   | 'cursor-cli'
+  | 'opencode-cli'
   | 'minimax'
   | 'minimax-coding-plan'
   | 'elevenlabs'
@@ -67,7 +68,7 @@ export interface LLMConfiguration {
   model_id: string
   fallback_models: string[]
   cross_provider_fallback?: {
-    provider: 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'cursor-cli'
+    provider: 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'cursor-cli' | 'opencode-cli'
     models: string[]
   }
   // API keys for each provider
@@ -81,6 +82,7 @@ export interface LLMConfiguration {
     anthropic?: string
     vertex?: string
     kimi?: string
+    opencode_cli?: string
     minimax?: string
     minimax_coding_plan?: string
     elevenlabs?: string
@@ -203,6 +205,7 @@ export interface LLMDefaultsResponse {
   azure_config?: ExtendedLLMConfiguration
   zai_config?: ExtendedLLMConfiguration
   kimi_config?: ExtendedLLMConfiguration
+  opencode_cli_config?: ExtendedLLMConfiguration
   minimax_config?: ExtendedLLMConfiguration
   minimax_coding_plan_config?: ExtendedLLMConfiguration
   elevenlabs_config?: ExtendedLLMConfiguration
@@ -216,6 +219,7 @@ export interface LLMDefaultsResponse {
     azure?: string[]
     'z-ai'?: string[]
     kimi?: string[]
+    'opencode-cli'?: string[]
     minimax?: string[]
     'minimax-coding-plan'?: string[]
     elevenlabs?: string[]

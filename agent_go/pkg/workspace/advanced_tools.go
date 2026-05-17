@@ -70,7 +70,7 @@ func videoReadToolDef() llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_video",
-			Description: "Read a video file from workspace and ask a question about it using a provider-backed video-understanding model. Before choosing provider/model_id, call list_llm_capabilities(capability=\"read_video\", include_models=true). If you pass model_id, also pass the matching provider from that capability result; do not pass model_id by itself.",
+			Description: "Read a video file from workspace and ask a question about it using a provider-backed video-understanding model. Direct video providers are not advertised by default; before choosing provider/model_id, call list_llm_capabilities(capability=\"read_video\", include_models=true).",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -84,11 +84,11 @@ func videoReadToolDef() llmtypes.Tool {
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional video-understanding provider override. Discover currently usable providers with list_llm_capabilities(capability=\"read_video\", include_models=true). Supported: 'kimi' (default) or 'z-ai' (Z.AI Vision MCP video_analysis). If specifying model_id, pass the matching provider too.",
+						"description": "Optional video-understanding provider override. Discover currently usable providers with list_llm_capabilities(capability=\"read_video\", include_models=true). If specifying model_id, pass the matching provider too.",
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional video-understanding model id. Use a model from list_llm_capabilities(capability=\"read_video\", include_models=true), and pass the matching provider in the same call. Supported today: kimi-k2.6 for provider kimi, glm-4.6v for provider z-ai.",
+						"description": "Optional video-understanding model id. Use a model from list_llm_capabilities(capability=\"read_video\", include_models=true), and pass the matching provider in the same call.",
 					},
 				},
 				"required": []string{"filepath", "query"},

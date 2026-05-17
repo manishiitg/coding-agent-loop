@@ -337,7 +337,7 @@ func createSearchWebLLMExecutor(workspaceURL string) func(ctx context.Context, a
 
 func isSearchCapableProvider(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case string(llm.ProviderClaudeCode), string(llm.ProviderCodexCLI), string(llm.ProviderCursorCLI), string(llm.ProviderGeminiCLI), string(llm.ProviderVertex):
+	case string(llm.ProviderClaudeCode), string(llm.ProviderCodexCLI), string(llm.ProviderCursorCLI), string(llm.ProviderOpenCodeCLI), string(llm.ProviderGeminiCLI), string(llm.ProviderVertex):
 		return true
 	default:
 		return false
@@ -361,7 +361,7 @@ func hasSearchProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case string(llm.ProviderClaudeCode):
 		return apiKeys != nil && apiKeys.Anthropic != nil && strings.TrimSpace(*apiKeys.Anthropic) != ""
-	case string(llm.ProviderCodexCLI), string(llm.ProviderCursorCLI):
+	case string(llm.ProviderCodexCLI), string(llm.ProviderCursorCLI), string(llm.ProviderOpenCodeCLI):
 		return true
 	case string(llm.ProviderGeminiCLI):
 		return apiKeys != nil && apiKeys.GeminiCLI != nil && strings.TrimSpace(*apiKeys.GeminiCLI) != ""
@@ -386,11 +386,35 @@ func isSearchProviderAvailable(provider string) bool {
 	case string(llm.ProviderCursorCLI):
 		_, err := exec.LookPath("cursor-agent")
 		return err == nil
+	case string(llm.ProviderOpenCodeCLI):
+		return opencodeAvailable()
 	case string(llm.ProviderVertex):
 		return true
 	default:
 		return false
 	}
+}
+
+func opencodeAvailable() bool {
+	if explicit := strings.TrimSpace(os.Getenv("OPENCODE_BIN")); explicit != "" {
+		if info, err := os.Stat(explicit); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	if _, err := exec.LookPath("opencode"); err == nil {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, candidate := range []string{
+			filepath.Join(home, ".opencode", "bin", "opencode"),
+			filepath.Join(home, ".cache", "opencode", "bin", "opencode"),
+		} {
+			if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func publishedSearchProviderSummary(entries []services.PublishedLLM) string {
@@ -462,6 +486,15 @@ func preferredSearchModelRank(provider, modelID string) int {
 		case "sonnet-4":
 			return 3
 		}
+	case string(llm.ProviderOpenCodeCLI):
+		switch modelID {
+		case "opencode-cli":
+			return 0
+		case "openai/gpt-5.1":
+			return 1
+		case "anthropic/claude-sonnet-4-5":
+			return 2
+		}
 	case string(llm.ProviderGeminiCLI):
 		if modelID == "auto" {
 			return 0
@@ -479,6 +512,8 @@ func searchModelAlias(provider, modelID string) string {
 			return "gpt-5.4-mini"
 		case string(llm.ProviderCursorCLI):
 			return "cursor-cli"
+		case string(llm.ProviderOpenCodeCLI):
+			return "opencode-cli"
 		case string(llm.ProviderGeminiCLI):
 			return "auto"
 		}
@@ -754,6 +789,10 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 	if value, ok := rawKeys["cursor_cli"].(string); ok && strings.TrimSpace(value) != "" {
 		v := value
 		keys.CursorCLI = &v
+	}
+	if value, ok := rawKeys["opencode_cli"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.OpenCodeCLI = &v
 	}
 	if value, ok := rawKeys["minimax"].(string); ok && strings.TrimSpace(value) != "" {
 		v := value
@@ -1467,7 +1506,7 @@ func wrapReadImageWithLLM(
 				Data:       imageData.Data,
 			},
 		}
-		if strings.EqualFold(provider, string(llm.ProviderCodexCLI)) || strings.EqualFold(provider, string(llm.ProviderCursorCLI)) || strings.EqualFold(provider, string(llm.ProviderClaudeCode)) {
+		if strings.EqualFold(provider, string(llm.ProviderCodexCLI)) || strings.EqualFold(provider, string(llm.ProviderCursorCLI)) || strings.EqualFold(provider, string(llm.ProviderOpenCodeCLI)) || strings.EqualFold(provider, string(llm.ProviderClaudeCode)) {
 			absoluteImagePath := workspaceAbsolutePath(normalizeWorkspaceDocumentPath(imageData.Filepath))
 			if _, statErr := os.Stat(absoluteImagePath); statErr != nil {
 				return "", fmt.Errorf("%s image analysis requires a readable local workspace file at %q: %w", provider, absoluteImagePath, statErr)
@@ -1620,8 +1659,10 @@ func createWorkspaceDefaultImageAnalysisLLM(ctx context.Context, apiKeys *llm.Pr
 	apiKeys = imageAnalysisAPIKeysWithEnv(apiKeys)
 	candidates := []services.ImageGenerationModelConfig{
 		{Provider: string(llm.ProviderVertex), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderVertex))},
-		{Provider: string(llm.ProviderZAI), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderZAI))},
-		{Provider: string(llm.ProviderKimi), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderKimi))},
+		{Provider: string(llm.ProviderCodexCLI), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderCodexCLI))},
+		{Provider: string(llm.ProviderCursorCLI), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderCursorCLI))},
+		{Provider: string(llm.ProviderOpenCodeCLI), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderOpenCodeCLI))},
+		{Provider: string(llm.ProviderClaudeCode), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderClaudeCode))},
 	}
 
 	for _, candidate := range candidates {
@@ -1668,10 +1709,28 @@ func imageAnalysisAPIKeysWithEnv(apiKeys *llm.ProviderAPIKeys) *llm.ProviderAPIK
 			merged.Kimi = &value
 		}
 	}
+	if merged.OpenCodeCLI == nil {
+		if value := firstNonEmptyEnv("OPENCODE_API_KEY"); value != "" {
+			merged.OpenCodeCLI = &value
+		}
+	}
 	return merged
 }
 
 func hasWorkspaceDefaultImageAnalysisAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case string(llm.ProviderClaudeCode):
+		_, err := exec.LookPath("claude")
+		return err == nil
+	case string(llm.ProviderCodexCLI):
+		_, err := exec.LookPath("codex")
+		return err == nil
+	case string(llm.ProviderCursorCLI):
+		_, err := exec.LookPath("cursor-agent")
+		return err == nil
+	case string(llm.ProviderOpenCodeCLI):
+		return opencodeAvailable()
+	}
 	if hasImageAnalysisProviderAuth(provider, apiKeys) {
 		return true
 	}
@@ -1712,6 +1771,8 @@ func createLLMFromConfig(ctx context.Context, config mcpagent.LLMModel) (llmtype
 			apiKeys.CodexCLI = config.APIKey
 		case llm.ProviderCursorCLI:
 			apiKeys.CursorCLI = config.APIKey
+		case llm.ProviderOpenCodeCLI:
+			apiKeys.OpenCodeCLI = config.APIKey
 		case llm.ProviderMiniMax:
 			apiKeys.MiniMax = config.APIKey
 		}

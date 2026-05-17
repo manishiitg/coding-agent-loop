@@ -212,24 +212,18 @@ Image generation defaults live in ` + "`" + absConfig + `/image-generation-confi
 Image understanding for the ` + "`read_image`" + ` tool can be routed via ` + "`" + absConfig + `/image-analysis-config.json` + "`" + `.
 - Read: ` + "`execute_shell_command(command: \"cat " + absConfig + "/image-analysis-config.json\")`" + `
 - Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/image-analysis-config.json\")`" + `
-- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3-pro-preview\"},\"fallbacks\":[{\"provider\":\"z-ai\",\"model_id\":\"glm-4.6v\"},{\"provider\":\"kimi\",\"model_id\":\"kimi-k2.6\"},{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"},{\"provider\":\"cursor-cli\",\"model_id\":\"cursor-cli\"},{\"provider\":\"claude-code\",\"model_id\":\"claude-code\"}]}`" + `
+- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3-pro-preview\"},\"fallbacks\":[{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"},{\"provider\":\"cursor-cli\",\"model_id\":\"cursor-cli\"},{\"provider\":\"opencode-cli\",\"model_id\":\"opencode-cli\"},{\"provider\":\"claude-code\",\"model_id\":\"claude-code\"}]}`" + `
 - If this file exists, ` + "`read_image`" + ` uses its ` + "`primary`" + ` and ordered ` + "`fallbacks`" + ` with workspace provider auth.
 - If this file does not exist, ` + "`read_image`" + ` falls back to the current chat model.
 - For one-off ` + "`read_image`" + ` calls, use ` + "`list_llm_capabilities(capability=\"read_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
-- Kimi image understanding is supported via provider ` + "`kimi`" + ` with model ` + "`kimi-k2.6`" + `.
 - Codex CLI image understanding is supported via provider ` + "`codex-cli`" + ` by passing the local workspace image path to Codex CLI.
 - Cursor CLI image understanding is supported via provider ` + "`cursor-cli`" + ` by passing the local workspace image path to Cursor Agent CLI.
+- OpenCode CLI image understanding is supported via provider ` + "`opencode-cli`" + ` by passing the local workspace image path to OpenCode CLI.
 - Claude Code image understanding is supported via provider ` + "`claude-code`" + ` by passing the local workspace image path to Claude Code CLI.
 - Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using the ` + "`set_provider_auth`" + ` tool; do not hand-edit the encrypted auth file.
 
 ## Video Analysis
-Video understanding is available through the ` + "`read_video(filepath, query, provider?, model_id?)`" + ` tool.
-- Default provider/model: ` + "`kimi`" + ` with ` + "`kimi-k2.6`" + `. It uploads the workspace video to Moonshot/Kimi file storage with ` + "`purpose=video`" + `, then references it as ` + "`ms://<file-id>`" + ` in the chat request.
-- Optional provider: ` + "`z-ai`" + `. It invokes the Z.AI Vision MCP server (` + "`npx -y @z_ai/mcp-server@latest`" + `) and calls the ` + "`video_analysis`" + ` tool with ` + "`Z_AI_MODE=ZAI`" + `.
-- For one-off ` + "`read_video`" + ` calls, use ` + "`list_llm_capabilities(capability=\"read_video\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
-- Kimi-supported formats: ` + "`mp4`" + `, ` + "`mpeg`" + `, ` + "`mov`" + `, ` + "`avi`" + `, ` + "`flv`" + `, ` + "`mpg`" + `, ` + "`webm`" + `, ` + "`wmv`" + `, ` + "`3gp`" + `, ` + "`3gpp`" + `.
-- Z.AI MCP-supported formats: ` + "`mp4`" + `, ` + "`mov`" + `, ` + "`m4v`" + `; max file size ` + "`8 MB`" + `.
-- Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using ` + "`set_provider_auth(provider=\"kimi\", api_key=\"...\")`" + ` or ` + "`set_provider_auth(provider=\"z-ai\", api_key=\"...\")`" + `; do not hand-edit the encrypted auth file.
+Direct provider-backed video understanding is not advertised by default. Prefer a published coding-agent model for local video workflows until a dedicated video provider is configured and exposed by ` + "`list_llm_capabilities(capability=\"read_video\", include_models=true)`" + `.
 
 ## Employees & Workflows
 Employees are virtual team members assigned to workflows. The employee UI shows employee ` + "`name`" + ` only; do not invent or display designations unless the user explicitly asks for them.

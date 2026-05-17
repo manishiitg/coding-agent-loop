@@ -1427,10 +1427,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	fmt.Println("✅ Server shutdown complete")
 }
 
-func cleanupClaudeCodeExperimentalSessions(phase string) {
-	cleanupCodingAgentInteractiveSessions(phase)
-}
-
 func cleanupCodingAgentInteractiveSessions(phase string) {
 	cleanupProvider := func(name string, cleanup func(context.Context) error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

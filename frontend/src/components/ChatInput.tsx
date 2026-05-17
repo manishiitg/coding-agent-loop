@@ -369,6 +369,38 @@ const SteerQueueButton: React.FC<{
   </Tooltip>
 )
 
+const TerminalOutputToggleButton: React.FC<{
+  visible: boolean
+  onClick: () => void
+  size?: 'sm' | 'md'
+  className?: string
+}> = ({ visible, onClick, size = 'md', className = '' }) => {
+  const sizeClass = size === 'sm' ? 'h-5 w-5 rounded' : 'h-7 w-7 rounded-md'
+  return (
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <button
+        type="button"
+        onClick={onClick}
+        aria-pressed={visible}
+        aria-label={visible ? 'Terminal output visible; click to hide' : 'Terminal output hidden; click to show'}
+        title={visible ? 'Terminal visible' : 'Terminal hidden'}
+        className={`inline-flex ${sizeClass} shrink-0 items-center justify-center border transition-colors ${
+          visible
+            ? 'border-blue-500 bg-blue-600 text-white shadow-sm dark:border-blue-400 dark:bg-blue-500 dark:text-white'
+            : 'border-gray-300 bg-gray-100 text-gray-500 hover:border-gray-400 hover:bg-gray-200 hover:text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400 dark:hover:border-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-100'
+        } ${className}`}
+      >
+        <Terminal className="h-3.5 w-3.5" />
+      </button>
+    </TooltipTrigger>
+    <TooltipContent side="top">
+      <p>{visible ? 'Terminal visible' : 'Terminal hidden'}</p>
+    </TooltipContent>
+  </Tooltip>
+  )
+}
+
 // Collapsible queued message item — shows preview for long messages with expand/collapse toggle
 const QueuedMessageItem: React.FC<{
   index: number
@@ -3208,27 +3240,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   <div className="flex max-w-[18rem] items-center gap-1 rounded-md border border-gray-300 bg-gray-100 px-2 py-1.5 text-xs text-gray-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400">
                     <span className="truncate">{activeLLMLabel}</span>
                     {supportsLiveCodingAgentInput && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={handleTerminalOutputButtonClick}
-                            aria-pressed={terminalOutputVisible}
-                            aria-label={terminalOutputVisible ? 'Terminal output visible; click to hide' : 'Terminal output hidden; click to show'}
-                            title={terminalOutputVisible ? 'Terminal visible' : 'Terminal hidden'}
-                            className={`ml-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors ${
-                              terminalOutputVisible
-                                ? 'border-blue-500 bg-blue-600 text-white shadow-sm dark:border-blue-400 dark:bg-blue-500 dark:text-white'
-                                : 'border-transparent text-gray-500 hover:bg-gray-200 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
-                            }`}
-                          >
-                            <Terminal className="h-3.5 w-3.5" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top">
-                          <p>{terminalOutputVisible ? 'Terminal visible' : 'Terminal hidden'}</p>
-                        </TooltipContent>
-                      </Tooltip>
+                      <TerminalOutputToggleButton
+                        visible={terminalOutputVisible}
+                        onClick={handleTerminalOutputButtonClick}
+                        size="sm"
+                        className="ml-0.5"
+                      />
                     )}
                   </div>
                 )}
@@ -3281,6 +3298,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
+                    )}
+                    {!hideExtras && supportsLiveCodingAgentInput && (
+                      <TerminalOutputToggleButton
+                        visible={terminalOutputVisible}
+                        onClick={handleTerminalOutputButtonClick}
+                      />
                     )}
                     {/* Browser Access Toggle — hidden in workflow mode */}
                     {!hideExtras && <button

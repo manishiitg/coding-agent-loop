@@ -144,39 +144,6 @@ func init() {
 	codingAgentBackgroundE2ECmd.Flags().DurationVar(&codingAgentBackgroundE2EFlags.timeout, "timeout", 6*time.Minute, "overall test timeout")
 }
 
-func (c *codingAgentChatE2EClient) waitForFinalOrRawContains(ctx context.Context, sessionID string, required []string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	var lastFinal string
-	var lastRaw string
-	for time.Now().Before(deadline) {
-		resp, raw, err := c.getEvents(ctx, sessionID)
-		if err != nil {
-			return err
-		}
-		lastRaw = raw
-		if extracted := extractUnifiedCompletionFinal(resp.Events); extracted != "" {
-			lastFinal = extracted
-		}
-		allPresent := true
-		for _, needle := range required {
-			if !strings.Contains(lastFinal, needle) && !strings.Contains(raw, needle) {
-				allPresent = false
-				break
-			}
-		}
-		if allPresent {
-			return nil
-		}
-		if resp.SessionStatus == "error" || resp.SessionStatus == "stopped" {
-			return fmt.Errorf("session ended with status %s; final=%q raw=%s", resp.SessionStatus, lastFinal, truncateE2E(lastRaw, 2000))
-		}
-		if err := sleepContext(ctx, time.Second); err != nil {
-			return err
-		}
-	}
-	return fmt.Errorf("timed out after %s; final=%q raw=%s", timeout, lastFinal, truncateE2E(lastRaw, 2000))
-}
-
 func (c *codingAgentChatE2EClient) waitForUnifiedCompletionContains(ctx context.Context, sessionID string, required []string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var lastFinal string

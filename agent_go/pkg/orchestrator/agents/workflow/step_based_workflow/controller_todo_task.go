@@ -428,7 +428,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		if i > 0 {
 			routesBuilder.WriteString("\n")
 		}
-		fmt.Fprintf(&routesBuilder, "- **%s** (`%s`)", ResolveVariables(route.RouteName, hcpo.variableValues), route.RouteID)
+		fmt.Fprintf(&routesBuilder, "- **%s** (`%s`) — %s", ResolveVariables(route.RouteName, hcpo.variableValues), route.RouteID, routeStepTypeSummary(route.SubAgentStep))
 		if route.SubAgentStep != nil {
 			subStepPath := fmt.Sprintf("%s-sub-%s", stepPath, route.RouteID)
 			subExecRelPath := getExecutionFolderPath(hcpo.getTodoTaskExecutionWorkspacePath(), route.SubAgentStep.GetID(), subStepPath)
@@ -559,6 +559,44 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	}
 
 	return templateVars
+}
+
+func routeStepTypeSummary(step PlanStepInterface) string {
+	if step == nil {
+		return "generic route"
+	}
+	switch step.StepType() {
+	case StepTypeMessageSeq:
+		return "type: message_sequence, stateful sequence worker"
+	case StepTypeTodoTask:
+		return "type: todo_task, nested orchestrator"
+	case StepTypeRegular:
+		return "type: regular, stateless worker"
+	case StepTypeConditional:
+		return "type: conditional"
+	case StepTypeRouting:
+		return "type: routing"
+	case StepTypeHumanInput:
+		return "type: human_input"
+	default:
+		return fmt.Sprintf("type: %s", step.StepType())
+	}
+}
+
+func routeStepBehaviorDetails(step PlanStepInterface) string {
+	if step == nil {
+		return "Generic ad-hoc route. It does not keep specialist route memory."
+	}
+	switch step.StepType() {
+	case StepTypeMessageSeq:
+		return "Stateful sequence worker. Calling this route sends the provided instructions as the next user message. If a session already exists, it resumes the same saved conversation instead of replaying the original queue."
+	case StepTypeRegular:
+		return "Stateless worker. Each call executes the task as a normal one-off step."
+	case StepTypeTodoTask:
+		return "Nested orchestrator. It manages its own sub-tasks and routes."
+	default:
+		return fmt.Sprintf("Route step type: %s.", step.StepType())
+	}
 }
 
 // selectTodoTaskOrchestratorLLM selects the LLM config for todo task orchestrator.

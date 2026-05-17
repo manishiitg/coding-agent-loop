@@ -12,9 +12,21 @@ export const UserMessageEventDisplay: React.FC<UserMessageEventDisplayProps> = (
 }) => {
   const [isExpanded, setIsExpanded] = useState(false)
   const CHAR_LIMIT = 300
+  const isLiveCodingAgentInput = event.metadata?.source === 'coding_agent_live_input'
 
   // Check if content is long enough to need expansion
   const shouldShowExpand = event.content && event.content.length > CHAR_LIMIT
+
+  if (isLiveCodingAgentInput) {
+    return (
+      <div className="ml-6 flex items-baseline gap-2 py-1 text-xs text-slate-500 dark:text-slate-400">
+        <span className="text-slate-400 dark:text-slate-500">↳</span>
+        <span className="max-w-full whitespace-pre-wrap break-words text-slate-700 dark:text-slate-200">
+          {event.content || 'No message content'}
+        </span>
+      </div>
+    )
+  }
 
   if (mode === 'compact') {
     return (

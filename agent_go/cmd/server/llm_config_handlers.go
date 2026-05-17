@@ -352,11 +352,11 @@ func discoveryCandidateKind(provider string) string {
 func discoveryModelOptions(provider string) []string {
 	switch provider {
 	case "codex-cli":
-		return []string{"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"}
+		return []string{"codex-cli", "high", "medium", "low"}
 	case "claude-code":
-		return []string{"claude-code"}
+		return []string{"claude-code", "high", "medium", "low"}
 	case "gemini-cli":
-		return []string{"auto", "pro", "flash", "flash-lite"}
+		return []string{"auto", "high", "medium", "low"}
 	case "kimi":
 		return []string{"kimi-code", "kimi-k2.6"}
 	default:

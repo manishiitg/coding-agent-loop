@@ -967,7 +967,7 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 func registerLLMCapabilityDiscoveryTools(registerTool func(string, string, map[string]interface{}, func(context.Context, map[string]interface{}) (string, error)) error) error {
 	if err := registerTool(
 		"list_llm_capabilities",
-		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Includes config files, auth requirements, CLI runtime availability, and static pricing metadata where available.",
+		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Use include_models=true before choosing an explicit provider/model_id pair for provider-backed tools. Includes config files, auth requirements, CLI runtime availability, and static pricing metadata where available.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -977,7 +977,7 @@ func registerLLMCapabilityDiscoveryTools(registerTool func(string, string, map[s
 				},
 				"include_models": map[string]interface{}{
 					"type":        "boolean",
-					"description": "When true, include full chat/text model id lists. Defaults to false because chat catalogs can be large.",
+					"description": "When true, include full model id lists where available. Use true before passing an explicit model_id to an LLM-backed tool so provider and model_id come from the same capability entry. Defaults to false because chat catalogs can be large.",
 				},
 			},
 		},
@@ -1066,7 +1066,7 @@ func (api *StreamingAPI) registerWorkflowLLMDiscoveryTools(underlyingAgent *mcpa
 func registerLLMCapabilityTools(registerTool func(string, string, map[string]interface{}, func(context.Context, map[string]interface{}) (string, error)) error) error {
 	if err := registerTool(
 		"list_llm_capabilities",
-		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Includes config files, auth requirements, CLI runtime availability, and static pricing metadata where available.",
+		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Use include_models=true before choosing an explicit provider/model_id pair for provider-backed tools. Includes config files, auth requirements, CLI runtime availability, and static pricing metadata where available.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1076,7 +1076,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 				},
 				"include_models": map[string]interface{}{
 					"type":        "boolean",
-					"description": "When true, include full chat/text model id lists. Defaults to false because chat catalogs can be large.",
+					"description": "When true, include full model id lists where available. Use true before passing an explicit model_id to an LLM-backed tool so provider and model_id come from the same capability entry. Defaults to false because chat catalogs can be large.",
 				},
 			},
 		},

@@ -92,9 +92,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # docker-ce-cli: MCP configs can use "command": "docker", "args": ["run", "-i", "--rm", "mcp/sonarqube"] (mount /var/run/docker.sock in deployment).
 # nodejs 20+: required for npx MCPs (mcp-remote/undici, @sylphx/pdf-reader-mcp, etc.). chromium: agent-browser/Playwright. gcc/libc6-dev: CGO and native Python deps.
 
-# Install Google Workspace CLI for GWS integration
-RUN npm install -g @googleworkspace/cli
-
 # agent-browser: CLI used by pkg/browser/executor.go to drive Playwright sessions.
 # On the workspace and dedicated-vm images this is installed alongside Chromium;
 # the agent calls workspace-api as a proxy today, but installing it here lets the

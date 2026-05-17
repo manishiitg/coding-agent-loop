@@ -93,6 +93,16 @@ func CreateReadImageProviderTestExecutor(workspaceURL, userID string) func(ctx c
 	return wrapReadImageWithLLM(baseExecutor, "")
 }
 
+// CreateSearchWebLLMProviderTestExecutor creates a search_web_llm executor for
+// provider matrix tests. It uses the same published-LLM routing and workspace
+// provider auth as the production workspace tool.
+func CreateSearchWebLLMProviderTestExecutor(workspaceURL string) func(ctx context.Context, args map[string]any) (string, error) {
+	if strings.TrimSpace(workspaceURL) == "" {
+		workspaceURL = getWorkspaceAPIURL()
+	}
+	return createSearchWebLLMExecutor(workspaceURL)
+}
+
 // CreateWorkspaceAdvancedToolExecutorsWithSession creates workspace advanced tool executors
 // with an explicit user ID and session ID. The session ID is injected as MCP_SESSION_ID
 // env var so that code execution mode HTTP tool calls can include it for connection reuse
@@ -927,19 +937,31 @@ func wrapReadVideoWithProvider(
 		if provider == "" {
 			provider = "kimi"
 		}
+		modelID := strings.TrimSpace(videoData.ModelID)
+		if modelID == "" {
+			modelID = strings.TrimSpace(stringFromMap(args, "model_id"))
+		}
 
 		switch provider {
 		case "kimi":
-			return wrapReadVideoWithKimi(ctx, workspaceURL, videoData)
+			return wrapReadVideoWithKimi(ctx, workspaceURL, videoData, modelID)
 		case "z-ai":
-			return wrapReadVideoWithZAI(ctx, workspaceURL, videoData)
+			return wrapReadVideoWithZAI(ctx, workspaceURL, videoData, modelID)
 		default:
 			return "", fmt.Errorf("unsupported read_video provider %q (supported: kimi, z-ai)", provider)
 		}
 	}
 }
 
-func wrapReadVideoWithKimi(ctx context.Context, workspaceURL string, videoData workspace.ReadVideoResult) (string, error) {
+func wrapReadVideoWithKimi(ctx context.Context, workspaceURL string, videoData workspace.ReadVideoResult, modelID string) (string, error) {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		modelID = "kimi-k2.6"
+	}
+	if !strings.EqualFold(modelID, "kimi-k2.6") {
+		return "", fmt.Errorf("unsupported read_video model_id %q for provider \"kimi\" (supported: kimi-k2.6)", modelID)
+	}
+
 	apiKeys := loadWorkspaceProviderAPIKeys(ctx, workspaceURL)
 	apiKey := ""
 	if apiKeys != nil && apiKeys.Kimi != nil {
@@ -967,7 +989,7 @@ func wrapReadVideoWithKimi(ctx context.Context, workspaceURL string, videoData w
 		return "", fmt.Errorf("failed to upload video to Kimi/Moonshot: %w", err)
 	}
 
-	responseText, err := analyzeKimiVideo(ctx, baseURL, apiKey, fileID, videoData.Query)
+	responseText, err := analyzeKimiVideo(ctx, baseURL, apiKey, fileID, videoData.Query, modelID)
 	if err != nil {
 		return "", fmt.Errorf("Kimi video analysis failed: %w", err)
 	}
@@ -984,7 +1006,7 @@ func wrapReadVideoWithKimi(ctx context.Context, workspaceURL string, videoData w
 		"filepath": videoData.Filepath,
 		"query":    videoData.Query,
 		"provider": "kimi",
-		"model":    "kimi-k2.6",
+		"model":    modelID,
 		"response": responseText,
 	}
 	responseJSON, err := json.Marshal(response)
@@ -994,7 +1016,15 @@ func wrapReadVideoWithKimi(ctx context.Context, workspaceURL string, videoData w
 	return string(responseJSON), nil
 }
 
-func wrapReadVideoWithZAI(ctx context.Context, workspaceURL string, videoData workspace.ReadVideoResult) (string, error) {
+func wrapReadVideoWithZAI(ctx context.Context, workspaceURL string, videoData workspace.ReadVideoResult, modelID string) (string, error) {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		modelID = "glm-4.6v"
+	}
+	if !strings.EqualFold(modelID, "glm-4.6v") {
+		return "", fmt.Errorf("unsupported read_video model_id %q for provider \"z-ai\" (supported: glm-4.6v)", modelID)
+	}
+
 	apiKeys := loadWorkspaceProviderAPIKeys(ctx, workspaceURL)
 	apiKey := ""
 	if apiKeys != nil && apiKeys.ZAI != nil {
@@ -1042,7 +1072,7 @@ func wrapReadVideoWithZAI(ctx context.Context, workspaceURL string, videoData wo
 		"query":    videoData.Query,
 		"provider": "z-ai",
 		"tool":     "video_analysis",
-		"model":    "glm-4.6v",
+		"model":    modelID,
 		"response": responseText,
 	}
 	responseJSON, err := json.Marshal(response)
@@ -1228,6 +1258,8 @@ func stringFromMap(args map[string]any, key string) string {
 		return ""
 	}
 	switch typed := value.(type) {
+	case nil:
+		return ""
 	case string:
 		return typed
 	default:
@@ -1287,9 +1319,13 @@ func uploadKimiVideo(ctx context.Context, baseURL, apiKey, videoPath, mimeType s
 	return strings.TrimSpace(parsed.ID), nil
 }
 
-func analyzeKimiVideo(ctx context.Context, baseURL, apiKey, fileID, query string) (string, error) {
+func analyzeKimiVideo(ctx context.Context, baseURL, apiKey, fileID, query, modelID string) (string, error) {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		modelID = "kimi-k2.6"
+	}
 	payload := map[string]any{
-		"model": "kimi-k2.6",
+		"model": modelID,
 		"messages": []map[string]any{
 			{
 				"role":    "system",
@@ -1401,8 +1437,17 @@ func wrapReadImageWithLLM(
 		log.Printf("[READ_IMAGE_DEBUG] Image data received: filepath=%s, mimeType=%s, base64Length=%d",
 			imageData.Filepath, imageData.MimeType, len(imageData.Data))
 
-		// Step 3: Resolve the analysis LLM from workspace config, falling back to the current agent model.
-		llmModel, provider, modelID, err := createImageAnalysisLLM(ctx, workspaceURL)
+		// Step 3: Resolve the analysis LLM from explicit provider/model args,
+		// workspace config, or finally the current agent model.
+		requestedProvider := strings.TrimSpace(imageData.Provider)
+		if requestedProvider == "" {
+			requestedProvider = stringFromMap(args, "provider")
+		}
+		requestedModelID := strings.TrimSpace(imageData.ModelID)
+		if requestedModelID == "" {
+			requestedModelID = stringFromMap(args, "model_id")
+		}
+		llmModel, provider, modelID, err := createImageAnalysisLLM(ctx, workspaceURL, requestedProvider, requestedModelID)
 		if err != nil {
 			log.Printf("[READ_IMAGE_DEBUG] Failed to create LLM client: %v", err)
 			return "", fmt.Errorf("failed to initialize LLM for image analysis: %w", err)
@@ -1468,6 +1513,8 @@ func wrapReadImageWithLLM(
 		response := map[string]any{
 			"filepath": imageData.Filepath,
 			"query":    imageData.Query,
+			"provider": provider,
+			"model":    modelID,
 			"response": responseText,
 		}
 
@@ -1481,8 +1528,37 @@ func wrapReadImageWithLLM(
 	}
 }
 
-func createImageAnalysisLLM(ctx context.Context, workspaceURL string) (llmtypes.Model, string, string, error) {
+func createImageAnalysisLLM(ctx context.Context, workspaceURL, requestedProvider, requestedModelID string) (llmtypes.Model, string, string, error) {
 	apiKeys := loadWorkspaceProviderAPIKeys(ctx, workspaceURL)
+	requestedProvider = strings.TrimSpace(requestedProvider)
+	requestedModelID = strings.TrimSpace(requestedModelID)
+	if requestedProvider == "<nil>" {
+		requestedProvider = ""
+	}
+	if requestedModelID == "<nil>" {
+		requestedModelID = ""
+	}
+
+	if requestedProvider != "" || requestedModelID != "" {
+		provider, modelID, err := normalizeImageAnalysisProviderAndModel(requestedProvider, requestedModelID)
+		if err != nil {
+			return nil, "", "", err
+		}
+		apiKeysWithEnv := imageAnalysisAPIKeysWithEnv(apiKeys)
+		if !hasWorkspaceDefaultImageAnalysisAuth(provider, apiKeysWithEnv) {
+			return nil, "", "", fmt.Errorf("read_image requires auth/runtime for requested provider/model %s/%s. Use list_llm_capabilities(capability=\"read_image\", include_models=true) to choose a usable provider/model pair", provider, modelID)
+		}
+		model, err := llm.InitializeLLM(llm.Config{
+			Provider: llm.Provider(provider),
+			ModelID:  modelID,
+			Context:  ctx,
+			APIKeys:  apiKeysWithEnv,
+		})
+		if err != nil {
+			return nil, "", "", err
+		}
+		return model, provider, modelID, nil
+	}
 
 	if workspaceURL != "" {
 		imageCfg, exists, err := services.LoadImageAnalysisConfig(ctx, workspaceURL)

@@ -144,6 +144,7 @@ func NewBaseAgent(
 	llmConfig *LLMConfig, // NEW: Full LLM configuration
 	apiKeys *AgentAPIKeys, // API keys for providers
 	mcpSessionID string, // MCP session ID for connection sharing across agents
+	codingAgentWorkingDir string, // CLI coding-agent process working directory
 	runtimeOverrides mcpclient.RuntimeOverrides, // Runtime config overrides for MCP servers (e.g., output directories)
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
@@ -285,6 +286,13 @@ func NewBaseAgent(
 		options = append(options, mcpagent.WithSessionID(mcpSessionID))
 		logger.Info("🔗 Using MCP session for connection sharing",
 			loggerv2.String("session_id", mcpSessionID),
+			loggerv2.String("agent_name", name))
+	}
+
+	if workingDir := strings.TrimSpace(codingAgentWorkingDir); workingDir != "" {
+		options = append(options, mcpagent.WithCodingAgentWorkingDir(workingDir))
+		logger.Info("🔗 Using coding-agent working directory",
+			loggerv2.String("working_dir", workingDir),
 			loggerv2.String("agent_name", name))
 	}
 

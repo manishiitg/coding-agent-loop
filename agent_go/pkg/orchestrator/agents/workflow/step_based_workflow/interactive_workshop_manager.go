@@ -1580,6 +1580,7 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 
 	// Agent config
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("workflow-builder-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
+	forceWorkflowChatClaudeCodeExperimentalTransport(config)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 
 	// MCP Servers — use preset if available, else NoServers
@@ -1904,6 +1905,10 @@ When the user gives context that future step agents will need at run time, do no
 - **User/account-specific values** -> `+"`variables/variables.json`"+` or secrets. Example: account IDs, email addresses, phone numbers, sheet IDs, API endpoints.
 - **Execution technique** -> `+"`learnings/_global/SKILL.md`"+`, only when it is reusable HOW-to-run knowledge such as selectors, API quirks, timing, or auth-flow pitfalls.
 
+### Direct-Work Grounding Rule
+
+When you do workflow work yourself instead of delegating to a normal step, first ground yourself in the workflow's own operating memory. Read `+"`learnings/_global/SKILL.md`"+` when it exists; read relevant `+"`knowledgebase/context/`"+`, `+"`knowledgebase/notes/_index.json`"+` + targeted notes, `+"`db/`"+` contracts/data, and recent `+"`runs/iteration-0/`"+` artifacts as needed. For `+"`learn_code`"+` steps, read the canonical `+"`learnings/{step-id}/main.py`"+` when it is relevant to the task. Then use those patterns while acting directly. Do not improvise a fresh approach when the workflow has already generated a skill, script, KB context, or prior run evidence that explains how to do it.
+
 If a step needs business context while running, explicitly wire it in BOTH places: set `+"`knowledgebase_access=\"read\"`"+` for KB context, and update the step description to say which `+"`knowledgebase/context/context.md`"+` section or rule family it must read and apply. Also add the right `+"`context_dependencies`"+` for prior run outputs, reference the `+"`db/README.md`"+` contract for db reads/writes, or use variables/placeholders for group-specific values. A step should not depend on untracked chat memory.
 
 **Step config knobs for KB (use update_step_config):**
@@ -2090,20 +2095,25 @@ Plan / step config / evaluation / KB / optimization. If the user asks to fix wha
 ### Primary job
 Run mode is the user-facing runtime surface, including Slack and WhatsApp routes. It can do the work itself when the request is small, run one step, run an orphan utility step, or run the full workflow. Optimize for these five jobs:
 
-1. **Do direct runtime work** when no workflow run is needed: use available tools plus workflow context to answer, look up, analyze, summarize, or take a small operational action.
+1. **Do direct runtime work** when no workflow run is needed: use available tools plus workflow context to answer, look up, analyze, summarize, or take a small operational action. Before acting, ground in the generated skill, KB, and db state: `+"`learnings/_global/SKILL.md`"+` for HOW to operate, `+"`knowledgebase/context/`"+` and targeted `+"`knowledgebase/notes/`"+` for business context, and `+"`db/`"+` plus `+"`db/README.md`"+` for durable facts/results.
 2. **Run the workflow** for one configured group at a time with `+"`run_full_workflow(group_name=\"...\")`"+`.
 3. **Run a specific step or orphan utility step** with `+"`execute_step(step_id=\"...\", group_name=\"...\")`"+` when the user asks for a targeted action, retry, data check, or one-off investigation.
 4. **Answer user questions** from current workflow state, latest run outputs, `+"`db/*.json`"+`, `+"`db/assets/`"+` references, report data, eval reports, timing/cost reviews, KB context/notes, learnings, saved scripts, and prior step results.
 5. **Inspect/debug execution** with `+"`list_executions`"+`, `+"`query_step`"+`, `+"`debug_step`"+`, and read-only review tools. Explain the issue and next action; do not mutate plan/config/learnings/KB/report/eval files in Run mode.
 
 ### Runtime context access
-Run mode should read the workflow file system when needed. Use:
+Run mode should read the workflow file system as normal operating memory, especially before doing work directly instead of running a step. Use:
 - `+"`soul/soul.md`"+` to understand the workflow objective and success criteria.
-- `+"`learnings/_global/SKILL.md`"+` and `+"`learnings/<step-id>/main.py`"+` to understand proven operating patterns and learned deterministic scripts.
-- `+"`knowledgebase/context/`"+` and `+"`knowledgebase/notes/`"+` for business rules, examples, preferences, facts, and assumptions.
-- `+"`db/`"+`, latest `+"`runs/iteration-0/`"+`, and reports/eval artifacts for current state and outcomes.
+- `+"`learnings/_global/SKILL.md`"+` as the first stop for HOW this workflow operates: target-system quirks, tool patterns, selectors, naming conventions, API behavior, auth/timing pitfalls, and reusable execution tricks.
+- `+"`learnings/<step-id>/main.py`"+` for relevant `+"`learn_code`"+` steps when the user's request maps to a known deterministic implementation pattern. Read it for behavior; do not edit it in Run mode.
+- `+"`knowledgebase/context/context.md`"+` for user-provided rules, preferences, constraints, examples, and business context that should govern runtime behavior.
+- `+"`knowledgebase/notes/_index.json`"+` first, then only targeted `+"`knowledgebase/notes/*.md`"+` files for workflow-discovered facts, history, patterns, and hypotheses.
+- `+"`db/README.md`"+` to understand durable table contracts, primary keys, merge rules, and writer/consumer ownership before interpreting or updating any db-backed state through a step.
+- `+"`db/*.json`"+`, `+"`db/assets/`"+`, latest `+"`runs/iteration-0/`"+`, and reports/eval artifacts for current state and outcomes.
 
 Reading these files is part of normal Run mode behavior. Writing persistent workflow design artifacts is not: do not manually edit plan/config/learnings/KB/report/eval files from Run mode. For user-confirmed durable runtime context, use `+"`capture_context`"+`.
+
+Before direct runtime work, always check the generated workflow skill first when it exists: `+"`learnings/_global/SKILL.md`"+`. Then check the KB and db surfaces that match the request. Treat these as the workflow's playbook and memory. If the direct task maps to a `+"`learn_code`"+` step, also inspect `+"`learnings/{step-id}/main.py`"+` for the proven implementation pattern, but do not edit it from Run mode.
 
 ### Audience
 The user here is usually **non-technical** — a stakeholder, a teammate, an end user. They don't read JSON, they don't know step IDs, they don't want to see file paths or `+"`jq`"+` queries. They want answers in plain English.
@@ -2316,7 +2326,7 @@ When the user asks you to "stop", "cancel", or "abort" running tasks, you MUST c
 
 When a step doesn't do what it should — wrong output, missing actions, incomplete results — **don't just re-run it**. You have a smarter model — use it to investigate.
 
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}**When a step is stuck or repeatedly failing**, run the task yourself using the same tools the step agent would use, figure out what works, then update the step's instructions, validation, config, or learnings with the correct approach.
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}**When a step is stuck or repeatedly failing**, run the task yourself using the same tools the step agent would use, but first read `+"`learnings/_global/SKILL.md`"+` and any relevant KB/db/run artifacts so you reuse the workflow's generated playbook. Figure out what works, then update the step's instructions, validation, config, or learnings with the correct approach.
 {{else}}**When a step is stuck or repeatedly failing**, inspect what happened with the available run/review tools and explain the likely fix. Do not update step instructions, validation, config, or learnings in this mode.
 {{end}}
 
@@ -2537,7 +2547,7 @@ After running a step, review it for optimization — but follow this priority or
 - **Review learnings after every successful run** — call 'cat learnings/_global/SKILL.md' to read the global learning file. Check:
   - Are they **specific and actionable**? Vague learnings like "be careful with the API" waste tokens. Good learnings describe exact patterns: "The /api/v2/data endpoint returns paginated results — always follow next_page_token until null."
   - Do they **contradict the step description**? If so, either update the description or delete the misleading learning.
-  - Do they **match the current step config**? Cross-check learnings against the step's configured servers, tools, and description. Learnings may reference server names, tool names, or patterns from a previous config that no longer apply (e.g., learning says "use server gws" but the step now uses "google_sheets", or learning references a tool that's been removed). Stale references cause the execution agent to search for non-existent servers/tools, wasting turns and causing failures. Fix by updating the learning file with the correct names.
+  - Do they **match the current step config**? Cross-check learnings against the step's configured servers, tools, and description. Learnings may reference server names, tool names, or patterns from a previous config that no longer apply. Stale references cause the execution agent to search for non-existent servers/tools, wasting turns and causing failures. Fix by updating the learning file with the correct names.
   - Are they **repetitive**? If the same pattern appears across multiple learning files, consolidate it into the step description and delete the redundant files.
 - **Learning lifecycle by step complexity:**
   - **Simple steps** (single tool call, straightforward output): leave `+"`learning_objective`"+` empty (the default). Learning is opt-in; simple steps don't earn their keep with the learning-agent overhead.
@@ -2993,16 +3003,6 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 		systemPrompt.WriteString(browserPromptStr)
 		logger.Info(fmt.Sprintf("🌐 Added browser instructions to workflow builder system prompt (playwright=%v, agent-browser=%v)",
 			browserCfg.HasPlaywright, browserCfg.HasAgentBrowser))
-	}
-
-	// Append GWS instructions if gws server is enabled
-	for _, s := range iwm.controller.GetSelectedServers() {
-		if s == "gws" {
-			systemPrompt.WriteString("\n\n")
-			systemPrompt.WriteString(instructions.GetGWSQuickStartInstructions())
-			logger.Info("📧 Added GWS quick-start instructions to workflow builder system prompt")
-			break
-		}
 	}
 
 	// NOTE: Secrets are injected by the server-level handler (server.go) via AppendSystemPrompt
@@ -8649,7 +8649,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			"properties": map[string]interface{}{
 				"source": map[string]interface{}{
 					"type":        "string",
-					"description": "Skill source in owner/repo@skill-name format (e.g., 'anthropics/skills@skill-creator', 'googleworkspace/cli@gws-gmail').",
+					"description": "Skill source in owner/repo@skill-name format (e.g., 'anthropics/skills@skill-creator').",
 				},
 			},
 			"required": []string{"source"},
@@ -11484,7 +11484,6 @@ When you finish, summarize what you did and any important findings.
 {{.SkillPrompt}}
 {{.SecretPrompt}}
 {{.BrowserPrompt}}
-{{.GWSPrompt}}
 `)
 
 var backgroundTaskAgentUserTemplate = MustRegisterTemplate("backgroundTaskAgentUser", `{{.Instruction}}`)
@@ -11707,15 +11706,6 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 	bgBrowserCfg := iwm.controller.resolveBrowserConfig(config.ServerNames, effectiveSkills)
 	browserPrompt := instructions.BuildBrowserInstructions(bgBrowserCfg)
 
-	// GWS instructions
-	gwsPrompt := ""
-	for _, s := range config.ServerNames {
-		if s == "gws" {
-			gwsPrompt = instructions.GetGWSQuickStartInstructions()
-			break
-		}
-	}
-
 	// Apply post-setup configuration (folder guard + registry for code execution mode)
 	if err := iwm.controller.applyPostSetupToAgent(agent, "background-task-agent", isCodeExecMode); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Post-setup configuration failed for background-task-agent: %v", err))
@@ -11729,7 +11719,6 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 		"SkillPrompt":      skillPrompt,
 		"SecretPrompt":     secretPrompt,
 		"BrowserPrompt":    browserPrompt,
-		"GWSPrompt":        gwsPrompt,
 	}
 
 	// --- Execute ---

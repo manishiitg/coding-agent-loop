@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
@@ -64,12 +66,14 @@ This test:
 			}
 		}
 
-		// Get image path from flag or use default
-		// This should be the workspace-relative path (e.g., "Downloads/hdfc_after_password_attempt_1.png")
-		imagePath := viper.GetString("image-path")
+		// Get image path from flag or use default.
+		// read_image requires a full absolute path under workspace-docs.
+		imagePath := strings.TrimSpace(viper.GetString("image-path"))
 		if imagePath == "" {
-			// Default to Downloads/hdfc_after_password_attempt_1.png (workspace-relative path)
-			imagePath = "Downloads/hdfc_after_password_attempt_1.png"
+			imagePath = defaultReadImageTestPath()
+		}
+		if !filepath.IsAbs(imagePath) {
+			return fmt.Errorf("--image-path must be a full absolute workspace-docs path, got %q", imagePath)
 		}
 
 		logger.Info(fmt.Sprintf("Using workspace image path: %s", imagePath))
@@ -165,9 +169,8 @@ This test:
 
 		logger.Info(fmt.Sprintf("✅ All workspace tools registered"))
 
-		// Test read_image tool
-		// Use the workspace-relative path directly (e.g., "Downloads/hdfc_after_password_attempt_1.png")
-		// The agent should automatically detect it's an image and use read_image tool
+		// Test read_image tool. The prompt includes the absolute path so the
+		// agent uses the same path contract exposed by the tool metadata.
 		prompt := fmt.Sprintf("Please read the file '%s' and describe what you see in it.", imagePath)
 
 		logger.Info(fmt.Sprintf("Testing read_image tool - image_file: %s", imagePath))
@@ -198,6 +201,16 @@ This test:
 }
 
 func init() {
-	readImageTestCmd.Flags().String("image-path", "", "Path to image file to test (default: Downloads/hdfc_after_password_attempt_1.png)")
+	readImageTestCmd.Flags().String("image-path", "", "Full absolute workspace-docs image path to test")
 	viper.BindPFlag("image-path", readImageTestCmd.Flags().Lookup("image-path"))
+}
+
+func defaultReadImageTestPath() string {
+	if path := firstExistingWorkspaceDocsAbsoluteTestPath(
+		"_users/default/Downloads/hdfc_after_password_attempt_1.png",
+		"Downloads/hdfc_after_password_attempt_1.png",
+	); path != "" {
+		return path
+	}
+	return workspaceDocsAbsoluteTestPath("_users/default/Downloads/hdfc_after_password_attempt_1.png")
 }

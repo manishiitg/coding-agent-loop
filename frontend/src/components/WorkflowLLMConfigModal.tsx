@@ -36,7 +36,17 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const [tier2, setTier2] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_2 ?? existing?.tiered_config?.tier_2 ?? null)
   const [tier3, setTier3] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_3 ?? existing?.tiered_config?.tier_3 ?? null)
   const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(manifestLLM?.phase_llm ?? existing?.phase_llm ?? null)
-  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(() => {
+    const config = manifestLLM ?? existing
+    const t1 = config?.tiered_config?.tier_1
+    const t2 = config?.tiered_config?.tier_2
+    const t3 = config?.tiered_config?.tier_3
+    const phase = config?.phase_llm
+    const key = (cfg?: AgentLLMConfig | null) => cfg?.provider && cfg?.model_id ? `${cfg.provider}/${cfg.model_id}` : ''
+    const configured = [t1, t2, t3, phase].filter(Boolean)
+    if (configured.some(cfg => (cfg?.fallbacks ?? []).length > 0)) return true
+    return new Set(configured.map(key).filter(Boolean)).size > 1
+  })
 
   if (!activePreset) return null
 

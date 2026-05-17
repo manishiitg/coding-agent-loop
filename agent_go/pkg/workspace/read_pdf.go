@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -36,14 +34,18 @@ func (c *Client) ReadPDF(ctx context.Context, params ReadPDFParams) (string, err
 	if params.Filepath == "" {
 		return "", fmt.Errorf("filepath is required")
 	}
+	absolutePath, guardPath, err := normalizeWorkspaceAbsoluteToolPath(params.Filepath, "filepath", "read_pdf")
+	if err != nil {
+		return "", err
+	}
 
 	// Validate path against folder guard (read operation)
-	if err := c.ValidatePath(params.Filepath, false); err != nil {
+	if err := c.ValidatePathWithContext(ctx, guardPath, false); err != nil {
 		return "", err
 	}
 
 	// Validate file extension
-	ext := strings.ToLower(filepath.Ext(params.Filepath))
+	ext := strings.ToLower(filepath.Ext(absolutePath))
 	if ext != ".pdf" {
 		return "", fmt.Errorf("file must be a PDF (got extension: %s)", ext)
 	}
@@ -62,42 +64,24 @@ func (c *Client) ReadPDF(ctx context.Context, params ReadPDFParams) (string, err
 		pageRange = "all"
 	}
 
-	// URL-encode the filepath segments
-	pathSegments := strings.Split(params.Filepath, "/")
+	// URL-encode the workspace API path. The external contract is absolute-only,
+	// but the workspace API route expects a workspace-docs-relative path.
+	pathSegments := strings.Split(filepath.ToSlash(guardPath), "/")
 	encodedSegments := make([]string, len(pathSegments))
 	for i, segment := range pathSegments {
 		encodedSegments[i] = url.PathEscape(segment)
 	}
 	encodedPath := strings.Join(encodedSegments, "/")
 
-	// Build API URL to get raw file content
-	apiURL := c.BaseURL + "/api/documents/" + encodedPath + "/raw"
-
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	pdfData, err := c.request(ctx, "GET", "/api/documents/"+encodedPath+"/raw", nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", fmt.Errorf("failed to read PDF file: %w. Use execute_shell_command to verify the path, for example with 'ls' or 'find'.", err)
 	}
 
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to call workspace API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("PDF file not found: %s. Use 'list_workspace_files' to find the correct path", params.Filepath)
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Read the PDF content (limit to 50MB)
+	// Limit PDF size to 50MB.
 	const maxPDFSize = 50 * 1024 * 1024
-	limitedReader := io.LimitReader(resp.Body, maxPDFSize)
-	pdfData, err := io.ReadAll(limitedReader)
-	if err != nil {
-		return "", fmt.Errorf("failed to read PDF data: %w", err)
+	if len(pdfData) > maxPDFSize {
+		return "", fmt.Errorf("PDF file too large (%d bytes, max %d bytes)", len(pdfData), maxPDFSize)
 	}
 
 	// Extract text using Python/pypdf subprocess
@@ -121,7 +105,7 @@ func (c *Client) ReadPDF(ctx context.Context, params ReadPDFParams) (string, err
 	}
 
 	response := map[string]interface{}{
-		"filepath":        params.Filepath,
+		"filepath":        absolutePath,
 		"total_pages":     result.TotalPages,
 		"extracted_pages": result.ExtractedPages,
 		"page_range":      pageRange,

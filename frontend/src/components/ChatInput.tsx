@@ -198,9 +198,8 @@ import { agentApi, getApiBaseUrl } from '../services/api'
 import { skillsApi } from '../api/skills'
 import type { Skill } from '../types/skills'
 
-// MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown
-// Managed by dedicated UI controls in ChatInput (browser/GWS icons), not MCP dropdown.
-const DEDICATED_MCP_SERVERS = new Set(['playwright', 'gws'])
+// MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown.
+const DEDICATED_MCP_SERVERS = new Set(['playwright'])
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
 
 const formatResumeChatTime = (value?: string): string => {
@@ -225,6 +224,46 @@ const resumeChatConversationPath = (session: ChatHistorySession): string => {
   if (session.conversation_path) return session.conversation_path
   const userId = session.user_id || 'default'
   return `_users/${userId}/chat_history/${session.session_id}/conversation.json`
+}
+
+const resumeChatRuntimeLabel = (session: ChatHistorySession): string | undefined => {
+  const runtime = session.runtime
+  const provider = runtime?.provider?.trim()
+  if (runtime?.kind !== 'coding_agent' || !provider) return undefined
+
+  const model = runtime.model_id?.trim()
+  if (model && model !== provider) return `${provider} · ${model}`
+  return provider
+}
+
+const resumeChatDetails = (session: ChatHistorySession): React.ReactNode | undefined => {
+  const messages = (session.preview_messages || [])
+    .filter(message => message.text?.trim())
+    .slice(-6)
+
+  if (messages.length === 0) return undefined
+
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-background/80 p-2 text-xs text-foreground shadow-sm">
+      {messages.map((message, index) => {
+        const normalizedRole = message.role === 'ai' || message.role === 'assistant' ? 'Assistant' : 'User'
+        const roleClass = normalizedRole === 'Assistant'
+          ? 'text-emerald-600 dark:text-emerald-400'
+          : 'text-sky-600 dark:text-sky-400'
+
+        return (
+          <div key={`${session.session_id}-preview-${index}`} className="space-y-0.5">
+            <div className={`text-[10px] font-semibold uppercase tracking-wide ${roleClass}`}>
+              {normalizedRole}
+            </div>
+            <div className="line-clamp-3 whitespace-pre-wrap break-words text-muted-foreground">
+              {message.text}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 type ResumeSessionKind = 'chat' | 'schedule' | 'bot'
@@ -783,7 +822,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     () => effectiveProviderForSteer === 'claude-code' || effectiveProviderForSteer === 'kimi' || effectiveProviderForSteer === 'gemini-cli' || effectiveProviderForSteer === 'codex-cli',
     [effectiveProviderForSteer]
   )
-  const isClaudeCode = useMemo(() => effectiveProviderForSteer === 'claude-code', [effectiveProviderForSteer])
+  const supportsLiveCodingAgentInput = useMemo(
+    () => effectiveProviderForSteer === 'claude-code' || effectiveProviderForSteer === 'gemini-cli' || effectiveProviderForSteer === 'codex-cli',
+    [effectiveProviderForSteer]
+  )
   const canShowSteer = useMemo(() => canSteer && !isCLIProvider, [canSteer, isCLIProvider])
   // CLI providers always require code execution mode
   const useCodeExecutionMode = useMemo(() => isCLIProvider ? true : (tabConfig?.useCodeExecutionMode ?? false), [isCLIProvider, tabConfig?.useCodeExecutionMode])
@@ -796,7 +838,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [cdpConnected, setCdpConnected] = useState<boolean | null>(null)
   const [cdpChecking, setCdpChecking] = useState(false)
   const [showCdpPopup, setShowCdpPopup] = useState(false)
-  const [showGWSPopup, setShowGWSPopup] = useState(false)
   const [showReasoningPopup, setShowReasoningPopup] = useState(false)
   const [showActiveAgentsPanel, setShowActiveAgentsPanel] = useState(false)
   const [isUploadingFiles, setIsUploadingFiles] = useState(false)
@@ -805,16 +846,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   useEffect(() => {
     if (activeAgents.length === 0) setShowActiveAgentsPanel(false)
   }, [activeAgents.length])
-  const [gwsChatAuthStatus, setGwsChatAuthStatus] = useState<{
-    configured?: boolean; auth_method?: string; token_valid?: boolean; token_error?: string;
-    enabled_api_count?: number; scope_count?: number; error?: string;
-  } | null>(null)
-  const [gwsChatChecking, setGwsChatChecking] = useState(false)
-  const [gwsChatSyncing, setGwsChatSyncing] = useState(false)
-  const [gwsChatSyncResult, setGwsChatSyncResult] = useState<{
-    synced?: number; failed?: { name: string; error: string }[]; error?: string;
-  } | null>(null)
-
   // Playwright MCP availability: check if 'playwright' server exists in toolList
   const toolList = useMCPStore(state => state.toolList)
   const playwrightServerStatus = useMemo(() => {
@@ -827,34 +858,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const isCdpDisconnected = browserMode === 'cdp' && cdpConnected === false
   const isPlaywrightMissing = browserMode === 'playwright' && playwrightServerStatus === 'not_found'
-
-
-  const syncGWSChatSkills = useCallback(async () => {
-    setGwsChatSyncing(true)
-    setGwsChatSyncResult(null)
-    try {
-      const result = await agentApi.syncGWSSkills()
-      setGwsChatSyncResult(result)
-    } catch {
-      setGwsChatSyncResult({ error: 'Failed to sync skills' })
-    } finally {
-      setGwsChatSyncing(false)
-    }
-  }, [])
-
-  const checkGWSChatAuth = useCallback(async () => {
-    setGwsChatChecking(true)
-    setGwsChatAuthStatus(null)
-    try {
-      const result = await agentApi.checkGWSAuthStatus()
-      setGwsChatAuthStatus(result)
-    } catch {
-      setGwsChatAuthStatus({ configured: false, error: 'Failed to connect to backend' })
-    } finally {
-      setGwsChatChecking(false)
-    }
-  }, [])
-
 
   // File context operations (always update tab config)
   const removeFileFromContext = useCallback((path: string) => {
@@ -1034,13 +1037,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return useWorkflowManifestStore.getState().getWorkflowById(activePresetIds.workflow)?.workspace_path
   }, [activePresetIds.workflow, getActivePreset, selectedModeCategory])
   
-  // Auto-check GWS auth when popup opens
-  useEffect(() => {
-    if (showGWSPopup && !gwsChatAuthStatus && !gwsChatChecking) {
-      checkGWSChatAuth()
-    }
-  }, [showGWSPopup]) // eslint-disable-line react-hooks/exhaustive-deps
-
   // Get queued messages from tab config
   const queuedMessages = useMemo(() => tabConfig?.queuedMessages || [], [tabConfig?.queuedMessages])
 
@@ -1070,6 +1066,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const updated = queuedMessages.filter((_: string, i: number) => i !== index)
     setTabConfig(activeTabId, { queuedMessages: updated })
   }, [activeTabId, queuedMessages, setTabConfig])
+
+  const queueStreamingMessage = useCallback((msg: string) => {
+    const trimmed = msg.trim()
+    if (!activeTabId || !trimmed) return
+    const currentQueued = useChatStore.getState().getTabConfig(activeTabId)?.queuedMessages || []
+    setTabConfig(activeTabId, {
+      inputText: '',
+      queuedMessages: [...currentQueued, trimmed]
+    })
+  }, [activeTabId, setTabConfig])
 
   const handleSteerQueuedMessage = useCallback(async (index: number, msg: string) => {
     if (!canShowSteer || !tabSessionId) return
@@ -1123,18 +1129,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Use tab-specific servers - memoize to prevent re-renders
   const manualSelectedServers = useMemo(() => tabConfig?.selectedServers || [], [tabConfig?.selectedServers])
-  
-  const gwsEnabled = useMemo(() => tabConfig?.enableGWSAccess ?? false, [tabConfig?.enableGWSAccess])
-
-  const toggleGWSServer = useCallback(() => {
-    if (!activeTabId) return
-    const newEnabled = !gwsEnabled
-    setTabConfig(activeTabId, {
-      enableGWSAccess: newEnabled,
-    })
-    if (newEnabled) setWorkspaceMinimized(false)
-  }, [activeTabId, gwsEnabled, setTabConfig, setWorkspaceMinimized])
-
   // Server operations (always update tab config AND sync to chat-specific MCP store)
   // This ensures new chat tabs inherit the user's manual server selection
   // Browser servers are mutually exclusive — only one can be active at a time
@@ -1653,6 +1647,25 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setTabConfig(activeTabId, { inputText: '', pastedAttachments: [] })
     }
   }, [activeTabId, setTabConfig])
+
+  const sendLiveCodingAgentMessage = useCallback(async (msg: string): Promise<boolean> => {
+    const trimmed = msg.trim()
+    if (!trimmed || !isStreaming || !supportsLiveCodingAgentInput || !tabSessionId) return false
+
+    clearInputState()
+    try {
+      await agentApi.steerMessage(tabSessionId, msg)
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      queueStreamingMessage(trimmed)
+      if (status === 404) {
+        addToast('No live coding agent is available yet — message queued.', 'warning')
+      } else {
+        addToast('Failed to send to coding agent — message queued.', 'warning')
+      }
+    }
+    return true
+  }, [addToast, clearInputState, isStreaming, queueStreamingMessage, supportsLiveCodingAgentInput, tabSessionId])
 
   const ensureMultiAgentTabReady = useCallback(async (): Promise<boolean> => {
     if (!isMultiAgentMode || showWorkflowsOverview) return false
@@ -2342,15 +2355,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         clearInputState()
         onSubmit(queryToSubmit)
       } else if (canSubmit && isStreaming) {
-        // Queue message when streaming - clear input (both local and store)
-        clearInputState()
-
-        if (activeTabId) {
-          const currentQueued = tabConfig?.queuedMessages || []
-          setTabConfig(activeTabId, {
-            inputText: '',
-            queuedMessages: [...currentQueued, queryToSubmit.trim()]
-          })
+        if (supportsLiveCodingAgentInput && tabSessionId) {
+          void sendLiveCodingAgentMessage(queryToSubmit)
+        } else {
+          clearInputState()
+          queueStreamingMessage(queryToSubmit)
         }
       } else if (trimmedQuery) {
         const submitBlockReason = getSubmitBlockReason()
@@ -2374,7 +2383,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, activeTabId, tabConfig?.queuedMessages, setTabConfig, getSubmitBlockReason, addToast])
+  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, supportsLiveCodingAgentInput, sendLiveCodingAgentMessage, queueStreamingMessage, getSubmitBlockReason, addToast])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -2399,14 +2408,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       clearInputState()
       onSubmit(queryToSubmit)
     } else if (canSubmit && isStreaming) {
-      clearInputState()
-
-      if (activeTabId) {
-        const currentQueued = tabConfig?.queuedMessages || []
-        setTabConfig(activeTabId, {
-          inputText: '',
-          queuedMessages: [...currentQueued, queryToSubmit.trim()]
-        })
+      if (supportsLiveCodingAgentInput && tabSessionId) {
+        void sendLiveCodingAgentMessage(queryToSubmit)
+      } else {
+        clearInputState()
+        queueStreamingMessage(queryToSubmit)
       }
     } else if (trimmedQuery) {
       const submitBlockReason = getSubmitBlockReason()
@@ -2414,7 +2420,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         addToast(submitBlockReason, 'info')
       }
     }
-  }, [queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, clearInputState, canSubmitImmediately, onSubmit, canSubmit, activeTabId, tabConfig?.queuedMessages, setTabConfig, getSubmitBlockReason, addToast])
+  }, [queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, clearInputState, canSubmitImmediately, onSubmit, canSubmit, supportsLiveCodingAgentInput, sendLiveCodingAgentMessage, queueStreamingMessage, getSubmitBlockReason, addToast])
 
   // Command selection handler - executes commands directly
   const handleCommandSelect = useCallback((command: string) => {
@@ -2890,6 +2896,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const path = resumeChatConversationPath(session)
       const kind = getResumeSessionKind(session)
       const botProvider = kind === 'bot' ? session.session_id.match(/^bot-([^-]+)--/)?.[1] : undefined
+      const runtimeLabel = resumeChatRuntimeLabel(session)
       const mode = botProvider || (session.agent_mode || 'chat').replace(/_/g, ' ')
       const messageCount = session.message_count ?? 0
       const countLabel = messageCount > 0 ? `${messageCount} message${messageCount === 1 ? '' : 's'}` : 'conversation'
@@ -2902,10 +2909,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return {
         id: session.session_id,
         name: resumeChatTitle(session),
-        description: `${formatResumeChatTime(session.updated_at || session.created_at)} · ${mode} · ${countLabel}`,
+        description: [
+          formatResumeChatTime(session.updated_at || session.created_at),
+          mode,
+          runtimeLabel,
+          countLabel,
+        ].filter(Boolean).join(' · '),
         isSelected: contextPaths.has(path),
         leadingIcon,
-        badge: kind === 'schedule' ? 'scheduled' : kind === 'bot' ? 'bot' : undefined,
+        badge: runtimeLabel ? 'coding' : kind === 'schedule' ? 'scheduled' : kind === 'bot' ? 'bot' : undefined,
+        details: resumeChatDetails(session),
       }
     })
   }, [chatFileContext, resumeFilter, resumeSessions])
@@ -3266,37 +3279,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </span>
                       )}
                     </button>}
-
-                    {/* Google Workspace Toggle — hidden in workflow mode */}
-                    {!hideExtras && (
-                    <button
-                      type="button"
-                      data-tour="chat-gws-tools"
-                      data-testid="tour-chat-gws-tools"
-                      onClick={() => setShowGWSPopup(true)}
-                      disabled={isStreaming || isSummarizing}
-                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
-                        gwsEnabled
-                          ? 'bg-blue-900/40 border-blue-600 text-blue-400'
-                          : 'bg-gray-800 border-gray-600 text-gray-500'
-                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
-                    >
-                      <svg viewBox="0 0 24 24" className="w-4 h-4 flex-shrink-0" fill="none">
-                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="currentColor" opacity="0.9"/>
-                        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="currentColor" opacity="0.7"/>
-                        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="currentColor" opacity="0.8"/>
-                        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="currentColor" opacity="0.85"/>
-                      </svg>
-                      {gwsEnabled ? (
-                        <span className="text-[10px] font-semibold px-1 rounded bg-white/10">GWS</span>
-                      ) : (
-                        <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[40px] transition-all duration-200">
-                          GWS
-                        </span>
-                      )}
-                    </button>
-                    )}
-
                   </div>
                 )}
 
@@ -3560,164 +3542,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           className="px-4 py-2 text-sm font-medium bg-green-600 hover:bg-green-500 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {browserMode === 'cdp' && cdpConnected !== true ? (cdpChecking ? 'Checking...' : 'Connect Chrome First') : 'Done'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Google Workspace Popup */}
-                {showGWSPopup && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowGWSPopup(false)}>
-                    <div className="bg-gray-900 rounded-xl shadow-2xl border border-gray-700 w-[480px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
-                        <div className="flex items-center gap-2">
-                          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none">
-                            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
-                            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-                          </svg>
-                          <h3 className="text-base font-semibold text-white">Google Workspace</h3>
-                          <a
-                            href="https://github.com/googleworkspace/cli"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                          >
-                            @googleworkspace/cli ↗
-                          </a>
-                        </div>
-                        <button onClick={() => setShowGWSPopup(false)} className="text-gray-400 hover:text-gray-200 transition-colors">
-                          <X className="w-5 h-5" />
-                        </button>
-                      </div>
-
-                      <div className="px-5 py-4 space-y-4">
-                        {/* Enable/disable toggle */}
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="text-sm font-medium text-gray-100">Google Workspace</div>
-                            <div className="text-xs text-gray-400 mt-0.5">Drive · Gmail · Calendar · Docs · Sheets · Slides</div>
-                          </div>
-                          <label className={`relative inline-flex items-center ${gwsChatAuthStatus?.token_valid === false || (!gwsEnabled && !gwsChatAuthStatus?.configured) ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}>
-                            <input
-                              type="checkbox"
-                              checked={gwsEnabled}
-                              onChange={toggleGWSServer}
-                              disabled={gwsChatAuthStatus?.token_valid === false || (!gwsEnabled && !gwsChatAuthStatus?.configured)}
-                              className="sr-only peer"
-                            />
-                            <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                          </label>
-                        </div>
-
-                        {/* Auth gate hint */}
-                        {gwsChatAuthStatus?.token_valid === false ? (
-                          <p className="text-xs text-amber-400">
-                            Token invalid — run <code className="text-amber-300">gws auth login</code>, then <code className="text-amber-300">gws auth export --unmasked &gt; agent_go/gws-credentials.json</code> and restart docker compose
-                          </p>
-                        ) : !gwsEnabled && !gwsChatAuthStatus?.configured && (
-                          <p className="text-xs text-amber-400">
-                            {gwsChatChecking ? 'Checking auth...' : 'Auth check required before enabling'}
-                          </p>
-                        )}
-
-                        {/* Auth status */}
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={checkGWSChatAuth}
-                              disabled={gwsChatChecking}
-                              className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 rounded text-gray-200 disabled:opacity-50 transition-colors"
-                            >
-                              {gwsChatChecking ? 'Checking...' : 'Check Auth Status'}
-                            </button>
-                            {gwsChatAuthStatus && (
-                              gwsChatAuthStatus.configured && gwsChatAuthStatus.token_valid !== false ? (
-                                <div className="flex items-center gap-1.5">
-                                  <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
-                                  <span className="text-xs text-green-400">
-                                    Auth OK · {gwsChatAuthStatus.enabled_api_count ?? 0} APIs
-                                    {gwsChatAuthStatus.auth_method ? ` (${gwsChatAuthStatus.auth_method})` : ''}
-                                  </span>
-                                </div>
-                              ) : gwsChatAuthStatus.configured && gwsChatAuthStatus.token_valid === false ? (
-                                <div className="flex items-center gap-1.5">
-                                  <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-                                  <span className="text-xs text-amber-400">Token invalid</span>
-                                </div>
-                              ) : (
-                                <div className="flex items-center gap-1.5">
-                                  <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-                                  <span className="text-xs text-red-400">
-                                    {gwsChatAuthStatus.token_valid === false
-                                      ? `Token invalid — run gws auth login${gwsChatAuthStatus.token_error ? ` (${gwsChatAuthStatus.token_error})` : ''}`
-                                      : (gwsChatAuthStatus.error ?? 'Not configured')}
-                                  </span>
-                                </div>
-                              )
-                            )}
-                          </div>
-                          {!gwsChatAuthStatus && (
-                            <p className="text-xs text-gray-500">Run <code className="text-gray-400">gws auth login</code>, then <code className="text-gray-400">gws auth export --unmasked &gt; agent_go/gws-credentials.json</code> and restart docker compose</p>
-                          )}
-                        </div>
-
-                        {/* Skills */}
-                        <div className="border-t border-gray-700 pt-4 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <div className="text-sm font-medium text-gray-100">Skills</div>
-                              <div className="text-xs text-gray-400 mt-0.5">
-                                Sync all gws-* skills from{' '}
-                                <a
-                                  href="https://github.com/googleworkspace/cli/tree/main/skills"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-blue-400 hover:text-blue-300 underline underline-offset-2"
-                                >
-                                  github.com/googleworkspace/cli
-                                </a>
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={syncGWSChatSkills}
-                              disabled={gwsChatSyncing}
-                              className="ml-3 flex-shrink-0 px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white rounded transition-colors"
-                            >
-                              {gwsChatSyncing ? 'Syncing...' : 'Sync from GitHub'}
-                            </button>
-                          </div>
-                          {gwsChatSyncResult && (
-                            gwsChatSyncResult.error ? (
-                              <p className="text-xs text-red-400">{gwsChatSyncResult.error}</p>
-                            ) : (
-                              <p className="text-xs text-green-400">
-                                Synced {gwsChatSyncResult.synced} skill{gwsChatSyncResult.synced !== 1 ? 's' : ''}
-                                {gwsChatSyncResult.failed?.length ? ` · ${gwsChatSyncResult.failed.length} failed` : ''}
-                              </p>
-                            )
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-700">
-                        <button
-                          type="button"
-                          onClick={() => { if (gwsEnabled) toggleGWSServer(); setShowGWSPopup(false) }}
-                          className="px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 rounded-md transition-colors"
-                        >
-                          Disable GWS
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowGWSPopup(false)}
-                          className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-md transition-colors"
-                        >
-                          Done
                         </button>
                       </div>
                     </div>

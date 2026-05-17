@@ -784,9 +784,21 @@ func normalizeAbsoluteWorkspacePath(inputPath string) (string, bool) {
 }
 
 func workspaceDocsRoots() []string {
-	roots := make([]string, 0, 3)
+	roots := make([]string, 0, 8)
 	if envRoot := strings.TrimSpace(os.Getenv("WORKSPACE_DOCS_PATH")); envRoot != "" {
 		roots = append(roots, envRoot)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		for dir := filepath.Clean(cwd); ; dir = filepath.Dir(dir) {
+			candidate := filepath.Join(dir, "workspace-docs")
+			if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+				roots = append(roots, candidate)
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+		}
 	}
 	roots = append(roots, "/app/workspace-docs", "/workspace-docs")
 	return deduplicateStrings(roots)

@@ -183,7 +183,7 @@ func extractRootCauseError(err error) string {
 //	if false, only workspace_advanced tools for chat mode (shell, image, web fetch, PDF)
 //
 // Returns: tools, executors, and a map of tool names to their categories
-// Tools from CreateWorkspaceAdvancedTools() get category "workspace_advanced"
+// Workspace registry tools get category "workspace_advanced"
 // All tools from CreateHumanTools() get category "human_tools"
 //
 // Note: workspace_basic and workspace_git are internal/deprecated and are not
@@ -200,73 +200,17 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 	allExecutors := make(map[string]interface{})
 	toolCategories := make(map[string]string)
 
-	// Create workspace advanced tools (always included)
-	workspaceAdvancedCategory := virtualtools.GetWorkspaceAdvancedToolCategory()
-	workspaceAdvancedTools := virtualtools.CreateWorkspaceAdvancedTools()
-	workspaceImageCategory := virtualtools.GetWorkspaceImageToolCategory()
-	workspaceImageTools := virtualtools.CreateWorkspaceImageTools()
-	workspaceVideoTools := virtualtools.CreateWorkspaceVideoTools()
-	workspaceAudioTools := virtualtools.CreateWorkspaceAudioTools()
-	workspaceMusicTools := virtualtools.CreateWorkspaceMusicTools()
-
-	// Use session-aware executors when session info is provided
-	var workspaceAdvancedExecutors map[string]func(ctx context.Context, args map[string]any) (string, error)
-	if sessionID != "" {
-		workspaceAdvancedExecutors, _ = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(userID, sessionID)
-	} else {
-		workspaceAdvancedExecutors = virtualtools.CreateWorkspaceAdvancedToolExecutors()
-	}
-	// Add advanced tools
-	allTools = append(allTools, workspaceAdvancedTools...)
-	allTools = append(allTools, workspaceImageTools...)
-	allTools = append(allTools, workspaceVideoTools...)
-	allTools = append(allTools, workspaceAudioTools...)
-	allTools = append(allTools, workspaceMusicTools...)
-	for name, executor := range workspaceAdvancedExecutors {
+	workspaceTools, workspaceExecutors, workspaceCategories, _ := virtualtools.CreateWorkspaceToolRegistryUntyped(virtualtools.WorkspaceToolRegistryConfig{
+		WorkspaceAPIURL: getWorkspaceAPIURL(),
+		UserID:          userID,
+		SessionID:       sessionID,
+	})
+	allTools = append(allTools, workspaceTools...)
+	for name, executor := range workspaceExecutors {
 		allExecutors[name] = executor
 	}
-	virtualtools.MergeImageToolExecutorsUntyped(virtualtools.ImageGenExecutorConfig{
-		WorkspaceAPIURL: getWorkspaceAPIURL(),
-		UserID:          userID,
-	}, allExecutors, nil)
-	virtualtools.MergeVideoToolExecutorsUntyped(virtualtools.VideoGenExecutorConfig{
-		WorkspaceAPIURL: getWorkspaceAPIURL(),
-		UserID:          userID,
-	}, allExecutors, nil)
-	virtualtools.MergeAudioToolExecutorsUntyped(virtualtools.AudioGenExecutorConfig{
-		WorkspaceAPIURL: getWorkspaceAPIURL(),
-		UserID:          userID,
-	}, allExecutors, nil)
-	virtualtools.MergeMusicToolExecutorsUntyped(virtualtools.AudioGenExecutorConfig{
-		WorkspaceAPIURL: getWorkspaceAPIURL(),
-		UserID:          userID,
-	}, allExecutors, nil)
-
-	// Advanced tools get workspace_advanced category
-	for _, tool := range workspaceAdvancedTools {
-		if tool.Function != nil {
-			toolCategories[tool.Function.Name] = workspaceAdvancedCategory
-		}
-	}
-	for _, tool := range workspaceImageTools {
-		if tool.Function != nil {
-			toolCategories[tool.Function.Name] = workspaceImageCategory
-		}
-	}
-	for _, tool := range workspaceVideoTools {
-		if tool.Function != nil {
-			toolCategories[tool.Function.Name] = workspaceAdvancedCategory
-		}
-	}
-	for _, tool := range workspaceAudioTools {
-		if tool.Function != nil {
-			toolCategories[tool.Function.Name] = workspaceAdvancedCategory
-		}
-	}
-	for _, tool := range workspaceMusicTools {
-		if tool.Function != nil {
-			toolCategories[tool.Function.Name] = workspaceAdvancedCategory
-		}
+	for name, category := range workspaceCategories {
+		toolCategories[name] = category
 	}
 
 	// Workflow mode: include human + todo tools + workspace_basic executors (for internal Go operations)

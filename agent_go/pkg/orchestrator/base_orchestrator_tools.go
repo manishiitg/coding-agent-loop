@@ -14,41 +14,8 @@ func getToolNamesByCategory(category string) map[string]bool {
 	toolNames := make(map[string]bool)
 
 	switch category {
-	case "workspace_tools":
-		// Backward compatible - returns all LLM-visible workspace tools.
-		executors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
-		for toolName := range executors {
-			toolNames[toolName] = true
-		}
-		imageExecutors := virtualtools.CreateWorkspaceImageToolExecutors(virtualtools.ImageGenExecutorConfig{})
-		for toolName := range imageExecutors {
-			toolNames[toolName] = true
-		}
-		videoExecutors := virtualtools.CreateWorkspaceVideoToolExecutors(virtualtools.VideoGenExecutorConfig{})
-		for toolName := range videoExecutors {
-			toolNames[toolName] = true
-		}
-		browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
-		for toolName := range browserExecutors {
-			toolNames[toolName] = true
-		}
-	case "workspace_advanced":
-		// LLM-visible advanced workspace tools
-		executors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
-		for toolName := range executors {
-			toolNames[toolName] = true
-		}
-		imageExecutors := virtualtools.CreateWorkspaceImageToolExecutors(virtualtools.ImageGenExecutorConfig{})
-		for toolName := range imageExecutors {
-			toolNames[toolName] = true
-		}
-		videoExecutors := virtualtools.CreateWorkspaceVideoToolExecutors(virtualtools.VideoGenExecutorConfig{})
-		for toolName := range videoExecutors {
-			toolNames[toolName] = true
-		}
-	case "workspace_image":
-		executors := virtualtools.CreateWorkspaceImageToolExecutors(virtualtools.ImageGenExecutorConfig{})
-		for toolName := range executors {
+	case "workspace_tools", "workspace_advanced", "workspace_image":
+		for toolName := range virtualtools.WorkspaceToolNamesByCategory(category) {
 			toolNames[toolName] = true
 		}
 	case "human_tools":

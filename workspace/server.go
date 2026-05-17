@@ -207,10 +207,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		api.GET("/browser/processes", handlers.ListBrowserProcesses)
 		api.POST("/browser/cleanup", handlers.KillBrowserProcesses)
 
-		// Google Workspace CLI routes
-		api.GET("/gws-auth-status", handlers.CheckGWSAuthStatus)
-		api.POST("/gws-sync-skills", handlers.SyncGWSSkills)
-
 		// Skills CLI routes (npx skills — runs inside container)
 		api.POST("/skills/cli/install", handleSkillInstall)
 		api.GET("/skills/cli/search", handleSkillSearch)

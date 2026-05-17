@@ -12,6 +12,7 @@ import (
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/agent/codeexec"
+	mcpllm "github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
@@ -36,6 +37,33 @@ func normalizeServerNames(servers []string) []string {
 		return []string{mcpclient.NoServers}
 	}
 	return servers
+}
+
+func forceWorkflowStepClaudeCodePrintTransport(config *agents.OrchestratorAgentConfig) {
+	if workflowAgentConfigUsesClaudeCode(config) {
+		config.ClaudeCodeTransport = mcpllm.ClaudeCodeTransportPrint
+	}
+}
+
+func forceWorkflowChatClaudeCodeExperimentalTransport(config *agents.OrchestratorAgentConfig) {
+	if workflowAgentConfigUsesClaudeCode(config) {
+		config.ClaudeCodeTransport = mcpllm.ClaudeCodeTransportExperimental
+	}
+}
+
+func workflowAgentConfigUsesClaudeCode(config *agents.OrchestratorAgentConfig) bool {
+	if config == nil {
+		return false
+	}
+	if config.LLMConfig.Primary.Provider == string(mcpllm.ProviderClaudeCode) {
+		return true
+	}
+	for _, fallback := range config.LLMConfig.Fallbacks {
+		if fallback.Provider == string(mcpllm.ProviderClaudeCode) {
+			return true
+		}
+	}
+	return false
 }
 
 // filterServersByWorkflow intersects stepServers with workflowServers so that the
@@ -952,6 +980,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBUpdateAgent(ctx context.Conte
 	// Cap below learning's 50 — KB merges should converge quickly.
 	maxTurns := 40
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+	forceWorkflowStepClaudeCodePrintTransport(config)
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.MCPSessionID = subAgentSessionID
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
@@ -1035,6 +1064,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBConsolidateAgent(ctx context.
 	// the same headroom as reorganize (60 turns).
 	maxTurns := 60
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+	forceWorkflowStepClaudeCodePrintTransport(config)
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.MCPSessionID = subAgentSessionID
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
@@ -1091,6 +1121,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBReorganizeAgent(ctx context.C
 	// but still cap to prevent runaway agents under ambiguous instructions.
 	maxTurns := 60
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+	forceWorkflowStepClaudeCodePrintTransport(config)
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.MCPSessionID = subAgentSessionID
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
@@ -1327,6 +1358,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 4. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+	forceWorkflowStepClaudeCodePrintTransport(config)
 	hcpo.disableParentAgentTimeout(config, "execution-only agent")
 
 	// Execution-only steps can run in parallel inside a group. If they all reuse the
@@ -1371,6 +1403,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// Check for isolated browser session ID (from share_browser=false in sub-agent tools)
 	if isolatedSessionID, ok := ctx.Value(virtualtools.SubAgentIsolatedSessionIDKey).(string); ok && isolatedSessionID != "" {
+		if cfg := common.GetSessionShellConfig(config.MCPSessionID); cfg != nil && strings.TrimSpace(cfg.WorkingDir) != "" {
+			common.SetSessionWorkingDir(isolatedSessionID, cfg.WorkingDir)
+		}
 		config.MCPSessionID = isolatedSessionID
 		hcpo.GetLogger().Info(fmt.Sprintf("Browser isolation: overriding MCPSessionID to %s", isolatedSessionID))
 	}
@@ -1479,6 +1514,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 
 	// 3. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+	forceWorkflowStepClaudeCodePrintTransport(config)
 
 	// Learning agents always use NoServers (pure LLM analysis agent)
 	// Step-specific server/tool selection is only for execution agents
@@ -1595,6 +1631,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 
 	// Create agent config with custom LLM if needed
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+	forceWorkflowStepClaudeCodePrintTransport(config)
 
 	workflowServersConditional := hcpo.GetSelectedServers()
 	// Use step-specific servers filtered against workflow-level servers (workflow is the hard cap)
@@ -1844,6 +1881,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 
 	// Create agent config with custom LLM if needed
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+	forceWorkflowStepClaudeCodePrintTransport(config)
 	hcpo.disableParentAgentTimeout(config, "todo task orchestrator agent")
 
 	// Give nested todo_task orchestrators their own session-level folder guard just like
@@ -2091,6 +2129,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 			for _, route := range execCtx.TodoTaskStep.PredefinedRoutes {
 				desc := ResolveVariables(route.Condition, hcpo.variableValues)
 				if route.SubAgentStep != nil {
+					desc += "\n\nRoute type: " + routeStepTypeSummary(route.SubAgentStep)
+					desc += "\nBehavior: " + routeStepBehaviorDetails(route.SubAgentStep)
 					desc += "\n\nDescription: " + ResolveVariables(route.SubAgentStep.GetDescription(), hcpo.variableValues)
 				}
 				routeDescriptions[route.RouteID] = desc

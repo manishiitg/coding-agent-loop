@@ -42,10 +42,6 @@ The `workspace` container runs a dedicated Planner API that the orchestrator int
 *   **System & Execution:**
     *   `POST /api/execute` (Secure shell command execution within the workspace)
     *   `POST /api/upload` (File uploads)
-*   **Google Workspace (GWS):**
-    *   `GET /api/gws-auth-status`
-    *   `POST /api/gws-sync-skills`
-
 ---
 
 ## 🌎 Universal Stdio Gateway
@@ -55,7 +51,7 @@ The `mcpbridge` binary isn't just for Claude or Gemini—it serves as a **Univer
 Any external LLM agent, framework (LangChain, AutoGPT, CrewAI), or custom script that supports the Model Context Protocol (MCP) via `stdio` can use `mcpbridge` to access your entire tool ecosystem through a single connection.
 
 ### Why use the Centralized Bridge?
-*   **Single Connection, 100+ Tools**: Connect to one "server" (`mcpbridge`) and immediately gain access to every tool configured in your orchestrator (GWS, Slack, Workspace, Browser, etc.).
+*   **Single Connection, 100+ Tools**: Connect to one "server" (`mcpbridge`) and immediately gain access to every tool configured in your orchestrator (Slack, Workspace, Browser, etc.).
 *   **Centralized Auth**: Manage API keys and OAuth tokens in one place (the orchestrator) rather than in every individual agent script.
 *   **Session Isolation**: Use the `MCP_SESSION_ID` environment variable to isolate tool execution and folder guards between different external agents.
 *   **Monitoring**: Every tool call made via the bridge is logged and visible in the orchestrator's central dashboard.

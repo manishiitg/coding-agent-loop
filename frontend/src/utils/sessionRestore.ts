@@ -264,7 +264,9 @@ function conversationToRestoredEvents(conversation: ChatHistoryConversation): Po
 async function hydrateTabEventsFromChatHistory(sessionId: string): Promise<RuntimeSessionState> {
   const chatStore = useChatStore.getState()
   const conversation = await agentApi.getChatHistoryConversation(sessionId)
-  const events = conversationToRestoredEvents(conversation)
+  const events = (conversation.ui_events && conversation.ui_events.length > 0)
+    ? (conversation.ui_events as PollingEvent[])
+    : conversationToRestoredEvents(conversation)
 
   chatStore.setTabEvents(sessionId, events)
   chatStore.setTabLastEventIndex(sessionId, events.length - 1)

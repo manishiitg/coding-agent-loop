@@ -85,6 +85,7 @@ print_stop_target() {
 kill_process_tree() {
     local root_pid="$1"
     local label="${2:-process}"
+    local grace_attempts="${3:-20}"
 
     if [ -z "$root_pid" ] || ! kill -0 "$root_pid" 2>/dev/null; then
         return 0
@@ -99,7 +100,7 @@ kill_process_tree() {
     kill "$root_pid" 2>/dev/null || true
 
     local attempt
-    for attempt in $(seq 1 20); do
+    for attempt in $(seq 1 "$grace_attempts"); do
         if ! kill -0 "$root_pid" 2>/dev/null; then
             return 0
         fi
@@ -859,7 +860,10 @@ stop_frontend_dev() {
 stop_agent_server() {
     if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
         print_stop_target "agent server" "$SERVER_PID" "$AGENT_PORT"
-        kill_process_tree "$SERVER_PID" "agent server"
+        # Give the Go server enough time to run SIGTERM cleanup. In particular,
+        # Claude Code experimental runs live in detached tmux sessions, and a
+        # fast SIGKILL can leave them orphaned.
+        kill_process_tree "$SERVER_PID" "agent server" 200
         wait "$SERVER_PID" 2>/dev/null
         print_port_status "$AGENT_PORT" "agent"
     fi

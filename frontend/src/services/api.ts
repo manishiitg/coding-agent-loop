@@ -679,8 +679,10 @@ export const agentApi = {
     return response.data
   },
 
-  getChatHistoryConversation: async (sessionId: string): Promise<ChatHistoryConversation> => {
-    const response = await api.get(`/api/chat-history/sessions/${sessionId}`)
+  getChatHistoryConversation: async (sessionId: string, workspacePath?: string): Promise<ChatHistoryConversation> => {
+    const params: Record<string, string> = {}
+    if (workspacePath) params.workspace_path = workspacePath
+    const response = await api.get(`/api/chat-history/sessions/${sessionId}`, { params })
     return response.data
   },
 
@@ -811,29 +813,6 @@ export const agentApi = {
   }> => {
     const body = pids ? { pids } : { all: true };
     const response = await workspaceApi.post('/api/browser/cleanup', body, { timeout: 10000 });
-    return response.data;
-  },
-
-  syncGWSSkills: async (): Promise<{
-    synced: number;
-    failed?: { name: string; error: string }[];
-    error?: string;
-  }> => {
-    const response = await workspaceApi.post('/api/gws-sync-skills', {}, { timeout: 120000 });
-    return response.data;
-  },
-
-  checkGWSAuthStatus: async (): Promise<{
-    configured: boolean;
-    auth_method?: string;
-    token_valid?: boolean;
-    token_error?: string;
-    enabled_api_count?: number;
-    enabled_apis?: string[];
-    scope_count?: number;
-    error?: string;
-  }> => {
-    const response = await workspaceApi.get('/api/gws-auth-status', { timeout: 10000 });
     return response.data;
   },
 

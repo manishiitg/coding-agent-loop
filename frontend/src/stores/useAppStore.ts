@@ -43,8 +43,7 @@ interface AppState {
   lastSelectedSkills: string[]
   lastBrowserMode: 'none' | 'headless' | 'cdp' | 'playwright'
   lastEnableImageGeneration: boolean
-  lastGWSAccess: boolean
-  syncLastTabSettings: (update: Partial<Pick<AppState, 'lastSelectedSkills' | 'lastBrowserMode' | 'lastEnableImageGeneration' | 'lastGWSAccess'>>) => void
+  syncLastTabSettings: (update: Partial<Pick<AppState, 'lastSelectedSkills' | 'lastBrowserMode' | 'lastEnableImageGeneration'>>) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -155,7 +154,6 @@ export const useAppStore = create<AppState>()(
         lastSelectedSkills: [],
         lastBrowserMode: 'none',
         lastEnableImageGeneration: false,
-        lastGWSAccess: false,
         syncLastTabSettings: (update) => {
           set(update)
         },
@@ -174,8 +172,7 @@ export const useAppStore = create<AppState>()(
         useCodeExecutionMode: state.useCodeExecutionMode,
         lastSelectedSkills: state.lastSelectedSkills,
         lastBrowserMode: state.lastBrowserMode,
-        lastEnableImageGeneration: state.lastEnableImageGeneration,
-        lastGWSAccess: state.lastGWSAccess
+        lastEnableImageGeneration: state.lastEnableImageGeneration
         // Note: requiresNewChat is not persisted as it's temporary state
         // File context is now mode-specific: multi-agent tabs have their own, workflow uses preset
         }),

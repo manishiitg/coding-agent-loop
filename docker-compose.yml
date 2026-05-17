@@ -31,12 +31,10 @@ services:
       # MCP Cache Configuration
       - MCP_CACHE_TTL_MINUTES=${MCP_CACHE_TTL_MINUTES:-10080}
       - WORKSPACE_ENABLE_GITHUB_SYNC=${WORKSPACE_ENABLE_GITHUB_SYNC:-true}
-      - GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/app/gws-credentials.json
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./workspace-docs:/app/workspace-docs
-      - ./agent_go/gws-credentials.json:/app/gws-credentials.json:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]

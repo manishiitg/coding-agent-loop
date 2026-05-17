@@ -177,6 +177,7 @@ Edit ` + "`" + absConfig + `/delegation-tier-config.json` + "`" + ` to change wh
 ## Published LLMs & Provider Auth
 Published LLM metadata lives in ` + "`" + absConfig + `/published-llms.json` + "`" + `. Provider authentication lives separately in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + `.
 - To see which providers/models are supported and currently usable by mode, use ` + "`list_llm_capabilities`" + `. It covers ` + "`chat`" + `, ` + "`search_web`" + `, ` + "`read_image`" + `, ` + "`read_video`" + `, ` + "`generate_image`" + `, ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, and ` + "`generate_music`" + `, including auth/runtime availability and static pricing metadata where available.
+- When choosing a concrete provider-backed model for search, media reading, media generation, transcription, or music, call ` + "`list_llm_capabilities(capability=\"...\", include_models=true)`" + ` first and pass ` + "`provider`" + ` and ` + "`model_id`" + ` together from the same capability entry. Do not pass only ` + "`model_id`" + ` and rely on provider inference.
 - Estimate priced generation/transcription costs with ` + "`estimate_llm_cost`" + ` for ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, and ` + "`generate_music`" + `. Treat results as estimates and verify provider pricing before high-volume runs.
 - Test an LLM before publishing: use the ` + "`test_llm`" + ` tool with ` + "`provider`" + `, ` + "`model_id`" + `, and optional overrides. It uses workspace-backed provider auth by default.
 - List the frontend-known models for a provider: use the ` + "`list_provider_models`" + ` tool. It uses the same shared metadata catalog as the frontend model picker.
@@ -186,7 +187,7 @@ Published LLM metadata lives in ` + "`" + absConfig + `/published-llms.json` + "
 - Update provider auth with the ` + "`set_provider_auth`" + ` tool.
 - Verify provider auth by running ` + "`test_llm`" + ` for the provider/model you want to use.
 - Prefer shell commands only for published LLM metadata in ` + "`" + absConfig + `/published-llms.json` + "`" + `. Use tools for provider-auth operations.
-- ` + "`search_web_llm`" + ` selects models from ` + "`" + absConfig + `/published-llms.json` + "`" + `. Its ` + "`provider`" + ` argument is required; ` + "`model_id`" + ` is optional and defaults to a working search-capable model for that provider.
+- ` + "`search_web_llm`" + ` selects models from ` + "`" + absConfig + `/published-llms.json` + "`" + `. Its ` + "`provider`" + ` argument is required; ` + "`model_id`" + ` is optional only when accepting a working search-capable model for that provider.
 - Use ` + "`search_role`" + ` to control routing:
   - ` + "`\"primary\"`" + ` = preferred default search provider
   - ` + "`\"fallback\"`" + ` = backup search provider
@@ -205,6 +206,7 @@ Image generation defaults live in ` + "`" + absConfig + `/image-generation-confi
 - Do not infer image-generation support from ` + "`list_provider_models`" + ` or the normal LLM model catalog. Those lists are for chat/text models, not image models.
 - MiniMax image generation is supported via provider ` + "`minimax-coding-plan`" + ` with model ` + "`image-01`" + `.
 - Vertex image generation is supported via provider ` + "`vertex`" + ` with models such as ` + "`gemini-3.1-flash-image-preview`" + ` and ` + "`gemini-3-pro-image-preview`" + `.
+- For one-off ` + "`image_gen`" + ` or ` + "`image_edit`" + ` calls, use ` + "`list_llm_capabilities(capability=\"generate_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
 
 ## Image Analysis Defaults
 Image understanding for the ` + "`read_image`" + ` tool can be routed via ` + "`" + absConfig + `/image-analysis-config.json` + "`" + `.
@@ -213,6 +215,7 @@ Image understanding for the ` + "`read_image`" + ` tool can be routed via ` + "`
 - Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3-pro-preview\"},\"fallbacks\":[{\"provider\":\"z-ai\",\"model_id\":\"glm-4.6v\"},{\"provider\":\"kimi\",\"model_id\":\"kimi-k2.6\"},{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"},{\"provider\":\"claude-code\",\"model_id\":\"claude-code\"}]}`" + `
 - If this file exists, ` + "`read_image`" + ` uses its ` + "`primary`" + ` and ordered ` + "`fallbacks`" + ` with workspace provider auth.
 - If this file does not exist, ` + "`read_image`" + ` falls back to the current chat model.
+- For one-off ` + "`read_image`" + ` calls, use ` + "`list_llm_capabilities(capability=\"read_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
 - MiniMax coding-plan is not currently a supported ` + "`read_image`" + ` provider because the adapter does not receive image content reliably.
 - Kimi image understanding is supported via provider ` + "`kimi`" + ` with model ` + "`kimi-k2.6`" + `.
 - Codex CLI image understanding is supported via provider ` + "`codex-cli`" + ` by passing the local workspace image path to Codex CLI.
@@ -220,9 +223,10 @@ Image understanding for the ` + "`read_image`" + ` tool can be routed via ` + "`
 - Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using the ` + "`set_provider_auth`" + ` tool; do not hand-edit the encrypted auth file.
 
 ## Video Analysis
-Video understanding is available through the ` + "`read_video(filepath, query, provider?)`" + ` tool.
+Video understanding is available through the ` + "`read_video(filepath, query, provider?, model_id?)`" + ` tool.
 - Default provider/model: ` + "`kimi`" + ` with ` + "`kimi-k2.6`" + `. It uploads the workspace video to Moonshot/Kimi file storage with ` + "`purpose=video`" + `, then references it as ` + "`ms://<file-id>`" + ` in the chat request.
 - Optional provider: ` + "`z-ai`" + `. It invokes the Z.AI Vision MCP server (` + "`npx -y @z_ai/mcp-server@latest`" + `) and calls the ` + "`video_analysis`" + ` tool with ` + "`Z_AI_MODE=ZAI`" + `.
+- For one-off ` + "`read_video`" + ` calls, use ` + "`list_llm_capabilities(capability=\"read_video\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
 - Kimi-supported formats: ` + "`mp4`" + `, ` + "`mpeg`" + `, ` + "`mov`" + `, ` + "`avi`" + `, ` + "`flv`" + `, ` + "`mpg`" + `, ` + "`webm`" + `, ` + "`wmv`" + `, ` + "`3gp`" + `, ` + "`3gpp`" + `.
 - Z.AI MCP-supported formats: ` + "`mp4`" + `, ` + "`mov`" + `, ` + "`m4v`" + `; max file size ` + "`8 MB`" + `.
 - Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using ` + "`set_provider_auth(provider=\"kimi\", api_key=\"...\")`" + ` or ` + "`set_provider_auth(provider=\"z-ai\", api_key=\"...\")`" + `; do not hand-edit the encrypted auth file.
@@ -813,17 +817,7 @@ The following skills are available for this conversation. Each skill extends you
 `)
 	}
 
-	// Group gws-* skills into a single entry; list all others individually
-	gwsAdded := false
 	for _, folderName := range selectedSkills {
-		if strings.HasPrefix(folderName, "gws-") {
-			if !gwsAdded {
-				gwsAdded = true
-				promptParts = append(promptParts,
-					fmt.Sprintf("- **Google Workspace (gws-\\*)**: Drive, Gmail, Calendar, Docs, Sheets, Slides, and shared utilities.\n  List available: `execute_shell_command(command: \"ls %s/gws-*/SKILL.md\")`", absSkills))
-			}
-			continue
-		}
 		skill, err := skills.GetSkill(workspaceAPIURL, folderName)
 		absPath := fmt.Sprintf("%s/%s/SKILL.md", absSkills, folderName)
 		if err != nil {
@@ -1225,9 +1219,4 @@ func buildLearningsSummary(client *skills.WorkspaceAPIClient, wsPath string) str
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-// getGWSQuickStartInstructions returns inline instructions for using Google Workspace via the gws CLI.
-func getGWSQuickStartInstructions() string {
-	return browserinstructions.GetGWSQuickStartInstructions()
 }

@@ -133,8 +133,6 @@ export interface AgentQueryRequest {
   enable_browser_access?: boolean // Enable/disable browser automation tool (auto-enables workspace when true)
   // Explicit browser mode for prompt/runtime selection
   browser_mode?: 'none' | 'headless' | 'cdp' | 'playwright'
-  // Google Workspace access configuration
-  enable_gws_access?: boolean // Enable/disable Google Workspace CLI access
   // CDP port for connecting to an existing Chrome browser (local mode only)
   cdp_port?: number
   // Context editing configuration
@@ -780,13 +778,33 @@ export interface ChatHistoryMessage {
 export interface ChatHistoryConversation {
   session_id: string;
   agent_mode?: string;
+  runtime?: ChatHistoryAgentRuntime;
   conversation_history: ChatHistoryMessage[];
+  ui_events?: PollingEventSchema[];
   updated_at?: string;
+}
+
+export interface ChatHistoryAgentRuntime {
+  kind?: string;
+  provider?: string;
+  model_id?: string;
+  external_session_id?: string;
+  resume_supported: boolean;
+  resume_flag?: string;
+  project_dir_id?: string;
+  workspace_path?: string;
+  captured_at?: string;
+}
+
+export interface ChatHistoryPreviewMessage {
+  role: string;
+  text: string;
 }
 
 export interface ChatHistorySession {
   session_id: string;
   agent_mode?: string;
+  runtime?: ChatHistoryAgentRuntime;
   status?: string;
   query?: string;
   user_id?: string;
@@ -795,6 +813,7 @@ export interface ChatHistorySession {
   created_at?: string;
   updated_at?: string;
   message_count?: number;
+  preview_messages?: ChatHistoryPreviewMessage[];
 }
 
 export interface ChatHistoryCleanupResult {

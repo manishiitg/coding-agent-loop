@@ -12,6 +12,11 @@ import { useAppStore } from '../../stores/useAppStore'
 import { sanitizeDisplayNameForFolder } from '../../utils/workflowUtils'
 import { logger } from '../../utils/logger'
 import {
+  PreviousChatHistoryPanel,
+  chatHistoryConversationPath,
+  chatHistorySessionTitle,
+} from '../PreviousChatHistoryPanel'
+import {
   REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
   REPORT_PREVIEW_PREFERENCE_KEY,
 } from './ReportViewer'
@@ -23,7 +28,8 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   hideHeader?: boolean
   hideInput?: boolean
   compact?: boolean
-}>(({ onNewChat, hideHeader, hideInput, compact }, ref) => {
+  hidePhaseChatEmptyState?: boolean
+}>(({ onNewChat, hideHeader, hideInput, compact, hidePhaseChatEmptyState }, ref) => {
   // Only pass tabId if the active tab belongs to workflow mode AND the current preset.
   // Legacy/restored builder tabs may not have presetQueryId, so allow those only when
   // there is no exact tab for the active preset; otherwise they disappear from the UI.
@@ -71,6 +77,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
       hideHeader={hideHeader}
       hideInput={effectiveHideInput}
       compact={compact}
+      hidePhaseChatEmptyState={hidePhaseChatEmptyState}
       // Pass null (not undefined) when no tab matches the active workflow preset.
       // Otherwise ChatArea falls back to the global activeTabId and can briefly
       // render the previous workflow's blocking human-feedback/auth prompt.
@@ -79,7 +86,12 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   )
 })
 import { agentApi, workflowManifestApi } from '../../services/api'
-import { type ActiveSessionInfo, type ExecutionOptions, type PollingEvent } from '../../services/api-types'
+import {
+  type ActiveSessionInfo,
+  type ChatHistorySession,
+  type ExecutionOptions,
+  type PollingEvent,
+} from '../../services/api-types'
 import { getRawEventData } from '../../generated/event-types'
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
 // hydrateTabEvents removed - no longer hydrating inactive tabs on reload to prevent page hang
@@ -90,6 +102,58 @@ const WORKFLOW_RESTORE_TIMEOUT_MS = 8000
 
 function normalizeWorkflowPath(path?: string | null): string {
   return (path || '').replace(/\/+$/, '')
+}
+
+const WorkflowPreviousChatsPanel: React.FC<{
+  workspacePath: string
+  onHasChatsChange?: (hasChats: boolean) => void
+}> = ({ workspacePath, onHasChatsChange }) => {
+  const activeTabId = useChatStore(state => state.activeTabId)
+  const activeSessionId = useChatStore(state => {
+    const tabId = state.activeTabId
+    return tabId ? state.chatTabs[tabId]?.sessionId : undefined
+  })
+  const setTabConfig = useChatStore(state => state.setTabConfig)
+  const addToast = useChatStore(state => state.addToast)
+
+  const handleAttachPreviousChat = useCallback((session: ChatHistorySession) => {
+    if (!activeTabId) {
+      addToast('No active workflow chat to attach to', 'error')
+      return
+    }
+
+    const path = chatHistoryConversationPath(session)
+    const existingContext = useChatStore.getState().getTabConfig(activeTabId)?.fileContext || []
+    const nextFileContext = existingContext.some(item => item.path === path)
+      ? existingContext
+      : [
+          ...existingContext,
+          {
+            name: chatHistorySessionTitle(session),
+            path,
+            type: 'file' as const,
+          },
+        ]
+
+    setTabConfig(activeTabId, {
+      fileContext: nextFileContext,
+      restoredConversationPath: path,
+      restoredConversationSummary: undefined,
+    })
+    addToast('Previous chat added to context', 'success')
+  }, [activeTabId, addToast, setTabConfig])
+
+  return (
+    <PreviousChatHistoryPanel
+      workspacePath={workspacePath}
+      activeSessionId={activeSessionId ?? undefined}
+      title="Previous workflow chats"
+      actionLabel="Attach"
+      emptyText="No previous workflow chats yet."
+      onHasChatsChange={onHasChatsChange}
+      onSelectSession={handleAttachPreviousChat}
+    />
+  )
 }
 
 function isLiveWorkflowSessionForPreset(session: ActiveSessionInfo, presetId: string, workspacePath?: string | null): boolean {
@@ -345,6 +409,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Lifted into useChatStore so ChatArea can render an in-panel spinner during restore.
   const isRestoringWorkflowSessions = useChatStore(state => state.isRestoringWorkflowSessions)
   const setIsRestoringWorkflowSessions = useChatStore(state => state.setIsRestoringWorkflowSessions)
+  const [hasPreviousWorkflowChats, setHasPreviousWorkflowChats] = useState(false)
   useEffect(() => {
     if (!isRestoringWorkflowSessions) return
     const timeout = window.setTimeout(() => {
@@ -449,7 +514,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     const eventCount = tab.sessionId ? (state.tabEvents[tab.sessionId]?.length || 0) : 0
     return eventCount === 0
   })
-
   // Keep the last concrete workspace path for the active preset during manifest
   // refreshes. A transient null here unmounts the report pane and makes toolbar
   // popups think the user switched workflows.
@@ -477,6 +541,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
     return null
   }, [activePresetId, activeWorkflowWorkspacePath])
+
+  useEffect(() => {
+    if (!showResumeHint || !workspacePath) {
+      setHasPreviousWorkflowChats(false)
+    }
+  }, [showResumeHint, workspacePath])
 
   const [reportPreviewPreference, setReportPreviewPreference] = useState<'auto' | 'desktop' | 'tablet' | 'mobile'>(() => {
     try {
@@ -1422,12 +1492,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               </div>
             )}
 
-            {showResumeHint && (
-              <div className="flex shrink-0 items-center gap-1.5 border-b border-border bg-muted/20 px-2 py-1">
-                <span className="truncate text-[11px] leading-4 text-muted-foreground">
-                  Need older context? Type <span className="font-mono text-foreground">/resume</span> to attach a previous chat thread.
-                </span>
-              </div>
+            {showResumeHint && workspacePath && (
+              <WorkflowPreviousChatsPanel
+                workspacePath={workspacePath}
+                onHasChatsChange={setHasPreviousWorkflowChats}
+              />
             )}
 
             <div className="min-h-[320px] flex-1">
@@ -1437,6 +1506,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 hideHeader
                 hideInput
                 compact
+                hidePhaseChatEmptyState={showResumeHint && hasPreviousWorkflowChats}
               />
             </div>
           </div>

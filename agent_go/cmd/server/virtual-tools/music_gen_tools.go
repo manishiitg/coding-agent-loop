@@ -123,7 +123,7 @@ func GetGenerateMusicToolDefinition() llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
 			Name:        generateMusicToolName,
-			Description: "Generate music using ElevenLabs Music or MiniMax Music. Requires a workspace-relative output_path. Defaults to ElevenLabs music_v1; pass provider=\"minimax\" to use MiniMax music-2.6.",
+			Description: "Generate music using ElevenLabs Music or MiniMax Music. Requires a full absolute output_path under the workspace docs root. Before choosing provider/model_id, call list_llm_capabilities(capability=\"generate_music\", include_models=true). If you pass model_id, also pass the matching provider from that capability result; do not pass model_id by itself. Defaults to ElevenLabs music_v1.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -133,16 +133,16 @@ func GetGenerateMusicToolDefinition() llmtypes.Tool {
 					},
 					"output_path": map[string]interface{}{
 						"type":        "string",
-						"description": "Required destination path for the generated music inside the workspace, e.g. 'Chats/generated-music/theme.mp3'. If multiple music items are returned, files are saved as '-1', '-2', etc. before the extension.",
+						"description": "Required full absolute destination path under the workspace docs root for the generated music, e.g. '/Users/.../workspace-docs/_users/default/Chats/generated-music/theme.mp3'. Workspace-relative paths are rejected. If multiple music items are returned, files are saved as '-1', '-2', etc. before the extension.",
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional provider override. Supported values: elevenlabs, minimax.",
+						"description": "Optional provider override. Discover usable provider/model pairs with list_llm_capabilities(capability=\"generate_music\", include_models=true). Supported values: elevenlabs, minimax. If specifying model_id, pass the matching provider too.",
 						"enum":        []interface{}{"elevenlabs", "minimax"},
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional model id. ElevenLabs default: music_v1. MiniMax examples: music-2.6, music-2.6-free.",
+						"description": "Optional model id. Use a model from list_llm_capabilities(capability=\"generate_music\", include_models=true), and pass the matching provider in the same call. ElevenLabs default: music_v1. MiniMax examples: music-2.6, music-2.6-free.",
 						"enum":        []interface{}{"music_v1", "music-2.6", "music-2.6-free", "music-cover", "music-cover-free"},
 					},
 					"duration_ms": map[string]interface{}{
@@ -199,10 +199,11 @@ func CreateMusicGenExecutor(cfg AudioGenExecutorConfig) func(ctx context.Context
 		}
 
 		outputPath, _ := args["output_path"].(string)
-		outputPath = normalizeWorkspaceDocumentPath(outputPath)
-		if strings.TrimSpace(outputPath) == "" {
-			return "", fmt.Errorf("output_path is required")
+		normalizedOutputPath, err := normalizeRequiredAbsoluteWorkspaceDocumentPath(outputPath, "output_path")
+		if err != nil {
+			return "", err
 		}
+		outputPath = normalizedOutputPath
 		if err := validateGuardedAudioOutputPath(ctx, cfg, outputPath); err != nil {
 			return "", err
 		}

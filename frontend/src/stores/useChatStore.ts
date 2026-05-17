@@ -265,7 +265,6 @@ export interface ChatTabConfig {
   enableContextSummarization?: boolean  // Context summarization setting
   browserMode?: 'none' | 'headless' | 'cdp' | 'playwright'  // Browser access mode (default: 'none')
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
-  enableGWSAccess?: boolean  // Enable/disable Google Workspace CLI access
   useCdp?: boolean  // Whether CDP mode is enabled (connect to local Chrome)
   cdpPort?: number  // CDP port (default 9222)
   delegationTierConfig?: DelegationTierConfig  // Per-tab delegation tier config (multi-agent mode)
@@ -359,7 +358,6 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
     browserMode: appStore?.lastBrowserMode ?? 'none',
     enableBrowserAccess: (appStore?.lastBrowserMode === 'headless' || appStore?.lastBrowserMode === 'cdp') ?? false,
     enableImageGeneration: appStore?.lastEnableImageGeneration ?? false,
-    enableGWSAccess: appStore?.lastGWSAccess ?? false,
     selectedSkills: appStore?.lastSelectedSkills ?? [],
     delegationTierConfig: undefined,
     queuedMessages: [],
@@ -455,7 +453,10 @@ interface ChatState extends StoreActions {
   // Only tracks parent agent streaming - sub-agent streaming routed to delegationStreamingText
   streamingText: Record<string, string>  // sessionId → accumulated streaming text (response content only)
   streamingStatus: Record<string, string>  // sessionId → latest status/heartbeat message (⏳/⚠️ messages)
+  streamingTerminalText: Record<string, string>  // sessionId → latest live terminal/screen snapshot
+  streamingTerminalActive: Record<string, boolean>  // sessionId → true while live terminal snapshots are arriving
   lastStreamingChunkIndex: Record<string, number>  // sessionId → last processed chunk_index (dedup guard)
+  lastStreamingTerminalChunkIndex: Record<string, number>  // sessionId → last terminal snapshot chunk_index
   completedStreamingText: Record<string, string>  // sessionId → preserved streaming text after generation completes
 
   // Sub-agent streaming text accumulation (per delegation)
@@ -559,7 +560,10 @@ interface ChatState extends StoreActions {
   
   // Streaming text actions
   appendStreamingChunk: (sessionId: string, chunkIndex: number, chunk: string) => void
+  setStreamingTerminalSnapshot: (sessionId: string, chunkIndex: number, chunk: string) => void
+  setStreamingTerminalActive: (sessionId: string, active: boolean) => void
   clearStreamingText: (sessionId: string) => void
+  clearStreamingTerminal: (sessionId: string) => void
   clearStreamingStatus: (sessionId: string) => void
 
   // Delegation streaming text actions
@@ -616,7 +620,10 @@ export const useChatStore = create<ChatState>()(
       // Streaming text accumulation (per session)
       streamingText: {},
       streamingStatus: {},
+      streamingTerminalText: {},
+      streamingTerminalActive: {},
       lastStreamingChunkIndex: {},
+      lastStreamingTerminalChunkIndex: {},
       completedStreamingText: {},
 
       // Sub-agent streaming text accumulation (per delegation)
@@ -928,6 +935,12 @@ export const useChatStore = create<ChatState>()(
           delete newStreamingText[sessionId]
           const newStreamingStatus = { ...state.streamingStatus }
           delete newStreamingStatus[sessionId]
+          const newStreamingTerminalText = { ...state.streamingTerminalText }
+          delete newStreamingTerminalText[sessionId]
+          const newStreamingTerminalActive = { ...state.streamingTerminalActive }
+          delete newStreamingTerminalActive[sessionId]
+          const newLastStreamingTerminalChunkIndex = { ...state.lastStreamingTerminalChunkIndex }
+          delete newLastStreamingTerminalChunkIndex[sessionId]
           const newLastStreamingChunkIndex = { ...state.lastStreamingChunkIndex }
           delete newLastStreamingChunkIndex[sessionId]
           const newCompletedStreamingText = { ...state.completedStreamingText }
@@ -939,7 +952,10 @@ export const useChatStore = create<ChatState>()(
             tabHasMoreOlderEvents: newTabHasMoreOlderEvents,
             streamingText: newStreamingText,
             streamingStatus: newStreamingStatus,
+            streamingTerminalText: newStreamingTerminalText,
+            streamingTerminalActive: newStreamingTerminalActive,
             lastStreamingChunkIndex: newLastStreamingChunkIndex,
+            lastStreamingTerminalChunkIndex: newLastStreamingTerminalChunkIndex,
             completedStreamingText: newCompletedStreamingText
           }
         })
@@ -1200,6 +1216,46 @@ export const useChatStore = create<ChatState>()(
         })
       },
 
+      setStreamingTerminalSnapshot: (sessionId: string, chunkIndex: number, chunk: string) => {
+        if (typeof chunk !== 'string' || !chunk) return
+
+        set((state) => {
+          const lastIndex = state.lastStreamingTerminalChunkIndex[sessionId] ?? -1
+          if (chunkIndex >= 0 && chunkIndex <= lastIndex) {
+            return state
+          }
+          const newStreamingStatus = { ...state.streamingStatus }
+          delete newStreamingStatus[sessionId]
+          return {
+            streamingTerminalText: {
+              ...state.streamingTerminalText,
+              [sessionId]: chunk
+            },
+            streamingTerminalActive: {
+              ...state.streamingTerminalActive,
+              [sessionId]: true
+            },
+            streamingStatus: newStreamingStatus,
+            lastStreamingTerminalChunkIndex: {
+              ...state.lastStreamingTerminalChunkIndex,
+              [sessionId]: chunkIndex
+            }
+          }
+        })
+      },
+
+      setStreamingTerminalActive: (sessionId: string, active: boolean) => {
+        set((state) => {
+          const nextStreamingTerminalActive = { ...state.streamingTerminalActive }
+          if (active) {
+            nextStreamingTerminalActive[sessionId] = true
+          } else {
+            delete nextStreamingTerminalActive[sessionId]
+          }
+          return { streamingTerminalActive: nextStreamingTerminalActive }
+        })
+      },
+
       clearStreamingText: (sessionId: string) => {
         // Cancel any pending inactivity timer
         if (_streamingInactivityTimers[sessionId]) {
@@ -1224,7 +1280,28 @@ export const useChatStore = create<ChatState>()(
               : currentText
             newCompletedStreamingText[sessionId] = capCompletedStreamingText(nextCompletedText)
           }
-          return { streamingText: newStreamingText, streamingStatus: newStreamingStatus, lastStreamingChunkIndex: newLastIdx, completedStreamingText: newCompletedStreamingText }
+          return {
+            streamingText: newStreamingText,
+            streamingStatus: newStreamingStatus,
+            lastStreamingChunkIndex: newLastIdx,
+            completedStreamingText: newCompletedStreamingText
+          }
+        })
+      },
+
+      clearStreamingTerminal: (sessionId: string) => {
+        set((state) => {
+          const newStreamingTerminalText = { ...state.streamingTerminalText }
+          delete newStreamingTerminalText[sessionId]
+          const newStreamingTerminalActive = { ...state.streamingTerminalActive }
+          delete newStreamingTerminalActive[sessionId]
+          const newLastTerminalIdx = { ...state.lastStreamingTerminalChunkIndex }
+          delete newLastTerminalIdx[sessionId]
+          return {
+            streamingTerminalText: newStreamingTerminalText,
+            streamingTerminalActive: newStreamingTerminalActive,
+            lastStreamingTerminalChunkIndex: newLastTerminalIdx
+          }
         })
       },
 
@@ -1413,7 +1490,10 @@ export const useChatStore = create<ChatState>()(
           activeTabId: null,
           streamingText: {},
           streamingStatus: {},
+          streamingTerminalText: {},
+          streamingTerminalActive: {},
           lastStreamingChunkIndex: {},
+          lastStreamingTerminalChunkIndex: {},
           completedStreamingText: {},
           delegationStreamingText: {},
           lastDelegationChunkIndex: {}
@@ -1686,9 +1766,21 @@ export const useChatStore = create<ChatState>()(
           delete newStreamingText[tab.sessionId]
           updates.streamingText = newStreamingText
 
+          const newStreamingTerminalText = { ...state.streamingTerminalText }
+          delete newStreamingTerminalText[tab.sessionId]
+          updates.streamingTerminalText = newStreamingTerminalText
+
+          const newStreamingTerminalActive = { ...state.streamingTerminalActive }
+          delete newStreamingTerminalActive[tab.sessionId]
+          updates.streamingTerminalActive = newStreamingTerminalActive
+
           const newLastChunkIndex = { ...state.lastStreamingChunkIndex }
           delete newLastChunkIndex[tab.sessionId]
           updates.lastStreamingChunkIndex = newLastChunkIndex
+
+          const newLastTerminalChunkIndex = { ...state.lastStreamingTerminalChunkIndex }
+          delete newLastTerminalChunkIndex[tab.sessionId]
+          updates.lastStreamingTerminalChunkIndex = newLastTerminalChunkIndex
 
           const newStreamingStatus = { ...state.streamingStatus }
           delete newStreamingStatus[tab.sessionId]
@@ -1948,13 +2040,11 @@ export const useChatStore = create<ChatState>()(
             lastSelectedSkills?: string[]
             lastBrowserMode?: 'none' | 'headless' | 'cdp' | 'playwright'
             lastEnableImageGeneration?: boolean
-            lastGWSAccess?: boolean
           }
           const sync: SyncUpdate = {}
           if (configUpdate.selectedSkills !== undefined) sync.lastSelectedSkills = configUpdate.selectedSkills
           if (configUpdate.browserMode !== undefined) sync.lastBrowserMode = configUpdate.browserMode
           if (configUpdate.enableImageGeneration !== undefined) sync.lastEnableImageGeneration = configUpdate.enableImageGeneration
-          if (configUpdate.enableGWSAccess !== undefined) sync.lastGWSAccess = configUpdate.enableGWSAccess
           if (Object.keys(sync).length > 0) {
             console.log('[TabSettings] Syncing to AppStore:', sync)
             useAppStore.getState().syncLastTabSettings(sync)

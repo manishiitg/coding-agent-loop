@@ -15,6 +15,7 @@ type ReadVideoParams struct {
 	Filepath string `json:"filepath"`
 	Query    string `json:"query"`
 	Provider string `json:"provider,omitempty"`
+	ModelID  string `json:"model_id,omitempty"`
 }
 
 // ReadVideoResult is the structured result from ReadVideo (pure I/O).
@@ -23,6 +24,7 @@ type ReadVideoResult struct {
 	Filepath string `json:"filepath"`
 	Query    string `json:"query"`
 	Provider string `json:"provider,omitempty"`
+	ModelID  string `json:"model_id,omitempty"`
 	MimeType string `json:"mime_type"`
 	Data     string `json:"data"` // base64-encoded video bytes
 }
@@ -75,17 +77,21 @@ func (c *Client) ReadVideo(ctx context.Context, params ReadVideoParams) (string,
 	if params.Query == "" {
 		return "", fmt.Errorf("query is required")
 	}
-
-	if err := c.ValidatePath(params.Filepath, false); err != nil {
+	absolutePath, guardPath, err := normalizeWorkspaceAbsoluteToolPath(params.Filepath, "filepath", "read_video")
+	if err != nil {
 		return "", err
 	}
 
-	ext := strings.ToLower(filepath.Ext(params.Filepath))
+	if err := c.ValidatePathWithContext(ctx, guardPath, false); err != nil {
+		return "", err
+	}
+
+	ext := strings.ToLower(filepath.Ext(absolutePath))
 	if !supportedVideoReadExtensions[ext] {
 		return "", fmt.Errorf("unsupported video format (got extension: %s). Supported: mp4, mpeg, mov, avi, flv, mpg, webm, wmv, 3gp, 3gpp", ext)
 	}
 
-	pathSegments := strings.Split(params.Filepath, "/")
+	pathSegments := strings.Split(filepath.ToSlash(guardPath), "/")
 	encodedSegments := make([]string, len(pathSegments))
 	for i, segment := range pathSegments {
 		encodedSegments[i] = url.PathEscape(segment)
@@ -103,10 +109,11 @@ func (c *Client) ReadVideo(ctx context.Context, params ReadVideoParams) (string,
 	}
 
 	result := ReadVideoResult{
-		Filepath: params.Filepath,
+		Filepath: absolutePath,
 		Query:    params.Query,
 		Provider: strings.TrimSpace(params.Provider),
-		MimeType: GetVideoMimeType(params.Filepath),
+		ModelID:  strings.TrimSpace(params.ModelID),
+		MimeType: GetVideoMimeType(absolutePath),
 		Data:     base64.StdEncoding.EncodeToString(rawData),
 	}
 

@@ -25,7 +25,7 @@ Runloop is built for teams that want more than a chat box:
 - Mix and match the best coding and reasoning models for each step
 - Schedule automations, recurring jobs, and background runs
 - Keep humans in the loop with approvals, feedback, and escalation paths
-- Connect agents to Slack, WhatsApp, browsers, Google Workspace, and MCP tools
+- Connect agents to Slack, WhatsApp, browsers, and MCP tools
 
 ## Why Runloop
 
@@ -54,7 +54,6 @@ Runloop is built for teams that want more than a chat box:
 ### Channels, Tools, and Connectors
 
 - **Slack**, **WhatsApp**, and custom webhook-based chat surfaces
-- **Google Workspace** for Gmail, Drive, Calendar, Docs, and Sheets
 - **Browser automation** through Vercel Agent-Browser, Playwright, and local CDP bridging
 - **MCP servers**, local tools, workspace files, and custom connectors
 
@@ -95,7 +94,6 @@ Deploy with deterministic controls designed for strict environments.
 
 ### 👁️ Automation, Connectors, and Browser Control
 Connect agents to real systems and communication channels.
-- **[Google Workspace (GWS)](docs/core/google_workspace_integration.md):** Native CLI injection grants agents deterministic, scoped access to Gmail, Drive, Calendar, Docs, and Sheets.
 - **[Vercel Agent-Browser](https://github.com/vercel-labs/agent-browser):** High-level browser automation engine used for complex web interactions, DOM analysis, and visual grounding.
 - **[Browser System](docs/core/browser.md):** Covers browser session management, runtime limits, and browser integration patterns across providers.
 - **[Bot Connectors](docs/core/bot_connector_system.md):** Expose specialized agent sessions through Slack, WhatsApp, the web simulator, and custom connector surfaces.

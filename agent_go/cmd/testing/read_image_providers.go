@@ -62,11 +62,15 @@ func runReadImageProvidersTest(cmd *cobra.Command, args []string) error {
 	}
 
 	imagePath := strings.TrimSpace(viper.GetString("read-image-providers.image-path"))
+	defaultImagePath := defaultReadImageProviderTestPath()
 	if imagePath == "" {
-		imagePath = defaultReadImageProviderTestPath()
+		imagePath = defaultImagePath
 	}
 	if imagePath == "" {
-		return fmt.Errorf("image path is required; pass --image-path with a workspace-relative image path")
+		return fmt.Errorf("image path is required; pass --image-path with a full absolute workspace-docs image path")
+	}
+	if !filepath.IsAbs(imagePath) {
+		return fmt.Errorf("--image-path must be a full absolute workspace-docs path, got %q", imagePath)
 	}
 
 	query := strings.TrimSpace(viper.GetString("read-image-providers.query"))
@@ -74,7 +78,7 @@ func runReadImageProvidersTest(cmd *cobra.Command, args []string) error {
 		query = "Describe the visible image content in one concise sentence."
 	}
 	expectAny := parseCSVList(viper.GetString("read-image-providers.expect-any"))
-	if len(expectAny) == 0 && imagePath == defaultReadImageProviderTestPath() {
+	if len(expectAny) == 0 && imagePath == defaultImagePath && strings.HasSuffix(filepath.ToSlash(imagePath), "/google.png") {
 		expectAny = []string{"google"}
 	}
 
@@ -229,16 +233,11 @@ func loadTestingEnvFiles() {
 }
 
 func defaultReadImageProviderTestPath() string {
-	candidates := []string{
+	return firstExistingWorkspaceDocsAbsoluteTestPath(
 		"_users/default/Chats/misc-topic/google.png",
+		"_users/default/Downloads/hdfc_after_password_attempt_1.png",
 		"Downloads/hdfc_after_password_attempt_1.png",
-	}
-	for _, candidate := range candidates {
-		if _, err := os.Stat(filepath.Join("workspace-docs", filepath.FromSlash(candidate))); err == nil {
-			return candidate
-		}
-	}
-	return ""
+	)
 }
 
 func defaultReadImageProviderModel(provider string) string {
@@ -413,7 +412,7 @@ func responseContainsAny(value string, markers []string) bool {
 func init() {
 	readImageProvidersTestCmd.Flags().String("workspace-url", "", "Workspace API URL (default: WORKSPACE_API_URL or http://127.0.0.1:8081)")
 	readImageProvidersTestCmd.Flags().String("user-id", "default", "Workspace user ID to use when reading the image")
-	readImageProvidersTestCmd.Flags().String("image-path", "", "Workspace-relative image path to test")
+	readImageProvidersTestCmd.Flags().String("image-path", "", "Full absolute workspace-docs image path to test")
 	readImageProvidersTestCmd.Flags().String("query", "", "Question to ask each image-analysis provider")
 	readImageProvidersTestCmd.Flags().String("expect-any", "", "Comma-separated response markers; at least one must appear. Defaults to google for the built-in google.png test image")
 	readImageProvidersTestCmd.Flags().String("providers", "", "Comma-separated providers to test (default: vertex,z-ai,kimi,codex-cli,claude-code)")

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
@@ -11,6 +13,8 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/common"
+	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchEvents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 
@@ -133,6 +137,7 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	config.MaxRetries = 3
 	config.Timeout = 300 // Same timeout for all agents
 	config.RateLimit = 60
+	config.CodingAgentWorkingDir = resolveCodingAgentWorkingDir(bo.GetWorkspacePath())
 
 	// Inject MCP session ID for connection sharing across agents in the same workflow
 	// When set, connections are stored in a session registry and reused
@@ -161,6 +166,28 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	config.LargeOutputThreshold = bo.GetLargeOutputThreshold()
 
 	return config
+}
+
+func resolveCodingAgentWorkingDir(workspacePath string) string {
+	trimmed := strings.TrimSpace(workspacePath)
+	if trimmed == "" {
+		return ""
+	}
+	if filepath.IsAbs(trimmed) {
+		return filepath.Clean(trimmed)
+	}
+	return filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(trimmed))
+}
+
+func syncCodingAgentWorkingDirWithShellSession(config *agents.OrchestratorAgentConfig) {
+	if config == nil || strings.TrimSpace(config.MCPSessionID) == "" {
+		return
+	}
+	sessionCfg := common.GetSessionShellConfig(config.MCPSessionID)
+	if sessionCfg == nil || strings.TrimSpace(sessionCfg.WorkingDir) == "" {
+		return
+	}
+	config.CodingAgentWorkingDir = resolveCodingAgentWorkingDir(sessionCfg.WorkingDir)
 }
 
 // setupStandardAgent is a private helper that performs the common setup logic for all agent creation methods
@@ -429,6 +456,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 ) (agents.OrchestratorAgent, error) {
 	// Apply overwriteSystemPrompt parameter to config so callers can override default system prompt behavior
 	config.OverwriteSystemPrompt = &overwriteSystemPrompt
+	syncCodingAgentWorkingDirWithShellSession(config)
 
 	// Create agent using provided factory function with pre-created config
 	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())

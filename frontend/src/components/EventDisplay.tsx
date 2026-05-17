@@ -11,6 +11,7 @@ import { useAppStore } from '../stores/useAppStore'
 import { useModeStore } from '../stores/useModeStore'
 import type { PollingEvent, SessionExecutionTreeResponse } from '../services/api-types'
 import { useRenderLogger } from '../utils/renderLogger'
+import { normalizeMarkdownContent } from './ui/MarkdownRenderer'
 
 interface EventDisplayProps {
   onFeedbackSubmitted?: () => void
@@ -29,9 +30,9 @@ const getMarkdownComponents = (compact: boolean) => ({
   h1: ({ children }: { children?: React.ReactNode }) => <h1 className={`${compact ? 'text-lg' : 'text-xl'} font-bold ${compact ? 'mb-2' : 'mb-3'} text-gray-900 dark:text-gray-100`}>{children}</h1>,
   h2: ({ children }: { children?: React.ReactNode }) => <h2 className={`${compact ? 'text-base' : 'text-lg'} font-semibold ${compact ? 'mb-2' : 'mb-2.5'} text-gray-900 dark:text-gray-100`}>{children}</h2>,
   h3: ({ children }: { children?: React.ReactNode }) => <h3 className={`${compact ? 'text-sm' : 'text-base'} font-semibold ${compact ? 'mb-1' : 'mb-2'} text-gray-900 dark:text-gray-100`}>{children}</h3>,
-  ul: ({ children }: { children?: React.ReactNode }) => <ul className={`list-disc ${compact ? 'pl-4 mb-2 space-y-0.5' : 'pl-5 mb-2.5 space-y-1'} text-gray-800 dark:text-gray-200`}>{children}</ul>,
-  ol: ({ children }: { children?: React.ReactNode }) => <ol className={`list-decimal ${compact ? 'pl-4 mb-2 space-y-0.5' : 'pl-5 mb-2.5 space-y-1'} text-gray-800 dark:text-gray-200`}>{children}</ol>,
-  li: ({ children }: { children?: React.ReactNode }) => <li className={`${compact ? 'text-xs' : 'text-xs'} text-gray-800 dark:text-gray-200 leading-relaxed`}>{children}</li>,
+  ul: ({ children }: { children?: React.ReactNode }) => <ul className={`list-disc list-outside ${compact ? 'pl-5 mb-2 space-y-0.5' : 'pl-6 mb-2.5 space-y-1'} text-gray-800 dark:text-gray-200`}>{children}</ul>,
+  ol: ({ children }: { children?: React.ReactNode }) => <ol className={`list-decimal list-outside ${compact ? 'pl-5 mb-2 space-y-0.5' : 'pl-6 mb-2.5 space-y-1'} text-gray-800 dark:text-gray-200`}>{children}</ol>,
+  li: ({ children }: { children?: React.ReactNode }) => <li className={`${compact ? 'text-xs' : 'text-xs'} pl-1 text-gray-800 dark:text-gray-200 leading-relaxed`}>{children}</li>,
   code: ({ children, className, inline }: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) => {
     const language = /language-(\w+)/.exec(className || '')?.[1]?.toLowerCase()
     const isPlainBlock = !inline && ['text', 'txt', 'plain', 'plaintext', 'terminal'].includes(language || '')
@@ -145,6 +146,12 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
   const currentStreamingStatus = useChatStore(state =>
     sessionId ? state.streamingStatus[sessionId] || '' : ''
   )
+  const currentStreamingTerminalText = useChatStore(state =>
+    sessionId ? state.streamingTerminalText[sessionId] || '' : ''
+  )
+  const currentStreamingTerminalActive = useChatStore(state =>
+    sessionId ? state.streamingTerminalActive[sessionId] || false : false
+  )
   const completedStreamingText = useChatStore(state =>
     sessionId ? state.completedStreamingText[sessionId] || '' : ''
   )
@@ -163,6 +170,8 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
     events: events.length,
     hasStreamingText: !!currentStreamingText,
     streamingTextLen: currentStreamingText.length,
+    streamingTerminalTextLen: currentStreamingTerminalText.length,
+    streamingTerminalActive: currentStreamingTerminalActive,
     finalResponse: !!finalResponse,
     isCompleted,
     sessionId,
@@ -176,6 +185,52 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
 
   // Memoize markdown components to avoid re-creating on every render
   const markdownComponents = React.useMemo(() => getMarkdownComponents(compact), [compact])
+  const normalizedStreamingText = React.useMemo(() => normalizeMarkdownContent(currentStreamingText), [currentStreamingText])
+  const normalizedCompletedStreamingText = React.useMemo(() => normalizeMarkdownContent(completedStreamingText), [completedStreamingText])
+  const normalizedFinalResponse = React.useMemo(() => normalizeMarkdownContent(finalResponse || ''), [finalResponse])
+  const hasLiveStreamingText = Boolean(currentStreamingText || currentStreamingStatus)
+  const hasLiveTerminalStream = Boolean(currentStreamingTerminalText && currentStreamingTerminalActive)
+  const streamingPanelTitle = currentStreamingTerminalText && !hasLiveStreamingText ? 'Terminal output' : 'Generating...'
+  const collapseTerminalOutput = Boolean(currentStreamingTerminalText && hasCompletionEvent && !hasLiveStreamingText && !hasLiveTerminalStream)
+  const terminalOutputRef = React.useRef<HTMLDivElement | null>(null)
+  const terminalAutoFollowRef = React.useRef(true)
+  const isTerminalNearBottom = React.useCallback((el: HTMLDivElement) => (
+    el.scrollHeight - el.scrollTop - el.clientHeight < 48
+  ), [])
+  const scrollTerminalOutputToBottom = React.useCallback((force = false) => {
+    requestAnimationFrame(() => {
+      const el = terminalOutputRef.current
+      if (el && (force || terminalAutoFollowRef.current)) {
+        el.scrollTop = el.scrollHeight
+        terminalAutoFollowRef.current = true
+      }
+    })
+  }, [])
+  const handleTerminalOutputScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    terminalAutoFollowRef.current = isTerminalNearBottom(event.currentTarget)
+  }, [isTerminalNearBottom])
+  React.useEffect(() => {
+    if (currentStreamingTerminalActive) {
+      terminalAutoFollowRef.current = true
+    }
+  }, [currentStreamingTerminalActive])
+  React.useEffect(() => {
+    if (currentStreamingTerminalText && !collapseTerminalOutput) {
+      scrollTerminalOutputToBottom()
+    }
+  }, [currentStreamingTerminalText, collapseTerminalOutput, scrollTerminalOutputToBottom])
+  const terminalOutputBlock = currentStreamingTerminalText ? (
+    <div
+      ref={terminalOutputRef}
+      className={`mt-2 ${compact ? 'min-h-[220px] max-h-[60vh] text-[11px] leading-4' : 'min-h-[320px] max-h-[70vh] text-xs leading-5'} overflow-y-auto overflow-x-auto overscroll-y-auto rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-neutral-950/60 [scrollbar-gutter:stable]`}
+      role="region"
+      aria-label="Terminal output"
+      tabIndex={0}
+      onScroll={handleTerminalOutputScroll}
+    >
+      <pre className={`m-0 min-w-max ${compact ? 'p-2' : 'p-3'} whitespace-pre font-mono text-gray-800 dark:text-gray-200`}>{currentStreamingTerminalText}</pre>
+    </div>
+  ) : null
 
   // Handle workflow approval
   const handleApproveWorkflow = React.useCallback(async (requestId: string) => {
@@ -224,22 +279,46 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
       )}
 
       {/* Streaming Text Display - shows LLM output as it generates */}
-      {(currentStreamingText || currentStreamingStatus) && (
+      {(currentStreamingText || currentStreamingTerminalText || currentStreamingStatus) && (
         <Card className="border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-neutral-900/40 shadow-sm min-w-0">
           <CardContent className={`${compact ? 'p-2' : 'p-3'} min-w-0`}>
-            <div className="flex items-center gap-1.5 mb-1">
-              <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" />
-              <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-600 dark:text-gray-400 font-medium`}>
-                Generating...
-              </span>
-            </div>
+            {!collapseTerminalOutput && (
+              <div className="flex items-center gap-1.5 mb-1">
+                {hasLiveStreamingText && (
+                  <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" />
+                )}
+                <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-600 dark:text-gray-400 font-medium`}>
+                  {streamingPanelTitle}
+                </span>
+              </div>
+            )}
             {currentStreamingText && (
               <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {currentStreamingText}
+                  {normalizedStreamingText}
                 </ReactMarkdown>
                 <span className="inline-block w-1.5 h-3 bg-gray-500 animate-pulse ml-0.5" />
               </div>
+            )}
+            {currentStreamingTerminalText && collapseTerminalOutput && (
+              <details
+                className="min-w-0"
+                onToggle={(event) => {
+                  if (event.currentTarget.open) {
+                    scrollTerminalOutputToBottom(true)
+                  }
+                }}
+              >
+                <summary className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-500 dark:text-gray-400 cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 select-none`}>
+                  <span className="inline-flex items-center">
+                    <span>Terminal output</span>
+                  </span>
+                </summary>
+                {terminalOutputBlock}
+              </details>
+            )}
+            {currentStreamingTerminalText && !collapseTerminalOutput && (
+              terminalOutputBlock
             )}
             {currentStreamingStatus && (
               <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-500 dark:text-gray-400 italic mt-1 opacity-75`}>
@@ -260,7 +339,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
           <div className="mt-1 border-l-2 border-gray-200 dark:border-gray-700 pl-2">
             <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[9px]' : 'text-[10px]'} opacity-75`}>
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                {completedStreamingText}
+                {normalizedCompletedStreamingText}
               </ReactMarkdown>
             </div>
           </div>
@@ -285,7 +364,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
             <CardContent className={`${compact ? 'p-3' : 'p-6'} min-w-0`}>
               <div className={`prose ${compact ? 'prose-xs' : 'prose-sm'} max-w-none dark:prose-invert min-w-0`}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {finalResponse}
+                  {normalizedFinalResponse}
                 </ReactMarkdown>
               </div>
             </CardContent>

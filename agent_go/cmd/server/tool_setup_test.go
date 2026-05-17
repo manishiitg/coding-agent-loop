@@ -49,6 +49,39 @@ func TestCollectAdditionalFolderGuardFolders(t *testing.T) {
 	}
 }
 
+func TestWorkspaceAdvancedToolBundleIncludesProviderMediaTools(t *testing.T) {
+	tools, executors, categories := createCustomTools(false, "default", "tool-bundle-test-session")
+
+	toolDefs := map[string]bool{}
+	for _, tool := range tools {
+		if tool.Function != nil {
+			toolDefs[tool.Function.Name] = true
+		}
+	}
+
+	for _, name := range []string{
+		"read_image",
+		"read_video",
+		"search_web_llm",
+		"image_gen",
+		"image_edit",
+		"generate_video",
+		"text_to_speech",
+		"speech_to_text",
+		"generate_music",
+	} {
+		if !toolDefs[name] {
+			t.Fatalf("workspace tool definitions missing %q", name)
+		}
+		if _, ok := executors[name]; !ok {
+			t.Fatalf("workspace tool executors missing %q", name)
+		}
+		if got := categories[name]; got != "workspace_advanced" {
+			t.Fatalf("tool %q category = %q, want workspace_advanced", name, got)
+		}
+	}
+}
+
 // TestChatModeFolderGuardBlockedWrite verifies that wrapExecutorsWithChatModeFolderGuard
 // denies writes to paths under blockedWriteFolders even when the path is under an allowed
 // write prefix. Regression guard for the "option 2" design — this is the prefix+blocklist

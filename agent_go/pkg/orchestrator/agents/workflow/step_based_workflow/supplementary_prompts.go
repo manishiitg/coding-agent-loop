@@ -74,14 +74,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added workflow browser downloads guidance to agent: %s", browserDownloadsPath))
 	}
 
-	// 5. GWS instructions (if gws server is enabled)
-	for _, s := range config.ServerNames {
-		if s == "gws" {
-			mcpAgent.AppendSystemPrompt(browserinstructions.GetGWSQuickStartInstructions())
-			hcpo.GetLogger().Info("📧 Added GWS quick-start instructions to agent")
-			break
-		}
-	}
 }
 
 // resolveBrowserConfig resolves the browser configuration for prompt instructions.

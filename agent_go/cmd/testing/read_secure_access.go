@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
@@ -53,8 +54,11 @@ Example:
 
 		logger.Info(fmt.Sprintf("=== Read Secure Access Check Image Test ==="))
 
-		// Hardcoded image path
-		imagePath := "Downloads/secure_access_check.png"
+		// Hardcoded image path. read_image requires a full absolute path under workspace-docs.
+		imagePath := defaultReadSecureAccessImagePath()
+		if !filepath.IsAbs(imagePath) {
+			return fmt.Errorf("secure access image path must be absolute, got %q", imagePath)
+		}
 		logger.Info(fmt.Sprintf("Testing with image: %s", imagePath))
 
 		// Get provider and model from viper or use defaults
@@ -199,4 +203,14 @@ Example:
 
 		return nil
 	},
+}
+
+func defaultReadSecureAccessImagePath() string {
+	if path := firstExistingWorkspaceDocsAbsoluteTestPath(
+		"_users/default/Downloads/secure_access_check.png",
+		"Downloads/secure_access_check.png",
+	); path != "" {
+		return path
+	}
+	return workspaceDocsAbsoluteTestPath("_users/default/Downloads/secure_access_check.png")
 }

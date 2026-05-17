@@ -2,14 +2,60 @@ package step_based_workflow
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"testing"
 
+	mcpllm "github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 )
+
+func TestCreateStandardAgentConfigUsesWorkflowFolderForCodingAgentWorkingDir(t *testing.T) {
+	docsRoot := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", docsRoot)
+
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(),
+		nil,
+		orchestrator.OrchestratorTypeWorkflow,
+		"",
+		0,
+		"",
+		[]string{"test-server"},
+		nil,
+		false,
+		&orchestrator.LLMConfig{},
+		1,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+	base.SetWorkspacePath("Workflow/testing")
+	base.SetMCPSessionID("workflow-session-123")
+
+	config := base.CreateStandardAgentConfigWithLLM(
+		"step-agent",
+		1,
+		agents.OutputFormatStructured,
+		&orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: string(mcpllm.ProviderCodexCLI),
+				ModelID:  "gpt-5.3-codex-spark",
+			},
+		},
+	)
+
+	want := filepath.Join(docsRoot, "Workflow", "testing")
+	if config.CodingAgentWorkingDir != want {
+		t.Fatalf("CodingAgentWorkingDir = %q, want %q", config.CodingAgentWorkingDir, want)
+	}
+}
 
 func TestInjectStepEnvIntoShellExecutor_OverridesStaleMCPSessionEnv(t *testing.T) {
 	t.Setenv("MCP_API_URL", "http://example.test/s/parent-session")
@@ -204,6 +250,22 @@ func TestApplyStepConfigToAgentConfigForcesCodeExecForCLIProviders(t *testing.T)
 
 	if !config.UseCodeExecutionMode {
 		t.Fatalf("expected CLI providers to have code execution mode enabled")
+	}
+}
+
+func TestClaudeCodeTransportHelpers(t *testing.T) {
+	stepConfig := agents.NewOrchestratorAgentConfig("step-agent")
+	stepConfig.LLMConfig.Primary.Provider = string(mcpllm.ProviderClaudeCode)
+	forceWorkflowStepClaudeCodePrintTransport(stepConfig)
+	if stepConfig.ClaudeCodeTransport != mcpllm.ClaudeCodeTransportPrint {
+		t.Fatalf("step ClaudeCodeTransport = %q, want %q", stepConfig.ClaudeCodeTransport, mcpllm.ClaudeCodeTransportPrint)
+	}
+
+	chatConfig := agents.NewOrchestratorAgentConfig("workflow-builder-agent")
+	chatConfig.LLMConfig.Primary.Provider = string(mcpllm.ProviderClaudeCode)
+	forceWorkflowChatClaudeCodeExperimentalTransport(chatConfig)
+	if chatConfig.ClaudeCodeTransport != mcpllm.ClaudeCodeTransportExperimental {
+		t.Fatalf("chat ClaudeCodeTransport = %q, want %q", chatConfig.ClaudeCodeTransport, mcpllm.ClaudeCodeTransportExperimental)
 	}
 }
 

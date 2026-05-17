@@ -346,8 +346,6 @@ type QueryRequest struct {
 	EnableBrowserAccess *bool `json:"enable_browser_access,omitempty"` // Enable/disable browser automation tool (nil = inherit default, true/false = explicit override)
 	// Explicit browser mode from frontend: none|headless|cdp|playwright
 	BrowserMode string `json:"browser_mode,omitempty"`
-	// Google Workspace access configuration
-	EnableGWSAccess *bool `json:"enable_gws_access,omitempty"` // Enable/disable Google Workspace CLI access (nil = inherit default, true/false = explicit override)
 	// CDP port for connecting to an existing Chrome browser (local mode only)
 	CdpPort *int `json:"cdp_port,omitempty"` // When set and > 0, connect to Chrome via CDP on this port instead of launching headless
 	// Image generation configuration
@@ -1341,6 +1339,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// request from the frontend gets real data instead of an empty list.
 	fmt.Printf("🔄 Initializing tool cache on server startup...\n")
 	api.initializeToolCache()
+	cleanupClaudeCodeExperimentalSessions("startup")
 
 	// Sync system skills (skill-creator, agent-browser, etc.) in background
 	go func() {
@@ -1412,6 +1411,12 @@ func cleanupClaudeCodeExperimentalSessions(phase string) {
 
 	if err := llmproviders.CleanupClaudeCodeExperimentalSessions(ctx); err != nil {
 		log.Printf("[CLAUDE-CODE] %s cleanup failed: %v", phase, err)
+	}
+	if err := llmproviders.CleanupCodexCLIInteractiveSessions(ctx); err != nil {
+		log.Printf("[CODEX-CLI] %s cleanup failed: %v", phase, err)
+	}
+	if err := llmproviders.CleanupGeminiCLIInteractiveSessions(ctx); err != nil {
+		log.Printf("[GEMINI-CLI] %s cleanup failed: %v", phase, err)
 	}
 }
 
@@ -2439,7 +2444,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[MANIFEST] WARNING: No workflow.json found for preset %s - workflow will run with request defaults only. Run migration: POST /api/workflows/migrate", req.PresetQueryID)
 		}
 
-		// --- Post-load processing: browser, image gen, GWS skills ---
+		// --- Post-load processing: browser and image generation ---
 		// Runs after either manifest or preset loading has populated the config variables.
 
 		// Resolve effective browser mode
@@ -2524,34 +2529,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			virtualtools.MergeImageToolExecutorsUntyped(imgCfg, allExecutors, toolCategories)
 			log.Printf("[WORKFLOW] Updated image tool executors (provider=%s model=%s)", imgCfg.Provider, imgCfg.ModelID)
-		}
-
-		// Auto-add gws-* skills when GWS access is enabled (workflow mode)
-		gwsWorkflowEnabled := req.EnableGWSAccess != nil && *req.EnableGWSAccess
-		if !gwsWorkflowEnabled {
-			for _, s := range req.EnabledServers {
-				if s == "gws" {
-					gwsWorkflowEnabled = true
-					break
-				}
-			}
-		}
-		if gwsWorkflowEnabled {
-			gwsSkills := []string{"gws-shared", "gws-drive", "gws-gmail", "gws-calendar", "gws-docs", "gws-sheets", "gws-slides"}
-			existingSkills := make(map[string]bool)
-			for _, sk := range selectedSkills {
-				existingSkills[sk] = true
-			}
-			added := 0
-			for _, gs := range gwsSkills {
-				if !existingSkills[gs] {
-					selectedSkills = append(selectedSkills, gs)
-					added++
-				}
-			}
-			if added > 0 {
-				log.Printf("[GWS] Auto-added %d gws-* skills for workflow mode (enable_gws_access: true)", added)
-			}
 		}
 
 		// Use selected tools from request if preset didn't provide any
@@ -3278,6 +3255,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create new agent with streamCtx instead of r.Context()
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
+		claudeCodePersistentInteractive, codexPersistentInteractive, geminiPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
+		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
+		chatWorkingFolder := perUserChatsFolder
+		if isWorkflowPhase && workflowPhaseFolder != "" && workflowPhaseFolder != "default_workspace" {
+			chatWorkingFolder = workflowPhaseFolder
+		}
+		workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
+		chatWorkingDir := codingAgentWorkspaceWorkingDir(chatWorkingFolder)
 		agentConfig := agent.LLMAgentConfig{
 			Name:               "chat-agent",
 			ServerName:         serverList, // Use full server list, not just first one
@@ -3306,8 +3291,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			Fallbacks: fallbacks,
 			// Code execution mode: When enabled, only virtual tools are added to LLM
 			// MCP tools are accessed via generated Go code using discover_code_files and write_code
-			UseCodeExecutionMode: useCodeExecutionMode,
-			APIKeys:              mergedAPIKeys,
+			UseCodeExecutionMode:                   useCodeExecutionMode,
+			ClaudeCodePersistentInteractiveSession: claudeCodePersistentInteractive,
+			CodexPersistentInteractiveSession:      codexPersistentInteractive,
+			GeminiPersistentInteractiveSession:     geminiPersistentInteractive,
+			ClaudeCodeTransport:                    claudeCodeTransport,
+			CodingAgentWorkingDir:                  chatWorkingDir,
+			APIKeys:                                mergedAPIKeys,
 			// Context summarization configuration
 			// Priority: Request > Environment Variable > Default (matches orchestrator defaults)
 			EnableContextSummarization: func() bool {
@@ -3556,34 +3546,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[BROWSER] Auto-adding agent-browser skill and tool (enable_browser_access: true)")
 			}
 
-			// Auto-add gws-* skills when GWS access is enabled (or gws in enabled_servers for preset compat)
-			gwsAccessEnabled := req.EnableGWSAccess != nil && *req.EnableGWSAccess
-			if !gwsAccessEnabled {
-				for _, s := range req.EnabledServers {
-					if s == "gws" {
-						gwsAccessEnabled = true
-						break
-					}
-				}
-			}
-			if gwsAccessEnabled {
-				gwsSkills := []string{"gws-shared", "gws-drive", "gws-gmail", "gws-calendar", "gws-docs", "gws-sheets", "gws-slides"}
-				existingSkills := make(map[string]bool)
-				for _, skill := range req.SelectedSkills {
-					existingSkills[skill] = true
-				}
-				added := 0
-				for _, gs := range gwsSkills {
-					if !existingSkills[gs] {
-						req.SelectedSkills = append(req.SelectedSkills, gs)
-						added++
-					}
-				}
-				if added > 0 {
-					log.Printf("[GWS] Auto-added %d gws-* skills (enable_gws_access: true)", added)
-				}
-			}
-
 			// Create Chats/ folder if it doesn't exist
 			if err := skills.CreateFolder("Chats"); err != nil {
 				log.Printf("[WORKSPACE] Warning: Could not create Chats/ folder: %v", err)
@@ -3615,37 +3577,23 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[WORKSPACE] Warning: Could not create memories/ folder: %v", err)
 			}
 
-			// Chat mode: LLM-visible workspace tools (advanced + image + video + audio + music)
+			// Chat mode: LLM-visible workspace tools (advanced + media/provider tools).
 			// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient.
 			// These tools are restricted to the current workspace/chat folder guard.
-			workspaceTools := append(virtualtools.CreateWorkspaceAdvancedTools(), virtualtools.CreateWorkspaceImageTools()...)
-			workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceVideoTools()...)
-			workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceAudioTools()...)
-			workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceMusicTools()...)
-			var workspaceExecutors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
-			workspaceExecutors, workspaceEnv = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(currentUserID, sessionID)
-			virtualtools.MergeImageToolExecutors(virtualtools.ImageGenExecutorConfig{
+			workspaceRegistry := virtualtools.CreateWorkspaceToolRegistry(virtualtools.WorkspaceToolRegistryConfig{
 				WorkspaceAPIURL: getWorkspaceAPIURL(),
 				UserID:          currentUserID,
-			}, workspaceExecutors, nil)
-			virtualtools.MergeVideoToolExecutors(virtualtools.VideoGenExecutorConfig{
-				WorkspaceAPIURL: getWorkspaceAPIURL(),
-				UserID:          currentUserID,
-			}, workspaceExecutors, nil)
-			virtualtools.MergeAudioToolExecutors(virtualtools.AudioGenExecutorConfig{
-				WorkspaceAPIURL: getWorkspaceAPIURL(),
-				UserID:          currentUserID,
-			}, workspaceExecutors, nil)
-			virtualtools.MergeMusicToolExecutors(virtualtools.AudioGenExecutorConfig{
-				WorkspaceAPIURL: getWorkspaceAPIURL(),
-				UserID:          currentUserID,
-			}, workspaceExecutors, nil)
+				SessionID:       sessionID,
+			})
+			workspaceTools := workspaceRegistry.Tools
+			workspaceExecutors := workspaceRegistry.Executors
+			workspaceEnv = workspaceRegistry.Env
+			toolCategories := workspaceRegistry.Categories
 			logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
 			// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
 			if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
 				virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
 			}
-			_, _, toolCategories := createCustomTools(false, currentUserID, sessionID)
 
 			// Merge @context file paths into additional folder-guard write access.
 			// workflowReadOnlyFolders was computed above.
@@ -3686,7 +3634,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				additionalFolders = append(additionalFolders, perUserMemWrite)
 				additionalFolders = append(additionalFolders, perUserChatHistory)
 				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
-				workspace.SetSessionWorkingDir(sessionID, "")
+				workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
 				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "skills/", "subagents/", "Downloads/", "Workflow/", "config/", perUserMemWrite}, additionalFolders...)
 				readPaths = append(readPaths, resolvedGrants.ReadOnlyExtra...)
 				readPaths = append(readPaths, workflowReadOnlyFolders...)
@@ -3705,7 +3653,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				extraFolders = append(extraFolders, perUserChatsWrite)
 				extraFolders = append(extraFolders, perUserChatHistory)
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, fileContextBlockedWriteFolders, extraFolders...)
-				workspace.SetSessionWorkingDir(sessionID, "")
+				workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
 				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", perUserMemWrite}, extraFolders...)
 				readPaths = append(readPaths, workflowReadOnlyFolders...)
 				workspace.SetSessionFolderGuard(sessionID,
@@ -4318,16 +4266,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[CHANNEL] Added %s formatting rules to system prompt", req.BotPlatform)
 			}
 
-			// 4. MODE-SPECIFIC — browser, GWS, memory (only when those capabilities are active).
+			// 4. MODE-SPECIFIC — browser and memory (only when those capabilities are active).
 			chatBrowserCfg := buildChatBrowserConfig(req)
 			if chatBrowserPrompt := browserinstructions.BuildBrowserInstructions(chatBrowserCfg); chatBrowserPrompt != "" {
 				underlyingAgent.AppendSystemPrompt(chatBrowserPrompt)
 				log.Printf("[BROWSER] Added browser instructions to system prompt (playwright=%v, agent-browser=%v, cdp=%v)",
 					chatBrowserCfg.HasPlaywright, chatBrowserCfg.HasAgentBrowser, chatBrowserCfg.CdpPort > 0)
-			}
-			if req.EnableGWSAccess != nil && *req.EnableGWSAccess {
-				underlyingAgent.AppendSystemPrompt(getGWSQuickStartInstructions())
-				log.Printf("[GWS] Added GWS quick-start instructions to system prompt")
 			}
 			underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions(memFolderForPrompt))
 
@@ -4370,10 +4314,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[SYSTEM_PROMPT] Final assembled prompt length=%d chars, hasGuidance=%v", len(underlyingAgent.GetSystemPrompt()), req.LLMGuidance != "" || llmGuidance != "")
 
 			// Add CLI-specific tool mapping for providers that use the api-bridge.
-			// These providers can only call mcp__api-bridge__* tools directly;
-			// delegation/memory tools must be called via curl through execute_shell_command.
+			// Tool names differ by CLI: Claude Code uses mcp__api-bridge__* while
+			// Codex/Gemini expose the same bridge as mcp_api-bridge_*.
 			if common.IsCLIProvider(req.Provider) {
-				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
+				underlyingAgent.AppendSystemPrompt(virtualtools.BuildCLIToolEnvironmentPrompt(req.Provider))
 				log.Printf("[CLI PROVIDER] Added custom tool HTTP API mapping for %s", req.Provider)
 			}
 			// [BROWSER_UPLOAD] Inject file upload instructions into the agent's system prompt
@@ -4454,6 +4398,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// The global map is read by execute_shell_command at call time.
 				if phaseWorkspacePath != "" && phaseWorkspacePath != "default_workspace" {
 					workspace.SetSessionWorkingDir(sessionID, phaseWorkspacePath)
+					if underlyingAgent != nil {
+						underlyingAgent.CodingAgentWorkingDir = codingAgentWorkspaceWorkingDir(phaseWorkspacePath)
+					}
 					// Restrict shell commands to the workflow folder via Isolator
 					// Include #workflow read-only paths so the builder can read referenced workflows
 					phaseReadPaths := []string{phaseWorkspacePath, "Chats", "skills", "subagents", "Downloads"}
@@ -4643,7 +4590,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[WORKFLOW_PHASE] Overrode system prompt (%d chars) for phase=%s", len(phaseSystemPrompt), workflowPhaseID)
 
 				// Re-append supplementary prompts after system prompt override
-				// (ClearAppendedSystemPrompts above wiped browser/GWS/secrets instructions)
+				// (ClearAppendedSystemPrompts above wiped browser/secrets instructions)
 				if capabilitySection := buildLLMCapabilityPromptSection(r.Context()); capabilitySection != "" {
 					underlyingAgent.AppendSystemPrompt(capabilitySection)
 					log.Printf("[WORKFLOW_PHASE] Appended LLM/media capability snapshot to %s system prompt", workflowPhaseID)
@@ -4663,7 +4610,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 
-					// Browser + GWS instructions from manifest config
+					// Browser instructions from manifest config
 					// The manifest determines browser mode, not req.EnableBrowserAccess (which is false for workflow_phase)
 					if phaseWorkspacePath != "" {
 						phaseManifest, phaseFound, phaseMErr := ReadWorkflowManifest(context.Background(), phaseWorkspacePath)
@@ -4732,14 +4679,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								}
 							}
 
-							// GWS instructions (check if gws server is in selected servers)
-							for _, s := range selectedServers {
-								if s == "gws" {
-									underlyingAgent.AppendSystemPrompt(browserinstructions.GetGWSQuickStartInstructions())
-									log.Printf("[WORKFLOW_PHASE] Appended GWS instructions to %s", workflowPhaseID)
-									break
-								}
-							}
 						}
 					}
 				}
@@ -5257,26 +5196,25 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Restore Claude Code CLI session ID for --resume on subsequent turns
-		if ccSID, ok := api.claudeCodeSessionIDs[sessionID]; ok {
-			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+		api.conversationMux.RLock()
+		ccSID := api.claudeCodeSessionIDs[sessionID]
+		gSID := api.geminiSessionIDs[sessionID]
+		gDirID := api.geminiProjectDirIDs[sessionID]
+		api.conversationMux.RUnlock()
+
+		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+			if ccSID != "" {
 				underlyingAgent.ClaudeCodeSessionID = ccSID
 			}
-		}
-
-		// Restore Gemini CLI session ID for --resume on subsequent turns
-		if gSID, ok := api.geminiSessionIDs[sessionID]; ok {
-			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+			if gSID != "" {
 				underlyingAgent.GeminiSessionID = gSID
 			}
-		}
-
-		// Restore Gemini CLI project dir ID for per-invocation isolation
-		if gDirID, ok := api.geminiProjectDirIDs[sessionID]; ok {
-			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+			if gDirID != "" {
 				underlyingAgent.GeminiProjectDirID = gDirID
 				log.Printf("[GEMINI CLI] Restored project dir ID %s for session %s", gDirID, sessionID)
 			}
+		}
+		if gDirID != "" {
 			workspace.SetSessionGeminiProjectDirID(sessionID, gDirID)
 		}
 
@@ -5389,9 +5327,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			persistedHistory = merged
 			log.Printf("[CONVERSATION DEBUG] Mode-change merge: persisting %d msgs (snapshot %d + new %d)", len(persistedHistory), len(preModeChangeSnapshot), len(finalHistory)-1)
 		}
+		persistedHistory = cleanChatHistoryForPersistence(persistedHistory)
 
-		// Persist conversation to user's chat_history/ folder (same format as builder/)
-		api.persistChatConversation(sessionID, req.AgentMode, currentUserID, persistedHistory)
+		runtimeWorkspacePath := strings.TrimSpace(req.SelectedFolder)
+		if isWorkflowPhase && workflowPhaseFolder != "" {
+			runtimeWorkspacePath = workflowPhaseFolder
+		}
+		var chatRuntime *ChatHistoryAgentRuntime
+		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+			chatRuntime = api.captureChatHistoryAgentRuntime(sessionID, finalProvider, finalModelID, runtimeWorkspacePath, underlyingAgent)
+		}
+		var uiEvents []events.Event
+		if api.eventStore != nil {
+			uiEvents = trimChatHistoryUIEvents(api.eventStore.GetAllEventsRaw(sessionID))
+		}
+
+		// Persist normal chats to the user's global chat_history. Workflow
+		// conversations are persisted below in the workflow-scoped builder folder
+		// so /resume stays scoped to the workflow and global chat history is not
+		// polluted by workflow-only sessions.
+		if !isWorkflowPhase {
+			api.persistChatConversation(sessionID, req.AgentMode, currentUserID, persistedHistory, chatRuntime, uiEvents)
+		}
 
 		// Store resolved workflowPhaseFolder so synthetic turns can persist builder conversations
 		if isWorkflowPhase && workflowPhaseFolder != "" {
@@ -5409,6 +5366,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				"phase_id":             workflowPhaseID,
 				"conversation_history": persistedHistory,
 				"updated_at":           time.Now().Format(time.RFC3339),
+			}
+			if chatRuntime != nil {
+				convData["runtime"] = chatRuntime
+			}
+			if len(uiEvents) > 0 {
+				convData["ui_events"] = uiEvents
 			}
 			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
 				logPath := workflowBuilderConversationLogPath(workflowPhaseFolder, sessionID, time.Now())
@@ -5486,28 +5449,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[BUILDER LOG] Failed to write daily phase token usage: %v", err)
 					}
 				}
-			}
-		}
-
-		// Save Claude Code CLI session ID for --resume on next turn
-		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-			if ccSID := underlyingAgent.ClaudeCodeSessionID; ccSID != "" {
-				api.claudeCodeSessionIDs[sessionID] = ccSID
-				log.Printf("[CLAUDE CODE] Saved session ID %s for session %s", ccSID, sessionID)
-			}
-		}
-
-		// Save Gemini CLI session ID for --resume on next turn
-		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-			if gSID := underlyingAgent.GeminiSessionID; gSID != "" {
-				api.geminiSessionIDs[sessionID] = gSID
-				log.Printf("[GEMINI CLI] Saved session ID %s for session %s", gSID, sessionID)
-			}
-			// Save Gemini CLI project dir ID for per-invocation isolation
-			if gDirID := underlyingAgent.GeminiProjectDirID; gDirID != "" {
-				api.geminiProjectDirIDs[sessionID] = gDirID
-				workspace.SetSessionGeminiProjectDirID(sessionID, gDirID)
-				log.Printf("[GEMINI CLI] Saved project dir ID %s for session %s", gDirID, sessionID)
 			}
 		}
 
@@ -5797,12 +5738,17 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Clear conversation history
+	// Clear conversation and coding-agent resume state guarded by the same
+	// mutex used by query/resume paths.
 	api.conversationMux.Lock()
 	if _, exists := api.conversationHistory[sessionID]; exists {
 		delete(api.conversationHistory, sessionID)
 		log.Printf("[SESSION DEBUG] Cleared conversation history for session %s", sessionID)
 	}
+	delete(api.claudeCodeSessionIDs, sessionID)
+	delete(api.geminiSessionIDs, sessionID)
+	delete(api.geminiProjectDirIDs, sessionID)
+	delete(api.lastWorkshopModeBySession, sessionID)
 	api.conversationMux.Unlock()
 
 	// Clear orchestrator state (removed - now stateless)
@@ -5816,16 +5762,6 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 		log.Printf("[SESSION DEBUG] Cleared workflow objective for session %s", sessionID)
 	}
 	api.workflowObjectiveMux.Unlock()
-
-	// Clear Claude Code CLI session ID
-	delete(api.claudeCodeSessionIDs, sessionID)
-
-	// Clear Gemini CLI session ID and project dir ID
-	delete(api.geminiSessionIDs, sessionID)
-	delete(api.geminiProjectDirIDs, sessionID)
-
-	// Clear last-seen workshop mode (used to detect mode toggles for recap injection)
-	delete(api.lastWorkshopModeBySession, sessionID)
 
 	// Kill headless browser processes for this session
 	api.cleanupBrowserSessions(sessionID)
@@ -5906,6 +5842,71 @@ func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID,
 		agentMode,
 		userID,
 	)
+}
+
+func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, modelID, workspacePath string, underlyingAgent *mcpagent.Agent) *ChatHistoryAgentRuntime {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	modelID = strings.TrimSpace(modelID)
+	workspacePath = strings.TrimSpace(workspacePath)
+	if provider == "" && modelID == "" && workspacePath == "" && underlyingAgent == nil {
+		return nil
+	}
+
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:          "llm_agent",
+		Provider:      provider,
+		ModelID:       modelID,
+		WorkspacePath: workspacePath,
+		CapturedAt:    time.Now().Format(time.RFC3339),
+	}
+	if common.IsCLIProvider(provider) {
+		runtime.Kind = "coding_agent"
+	}
+
+	if underlyingAgent != nil {
+		switch provider {
+		case "claude-code":
+			if sid := strings.TrimSpace(underlyingAgent.ClaudeCodeSessionID); sid != "" {
+				api.conversationMux.Lock()
+				api.claudeCodeSessionIDs[sessionID] = sid
+				api.conversationMux.Unlock()
+				runtime.ExternalSessionID = sid
+				runtime.ResumeSupported = true
+				runtime.ResumeFlag = "--resume"
+				log.Printf("[CLAUDE CODE] Saved session ID %s for session %s", sid, sessionID)
+			}
+		case "gemini-cli":
+			sid := strings.TrimSpace(underlyingAgent.GeminiSessionID)
+			dirID := strings.TrimSpace(underlyingAgent.GeminiProjectDirID)
+			if sid != "" || dirID != "" {
+				api.conversationMux.Lock()
+				if sid != "" {
+					api.geminiSessionIDs[sessionID] = sid
+				}
+				if dirID != "" {
+					api.geminiProjectDirIDs[sessionID] = dirID
+				}
+				api.conversationMux.Unlock()
+			}
+			if sid != "" {
+				runtime.ExternalSessionID = sid
+				runtime.ResumeSupported = true
+				runtime.ResumeFlag = "--resume"
+				log.Printf("[GEMINI CLI] Saved session ID %s for session %s", sid, sessionID)
+			}
+			if dirID != "" {
+				workspace.SetSessionGeminiProjectDirID(sessionID, dirID)
+				runtime.ProjectDirID = dirID
+				log.Printf("[GEMINI CLI] Saved project dir ID %s for session %s", dirID, sessionID)
+			}
+		case "codex-cli":
+			if dirID := strings.TrimSpace(underlyingAgent.CodexProjectDirID); dirID != "" {
+				runtime.ProjectDirID = dirID
+			}
+		}
+	}
+
+	return runtime
 }
 
 // updateSessionActivity updates the LastActivity timestamp for a session when events are added
@@ -6178,11 +6179,12 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			return 5 * time.Minute
 		}(),
 		// Sub-agent mode uses the resolved values (from delegate call, template default, or auto-enable).
-		UseCodeExecutionMode: useCodeExec,
-		APIKeys:              apiKeys,
-		Fallbacks:            tierFallbacks,
-		SessionID:            subAgentSessionID, // Reuse parent session's MCP connections via registry, unless browser isolation requested
-		UserID:               subAgentUserID,    // Per-user OAuth token isolation
+		UseCodeExecutionMode:  useCodeExec,
+		APIKeys:               apiKeys,
+		Fallbacks:             tierFallbacks,
+		SessionID:             subAgentSessionID, // Reuse parent session's MCP connections via registry, unless browser isolation requested
+		UserID:                subAgentUserID,    // Per-user OAuth token isolation
+		CodingAgentWorkingDir: codingAgentWorkspaceWorkingDir(perUserChatsFolderFor(subAgentUserID)),
 		// Context offloading: inherit from environment
 		LargeOutputThreshold: func() int {
 			if envVal := os.Getenv("LARGE_OUTPUT_THRESHOLD"); envVal != "" {
@@ -6386,12 +6388,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				subBrowserCfg.HasPlaywright, subBrowserCfg.HasAgentBrowser, subBrowserCfg.CdpPort > 0)
 		}
 
-		// [GWS] Add GWS quick-start instructions to sub-agent (same as parent)
-		if parentReq.EnableGWSAccess != nil && *parentReq.EnableGWSAccess {
-			underlyingAgent.AppendSystemPrompt(browserinstructions.GetGWSQuickStartInstructions())
-			log.Printf("[GWS] Added GWS quick-start instructions to sub-agent")
-		}
-
 		// Register file path transformer for browser file uploads on sub-agent
 		hasBrowserAccess := parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess
 		hasPlaywright := false
@@ -6431,28 +6427,16 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 	// Register workspace tools for sub-agent
 	if underlyingAgent := subAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-		// Sub-agents get the normal LLM-visible workspace tool set (advanced + image + video + audio + music).
-		workspaceTools := append(virtualtools.CreateWorkspaceAdvancedTools(), virtualtools.CreateWorkspaceImageTools()...)
-		workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceVideoTools()...)
-		workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceAudioTools()...)
-		workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceMusicTools()...)
-		workspaceExecutors, subAgentEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
-		virtualtools.MergeImageToolExecutors(virtualtools.ImageGenExecutorConfig{
+		// Sub-agents get the normal LLM-visible workspace tool set (advanced + media/provider tools).
+		workspaceRegistry := virtualtools.CreateWorkspaceToolRegistry(virtualtools.WorkspaceToolRegistryConfig{
 			WorkspaceAPIURL: getWorkspaceAPIURL(),
 			UserID:          subAgentUserID,
-		}, workspaceExecutors, nil)
-		virtualtools.MergeVideoToolExecutors(virtualtools.VideoGenExecutorConfig{
-			WorkspaceAPIURL: getWorkspaceAPIURL(),
-			UserID:          subAgentUserID,
-		}, workspaceExecutors, nil)
-		virtualtools.MergeAudioToolExecutors(virtualtools.AudioGenExecutorConfig{
-			WorkspaceAPIURL: getWorkspaceAPIURL(),
-			UserID:          subAgentUserID,
-		}, workspaceExecutors, nil)
-		virtualtools.MergeMusicToolExecutors(virtualtools.AudioGenExecutorConfig{
-			WorkspaceAPIURL: getWorkspaceAPIURL(),
-			UserID:          subAgentUserID,
-		}, workspaceExecutors, nil)
+			SessionID:       sessionID,
+		})
+		workspaceTools := workspaceRegistry.Tools
+		workspaceExecutors := workspaceRegistry.Executors
+		subAgentEnv := workspaceRegistry.Env
+		toolCategories := workspaceRegistry.Categories
 		log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with explicit userID=%q sessionID=%q", subAgentUserID, sessionID)
 		// Inject secrets as environment variables for sub-agent shell execution (SECRET_ prefix for whitelist)
 		delegationSecrets := mergeGlobalSecrets(parentReq.DecryptedSecrets, parentReq.SelectedGlobalSecrets)
@@ -6466,7 +6450,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		if underlying := subAgent.GetUnderlyingAgent(); underlying != nil {
 			virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
 		}
-		_, _, toolCategories := createCustomTools(false, subAgentUserID, sessionID)
 
 		// Conditional grants already resolved above into subResolvedGrants.
 		// Merge parent @context paths and #workflow references into delegated folder-guard access.
@@ -6494,7 +6477,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			// session's blocked paths aren't inherited here; this call path is for sub-agents
 			// spawned with their own folder scope). Pass nil.
 			workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, nil, extraFolders...)
-			workspace.SetSessionWorkingDir(sessionID, "")
+			workspace.SetSessionWorkingDir(sessionID, subPerUserChatsFolder)
 			readPaths := append([]string{subPerUserChatsWrite, subPerUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", subPerUserMemWrite}, extraFolders...)
 			readPaths = append(readPaths, subResolvedGrants.ReadOnlyExtra...)
 			readPaths = append(readPaths, workflowReadOnlyFolders...)
@@ -7655,7 +7638,8 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 		api.sessionWorkspaceMu.RLock()
 		workflowPhaseFolder, hasFolderForSession := api.sessionWorkspaceFolders[sessionID]
 		api.sessionWorkspaceMu.RUnlock()
-		if hasFolderForSession && workflowPhaseFolder != "" && len(finalHistory) > 0 {
+		persistedHistory := cleanChatHistoryForPersistence(finalHistory)
+		if hasFolderForSession && workflowPhaseFolder != "" && len(persistedHistory) > 0 {
 			phaseID := ""
 			if hasReq {
 				phaseID = strings.TrimSpace(req.PhaseID)
@@ -7677,7 +7661,7 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 			convData := map[string]interface{}{
 				"session_id":           sessionID,
 				"phase_id":             phaseID,
-				"conversation_history": finalHistory,
+				"conversation_history": persistedHistory,
 				"updated_at":           time.Now().Format(time.RFC3339),
 			}
 			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
@@ -8210,6 +8194,60 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if runningAgent.GetProvider() == llm.ProviderClaudeCode {
+		steerCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := llmproviders.SendClaudeCodeExperimentalInput(steerCtx, sessionID, req.Message); err == nil {
+			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
+			log.Printf("[STEER] Sent live message to Claude Code session %s: %.80s", sessionID, req.Message)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "Steer message sent to coding agent",
+			})
+			return
+		} else {
+			log.Printf("[STEER] Claude Code live input unavailable for session %s, falling back to agent queue: %v", sessionID, err)
+		}
+	}
+	if runningAgent.GetProvider() == llm.ProviderCodexCLI {
+		steerCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := llmproviders.SendCodexCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
+			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
+			log.Printf("[STEER] Sent live message to Codex CLI session %s: %.80s", sessionID, req.Message)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "Steer message sent to coding agent",
+			})
+			return
+		} else {
+			log.Printf("[STEER] Codex CLI live input unavailable for session %s, falling back to agent queue: %v", sessionID, err)
+		}
+	}
+	if runningAgent.GetProvider() == llm.ProviderGeminiCLI {
+		steerCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := llmproviders.SendGeminiCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
+			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
+			log.Printf("[STEER] Sent live message to Gemini CLI session %s: %.80s", sessionID, req.Message)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "Steer message sent to coding agent",
+			})
+			return
+		} else {
+			log.Printf("[STEER] Gemini CLI live input unavailable for session %s, falling back to agent queue: %v", sessionID, err)
+		}
+	}
+
+	if err := r.Context().Err(); err != nil {
+		log.Printf("[STEER] Request canceled before queued steer fallback for session %s: %v", sessionID, err)
+		return
+	}
+
 	// Inject the steer message into the agent's pending queue
 	runningAgent.AddSteerMessage(req.Message)
 	log.Printf("[STEER] Queued steer message for session %s: %.80s", sessionID, req.Message)
@@ -8219,6 +8257,31 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		"success": true,
 		"message": "Steer message queued for injection",
 	})
+}
+
+func (api *StreamingAPI) recordLiveCodingAgentUserMessage(sessionID, message, provider string) {
+	message = strings.TrimSpace(message)
+	if sessionID == "" || message == "" || api == nil || api.eventStore == nil {
+		return
+	}
+
+	eventData := unifiedevents.NewUserMessageEvent(0, message, "user")
+	eventData.Metadata = map[string]interface{}{
+		"source":   "coding_agent_live_input",
+		"provider": provider,
+	}
+	agentEvent := unifiedevents.NewAgentEvent(eventData)
+	agentEvent.SessionID = sessionID
+	agentEvent.Component = "coding_agent_live_input"
+
+	event := events.Event{
+		ID:        fmt.Sprintf("coding-agent-user-message-%d", time.Now().UnixNano()),
+		Type:      string(unifiedevents.UserMessageEventType),
+		Timestamp: time.Now(),
+		Data:      agentEvent,
+		SessionID: sessionID,
+	}
+	api.eventStore.AddEvent(sessionID, event)
 }
 
 // handleSubmitHumanFeedback handles human feedback submission

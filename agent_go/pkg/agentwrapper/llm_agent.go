@@ -199,8 +199,13 @@ type LLMAgentConfig struct {
 	Fallbacks []FallbackModel // Fallback models with optional provider override
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
-	UseCodeExecutionMode bool
-	APIKeys              *llm.ProviderAPIKeys // API keys for providers
+	UseCodeExecutionMode                   bool
+	ClaudeCodePersistentInteractiveSession bool
+	CodexPersistentInteractiveSession      bool
+	GeminiPersistentInteractiveSession     bool
+	ClaudeCodeTransport                    string
+	CodingAgentWorkingDir                  string
+	APIKeys                                *llm.ProviderAPIKeys // API keys for providers
 
 	// Context summarization configuration
 	EnableContextSummarization     bool    // Enable context summarization feature
@@ -415,6 +420,26 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.UseCodeExecutionMode {
 		agentOptions = append(agentOptions, mcpagent.WithCodeExecutionMode(true))
 		logger.Info("🔧 Code execution mode enabled - MCP tools will be accessed via generated Go code")
+	}
+	if config.ClaudeCodePersistentInteractiveSession {
+		agentOptions = append(agentOptions, mcpagent.WithClaudeCodePersistentInteractiveSession(true))
+		logger.Info("🔗 Claude Code persistent interactive tmux session enabled")
+	}
+	if config.ClaudeCodeTransport != "" {
+		agentOptions = append(agentOptions, mcpagent.WithClaudeCodeTransport(config.ClaudeCodeTransport))
+		logger.Info(fmt.Sprintf("🔗 Claude Code transport override: %s", config.ClaudeCodeTransport))
+	}
+	if strings.TrimSpace(config.CodingAgentWorkingDir) != "" {
+		agentOptions = append(agentOptions, mcpagent.WithCodingAgentWorkingDir(config.CodingAgentWorkingDir))
+		logger.Info(fmt.Sprintf("🔗 Coding agent working directory: %s", config.CodingAgentWorkingDir))
+	}
+	if config.CodexPersistentInteractiveSession {
+		agentOptions = append(agentOptions, mcpagent.WithCodexPersistentInteractiveSession(true))
+		logger.Info("🔗 Codex CLI persistent interactive tmux session enabled")
+	}
+	if config.GeminiPersistentInteractiveSession {
+		agentOptions = append(agentOptions, mcpagent.WithGeminiPersistentInteractiveSession(true))
+		logger.Info("🔗 Gemini CLI persistent interactive tmux session enabled")
 	}
 
 	// Add session ID for MCP connection reuse (e.g., Playwright browser sharing)
@@ -902,14 +927,15 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, trac
 
 	// Use the existing LLM provider system with detailed fallback models
 	llmConfig := llm.Config{
-		Provider:       llmProvider,
-		ModelID:        runtimeModelID,
-		Temperature:    config.Temperature,
-		TraceID:        traceID, // Pass the trace ID for proper span hierarchy
-		FallbackModels: fallbackModels,
-		MaxRetries:     3,
-		Logger:         v2LoggerForLLM,
-		APIKeys:        config.APIKeys, // Use API keys directly from config
+		Provider:            llmProvider,
+		ModelID:             runtimeModelID,
+		Temperature:         config.Temperature,
+		TraceID:             traceID, // Pass the trace ID for proper span hierarchy
+		FallbackModels:      fallbackModels,
+		MaxRetries:          3,
+		Logger:              v2LoggerForLLM,
+		APIKeys:             config.APIKeys, // Use API keys directly from config
+		ClaudeCodeTransport: config.ClaudeCodeTransport,
 	}
 
 	// Initialize the LLM using the factory with detailed fallback support

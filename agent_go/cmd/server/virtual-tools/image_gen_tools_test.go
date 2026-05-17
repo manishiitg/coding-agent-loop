@@ -1,6 +1,9 @@
 package virtualtools
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeImageProviderAndModelProviderAliasDefaultsModel(t *testing.T) {
 	tests := []struct {
@@ -25,7 +28,7 @@ func TestNormalizeImageProviderAndModelProviderAliasDefaultsModel(t *testing.T) 
 			name:      "codex alias",
 			provider:  "codex-cli",
 			modelID:   "codex-cli",
-			wantModel: "gpt-5.4-mini",
+			wantModel: "codex-cli",
 		},
 	}
 
@@ -49,5 +52,19 @@ func TestNormalizeImageProviderAndModelRejectsWrongModelForProvider(t *testing.T
 	_, _, err := normalizeImageProviderAndModel("minimax-coding-plan", "gemini-3.1-flash-image-preview")
 	if err == nil {
 		t.Fatal("normalizeImageProviderAndModel returned nil error for unsupported provider/model pair")
+	}
+}
+
+func TestNormalizeImageProviderAndModelRejectsTierLabelsAsImageModels(t *testing.T) {
+	for _, tier := range []string{"low", "medium", "high", "auto"} {
+		t.Run(tier, func(t *testing.T) {
+			_, _, err := normalizeImageProviderAndModel("codex-cli", tier)
+			if err == nil {
+				t.Fatal("normalizeImageProviderAndModel returned nil error for tier label")
+			}
+			if !strings.Contains(err.Error(), "unsupported image generation model") {
+				t.Fatalf("error = %v, want unsupported model", err)
+			}
+		})
 	}
 }

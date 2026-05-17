@@ -48,7 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 prevents downloading extra Chromium binaries
 # We use the system-installed chromium instead via AGENT_BROWSER_EXECUTABLE_PATH
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-RUN npm install -g agent-browser @googleworkspace/cli skills && \
+RUN npm install -g agent-browser skills && \
     rm -rf /root/.cache/ms-playwright /tmp/.cache/ms-playwright
 
 # Set Chromium path for agent-browser and Playwright (system chromium on Debian)

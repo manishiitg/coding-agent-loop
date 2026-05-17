@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMem
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { useShallow } from 'zustand/react/shallow'
 import { agentApi, resetSessionId, getSessionId } from '../services/api'
-import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage, ExecutionOptions } from '../services/api-types'
+import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage, ExecutionOptions, ChatHistorySession } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
 import { ChatInput } from './ChatInput'
 import type { ActiveAgentInfo } from './ChatInput'
@@ -15,6 +15,7 @@ import { WorkflowExplanation } from './WorkflowExplanation'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore, useGlobalPresetStore } from '../stores'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { ModeEmptyState } from './ModeEmptyState'
+import { PreviousChatHistoryPanel, chatHistoryConversationPath, chatHistorySessionTitle } from './PreviousChatHistoryPanel'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { normalizeEventViewMode, type ChatTab } from '../stores/useChatStore'
@@ -260,6 +261,8 @@ interface ChatAreaProps {
   hideInput?: boolean
   // Compact mode for smaller font sizes (used in workflow layout)
   compact?: boolean
+  // Hide the phase-specific empty help when the parent renders a better empty state.
+  hidePhaseChatEmptyState?: boolean
   // Tab ID - if provided, use this tab's session ID (works for both chat and workflow modes).
   // Pass null explicitly to disable all active behavior (SSE, polling, queue) — used when
   // this ChatArea instance is hidden behind another instance for the same tab.
@@ -283,7 +286,7 @@ let globalHasRestored = false
 
 // Inner component for chat area
 const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAreaRef>) => {
-  const { onNewChat, hideHeader = false, hideInput = false, compact = false, tabId } = props
+  const { onNewChat, hideHeader = false, hideInput = false, compact = false, hidePhaseChatEmptyState = false, tabId } = props
   // null means "inactive — don't subscribe to any tab or run any effects"
   const isInactive = tabId === null
 
@@ -670,9 +673,58 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   
   // State for session restoration loading
   const [isRestoringChatSessions, setIsRestoringChatSessions] = useState(false)
+  const [hasPreviousNormalChats, setHasPreviousNormalChats] = useState(false)
   // Workflow-mode restore flag is owned by WorkflowLayout via useChatStore so we can show
   // an in-panel spinner here while reconnectWorkflowTabs() is replaying events.
   const isRestoringWorkflowSessions = useChatStore(state => state.isRestoringWorkflowSessions)
+  const showNormalPreviousChatsPanel = selectedModeCategory === 'multi-agent' &&
+    displayEvents.length === 0 &&
+    !isStreaming &&
+    !isRestoringChatSessions
+
+  useEffect(() => {
+    if (!showNormalPreviousChatsPanel) {
+      setHasPreviousNormalChats(false)
+    }
+  }, [showNormalPreviousChatsPanel])
+
+  const handleOpenPreviousChat = useCallback(async (session: ChatHistorySession) => {
+    try {
+      const restoredTabId = await restoreSession(session.session_id, {
+        title: chatHistorySessionTitle(session),
+        source: 'previous-chat-panel',
+      })
+      switchTab(restoredTabId)
+    } catch (error) {
+      logger.error('ChatArea', 'Failed to open previous chat:', error)
+      const chatStore = useChatStore.getState()
+      let targetTabId = chatStore.activeTabId || undefined
+      let targetTab = targetTabId ? chatStore.chatTabs[targetTabId] : undefined
+      if (!targetTab || targetTab.metadata?.mode !== 'multi-agent') {
+        targetTabId = await chatStore.createChatTab('Agent Chat 1', { mode: 'multi-agent' })
+        targetTab = chatStore.chatTabs[targetTabId]
+      }
+      if (!targetTabId || !targetTab) {
+        addToast('Failed to attach previous chat', 'error')
+        return
+      }
+
+      const path = chatHistoryConversationPath(session)
+      const title = chatHistorySessionTitle(session)
+      const existingContext = chatStore.getTabConfig(targetTabId)?.fileContext || []
+      const nextFileContext = existingContext.some(item => item.path === path)
+        ? existingContext
+        : [...existingContext, { name: title, path, type: 'file' as const }]
+
+      chatStore.setTabConfig(targetTabId, {
+        fileContext: nextFileContext,
+        restoredConversationPath: path,
+        restoredConversationSummary: undefined,
+      })
+      switchTab(targetTabId)
+      addToast('Could not restore; previous chat attached as context', 'success')
+    }
+  }, [addToast, switchTab])
 
   // State for mode switch dialog
   const [showModeSwitchDialog, setShowModeSwitchDialog] = useState(false)
@@ -1277,6 +1329,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           chatStore.clearDelegationStreamingText(correlationId as string)
         } else if (!isWorkshopStreaming) {
           chatStore.clearStreamingText(actualSessionId)
+          chatStore.clearStreamingTerminal(actualSessionId)
         }
         continue
       }
@@ -1288,11 +1341,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const content = typeof rawContent === 'string' ? rawContent : ''
         const rawIndex = innerData?.chunk_index ?? agentEvent?.chunk_index
         const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
+        const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
+        const isTerminalStreaming = metadata?.kind === 'terminal'
         if (isDelegationStreaming) {
           if (content) {
             if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearDelegationStreamingText(correlationId as string)
             chatStore.appendDelegationStreamingChunk(correlationId as string, chunkIndex, content)
           }
+        } else if (!isWorkshopStreaming && isTerminalStreaming && content) {
+          chatStore.setStreamingTerminalSnapshot(actualSessionId, chunkIndex, content)
         } else if (!isWorkshopStreaming && content) {
           if (chunkIndex === 0 || chunkIndex === 1) {
             chatStore.clearStreamingText(actualSessionId)
@@ -1307,6 +1364,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
         if (!isDelegationStreaming && !isWorkshopStreaming) {
           chatStore.clearStreamingStatus(actualSessionId)
+          chatStore.setStreamingTerminalActive(actualSessionId, false)
           const sidForClear = actualSessionId
           const textSnapshot = useChatStore.getState().streamingText[sidForClear]
           setTimeout(() => {
@@ -1623,32 +1681,41 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         if (event.type === 'streaming_start') {
           const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
           const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+          const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
           if (isDelegation) {
             chatStore.clearDelegationStreamingText(correlationId as string)
-          } else {
+          } else if (!isWorkshopStreaming) {
             chatStore.clearStreamingText(actualSessionId)
+            chatStore.clearStreamingTerminal(actualSessionId)
           }
         } else if (event.type === 'streaming_chunk') {
           const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
           const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+          const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
           const rawContent = innerData?.content ?? agentEvent?.content
           const content = typeof rawContent === 'string' ? rawContent : ''
           const rawIndex = innerData?.chunk_index ?? agentEvent?.chunk_index
           const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
+          const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
+          const isTerminalStreaming = metadata?.kind === 'terminal'
           if (isDelegation) {
             if (content) {
               if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearDelegationStreamingText(correlationId as string)
               chatStore.appendDelegationStreamingChunk(correlationId as string, chunkIndex, content)
             }
-          } else if (content) {
+          } else if (!isWorkshopStreaming && isTerminalStreaming && content) {
+            chatStore.setStreamingTerminalSnapshot(actualSessionId, chunkIndex, content)
+          } else if (!isWorkshopStreaming && content) {
             if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearStreamingText(actualSessionId)
             chatStore.appendStreamingChunk(actualSessionId, chunkIndex, content)
           }
         } else if (event.type === 'streaming_end') {
           const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
           const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
-          if (!isDelegation) {
+          const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
+          if (!isDelegation && !isWorkshopStreaming) {
             chatStore.clearStreamingStatus(actualSessionId)
+            chatStore.setStreamingTerminalActive(actualSessionId, false)
             const sidForClear = actualSessionId
             const textSnapshot = useChatStore.getState().streamingText[sidForClear]
             setTimeout(() => {
@@ -2112,26 +2179,25 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   }, [pollingInterval, stopPolling, disconnectAllSSE])
   
 
+  const stopStreamingInFlightRef = useRef(false)
+
   const stopStreaming = useCallback(async () => {
+    if (stopStreamingInFlightRef.current) return
+    stopStreamingInFlightRef.current = true
+
     const chatStore = useChatStore.getState()
     
     // DO NOT stop polling - let backend determine activity based on events
     // Backend will mark session as inactive after 10 minutes of no events
     // This ensures we catch any pending events after stop is pressed
     
-    // Update UI state only (isStreaming is UI-only, not used for polling decisions)
-    setIsStreaming(false) // UI: Hide stop button, show send button
-    
-    // Update active tab's streaming status (UI feedback only)
-    if (activeTab) {
-      chatStore.setTabStreaming(activeTab.tabId, false) // UI: Hide stop button, show send button
-    }
-
-    // Cancel only the current LLM turn for this tab.
+    // Cancel only the foreground LLM turn for this tab. Background/workflow
+    // agents are intentionally left running; explicit session stop handles those.
     // CRITICAL: Only use the active tab's session ID - never fall back to global sessionId.
     const sessionIdToStop = activeTab?.sessionId
     if (!sessionIdToStop) {
       logger.warn('ChatArea', 'No session ID available for active tab')
+      stopStreamingInFlightRef.current = false
       return
     }
 
@@ -2139,11 +2205,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       await agentApi.cancelCurrentTurn(sessionIdToStop)
     } catch (error) {
       logger.error('ChatArea', 'Failed to cancel current turn:', error)
-    }
+    } finally {
+      // Only mark idle after the backend acknowledges cancellation. If we flip
+      // this earlier, queued/new messages can auto-send while the old foreground
+      // turn is still accepting cancellation.
+      setIsStreaming(false)
 
-    // Mark tab as completed so queued messages get auto-sent
-    if (activeTab) {
-      chatStore.setTabCompleted(activeTab.tabId, true)
+      if (activeTab) {
+        chatStore.setTabStreaming(activeTab.tabId, false)
+        chatStore.setTabCompleted(activeTab.tabId, true)
+      }
+      stopStreamingInFlightRef.current = false
     }
 
     // Deprecated: setLastEventCount removed
@@ -2823,7 +2895,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             {/* Phase Chat Help - Show for chat-compatible phases until AI has responded */}
-            {!isRestoringWorkflowSessions && !showWorkflowsOverview && !activeTab?.metadata?.isOrganizationAssistant && !activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && !displayEvents.some(e => e.type === 'unified_completion' || e.type === 'agent_end' || e.type === 'llm_generation_end') && (
+            {!hidePhaseChatEmptyState && !isRestoringWorkflowSessions && !showWorkflowsOverview && !activeTab?.metadata?.isOrganizationAssistant && !activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && !displayEvents.some(e => e.type === 'unified_completion' || e.type === 'agent_end' || e.type === 'llm_generation_end') && (
               <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} compact={compact} />
             )}
 
@@ -2854,8 +2926,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 <p className="text-sm text-gray-500 dark:text-gray-400">Restoring previous session...</p>
               </div>
             )}
+            {showNormalPreviousChatsPanel && (
+              <PreviousChatHistoryPanel
+                activeSessionId={activeTab?.sessionId ?? undefined}
+                title="Previous chats"
+                actionLabel="Open"
+                emptyText="No previous chats yet."
+                onHasChatsChange={setHasPreviousNormalChats}
+                onSelectSession={handleOpenPreviousChat}
+              />
+            )}
             {/* Empty State - Show when no events and not in historical session */}
-            {displayEvents.length === 0 && !isStreaming && !isRestoringChatSessions && (
+            {displayEvents.length === 0 && !isStreaming && !isRestoringChatSessions && !hasPreviousNormalChats && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
 

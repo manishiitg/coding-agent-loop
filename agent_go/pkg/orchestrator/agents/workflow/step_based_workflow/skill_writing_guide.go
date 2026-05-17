@@ -19,21 +19,6 @@ type SystemSkill struct {
 func GetSystemSkills() []SystemSkill {
 	return []SystemSkill{
 		{Source: "anthropics/skills@skill-creator", Name: "skill-creator"},
-		// gws skills — install all from googleworkspace/cli
-		{Source: "googleworkspace/cli@gws-shared", Name: "gws-shared"},
-		{Source: "googleworkspace/cli@gws-gmail", Name: "gws-gmail"},
-		{Source: "googleworkspace/cli@gws-gmail-send", Name: "gws-gmail-send"},
-		{Source: "googleworkspace/cli@gws-drive", Name: "gws-drive"},
-		{Source: "googleworkspace/cli@gws-drive-upload", Name: "gws-drive-upload"},
-		{Source: "googleworkspace/cli@gws-docs", Name: "gws-docs"},
-		{Source: "googleworkspace/cli@gws-docs-write", Name: "gws-docs-write"},
-		{Source: "googleworkspace/cli@gws-calendar", Name: "gws-calendar"},
-		{Source: "googleworkspace/cli@gws-calendar-insert", Name: "gws-calendar-insert"},
-		{Source: "googleworkspace/cli@gws-calendar-agenda", Name: "gws-calendar-agenda"},
-		{Source: "googleworkspace/cli@gws-sheets", Name: "gws-sheets"},
-		{Source: "googleworkspace/cli@gws-sheets-read", Name: "gws-sheets-read"},
-		{Source: "googleworkspace/cli@gws-sheets-append", Name: "gws-sheets-append"},
-		{Source: "googleworkspace/cli@gws-slides", Name: "gws-slides"},
 	}
 }
 

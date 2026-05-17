@@ -114,7 +114,6 @@ AWS_REGION=us-east-1
 ```
 
 **Features:**
-- Google Workspace integration
 - Enterprise SSO support
 - User pool management via AWS Console
 

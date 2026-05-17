@@ -80,7 +80,7 @@ const providerConfig: Record<string, {
   cognito: {
     displayName: 'AWS Cognito',
     icon: <CognitoIcon />,
-    description: 'Sign in with your Google Workspace account via AWS Cognito',
+    description: 'Sign in with your work account via AWS Cognito',
     buttonClass: 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 dark:bg-gray-800 dark:hover:bg-gray-700 dark:text-gray-200 dark:border-gray-600'
   },
   supabase: {

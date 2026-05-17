@@ -797,9 +797,18 @@ When the user asks "what did the workflow extract / produce / know?", each workf
 `
 }
 
-// GetClaudeCodeDelegationOverride returns additional instructions for Claude Code providers
-// that explain how to call "human" category tools via the HTTP API instead of direct function calls.
-func GetClaudeCodeDelegationOverride() string {
+// BuildCLIToolEnvironmentPrompt returns additional instructions for CLI providers
+// that explain how to call api-bridge tools and route human/custom tools through HTTP.
+func BuildCLIToolEnvironmentPrompt(provider string) string {
+	executeTool := "mcp_api-bridge_execute_shell_command"
+	specTool := "mcp_api-bridge_get_api_spec"
+	browserTool := "mcp_api-bridge_agent_browser"
+	if provider == "claude-code" {
+		executeTool = "mcp__api-bridge__execute_shell_command"
+		specTool = "mcp__api-bridge__get_api_spec"
+		browserTool = "mcp__api-bridge__agent_browser"
+	}
+
 	return `
 ## CLI Tool Environment (CRITICAL — Read Carefully)
 
@@ -807,18 +816,18 @@ Your native tools (Bash, Read, Write, etc.) are **disabled**. All tool access go
 
 | Tool name | Purpose |
 |-----------|---------|
-| ` + "`mcp__api-bridge__execute_shell_command`" + ` | Run any shell command (replaces Bash/Read/Write) |
-| ` + "`mcp__api-bridge__get_api_spec`" + ` | Discover human/custom tools and their API specs |
-| ` + "`mcp__api-bridge__agent_browser`" + ` | Browser automation |
+| ` + "`" + executeTool + "`" + ` | Run any shell command (replaces Bash/Read/Write) |
+| ` + "`" + specTool + "`" + ` | Discover human/custom tools and their API specs |
+| ` + "`" + browserTool + "`" + ` | Browser automation |
 | ` + "`WebSearch`" + ` | Web search |
 
 ### Tool Name Mapping
-Whenever the instructions above mention ` + "`execute_shell_command(...)`" + `, call ` + "`mcp__api-bridge__execute_shell_command`" + ` instead. Example:
+Whenever the instructions above mention ` + "`execute_shell_command(...)`" + `, call ` + "`" + executeTool + "`" + ` instead. Example:
 - Instructions say: execute_shell_command(command: "ls Chats/")
-- You call: mcp__api-bridge__execute_shell_command(command: "ls Chats/")
+- You call: ` + executeTool + `(command: "ls Chats/")
 
 ### Calling Custom Tools via HTTP API
-The following tools are NOT available as direct function calls — call them via curl through ` + "`mcp__api-bridge__execute_shell_command`" + `:
+The following tools are NOT available as direct function calls — call them via curl through ` + "`" + executeTool + "`" + `:
 
 - **Delegation tools**: delegate, query_agent, terminate_agent, list_agents
 - **Memory tools**: save_memory, recall_memory, enrich_memory

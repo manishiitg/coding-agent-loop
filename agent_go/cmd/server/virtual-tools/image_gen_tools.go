@@ -73,7 +73,7 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "image_gen",
-			Description: "Generate images using AI from a text prompt. Requires a workspace-relative output_path so the caller decides exactly where the generated image files should be stored. Supports optional provider override, aspect ratio, resolution, number of images, and negative prompt options.",
+			Description: "Generate images using AI from a text prompt. Requires a full absolute output_path under the workspace docs root so the caller decides exactly where the generated image files should be stored. Before choosing provider/model_id, call list_llm_capabilities(capability=\"generate_image\", include_models=true). If you pass model_id, also pass the matching provider from that capability result; do not pass model_id by itself. Supports aspect ratio, resolution, number of images, and negative prompt options.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -83,15 +83,15 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 					},
 					"output_path": map[string]interface{}{
 						"type":        "string",
-						"description": "Required workspace-relative destination path for the generated image. Example: 'Chats/generated-images/hero.png' or 'Workflow/my-flow/assets/hero'. If number_of_images is greater than 1, this path is used as the base name and files are saved as '-1', '-2', etc. before the extension.",
+						"description": "Required full absolute destination path under the workspace docs root for the generated image. Example: '/Users/.../workspace-docs/_users/default/Chats/generated-images/hero.png' or '/app/workspace-docs/Workflow/my-flow/assets/hero.png'. Workspace-relative paths are rejected. If number_of_images is greater than 1, this path is used as the base name and files are saved as '-1', '-2', etc. before the extension.",
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional provider override. Supported values: vertex, minimax-coding-plan, or codex-cli. Vertex supports gemini-3.1-flash-image-preview and gemini-3-pro-image-preview. MiniMax coding plan supports image-01. Codex CLI supports native image generation and editing via models like codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, and gpt-5.3-codex-spark.",
+						"description": "Optional provider override. Discover usable provider/model pairs with list_llm_capabilities(capability=\"generate_image\", include_models=true). Supported values: vertex, minimax-coding-plan, or codex-cli. If specifying model_id, pass the matching provider too.",
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional image model override. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, image-01, codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. If omitted, the default for the selected provider is used.",
+						"description": "Optional image model override. Use a model from list_llm_capabilities(capability=\"generate_image\", include_models=true), and pass the matching provider in the same call. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, image-01, codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. Do not use LLM tier labels such as low, medium, high, or auto as image model IDs.",
 					},
 					"input_image": map[string]interface{}{
 						"type":        "string",
@@ -130,14 +130,15 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 
 // imageGenResult is the JSON structure returned to the LLM
 type imageGenResult struct {
-	Model        string   `json:"model"`
-	CostPerImage *float64 `json:"cost_per_image,omitempty"`
-	TotalCost    *float64 `json:"total_cost_usd,omitempty"`
-	CostNote     string   `json:"cost_note,omitempty"`
-	Prompt       string   `json:"prompt"`
-	SavedPaths   []string `json:"saved_paths,omitempty"`
-	Count        int      `json:"count"`
-	Note         string   `json:"note,omitempty"`
+	Model         string   `json:"model"`
+	CostPerImage  *float64 `json:"cost_per_image,omitempty"`
+	TotalCost     *float64 `json:"total_cost_usd,omitempty"`
+	CostNote      string   `json:"cost_note,omitempty"`
+	Prompt        string   `json:"prompt"`
+	SavedPaths    []string `json:"saved_paths,omitempty"`
+	AbsolutePaths []string `json:"absolute_paths,omitempty"`
+	Count         int      `json:"count"`
+	Note          string   `json:"note,omitempty"`
 }
 
 const (
@@ -150,7 +151,7 @@ func defaultImageModelForProvider(provider string) string {
 	case "minimax-coding-plan":
 		return "image-01"
 	case "codex-cli":
-		return "gpt-5.4-mini"
+		return "codex-cli"
 	default:
 		return defaultImageGenModelID
 	}
@@ -377,7 +378,7 @@ func resolveImageOutputPaths(outputPath string, count int, mimeType string) ([]s
 		return nil, fmt.Errorf("output_path is required")
 	}
 	if strings.HasPrefix(cleanPath, "/") {
-		return nil, fmt.Errorf("output_path must be workspace-relative, not absolute")
+		return nil, fmt.Errorf("output_path must be normalized under the workspace docs root")
 	}
 	if cleanPath == ".." || strings.HasPrefix(cleanPath, "../") {
 		return nil, fmt.Errorf("output_path must stay inside the workspace")
@@ -512,9 +513,11 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 			return "", fmt.Errorf("prompt is required")
 		}
 		outputPath, _ := args["output_path"].(string)
-		if strings.TrimSpace(outputPath) == "" {
-			return "", fmt.Errorf("output_path is required")
+		normalizedOutputPath, err := normalizeRequiredAbsoluteWorkspaceDocumentPath(outputPath, "output_path")
+		if err != nil {
+			return "", err
 		}
+		outputPath = normalizedOutputPath
 		if err := validateGuardedImageOutputPath(ctx, cfg, outputPath); err != nil {
 			return "", err
 		}
@@ -610,6 +613,7 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 		log.Printf("[IMAGE_GEN] Generated %d image(s) with model=%s", len(resp.Images), modelID)
 
 		var savedPaths []string
+		var absolutePaths []string
 		cleanOutputPath := path.Clean(strings.TrimSpace(outputPath))
 		outputDir := path.Dir(cleanOutputPath)
 		wsClient := workspace.NewClient(
@@ -648,6 +652,7 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 			}
 			log.Printf("[IMAGE_GEN] Saved image %d to workspace: %s", i+1, savedPath)
 			savedPaths = append(savedPaths, savedPath)
+			absolutePaths = append(absolutePaths, workspaceAbsolutePath(savedPath))
 		}
 
 		costPerImage, costNote := imageGenerationCostMetadata(provider, modelID)
@@ -668,14 +673,15 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 			})
 		}
 		result := imageGenResult{
-			Model:        modelID,
-			CostPerImage: costPerImage,
-			TotalCost:    totalCost,
-			CostNote:     costNote,
-			Prompt:       prompt,
-			SavedPaths:   savedPaths,
-			Count:        len(resp.Images),
-			Note:         "",
+			Model:         modelID,
+			CostPerImage:  costPerImage,
+			TotalCost:     totalCost,
+			CostNote:      costNote,
+			Prompt:        prompt,
+			SavedPaths:    savedPaths,
+			AbsolutePaths: absolutePaths,
+			Count:         len(resp.Images),
+			Note:          "",
 		}
 		if costPerImage != nil {
 			log.Printf("[IMAGE_GEN] Done: saved=%d costPerImage=$%.4f", len(savedPaths), *costPerImage)
@@ -759,17 +765,17 @@ func GetImageEditToolDefinition() llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "image_edit",
-			Description: "Edit an existing image from the workspace using a text instruction. Requires a workspace-relative output_path so the caller decides exactly where the edited image files should be stored. Supports optional provider override and displays results inline.",
+			Description: "Edit an existing image from the workspace using a text instruction. Requires full absolute image_path and output_path values under the workspace docs root. Before choosing provider/model_id, call list_llm_capabilities(capability=\"generate_image\", include_models=true). If you pass model_id, also pass the matching provider from that capability result; do not pass model_id by itself. Displays results inline.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"image_path": map[string]interface{}{
 						"type":        "string",
-						"description": "Workspace path of the image to edit (e.g. 'Chats/generated-images/image-20260305-223629-1.png'). Use the saved_paths value from a prior image_gen result.",
+						"description": "Full absolute workspace-docs path of the image to edit (e.g. '/Users/.../workspace-docs/_users/default/Chats/generated-images/image.png'). Use the absolute_paths value from a prior image_gen result. Workspace-relative paths are rejected.",
 					},
 					"output_path": map[string]interface{}{
 						"type":        "string",
-						"description": "Required workspace-relative destination path for the edited image. If multiple images are returned, this path is used as the base name and files are saved as '-1', '-2', etc. before the extension.",
+						"description": "Required full absolute destination path under the workspace docs root for the edited image. Example: '/Users/.../workspace-docs/_users/default/Chats/generated-images/edited.png'. Workspace-relative paths are rejected. If multiple images are returned, this path is used as the base name and files are saved as '-1', '-2', etc. before the extension.",
 					},
 					"prompt": map[string]interface{}{
 						"type":        "string",
@@ -777,11 +783,11 @@ func GetImageEditToolDefinition() llmtypes.Tool {
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional provider override. Supported values: vertex, minimax-coding-plan, or codex-cli. Vertex supports gemini-3.1-flash-image-preview and gemini-3-pro-image-preview. MiniMax coding plan supports image-01. Codex CLI supports native image generation and editing via models like codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, and gpt-5.3-codex-spark.",
+						"description": "Optional provider override. Discover usable provider/model pairs with list_llm_capabilities(capability=\"generate_image\", include_models=true). Supported values: vertex, minimax-coding-plan, or codex-cli. If specifying model_id, pass the matching provider too.",
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional image model override. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, image-01, codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. If omitted, the default for the selected provider is used.",
+						"description": "Optional image model override. Use a model from list_llm_capabilities(capability=\"generate_image\", include_models=true), and pass the matching provider in the same call. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, image-01, codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. Do not use LLM tier labels such as low, medium, high, or auto as image model IDs.",
 					},
 					"aspect_ratio": map[string]interface{}{
 						"type":        "string",
@@ -807,13 +813,17 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 		cfg = applyImageGenRuntimeOverride(ctx, cfg)
 		cfg = applyImageGenToolArgs(cfg, args)
 		imagePath, _ := args["image_path"].(string)
-		if imagePath == "" {
-			return "", fmt.Errorf("image_path is required")
+		normalizedImagePath, err := normalizeRequiredAbsoluteWorkspaceDocumentPath(imagePath, "image_path")
+		if err != nil {
+			return "", err
 		}
+		imagePath = normalizedImagePath
 		outputPath, _ := args["output_path"].(string)
-		if strings.TrimSpace(outputPath) == "" {
-			return "", fmt.Errorf("output_path is required")
+		normalizedOutputPath, err := normalizeRequiredAbsoluteWorkspaceDocumentPath(outputPath, "output_path")
+		if err != nil {
+			return "", err
 		}
+		outputPath = normalizedOutputPath
 		if err := validateGuardedImageOutputPath(ctx, cfg, outputPath); err != nil {
 			return "", err
 		}
@@ -917,6 +927,7 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 
 		// Save edited images to workspace
 		var savedPaths []string
+		var absolutePaths []string
 		cleanOutputPath := path.Clean(strings.TrimSpace(outputPath))
 		outputDir := path.Dir(cleanOutputPath)
 
@@ -955,6 +966,7 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 			}
 			log.Printf("[IMAGE_EDIT] Saved edited image %d: %s", i+1, savedPath)
 			savedPaths = append(savedPaths, savedPath)
+			absolutePaths = append(absolutePaths, workspaceAbsolutePath(savedPath))
 		}
 
 		costPerImage, costNote := imageGenerationCostMetadata(provider, modelID)
@@ -975,14 +987,15 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 			})
 		}
 		result := imageGenResult{
-			Model:        modelID,
-			CostPerImage: costPerImage,
-			TotalCost:    totalCost,
-			CostNote:     costNote,
-			Prompt:       prompt,
-			SavedPaths:   savedPaths,
-			Count:        len(resp.Images),
-			Note:         "",
+			Model:         modelID,
+			CostPerImage:  costPerImage,
+			TotalCost:     totalCost,
+			CostNote:      costNote,
+			Prompt:        prompt,
+			SavedPaths:    savedPaths,
+			AbsolutePaths: absolutePaths,
+			Count:         len(resp.Images),
+			Note:          "",
 		}
 		if costPerImage != nil {
 			log.Printf("[IMAGE_EDIT] Done: saved=%d costPerImage=$%.4f", len(savedPaths), *costPerImage)

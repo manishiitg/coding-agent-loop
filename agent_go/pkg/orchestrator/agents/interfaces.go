@@ -109,6 +109,14 @@ type OrchestratorAgentConfig struct {
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
+	// ClaudeCodeTransport optionally overrides the Claude Code provider
+	// transport for this workflow agent. Workflow execution currently uses the
+	// print transport for deterministic stream-json responses.
+	ClaudeCodeTransport string `json:"claude_code_transport,omitempty"`
+	// CodingAgentWorkingDir sets the process working directory for CLI-backed
+	// coding providers. Workflow agents should run from the workflow folder, not
+	// from the server/project root.
+	CodingAgentWorkingDir string `json:"coding_agent_working_dir,omitempty"`
 	// Context offloading configuration
 	EnableContextOffloading *bool `json:"enable_context_offloading,omitempty"` // Enable/disable context offloading (default: true if nil)
 	LargeOutputThreshold    int   `json:"large_output_threshold,omitempty"`    // Token threshold for context offloading (0 = use default: 10000)

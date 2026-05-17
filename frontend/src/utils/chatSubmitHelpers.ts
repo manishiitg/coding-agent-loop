@@ -105,7 +105,7 @@ export function buildQueryRequestPayload(params: {
     && CHAT_COMPATIBLE_PHASES.has(currentTab.metadata.phaseId)
   // isChatLikeMode: includes phase chat for basic settings (context summarization, workspace access)
   const isChatLikeMode = isMultiAgentMode || isWorkflowPhaseChat
-  // isChatWithExtras: only multi-agent mode gets optional extras (browser, GWS, skills, secrets, etc.)
+  // isChatWithExtras: only multi-agent mode gets optional extras (browser, skills, secrets, etc.)
   const isChatWithExtras = isMultiAgentMode
 
   // Context editing from workflow preset
@@ -168,9 +168,6 @@ export function buildQueryRequestPayload(params: {
       : undefined,
     browser_mode: isChatWithExtras
       ? effectiveBrowserMode
-      : undefined,
-    enable_gws_access: isChatWithExtras
-      ? (currentTab?.config?.enableGWSAccess ?? false)
       : undefined,
     cdp_port: isChatWithExtras && effectiveBrowserMode === 'cdp'
       ? (currentTab?.config?.cdpPort || 9222)

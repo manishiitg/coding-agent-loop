@@ -145,6 +145,7 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		&boa.config.LLMConfig,                  // Pass LLMConfig
 		boa.config.APIKeys,                     // Pass API keys
 		boa.config.MCPSessionID,                // MCP session ID for connection sharing
+		boa.config.CodingAgentWorkingDir,       // CLI coding-agent working directory
 		boa.config.RuntimeOverrides,            // Runtime config overrides for MCP servers
 	)
 	if err != nil {
@@ -716,15 +717,16 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 
 	// Create LLM configuration using unified LLMConfig
 	config := llm.Config{
-		Provider:       llm.Provider(primaryProvider),
-		ModelID:        primaryModel,
-		Temperature:    boa.config.Temperature,
-		Tracers:        nil, // Tracers will be set later if needed
-		TraceID:        traceID,
-		FallbackModels: fallbackModels,
-		MaxRetries:     boa.config.MaxRetries,
-		Logger:         llmLogger, // Use separate LLM logger for multi-llm-provider-go logs
-		APIKeys:        llmAPIKeys,
+		Provider:            llm.Provider(primaryProvider),
+		ModelID:             primaryModel,
+		Temperature:         boa.config.Temperature,
+		Tracers:             nil, // Tracers will be set later if needed
+		TraceID:             traceID,
+		FallbackModels:      fallbackModels,
+		MaxRetries:          boa.config.MaxRetries,
+		Logger:              llmLogger, // Use separate LLM logger for multi-llm-provider-go logs
+		APIKeys:             llmAPIKeys,
+		ClaudeCodeTransport: boa.config.ClaudeCodeTransport,
 	}
 
 	// Initialize LLM using the existing factory

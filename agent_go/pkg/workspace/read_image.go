@@ -14,6 +14,8 @@ import (
 type ReadImageParams struct {
 	Filepath string `json:"filepath"`
 	Query    string `json:"query"`
+	Provider string `json:"provider,omitempty"`
+	ModelID  string `json:"model_id,omitempty"`
 }
 
 // ReadImageResult is the structured result from ReadImage (pure I/O).
@@ -21,6 +23,8 @@ type ReadImageParams struct {
 type ReadImageResult struct {
 	Filepath string `json:"filepath"`
 	Query    string `json:"query"`
+	Provider string `json:"provider,omitempty"`
+	ModelID  string `json:"model_id,omitempty"`
 	MimeType string `json:"mime_type"`
 	Data     string `json:"data"` // base64-encoded image bytes
 }
@@ -72,22 +76,28 @@ func (c *Client) ReadImage(ctx context.Context, params ReadImageParams) (string,
 	if params.Query == "" {
 		return "", fmt.Errorf("query is required")
 	}
+	absolutePath, guardPath, err := normalizeReadImageAbsolutePath(params.Filepath)
+	if err != nil {
+		log.Printf("[READ_IMAGE_DEBUG] Path normalization failed: %v", err)
+		return "", err
+	}
 
 	// Validate path against folder guard (read operation)
-	if err := c.ValidatePath(params.Filepath, false); err != nil {
+	if err := c.ValidatePathWithContext(ctx, guardPath, false); err != nil {
 		log.Printf("[READ_IMAGE_DEBUG] Path validation failed: %v", err)
 		return "", err
 	}
 
 	// Validate file extension
-	ext := strings.ToLower(filepath.Ext(params.Filepath))
+	ext := strings.ToLower(filepath.Ext(absolutePath))
 	if !supportedImageExtensions[ext] {
 		log.Printf("[READ_IMAGE_DEBUG] Unsupported extension: %s", ext)
 		return "", fmt.Errorf("unsupported image format (got extension: %s). Supported: png, jpg, jpeg, gif, bmp, webp, svg, ico", ext)
 	}
 
-	// URL-encode the filepath segments
-	pathSegments := strings.Split(params.Filepath, "/")
+	// URL-encode the workspace API path. The external contract is absolute-only,
+	// but the workspace API route expects a workspace-docs-relative path.
+	pathSegments := strings.Split(filepath.ToSlash(guardPath), "/")
 	encodedSegments := make([]string, len(pathSegments))
 	for i, segment := range pathSegments {
 		encodedSegments[i] = url.PathEscape(segment)
@@ -113,15 +123,17 @@ func (c *Client) ReadImage(ctx context.Context, params ReadImageParams) (string,
 	}
 
 	// Determine MIME type and base64-encode
-	mimeType := GetImageMimeType(params.Filepath)
+	mimeType := GetImageMimeType(absolutePath)
 	base64Data := base64.StdEncoding.EncodeToString(rawData)
 
 	log.Printf("[READ_IMAGE_DEBUG] Image encoded: mimeType=%s, base64Length=%d", mimeType, len(base64Data))
 
 	// Return structured result — the virtual-tools wrapper will handle the LLM call
 	result := ReadImageResult{
-		Filepath: params.Filepath,
+		Filepath: absolutePath,
 		Query:    params.Query,
+		Provider: strings.TrimSpace(params.Provider),
+		ModelID:  strings.TrimSpace(params.ModelID),
 		MimeType: mimeType,
 		Data:     base64Data,
 	}
@@ -133,4 +145,24 @@ func (c *Client) ReadImage(ctx context.Context, params ReadImageParams) (string,
 
 	log.Printf("[READ_IMAGE_DEBUG] ReadImage I/O complete, returning base64 data for LLM processing")
 	return string(responseJSON), nil
+}
+
+func normalizeReadImageAbsolutePath(inputPath string) (absolutePath string, guardPath string, err error) {
+	return normalizeWorkspaceAbsoluteToolPath(inputPath, "filepath", "read_image")
+}
+
+func normalizeWorkspaceAbsoluteToolPath(inputPath, fieldName, toolName string) (absolutePath string, guardPath string, err error) {
+	trimmed := strings.TrimSpace(inputPath)
+	if trimmed == "" {
+		return "", "", fmt.Errorf("%s is required", fieldName)
+	}
+	if !filepath.IsAbs(trimmed) {
+		return "", "", fmt.Errorf("%s %s must be a full absolute path under the workspace docs root; got relative path %q", toolName, fieldName, inputPath)
+	}
+	absolutePath = filepath.Clean(trimmed)
+	guardPath, ok := normalizeAbsoluteWorkspacePath(absolutePath)
+	if !ok {
+		return "", "", fmt.Errorf("%s %s must be under an allowed workspace docs root; got %q. Allowed roots: %s", toolName, fieldName, absolutePath, strings.Join(workspaceDocsRoots(), ", "))
+	}
+	return absolutePath, guardPath, nil
 }

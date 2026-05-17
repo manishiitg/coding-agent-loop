@@ -195,7 +195,7 @@ func resolveAudioOutputPaths(outputPath string, count int, mimeType string) ([]s
 		return nil, fmt.Errorf("output_path is required")
 	}
 	if strings.HasPrefix(cleanPath, "/") {
-		return nil, fmt.Errorf("output_path must be workspace-relative, not absolute")
+		return nil, fmt.Errorf("output_path must be normalized under the workspace docs root")
 	}
 	if cleanPath == ".." || strings.HasPrefix(cleanPath, "../") {
 		return nil, fmt.Errorf("output_path must stay inside the workspace")
@@ -271,7 +271,7 @@ func GetTextToSpeechToolDefinition() llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
 			Name:        textToSpeechToolName,
-			Description: "Generate text-to-speech audio using Gemini TTS, MiniMax, ElevenLabs, or Deepgram. Requires a workspace-relative output_path. Defaults to Gemini gemini-3.1-flash-tts-preview; pass provider=\"minimax\", provider=\"elevenlabs\", or provider=\"deepgram\" to use another provider.",
+			Description: "Generate text-to-speech audio using Gemini TTS, MiniMax, ElevenLabs, or Deepgram. Requires a full absolute output_path under the workspace docs root. Before choosing provider/model_id, call list_llm_capabilities(capability=\"text_to_speech\", include_models=true). If you pass model_id, also pass the matching provider from that capability result; do not pass model_id by itself. Defaults to Gemini gemini-3.1-flash-tts-preview.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -281,15 +281,15 @@ func GetTextToSpeechToolDefinition() llmtypes.Tool {
 					},
 					"output_path": map[string]interface{}{
 						"type":        "string",
-						"description": "Required destination path for the generated audio inside the workspace, e.g. 'Chats/generated-audio/narration.wav'. If multiple audio items are returned, files are saved as '-1', '-2', etc. before the extension.",
+						"description": "Required full absolute destination path under the workspace docs root for the generated audio, e.g. '/Users/.../workspace-docs/_users/default/Chats/generated-audio/narration.wav'. Workspace-relative paths are rejected. If multiple audio items are returned, files are saved as '-1', '-2', etc. before the extension.",
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional provider override. Supported values: vertex, minimax, elevenlabs, deepgram.",
+						"description": "Optional provider override. Discover usable provider/model pairs with list_llm_capabilities(capability=\"text_to_speech\", include_models=true). Supported values: vertex, minimax, elevenlabs, deepgram. If specifying model_id, pass the matching provider too.",
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional model id. Gemini default: gemini-3.1-flash-tts-preview. MiniMax examples: speech-2.8-turbo, speech-2.8-hd. ElevenLabs examples: eleven_multilingual_v2, eleven_turbo_v2_5. Deepgram examples: aura-2-thalia-en, aura-2-luna-en.",
+						"description": "Optional model id. Use a model from list_llm_capabilities(capability=\"text_to_speech\", include_models=true), and pass the matching provider in the same call. Gemini default: gemini-3.1-flash-tts-preview. MiniMax examples: speech-2.8-turbo, speech-2.8-hd. ElevenLabs examples: eleven_multilingual_v2, eleven_turbo_v2_5. Deepgram examples: aura-2-thalia-en, aura-2-luna-en.",
 						"enum":        []interface{}{"gemini-3.1-flash-tts-preview", "speech-2.8-turbo", "speech-2.8-hd", "speech-2.6-turbo", "speech-2.6-hd", "speech-02-turbo", "speech-02-hd", "eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_v3", "aura-2-thalia-en", "aura-2-luna-en", "aura-2-asteria-en", "aura-2-apollo-en"},
 					},
 					"voice_name": map[string]interface{}{
@@ -331,23 +331,23 @@ func GetSpeechToTextToolDefinition() llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
 			Name:        speechToTextToolName,
-			Description: "Transcribe workspace audio to text using Deepgram speech-to-text. Requires a workspace-relative audio_path. Defaults to Deepgram nova-3.",
+			Description: "Transcribe workspace audio to text using Deepgram speech-to-text. Requires a full absolute audio_path under the workspace docs root. Before choosing provider/model_id, call list_llm_capabilities(capability=\"speech_to_text\", include_models=true). If you pass model_id, also pass the matching provider from that capability result; do not pass model_id by itself. Defaults to Deepgram nova-3.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"audio_path": map[string]interface{}{
 						"type":        "string",
-						"description": "Required workspace-relative path to the audio file to transcribe, e.g. 'Chats/audio/interview.mp3'.",
+						"description": "Required full absolute path under the workspace docs root to the audio file to transcribe, e.g. '/Users/.../workspace-docs/_users/default/Chats/audio/interview.mp3'. Workspace-relative paths are rejected.",
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional provider override. Currently supported: deepgram.",
+						"description": "Optional provider override. Discover usable provider/model pairs with list_llm_capabilities(capability=\"speech_to_text\", include_models=true). Currently supported: deepgram. If specifying model_id, pass the matching provider too.",
 						"enum":        []interface{}{"deepgram"},
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional Deepgram speech-to-text model id. Defaults to nova-3.",
-						"enum":        []interface{}{"nova-3", "nova-2", "base"},
+						"description": "Optional Deepgram speech-to-text model id. Use a model from list_llm_capabilities(capability=\"speech_to_text\", include_models=true), and pass provider=\"deepgram\" in the same call. Defaults to nova-3.",
+						"enum":        []interface{}{"nova-3", "nova-3-multilingual", "nova-2", "base"},
 					},
 					"language_code": map[string]interface{}{
 						"type":        "string",
@@ -381,10 +381,11 @@ func CreateAudioGenExecutor(cfg AudioGenExecutorConfig) func(ctx context.Context
 			return "", fmt.Errorf("prompt is required")
 		}
 		outputPath, _ := args["output_path"].(string)
-		outputPath = normalizeWorkspaceDocumentPath(outputPath)
-		if strings.TrimSpace(outputPath) == "" {
-			return "", fmt.Errorf("output_path is required")
+		normalizedOutputPath, err := normalizeRequiredAbsoluteWorkspaceDocumentPath(outputPath, "output_path")
+		if err != nil {
+			return "", err
 		}
+		outputPath = normalizedOutputPath
 		if err := validateGuardedAudioOutputPath(ctx, cfg, outputPath); err != nil {
 			return "", err
 		}
@@ -608,13 +609,14 @@ func normalizeAudioTranscriptionProviderAndModel(provider, modelID string) (stri
 func CreateSpeechToTextExecutor(cfg AudioGenExecutorConfig) func(ctx context.Context, args map[string]any) (string, error) {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		audioPath, _ := args["audio_path"].(string)
-		audioPath = normalizeWorkspaceDocumentPath(audioPath)
-		if strings.TrimSpace(audioPath) == "" {
-			return "", fmt.Errorf("audio_path is required")
+		normalizedAudioPath, err := normalizeRequiredAbsoluteWorkspaceDocumentPath(audioPath, "audio_path")
+		if err != nil {
+			return "", err
 		}
+		audioPath = normalizedAudioPath
 		cleanAudioPath := path.Clean(strings.TrimSpace(audioPath))
 		if cleanAudioPath == "." || cleanAudioPath == ".." || strings.HasPrefix(cleanAudioPath, "../") || strings.HasPrefix(cleanAudioPath, "/") {
-			return "", fmt.Errorf("audio_path must be workspace-relative and stay inside the workspace")
+			return "", fmt.Errorf("audio_path must be normalized under the workspace docs root")
 		}
 		if cfg.WorkspaceAPIURL == "" {
 			return "", fmt.Errorf("speech_to_text requires a workspace API URL so audio_path can be read from the workspace")

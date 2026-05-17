@@ -65,15 +65,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [cdpPort, setCdpPort] = useState(9222);
   const [cdpConnected, setCdpConnected] = useState<boolean | null>(null);
   const [cdpChecking, setCdpChecking] = useState(false);
-  const [gwsChecking, setGwsChecking] = useState(false);
-  const [gwsAuthStatus, setGwsAuthStatus] = useState<{
-    configured?: boolean; auth_method?: string; token_valid?: boolean; token_error?: string;
-    enabled_api_count?: number; scope_count?: number; error?: string;
-  } | null>(null);
-  const [gwsSyncing, setGwsSyncing] = useState(false);
-  const [gwsSyncResult, setGwsSyncResult] = useState<{
-    synced?: number; failed?: { name: string; error: string }[]; error?: string;
-  } | null>(null);
   const [showDeleteWorkflowConfirm, setShowDeleteWorkflowConfirm] = useState(false);
   const [deletingWorkflow, setDeletingWorkflow] = useState(false);
   const toolList = useMCPStore(state => state.toolList);
@@ -166,32 +157,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     return () => clearTimeout(timer);
   }, [useCdp, cdpPort, enableBrowserAccess, checkCdpConnection]);
 
-  const syncGWSSkills = useCallback(async () => {
-    setGwsSyncing(true);
-    setGwsSyncResult(null);
-    try {
-      const result = await agentApi.syncGWSSkills();
-      setGwsSyncResult(result);
-    } catch {
-      setGwsSyncResult({ error: 'Failed to connect to backend' });
-    } finally {
-      setGwsSyncing(false);
-    }
-  }, []);
-
-  const checkGWSAuth = useCallback(async () => {
-    setGwsChecking(true);
-    setGwsAuthStatus(null);
-    try {
-      const result = await agentApi.checkGWSAuthStatus();
-      setGwsAuthStatus(result);
-    } catch {
-      setGwsAuthStatus({ configured: false, error: 'Failed to connect to backend' });
-    } finally {
-      setGwsChecking(false);
-    }
-  }, []);
-
   // LLM selection handler - updates local preset LLM config
   const handleLLMSelect = useCallback((llm: LLMOption) => {
     setLlmConfig({
@@ -231,6 +196,17 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const effectiveTier1LLM = useMemo<AgentLLMConfig | null>(() => tier1LLM || defaultAgentLLM, [tier1LLM, defaultAgentLLM]);
   const effectiveTier2LLM = useMemo<AgentLLMConfig | null>(() => tier2LLM || defaultAgentLLM, [tier2LLM, defaultAgentLLM]);
   const effectiveTier3LLM = useMemo<AgentLLMConfig | null>(() => tier3LLM || defaultAgentLLM, [tier3LLM, defaultAgentLLM]);
+
+  const hasAdvancedWorkflowLLMConfig = useCallback((presetLLM?: PresetLLMConfig | null) => {
+    const t1 = presetLLM?.tiered_config?.tier_1;
+    const t2 = presetLLM?.tiered_config?.tier_2;
+    const t3 = presetLLM?.tiered_config?.tier_3;
+    const phase = presetLLM?.phase_llm;
+    const configured = [t1, t2, t3, phase].filter(Boolean);
+    const key = (cfg?: AgentLLMConfig | null) => cfg?.provider && cfg?.model_id ? `${cfg.provider}/${cfg.model_id}` : '';
+    if (configured.some(cfg => (cfg?.fallbacks ?? []).length > 0)) return true;
+    return new Set(configured.map(key).filter(Boolean)).size > 1;
+  }, []);
 
   const handleSharedWorkflowLLMSelect = useCallback((llm: LLMOption) => {
     const selected: AgentLLMConfig = {
@@ -296,7 +272,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setTier1Fallbacks(presetLLM.tiered_config?.tier_1?.fallbacks || []);
       setTier2Fallbacks(presetLLM.tiered_config?.tier_2?.fallbacks || []);
       setTier3Fallbacks(presetLLM.tiered_config?.tier_3?.fallbacks || []);
-      setShowWorkflowLLMAdvanced(false);
+      setShowWorkflowLLMAdvanced(hasAdvancedWorkflowLLMConfig(presetLLM));
     } else {
       setLabel('');
       setQuery('');
@@ -330,7 +306,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setTier3Fallbacks([]);
       setShowWorkflowLLMAdvanced(false);
     }
-  }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory, makeWorkflowFolder, sanitizeWorkflowFolderName]);
+  }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory, makeWorkflowFolder, sanitizeWorkflowFolderName, hasAdvancedWorkflowLLMConfig]);
 
   useEffect(() => {
     if (editingPreset || effectiveAgentMode !== 'workflow' || workflowFolderEdited) {
@@ -1040,125 +1016,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     )}
                   </div>
                 </div>
-
-                {/* Google Workspace Section */}
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Google Workspace
-                  </label>
-                  <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 flex-1">
-                        <svg viewBox="0 0 24 24" className="w-5 h-5 flex-shrink-0" fill="none">
-                          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
-                          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-                        </svg>
-                        <div>
-                          <div className="text-sm font-medium text-gray-900 dark:text-white">Enable Google Workspace</div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Access Drive, Gmail, Calendar, Docs, Sheets, and Slides tools</div>
-                        </div>
-                      </div>
-                      <label className={`relative inline-flex items-center ml-3 ${gwsAuthStatus?.token_valid === false ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
-                        <input
-                          type="checkbox"
-                          checked={selectedServers.includes('gws')}
-                          disabled={gwsAuthStatus?.token_valid === false}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedServers(prev => prev.includes('gws') ? prev : [...prev, 'gws']);
-                            } else {
-                              setSelectedServers(prev => prev.filter(s => s !== 'gws'));
-                            }
-                          }}
-                          className="sr-only peer hidden"
-                        />
-                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-                      </label>
-                    </div>
-
-                    <details className="group">
-                      <summary className="cursor-pointer text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline select-none list-none flex items-center gap-1">
-                        <span className="group-open:rotate-90 transition-transform inline-block">▶</span>
-                        Setup Instructions
-                      </summary>
-                      <div className="mt-2 space-y-2 text-xs text-gray-600 dark:text-gray-400">
-                        <ol className="list-decimal list-inside space-y-1 pl-1">
-                          <li>Install: <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded font-mono text-[11px]">npm install -g @googleworkspace/cli</code></li>
-                          <li>Create a Google Cloud project, enable Workspace APIs, and download your OAuth2 client secret JSON</li>
-                          <li>Authenticate: <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded font-mono text-[11px]">gws auth login --client-secret /path/to/client_secret.json</code></li>
-                          <li>Authorize in the browser when prompted</li>
-                          <li>Export credentials: <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded font-mono text-[11px]">gws auth export --unmasked &gt; agent_go/gws-credentials.json</code></li>
-                          <li>Restart the backend: <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded font-mono text-[11px]">docker compose down &amp;&amp; docker compose up -d</code></li>
-                          <li>Verify below with &quot;Check Auth Status&quot;</li>
-                        </ol>
-                        <p className="text-amber-600 dark:text-amber-400 mt-1">
-                          Tip: each gws service exposes 10–80 tools. The default config uses the core 6 services.
-                        </p>
-                      </div>
-                    </details>
-
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={checkGWSAuth}
-                        disabled={gwsChecking}
-                        className="px-2 py-1 text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded text-gray-700 dark:text-gray-300 disabled:opacity-50"
-                      >
-                        {gwsChecking ? 'Checking...' : 'Check Auth Status'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={syncGWSSkills}
-                        disabled={gwsSyncing}
-                        className="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900/40 hover:bg-blue-200 dark:hover:bg-blue-900/60 rounded text-blue-700 dark:text-blue-300 disabled:opacity-50"
-                      >
-                        {gwsSyncing ? 'Syncing...' : 'Sync Skills from GitHub'}
-                      </button>
-                      {gwsAuthStatus && (
-                        gwsAuthStatus.configured && gwsAuthStatus.token_valid !== false ? (
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
-                            <span className="text-xs text-green-600 dark:text-green-400">
-                              Auth OK · {gwsAuthStatus.enabled_api_count ?? 0} APIs · {gwsAuthStatus.scope_count ?? 0} scopes
-                              {gwsAuthStatus.auth_method ? ` (${gwsAuthStatus.auth_method})` : ''}
-                            </span>
-                          </div>
-                        ) : gwsAuthStatus.configured && gwsAuthStatus.token_valid === false ? (
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-                            <span className="text-xs text-amber-600 dark:text-amber-400">
-                              Token invalid — run <code className="font-mono">gws auth login</code>, then <code className="font-mono">gws auth export --unmasked &gt; agent_go/gws-credentials.json</code> and restart docker compose
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-                            <span className="text-xs text-red-600 dark:text-red-400">
-                              {gwsAuthStatus.token_valid === false
-                                ? `Token invalid — run gws auth login${gwsAuthStatus.token_error ? ` (${gwsAuthStatus.token_error})` : ''}`
-                                : (gwsAuthStatus.error ?? 'Not configured — run gws auth login')}
-                            </span>
-                          </div>
-                        )
-                      )}
-                      {gwsSyncResult && (
-                        gwsSyncResult.error ? (
-                          <span className="text-xs text-red-600 dark:text-red-400">{gwsSyncResult.error}</span>
-                        ) : (
-                          <span className="text-xs text-green-600 dark:text-green-400">
-                            Synced {gwsSyncResult.synced} skill{gwsSyncResult.synced !== 1 ? 's' : ''}
-                            {gwsSyncResult.failed && gwsSyncResult.failed.length > 0
-                              ? ` · ${gwsSyncResult.failed.length} failed`
-                              : ''}
-                          </span>
-                        )
-                      )}
-                    </div>
-                  </div>
-                </div>
-
                 {/* Agent Mode Display (read-only for workflow) */}
                 {hideAgentModeSelection && fixedAgentMode && (
                   <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">

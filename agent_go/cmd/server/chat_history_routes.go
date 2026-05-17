@@ -87,8 +87,9 @@ func getChatHistoryConversationHandler(api *StreamingAPI) http.HandlerFunc {
 			userID = "default"
 		}
 		sessionID := mux.Vars(r)["session_id"]
+		workspacePath := r.URL.Query().Get("workspace_path")
 
-		data, err := ReadChatHistoryConversation(userID, sessionID)
+		data, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
 		if err != nil {
 			http.Error(w, "Session not found", http.StatusNotFound)
 			return

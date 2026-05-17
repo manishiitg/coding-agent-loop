@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X, Brain, Zap, Gauge, Server, Shield, FolderOpen, Sparkles, Tag, Plus, Trash2, Crown, RefreshCw, SlidersHorizontal } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useLLMStore } from '../stores'
@@ -50,17 +50,37 @@ const FEATURES = [
 ]
 
 type BuiltInTierKey = 'main' | 'high' | 'medium' | 'low'
+const BUILT_IN_TIERS: BuiltInTierKey[] = ['main', 'high', 'medium', 'low']
+
+const tierKey = (tier?: TierModel): string | null => {
+  if (!tier?.provider || !tier?.model_id) return null
+  return `${tier.provider}/${tier.model_id}`
+}
+
+const hasAdvancedTierConfig = (config: DelegationTierConfig | null): boolean => {
+  if (!config) return false
+  if (config.custom && Object.keys(config.custom).length > 0) return true
+  if (BUILT_IN_TIERS.some(key => (config[key]?.fallbacks || []).length > 0)) return true
+  const configuredModels = new Set(BUILT_IN_TIERS.map(key => tierKey(config[key])).filter(Boolean))
+  return configuredModels.size > 1
+}
 
 export default function DelegationTierConfigModal({ isOpen, onClose }: DelegationTierConfigModalProps) {
   const { availableLLMs, delegationTierConfig, setDelegationTierConfig, loadDelegationTierDefaults } = useLLMStore()
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const initializedAdvancedForOpen = useRef(false)
 
   useEffect(() => {
-    if (isOpen) {
-      setShowAdvanced(false)
+    if (!isOpen) {
+      initializedAdvancedForOpen.current = false
+      return
     }
-  }, [isOpen])
+    if (!initializedAdvancedForOpen.current) {
+      initializedAdvancedForOpen.current = true
+      setShowAdvanced(hasAdvancedTierConfig(delegationTierConfig))
+    }
+  }, [isOpen, delegationTierConfig])
 
   if (!isOpen) return null
 

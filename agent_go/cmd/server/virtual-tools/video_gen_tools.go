@@ -152,12 +152,7 @@ func normalizeWorkspaceDocumentPath(inputPath string) string {
 	}
 
 	cleanAbs := filepath.Clean(trimmed)
-	prefixes := []string{
-		filepath.Clean(fsutil.WorkspaceDocsRoot()),
-		filepath.Clean("/app/workspace-docs"),
-		filepath.Clean("/workspace-docs"),
-	}
-	for _, prefix := range prefixes {
+	for _, prefix := range workspaceDocumentRoots() {
 		if prefix == "" {
 			continue
 		}
@@ -174,6 +169,63 @@ func normalizeWorkspaceDocumentPath(inputPath string) string {
 	return path.Clean(filepath.ToSlash(trimmed))
 }
 
+func normalizeRequiredAbsoluteWorkspaceDocumentPath(inputPath, fieldName string) (string, error) {
+	trimmed := strings.TrimSpace(inputPath)
+	if trimmed == "" {
+		return "", fmt.Errorf("%s is required", fieldName)
+	}
+	if !filepath.IsAbs(trimmed) {
+		return "", fmt.Errorf("%s must be a full absolute path under the workspace docs root; got relative path %q", fieldName, inputPath)
+	}
+	relativePath := normalizeWorkspaceDocumentPath(trimmed)
+	if relativePath == "" || strings.HasPrefix(relativePath, "/") {
+		return "", fmt.Errorf("%s must be under an allowed workspace docs root; got %q. Allowed roots: %s", fieldName, filepath.Clean(trimmed), strings.Join(workspaceDocumentRoots(), ", "))
+	}
+	return relativePath, nil
+}
+
+func workspaceDocumentRoots() []string {
+	roots := make([]string, 0, 8)
+	if envRoot := strings.TrimSpace(os.Getenv("WORKSPACE_DOCS_PATH")); envRoot != "" {
+		roots = append(roots, envRoot)
+	} else if root := strings.TrimSpace(fsutil.WorkspaceDocsRoot()); root != "" {
+		if info, err := os.Stat(root); err == nil && info.IsDir() {
+			roots = append(roots, root)
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		for dir := filepath.Clean(cwd); ; dir = filepath.Dir(dir) {
+			candidate := filepath.Join(dir, "workspace-docs")
+			if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+				roots = append(roots, candidate)
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+		}
+	}
+	roots = append(roots, "/app/workspace-docs", "/workspace-docs")
+	return dedupeWorkspaceDocumentRoots(roots)
+}
+
+func dedupeWorkspaceDocumentRoots(roots []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(roots))
+	for _, root := range roots {
+		root = filepath.Clean(strings.TrimSpace(root))
+		if root == "" || root == "." {
+			continue
+		}
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+		out = append(out, root)
+	}
+	return out
+}
+
 func workspaceAbsolutePath(relativePath string) string {
 	return filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(path.Clean(relativePath)))
 }
@@ -184,7 +236,7 @@ func resolveVideoOutputPaths(outputPath string, count int, mimeType string) ([]s
 		return nil, fmt.Errorf("output_path is required")
 	}
 	if strings.HasPrefix(cleanPath, "/") {
-		return nil, fmt.Errorf("output_path must be workspace-relative, not absolute")
+		return nil, fmt.Errorf("output_path must be normalized under the workspace docs root")
 	}
 	if cleanPath == ".." || strings.HasPrefix(cleanPath, "../") {
 		return nil, fmt.Errorf("output_path must stay inside the workspace")
@@ -260,7 +312,7 @@ func getVideoGenToolDefinition(toolName string) llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
 			Name:        toolName,
-			Description: "Generate videos using AI from a text prompt. Requires an output_path inside the workspace and a model_id (the model determines the Google backend). Veo 3 models include native audio in the output by default. Supports image-to-video generation, aspect ratio, resolution, duration, number of videos, and negative prompt.",
+			Description: "Generate videos using AI from a text prompt. Requires a full absolute output_path under the workspace docs root and a model_id (the model determines the Google backend). Before choosing provider/model_id, call list_llm_capabilities(capability=\"generate_video\", include_models=true). When specifying a model_id, pass the matching provider too. Veo 3 models include native audio in the output by default. Supports image-to-video generation, aspect ratio, resolution, duration, number of videos, and negative prompt.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -270,15 +322,15 @@ func getVideoGenToolDefinition(toolName string) llmtypes.Tool {
 					},
 					"output_path": map[string]interface{}{
 						"type":        "string",
-						"description": "Required destination path for the generated video inside the workspace. Can be workspace-relative like 'Chats/generated-videos/scene.mp4' or an absolute workspace path like '/app/workspace-docs/Chats/generated-videos/scene.mp4'. If multiple videos are returned, this path is used as the base name and files are saved as '-1', '-2', etc. before the extension.",
+						"description": "Required full absolute destination path under the workspace docs root for the generated video. Example: '/Users/.../workspace-docs/_users/default/Chats/generated-videos/scene.mp4' or '/app/workspace-docs/Workflow/my-flow/assets/scene.mp4'. Workspace-relative paths are rejected. If multiple videos are returned, this path is used as the base name and files are saved as '-1', '-2', etc. before the extension.",
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional provider override. Supported values: vertex.",
+						"description": "Provider for video generation. Discover usable provider/model pairs with list_llm_capabilities(capability=\"generate_video\", include_models=true). Supported value: vertex. Pass provider together with model_id.",
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Required Veo model id. The model determines the Google backend. Gemini API backend (requires GEMINI_API_KEY/VERTEX_API_KEY): veo-3.1-generate-preview, veo-3.1-fast-generate-preview. Vertex AI backend (requires GOOGLE_CLOUD_PROJECT + ADC): veo-3.1-generate-001, veo-3.1-lite-generate-001, veo-3.1-fast-generate-001. All Veo 3 models include native audio in the output by default.",
+						"description": "Required Veo model id. Use a model from list_llm_capabilities(capability=\"generate_video\", include_models=true), and pass the matching provider in the same call. The model determines the Google backend. Gemini API backend (requires GEMINI_API_KEY/VERTEX_API_KEY): veo-3.1-generate-preview, veo-3.1-fast-generate-preview. Vertex AI backend (requires GOOGLE_CLOUD_PROJECT + ADC): veo-3.1-generate-001, veo-3.1-lite-generate-001, veo-3.1-fast-generate-001. All Veo 3 models include native audio in the output by default.",
 						"enum":        []interface{}{"veo-3.1-generate-001", "veo-3.1-lite-generate-001", "veo-3.1-fast-generate-001", "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview"},
 					},
 					"input_image": map[string]interface{}{
@@ -287,7 +339,7 @@ func getVideoGenToolDefinition(toolName string) llmtypes.Tool {
 					},
 					"input_image_path": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional workspace image path to use as the first frame for image-to-video generation. Can be workspace-relative like 'Chats/images/start.png' or an absolute workspace path like '/app/workspace-docs/Chats/images/start.png'.",
+						"description": "Optional full absolute workspace-docs image path to use as the first frame for image-to-video generation. Example: '/Users/.../workspace-docs/_users/default/Chats/images/start.png'. Workspace-relative paths are rejected.",
 					},
 					"input_image_mime_type": map[string]interface{}{
 						"type":        "string",
@@ -349,10 +401,11 @@ func CreateVideoGenExecutor(cfg VideoGenExecutorConfig) func(ctx context.Context
 			return "", fmt.Errorf("prompt is required")
 		}
 		outputPath, _ := args["output_path"].(string)
-		outputPath = normalizeWorkspaceDocumentPath(outputPath)
-		if strings.TrimSpace(outputPath) == "" {
-			return "", fmt.Errorf("output_path is required")
+		normalizedOutputPath, err := normalizeRequiredAbsoluteWorkspaceDocumentPath(outputPath, "output_path")
+		if err != nil {
+			return "", err
 		}
+		outputPath = normalizedOutputPath
 		if rawModelID, _ := args["model_id"].(string); strings.TrimSpace(rawModelID) == "" {
 			return "", fmt.Errorf("model_id is required. %s", supportedVideoProviderSummary())
 		}
@@ -423,7 +476,11 @@ func CreateVideoGenExecutor(cfg VideoGenExecutorConfig) func(ctx context.Context
 			opts = append(opts, llmtypes.WithVideoSeed(int32(seed)))
 		}
 		if inputImagePath, ok := args["input_image_path"].(string); ok && strings.TrimSpace(inputImagePath) != "" {
-			normalizedInputImagePath = normalizeWorkspaceDocumentPath(inputImagePath)
+			var pathErr error
+			normalizedInputImagePath, pathErr = normalizeRequiredAbsoluteWorkspaceDocumentPath(inputImagePath, "input_image_path")
+			if pathErr != nil {
+				return "", pathErr
+			}
 		}
 		if inputImageB64, ok := args["input_image"].(string); ok && inputImageB64 != "" && normalizedInputImagePath != "" {
 			return "", fmt.Errorf("provide either input_image or input_image_path, not both")

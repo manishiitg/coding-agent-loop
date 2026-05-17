@@ -12,21 +12,43 @@ import (
 	"time"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	internalevents "mcp-agent-builder-go/agent_go/internal/events"
 	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 )
 
 // ChatHistorySession is the metadata returned by the list endpoint.
 type ChatHistorySession struct {
-	SessionID        string `json:"session_id"`
-	AgentMode        string `json:"agent_mode"`
-	Status           string `json:"status"`
-	Query            string `json:"query,omitempty"`
-	UserID           string `json:"user_id"`
-	WorkspacePath    string `json:"workspace_path,omitempty"`
-	ConversationPath string `json:"conversation_path"`
-	CreatedAt        string `json:"created_at"`
-	UpdatedAt        string `json:"updated_at"`
-	MessageCount     int    `json:"message_count"`
+	SessionID        string                      `json:"session_id"`
+	AgentMode        string                      `json:"agent_mode"`
+	Runtime          *ChatHistoryAgentRuntime    `json:"runtime,omitempty"`
+	Status           string                      `json:"status"`
+	Query            string                      `json:"query,omitempty"`
+	UserID           string                      `json:"user_id"`
+	WorkspacePath    string                      `json:"workspace_path,omitempty"`
+	ConversationPath string                      `json:"conversation_path"`
+	CreatedAt        string                      `json:"created_at"`
+	UpdatedAt        string                      `json:"updated_at"`
+	MessageCount     int                         `json:"message_count"`
+	PreviewMessages  []ChatHistoryPreviewMessage `json:"preview_messages,omitempty"`
+}
+
+// ChatHistoryAgentRuntime records enough information to reopen a previous chat
+// with its original runtime when that runtime supports native resume.
+type ChatHistoryAgentRuntime struct {
+	Kind              string `json:"kind,omitempty"`
+	Provider          string `json:"provider,omitempty"`
+	ModelID           string `json:"model_id,omitempty"`
+	ExternalSessionID string `json:"external_session_id,omitempty"`
+	ResumeSupported   bool   `json:"resume_supported"`
+	ResumeFlag        string `json:"resume_flag,omitempty"`
+	ProjectDirID      string `json:"project_dir_id,omitempty"`
+	WorkspacePath     string `json:"workspace_path,omitempty"`
+	CapturedAt        string `json:"captured_at,omitempty"`
+}
+
+type ChatHistoryPreviewMessage struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
 }
 
 type ChatHistoryCleanupResult struct {
@@ -36,16 +58,33 @@ type ChatHistoryCleanupResult struct {
 	Scope        string   `json:"scope"`
 }
 
+const (
+	maxPersistedChatHistoryUIEvents = 200
+	maxChatHistoryFallbackScan      = 1000
+)
+
 // chatHistoryRoot returns the workspace-relative path to a user's chat_history root.
 func chatHistoryRoot(userID string) string {
 	return fmt.Sprintf("_users/%s/chat_history", sanitizeUserIDForPath(userID))
 }
 
-// persistChatConversation saves the conversation in the same format as the
-// workflow builder: a single conversation.json with the full message history.
-// Called inline (not async) right after finalHistory is captured.
-func (api *StreamingAPI) persistChatConversation(sessionID, agentMode, userID string, history []llmtypes.MessageContent) {
-	if len(history) == 0 {
+func chatHistoryConversationFileName(sessionID string) string {
+	return fmt.Sprintf("session-%s-conversation.json", sanitizeChatHistorySessionID(sessionID))
+}
+
+func chatHistoryConversationDate(t time.Time) string {
+	return t.Format("2006-01-02")
+}
+
+func chatHistoryConversationPath(userID, sessionID string, t time.Time) string {
+	return pathpkg.Join(chatHistoryRoot(userID), chatHistoryConversationDate(t), chatHistoryConversationFileName(sessionID))
+}
+
+// persistChatConversation saves an already persistence-cleaned conversation in
+// the same format as the workflow builder: a single conversation.json with the
+// full message history. Called inline right after finalHistory is captured.
+func (api *StreamingAPI) persistChatConversation(sessionID, agentMode, userID string, persistedHistory []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, uiEvents []internalevents.Event) {
+	if len(persistedHistory) == 0 {
 		return
 	}
 	if userID == "" {
@@ -53,11 +92,19 @@ func (api *StreamingAPI) persistChatConversation(sessionID, agentMode, userID st
 	}
 	logCtx := newServerLogContext("", "", agentMode, userID, "", sessionID)
 
+	now := time.Now()
 	convData := map[string]interface{}{
 		"session_id":           sessionID,
 		"agent_mode":           agentMode,
-		"conversation_history": history,
-		"updated_at":           time.Now().Format(time.RFC3339),
+		"conversation_history": persistedHistory,
+		"updated_at":           now.Format(time.RFC3339),
+	}
+	if runtime != nil {
+		convData["runtime"] = runtime
+	}
+	uiEvents = trimChatHistoryUIEvents(uiEvents)
+	if len(uiEvents) > 0 {
+		convData["ui_events"] = uiEvents
 	}
 
 	convJSON, err := json.MarshalIndent(convData, "", "  ")
@@ -66,13 +113,22 @@ func (api *StreamingAPI) persistChatConversation(sessionID, agentMode, userID st
 		return
 	}
 
-	convPath := pathpkg.Join(chatHistoryRoot(userID), sessionID, "conversation.json")
+	convPath := chatHistoryConversationPath(userID, sessionID, now)
 	if err := writeRawFileToWorkspace(context.Background(), convPath, string(convJSON)); err != nil {
 		logfWithContext(logCtx, "[CHAT_HISTORY] Failed to write %s: %v", convPath, err)
 		return
 	}
 
-	logfWithContext(logCtx, "[CHAT_HISTORY] Saved conversation (%d messages) to %s", len(history), convPath)
+	logfWithContext(logCtx, "[CHAT_HISTORY] Saved conversation (%d messages) to %s", len(persistedHistory), convPath)
+}
+
+func trimChatHistoryUIEvents(uiEvents []internalevents.Event) []internalevents.Event {
+	if len(uiEvents) <= maxPersistedChatHistoryUIEvents {
+		return uiEvents
+	}
+	trimmed := make([]internalevents.Event, maxPersistedChatHistoryUIEvents)
+	copy(trimmed, uiEvents[len(uiEvents)-maxPersistedChatHistoryUIEvents:])
+	return trimmed
 }
 
 // ListChatHistorySessions returns persisted session metadata for a user, newest first.
@@ -93,48 +149,39 @@ func ListChatHistorySessions(userID string, limit, offset int, workspacePath str
 		return sessions, err
 	}
 
-	sessionIDs, err := listWorkspaceChildFolderNames(context.Background(), root)
+	filePaths, err := listWorkspaceFilesRecursive(context.Background(), root)
 	if err != nil {
 		return nil, err
 	}
 
-	var sessions []ChatHistorySession
-	for _, sessionID := range sessionIDs {
-		convPath := pathpkg.Join(root, sessionID, "conversation.json")
+	sessionsByID := make(map[string]ChatHistorySession)
+	for _, convPath := range filePaths {
+		sessionID, ok := chatHistorySessionIDFromWorkspacePath(root, convPath)
+		if !ok {
+			continue
+		}
 		data, exists, err := readFileFromWorkspace(context.Background(), convPath)
 		if err != nil || !exists {
 			continue
-		}
-
-		var raw struct {
-			SessionID string                    `json:"session_id"`
-			AgentMode string                    `json:"agent_mode"`
-			History   []llmtypes.MessageContent `json:"conversation_history"`
-			UpdatedAt string                    `json:"updated_at"`
-		}
-		if err := json.Unmarshal([]byte(data), &raw); err != nil {
-			continue
-		}
-
-		query := firstHumanText(raw.History)
-		if len(query) > 200 {
-			query = query[:200] + "..."
 		}
 
 		if workspacePath != "" && !chatHistoryDataMatchesWorkspace(data, workspacePath) {
 			continue
 		}
 
-		sessions = append(sessions, ChatHistorySession{
-			SessionID:        raw.SessionID,
-			AgentMode:        raw.AgentMode,
-			Query:            query,
-			UserID:           userID,
-			WorkspacePath:    workspacePath,
-			ConversationPath: convPath,
-			UpdatedAt:        raw.UpdatedAt,
-			MessageCount:     len(raw.History),
-		})
+		session, ok := parseLocalChatHistorySession(userID, root, workspacePath, sessionID, data, time.Now())
+		if !ok {
+			continue
+		}
+		session.ConversationPath = convPath
+		if existing, ok := sessionsByID[session.SessionID]; !ok || session.UpdatedAt > existing.UpdatedAt || (session.UpdatedAt == existing.UpdatedAt && session.ConversationPath > existing.ConversationPath) {
+			sessionsByID[session.SessionID] = session
+		}
+	}
+
+	sessions := make([]ChatHistorySession, 0, len(sessionsByID))
+	for _, session := range sessionsByID {
+		sessions = append(sessions, session)
 	}
 
 	// Sort by UpdatedAt descending
@@ -155,9 +202,10 @@ func ListChatHistorySessions(userID string, limit, offset int, workspacePath str
 }
 
 type localChatHistoryFile struct {
-	sessionID string
-	convPath  string
-	modTime   time.Time
+	sessionID     string
+	convPath      string
+	workspacePath string
+	modTime       time.Time
 }
 
 // listChatHistorySessionsFromDisk avoids hundreds of workspace-API reads when
@@ -177,22 +225,51 @@ func listChatHistorySessionsFromDisk(userID, workspaceRoot, workflowPath string,
 		return nil, true, err
 	}
 
-	files := make([]localChatHistoryFile, 0, len(entries))
+	filesBySession := make(map[string]localChatHistoryFile)
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		sessionID := entry.Name()
-		convPath := filepath.Join(baseDir, sessionID, "conversation.json")
-		info, err := os.Stat(convPath)
-		if err != nil {
-			continue
+		entryName := entry.Name()
+
+		// Legacy layout: chat_history/<session-id>/conversation.json
+		legacyConvPath := filepath.Join(baseDir, entryName, "conversation.json")
+		if info, err := os.Stat(legacyConvPath); err == nil && !info.IsDir() {
+			addLocalChatHistoryFile(filesBySession, localChatHistoryFile{
+				sessionID:     entryName,
+				convPath:      legacyConvPath,
+				workspacePath: pathpkg.Join(workspaceRoot, entryName, "conversation.json"),
+				modTime:       info.ModTime(),
+			})
 		}
-		files = append(files, localChatHistoryFile{
-			sessionID: sessionID,
-			convPath:  convPath,
-			modTime:   info.ModTime(),
-		})
+
+		// Date-bucket layout: chat_history/YYYY-MM-DD/session-<id>-conversation.json
+		dateDir := filepath.Join(baseDir, entryName)
+		matches, err := filepath.Glob(filepath.Join(dateDir, "session-*-conversation.json"))
+		if err != nil {
+			return nil, true, err
+		}
+		for _, convPath := range matches {
+			info, err := os.Stat(convPath)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			sessionID := chatHistorySessionIDFromFileName(filepath.Base(convPath))
+			if sessionID == "" {
+				continue
+			}
+			addLocalChatHistoryFile(filesBySession, localChatHistoryFile{
+				sessionID:     sessionID,
+				convPath:      convPath,
+				workspacePath: pathpkg.Join(workspaceRoot, entryName, filepath.Base(convPath)),
+				modTime:       info.ModTime(),
+			})
+		}
+	}
+
+	files := make([]localChatHistoryFile, 0, len(filesBySession))
+	for _, file := range filesBySession {
+		files = append(files, file)
 	}
 
 	sort.Slice(files, func(i, j int) bool {
@@ -219,6 +296,42 @@ func listChatHistorySessionsFromDisk(userID, workspaceRoot, workflowPath string,
 		return sessions[i].UpdatedAt > sessions[j].UpdatedAt
 	})
 	return sessions, true, nil
+}
+
+func addLocalChatHistoryFile(filesBySession map[string]localChatHistoryFile, file localChatHistoryFile) {
+	if file.sessionID == "" {
+		return
+	}
+	if existing, ok := filesBySession[file.sessionID]; !ok || file.modTime.After(existing.modTime) || (file.modTime.Equal(existing.modTime) && file.workspacePath > existing.workspacePath) {
+		filesBySession[file.sessionID] = file
+	}
+}
+
+func chatHistorySessionIDFromFileName(fileName string) string {
+	if !strings.HasPrefix(fileName, "session-") || !strings.HasSuffix(fileName, "-conversation.json") {
+		return ""
+	}
+	sessionID := strings.TrimSuffix(strings.TrimPrefix(fileName, "session-"), "-conversation.json")
+	return sanitizeChatHistorySessionID(sessionID)
+}
+
+func chatHistorySessionIDFromWorkspacePath(root, convPath string) (string, bool) {
+	root = strings.Trim(pathpkg.Clean(root), "/")
+	convPath = strings.Trim(pathpkg.Clean(filepath.ToSlash(convPath)), "/")
+	if root == "" || convPath == "" || !strings.HasPrefix(convPath, root+"/") {
+		return "", false
+	}
+	rel := strings.TrimPrefix(convPath, root+"/")
+	parts := strings.Split(rel, "/")
+	if len(parts) == 2 && parts[1] == "conversation.json" {
+		sessionID := sanitizeChatHistorySessionID(parts[0])
+		return sessionID, sessionID != ""
+	}
+	if len(parts) == 2 {
+		sessionID := chatHistorySessionIDFromFileName(parts[1])
+		return sessionID, sessionID != ""
+	}
+	return "", false
 }
 
 func listWorkflowScopedChatHistorySessionsFromDisk(userID, chatHistoryRootPath, workflowPath string, limit, offset int) ([]ChatHistorySession, bool, error) {
@@ -336,13 +449,18 @@ func readLocalChatHistorySession(userID, workspaceRoot, workflowPath string, fil
 	if err != nil {
 		return ChatHistorySession{}, false
 	}
-	return parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, file.sessionID, string(data), file.modTime)
+	session, ok := parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, file.sessionID, string(data), file.modTime)
+	if ok && file.workspacePath != "" {
+		session.ConversationPath = file.workspacePath
+	}
+	return session, ok
 }
 
 func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackSessionID, data string, fallbackUpdatedAt time.Time) (ChatHistorySession, bool) {
 	var raw struct {
 		SessionID string                    `json:"session_id"`
 		AgentMode string                    `json:"agent_mode"`
+		Runtime   *ChatHistoryAgentRuntime  `json:"runtime,omitempty"`
 		History   []llmtypes.MessageContent `json:"conversation_history"`
 		UpdatedAt string                    `json:"updated_at"`
 	}
@@ -364,12 +482,14 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 	return ChatHistorySession{
 		SessionID:        raw.SessionID,
 		AgentMode:        raw.AgentMode,
+		Runtime:          raw.Runtime,
 		Query:            query,
 		UserID:           userID,
 		WorkspacePath:    workflowPath,
 		ConversationPath: pathpkg.Join(workspaceRoot, raw.SessionID, "conversation.json"),
 		UpdatedAt:        raw.UpdatedAt,
 		MessageCount:     len(raw.History),
+		PreviewMessages:  chatHistoryPreviewMessages(raw.History),
 	}, true
 }
 
@@ -417,19 +537,79 @@ func firstHumanText(history []llmtypes.MessageContent) string {
 			continue
 		}
 		for _, part := range msg.Parts {
-			switch v := part.(type) {
-			case llmtypes.TextContent:
-				if v.Text != "" {
-					return cleanChatHistoryQuery(v.Text)
-				}
-			case map[string]interface{}:
-				if t, ok := v["Text"].(string); ok && t != "" {
-					return cleanChatHistoryQuery(t)
-				}
+			if text := chatHistoryPartText(part); text != "" {
+				return cleanChatHistoryQuery(text)
 			}
 		}
 	}
 	return ""
+}
+
+func chatHistoryPreviewMessages(history []llmtypes.MessageContent) []ChatHistoryPreviewMessage {
+	const maxPreviewMessages = 6
+	const maxPreviewChars = 360
+
+	messages := []ChatHistoryPreviewMessage{}
+	for _, msg := range history {
+		role := strings.ToLower(strings.TrimSpace(string(msg.Role)))
+		if role != "human" && role != "user" && role != "ai" && role != "assistant" {
+			continue
+		}
+		textParts := []string{}
+		for _, part := range msg.Parts {
+			if text := strings.TrimSpace(chatHistoryPartText(part)); text != "" {
+				textParts = append(textParts, text)
+			}
+		}
+		text := strings.TrimSpace(strings.Join(textParts, "\n\n"))
+		if text == "" {
+			continue
+		}
+		text = cleanChatHistoryQuery(text)
+		if shouldSkipChatHistoryPreviewText(text) {
+			continue
+		}
+		if len(text) > maxPreviewChars {
+			text = strings.TrimSpace(text[:maxPreviewChars]) + "..."
+		}
+		displayRole := role
+		if displayRole == "user" {
+			displayRole = "human"
+		}
+		if displayRole == "assistant" {
+			displayRole = "ai"
+		}
+		messages = append(messages, ChatHistoryPreviewMessage{
+			Role: displayRole,
+			Text: text,
+		})
+	}
+	if len(messages) > maxPreviewMessages {
+		messages = messages[len(messages)-maxPreviewMessages:]
+	}
+	return messages
+}
+
+func chatHistoryPartText(part interface{}) string {
+	switch v := part.(type) {
+	case llmtypes.TextContent:
+		return v.Text
+	case map[string]interface{}:
+		if t, ok := v["Text"].(string); ok {
+			return t
+		}
+		if t, ok := v["text"].(string); ok {
+			return t
+		}
+	}
+	return ""
+}
+
+func shouldSkipChatHistoryPreviewText(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	return strings.HasPrefix(trimmed, "[AUTO-NOTIFICATION]") ||
+		strings.HasPrefix(trimmed, "[Previous tool call") ||
+		strings.HasPrefix(trimmed, "[Previous tool result")
 }
 
 func cleanChatHistoryQuery(text string) string {
@@ -445,10 +625,81 @@ func cleanChatHistoryQuery(text string) string {
 	return strings.TrimSpace(text)
 }
 
-// ReadChatHistoryConversation reads the persisted conversation.json for a session.
-func ReadChatHistoryConversation(userID, sessionID string) (json.RawMessage, error) {
+// cleanChatHistoryForPersistence removes hidden prompt context that the frontend
+// appends for model-only use. Persisting that context causes chained /resume
+// selections to point at older conversations instead of the visible user turn.
+func cleanChatHistoryForPersistence(history []llmtypes.MessageContent) []llmtypes.MessageContent {
+	if len(history) == 0 {
+		return history
+	}
+	cleaned := make([]llmtypes.MessageContent, len(history))
+	for i, msg := range history {
+		cleaned[i] = msg
+		role := strings.ToLower(strings.TrimSpace(string(msg.Role)))
+		if role != "human" && role != "user" {
+			continue
+		}
+		if len(msg.Parts) == 0 {
+			continue
+		}
+		parts := make([]llmtypes.ContentPart, len(msg.Parts))
+		copy(parts, msg.Parts)
+		changed := false
+		for partIndex, part := range parts {
+			if textPart, ok := part.(llmtypes.TextContent); ok {
+				cleanText := cleanChatHistoryQuery(textPart.Text)
+				if cleanText != textPart.Text {
+					parts[partIndex] = llmtypes.TextContent{Text: cleanText}
+					changed = true
+				}
+			}
+		}
+		if changed {
+			cleaned[i].Parts = parts
+		}
+	}
+	return cleaned
+}
+
+// ReadChatHistoryConversation reads the persisted conversation JSON for a session.
+func ReadChatHistoryConversation(userID, sessionID, workspacePath string) (json.RawMessage, error) {
 	if userID == "" {
 		userID = "default"
+	}
+	sessionID = sanitizeChatHistorySessionID(sessionID)
+	if sessionID == "" {
+		return nil, fmt.Errorf("conversation not found")
+	}
+	workspacePath = normalizeChatHistoryWorkspacePath(workspacePath)
+	if workspacePath != "" {
+		if data, ok, err := readWorkflowScopedChatHistoryConversationDirect(sessionID, workspacePath); ok || err != nil {
+			return data, err
+		}
+		if data, ok, err := readWorkflowScopedChatHistoryConversationFromWorkspace(sessionID, workspacePath); ok || err != nil {
+			return data, err
+		}
+		sessions, err := ListChatHistorySessions(userID, maxChatHistoryFallbackScan, 0, workspacePath)
+		if err != nil {
+			return nil, err
+		}
+		for _, session := range sessions {
+			if session.SessionID != sessionID || session.ConversationPath == "" {
+				continue
+			}
+			data, exists, err := readFileFromWorkspace(context.Background(), session.ConversationPath)
+			if err != nil {
+				return nil, err
+			}
+			if exists {
+				return json.RawMessage(data), nil
+			}
+		}
+	}
+	if data, ok, err := readUserChatHistoryConversationDirect(userID, sessionID); ok || err != nil {
+		return data, err
+	}
+	if data, ok, err := readUserChatHistoryConversationFromWorkspace(userID, sessionID); ok || err != nil {
+		return data, err
 	}
 	convPath := pathpkg.Join(chatHistoryRoot(userID), sessionID, "conversation.json")
 	data, exists, err := readFileFromWorkspace(context.Background(), convPath)
@@ -459,6 +710,197 @@ func ReadChatHistoryConversation(userID, sessionID string) (json.RawMessage, err
 		return nil, fmt.Errorf("conversation not found")
 	}
 	return json.RawMessage(data), nil
+}
+
+func readUserChatHistoryConversationDirect(userID, sessionID string) (json.RawMessage, bool, error) {
+	root := chatHistoryRoot(userID)
+	baseDir, ok := resolveLocalChatHistoryDir(root)
+	if !ok {
+		return nil, false, nil
+	}
+
+	patterns := []string{
+		filepath.Join(baseDir, "*", chatHistoryConversationFileName(sessionID)),
+		filepath.Join(baseDir, sessionID, "conversation.json"),
+	}
+	type candidate struct {
+		path      string
+		modTime   time.Time
+		updatedAt string
+	}
+	var latest *candidate
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return nil, true, err
+		}
+		for _, match := range matches {
+			info, err := os.Stat(match)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			data, err := os.ReadFile(match)
+			if err != nil {
+				return nil, true, err
+			}
+			updatedAt := chatHistoryUpdatedAtFromJSON(string(data))
+			if latest == nil || updatedAt > latest.updatedAt || (updatedAt == latest.updatedAt && info.ModTime().After(latest.modTime)) || (updatedAt == latest.updatedAt && info.ModTime().Equal(latest.modTime) && match > latest.path) {
+				latest = &candidate{path: match, modTime: info.ModTime(), updatedAt: updatedAt}
+			}
+		}
+	}
+	if latest == nil {
+		return nil, false, nil
+	}
+	data, err := os.ReadFile(latest.path)
+	if err != nil {
+		return nil, true, err
+	}
+	return json.RawMessage(data), true, nil
+}
+
+func readUserChatHistoryConversationFromWorkspace(userID, sessionID string) (json.RawMessage, bool, error) {
+	root := chatHistoryRoot(userID)
+	filePaths, err := listWorkspaceFilesRecursive(context.Background(), root)
+	if err != nil {
+		return nil, false, err
+	}
+	var latestData string
+	var latestUpdatedAt string
+	var latestPath string
+	for _, convPath := range filePaths {
+		candidateSessionID, ok := chatHistorySessionIDFromWorkspacePath(root, convPath)
+		if !ok || candidateSessionID != sessionID {
+			continue
+		}
+		data, exists, err := readFileFromWorkspace(context.Background(), convPath)
+		if err != nil {
+			return nil, false, err
+		}
+		if !exists {
+			continue
+		}
+		updatedAt := chatHistoryUpdatedAtFromJSON(data)
+		if latestData == "" || updatedAt > latestUpdatedAt || (updatedAt == latestUpdatedAt && convPath > latestPath) {
+			latestData = data
+			latestUpdatedAt = updatedAt
+			latestPath = convPath
+		}
+	}
+	if latestData == "" {
+		return nil, false, nil
+	}
+	return json.RawMessage(latestData), true, nil
+}
+
+func readWorkflowScopedChatHistoryConversationFromWorkspace(sessionID, workspacePath string) (json.RawMessage, bool, error) {
+	workspacePath = normalizeChatHistoryWorkspacePath(workspacePath)
+	if sessionID == "" || workspacePath == "" {
+		return nil, false, nil
+	}
+
+	ctx := context.Background()
+	fileName := fmt.Sprintf("session-%s-conversation.json", sessionID)
+	candidatePaths := []string{
+		pathpkg.Join(workspacePath, "builder", fileName),
+	}
+
+	conversationRoot := pathpkg.Join(workspacePath, "builder", "conversation")
+	dateFolders, err := listWorkspaceChildFolderNames(ctx, conversationRoot)
+	if err != nil {
+		return nil, false, err
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(dateFolders)))
+	for _, dateFolder := range dateFolders {
+		dateFolder = strings.TrimSpace(dateFolder)
+		if dateFolder == "" || dateFolder == "." || dateFolder == ".." {
+			continue
+		}
+		candidatePaths = append(candidatePaths, pathpkg.Join(conversationRoot, dateFolder, fileName))
+	}
+
+	var latestData string
+	var latestUpdatedAt string
+	var latestPath string
+	for _, candidatePath := range candidatePaths {
+		data, exists, err := readFileFromWorkspace(ctx, candidatePath)
+		if err != nil {
+			return nil, false, err
+		}
+		if !exists {
+			continue
+		}
+		updatedAt := chatHistoryUpdatedAtFromJSON(data)
+		if latestData == "" || updatedAt > latestUpdatedAt || (updatedAt == latestUpdatedAt && candidatePath > latestPath) {
+			latestData = data
+			latestUpdatedAt = updatedAt
+			latestPath = candidatePath
+		}
+	}
+	if latestData == "" {
+		return nil, false, nil
+	}
+	return json.RawMessage(latestData), true, nil
+}
+
+func chatHistoryUpdatedAtFromJSON(data string) string {
+	var raw struct {
+		UpdatedAt string `json:"updated_at"`
+	}
+	if err := json.Unmarshal([]byte(data), &raw); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(raw.UpdatedAt)
+}
+
+func sanitizeChatHistorySessionID(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || sessionID == "." || sessionID == ".." ||
+		strings.Contains(sessionID, "/") || strings.Contains(sessionID, "\\") {
+		return ""
+	}
+	return sessionID
+}
+
+func readWorkflowScopedChatHistoryConversationDirect(sessionID, workspacePath string) (json.RawMessage, bool, error) {
+	workflowDir, ok := resolveLocalWorkflowDir(workspacePath)
+	if !ok {
+		return nil, false, nil
+	}
+	fileName := fmt.Sprintf("session-%s-conversation.json", sessionID)
+	patterns := []string{
+		filepath.Join(workflowDir, "builder", fileName),
+		filepath.Join(workflowDir, "builder", "conversation", "*", fileName),
+	}
+
+	type candidate struct {
+		path    string
+		modTime time.Time
+	}
+	var latest *candidate
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return nil, true, err
+		}
+		for _, match := range matches {
+			info, err := os.Stat(match)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			if latest == nil || info.ModTime().After(latest.modTime) || (info.ModTime().Equal(latest.modTime) && match > latest.path) {
+				latest = &candidate{path: match, modTime: info.ModTime()}
+			}
+		}
+	}
+	if latest == nil {
+		return nil, false, nil
+	}
+	data, err := os.ReadFile(latest.path)
+	if err != nil {
+		return nil, true, err
+	}
+	return json.RawMessage(data), true, nil
 }
 
 func DeleteChatHistoryOlderThan(userID string, olderThanDays int, workspacePath string) (ChatHistoryCleanupResult, error) {
@@ -502,23 +944,37 @@ func DeleteChatHistoryOlderThan(userID string, olderThanDays int, workspacePath 
 		if !entry.IsDir() {
 			continue
 		}
-		sessionDir := filepath.Join(baseDir, entry.Name())
-		convPath := filepath.Join(sessionDir, "conversation.json")
-		info, err := os.Stat(convPath)
-		if err != nil || !info.ModTime().Before(cutoff) {
+		entryName := entry.Name()
+		entryDir := filepath.Join(baseDir, entryName)
+
+		// Legacy layout: chat_history/<session-id>/conversation.json
+		legacyConvPath := filepath.Join(entryDir, "conversation.json")
+		if info, err := os.Stat(legacyConvPath); err == nil && !info.IsDir() && info.ModTime().Before(cutoff) {
+			if err := os.RemoveAll(entryDir); err != nil {
+				return result, err
+			}
+			result.DeletedCount++
+			result.DeletedPaths = append(result.DeletedPaths, pathpkg.Join(root, entryName))
 			continue
 		}
-		if workspacePath != "" {
-			data, err := os.ReadFile(convPath)
-			if err != nil || !chatHistoryDataMatchesWorkspace(string(data), workspacePath) {
-				continue
-			}
-		}
-		if err := os.RemoveAll(sessionDir); err != nil {
+
+		// Date-bucket layout: chat_history/YYYY-MM-DD/session-<id>-conversation.json
+		matches, err := filepath.Glob(filepath.Join(entryDir, "session-*-conversation.json"))
+		if err != nil {
 			return result, err
 		}
-		result.DeletedCount++
-		result.DeletedPaths = append(result.DeletedPaths, pathpkg.Join(root, entry.Name()))
+		for _, convPath := range matches {
+			info, err := os.Stat(convPath)
+			if err != nil || info.IsDir() || !info.ModTime().Before(cutoff) {
+				continue
+			}
+			if err := os.Remove(convPath); err != nil {
+				return result, err
+			}
+			result.DeletedCount++
+			result.DeletedPaths = append(result.DeletedPaths, pathpkg.Join(root, entryName, filepath.Base(convPath)))
+		}
+		_ = os.Remove(entryDir)
 	}
 	return result, nil
 }

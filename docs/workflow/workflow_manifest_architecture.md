@@ -34,7 +34,7 @@ The backend struct lives in [workflow_manifest.go](/Users/mipl/ai-work/mcp-agent
   "objective": "Optional workflow-level objective",
   "success_criteria": "Optional workflow-level success criteria",
   "capabilities": {
-    "selected_servers": ["github", "gws"],
+    "selected_servers": ["github"],
     "selected_tools": [],
     "selected_skills": ["account-research"],
     "selected_secrets": ["my-secret-name"],

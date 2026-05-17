@@ -65,6 +65,64 @@ const pipeTableSeparatorFor = (line: string): string => {
   return `| ${cells.map(() => '---').join(' | ')} |`
 }
 
+const pipeTableLineForCells = (cells: string[]): string => `| ${cells.join(' | ')} |`
+
+const isBlankPipeTableCell = (cell: string): boolean => cell.trim() === ''
+
+const isLikelyContinuationPipeRow = (cells: string[]): boolean => {
+  if (cells.length < 2) return false
+  const nonEmptyCells = cells.filter(cell => cell.trim() !== '')
+  if (nonEmptyCells.length !== 1) return false
+  const nonEmptyIndex = cells.findIndex(cell => cell.trim() !== '')
+  return nonEmptyIndex > 0 && cells.slice(0, nonEmptyIndex).every(isBlankPipeTableCell)
+}
+
+const mergeContinuationPipeRow = (previous: string[], continuation: string[]): string[] => {
+  const nonEmptyIndex = continuation.findIndex(cell => cell.trim() !== '')
+  if (nonEmptyIndex < 0 || nonEmptyIndex >= previous.length) return previous
+
+  const merged = [...previous]
+  const prior = merged[nonEmptyIndex].trim()
+  const suffix = continuation[nonEmptyIndex].trim()
+  merged[nonEmptyIndex] = prior ? `${prior} ${suffix}` : suffix
+  return merged
+}
+
+const normalizePipeTableBlock = (rows: string[]): string[] => {
+  if (rows.length < 2) return rows
+
+  const output: string[] = []
+  let sawHeaderSeparator = false
+
+  for (const row of rows) {
+    const cells = splitPipeTableCells(row)
+    if (cells.length < 2) {
+      output.push(row)
+      continue
+    }
+
+    if (isPipeTableSeparator(row)) {
+      if (!sawHeaderSeparator && output.length > 0) {
+        output.push(pipeTableSeparatorFor(output[0]))
+        sawHeaderSeparator = true
+      }
+      continue
+    }
+
+    if (sawHeaderSeparator && isLikelyContinuationPipeRow(cells) && output.length > 2) {
+      const previousCells = splitPipeTableCells(output[output.length - 1])
+      if (previousCells.length === cells.length) {
+        output[output.length - 1] = pipeTableLineForCells(mergeContinuationPipeRow(previousCells, cells))
+        continue
+      }
+    }
+
+    output.push(row)
+  }
+
+  return output
+}
+
 const isBoxTableBorderLine = (line: string): boolean => {
   const trimmed = line.trim()
   return /^[┌┬┐├┼┤└┴┘─]+$/.test(trimmed)
@@ -149,32 +207,178 @@ const normalizeLooseMarkdownTables = (value: string): string => {
   const lines = value.split('\n')
   const output: string[] = []
   let inFence = false
+  let tableRows: string[] = []
+
+  const flushTableRows = () => {
+    if (tableRows.length > 0) {
+      output.push(...normalizePipeTableBlock(tableRows))
+      tableRows = []
+    }
+  }
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     const trimmed = line.trim()
     const isFence = trimmed.startsWith('```') || trimmed.startsWith('~~~')
 
-    output.push(line)
-
     if (isFence) {
+      flushTableRows()
+      output.push(line)
       inFence = !inFence
       continue
     }
-    if (inFence || !isPipeTableRow(line)) continue
+    if (inFence) {
+      output.push(line)
+      continue
+    }
+
+    if (!isPipeTableRow(line) && !isPipeTableSeparator(line)) {
+      flushTableRows()
+      output.push(line)
+      continue
+    }
+
+    tableRows.push(line)
 
     const nextLine = lines[i + 1] || ''
-    const previousOutputLine = output[output.length - 2] || ''
+    const previousOutputLine = tableRows[tableRows.length - 2] || ''
     if (
       isPipeTableRow(nextLine) &&
       !isPipeTableSeparator(nextLine) &&
       !isPipeTableSeparator(previousOutputLine)
     ) {
-      output.push(pipeTableSeparatorFor(line))
+      tableRows.push(pipeTableSeparatorFor(line))
     }
   }
 
+  flushTableRows()
   return output.join('\n')
+}
+
+export const normalizeMarkdownContent = (value: string): string => {
+  if (!value) return ""
+
+  let processed = value.replace(/(^|\n)---\n([a-zA-Z0-9_-]+:[\s\S]+?)\n---(\n|$)/g, '$1\n```tool-definition\n$2\n```\n$3')
+  processed = normalizeBoxDrawingTables(processed)
+  processed = normalizeLooseMarkdownTables(processed)
+  processed = normalizeLooseNestedLists(processed)
+  processed = normalizeSectionedFlatLists(processed)
+  return processed
+}
+
+const normalizeLooseNestedLists = (value: string): string => {
+  const lines = value.split('\n')
+  const output: string[] = []
+  let changed = false
+  let inFence = false
+  let pendingOrderedIndent: string | null = null
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    const isFence = trimmed.startsWith('```') || trimmed.startsWith('~~~')
+
+    if (isFence) {
+      output.push(line)
+      inFence = !inFence
+      pendingOrderedIndent = null
+      continue
+    }
+    if (inFence) {
+      output.push(line)
+      continue
+    }
+
+    const orderedMatch = /^(\s*)\d+[.)]\s+\S/.exec(line)
+    if (orderedMatch) {
+      output.push(line)
+      pendingOrderedIndent = orderedMatch[1]
+      continue
+    }
+
+    if (pendingOrderedIndent !== null && trimmed === '') {
+      output.push(line)
+      continue
+    }
+
+    const unorderedMatch = /^(\s*)[-*+]\s+\S/.exec(line)
+    if (pendingOrderedIndent !== null && unorderedMatch && unorderedMatch[1].length <= pendingOrderedIndent.length) {
+      output.push(`${pendingOrderedIndent}   ${line.trimStart()}`)
+      changed = true
+      continue
+    }
+
+    pendingOrderedIndent = null
+    output.push(line)
+  }
+
+  return changed ? output.join('\n') : value
+}
+
+const sectionedFlatListLabels = new Set([
+  'files',
+  'folders',
+  'directories',
+  'root files',
+  'root folders'
+])
+
+const normalizeSectionedFlatLists = (value: string): string => {
+  const lines = value.split('\n')
+  const output: string[] = []
+  let changed = false
+  let inFence = false
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const trimmed = line.trim()
+    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
+      output.push(line)
+      inFence = !inFence
+      continue
+    }
+    if (inFence) {
+      output.push(line)
+      continue
+    }
+
+    const match = /^[-*]\s+(.+?)\s*$/.exec(line)
+    if (!match) {
+      output.push(line)
+      continue
+    }
+
+    const label = match[1].replace(/:$/, '').trim()
+    if (!sectionedFlatListLabels.has(label.toLowerCase())) {
+      output.push(line)
+      continue
+    }
+
+    let hasFollowingItem = false
+    for (let j = i + 1; j < lines.length; j++) {
+      if (!lines[j].trim()) break
+      const nextMatch = /^[-*]\s+(.+?)\s*$/.exec(lines[j])
+      if (!nextMatch) break
+      const nextLabel = nextMatch[1].replace(/:$/, '').trim()
+      if (!sectionedFlatListLabels.has(nextLabel.toLowerCase())) {
+        hasFollowingItem = true
+      }
+      break
+    }
+
+    if (!hasFollowingItem) {
+      output.push(line)
+      continue
+    }
+
+    if (output.length > 0 && output[output.length - 1].trim() !== '') {
+      output.push('')
+    }
+    output.push(`**${label}**`)
+    output.push('')
+    changed = true
+  }
+
+  return changed ? output.join('\n').replace(/\n{3,}/g, '\n\n') : value
 }
 
 const isLikelyRelativeWorkspaceFile = (href: string): boolean => {
@@ -540,13 +744,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
   const processedContent = React.useMemo(() => {
     if (!content) return ""
-    
-    // 1. Tool definition processing (existing)
-    // Replace YAML-like frontmatter/blocks with a custom code block
-    // Matches content between --- and --- where the content looks like key-value pairs
-    let processed = content.replace(/(^|\n)---\n([a-zA-Z0-9_-]+:[\s\S]+?)\n---(\n|$)/g, '$1\n```tool-definition\n$2\n```\n$3')
-    processed = normalizeBoxDrawingTables(processed)
-    processed = normalizeLooseMarkdownTables(processed)
+    let processed = normalizeMarkdownContent(content)
 
     // 2. Auto-link workspace paths (skip when disablePathLinking is true)
     if (disablePathLinking) return processed
@@ -701,28 +899,55 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     >
       <style dangerouslySetInnerHTML={{
         __html: `
+          .markdown-content ul,
+          .markdown-content ol {
+            list-style-position: outside;
+            margin-left: 0;
+            padding-left: 1.5rem;
+          }
+          .markdown-content ul {
+            list-style-type: disc;
+          }
+          .markdown-content ol {
+            list-style-type: decimal;
+          }
+          .markdown-content li {
+            padding-left: 0.25rem;
+          }
           .markdown-content ul ul {
+            padding-left: 1.25rem;
             margin-top: 0.25rem;
             margin-bottom: 0.25rem;
           }
           .markdown-content ul ul ul {
+            padding-left: 1.25rem;
             margin-top: 0.125rem;
             margin-bottom: 0.125rem;
           }
           .markdown-content ol ol {
+            padding-left: 1.25rem;
             margin-top: 0.25rem;
             margin-bottom: 0.25rem;
           }
           .markdown-content ol ol ol {
+            padding-left: 1.25rem;
             margin-top: 0.125rem;
             margin-bottom: 0.125rem;
           }
-          .markdown-content li p {
-            margin: 0;
-            display: inline;
+          .markdown-content li > p {
+            margin-top: 0.25rem;
+            margin-bottom: 0.25rem;
+            display: block;
+          }
+          .markdown-content li > p:first-child {
+            margin-top: 0;
+          }
+          .markdown-content li > p:last-child {
+            margin-bottom: 0;
           }
           .markdown-content li ul,
           .markdown-content li ol {
+            padding-left: 1.25rem;
             margin-top: 0.25rem;
             margin-bottom: 0.25rem;
           }
@@ -803,9 +1028,9 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           h2: ({ children }) => <h2 className="text-xl font-semibold mb-2 mt-3 first:mt-0 text-gray-900 dark:text-gray-100 break-words overflow-wrap-anywhere">{children}</h2>,
           h3: ({ children }) => <h3 className="text-lg font-semibold mb-1.5 mt-2 first:mt-0 text-gray-900 dark:text-gray-100 break-words overflow-wrap-anywhere">{children}</h3>,
           h4: ({ children }) => <h4 className="text-base font-semibold mb-1.5 mt-2 first:mt-0 text-gray-900 dark:text-gray-100 break-words overflow-wrap-anywhere">{children}</h4>,
-          ul: ({ children }) => <ul className="list-disc mb-2 space-y-1 ml-6 pl-2 min-w-0">{children}</ul>,
-          ol: ({ children }) => <ol className="list-decimal mb-2 space-y-1 ml-6 pl-2 min-w-0">{children}</ol>,
-          li: ({ children }) => <li className="text-sm break-words overflow-wrap-anywhere leading-6 text-gray-700 dark:text-gray-300">{children}</li>,
+          ul: ({ children }) => <ul className="list-disc list-outside mb-2 space-y-1 pl-6 min-w-0">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal list-outside mb-2 space-y-1 pl-6 min-w-0">{children}</ol>,
+          li: ({ children }) => <li className="pl-1 text-sm break-words overflow-wrap-anywhere leading-6 text-gray-700 dark:text-gray-300">{children}</li>,
           code: ({ className, children, inline, ...props }: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) => {
             const match = /language-(\w+)/.exec(className || '')
             const isInline = typeof inline === 'boolean' ? inline : false

@@ -46,11 +46,6 @@ func buildDockerEnvironment() []string {
 		// - Any other secrets from parent process
 	}
 
-	// Pass through Google Workspace CLI credentials if configured
-	if gwsCreds := os.Getenv("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"); gwsCreds != "" {
-		env = append(env, "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE="+gwsCreds)
-	}
-
 	return env
 }
 

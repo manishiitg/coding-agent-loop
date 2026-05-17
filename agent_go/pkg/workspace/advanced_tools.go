@@ -37,17 +37,25 @@ func imageToolDef() llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_image",
-			Description: "Read an image file from workspace and ask a question about it. This tool will process the image and your question together.",
+			Description: "Read an image file from workspace and ask a question about it using a provider-backed vision model. Before choosing provider/model_id, call list_llm_capabilities(capability=\"read_image\", include_models=true). If you pass model_id, also pass the matching provider from that capability result; do not pass model_id by itself.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"filepath": map[string]interface{}{
 						"type":        "string",
-						"description": "Path to the image file. Either an absolute path under the workspace docs root (e.g., '/workspace-docs/Downloads/hdfc_login.png') or a workspace-relative path (e.g., 'Downloads/hdfc_login.png', 'images/photo.jpg'). Both forms are accepted. Absolute paths outside the workspace docs root are rejected.",
+						"description": "Full absolute path to the image file under the workspace docs root (e.g., '/Users/.../workspace-docs/_users/default/Chats/photo.png', '/app/workspace-docs/_users/default/Downloads/hdfc_login.png'). Workspace-relative paths are rejected. Absolute paths outside the workspace docs root are rejected.",
 					},
 					"query": map[string]interface{}{
 						"type":        "string",
 						"description": "Question to ask about the image (e.g., 'What is in this image?', 'Describe this image', 'What text is written here?')",
+					},
+					"provider": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional image-analysis provider override. Discover currently usable providers with list_llm_capabilities(capability=\"read_image\", include_models=true). If specifying model_id, pass the matching provider too.",
+					},
+					"model_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional image-analysis model id. Use a model from list_llm_capabilities(capability=\"read_image\", include_models=true), and pass the matching provider in the same call. Do not use tier labels such as low, medium, high, or auto as model IDs.",
 					},
 				},
 				"required": []string{"filepath", "query"},
@@ -62,13 +70,13 @@ func videoReadToolDef() llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_video",
-			Description: "Read a video file from workspace and ask a question about it. This tool uploads the video to the configured video-understanding provider and returns a text analysis.",
+			Description: "Read a video file from workspace and ask a question about it using a provider-backed video-understanding model. Before choosing provider/model_id, call list_llm_capabilities(capability=\"read_video\", include_models=true). If you pass model_id, also pass the matching provider from that capability result; do not pass model_id by itself.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"filepath": map[string]interface{}{
 						"type":        "string",
-						"description": "Path to the video file. Either an absolute path under the workspace docs root (e.g., '/workspace-docs/Downloads/demo.mp4') or a workspace-relative path (e.g., 'Downloads/demo.mp4', 'videos/clip.mov'). Both forms are accepted. Absolute paths outside the workspace docs root are rejected.",
+						"description": "Full absolute path to the video file under the workspace docs root (e.g., '/Users/.../workspace-docs/_users/default/Chats/demo.mp4', '/app/workspace-docs/_users/default/Downloads/demo.mp4'). Workspace-relative paths are rejected. Absolute paths outside the workspace docs root are rejected.",
 					},
 					"query": map[string]interface{}{
 						"type":        "string",
@@ -76,7 +84,11 @@ func videoReadToolDef() llmtypes.Tool {
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional video-understanding provider override. Supported: 'kimi' (default) or 'z-ai' (Z.AI Vision MCP video_analysis).",
+						"description": "Optional video-understanding provider override. Discover currently usable providers with list_llm_capabilities(capability=\"read_video\", include_models=true). Supported: 'kimi' (default) or 'z-ai' (Z.AI Vision MCP video_analysis). If specifying model_id, pass the matching provider too.",
+					},
+					"model_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional video-understanding model id. Use a model from list_llm_capabilities(capability=\"read_video\", include_models=true), and pass the matching provider in the same call. Supported today: kimi-k2.6 for provider kimi, glm-4.6v for provider z-ai.",
 					},
 				},
 				"required": []string{"filepath", "query"},
@@ -97,7 +109,7 @@ func pdfToolDef() llmtypes.Tool {
 				"properties": map[string]interface{}{
 					"filepath": map[string]interface{}{
 						"type":        "string",
-						"description": "Path to the PDF file. Either an absolute path under the workspace docs root (e.g., '/workspace-docs/documents/report.pdf') or a workspace-relative path (e.g., 'documents/report.pdf', 'Downloads/contract.pdf'). Both forms are accepted. Absolute paths outside the workspace docs root are rejected.",
+						"description": "Full absolute path to the PDF file under the workspace docs root (e.g., '/Users/.../workspace-docs/_users/default/Chats/report.pdf', '/app/workspace-docs/_users/default/Downloads/contract.pdf'). Workspace-relative paths are rejected. Absolute paths outside the workspace docs root are rejected.",
 					},
 					"page_range": map[string]interface{}{
 						"type":        "string",
@@ -150,7 +162,7 @@ func searchWebLLMToolDef() llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "search_web_llm",
-			Description: "Search the web using a published search-capable provider. Provider is required; model_id is optional and defaults to a working published model for that provider using search_role/search_priority.",
+			Description: "Search the web using a published search-capable provider. Before choosing provider/model_id, call list_llm_capabilities(capability=\"search_web\", include_models=true). Provider is required. If you pass model_id, pass the matching provider from that capability result; do not pass model_id by itself. model_id can be omitted only when accepting the backend's working default for that provider.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -160,11 +172,11 @@ func searchWebLLMToolDef() llmtypes.Tool {
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Required published provider, e.g. gemini-cli, vertex, claude-code, codex-cli, or minimax-coding-plan.",
+						"description": "Required published provider, e.g. gemini-cli, vertex, claude-code, codex-cli, or minimax-coding-plan. Discover usable providers with list_llm_capabilities(capability=\"search_web\", include_models=true).",
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional published model_id override. If omitted, or if a provider alias such as codex-cli is passed, the tool selects a working model for the provider.",
+						"description": "Optional published model_id override. Use a model from list_llm_capabilities(capability=\"search_web\", include_models=true), and pass the matching provider in the same call. If omitted, or if a provider alias such as codex-cli is passed, the tool selects a working model for the provider.",
 					},
 				},
 				"required": []string{"query", "provider"},

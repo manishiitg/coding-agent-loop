@@ -47,17 +47,12 @@ const STEPS: WalkthroughStep[] = [
   {
     selector: '[data-tour="chat-input-tools"]',
     title: 'Chat tools',
-    body: 'Pick servers, skills, browser access, Google Workspace, secrets, and other tool access before sending.',
+    body: 'Pick servers, skills, browser access, secrets, and other tool access before sending.',
   },
   {
     selector: '[data-tour="chat-browser-tools"]',
     title: 'Browser access',
     body: 'Enable headless browser, Chrome CDP, or Playwright when the agent needs to inspect or operate web pages.',
-  },
-  {
-    selector: '[data-tour="chat-gws-tools"]',
-    title: 'Google Workspace',
-    body: 'Enable Google Workspace when the agent needs Drive, Gmail, Calendar, Docs, Sheets, or Slides access.',
   },
   {
     selector: '[data-tour="chat-active-agents"]',

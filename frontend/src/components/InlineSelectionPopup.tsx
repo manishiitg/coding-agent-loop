@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
-import { Check, Loader2, Search } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Loader2, Search } from 'lucide-react'
 
 const DBG = '[skill-popup]'
 
@@ -10,6 +10,7 @@ export interface InlineSelectionItem {
   isSelected: boolean
   leadingIcon?: React.ReactNode
   badge?: string
+  details?: React.ReactNode
 }
 
 export interface InlineSelectionFilterTab {
@@ -62,6 +63,7 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [localQuery, setLocalQuery] = useState('')
+  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
   const searchInputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -94,6 +96,7 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
     } else {
       setLocalQuery('')
       setSelectedIndex(0)
+      setExpandedItemIds(new Set())
     }
   }, [isOpen])
 
@@ -171,6 +174,22 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
       } else if (e.key === 'ArrowUp') {
         e.preventDefault()
         setSelectedIndex(prev => Math.max(prev - 1, 0))
+      } else if (e.key === 'ArrowRight') {
+        const item = filteredItemsRef.current[idx]
+        if (item?.details) {
+          e.preventDefault()
+          setExpandedItemIds(prev => new Set(prev).add(item.id))
+        }
+      } else if (e.key === 'ArrowLeft') {
+        const item = filteredItemsRef.current[idx]
+        if (item?.details) {
+          e.preventDefault()
+          setExpandedItemIds(prev => {
+            const next = new Set(prev)
+            next.delete(item.id)
+            return next
+          })
+        }
       }
     }
     // console.log(`${DBG} registered keydown listener`)
@@ -285,41 +304,77 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
             {localQuery ? `No ${title.toLowerCase()} found` : emptyMessage}
           </div>
         ) : (
-          filteredItems.map((item, index) => (
-            <div
-              key={`${item.id}-${index}`}
-              data-testid={`inline-selection-item-${item.id}`}
-              className={`px-3 py-2 cursor-pointer flex items-center gap-2 text-sm transition-colors ${
-                index === selectedIndex
-                  ? 'bg-primary/10 text-primary border-l-2 border-primary'
-                  : 'hover:bg-secondary'
-              }`}
-              onMouseDown={e => { e.preventDefault(); onToggleItem(item.id) }}
-            >
-              {item.leadingIcon && (
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground">
-                  {item.leadingIcon}
-                </div>
-              )}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="min-w-0 truncate font-medium">{item.name}</span>
-                  {item.badge && (
-                    <span className="shrink-0 text-[10px] px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-medium leading-none">
-                      {item.badge}
-                    </span>
+          filteredItems.map((item, index) => {
+            const isExpanded = expandedItemIds.has(item.id)
+            return (
+              <div
+                key={`${item.id}-${index}`}
+                data-testid={`inline-selection-item-${item.id}`}
+                className={`text-sm transition-colors ${
+                  index === selectedIndex
+                    ? 'bg-primary/10 text-primary border-l-2 border-primary'
+                    : 'hover:bg-secondary'
+                }`}
+              >
+                <div
+                  className="flex cursor-pointer items-center gap-2 px-3 py-2"
+                  onMouseDown={e => { e.preventDefault(); onToggleItem(item.id) }}
+                >
+                  {item.leadingIcon && (
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground">
+                      {item.leadingIcon}
+                    </div>
                   )}
-                  {item.id.startsWith('custom/') && (
-                    <span className="text-[10px] px-1 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 font-medium leading-none">custom</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="min-w-0 truncate font-medium">{item.name}</span>
+                      {item.badge && (
+                        <span className="shrink-0 text-[10px] px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-medium leading-none">
+                          {item.badge}
+                        </span>
+                      )}
+                      {item.id.startsWith('custom/') && (
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 font-medium leading-none">custom</span>
+                      )}
+                    </div>
+                    {item.description && (
+                      <div className="text-xs text-muted-foreground truncate">{item.description}</div>
+                    )}
+                  </div>
+                  {item.details && (
+                    <button
+                      type="button"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                      title={isExpanded ? 'Hide details' : 'Show details'}
+                      aria-label={isExpanded ? 'Hide details' : 'Show details'}
+                      onMouseDown={e => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                      }}
+                      onClick={e => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setExpandedItemIds(prev => {
+                          const next = new Set(prev)
+                          if (next.has(item.id)) next.delete(item.id)
+                          else next.add(item.id)
+                          return next
+                        })
+                      }}
+                    >
+                      {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    </button>
                   )}
+                  {item.isSelected && <Check className="w-4 h-4 text-green-500 flex-shrink-0" />}
                 </div>
-                {item.description && (
-                  <div className="text-xs text-muted-foreground truncate">{item.description}</div>
+                {isExpanded && item.details && (
+                  <div className="px-3 pb-3 pl-12">
+                    {item.details}
+                  </div>
                 )}
               </div>
-              {item.isSelected && <Check className="w-4 h-4 text-green-500 flex-shrink-0" />}
-            </div>
-          ))
+            )
+          })
         )}
       </div>
 
@@ -340,7 +395,7 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
           </div>
         )}
         <div className="flex items-center justify-between">
-          <span>↑↓ navigate</span>
+          <span>↑↓ navigate{filteredItems.some(item => item.details) ? ' · → details' : ''}</span>
           <span>{enterHint} • Esc to close</span>
         </div>
       </div>

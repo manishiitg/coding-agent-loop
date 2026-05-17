@@ -119,6 +119,9 @@ export const WorkflowChatTabs: React.FC = () => {
   })))
 
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
+  const setShowWorkspacePane = useWorkflowStore(state => state.setShowWorkspacePane)
+  const setWorkflowWorkspaceView = useWorkflowStore(state => state.setWorkflowWorkspaceView)
+  const setCanvasViewMode = useWorkflowStore(state => state.setCanvasViewMode)
 
   // Layout mode for the active tab — tree groups related events, flat shows the old feed.
   const activeViewMode = useChatStore(state => {
@@ -165,6 +168,14 @@ export const WorkflowChatTabs: React.FC = () => {
     e.stopPropagation()
     await closeTab(tabId)
   }, [closeTab])
+
+  const handleShowWorkflow = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setWorkflowWorkspaceView('flow')
+    setCanvasViewMode('flow')
+    setShowWorkspacePane(true)
+    setShowChatArea(false)
+  }, [setCanvasViewMode, setShowChatArea, setShowWorkspacePane, setWorkflowWorkspaceView])
 
   // Close chat area when all workflow tabs are closed (but not on first render)
   useEffect(() => {
@@ -267,6 +278,21 @@ export const WorkflowChatTabs: React.FC = () => {
               </TooltipTrigger>
               <TooltipContent>
                 <p>{activeViewMode === 'tree' ? 'Tree view — group events by workflow and agent' : 'Flat view — show events in chronological order'}</p>
+              </TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleShowWorkflow}
+                  className="flex items-center gap-1 p-1.5 rounded text-xs font-medium text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-900 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
+                  aria-label="Show workflow"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Show workflow</p>
               </TooltipContent>
             </Tooltip>
 

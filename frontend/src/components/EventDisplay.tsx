@@ -191,7 +191,10 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
   const hasLiveStreamingText = Boolean(currentStreamingText || currentStreamingStatus)
   const hasLiveTerminalStream = Boolean(currentStreamingTerminalText && currentStreamingTerminalActive)
   const streamingPanelTitle = currentStreamingTerminalText && !hasLiveStreamingText ? 'Terminal output' : 'Generating...'
-  const collapseTerminalOutput = Boolean(currentStreamingTerminalText && hasCompletionEvent && !hasLiveStreamingText && !hasLiveTerminalStream)
+  const showStreamingPanelHeader = Boolean(hasLiveStreamingText && (!currentStreamingTerminalText || hasLiveTerminalStream))
+  const [terminalOutputOpenBySession, setTerminalOutputOpenBySession] = React.useState<Record<string, boolean>>({})
+  const terminalOutputSessionKey = sessionId || '__default__'
+  const terminalOutputOpen = terminalOutputOpenBySession[terminalOutputSessionKey] ?? true
   const terminalOutputRef = React.useRef<HTMLDivElement | null>(null)
   const terminalAutoFollowRef = React.useRef(true)
   const isTerminalNearBottom = React.useCallback((el: HTMLDivElement) => (
@@ -215,10 +218,21 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
     }
   }, [currentStreamingTerminalActive])
   React.useEffect(() => {
-    if (currentStreamingTerminalText && !collapseTerminalOutput) {
+    if (currentStreamingTerminalText && terminalOutputOpen) {
       scrollTerminalOutputToBottom()
     }
-  }, [currentStreamingTerminalText, collapseTerminalOutput, scrollTerminalOutputToBottom])
+  }, [currentStreamingTerminalText, terminalOutputOpen, scrollTerminalOutputToBottom])
+  const handleTerminalOutputToggle = React.useCallback((event: React.SyntheticEvent<HTMLDetailsElement>) => {
+    const isOpen = event.currentTarget.open
+    setTerminalOutputOpenBySession(prev => (
+      prev[terminalOutputSessionKey] === isOpen
+        ? prev
+        : { ...prev, [terminalOutputSessionKey]: isOpen }
+    ))
+    if (isOpen) {
+      scrollTerminalOutputToBottom(true)
+    }
+  }, [scrollTerminalOutputToBottom, terminalOutputSessionKey])
   const terminalOutputBlock = currentStreamingTerminalText ? (
     <div
       ref={terminalOutputRef}
@@ -282,7 +296,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
       {(currentStreamingText || currentStreamingTerminalText || currentStreamingStatus) && (
         <Card className="border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-neutral-900/40 shadow-sm min-w-0">
           <CardContent className={`${compact ? 'p-2' : 'p-3'} min-w-0`}>
-            {!collapseTerminalOutput && (
+            {showStreamingPanelHeader && (
               <div className="flex items-center gap-1.5 mb-1">
                 {hasLiveStreamingText && (
                   <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" />
@@ -300,14 +314,11 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
                 <span className="inline-block w-1.5 h-3 bg-gray-500 animate-pulse ml-0.5" />
               </div>
             )}
-            {currentStreamingTerminalText && collapseTerminalOutput && (
+            {currentStreamingTerminalText && (
               <details
                 className="min-w-0"
-                onToggle={(event) => {
-                  if (event.currentTarget.open) {
-                    scrollTerminalOutputToBottom(true)
-                  }
-                }}
+                open={terminalOutputOpen}
+                onToggle={handleTerminalOutputToggle}
               >
                 <summary className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-500 dark:text-gray-400 cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 select-none`}>
                   <span className="inline-flex items-center">
@@ -316,9 +327,6 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
                 </summary>
                 {terminalOutputBlock}
               </details>
-            )}
-            {currentStreamingTerminalText && !collapseTerminalOutput && (
-              terminalOutputBlock
             )}
             {currentStreamingStatus && (
               <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-500 dark:text-gray-400 italic mt-1 opacity-75`}>

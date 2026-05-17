@@ -3236,20 +3236,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// In plan delegation mode, orchestrator uses Main tier model (falls back to High if Main not set)
+		// only when the request did not choose a primary chat model. The chat UI's provider
+		// selector must win over saved/env tier defaults; delegated sub-agents still resolve tiers
+		// at spawn time in executeDelegatedTask.
 		if !isWorkflowPhase {
-			tierConfig := LoadAndResolveTierConfig(streamCtx, req.DelegationTierConfig)
-			if tierConfig != nil {
-				if tierConfig.Main != nil && tierConfig.Main.Provider != "" && tierConfig.Main.ModelID != "" {
-					finalProvider = tierConfig.Main.Provider
-					finalModelID = tierConfig.Main.ModelID
-					fallbacks = convertTierFallbacksToAgentFallbacks(tierConfig.Main.Fallbacks, tierConfig.Main.Provider)
-					log.Printf("[DELEGATION] Orchestrator using main tier model: %s/%s", finalProvider, finalModelID)
-				} else if tierConfig.High != nil && tierConfig.High.Provider != "" && tierConfig.High.ModelID != "" {
-					finalProvider = tierConfig.High.Provider
-					finalModelID = tierConfig.High.ModelID
-					fallbacks = convertTierFallbacksToAgentFallbacks(tierConfig.High.Fallbacks, tierConfig.High.Provider)
-					log.Printf("[DELEGATION] Orchestrator using high tier model (main not set): %s/%s", finalProvider, finalModelID)
-				}
+			var appliedTier bool
+			finalProvider, finalModelID, fallbacks, appliedTier = applyTopLevelTierModelIfNoExplicitLLM(streamCtx, req, finalProvider, finalModelID, fallbacks)
+			if appliedTier {
+				log.Printf("[DELEGATION] Orchestrator using tier model: %s/%s", finalProvider, finalModelID)
 			}
 		}
 
@@ -5196,26 +5190,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		api.conversationMux.RLock()
-		ccSID := api.claudeCodeSessionIDs[sessionID]
-		gSID := api.geminiSessionIDs[sessionID]
-		gDirID := api.geminiProjectDirIDs[sessionID]
-		api.conversationMux.RUnlock()
-
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-			if ccSID != "" {
-				underlyingAgent.ClaudeCodeSessionID = ccSID
-			}
-			if gSID != "" {
-				underlyingAgent.GeminiSessionID = gSID
-			}
-			if gDirID != "" {
-				underlyingAgent.GeminiProjectDirID = gDirID
-				log.Printf("[GEMINI CLI] Restored project dir ID %s for session %s", gDirID, sessionID)
-			}
-		}
-		if gDirID != "" {
-			workspace.SetSessionGeminiProjectDirID(sessionID, gDirID)
+			api.restoreCodingAgentRuntime(sessionID, underlyingAgent)
 		}
 
 		// Store the fully configured agent before streaming starts so ultra-fast background
@@ -5907,6 +5883,30 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	}
 
 	return runtime
+}
+
+func (api *StreamingAPI) restoreCodingAgentRuntime(sessionID string, underlyingAgent *mcpagent.Agent) {
+	if api == nil || underlyingAgent == nil {
+		return
+	}
+
+	api.conversationMux.RLock()
+	ccSID := strings.TrimSpace(api.claudeCodeSessionIDs[sessionID])
+	gSID := strings.TrimSpace(api.geminiSessionIDs[sessionID])
+	gDirID := strings.TrimSpace(api.geminiProjectDirIDs[sessionID])
+	api.conversationMux.RUnlock()
+
+	if ccSID != "" {
+		underlyingAgent.ClaudeCodeSessionID = ccSID
+	}
+	if gSID != "" {
+		underlyingAgent.GeminiSessionID = gSID
+	}
+	if gDirID != "" {
+		underlyingAgent.GeminiProjectDirID = gDirID
+		workspace.SetSessionGeminiProjectDirID(sessionID, gDirID)
+		log.Printf("[GEMINI CLI] Restored project dir ID %s for session %s", gDirID, sessionID)
+	}
 }
 
 // updateSessionActivity updates the LastActivity timestamp for a session when events are added
@@ -7852,6 +7852,32 @@ func convertTierFallbacksToAgentFallbacks(fallbacks []virtualtools.TierModelFall
 		return nil
 	}
 	return out
+}
+
+func queryRequestHasExplicitLLMSelection(req QueryRequest) bool {
+	if req.LLMConfig != nil {
+		if strings.TrimSpace(req.LLMConfig.Primary.Provider) != "" || strings.TrimSpace(req.LLMConfig.Primary.ModelID) != "" {
+			return true
+		}
+	}
+	return strings.TrimSpace(req.Provider) != "" || strings.TrimSpace(req.ModelID) != ""
+}
+
+func applyTopLevelTierModelIfNoExplicitLLM(ctx context.Context, req QueryRequest, finalProvider, finalModelID string, fallbacks []agent.FallbackModel) (string, string, []agent.FallbackModel, bool) {
+	if queryRequestHasExplicitLLMSelection(req) {
+		return finalProvider, finalModelID, fallbacks, false
+	}
+	tierConfig := LoadAndResolveTierConfig(ctx, req.DelegationTierConfig)
+	if tierConfig == nil {
+		return finalProvider, finalModelID, fallbacks, false
+	}
+	if tierConfig.Main != nil && tierConfig.Main.Provider != "" && tierConfig.Main.ModelID != "" {
+		return tierConfig.Main.Provider, tierConfig.Main.ModelID, convertTierFallbacksToAgentFallbacks(tierConfig.Main.Fallbacks, tierConfig.Main.Provider), true
+	}
+	if tierConfig.High != nil && tierConfig.High.Provider != "" && tierConfig.High.ModelID != "" {
+		return tierConfig.High.Provider, tierConfig.High.ModelID, convertTierFallbacksToAgentFallbacks(tierConfig.High.Fallbacks, tierConfig.High.Provider), true
+	}
+	return finalProvider, finalModelID, fallbacks, false
 }
 
 // resolveDelegationTierConfig builds a DelegationTierConfig by merging:

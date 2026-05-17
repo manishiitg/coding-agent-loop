@@ -532,17 +532,54 @@ func normalizeChatHistoryWorkspacePath(workspacePath string) string {
 }
 
 func firstHumanText(history []llmtypes.MessageContent) string {
+	firstText := ""
 	for _, msg := range history {
-		if msg.Role != "human" {
+		role := strings.ToLower(strings.TrimSpace(string(msg.Role)))
+		if role != "human" && role != "user" {
 			continue
 		}
 		for _, part := range msg.Parts {
 			if text := chatHistoryPartText(part); text != "" {
-				return cleanChatHistoryQuery(text)
+				cleaned := cleanChatHistoryQuery(text)
+				if firstText == "" {
+					firstText = cleaned
+				}
+				if !isLowSignalChatHistoryQuery(cleaned) {
+					return cleaned
+				}
 			}
 		}
 	}
-	return ""
+	return firstText
+}
+
+func isLowSignalChatHistoryQuery(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	normalized = strings.Trim(normalized, ".!?,;:-_ \t\n\r")
+	if normalized == "" {
+		return true
+	}
+	if len([]rune(normalized)) <= 2 {
+		return true
+	}
+	lowSignal := map[string]bool{
+		"hi":              true,
+		"hello":           true,
+		"hey":             true,
+		"ok":              true,
+		"okay":            true,
+		"thanks":          true,
+		"thank you":       true,
+		"yes":             true,
+		"no":              true,
+		"done":            true,
+		"lets start":      true,
+		"let's start":     true,
+		"start":           true,
+		"continue":        true,
+		"please continue": true,
+	}
+	return lowSignal[normalized]
 }
 
 func chatHistoryPreviewMessages(history []llmtypes.MessageContent) []ChatHistoryPreviewMessage {

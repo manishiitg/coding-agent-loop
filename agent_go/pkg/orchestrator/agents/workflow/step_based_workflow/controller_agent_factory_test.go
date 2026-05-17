@@ -256,14 +256,14 @@ func TestApplyStepConfigToAgentConfigForcesCodeExecForCLIProviders(t *testing.T)
 func TestClaudeCodeTransportHelpers(t *testing.T) {
 	stepConfig := agents.NewOrchestratorAgentConfig("step-agent")
 	stepConfig.LLMConfig.Primary.Provider = string(mcpllm.ProviderClaudeCode)
-	forceWorkflowStepClaudeCodePrintTransport(stepConfig)
-	if stepConfig.ClaudeCodeTransport != mcpllm.ClaudeCodeTransportPrint {
-		t.Fatalf("step ClaudeCodeTransport = %q, want %q", stepConfig.ClaudeCodeTransport, mcpllm.ClaudeCodeTransportPrint)
+	forceWorkflowClaudeCodeInteractiveTransport(stepConfig)
+	if stepConfig.ClaudeCodeTransport != mcpllm.ClaudeCodeTransportExperimental {
+		t.Fatalf("step ClaudeCodeTransport = %q, want %q", stepConfig.ClaudeCodeTransport, mcpllm.ClaudeCodeTransportExperimental)
 	}
 
 	chatConfig := agents.NewOrchestratorAgentConfig("workflow-builder-agent")
 	chatConfig.LLMConfig.Primary.Provider = string(mcpllm.ProviderClaudeCode)
-	forceWorkflowChatClaudeCodeExperimentalTransport(chatConfig)
+	forceWorkflowClaudeCodeInteractiveTransport(chatConfig)
 	if chatConfig.ClaudeCodeTransport != mcpllm.ClaudeCodeTransportExperimental {
 		t.Fatalf("chat ClaudeCodeTransport = %q, want %q", chatConfig.ClaudeCodeTransport, mcpllm.ClaudeCodeTransportExperimental)
 	}

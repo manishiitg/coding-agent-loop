@@ -139,7 +139,7 @@ const splitBoxTableCells = (line: string): string[] => {
 }
 
 const flushBoxTable = (output: string[], boxRows: string[][]) => {
-  if (boxRows.length < 2) {
+  if (boxRows.length < 2 || boxRows[0].length < 1) {
     for (const row of boxRows) output.push(`│ ${row.join(' │ ')} │`)
     return
   }
@@ -160,7 +160,7 @@ const normalizeBoxDrawingTables = (value: string): string => {
   let sawBoxBorder = false
 
   const flush = () => {
-    if (boxRows.length > 0 && sawBoxBorder) {
+    if (boxRows.length >= 2 || (boxRows.length > 0 && sawBoxBorder)) {
       flushBoxTable(output, boxRows)
     } else {
       for (const row of boxRows) output.push(`│ ${row.join(' │ ')} │`)
@@ -190,7 +190,7 @@ const normalizeBoxDrawingTables = (value: string): string => {
     }
 
     const cells = splitBoxTableCells(line)
-    if (cells.length >= 2) {
+    if (cells.length >= 1) {
       boxRows.push(cells)
       continue
     }

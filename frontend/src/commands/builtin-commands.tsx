@@ -27,7 +27,7 @@ export const builtinCommands: CommandDefinition[] = [
     command: 'resume',
     description: 'Attach a previous chat conversation as context',
     icon: <History className="w-4 h-4" />,
-    modes: ['workflow'],
+    modes: ['workflow', 'multi-agent'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: ['builder', 'optimizer', 'run'],
     source: 'builtin',

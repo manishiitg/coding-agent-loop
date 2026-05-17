@@ -1580,7 +1580,7 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 
 	// Agent config
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("workflow-builder-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
-	forceWorkflowChatClaudeCodeExperimentalTransport(config)
+	forceWorkflowClaudeCodeInteractiveTransport(config)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 
 	// MCP Servers — use preset if available, else NoServers

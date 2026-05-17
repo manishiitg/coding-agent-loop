@@ -110,8 +110,8 @@ type OrchestratorAgentConfig struct {
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
 	// ClaudeCodeTransport optionally overrides the Claude Code provider
-	// transport for this workflow agent. Workflow execution currently uses the
-	// print transport for deterministic stream-json responses.
+	// transport for this workflow agent. Workflow agents use the interactive
+	// tmux transport so chat and step execution share one coding-CLI path.
 	ClaudeCodeTransport string `json:"claude_code_transport,omitempty"`
 	// CodingAgentWorkingDir sets the process working directory for CLI-backed
 	// coding providers. Workflow agents should run from the workflow folder, not

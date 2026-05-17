@@ -1408,8 +1408,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [skillsLoading, setSkillsLoading] = useState(false)
 
   const openResumeDialog = useCallback(() => {
-    if (selectedModeCategory !== 'workflow') {
-      addToast('/resume is only available in workflow chat', 'info')
+    if (selectedModeCategory !== 'workflow' && selectedModeCategory !== 'multi-agent') {
+      addToast('/resume is only available in chat or workflow', 'info')
       return
     }
 

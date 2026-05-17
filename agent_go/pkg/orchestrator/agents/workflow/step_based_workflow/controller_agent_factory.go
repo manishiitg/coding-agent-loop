@@ -39,13 +39,7 @@ func normalizeServerNames(servers []string) []string {
 	return servers
 }
 
-func forceWorkflowStepClaudeCodePrintTransport(config *agents.OrchestratorAgentConfig) {
-	if workflowAgentConfigUsesClaudeCode(config) {
-		config.ClaudeCodeTransport = mcpllm.ClaudeCodeTransportPrint
-	}
-}
-
-func forceWorkflowChatClaudeCodeExperimentalTransport(config *agents.OrchestratorAgentConfig) {
+func forceWorkflowClaudeCodeInteractiveTransport(config *agents.OrchestratorAgentConfig) {
 	if workflowAgentConfigUsesClaudeCode(config) {
 		config.ClaudeCodeTransport = mcpllm.ClaudeCodeTransportExperimental
 	}
@@ -980,7 +974,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBUpdateAgent(ctx context.Conte
 	// Cap below learning's 50 — KB merges should converge quickly.
 	maxTurns := 40
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
-	forceWorkflowStepClaudeCodePrintTransport(config)
+	forceWorkflowClaudeCodeInteractiveTransport(config)
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.MCPSessionID = subAgentSessionID
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
@@ -1064,7 +1058,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBConsolidateAgent(ctx context.
 	// the same headroom as reorganize (60 turns).
 	maxTurns := 60
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
-	forceWorkflowStepClaudeCodePrintTransport(config)
+	forceWorkflowClaudeCodeInteractiveTransport(config)
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.MCPSessionID = subAgentSessionID
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
@@ -1121,7 +1115,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBReorganizeAgent(ctx context.C
 	// but still cap to prevent runaway agents under ambiguous instructions.
 	maxTurns := 60
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
-	forceWorkflowStepClaudeCodePrintTransport(config)
+	forceWorkflowClaudeCodeInteractiveTransport(config)
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.MCPSessionID = subAgentSessionID
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
@@ -1358,7 +1352,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 4. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
-	forceWorkflowStepClaudeCodePrintTransport(config)
+	forceWorkflowClaudeCodeInteractiveTransport(config)
 	hcpo.disableParentAgentTimeout(config, "execution-only agent")
 
 	// Execution-only steps can run in parallel inside a group. If they all reuse the
@@ -1514,7 +1508,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 
 	// 3. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
-	forceWorkflowStepClaudeCodePrintTransport(config)
+	forceWorkflowClaudeCodeInteractiveTransport(config)
 
 	// Learning agents always use NoServers (pure LLM analysis agent)
 	// Step-specific server/tool selection is only for execution agents
@@ -1631,7 +1625,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 
 	// Create agent config with custom LLM if needed
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
-	forceWorkflowStepClaudeCodePrintTransport(config)
+	forceWorkflowClaudeCodeInteractiveTransport(config)
 
 	workflowServersConditional := hcpo.GetSelectedServers()
 	// Use step-specific servers filtered against workflow-level servers (workflow is the hard cap)
@@ -1881,7 +1875,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 
 	// Create agent config with custom LLM if needed
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
-	forceWorkflowStepClaudeCodePrintTransport(config)
+	forceWorkflowClaudeCodeInteractiveTransport(config)
 	hcpo.disableParentAgentTimeout(config, "todo task orchestrator agent")
 
 	// Give nested todo_task orchestrators their own session-level folder guard just like

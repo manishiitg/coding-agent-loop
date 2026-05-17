@@ -567,6 +567,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     return filtered
   }, [tabEvents])
 
+  const hasConversationContent = useMemo(() => {
+    return displayEvents.some(event =>
+      event.type === 'user_message' ||
+      event.type === 'conversation_end' ||
+      event.type === 'unified_completion'
+    )
+  }, [displayEvents])
+
   const { data: sessionExecutionTree } = useSessionExecutionTree(activeSessionId, !!activeSessionId)
   const activeAgents = useMemo<ActiveAgentInfo[]>(() => {
     const root = sessionExecutionTree?.root
@@ -678,7 +686,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // an in-panel spinner here while reconnectWorkflowTabs() is replaying events.
   const isRestoringWorkflowSessions = useChatStore(state => state.isRestoringWorkflowSessions)
   const showNormalPreviousChatsPanel = selectedModeCategory === 'multi-agent' &&
-    displayEvents.length === 0 &&
+    !hasConversationContent &&
     !isStreaming &&
     !isRestoringChatSessions
 
@@ -2928,7 +2936,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             )}
             {showNormalPreviousChatsPanel && (
               <PreviousChatHistoryPanel
-                activeSessionId={activeTab?.sessionId ?? undefined}
+                activeSessionId={hasConversationContent ? activeTab?.sessionId ?? undefined : undefined}
                 title="Previous chats"
                 actionLabel="Open"
                 emptyText="No previous chats yet."
@@ -2937,7 +2945,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               />
             )}
             {/* Empty State - Show when no events and not in historical session */}
-            {displayEvents.length === 0 && !isStreaming && !isRestoringChatSessions && !hasPreviousNormalChats && (
+            {!hasConversationContent && !isStreaming && !isRestoringChatSessions && !hasPreviousNormalChats && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
 

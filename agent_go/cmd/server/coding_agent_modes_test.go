@@ -1,11 +1,14 @@
 package server
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
 
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	internalevents "mcp-agent-builder-go/agent_go/internal/events"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 
 	pkgevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
@@ -67,6 +70,52 @@ func TestCodingAgentWorkspaceWorkingDirUsesWorkspaceDocsRoot(t *testing.T) {
 	want := filepath.Join(root, "_users", "alice", "Chats")
 	if got != want {
 		t.Fatalf("working dir = %q, want %q", got, want)
+	}
+}
+
+func TestTopLevelTierModelDoesNotOverrideExplicitChatLLM(t *testing.T) {
+	req := QueryRequest{
+		Provider: "gemini-cli",
+		ModelID:  "gemini-3.1-flash-lite",
+		LLMConfig: &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: "gemini-cli",
+				ModelID:  "gemini-3.1-flash-lite",
+			},
+		},
+		DelegationTierConfig: &virtualtools.DelegationTierConfig{
+			High: &virtualtools.TierModel{
+				Provider: "claude-code",
+				ModelID:  "claude-sonnet-4-6",
+			},
+		},
+	}
+
+	gotProvider, gotModel, _, applied := applyTopLevelTierModelIfNoExplicitLLM(context.Background(), req, "gemini-cli", "gemini-3.1-flash-lite", nil)
+	if applied {
+		t.Fatal("tier model was applied despite an explicit chat LLM selection")
+	}
+	if gotProvider != "gemini-cli" || gotModel != "gemini-3.1-flash-lite" {
+		t.Fatalf("resolved chat LLM = %s/%s, want gemini-cli/gemini-3.1-flash-lite", gotProvider, gotModel)
+	}
+}
+
+func TestTopLevelTierModelAppliesWhenChatLLMIsMissing(t *testing.T) {
+	req := QueryRequest{
+		DelegationTierConfig: &virtualtools.DelegationTierConfig{
+			High: &virtualtools.TierModel{
+				Provider: "claude-code",
+				ModelID:  "claude-sonnet-4-6",
+			},
+		},
+	}
+
+	gotProvider, gotModel, _, applied := applyTopLevelTierModelIfNoExplicitLLM(context.Background(), req, "", "", nil)
+	if !applied {
+		t.Fatal("tier model was not applied for a request with no chat LLM selection")
+	}
+	if gotProvider != "claude-code" || gotModel != "claude-sonnet-4-6" {
+		t.Fatalf("resolved chat LLM = %s/%s, want claude-code/claude-sonnet-4-6", gotProvider, gotModel)
 	}
 }
 

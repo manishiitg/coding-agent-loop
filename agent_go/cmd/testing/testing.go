@@ -91,6 +91,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(geminiResumeAfterCancelTestCmd)
 	TestingCmd.AddCommand(codexResumeAfterCancelTestCmd)
 	TestingCmd.AddCommand(codexMCPToolCallTestCmd)
+	TestingCmd.AddCommand(codingAgentChatE2ECmd)
 	TestingCmd.AddCommand(zaiTestCmd)
 	TestingCmd.AddCommand(kimiTestCmd)
 }

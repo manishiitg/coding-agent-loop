@@ -47,6 +47,9 @@ func sanitizePublishedLLM(entry StoredPublishedLLM) (StoredPublishedLLM, bool) {
 	if entry.Provider == "" || entry.ModelID == "" || entry.Name == "" {
 		return StoredPublishedLLM{}, false
 	}
+	if !isPublishedLLMProviderAllowed(entry.Provider) {
+		return StoredPublishedLLM{}, false
+	}
 
 	if entry.ID == "" {
 		entry.ID = fmt.Sprintf("%s:%s:%d", entry.Provider, entry.ModelID, time.Now().UnixNano())

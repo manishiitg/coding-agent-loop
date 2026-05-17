@@ -101,9 +101,6 @@ func LoadProviderKeys(ctx context.Context) (*StoredProviderKeys, error) {
 // ProviderKeysToAPIKeysMap converts stored keys to the map format used in reqMap["llm_config"]["api_keys"].
 func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	m := map[string]interface{}{}
-	if keys.OpenRouter != "" {
-		m["openrouter"] = keys.OpenRouter
-	}
 	if keys.OpenAI != "" {
 		m["openai"] = keys.OpenAI
 	}
@@ -127,9 +124,6 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	}
 	if keys.MiniMax != "" {
 		m["minimax"] = keys.MiniMax
-	}
-	if keys.MiniMaxCodingPlan != "" {
-		m["minimax-coding-plan"] = keys.MiniMaxCodingPlan
 	}
 	if keys.ElevenLabs != "" {
 		m["elevenlabs"] = keys.ElevenLabs
@@ -164,9 +158,6 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		return &llm.ProviderAPIKeys{}
 	}
 	result := &llm.ProviderAPIKeys{}
-	if keys.OpenRouter != "" {
-		result.OpenRouter = &keys.OpenRouter
-	}
 	if keys.OpenAI != "" {
 		result.OpenAI = &keys.OpenAI
 	}
@@ -190,9 +181,6 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	}
 	if keys.MiniMax != "" {
 		result.MiniMax = &keys.MiniMax
-	}
-	if keys.MiniMaxCodingPlan != "" {
-		result.MiniMaxCodingPlan = &keys.MiniMaxCodingPlan
 	}
 	if keys.ElevenLabs != "" {
 		result.ElevenLabs = &keys.ElevenLabs
@@ -218,9 +206,6 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	}
 	if result.CursorCLI != nil {
 		loaded = append(loaded, "cursor-cli")
-	}
-	if result.OpenRouter != nil {
-		loaded = append(loaded, "openrouter")
 	}
 	if result.OpenAI != nil {
 		loaded = append(loaded, "openai")
@@ -283,19 +268,17 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		return env
 	}
 	result := &llm.ProviderAPIKeys{
-		OpenRouter:        pick(envKeys.OpenRouter, wsKeys.OpenRouter),
-		OpenAI:            pick(envKeys.OpenAI, wsKeys.OpenAI),
-		Anthropic:         pick(envKeys.Anthropic, wsKeys.Anthropic),
-		ZAI:               pick(envKeys.ZAI, wsKeys.ZAI),
-		Kimi:              pick(envKeys.Kimi, wsKeys.Kimi),
-		Vertex:            pick(envKeys.Vertex, wsKeys.Vertex),
-		GeminiCLI:         pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
-		CodexCLI:          pick(envKeys.CodexCLI, wsKeys.CodexCLI),
-		CursorCLI:         pick(envKeys.CursorCLI, wsKeys.CursorCLI),
-		MiniMax:           pick(envKeys.MiniMax, wsKeys.MiniMax),
-		MiniMaxCodingPlan: pick(envKeys.MiniMaxCodingPlan, wsKeys.MiniMaxCodingPlan),
-		ElevenLabs:        pick(envKeys.ElevenLabs, wsKeys.ElevenLabs),
-		Deepgram:          pick(envKeys.Deepgram, wsKeys.Deepgram),
+		OpenAI:     pick(envKeys.OpenAI, wsKeys.OpenAI),
+		Anthropic:  pick(envKeys.Anthropic, wsKeys.Anthropic),
+		ZAI:        pick(envKeys.ZAI, wsKeys.ZAI),
+		Kimi:       pick(envKeys.Kimi, wsKeys.Kimi),
+		Vertex:     pick(envKeys.Vertex, wsKeys.Vertex),
+		GeminiCLI:  pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
+		CodexCLI:   pick(envKeys.CodexCLI, wsKeys.CodexCLI),
+		CursorCLI:  pick(envKeys.CursorCLI, wsKeys.CursorCLI),
+		MiniMax:    pick(envKeys.MiniMax, wsKeys.MiniMax),
+		ElevenLabs: pick(envKeys.ElevenLabs, wsKeys.ElevenLabs),
+		Deepgram:   pick(envKeys.Deepgram, wsKeys.Deepgram),
 	}
 	// Bedrock / Azure: workspace wins if present, else env
 	if wsKeys.Bedrock != nil {
@@ -425,18 +408,16 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 	}
 
 	merged := &StoredProviderKeys{
-		OpenRouter:        pick(existing.OpenRouter, incoming.OpenRouter),
-		OpenAI:            pick(existing.OpenAI, incoming.OpenAI),
-		Anthropic:         pick(existing.Anthropic, incoming.Anthropic),
-		ZAI:               pick(existing.ZAI, incoming.ZAI),
-		Kimi:              pick(existing.Kimi, incoming.Kimi),
-		Vertex:            pick(existing.Vertex, incoming.Vertex),
-		GeminiCLI:         pick(existing.GeminiCLI, incoming.GeminiCLI),
-		CursorCLI:         pick(existing.CursorCLI, incoming.CursorCLI),
-		MiniMax:           pick(existing.MiniMax, incoming.MiniMax),
-		MiniMaxCodingPlan: pick(existing.MiniMaxCodingPlan, incoming.MiniMaxCodingPlan),
-		ElevenLabs:        pick(existing.ElevenLabs, incoming.ElevenLabs),
-		Deepgram:          pick(existing.Deepgram, incoming.Deepgram),
+		OpenAI:     pick(existing.OpenAI, incoming.OpenAI),
+		Anthropic:  pick(existing.Anthropic, incoming.Anthropic),
+		ZAI:        pick(existing.ZAI, incoming.ZAI),
+		Kimi:       pick(existing.Kimi, incoming.Kimi),
+		Vertex:     pick(existing.Vertex, incoming.Vertex),
+		GeminiCLI:  pick(existing.GeminiCLI, incoming.GeminiCLI),
+		CursorCLI:  pick(existing.CursorCLI, incoming.CursorCLI),
+		MiniMax:    pick(existing.MiniMax, incoming.MiniMax),
+		ElevenLabs: pick(existing.ElevenLabs, incoming.ElevenLabs),
+		Deepgram:   pick(existing.Deepgram, incoming.Deepgram),
 	}
 
 	// Bedrock / Azure: incoming wins if present, else keep existing
@@ -471,6 +452,8 @@ func (api *StreamingAPI) handleLoadProviderKeys(w http.ResponseWriter, r *http.R
 	if keys == nil {
 		keys = &StoredProviderKeys{}
 	}
+	keys.OpenRouter = ""
+	keys.MiniMaxCodingPlan = ""
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(keys)

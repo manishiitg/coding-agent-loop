@@ -330,7 +330,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       return undefined;
     }
     return {
-      provider: option.provider as 'openai' | 'bedrock' | 'openrouter' | 'vertex',
+      provider: option.provider as 'openai' | 'bedrock' | 'vertex',
       model_id: option.model,
     };
   };

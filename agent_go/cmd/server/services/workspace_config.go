@@ -36,6 +36,16 @@ type PublishedLLM struct {
 	Options        map[string]interface{} `json:"options,omitempty"`
 }
 
+func isPublishedLLMProviderAllowed(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "bedrock", "openai", "vertex", "anthropic", "azure",
+		"claude-code", "gemini-cli", "codex-cli", "cursor-cli":
+		return true
+	default:
+		return false
+	}
+}
+
 type ImageGenerationModelConfig struct {
 	Provider string `json:"provider"`
 	ModelID  string `json:"model_id"`
@@ -189,6 +199,9 @@ func LoadPublishedLLMs(ctx context.Context, workspaceURL string) ([]PublishedLLM
 		if entry.Provider == "" || entry.ModelID == "" {
 			continue
 		}
+		if !isPublishedLLMProviderAllowed(entry.Provider) {
+			continue
+		}
 		if len(entry.Options) == 0 {
 			entry.Options = nil
 		}
@@ -299,19 +312,17 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 	}
 
 	var stored struct {
-		OpenRouter        string `json:"openrouter,omitempty"`
-		OpenAI            string `json:"openai,omitempty"`
-		Anthropic         string `json:"anthropic,omitempty"`
-		ZAI               string `json:"zai,omitempty"`
-		Kimi              string `json:"kimi,omitempty"`
-		Vertex            string `json:"vertex,omitempty"`
-		GeminiCLI         string `json:"gemini_cli,omitempty"`
-		CodexCLI          string `json:"codex_cli,omitempty"`
-		MiniMax           string `json:"minimax,omitempty"`
-		MiniMaxCodingPlan string `json:"minimax_coding_plan,omitempty"`
-		ElevenLabs        string `json:"elevenlabs,omitempty"`
-		Deepgram          string `json:"deepgram,omitempty"`
-		Bedrock           *struct {
+		OpenAI     string `json:"openai,omitempty"`
+		Anthropic  string `json:"anthropic,omitempty"`
+		ZAI        string `json:"zai,omitempty"`
+		Kimi       string `json:"kimi,omitempty"`
+		Vertex     string `json:"vertex,omitempty"`
+		GeminiCLI  string `json:"gemini_cli,omitempty"`
+		CodexCLI   string `json:"codex_cli,omitempty"`
+		MiniMax    string `json:"minimax,omitempty"`
+		ElevenLabs string `json:"elevenlabs,omitempty"`
+		Deepgram   string `json:"deepgram,omitempty"`
+		Bedrock    *struct {
 			Region string `json:"region"`
 		} `json:"bedrock,omitempty"`
 		Azure *struct {
@@ -326,9 +337,6 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 	}
 
 	m := map[string]interface{}{}
-	if stored.OpenRouter != "" {
-		m["openrouter"] = stored.OpenRouter
-	}
 	if stored.OpenAI != "" {
 		m["openai"] = stored.OpenAI
 	}
@@ -352,9 +360,6 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 	}
 	if stored.MiniMax != "" {
 		m["minimax"] = stored.MiniMax
-	}
-	if stored.MiniMaxCodingPlan != "" {
-		m["minimax-coding-plan"] = stored.MiniMaxCodingPlan
 	}
 	if stored.ElevenLabs != "" {
 		m["elevenlabs"] = stored.ElevenLabs

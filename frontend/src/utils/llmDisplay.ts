@@ -149,18 +149,14 @@ export const PROVIDER_ORDER: ProviderType[] = [
   'cursor-cli',
   'claude-code',
   'gemini-cli',
-  'openrouter',
   'bedrock',
   'openai',
   'vertex',
   'anthropic',
   'azure',
-  'z-ai',
-  'kimi',
   'minimax',
   'elevenlabs',
   'deepgram',
-  'minimax-coding-plan',
 ]
 
 export function getProviderDisplayInfo(provider?: string): ProviderDisplayInfo {

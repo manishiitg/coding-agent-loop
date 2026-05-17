@@ -1265,8 +1265,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (activeTabId) {
       // Get current config to preserve fallback models and cross-provider fallback
       const currentConfig = tabConfig?.llmConfig || {
-        provider: 'openrouter',
-        model_id: '',
+        provider: 'codex-cli',
+        model_id: 'codex-cli',
         fallback_models: [],
         cross_provider_fallback: undefined
       }

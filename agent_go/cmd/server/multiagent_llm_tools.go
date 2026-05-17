@@ -16,6 +16,16 @@ import (
 // listProviderModelsJSON returns a JSON string of all models for the given provider
 // from the shared model metadata catalog. Used by both multi-agent and workshop LLM tools.
 func listProviderModelsJSON(provider string) string {
+	provider = normalizeManagedProvider(provider)
+	if !isPublishedLLMProviderAllowed(provider) {
+		return prettyJSON(map[string]interface{}{
+			"provider": provider,
+			"count":    0,
+			"models":   []interface{}{},
+			"note":     "This provider is not available as a published chat LLM provider.",
+		})
+	}
+
 	allModels := utils.GetAllModelMetadata()
 	filtered := make([]interface{}, 0, len(allModels))
 	for _, m := range allModels {
@@ -31,6 +41,7 @@ func listProviderModelsJSON(provider string) string {
 		"provider": provider,
 		"count":    len(filtered),
 		"models":   filtered,
+		"source":   "/api/llm-config/models/metadata",
 	})
 }
 
@@ -64,8 +75,6 @@ func getStoredProviderAPIKey(keys *StoredProviderKeys, provider string) string {
 	}
 
 	switch normalizeManagedProvider(provider) {
-	case "openrouter":
-		return strings.TrimSpace(keys.OpenRouter)
 	case "openai":
 		return strings.TrimSpace(keys.OpenAI)
 	case "anthropic":
@@ -80,8 +89,6 @@ func getStoredProviderAPIKey(keys *StoredProviderKeys, provider string) string {
 		return strings.TrimSpace(keys.CursorCLI)
 	case "minimax":
 		return strings.TrimSpace(keys.MiniMax)
-	case "minimax-coding-plan":
-		return strings.TrimSpace(keys.MiniMaxCodingPlan)
 	case "elevenlabs":
 		return strings.TrimSpace(keys.ElevenLabs)
 	case "deepgram":
@@ -98,8 +105,6 @@ func setStoredProviderAPIKey(keys *StoredProviderKeys, provider, apiKey string) 
 
 	value := strings.TrimSpace(apiKey)
 	switch normalizeManagedProvider(provider) {
-	case "openrouter":
-		keys.OpenRouter = value
 	case "openai":
 		keys.OpenAI = value
 	case "anthropic":
@@ -114,8 +119,6 @@ func setStoredProviderAPIKey(keys *StoredProviderKeys, provider, apiKey string) 
 		keys.CursorCLI = value
 	case "minimax":
 		keys.MiniMax = value
-	case "minimax-coding-plan":
-		keys.MiniMaxCodingPlan = value
 	case "elevenlabs":
 		keys.ElevenLabs = value
 	case "deepgram":
@@ -285,8 +288,6 @@ func providerRuntime(provider string) string {
 		return "gemini"
 	case string(llm.ProviderCursorCLI):
 		return "cursor-agent"
-	case string(llm.ProviderMiniMaxCodingPlan):
-		return "mmx"
 	default:
 		return ""
 	}
@@ -297,8 +298,6 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 		keys = &llm.ProviderAPIKeys{}
 	}
 	switch normalizeManagedProvider(provider) {
-	case string(llm.ProviderOpenRouter):
-		return keys.OpenRouter != nil && strings.TrimSpace(*keys.OpenRouter) != "", "OPENROUTER_API_KEY or workspace provider auth"
 	case string(llm.ProviderOpenAI):
 		return keys.OpenAI != nil && strings.TrimSpace(*keys.OpenAI) != "", "OPENAI_API_KEY or workspace provider auth"
 	case string(llm.ProviderAnthropic):
@@ -319,8 +318,6 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 		return true, "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
 	case string(llm.ProviderMiniMax):
 		return keys.MiniMax != nil && strings.TrimSpace(*keys.MiniMax) != "", "MINIMAX_API_KEY or workspace provider auth"
-	case string(llm.ProviderMiniMaxCodingPlan):
-		return keys.MiniMaxCodingPlan != nil && strings.TrimSpace(*keys.MiniMaxCodingPlan) != "", "MINIMAX_CODING_PLAN_API_KEY or workspace provider auth"
 	case string(llm.ProviderElevenLabs):
 		return keys.ElevenLabs != nil && strings.TrimSpace(*keys.ElevenLabs) != "", "ELEVENLABS_API_KEY or workspace provider auth"
 	case string(llm.ProviderDeepgram):
@@ -359,9 +356,26 @@ func buildChatLLMCapabilities(keys *llm.ProviderAPIKeys, includeModels bool) []l
 		modelsByProvider[provider] = append(modelsByProvider[provider], modelID)
 	}
 
-	providers := getSupportedProviders()
+	providers := []string{
+		string(llm.ProviderCodexCLI),
+		string(llm.ProviderCursorCLI),
+		string(llm.ProviderClaudeCode),
+		string(llm.ProviderGeminiCLI),
+		string(llm.ProviderOpenAI),
+		string(llm.ProviderAnthropic),
+		string(llm.ProviderVertex),
+		string(llm.ProviderBedrock),
+		string(llm.ProviderAzure),
+	}
+	supportedSet := make(map[string]bool)
+	for _, provider := range getSupportedProviders() {
+		supportedSet[provider] = true
+	}
 	result := make([]llmCapabilityProvider, 0, len(providers))
 	for _, provider := range providers {
+		if !supportedSet[provider] {
+			continue
+		}
 		authConfigured, authSource := providerAuthConfigured(provider, keys)
 		usable, runtime, runtimeOK := providerUsable(provider, authConfigured)
 		entry := llmCapabilityProvider{
@@ -388,7 +402,6 @@ func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, configFile string,
 	for _, provider := range []string{
 		string(llm.ProviderVertex),
 		string(llm.ProviderMiniMax),
-		string(llm.ProviderMiniMaxCodingPlan),
 		string(llm.ProviderCodexCLI),
 		string(llm.ProviderCursorCLI),
 		string(llm.ProviderZAI),
@@ -478,12 +491,11 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 				keys,
 				"config/published-llms.json",
 				map[string][]string{
-					string(llm.ProviderClaudeCode):        {"claude-code"},
-					string(llm.ProviderCodexCLI):          {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
-					string(llm.ProviderCursorCLI):         {"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
-					string(llm.ProviderGeminiCLI):         {"gemini CLI models"},
-					string(llm.ProviderMiniMaxCodingPlan): {"MiniMax coding-plan search via mmx"},
-					string(llm.ProviderVertex):            {"gemini* models only"},
+					string(llm.ProviderClaudeCode): {"claude-code"},
+					string(llm.ProviderCodexCLI):   {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
+					string(llm.ProviderCursorCLI):  {"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
+					string(llm.ProviderGeminiCLI):  {"gemini CLI models"},
+					string(llm.ProviderVertex):     {"gemini* models only"},
 				},
 				map[string]string{},
 				map[string][]string{
@@ -575,14 +587,12 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 				keys,
 				"config/image-generation-config.json",
 				map[string][]string{
-					string(llm.ProviderVertex):            {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"},
-					string(llm.ProviderMiniMaxCodingPlan): {"image-01"},
-					string(llm.ProviderCodexCLI):          {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
+					string(llm.ProviderVertex):   {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"},
+					string(llm.ProviderCodexCLI): {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
 				},
 				map[string]string{
-					string(llm.ProviderVertex):            "gemini-3.1-flash-image-preview",
-					string(llm.ProviderMiniMaxCodingPlan): "image-01",
-					string(llm.ProviderCodexCLI):          "gpt-5.4-mini",
+					string(llm.ProviderVertex):   "gemini-3.1-flash-image-preview",
+					string(llm.ProviderCodexCLI): "gpt-5.4-mini",
 				},
 				map[string][]string{},
 			),
@@ -1171,7 +1181,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as openai, openrouter, anthropic, z-ai, vertex, azure, minimax, minimax-coding-plan, or bedrock.",
+					"description": "Provider id such as openai, anthropic, vertex, azure, bedrock, codex-cli, cursor-cli, claude-code, or gemini-cli.",
 				},
 			},
 			"required": []string{"provider"},
@@ -1181,25 +1191,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			if provider == "" {
 				return "provider is required.", nil
 			}
-
-			allModels := utils.GetAllModelMetadata()
-			filteredModels := make([]interface{}, 0, len(allModels))
-			for _, model := range allModels {
-				if model == nil {
-					continue
-				}
-				if normalizeManagedProvider(model.Provider) != provider {
-					continue
-				}
-				filteredModels = append(filteredModels, model)
-			}
-
-			return prettyJSON(map[string]interface{}{
-				"provider": provider,
-				"count":    len(filteredModels),
-				"models":   filteredModels,
-				"source":   "/api/llm-config/models/metadata",
-			}), nil
+			return listProviderModelsJSON(provider), nil
 		},
 	); err != nil {
 		return err
@@ -1213,7 +1205,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as openai, openrouter, anthropic, z-ai, vertex, azure, minimax, minimax-coding-plan, gemini-cli, claude-code, codex-cli, cursor-cli, or bedrock.",
+					"description": "Provider id such as openai, anthropic, vertex, azure, bedrock, gemini-cli, claude-code, codex-cli, or cursor-cli.",
 				},
 				"model_id": map[string]interface{}{
 					"type":        "string",
@@ -1258,6 +1250,9 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 
 			if provider == "" {
 				return "provider is required.", nil
+			}
+			if !isPublishedLLMProviderAllowed(provider) {
+				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
 			explicitAPIKeyProvided := strings.TrimSpace(apiKey) != ""
@@ -1362,7 +1357,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 				},
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as openai, openrouter, anthropic, z-ai, vertex, azure, minimax, gemini-cli, claude-code, codex-cli, or cursor-cli.",
+					"description": "Provider id such as openai, anthropic, vertex, azure, bedrock, gemini-cli, claude-code, codex-cli, or cursor-cli.",
 				},
 				"model_id": map[string]interface{}{
 					"type":        "string",
@@ -1426,6 +1421,9 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			modelID = strings.TrimSpace(modelID)
 			if name == "" || provider == "" || modelID == "" {
 				return "name, provider, and model_id are required.", nil
+			}
+			if !isPublishedLLMProviderAllowed(provider) {
+				return fmt.Sprintf("unsupported published LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
 			var temperature *float64
@@ -1523,7 +1521,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id: openrouter, openai, anthropic, z-ai, vertex, gemini-cli, cursor-cli, minimax, minimax-coding-plan, elevenlabs, deepgram, bedrock, or azure.",
+					"description": "Provider id: openai, anthropic, vertex, gemini-cli, cursor-cli, kimi, z-ai, minimax, elevenlabs, deepgram, bedrock, or azure.",
 				},
 				"api_key": map[string]interface{}{
 					"type":        "string",

@@ -709,7 +709,7 @@ type ExecutionOptions struct {
 
 // AgentLLMConfig represents LLM configuration for an agent (matches controller type)
 type AgentLLMConfig struct {
-	Provider string `json:"provider,omitempty"` // e.g., "openai", "bedrock", "openrouter", "vertex", "anthropic"
+	Provider string `json:"provider,omitempty"` // e.g., "openai", "bedrock", "vertex", "anthropic"
 	ModelID  string `json:"model_id,omitempty"` // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
 }
 

@@ -19,15 +19,13 @@ import (
 // Token-priced providers such as Codex CLI are intentionally omitted so they do
 // not get reported as free when no fixed per-image price is available.
 var imageGenModelCosts = map[string]float64{
-	"gemini-3.1-flash-image-preview": 0.067,  // $0.045/0.5K · $0.067/1K · $0.101/2K · $0.151/4K
-	"gemini-3-pro-image-preview":     0.134,  // $0.134/1K-2K image · $0.24/4K image
-	"image-01":                       0.0035, // MiniMax Image-01
+	"gemini-3.1-flash-image-preview": 0.067, // $0.045/0.5K · $0.067/1K · $0.101/2K · $0.151/4K
+	"gemini-3-pro-image-preview":     0.134, // $0.134/1K-2K image · $0.24/4K image
 }
 
 var imageProviderModels = map[string][]string{
-	"vertex":              {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"},
-	"minimax-coding-plan": {"image-01"},
-	"codex-cli":           {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
+	"vertex":    {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"},
+	"codex-cli": {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
 }
 
 // ImageGenExecutorConfig holds configuration for the image generation executor
@@ -87,11 +85,11 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional provider override. Discover usable provider/model pairs with list_llm_capabilities(capability=\"generate_image\", include_models=true). Supported values: vertex, minimax-coding-plan, or codex-cli. If specifying model_id, pass the matching provider too.",
+						"description": "Optional provider override. Discover usable provider/model pairs with list_llm_capabilities(capability=\"generate_image\", include_models=true). Supported values: vertex or codex-cli. If specifying model_id, pass the matching provider too.",
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional image model override. Use a model from list_llm_capabilities(capability=\"generate_image\", include_models=true), and pass the matching provider in the same call. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, image-01, codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. Do not use LLM tier labels such as low, medium, high, or auto as image model IDs.",
+						"description": "Optional image model override. Use a model from list_llm_capabilities(capability=\"generate_image\", include_models=true), and pass the matching provider in the same call. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. Do not use LLM tier labels such as low, medium, high, or auto as image model IDs.",
 					},
 					"input_image": map[string]interface{}{
 						"type":        "string",
@@ -148,8 +146,6 @@ const (
 
 func defaultImageModelForProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "minimax-coding-plan":
-		return "image-01"
 	case "codex-cli":
 		return "codex-cli"
 	default:
@@ -199,8 +195,6 @@ func inferImageProviderFromModel(modelID string) string {
 	switch {
 	case strings.HasPrefix(modelID, "gemini-"), strings.HasPrefix(modelID, "imagen-"):
 		return "vertex"
-	case modelID == "image-01":
-		return "minimax-coding-plan"
 	case modelID == "codex-cli", modelID == "gpt-5.4", modelID == "gpt-5.4-mini", modelID == "gpt-5.3-codex", modelID == "gpt-5.3-codex-spark":
 		return "codex-cli"
 	default:
@@ -237,7 +231,7 @@ func normalizeImageProviderAndModel(provider, modelID string) (string, string, e
 	modelID = normalizeImageModelAlias(provider, modelID)
 
 	switch provider {
-	case "vertex", "minimax-coding-plan", "codex-cli":
+	case "vertex", "codex-cli":
 		if !isSupportedImageModel(provider, modelID) {
 			return "", "", fmt.Errorf("unsupported image generation model %q for provider %q. %s", modelID, provider, imageModelsSummaryForProvider(provider))
 		}
@@ -273,8 +267,6 @@ func hasImageProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "vertex":
 		return apiKeys != nil && apiKeys.Vertex != nil && strings.TrimSpace(*apiKeys.Vertex) != ""
-	case "minimax-coding-plan":
-		return apiKeys != nil && apiKeys.MiniMaxCodingPlan != nil && strings.TrimSpace(*apiKeys.MiniMaxCodingPlan) != ""
 	case "codex-cli":
 		return apiKeys != nil && apiKeys.CodexCLI != nil && strings.TrimSpace(*apiKeys.CodexCLI) != ""
 	default:
@@ -296,7 +288,7 @@ func hasImageAnalysisProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys)
 }
 
 func supportedImageProviderSummary() string {
-	return "Supported image providers: vertex (gemini-3.1-flash-image-preview, gemini-3-pro-image-preview), minimax-coding-plan (image-01), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark)"
+	return "Supported image providers: vertex (gemini-3.1-flash-image-preview, gemini-3-pro-image-preview), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark)"
 }
 
 func supportedImageAnalysisProviderSummary() string {
@@ -326,7 +318,7 @@ func wrapImageGenerationSelectionError(err error) error {
 		return nil
 	}
 	return fmt.Errorf(
-		"image generation setup is incomplete: %w. Add workspace provider auth with set_provider_auth(provider=\"vertex\"|\"minimax-coding-plan\"|\"codex-cli\", api_key=\"...\") or update config/image-generation-config.json to point to a provider that has auth configured. %s",
+		"image generation setup is incomplete: %w. Add workspace provider auth with set_provider_auth(provider=\"vertex\"|\"codex-cli\", api_key=\"...\") or update config/image-generation-config.json to point to a provider that has auth configured. %s",
 		err,
 		supportedImageProviderSummary(),
 	)
@@ -341,13 +333,7 @@ func wrapImageGenerationInitializationError(provider, modelID string, err error)
 	switch provider {
 	case "vertex":
 		return fmt.Errorf(
-			"image generation could not start for provider %q and model %q: %w. To fix this, set workspace auth with set_provider_auth(provider=\"vertex\", api_key=\"...\") or change config/image-generation-config.json to another provider such as minimax-coding-plan with matching auth. %s",
-			provider, modelID, err,
-			imageModelsSummaryForProvider(provider),
-		)
-	case "minimax-coding-plan":
-		return fmt.Errorf(
-			"image generation could not start for provider %q and model %q: %w. To fix this, set workspace auth with set_provider_auth(provider=\"minimax-coding-plan\", api_key=\"...\") or change config/image-generation-config.json to another provider such as vertex with matching auth. %s",
+			"image generation could not start for provider %q and model %q: %w. To fix this, set workspace auth with set_provider_auth(provider=\"vertex\", api_key=\"...\") or change config/image-generation-config.json to another provider with matching auth. %s",
 			provider, modelID, err,
 			imageModelsSummaryForProvider(provider),
 		)
@@ -542,9 +528,7 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 			providerAPIKeys = &llm.ProviderAPIKeys{}
 		}
 		if apiKeyPtr != nil {
-			if provider == "minimax-coding-plan" {
-				providerAPIKeys.MiniMaxCodingPlan = apiKeyPtr
-			} else if provider == "codex-cli" {
+			if provider == "codex-cli" {
 				providerAPIKeys.CodexCLI = apiKeyPtr
 			} else {
 				providerAPIKeys.Vertex = apiKeyPtr
@@ -787,11 +771,11 @@ func GetImageEditToolDefinition() llmtypes.Tool {
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional provider override. Discover usable provider/model pairs with list_llm_capabilities(capability=\"generate_image\", include_models=true). Supported values: vertex, minimax-coding-plan, or codex-cli. If specifying model_id, pass the matching provider too.",
+						"description": "Optional provider override. Discover usable provider/model pairs with list_llm_capabilities(capability=\"generate_image\", include_models=true). Supported values: vertex or codex-cli. If specifying model_id, pass the matching provider too.",
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional image model override. Use a model from list_llm_capabilities(capability=\"generate_image\", include_models=true), and pass the matching provider in the same call. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, image-01, codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. Do not use LLM tier labels such as low, medium, high, or auto as image model IDs.",
+						"description": "Optional image model override. Use a model from list_llm_capabilities(capability=\"generate_image\", include_models=true), and pass the matching provider in the same call. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. Do not use LLM tier labels such as low, medium, high, or auto as image model IDs.",
 					},
 					"aspect_ratio": map[string]interface{}{
 						"type":        "string",
@@ -852,9 +836,7 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 			providerAPIKeys = &llm.ProviderAPIKeys{}
 		}
 		if apiKeyPtr != nil {
-			if provider == "minimax-coding-plan" {
-				providerAPIKeys.MiniMaxCodingPlan = apiKeyPtr
-			} else if provider == "codex-cli" {
+			if provider == "codex-cli" {
 				providerAPIKeys.CodexCLI = apiKeyPtr
 			} else {
 				providerAPIKeys.Vertex = apiKeyPtr

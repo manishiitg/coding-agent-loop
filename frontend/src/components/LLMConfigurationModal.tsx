@@ -5,7 +5,6 @@ import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore, useAppStore } from '../stores'
 import type { LLMConfiguration, ExtendedLLMConfiguration, AgentLLMConfiguration } from '../services/api-types'
 import { AnthropicSection } from './AnthropicSection'
-import { OpenRouterSection } from './OpenRouterSection'
 import { BedrockSection } from './BedrockSection'
 import { OpenAISection } from './OpenAISection'
 import { VertexSection } from './VertexSection'
@@ -14,8 +13,6 @@ import { ClaudeCodeSection } from './ClaudeCodeSection'
 import { GeminiCLISection } from './GeminiCLISection'
 import { CodexCLISection } from './CodexCLISection'
 import { CursorCLISection } from './CursorCLISection'
-import { MiniMaxSection } from './MiniMaxSection'
-import { MiniMaxCodingPlanSection } from './MiniMaxCodingPlanSection'
 import { APIKeyProviderSection } from './APIKeyProviderSection'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 import { LibraryTab } from './llm/LibraryTab'
@@ -28,8 +25,8 @@ interface LLMConfigurationModalProps {
   onOpenDiscovery?: () => void
 }
 
-// Providers that use API keys (excludes claude-code which uses local CLI)
-type APIKeyProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'kimi' | 'minimax' | 'minimax-coding-plan' | 'elevenlabs' | 'deepgram'
+// Providers that use API keys in this modal (excludes local CLIs and hidden legacy chat providers)
+type APIKeyProviderType = 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'minimax' | 'elevenlabs' | 'deepgram'
 
 type APIKeyStatusValue = 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
 
@@ -43,6 +40,8 @@ type TabType = 'library' | ProviderType | AudioProviderTab
 
 const CHAT_CAPABILITIES = new Set(['chat', 'text'])
 const AUDIO_CAPABILITIES = new Set(['text_to_speech', 'speech_to_text', 'generate_music', 'audio_generation', 'audio_transcription', 'music_generation'])
+const HIDDEN_CHAT_PROVIDER_TABS = new Set<ProviderType>(['openrouter', 'z-ai', 'kimi', 'minimax', 'minimax-coding-plan'])
+const isMiniMaxAudioModel = (modelId: string) => /^(speech|music|audio|voice)[-_]/i.test(modelId)
 
 const FALLBACK_AUDIO_PROVIDER_ITEMS: Array<{
   tab: ProviderType | AudioProviderTab
@@ -93,34 +92,24 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
     setWorkflowPrimaryConfig,
     setWorkflowAgentConfig,
     // Provider configs (shared across modes)
-    openrouterConfig,
     bedrockConfig,
     openaiConfig,
     vertexConfig,
     anthropicConfig,
     azureConfig,
-    zaiConfig,
-    kimiConfig,
     minimaxConfig,
-    minimaxCodingPlanConfig,
     elevenlabsConfig,
     deepgramConfig,
     availableVertexModels,
     availableMinimaxModels,
-    availableZAIModels,
-    availableKimiModels,
     availableElevenLabsModels,
     availableDeepgramModels,
-    setOpenrouterConfig,
     setBedrockConfig,
     setOpenaiConfig,
     setVertexConfig,
     setAnthropicConfig,
     setAzureConfig,
-    setZaiConfig,
-    setKimiConfig,
     setMinimaxConfig,
-    setMinimaxCodingPlanConfig,
     setElevenlabsConfig,
     setDeepgramConfig,
     testAPIKey,
@@ -141,7 +130,8 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
     if (tab === 'audio-gemini') return 'vertex'
     if (tab === 'audio-minimax') return 'minimax'
     if (tab === 'library' || tab === 'claude-code' || tab === 'gemini-cli' || tab === 'codex-cli' || tab === 'cursor-cli') return null
-    return tab
+    if (HIDDEN_CHAT_PROVIDER_TABS.has(tab as ProviderType)) return null
+    return tab as APIKeyProviderType
   }
 
   const hasCapability = useCallback((provider: ProviderType, capabilities: Set<string>) => {
@@ -153,6 +143,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
 
   const llmProviderTabs = useMemo(() => (
     PROVIDER_ORDER.filter(provider => {
+      if (HIDDEN_CHAT_PROVIDER_TABS.has(provider)) return false
       const supported = isProviderSupported(provider)
       console.log('[LLMModal] provider', provider, 'supported:', supported)
       if (!supported) return false
@@ -217,20 +208,16 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
 
   // Provider config map for reducing duplication
   const providerConfigMap = useMemo(() => ({
-    openrouter: { config: openrouterConfig, setConfig: setOpenrouterConfig },
     bedrock: { config: bedrockConfig, setConfig: setBedrockConfig },
     openai: { config: openaiConfig, setConfig: setOpenaiConfig },
     vertex: { config: vertexConfig, setConfig: setVertexConfig },
     anthropic: { config: anthropicConfig, setConfig: setAnthropicConfig },
     azure: { config: azureConfig, setConfig: setAzureConfig },
-    'z-ai': { config: zaiConfig, setConfig: setZaiConfig },
-    kimi: { config: kimiConfig, setConfig: setKimiConfig },
     minimax: { config: minimaxConfig, setConfig: setMinimaxConfig },
-    'minimax-coding-plan': { config: minimaxCodingPlanConfig, setConfig: setMinimaxCodingPlanConfig },
     elevenlabs: { config: elevenlabsConfig, setConfig: setElevenlabsConfig },
     deepgram: { config: deepgramConfig, setConfig: setDeepgramConfig }
-  }), [openrouterConfig, bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, azureConfig, zaiConfig, kimiConfig, minimaxConfig, minimaxCodingPlanConfig, elevenlabsConfig, deepgramConfig,
-      setOpenrouterConfig, setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig, setAzureConfig, setZaiConfig, setKimiConfig, setMinimaxConfig, setMinimaxCodingPlanConfig, setElevenlabsConfig, setDeepgramConfig])
+  }), [bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, azureConfig, minimaxConfig, elevenlabsConfig, deepgramConfig,
+      setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig, setAzureConfig, setMinimaxConfig, setElevenlabsConfig, setDeepgramConfig])
 
   // Metadata state - Driven purely by backend
   const [metadata, setMetadata] = useState<ModelMetadata[]>([])
@@ -293,31 +280,23 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
   // Models are now accessed directly from metadata or store in each provider section
 
   const [apiKeyStatus, setApiKeyStatus] = useState<APIKeyStatus>({
-    openrouter: 'idle',
     openai: 'idle',
     bedrock: 'idle',
     vertex: 'idle',
     anthropic: 'idle',
     azure: 'idle',
-    'z-ai': 'idle',
-    kimi: 'idle',
     minimax: 'idle',
-    'minimax-coding-plan': 'idle',
     elevenlabs: 'idle',
     deepgram: 'idle'
   })
 
   const [apiKeyErrors, setApiKeyErrors] = useState<APIKeyError>({
-    openrouter: null,
     openai: null,
     bedrock: null,
     vertex: null,
     anthropic: null,
     azure: null,
-    'z-ai': null,
-    kimi: null,
     minimax: null,
-    'minimax-coding-plan': null,
     elevenlabs: null,
     deepgram: null
   })
@@ -610,17 +589,6 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
               })()}
 
               {/* Editable provider sections (only when not locked) */}
-              {activeTab === 'openrouter' && !isProviderLocked('openrouter') && (
-                <OpenRouterSection
-                  config={openrouterConfig}
-                  onUpdate={(config) => handleProviderConfigUpdate('openrouter', config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('openrouter', apiKey, modelId, options, temperature)}
-                  apiKeyStatus={apiKeyStatus.openrouter}
-                  apiKeyError={apiKeyErrors.openrouter}
-                  metadata={metadata}
-                />
-              )}
-
               {activeTab === 'bedrock' && !isProviderLocked('bedrock') && (
                 <BedrockSection
                   config={bedrockConfig}
@@ -676,66 +644,6 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
                 />
               )}
 
-              {activeTab === 'z-ai' && !isProviderLocked('z-ai') && (
-                <APIKeyProviderSection
-                  provider="z-ai"
-                  providerLabel="Z.AI"
-                  modelPlaceholder="Select a Z.AI model"
-                  publishErrorLabel="Z.AI"
-                  config={zaiConfig}
-                  models={Array.from(new Set([
-                    ...(metadata?.filter(m => m.provider === 'z-ai').map(m => m.model_id) || []),
-                    ...availableZAIModels
-                  ]))}
-                  onUpdate={(config) => handleProviderConfigUpdate('z-ai', config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('z-ai', apiKey, modelId, options, temperature)}
-                  apiKeyStatus={apiKeyStatus['z-ai']}
-                  apiKeyError={apiKeyErrors['z-ai']}
-                  metadata={metadata}
-                />
-              )}
-
-              {activeTab === 'kimi' && !isProviderLocked('kimi') && (
-                <APIKeyProviderSection
-                  provider="kimi"
-                  providerLabel="Kimi"
-                  modelPlaceholder="Select a Kimi model"
-                  publishErrorLabel="Kimi"
-                  config={kimiConfig}
-                  models={Array.from(new Set([
-                    ...(metadata?.filter(m => m.provider === 'kimi').map(m => m.model_id) || []),
-                    ...availableKimiModels
-                  ]))}
-                  onUpdate={(config) => handleProviderConfigUpdate('kimi', config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('kimi', apiKey, modelId, options, temperature)}
-                  apiKeyStatus={apiKeyStatus.kimi}
-                  apiKeyError={apiKeyErrors.kimi}
-                  metadata={metadata}
-                />
-              )}
-
-              {activeTab === 'minimax' && !isProviderLocked('minimax') && (
-                <MiniMaxSection
-                  config={minimaxConfig}
-                  onUpdate={(config) => handleProviderConfigUpdate('minimax', config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('minimax', apiKey, modelId, options, temperature)}
-                  apiKeyStatus={apiKeyStatus.minimax}
-                  apiKeyError={apiKeyErrors.minimax}
-                  metadata={metadata}
-                />
-              )}
-
-              {activeTab === 'minimax-coding-plan' && !isProviderLocked('minimax-coding-plan') && (
-                <MiniMaxCodingPlanSection
-                  config={minimaxCodingPlanConfig}
-                  onUpdate={(config) => handleProviderConfigUpdate('minimax-coding-plan', config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('minimax-coding-plan', apiKey, modelId, options, temperature)}
-                  apiKeyStatus={apiKeyStatus['minimax-coding-plan']}
-                  apiKeyError={apiKeyErrors['minimax-coding-plan']}
-                  metadata={metadata}
-                />
-              )}
-
               {activeTab === 'audio-gemini' && !isProviderLocked('vertex') && (
                 <APIKeyProviderSection
                   provider="vertex"
@@ -775,8 +683,8 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
                     'speech-2.8-hd',
                     'music-2.6',
                     'music-2.6-free',
-                    ...(metadata?.filter(m => m.provider === 'minimax').map(m => m.model_id) || []),
-                    ...availableMinimaxModels
+                    ...(metadata?.filter(m => m.provider === 'minimax' && isMiniMaxAudioModel(m.model_id)).map(m => m.model_id) || []),
+                    ...availableMinimaxModels.filter(isMiniMaxAudioModel)
                   ]))}
                   onUpdate={(config) => setMinimaxConfig(config)}
                   onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('minimax', apiKey, modelId, options, temperature)}

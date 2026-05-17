@@ -2,8 +2,8 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 export interface ImageGenConfig {
-  provider: string  // e.g. 'vertex' or 'minimax-coding-plan'
-  modelId: string   // e.g. 'gemini-3.1-flash-image-preview' or 'image-01'
+  provider: string  // e.g. 'vertex' or 'codex-cli'
+  modelId: string   // e.g. 'gemini-3.1-flash-image-preview' or 'gpt-5.4-mini'
   apiKey: string    // provider-specific API key override
 }
 

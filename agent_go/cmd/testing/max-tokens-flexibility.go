@@ -22,7 +22,7 @@ var maxTokensFlexibilityCmd = &cobra.Command{
 }
 
 func init() {
-	maxTokensFlexibilityCmd.Flags().String("provider", "bedrock", "LLM provider to test (bedrock, openai, openrouter, anthropic)")
+	maxTokensFlexibilityCmd.Flags().String("provider", "bedrock", "LLM provider to test (bedrock, openai, anthropic)")
 	maxTokensFlexibilityCmd.Flags().String("servers", "citymall-aws-mcp", "Comma-separated list of MCP servers to test")
 	maxTokensFlexibilityCmd.Flags().Bool("verbose", false, "Enable verbose logging")
 	maxTokensFlexibilityCmd.Flags().String("log-file", "", "Log file path")
@@ -204,9 +204,6 @@ func testProviderSpecificTokenHandling(provider string, servers []string, verbos
 	case "openai":
 		query = "Using OpenAI's capabilities, explain how to implement a simple chatbot. Keep it concise but informative."
 		simulatedResponse = "OpenAI's GPT models offer excellent chatbot capabilities through their chat completion API. Send conversation history and receive contextual responses. The API automatically manages token limits, providing appropriate response lengths without hardcoded constraints."
-	case "openrouter":
-		query = "Using OpenRouter's capabilities, explain how to implement a simple chatbot. Keep it concise but informative."
-		simulatedResponse = "OpenRouter provides access to multiple AI models through a unified API. Implement chatbots by routing requests to appropriate models based on your needs. The service handles token management across different model providers automatically."
 	case "anthropic":
 		query = "Using Anthropic's capabilities, explain how to implement a simple chatbot. Keep it concise but informative."
 		simulatedResponse = "Anthropic's Claude models excel at conversational AI through their messages API. Send user messages and receive thoughtful responses. The API manages token limits intelligently, adapting response length to query complexity."

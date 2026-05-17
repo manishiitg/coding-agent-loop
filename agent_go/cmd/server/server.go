@@ -1958,7 +1958,7 @@ func (api *StreamingAPI) handlePublicFolderDownload(w http.ResponseWriter, r *ht
 	io.Copy(w, resp.Body)
 }
 
-// API Key Validation endpoint - validates API keys for OpenRouter and OpenAI
+// API Key Validation endpoint - validates API keys for supported providers.
 // Capabilities endpoint
 func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -3176,6 +3176,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if providerToValidate == "" {
 			providerToValidate = req.Provider
 		}
+		if !isPublishedLLMProviderAllowed(providerToValidate) {
+			fallbackProvider, fallbackModelID := fallbackPublishedLLMProviderAndModel()
+			logfWithContext(queryLogCtx, "[LLM_CONFIG] Provider %q is no longer supported for chat; using %s/%s", providerToValidate, fallbackProvider, fallbackModelID)
+			finalProvider = fallbackProvider
+			finalModelID = fallbackModelID
+			providerToValidate = fallbackProvider
+		}
+		if len(fallbacks) > 0 {
+			filteredFallbacks := make([]agent.FallbackModel, 0, len(fallbacks))
+			for _, fallback := range fallbacks {
+				if isPublishedLLMProviderAllowed(fallback.Provider) {
+					filteredFallbacks = append(filteredFallbacks, fallback)
+				}
+			}
+			fallbacks = filteredFallbacks
+		}
 		llmProvider, err := llm.ValidateProvider(providerToValidate)
 		if err != nil {
 			sendError(fmt.Sprintf("Invalid provider: %v", err), true)
@@ -3245,6 +3261,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if appliedTier {
 				log.Printf("[DELEGATION] Orchestrator using tier model: %s/%s", finalProvider, finalModelID)
 			}
+		}
+		if !isPublishedLLMProviderAllowed(finalProvider) {
+			finalProvider, finalModelID = fallbackPublishedLLMProviderAndModel()
+			fallbacks = nil
+			log.Printf("[LLM_CONFIG] Tier/default provider was deprecated; using %s/%s", finalProvider, finalModelID)
 		}
 
 		// Create new agent with streamCtx instead of r.Context()
@@ -9219,6 +9240,9 @@ func (api *StreamingAPI) buildLLMToolsCallbacks() *todo_creation_human.LLMToolsC
 			if provider == "" {
 				return "provider is required.", nil
 			}
+			if !isPublishedLLMProviderAllowed(provider) {
+				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
+			}
 
 			validationOptions := cloneOptionsMap(options)
 			if raw, ok := args["temperature"].(float64); ok {
@@ -9234,11 +9258,6 @@ func (api *StreamingAPI) buildLLMToolsCallbacks() *todo_creation_human.LLMToolsC
 				keys, err := LoadProviderKeys(ctx)
 				if err == nil && keys != nil {
 					switch provider {
-					case "openrouter":
-						if keys.OpenRouter != "" {
-							apiKey = keys.OpenRouter
-							usedWorkspaceAuth = true
-						}
 					case "openai":
 						if keys.OpenAI != "" {
 							apiKey = keys.OpenAI

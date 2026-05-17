@@ -27,7 +27,7 @@ export interface LLMModel {
   model_id: string
 
   // Auth per model (each model carries its own credentials)
-  api_key?: string      // For OpenRouter, OpenAI, Anthropic, Vertex, Azure
+  api_key?: string      // For OpenAI, Anthropic, Vertex, Azure, and API-key based providers
   region?: string       // For Bedrock, Azure
   endpoint?: string     // For Azure (endpoint URL)
 
@@ -67,7 +67,7 @@ export interface LLMConfiguration {
   model_id: string
   fallback_models: string[]
   cross_provider_fallback?: {
-    provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'cursor-cli'
+    provider: 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'cursor-cli'
     models: string[]
   }
   // API keys for each provider
@@ -192,7 +192,7 @@ export interface AgentQueryResponse {
 // LLM Defaults Configuration Response
 export interface LLMDefaultsResponse {
   primary_config: LLMConfiguration
-  openrouter_config: ExtendedLLMConfiguration
+  openrouter_config?: ExtendedLLMConfiguration
   bedrock_config: ExtendedLLMConfiguration
   openai_config: ExtendedLLMConfiguration
   vertex_config?: ExtendedLLMConfiguration
@@ -206,7 +206,7 @@ export interface LLMDefaultsResponse {
   deepgram_config?: ExtendedLLMConfiguration
   available_models: {
     bedrock: string[]
-    openrouter: string[]
+    openrouter?: string[]
     openai: string[]
     vertex?: string[]
     anthropic?: string[]

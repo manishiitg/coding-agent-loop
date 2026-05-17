@@ -16,6 +16,62 @@ type PublishedLLMMetadataSnapshot = {
   cached_input_cost_write_per_1m?: number
 }
 
+const DEFAULT_CHAT_PROVIDER: LLMProvider = 'codex-cli'
+const DEFAULT_CHAT_MODEL = 'codex-cli'
+const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
+  'bedrock',
+  'openai',
+  'vertex',
+  'anthropic',
+  'azure',
+  'z-ai',
+  'kimi',
+  'claude-code',
+  'gemini-cli',
+  'codex-cli',
+  'cursor-cli',
+  'minimax',
+  'elevenlabs',
+  'deepgram',
+]
+const PUBLISHED_LLM_ALLOWED_PROVIDERS = new Set<LLMProvider>([
+  'bedrock',
+  'openai',
+  'vertex',
+  'anthropic',
+  'azure',
+  'claude-code',
+  'gemini-cli',
+  'codex-cli',
+  'cursor-cli',
+])
+
+function isPublishedLLMProviderAllowed(provider?: string): provider is LLMProvider {
+  return PUBLISHED_LLM_ALLOWED_PROVIDERS.has(provider as LLMProvider)
+}
+
+function defaultLLMConfiguration(): LLMConfiguration {
+  return {
+    provider: DEFAULT_CHAT_PROVIDER,
+    model_id: DEFAULT_CHAT_MODEL,
+    fallback_models: [],
+    cross_provider_fallback: undefined,
+  }
+}
+
+function normalizePrimaryConfig(config?: LLMConfiguration): LLMConfiguration {
+  if (!config || !isPublishedLLMProviderAllowed(config.provider) || !config.model_id?.trim()) {
+    return defaultLLMConfiguration()
+  }
+  return {
+    ...config,
+    fallback_models: config.fallback_models || [],
+    cross_provider_fallback: config.cross_provider_fallback && isPublishedLLMProviderAllowed(config.cross_provider_fallback.provider)
+      ? config.cross_provider_fallback
+      : undefined,
+  }
+}
+
 function sanitizeLLMModel(model: LLMModel): LLMModel {
   return {
     provider: model.provider,
@@ -24,6 +80,16 @@ function sanitizeLLMModel(model: LLMModel): LLMModel {
     options: model.options,
     temperature: model.temperature,
   }
+}
+
+function normalizeLLMModel(model?: LLMModel): LLMModel {
+  if (!model || !isPublishedLLMProviderAllowed(model.provider) || !model.model_id?.trim()) {
+    return {
+      provider: DEFAULT_CHAT_PROVIDER,
+      model_id: DEFAULT_CHAT_MODEL,
+    }
+  }
+  return sanitizeLLMModel(model)
 }
 
 function sanitizeSavedLLM(llm: SavedLLM): SavedLLM {
@@ -43,11 +109,15 @@ function sanitizeSavedLLM(llm: SavedLLM): SavedLLM {
   }
 }
 
+function filterPublishedLLMs(llms: SavedLLM[]): SavedLLM[] {
+  return llms.filter(llm => isPublishedLLMProviderAllowed(llm.provider) && !!llm.model_id?.trim())
+}
+
 function sanitizeAgentConfig(config: AgentLLMConfiguration | null): AgentLLMConfiguration | null {
   if (!config) return null
   return {
-    primary: sanitizeLLMModel(config.primary),
-    fallbacks: config.fallbacks.map(sanitizeLLMModel),
+    primary: normalizeLLMModel(config.primary),
+    fallbacks: config.fallbacks.filter(model => isPublishedLLMProviderAllowed(model.provider)).map(sanitizeLLMModel),
   }
 }
 
@@ -61,7 +131,6 @@ function sanitizeProviderConfigForPersistence(config: ExtendedLLMConfiguration):
 
 function hasStoredProviderKeys(keys?: StoredProviderKeys | null): boolean {
   return !!(
-    keys?.openrouter ||
     keys?.openai ||
     keys?.anthropic ||
     keys?.zai ||
@@ -70,7 +139,6 @@ function hasStoredProviderKeys(keys?: StoredProviderKeys | null): boolean {
     keys?.gemini_cli ||
     keys?.cursor_cli ||
     keys?.minimax ||
-    keys?.minimax_coding_plan ||
     keys?.elevenlabs ||
     keys?.deepgram ||
     keys?.bedrock?.region ||
@@ -95,7 +163,6 @@ function extractStoredProviderKeysFromState(state: {
   savedLLMs: SavedLLM[]
 }): StoredProviderKeys {
   const keys: StoredProviderKeys = {
-    openrouter: state.openrouterConfig?.api_key || undefined,
     openai: state.openaiConfig?.api_key || undefined,
     anthropic: state.anthropicConfig?.api_key || undefined,
     zai: state.zaiConfig?.api_key || undefined,
@@ -103,7 +170,6 @@ function extractStoredProviderKeysFromState(state: {
     vertex: state.vertexConfig?.api_key || undefined,
     gemini_cli: state.geminiCliApiKey || undefined,
     minimax: state.minimaxConfig?.api_key || undefined,
-    minimax_coding_plan: state.minimaxCodingPlanConfig?.api_key || undefined,
     elevenlabs: state.elevenlabsConfig?.api_key || undefined,
     deepgram: state.deepgramConfig?.api_key || undefined,
     bedrock: state.bedrockConfig?.region ? { region: state.bedrockConfig.region } : undefined,
@@ -118,14 +184,12 @@ function extractStoredProviderKeysFromState(state: {
   }
 
   for (const llm of state.savedLLMs || []) {
-    if (llm.provider === 'openrouter' && llm.api_key && !keys.openrouter) keys.openrouter = llm.api_key
     if (llm.provider === 'openai' && llm.api_key && !keys.openai) keys.openai = llm.api_key
     if (llm.provider === 'anthropic' && llm.api_key && !keys.anthropic) keys.anthropic = llm.api_key
     if (llm.provider === 'z-ai' && llm.api_key && !keys.zai) keys.zai = llm.api_key
     if (llm.provider === 'kimi' && llm.api_key && !keys.kimi) keys.kimi = llm.api_key
     if (llm.provider === 'vertex' && llm.api_key && !keys.vertex) keys.vertex = llm.api_key
     if (llm.provider === 'minimax' && llm.api_key && !keys.minimax) keys.minimax = llm.api_key
-    if (llm.provider === 'minimax-coding-plan' && llm.api_key && !keys.minimax_coding_plan) keys.minimax_coding_plan = llm.api_key
     if (llm.provider === 'bedrock' && llm.region && !keys.bedrock) keys.bedrock = { region: llm.region }
     if (llm.provider === 'azure' && llm.endpoint && llm.api_key && !keys.azure) {
       keys.azure = {
@@ -274,7 +338,7 @@ interface LLMState extends StoreActions {
   removeCustomMinimaxCodingPlanModel: (model: string) => void
 
   // Legacy actions (for backward compatibility)
-  updateProvider: (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'kimi' | 'minimax' | 'minimax-coding-plan' | 'elevenlabs' | 'deepgram') => void
+  updateProvider: (provider: 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'elevenlabs' | 'deepgram') => void
   updateModel: (modelId: string) => void
   updateFallbacks: (fallbacks: string[]) => void
   updateCrossProviderFallback: (fallback: LLMConfiguration['cross_provider_fallback']) => void
@@ -294,29 +358,14 @@ export const useLLMStore = create<LLMState>()(
       (set, get) => ({
         // Initial state - will be loaded from backend
         // LEGACY: kept for backward compatibility
-        primaryConfig: {
-          provider: 'openrouter',
-          model_id: '',
-          fallback_models: [],
-          cross_provider_fallback: undefined
-        },
+        primaryConfig: defaultLLMConfiguration(),
 
         agentConfig: null,
 
         // Mode-specific configs (initialized empty, will be migrated from legacy on first load)
-        chatPrimaryConfig: {
-          provider: 'openrouter',
-          model_id: '',
-          fallback_models: [],
-          cross_provider_fallback: undefined
-        },
+        chatPrimaryConfig: defaultLLMConfiguration(),
         chatAgentConfig: null,
-        workflowPrimaryConfig: {
-          provider: 'openrouter',
-          model_id: '',
-          fallback_models: [],
-          cross_provider_fallback: undefined
-        },
+        workflowPrimaryConfig: defaultLLMConfiguration(),
         workflowAgentConfig: null,
 
         // Saved/Published LLM Library
@@ -455,7 +504,7 @@ export const useLLMStore = create<LLMState>()(
         delegationTierConfig: null,
 
         // Supported providers (always load fresh from backend, default to all)
-        supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'z-ai', 'kimi', 'claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'minimax', 'minimax-coding-plan', 'elevenlabs', 'deepgram'],
+        supportedProviders: SUPPORTED_PROVIDERS_FALLBACK,
         providerCapabilities: {},
         llmConfigLocked: false,
         lockedProviders: [],
@@ -565,18 +614,11 @@ export const useLLMStore = create<LLMState>()(
             const state = get()
             const providerKeys: Record<string, string> = {}
             const providerConfigs: Record<string, { api_key?: string }> = {
-              openrouter: state.openrouterConfig,
               openai: state.openaiConfig,
               anthropic: state.anthropicConfig,
               vertex: state.vertexConfig,
               bedrock: state.bedrockConfig,
               azure: state.azureConfig,
-              'z-ai': state.zaiConfig,
-              kimi: state.kimiConfig,
-              minimax: state.minimaxConfig,
-              'minimax-coding-plan': state.minimaxCodingPlanConfig,
-              elevenlabs: state.elevenlabsConfig,
-              deepgram: state.deepgramConfig,
             }
             const tierConfig = config as Record<string, { provider?: string }>
             for (const tier of ['high', 'medium', 'low']) {
@@ -630,9 +672,12 @@ export const useLLMStore = create<LLMState>()(
         // Library management
         saveLLM: async (llm, name, modelName, authMethod, metadata) => {
           const { refreshAvailableLLMs } = get()
+          if (!isPublishedLLMProviderAllowed(llm.provider)) {
+            throw new Error(`Provider ${llm.provider} is not available as a published chat LLM`)
+          }
           // Always fetch the current list from backend to avoid overwriting
           // previously published LLMs when frontend state is stale/empty
-          const existingLLMs = await llmConfigService.getPublishedLLMs().catch(() => get().savedLLMs)
+          const existingLLMs = filterPublishedLLMs(await llmConfigService.getPublishedLLMs().catch(() => get().savedLLMs))
           const newSavedLLM = sanitizeSavedLLM({
             ...llm,
             id: crypto.randomUUID(),
@@ -647,7 +692,7 @@ export const useLLMStore = create<LLMState>()(
             cached_input_cost_write_per_1m: metadata?.cached_input_cost_write_per_1m,
             created_at: new Date().toISOString()
           })
-          const nextSavedLLMs = [...(existingLLMs || []), newSavedLLM]
+          const nextSavedLLMs = filterPublishedLLMs([...(existingLLMs || []), newSavedLLM])
 
           await llmConfigService.savePublishedLLMs(nextSavedLLMs)
           set({ savedLLMs: nextSavedLLMs })
@@ -657,7 +702,7 @@ export const useLLMStore = create<LLMState>()(
         deleteSavedLLM: async (id) => {
           const { refreshAvailableLLMs } = get()
           // Always fetch the current list from backend to avoid overwriting
-          const existingLLMs = await llmConfigService.getPublishedLLMs().catch(() => get().savedLLMs)
+          const existingLLMs = filterPublishedLLMs(await llmConfigService.getPublishedLLMs().catch(() => get().savedLLMs))
           const nextSavedLLMs = (existingLLMs || []).filter(llm => llm.id !== id)
 
           await llmConfigService.savePublishedLLMs(nextSavedLLMs)
@@ -769,14 +814,14 @@ export const useLLMStore = create<LLMState>()(
             
             // Preserve user configurations from current state (loaded from localStorage)
             // Merge backend defaults with saved config, prioritizing saved values
-            const preserveUserConfig = (savedConfig: ExtendedLLMConfiguration, defaultConfig: ExtendedLLMConfiguration): ExtendedLLMConfiguration => {
+            const preserveUserConfig = (savedConfig: ExtendedLLMConfiguration, defaultConfig?: ExtendedLLMConfiguration): ExtendedLLMConfiguration => {
               // Use saved config as base, only fill in missing fields from defaults
               // Check if savedConfig has meaningful values (not just initial empty state)
               const hasSavedModel = savedConfig?.model_id && savedConfig.model_id.trim() !== ''
               const hasSavedFallbacks = savedConfig?.fallback_models && savedConfig.fallback_models.length > 0
 
               return {
-                provider: savedConfig?.provider || defaultConfig?.provider || 'openrouter',
+                provider: savedConfig?.provider || defaultConfig?.provider || DEFAULT_CHAT_PROVIDER,
                 // Preserve model_id from saved config (including custom models) if it exists
                 // Otherwise use default
                 model_id: hasSavedModel ? savedConfig.model_id : (defaultConfig?.model_id || ''),
@@ -809,10 +854,17 @@ export const useLLMStore = create<LLMState>()(
               }
             }
 
-            const localPublishedLLMs = (currentState.savedLLMs || []).map(sanitizeSavedLLM)
+            const localPublishedLLMs = filterPublishedLLMs((currentState.savedLLMs || []).map(sanitizeSavedLLM))
             let workspacePublishedLLMs = Array.isArray(loadedPublishedLLMs)
-              ? loadedPublishedLLMs.map(sanitizeSavedLLM)
+              ? filterPublishedLLMs(loadedPublishedLLMs.map(sanitizeSavedLLM))
               : []
+            if (Array.isArray(loadedPublishedLLMs) && loadedPublishedLLMs.length !== workspacePublishedLLMs.length) {
+              try {
+                await llmConfigService.savePublishedLLMs(workspacePublishedLLMs)
+              } catch (error) {
+                console.warn('Failed to remove deprecated published LLM providers from workspace storage:', error)
+              }
+            }
             if (workspacePublishedLLMs.length === 0 && localPublishedLLMs.length > 0) {
               try {
                 await llmConfigService.savePublishedLLMs(localPublishedLLMs)
@@ -826,7 +878,7 @@ export const useLLMStore = create<LLMState>()(
             const locked = !!defaults.llm_config_locked
             const defaultPublishedLocked = !!defaults.default_published_llms_locked
             const defaultList = Array.isArray(defaults.default_published_llms)
-              ? (defaults.default_published_llms as SavedLLM[]).map(sanitizeSavedLLM)
+              ? filterPublishedLLMs((defaults.default_published_llms as SavedLLM[]).map(sanitizeSavedLLM))
               : []
 
             let newSavedLLMs = workspacePublishedLLMs
@@ -944,14 +996,12 @@ export const useLLMStore = create<LLMState>()(
               }
             )
 
-            if (workspaceProviderKeys?.openrouter) openrouterConfig.api_key = workspaceProviderKeys.openrouter
             if (workspaceProviderKeys?.openai) openaiConfig.api_key = workspaceProviderKeys.openai
             if (workspaceProviderKeys?.anthropic) anthropicConfig.api_key = workspaceProviderKeys.anthropic
             if (workspaceProviderKeys?.zai) zaiConfig.api_key = workspaceProviderKeys.zai
             if (workspaceProviderKeys?.kimi) kimiConfig.api_key = workspaceProviderKeys.kimi
             if (workspaceProviderKeys?.vertex) vertexConfig.api_key = workspaceProviderKeys.vertex
             if (workspaceProviderKeys?.minimax) minimaxConfig.api_key = workspaceProviderKeys.minimax
-            if (workspaceProviderKeys?.minimax_coding_plan) minimaxCodingPlanConfig.api_key = workspaceProviderKeys.minimax_coding_plan
             if (workspaceProviderKeys?.elevenlabs) elevenlabsConfig.api_key = workspaceProviderKeys.elevenlabs
             if (workspaceProviderKeys?.deepgram) deepgramConfig.api_key = workspaceProviderKeys.deepgram
             if (workspaceProviderKeys?.bedrock?.region) {
@@ -967,7 +1017,7 @@ export const useLLMStore = create<LLMState>()(
               }
             }
 
-            let newPrimaryConfig = hasUserSelection ? currentState.primaryConfig : defaults.primary_config
+            let newPrimaryConfig = normalizePrimaryConfig(hasUserSelection ? currentState.primaryConfig : defaults.primary_config)
             if (locked && defaultList.length > 0) {
               const first = defaultList[0]
               newPrimaryConfig = {
@@ -995,7 +1045,7 @@ export const useLLMStore = create<LLMState>()(
               geminiCliApiKey: workspaceProviderKeys?.gemini_cli || '', // gitleaks:allow
               savedLLMs: newSavedLLMs,
               availableBedrockModels: defaults.available_models.bedrock,
-              availableOpenRouterModels: defaults.available_models.openrouter,
+              availableOpenRouterModels: defaults.available_models.openrouter || [],
               availableOpenAIModels: defaults.available_models.openai,
               availableVertexModels: defaults.available_models.vertex || [],
               availableAnthropicModels: defaults.available_models.anthropic || [],
@@ -1007,7 +1057,7 @@ export const useLLMStore = create<LLMState>()(
               availableElevenLabsModels: defaults.available_models.elevenlabs || [],
               availableDeepgramModels: defaults.available_models.deepgram || [],
               supportedProviders: (() => {
-                const sp = defaults.supported_providers || ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'z-ai', 'kimi', 'claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'minimax', 'minimax-coding-plan', 'elevenlabs', 'deepgram']
+                const sp = (defaults.supported_providers || SUPPORTED_PROVIDERS_FALLBACK).filter(provider => provider !== 'openrouter' && provider !== 'minimax-coding-plan')
                 console.log('[useLLMStore] supported_providers from backend:', defaults.supported_providers, '→ using:', sp)
                 return sp
               })(),
@@ -1091,9 +1141,6 @@ export const useLLMStore = create<LLMState>()(
           let availableModels: string[] = []
           
           switch(provider) {
-            case 'openrouter':
-              availableModels = [...state.availableOpenRouterModels, ...state.customOpenRouterModels];
-              break;
             case 'bedrock':
               availableModels = [...state.availableBedrockModels, ...state.customBedrockModels];
               break;
@@ -1108,15 +1155,6 @@ export const useLLMStore = create<LLMState>()(
               break;
             case 'azure':
               availableModels = [...state.availableAzureModels, ...state.customAzureModels];
-              break;
-            case 'z-ai':
-              availableModels = state.availableZAIModels;
-              break;
-            case 'kimi':
-              availableModels = state.availableKimiModels;
-              break;
-            case 'minimax':
-              availableModels = [...state.availableMinimaxModels, ...state.customMinimaxModels];
               break;
             case 'elevenlabs':
               availableModels = state.availableElevenLabsModels;
@@ -1204,6 +1242,9 @@ export const useLLMStore = create<LLMState>()(
             // This replaces the old provider-specific model lists
             const supportedProviders = currentState.supportedProviders || []
             currentState.savedLLMs.forEach(savedLLM => {
+              if (!isPublishedLLMProviderAllowed(savedLLM.provider)) {
+                return
+              }
               // Skip if provider is not supported
               if (supportedProviders.length > 0 && !supportedProviders.includes(savedLLM.provider)) {
                 return
@@ -1283,19 +1324,14 @@ export const useLLMStore = create<LLMState>()(
           } catch (error) {
             console.error('Failed to validate model existence:', error)
             // Fallback to local state check if API call fails
-            return get().availableOpenRouterModels.includes(modelId)
+            return get().modelMetadataCatalog.some(model => model.model_id === modelId)
           }
         },
 
         // Generic actions
         reset: () => {
           set({
-            primaryConfig: {
-              provider: 'openrouter',
-              model_id: '',
-              fallback_models: [],
-              cross_provider_fallback: undefined
-            },
+            primaryConfig: defaultLLMConfiguration(),
             agentConfig: null,
             openrouterConfig: {
               provider: 'openrouter',
@@ -1407,7 +1443,6 @@ export const useLLMStore = create<LLMState>()(
           workflowPrimaryConfig: state.workflowPrimaryConfig,
           workflowAgentConfig: sanitizeAgentConfig(state.workflowAgentConfig),
           // Other persisted state
-          openrouterConfig: sanitizeProviderConfigForPersistence(state.openrouterConfig),
           bedrockConfig: sanitizeProviderConfigForPersistence(state.bedrockConfig),
           openaiConfig: sanitizeProviderConfigForPersistence(state.openaiConfig),
           vertexConfig: sanitizeProviderConfigForPersistence(state.vertexConfig),
@@ -1416,16 +1451,13 @@ export const useLLMStore = create<LLMState>()(
           zaiConfig: sanitizeProviderConfigForPersistence(state.zaiConfig),
           kimiConfig: sanitizeProviderConfigForPersistence(state.kimiConfig),
           minimaxConfig: sanitizeProviderConfigForPersistence(state.minimaxConfig),
-          minimaxCodingPlanConfig: sanitizeProviderConfigForPersistence(state.minimaxCodingPlanConfig),
           elevenlabsConfig: sanitizeProviderConfigForPersistence(state.elevenlabsConfig),
           deepgramConfig: sanitizeProviderConfigForPersistence(state.deepgramConfig),
           customBedrockModels: state.customBedrockModels,
-          customOpenRouterModels: state.customOpenRouterModels,
           customOpenAIModels: state.customOpenAIModels,
           customVertexModels: state.customVertexModels,
           customAzureModels: state.customAzureModels,
           customMinimaxModels: state.customMinimaxModels,
-          customMinimaxCodingPlanModels: state.customMinimaxCodingPlanModels,
           geminiCliModel: state.geminiCliModel,
           showLLMModal: state.showLLMModal,
           delegationTierConfig: state.delegationTierConfig,
@@ -1436,6 +1468,12 @@ export const useLLMStore = create<LLMState>()(
         // Migration: copy legacy config to mode-specific configs on first load
         onRehydrateStorage: () => (state) => {
           if (state) {
+            state.primaryConfig = normalizePrimaryConfig(state.primaryConfig)
+            state.chatPrimaryConfig = normalizePrimaryConfig(state.chatPrimaryConfig)
+            state.workflowPrimaryConfig = normalizePrimaryConfig(state.workflowPrimaryConfig)
+            state.agentConfig = sanitizeAgentConfig(state.agentConfig)
+            state.chatAgentConfig = sanitizeAgentConfig(state.chatAgentConfig)
+            state.workflowAgentConfig = sanitizeAgentConfig(state.workflowAgentConfig)
             const hasLegacyConfig = state.primaryConfig?.provider && state.primaryConfig?.model_id
             const hasChatConfig = state.chatPrimaryConfig?.model_id && state.chatPrimaryConfig.model_id !== ''
             const hasWorkflowConfig = state.workflowPrimaryConfig?.model_id && state.workflowPrimaryConfig.model_id !== ''
@@ -1465,7 +1503,6 @@ function syncProviderKeysToServer() {
     try {
       const s = useLLMStore.getState()
       await providerKeysApi.save({
-        openrouter: s.openrouterConfig?.api_key || undefined,
         openai: s.openaiConfig?.api_key || undefined,
         anthropic: s.anthropicConfig?.api_key || undefined,
         zai: s.zaiConfig?.api_key || undefined,
@@ -1473,7 +1510,6 @@ function syncProviderKeysToServer() {
         vertex: s.vertexConfig?.api_key || undefined,
         gemini_cli: s.geminiCliApiKey || undefined,
         minimax: s.minimaxConfig?.api_key || undefined,
-        minimax_coding_plan: s.minimaxCodingPlanConfig?.api_key || undefined,
         elevenlabs: s.elevenlabsConfig?.api_key || undefined,
         deepgram: s.deepgramConfig?.api_key || undefined,
         bedrock: s.bedrockConfig?.region ? { region: s.bedrockConfig.region } : undefined,
@@ -1493,7 +1529,6 @@ function syncProviderKeysToServer() {
 }
 
 const getProviderKeySnapshot = (state: LLMState) => ([
-  state.openrouterConfig?.api_key,
   state.openaiConfig?.api_key,
   state.anthropicConfig?.api_key,
   state.zaiConfig?.api_key,
@@ -1502,7 +1537,6 @@ const getProviderKeySnapshot = (state: LLMState) => ([
   state.azureConfig?.api_key,
   state.azureConfig?.endpoint,
   state.minimaxConfig?.api_key,
-  state.minimaxCodingPlanConfig?.api_key,
   state.elevenlabsConfig?.api_key,
   state.deepgramConfig?.api_key,
   state.bedrockConfig?.region,

@@ -9,6 +9,7 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 		Kimi:              "kimi-existing",
 		MiniMax:           "minimax-existing",
 		MiniMaxCodingPlan: "coding-existing",
+		OpenRouter:        "openrouter-existing",
 	}
 
 	incoming := &StoredProviderKeys{
@@ -30,7 +31,10 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 	if merged.MiniMax != "" {
 		t.Fatalf("expected MiniMax key to be deleted, got %q", merged.MiniMax)
 	}
-	if merged.MiniMaxCodingPlan != "coding-existing" {
-		t.Fatalf("expected MiniMax coding plan key to be preserved, got %q", merged.MiniMaxCodingPlan)
+	if merged.MiniMaxCodingPlan != "" {
+		t.Fatalf("expected MiniMax coding plan key to be removed, got %q", merged.MiniMaxCodingPlan)
+	}
+	if merged.OpenRouter != "" {
+		t.Fatalf("expected OpenRouter key to be removed, got %q", merged.OpenRouter)
 	}
 }

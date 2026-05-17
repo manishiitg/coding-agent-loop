@@ -19,12 +19,6 @@ func TestNormalizeImageProviderAndModelProviderAliasDefaultsModel(t *testing.T) 
 			wantModel: "gemini-3.1-flash-image-preview",
 		},
 		{
-			name:      "minimax alias",
-			provider:  "minimax-coding-plan",
-			modelID:   "minimax-coding-plan",
-			wantModel: "image-01",
-		},
-		{
 			name:      "codex alias",
 			provider:  "codex-cli",
 			modelID:   "codex-cli",
@@ -49,9 +43,16 @@ func TestNormalizeImageProviderAndModelProviderAliasDefaultsModel(t *testing.T) 
 }
 
 func TestNormalizeImageProviderAndModelRejectsWrongModelForProvider(t *testing.T) {
-	_, _, err := normalizeImageProviderAndModel("minimax-coding-plan", "gemini-3.1-flash-image-preview")
+	_, _, err := normalizeImageProviderAndModel("codex-cli", "gemini-3.1-flash-image-preview")
 	if err == nil {
 		t.Fatal("normalizeImageProviderAndModel returned nil error for unsupported provider/model pair")
+	}
+}
+
+func TestNormalizeImageProviderAndModelRejectsMiniMaxCodingPlan(t *testing.T) {
+	_, _, err := normalizeImageProviderAndModel("minimax-coding-plan", "")
+	if err == nil {
+		t.Fatal("normalizeImageProviderAndModel returned nil error for removed minimax-coding-plan provider")
 	}
 }
 

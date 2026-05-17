@@ -52,7 +52,6 @@ export default function BotSimulatorModal({ isOpen, onClose }: BotSimulatorModal
         // Collect provider API keys for the tiers
         const llmState = useLLMStore.getState()
         const providerConfigs: Record<string, { api_key?: string }> = {
-          openrouter: llmState.openrouterConfig,
           openai: llmState.openaiConfig,
           anthropic: llmState.anthropicConfig,
           vertex: llmState.vertexConfig,

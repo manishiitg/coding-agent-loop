@@ -337,7 +337,7 @@ func createSearchWebLLMExecutor(workspaceURL string) func(ctx context.Context, a
 
 func isSearchCapableProvider(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case string(llm.ProviderClaudeCode), string(llm.ProviderCodexCLI), string(llm.ProviderCursorCLI), string(llm.ProviderGeminiCLI), string(llm.ProviderMiniMaxCodingPlan), string(llm.ProviderVertex):
+	case string(llm.ProviderClaudeCode), string(llm.ProviderCodexCLI), string(llm.ProviderCursorCLI), string(llm.ProviderGeminiCLI), string(llm.ProviderVertex):
 		return true
 	default:
 		return false
@@ -365,8 +365,6 @@ func hasSearchProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 		return true
 	case string(llm.ProviderGeminiCLI):
 		return apiKeys != nil && apiKeys.GeminiCLI != nil && strings.TrimSpace(*apiKeys.GeminiCLI) != ""
-	case string(llm.ProviderMiniMaxCodingPlan):
-		return apiKeys != nil && apiKeys.MiniMaxCodingPlan != nil && strings.TrimSpace(*apiKeys.MiniMaxCodingPlan) != ""
 	case string(llm.ProviderVertex):
 		return apiKeys != nil && apiKeys.Vertex != nil && strings.TrimSpace(*apiKeys.Vertex) != ""
 	default:
@@ -387,9 +385,6 @@ func isSearchProviderAvailable(provider string) bool {
 		return err == nil
 	case string(llm.ProviderCursorCLI):
 		_, err := exec.LookPath("cursor-agent")
-		return err == nil
-	case string(llm.ProviderMiniMaxCodingPlan):
-		_, err := exec.LookPath("mmx")
 		return err == nil
 	case string(llm.ProviderVertex):
 		return true
@@ -471,10 +466,6 @@ func preferredSearchModelRank(provider, modelID string) int {
 		if modelID == "auto" {
 			return 0
 		}
-	case string(llm.ProviderMiniMaxCodingPlan):
-		if modelID == "claude-sonnet-4-5" || modelID == "minimax" {
-			return 0
-		}
 	}
 	return 100
 }
@@ -490,8 +481,6 @@ func searchModelAlias(provider, modelID string) string {
 			return "cursor-cli"
 		case string(llm.ProviderGeminiCLI):
 			return "auto"
-		case string(llm.ProviderMiniMaxCodingPlan):
-			return "claude-sonnet-4-5"
 		}
 	}
 	return modelID
@@ -734,10 +723,6 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 	}
 
 	keys := &llm.ProviderAPIKeys{}
-	if value, ok := rawKeys["openrouter"].(string); ok && strings.TrimSpace(value) != "" {
-		v := value
-		keys.OpenRouter = &v
-	}
 	if value, ok := rawKeys["openai"].(string); ok && strings.TrimSpace(value) != "" {
 		v := value
 		keys.OpenAI = &v
@@ -773,10 +758,6 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 	if value, ok := rawKeys["minimax"].(string); ok && strings.TrimSpace(value) != "" {
 		v := value
 		keys.MiniMax = &v
-	}
-	if value, ok := rawKeys["minimax-coding-plan"].(string); ok && strings.TrimSpace(value) != "" {
-		v := value
-		keys.MiniMaxCodingPlan = &v
 	}
 	if value, ok := rawKeys["elevenlabs"].(string); ok && strings.TrimSpace(value) != "" {
 		v := value
@@ -833,10 +814,6 @@ func createPublishedSearchLLM(ctx context.Context, workspaceURL string, requeste
 	case llm.ProviderClaudeCode:
 		if apiKeys == nil || apiKeys.Anthropic == nil || strings.TrimSpace(*apiKeys.Anthropic) == "" {
 			return nil, fmt.Errorf("search_web_llm requires Anthropic auth in config/provider-api-keys.json for the published Claude Code provider")
-		}
-	case llm.ProviderMiniMaxCodingPlan:
-		if apiKeys == nil || apiKeys.MiniMaxCodingPlan == nil || strings.TrimSpace(*apiKeys.MiniMaxCodingPlan) == "" {
-			return nil, fmt.Errorf("search_web_llm requires MiniMax auth in config/provider-api-keys.json for the published MiniMax coding plan provider")
 		}
 	case llm.ProviderVertex:
 		if apiKeys == nil || apiKeys.Vertex == nil || strings.TrimSpace(*apiKeys.Vertex) == "" {
@@ -1725,8 +1702,6 @@ func createLLMFromConfig(ctx context.Context, config mcpagent.LLMModel) (llmtype
 			apiKeys.Anthropic = config.APIKey
 		case llm.ProviderOpenAI:
 			apiKeys.OpenAI = config.APIKey
-		case llm.ProviderOpenRouter:
-			apiKeys.OpenRouter = config.APIKey
 		case llm.ProviderZAI:
 			apiKeys.ZAI = config.APIKey
 		case llm.ProviderVertex:
@@ -1739,8 +1714,6 @@ func createLLMFromConfig(ctx context.Context, config mcpagent.LLMModel) (llmtype
 			apiKeys.CursorCLI = config.APIKey
 		case llm.ProviderMiniMax:
 			apiKeys.MiniMax = config.APIKey
-		case llm.ProviderMiniMaxCodingPlan:
-			apiKeys.MiniMaxCodingPlan = config.APIKey
 		}
 	}
 

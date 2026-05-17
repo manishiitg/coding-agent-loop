@@ -158,7 +158,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
       if (delegationTierConfig && Object.keys(delegationTierConfig).length > 0) {
         const llmState = useLLMStore.getState()
         const providerConfigs: Record<string, { api_key?: string }> = {
-          openrouter: llmState.openrouterConfig, openai: llmState.openaiConfig,
+          openai: llmState.openaiConfig,
           anthropic: llmState.anthropicConfig, vertex: llmState.vertexConfig,
           bedrock: llmState.bedrockConfig, azure: llmState.azureConfig,
         }

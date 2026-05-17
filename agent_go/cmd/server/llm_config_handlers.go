@@ -23,7 +23,6 @@ import (
 )
 
 var supportedLLMProviders = []string{
-	"openrouter",
 	"bedrock",
 	"openai",
 	"vertex",
@@ -32,7 +31,6 @@ var supportedLLMProviders = []string{
 	"z-ai",
 	"kimi",
 	"minimax",
-	"minimax-coding-plan",
 	"elevenlabs",
 	"deepgram",
 	"claude-code",
@@ -42,6 +40,39 @@ var supportedLLMProviders = []string{
 }
 
 const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
+
+func isPublishedLLMProviderAllowed(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "bedrock", "openai", "vertex", "anthropic", "azure",
+		"claude-code", "gemini-cli", "codex-cli", "cursor-cli":
+		return true
+	default:
+		return false
+	}
+}
+
+func fallbackPublishedLLMProviderAndModel() (string, string) {
+	for _, provider := range []string{
+		"codex-cli",
+		"cursor-cli",
+		"claude-code",
+		"gemini-cli",
+		"bedrock",
+		"openai",
+		"anthropic",
+		"vertex",
+		"azure",
+	} {
+		if !isPublishedLLMProviderAllowed(provider) {
+			continue
+		}
+		modelID := strings.TrimSpace(llm.GetDefaultModel(llm.Provider(provider)))
+		if modelID != "" {
+			return provider, modelID
+		}
+	}
+	return "codex-cli", "codex-cli"
+}
 
 // getSupportedProviders returns the list of supported LLM providers based on environment configuration
 func getSupportedProviders() []string {
@@ -186,23 +217,30 @@ func buildProviderCapabilities(ctx context.Context) map[string][]string {
 // getPrimaryProviderAndModelFromDefaults extracts provider and model_id from llm.GetLLMDefaults().PrimaryConfig.
 func getPrimaryProviderAndModelFromDefaults() (provider, modelID string) {
 	defaults := llm.GetLLMDefaults()
+	fallbackProvider, fallbackModelID := fallbackPublishedLLMProviderAndModel()
 	bytes, err := json.Marshal(defaults.PrimaryConfig)
 	if err != nil {
-		return "openrouter", llm.GetDefaultModel(llm.Provider("openrouter"))
+		return fallbackProvider, fallbackModelID
 	}
 	var m map[string]interface{}
 	if err := json.Unmarshal(bytes, &m); err != nil {
-		return "openrouter", llm.GetDefaultModel(llm.Provider("openrouter"))
+		return fallbackProvider, fallbackModelID
 	}
 	if p, _ := m["provider"].(string); p != "" {
 		provider = p
 	} else {
-		provider = "openrouter"
+		provider = fallbackProvider
+	}
+	if !isPublishedLLMProviderAllowed(provider) {
+		return fallbackProvider, fallbackModelID
 	}
 	if mid, _ := m["model_id"].(string); mid != "" {
 		modelID = mid
 	} else {
 		modelID = llm.GetDefaultModel(llm.Provider(provider))
+	}
+	if strings.TrimSpace(modelID) == "" {
+		return fallbackProvider, fallbackModelID
 	}
 	return provider, modelID
 }
@@ -219,7 +257,6 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 		}
 	}
 
-	setProviderKeyFromEnv(llm.ProviderOpenRouter, "OPENROUTER_API_KEY")
 	setProviderKeyFromEnv(llm.ProviderOpenAI, "OPENAI_API_KEY")
 	setProviderKeyFromEnv(llm.ProviderAnthropic, "ANTHROPIC_API_KEY")
 	setProviderKeyFromEnv(llm.ProviderZAI, "ZAI_API_KEY")
@@ -249,9 +286,6 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	}
 	if s := os.Getenv("MINIMAX_API_KEY"); s != "" {
 		keys.MiniMax = &s
-	}
-	if s := os.Getenv("MINIMAX_CODING_PLAN_API_KEY"); s != "" {
-		keys.MiniMaxCodingPlan = &s
 	}
 	if s := os.Getenv("ELEVENLABS_API_KEY"); s != "" {
 		keys.ElevenLabs = &s
@@ -313,8 +347,6 @@ func providerDisplayLabel(provider string) string {
 		return "Anthropic API"
 	case "vertex":
 		return "Gemini / Vertex"
-	case "openrouter":
-		return "OpenRouter"
 	case "bedrock":
 		return "Amazon Bedrock"
 	case "azure":
@@ -325,8 +357,6 @@ func providerDisplayLabel(provider string) string {
 		return "Kimi"
 	case "minimax":
 		return "MiniMax"
-	case "minimax-coding-plan":
-		return "MiniMax Coding Plan"
 	default:
 		return provider
 	}
@@ -366,8 +396,6 @@ func discoveryModelOptions(provider string) []string {
 		return []string{"claude-code", "high", "medium", "low"}
 	case "gemini-cli":
 		return []string{"auto", "high", "medium", "low"}
-	case "kimi":
-		return []string{"kimi-k2.6"}
 	default:
 		return nil
 	}
@@ -416,16 +444,11 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 		"cursor-cli",
 		"claude-code",
 		"gemini-cli",
-		"kimi",
 		"openai",
 		"anthropic",
 		"vertex",
-		"openrouter",
 		"bedrock",
 		"azure",
-		"z-ai",
-		"minimax",
-		"minimax-coding-plan",
 	}
 
 	candidates := make([]llmDiscoveryCandidate, 0, len(providerOrder))
@@ -530,6 +553,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	if s := os.Getenv("DEFAULT_PUBLISHED_LLMS"); s != "" {
 		var list []map[string]interface{}
 		if err := json.Unmarshal([]byte(s), &list); err == nil && len(list) > 0 {
+			list = filterDefaultPublishedLLMs(list)
 			for i := range list {
 				provider, _ := list[i]["provider"].(string)
 				if locked || isProviderLocked(provider) {
@@ -544,6 +568,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 		if data, err := os.ReadFile(path); err == nil {
 			var list []map[string]interface{}
 			if err := json.Unmarshal(data, &list); err == nil && len(list) > 0 {
+				list = filterDefaultPublishedLLMs(list)
 				for i := range list {
 					provider, _ := list[i]["provider"].(string)
 					if locked || isProviderLocked(provider) {
@@ -558,7 +583,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	// 3) Auto-generate defaults from AvailableModels for locked providers
 	var entries []map[string]interface{}
 	defaults := llm.GetLLMDefaults()
-	providers := []string{"azure", "bedrock", "openrouter", "openai", "anthropic", "vertex", "z-ai", "kimi", "minimax", "minimax-coding-plan"}
+	providers := []string{"codex-cli", "cursor-cli", "claude-code", "gemini-cli", "azure", "bedrock", "openai", "anthropic", "vertex"}
 
 	for _, p := range providers {
 		// If provider is locked (or global lock is on), include its available models
@@ -592,11 +617,17 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 			modelID = m
 		}
 	}
+	if !isPublishedLLMProviderAllowed(provider) {
+		provider, modelID = fallbackPublishedLLMProviderAndModel()
+	}
 	if provider == "" {
-		provider = "openrouter"
+		provider, modelID = fallbackPublishedLLMProviderAndModel()
 	}
 	if modelID == "" {
 		modelID = llm.GetDefaultModel(llm.Provider(provider))
+	}
+	if strings.TrimSpace(modelID) == "" {
+		provider, modelID = fallbackPublishedLLMProviderAndModel()
 	}
 	entry := map[string]interface{}{
 		"id":       "default-" + provider + "-" + strings.ReplaceAll(modelID, "/", "-"),
@@ -608,19 +639,25 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	isLocked := locked || isProviderLocked(provider)
 
 	if !isLocked {
-		if key := os.Getenv("OPENROUTER_API_KEY"); provider == "openrouter" && key != "" {
-			entry["api_key"] = key
-		} else if key := os.Getenv("OPENAI_API_KEY"); provider == "openai" && key != "" {
+		if key := os.Getenv("OPENAI_API_KEY"); provider == "openai" && key != "" {
 			entry["api_key"] = key
 		} else if key := os.Getenv("ANTHROPIC_API_KEY"); provider == "anthropic" && key != "" {
-			entry["api_key"] = key
-		} else if key := os.Getenv("ZAI_API_KEY"); provider == "z-ai" && key != "" {
-			entry["api_key"] = key
-		} else if key := os.Getenv("KIMI_API_KEY"); provider == "kimi" && key != "" {
 			entry["api_key"] = key
 		}
 	}
 	return []map[string]interface{}{entry}
+}
+
+func filterDefaultPublishedLLMs(list []map[string]interface{}) []map[string]interface{} {
+	filtered := make([]map[string]interface{}, 0, len(list))
+	for _, entry := range list {
+		provider, _ := entry["provider"].(string)
+		if !isPublishedLLMProviderAllowed(provider) {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }
 
 // handleGetLLMDefaults returns default LLM configurations from environment variables.
@@ -628,28 +665,41 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Received request for LLM defaults")
 	defaults := llm.GetLLMDefaults()
+	availableModels := make(map[string][]string, len(defaults.AvailableModels))
+	for provider, models := range defaults.AvailableModels {
+		switch strings.ToLower(strings.TrimSpace(provider)) {
+		case "openrouter", "z-ai", "kimi", "minimax-coding-plan":
+			continue
+		default:
+			availableModels[provider] = models
+		}
+	}
 
 	globalLocked := isGlobalLLMConfigLocked()
 	lockedProviders := getLockedProviders()
+	primaryProvider, primaryModelID := getPrimaryProviderAndModelFromDefaults()
+	primaryConfig := map[string]interface{}{
+		"provider":        primaryProvider,
+		"model_id":        primaryModelID,
+		"fallback_models": []string{},
+	}
 
 	// Build response (same shape as before)
 	response := map[string]interface{}{
-		"primary_config":             defaults.PrimaryConfig,
-		"openrouter_config":          defaults.OpenrouterConfig,
-		"bedrock_config":             defaults.BedrockConfig,
-		"openai_config":              defaults.OpenaiConfig,
-		"anthropic_config":           defaults.AnthropicConfig,
-		"azure_config":               defaults.AzureConfig,
-		"zai_config":                 defaults.ZAIConfig,
-		"kimi_config":                defaults.KimiConfig,
-		"minimax_config":             defaults.MinimaxConfig,
-		"minimax_coding_plan_config": defaults.MinimaxCodingPlanConfig,
-		"elevenlabs_config":          defaults.ElevenLabsConfig,
-		"deepgram_config":            defaults.DeepgramConfig,
-		"available_models":           defaults.AvailableModels,
-		"provider_capabilities":      buildProviderCapabilities(r.Context()),
-		"supported_providers":        getSupportedProviders(),
-		"locked_providers":           lockedProviders,
+		"primary_config":        primaryConfig,
+		"bedrock_config":        defaults.BedrockConfig,
+		"openai_config":         defaults.OpenaiConfig,
+		"anthropic_config":      defaults.AnthropicConfig,
+		"azure_config":          defaults.AzureConfig,
+		"zai_config":            defaults.ZAIConfig,
+		"kimi_config":           defaults.KimiConfig,
+		"minimax_config":        defaults.MinimaxConfig,
+		"elevenlabs_config":     defaults.ElevenLabsConfig,
+		"deepgram_config":       defaults.DeepgramConfig,
+		"available_models":      availableModels,
+		"provider_capabilities": buildProviderCapabilities(r.Context()),
+		"supported_providers":   getSupportedProviders(),
+		"locked_providers":      lockedProviders,
 	}
 
 	// Helper to safely strip secrets from a specific config map
@@ -669,8 +719,6 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 		// Strip from specifically locked providers
 		for _, p := range lockedProviders {
 			switch p {
-			case "openrouter":
-				stripSecrets("openrouter_config")
 			case "bedrock":
 				stripSecrets("bedrock_config")
 			case "openai":
@@ -687,8 +735,6 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 				stripSecrets("vertex_config")
 			case "minimax":
 				stripSecrets("minimax_config")
-			case "minimax-coding-plan":
-				stripSecrets("minimax_coding_plan_config")
 			case "elevenlabs":
 				stripSecrets("elevenlabs_config")
 			case "deepgram":
@@ -743,7 +789,7 @@ func (api *StreamingAPI) handleTestImageGen(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]any{"valid": true, "message": "Image generation is working"})
 }
 
-// handleValidateAPIKey validates API keys for OpenRouter, OpenAI, Bedrock, Vertex, Anthropic, and Claude Code
+// handleValidateAPIKey validates API keys for supported LLM providers and coding CLIs.
 func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Request) {
 	var req llm.APIKeyValidationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -775,8 +821,6 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 	}
 
 	switch strings.ToLower(strings.TrimSpace(req.Provider)) {
-	case "openrouter":
-		setAPIKey(keys.OpenRouter)
 	case "openai":
 		setAPIKey(keys.OpenAI)
 	case "anthropic":
@@ -791,8 +835,6 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 		setAPIKey(keys.CursorCLI)
 	case "minimax":
 		setAPIKey(keys.MiniMax)
-	case "minimax-coding-plan":
-		setAPIKey(keys.MiniMaxCodingPlan)
 	case "elevenlabs":
 		setAPIKey(keys.ElevenLabs)
 	case "deepgram":
@@ -819,6 +861,14 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 }
 
 func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidationResponse {
+	switch strings.ToLower(strings.TrimSpace(req.Provider)) {
+	case "openrouter", "minimax-coding-plan":
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Provider %s is no longer available as a direct LLM provider.", req.Provider),
+		}
+	}
+
 	switch req.Provider {
 	case "claude-code":
 		return validateClaudeCodeCLI()

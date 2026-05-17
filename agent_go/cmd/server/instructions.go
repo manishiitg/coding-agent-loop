@@ -199,13 +199,13 @@ Published LLM metadata lives in ` + "`" + absConfig + `/published-llms.json` + "
 Image generation defaults live in ` + "`" + absConfig + `/image-generation-config.json` + "`" + `. Provider authentication still lives in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + `.
 - Read: ` + "`execute_shell_command(command: \"cat " + absConfig + "/image-generation-config.json\")`" + `
 - Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/image-generation-config.json\")`" + `
-- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3.1-flash-image-preview\"},\"fallbacks\":[{\"provider\":\"minimax-coding-plan\",\"model_id\":\"image-01\"}]}`" + `
+- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3.1-flash-image-preview\"},\"fallbacks\":[{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"}]}`" + `
 - ` + "`primary`" + ` is tried first. ` + "`fallbacks`" + ` are tried in order when the primary provider lacks workspace auth.
 - Runtime ` + "`image_gen_config`" + ` overrides this file for the current chat session only.
 - Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using the ` + "`set_provider_auth`" + ` tool; do not hand-edit the encrypted auth file.
 - Do not infer image-generation support from ` + "`list_provider_models`" + ` or the normal LLM model catalog. Those lists are for chat/text models, not image models.
-- MiniMax image generation is supported via provider ` + "`minimax-coding-plan`" + ` with model ` + "`image-01`" + `.
 - Vertex image generation is supported via provider ` + "`vertex`" + ` with models such as ` + "`gemini-3.1-flash-image-preview`" + ` and ` + "`gemini-3-pro-image-preview`" + `.
+- Codex CLI image generation is supported via provider ` + "`codex-cli`" + ` with models such as ` + "`gpt-5.4-mini`" + `.
 - For one-off ` + "`image_gen`" + ` or ` + "`image_edit`" + ` calls, use ` + "`list_llm_capabilities(capability=\"generate_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
 
 ## Image Analysis Defaults
@@ -216,7 +216,6 @@ Image understanding for the ` + "`read_image`" + ` tool can be routed via ` + "`
 - If this file exists, ` + "`read_image`" + ` uses its ` + "`primary`" + ` and ordered ` + "`fallbacks`" + ` with workspace provider auth.
 - If this file does not exist, ` + "`read_image`" + ` falls back to the current chat model.
 - For one-off ` + "`read_image`" + ` calls, use ` + "`list_llm_capabilities(capability=\"read_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
-- MiniMax coding-plan is not currently a supported ` + "`read_image`" + ` provider because the adapter does not receive image content reliably.
 - Kimi image understanding is supported via provider ` + "`kimi`" + ` with model ` + "`kimi-k2.6`" + `.
 - Codex CLI image understanding is supported via provider ` + "`codex-cli`" + ` by passing the local workspace image path to Codex CLI.
 - Cursor CLI image understanding is supported via provider ` + "`cursor-cli`" + ` by passing the local workspace image path to Cursor Agent CLI.
@@ -759,7 +758,7 @@ name: skill-name
 description: Brief description
 argument-hint: <arguments>
 allowed-tools: ["tool1", "tool2"]
-model: openrouter/anthropic/claude-sonnet-4
+model: claude-code
 ---
 
 # Instructions

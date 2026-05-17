@@ -346,8 +346,8 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
     selectedSecrets: [],
     workflowContext: [],
     llmConfig: llmConfig || {
-      provider: 'openrouter',
-      model_id: '',
+      provider: 'codex-cli',
+      model_id: 'codex-cli',
       fallback_models: [],
       cross_provider_fallback: undefined
     },

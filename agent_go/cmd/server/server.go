@@ -3334,7 +3334,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create new agent with streamCtx instead of r.Context()
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
-		claudeCodePersistentInteractive, codexPersistentInteractive, geminiPersistentInteractive, cursorPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
+		claudeCodePersistentInteractive, codexPersistentInteractive, geminiPersistentInteractive, cursorPersistentInteractive, openCodePersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
 		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
 		chatWorkingFolder := perUserChatsFolder
 		if isWorkflowPhase && workflowPhaseFolder != "" && workflowPhaseFolder != "default_workspace" {
@@ -3375,6 +3375,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			CodexPersistentInteractiveSession:      codexPersistentInteractive,
 			GeminiPersistentInteractiveSession:     geminiPersistentInteractive,
 			CursorPersistentInteractiveSession:     cursorPersistentInteractive,
+			OpenCodePersistentInteractiveSession:   openCodePersistentInteractive,
 			ClaudeCodeTransport:                    claudeCodeTransport,
 			CodingAgentWorkingDir:                  chatWorkingDir,
 			APIKeys:                                mergedAPIKeys,

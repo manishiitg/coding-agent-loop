@@ -204,6 +204,7 @@ type LLMAgentConfig struct {
 	CodexPersistentInteractiveSession      bool
 	GeminiPersistentInteractiveSession     bool
 	CursorPersistentInteractiveSession     bool
+	OpenCodePersistentInteractiveSession   bool
 	ClaudeCodeTransport                    string
 	CodingAgentWorkingDir                  string
 	APIKeys                                *llm.ProviderAPIKeys // API keys for providers
@@ -445,6 +446,10 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.CursorPersistentInteractiveSession {
 		agentOptions = append(agentOptions, mcpagent.WithCursorPersistentInteractiveSession(true))
 		logger.Info("🔗 Cursor CLI persistent interactive tmux session enabled")
+	}
+	if config.OpenCodePersistentInteractiveSession {
+		agentOptions = append(agentOptions, mcpagent.WithOpenCodePersistentInteractiveSession(true))
+		logger.Info("🔗 OpenCode CLI persistent interactive tmux session enabled")
 	}
 
 	// Add session ID for MCP connection reuse (e.g., Playwright browser sharing)

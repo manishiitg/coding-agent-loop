@@ -423,7 +423,7 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresClaude(t *testing
 		ResumeSupported:   true,
 	}
 
-	if !api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "claude-code", runtime, agent) {
+	if !api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "claude-code", "", runtime, agent) {
 		t.Fatal("expected native resume state to be seeded")
 	}
 
@@ -449,7 +449,7 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsProviderMismatch(t
 		ResumeSupported:   true,
 	}
 
-	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "gemini-cli", runtime, agent) {
+	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "gemini-cli", "", runtime, agent) {
 		t.Fatal("expected provider mismatch to skip native resume")
 	}
 	if agent.ClaudeCodeSessionID != "" {
@@ -457,5 +457,28 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsProviderMismatch(t
 	}
 	if got := api.claudeCodeSessionIDs["new-ui-session"]; got != "" {
 		t.Fatalf("stored Claude session ID = %q", got)
+	}
+}
+
+func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsWorkshopModeMismatch(t *testing.T) {
+	api := &StreamingAPI{
+		claudeCodeSessionIDs: make(map[string]string),
+		geminiSessionIDs:     make(map[string]string),
+		geminiProjectDirIDs:  make(map[string]string),
+	}
+	agent := &mcpagent.Agent{}
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:              "coding_agent",
+		Provider:          "claude-code",
+		ExternalSessionID: "claude-native-restored",
+		ResumeSupported:   true,
+		WorkshopMode:      "builder",
+	}
+
+	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "claude-code", "optimizer", runtime, agent) {
+		t.Fatal("expected workshop mode mismatch to skip native resume")
+	}
+	if agent.ClaudeCodeSessionID != "" {
+		t.Fatalf("agent ClaudeCodeSessionID = %q", agent.ClaudeCodeSessionID)
 	}
 }

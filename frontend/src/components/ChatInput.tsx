@@ -236,6 +236,16 @@ const resumeChatRuntimeLabel = (session: ChatHistorySession): string | undefined
   return provider
 }
 
+const resumeChatWorkshopModeLabel = (session: ChatHistorySession): string | undefined => {
+  const raw = (session.runtime?.workshop_mode || session.workshop_mode || '').trim().toLowerCase()
+  if (!raw) return undefined
+  if (raw === 'optimizer') return 'Optimizer'
+  if (raw === 'builder') return 'Builder'
+  if (raw === 'run') return 'Run'
+  if (raw === 'reporting') return 'Reporting'
+  return raw.replace(/_/g, ' ')
+}
+
 const resumeChatDetails = (session: ChatHistorySession): React.ReactNode | undefined => {
   const messages = (session.preview_messages || [])
     .filter(message => message.text?.trim())
@@ -586,7 +596,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const tabSessionId = activeTab?.sessionId ?? null
   const isViewOnly = activeTab?.metadata?.isViewOnly ?? false
   const terminalOutputSessionKey = tabSessionId || activeTabId || '__default__'
-  const terminalOutputOpen = useChatStore(state => state.terminalOutputOpen[terminalOutputSessionKey] ?? true)
+  const terminalOutputVisible = useChatStore(state => state.terminalOutputOpen[terminalOutputSessionKey] ?? true)
   const toggleTerminalOutputOpen = useChatStore(state => state.toggleTerminalOutputOpen)
   
   // Note: activeTab may be undefined during initial render before tabs are created
@@ -1307,7 +1317,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
       }
       // Fallback to preset
-      const preset = getActivePreset('workflow')
+      const preset = workflowPhasePreset
       const presetPhaseLLM = preset?.llmConfig?.phase_llm
       if (presetPhaseLLM?.provider && presetPhaseLLM?.model_id) {
         const found = availableLLMs.find(llm =>
@@ -1354,7 +1364,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
     return getCurrentLLMOption()
-  }, [tabConfig?.llmConfig, availableLLMs, getCurrentLLMOption, isWorkflowPhaseChat, getActivePreset, workflowPrimaryConfig, manifestPhaseLLM?.provider, manifestPhaseLLM?.model_id])
+  }, [
+    tabConfig?.llmConfig,
+    availableLLMs,
+    getCurrentLLMOption,
+    isWorkflowPhaseChat,
+    workflowPrimaryConfig,
+    manifestPhaseLLM?.provider,
+    manifestPhaseLLM?.model_id,
+    workflowPhasePreset?.llmConfig?.phase_llm?.provider,
+    workflowPhasePreset?.llmConfig?.phase_llm?.model_id,
+    workflowPhasePreset?.llmConfig?.provider,
+    workflowPhasePreset?.llmConfig?.model_id,
+  ])
 
   const activeLLMLabel = useMemo(() => {
     if (!primaryLLM?.provider) return 'LLM'
@@ -2910,6 +2932,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const kind = getResumeSessionKind(session)
       const botProvider = kind === 'bot' ? session.session_id.match(/^bot-([^-]+)--/)?.[1] : undefined
       const runtimeLabel = resumeChatRuntimeLabel(session)
+      const workshopModeLabel = resumeChatWorkshopModeLabel(session)
       const mode = botProvider || (session.agent_mode || 'chat').replace(/_/g, ' ')
       const messageCount = session.message_count ?? 0
       const countLabel = messageCount > 0 ? `${messageCount} message${messageCount === 1 ? '' : 's'}` : 'conversation'
@@ -2925,6 +2948,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         description: [
           formatResumeChatTime(session.updated_at || session.created_at),
           mode,
+          workshopModeLabel,
           runtimeLabel,
           countLabel,
         ].filter(Boolean).join(' · '),
@@ -3189,11 +3213,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           <button
                             type="button"
                             onClick={handleTerminalOutputButtonClick}
-                            aria-pressed={terminalOutputOpen}
-                            aria-label={terminalOutputOpen ? 'Hide terminal output' : 'Show terminal output'}
+                            aria-pressed={terminalOutputVisible}
+                            aria-label={terminalOutputVisible ? 'Terminal output visible; click to hide' : 'Terminal output hidden; click to show'}
+                            title={terminalOutputVisible ? 'Terminal visible' : 'Terminal hidden'}
                             className={`ml-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors ${
-                              terminalOutputOpen
-                                ? 'border-gray-400 bg-gray-200 text-gray-800 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-100'
+                              terminalOutputVisible
+                                ? 'border-blue-500 bg-blue-600 text-white shadow-sm dark:border-blue-400 dark:bg-blue-500 dark:text-white'
                                 : 'border-transparent text-gray-500 hover:bg-gray-200 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
                             }`}
                           >
@@ -3201,7 +3226,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           </button>
                         </TooltipTrigger>
                         <TooltipContent side="top">
-                          <p>{terminalOutputOpen ? 'Hide terminal output' : 'Show terminal output'}</p>
+                          <p>{terminalOutputVisible ? 'Terminal visible' : 'Terminal hidden'}</p>
                         </TooltipContent>
                       </Tooltip>
                     )}

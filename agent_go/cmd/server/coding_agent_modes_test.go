@@ -191,6 +191,37 @@ func TestRecordLiveCodingAgentUserMessageCapturesVisibleEvent(t *testing.T) {
 	}
 }
 
+func TestDelegationStartEventParentsToBackgroundAgent(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	sessionID := "session-background-owner"
+	backgroundAgentID := "bg-agent-123"
+	delegationID := "delegation-child-456"
+	api := &StreamingAPI{eventStore: store}
+
+	api.emitDelegationStartEvent(sessionID, delegationID, 1, "inspect logs", "high", "claude-sonnet-4-6", []string{"api-bridge"}, backgroundAgentID, "worker")
+
+	rawEvents := store.GetAllEventsRaw(sessionID)
+	if len(rawEvents) != 1 {
+		t.Fatalf("raw event count = %d, want 1", len(rawEvents))
+	}
+	event := rawEvents[0]
+	if event.Type != "delegation_start" {
+		t.Fatalf("event type = %q, want delegation_start", event.Type)
+	}
+	if event.Data == nil {
+		t.Fatal("event data is nil")
+	}
+	wantParentID := sessionID + "_background_agent_started_" + backgroundAgentID
+	if event.Data.ParentID != wantParentID {
+		t.Fatalf("parent_id = %q, want %q", event.Data.ParentID, wantParentID)
+	}
+	if event.Data.CorrelationID != delegationID {
+		t.Fatalf("correlation_id = %q, want %q", event.Data.CorrelationID, delegationID)
+	}
+}
+
 func assertLiveCodingUserMessageEvent(t *testing.T, event internalevents.Event, sessionID, provider string) {
 	t.Helper()
 	if event.Type != string(pkgevents.UserMessageEventType) {

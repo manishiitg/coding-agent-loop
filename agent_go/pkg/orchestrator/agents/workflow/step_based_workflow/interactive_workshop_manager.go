@@ -519,10 +519,10 @@ const (
 	WorkshopStepCancelled WorkshopStepStatus = "cancelled"
 )
 
-// ToolCallQueryFunc queries the event store for tool calls associated with a correlation ID.
-// Parameters: sessionID (main session), correlationID (agentSessionID for the step execution), toolCallID (empty for summary, specific ID for detail).
+// ToolCallQueryFunc queries live tool calls associated with a workshop execution.
+// Parameters: sessionID (main session), correlationID (agentSessionID for the step execution), stepID, toolCallID (empty for summary, specific ID for detail).
 // Returns a formatted string summary of tool calls. Nil means the feature is unavailable.
-type ToolCallQueryFunc func(sessionID, correlationID, toolCallID string) string
+type ToolCallQueryFunc func(sessionID, correlationID, stepID, toolCallID string) string
 
 // WorkshopStepExecution tracks a single background step execution
 type WorkshopStepExecution struct {
@@ -530,6 +530,7 @@ type WorkshopStepExecution struct {
 	StepID         string
 	AgentSessionID string // correlation ID used to tag events for this execution
 	Status         WorkshopStepStatus
+	CreatedAt      time.Time
 	Result         string
 	Err            error
 	cancel         context.CancelFunc
@@ -551,6 +552,7 @@ type WorkshopStepSnapshot struct {
 	StepID         string
 	AgentSessionID string
 	Status         WorkshopStepStatus
+	CreatedAt      time.Time
 	Result         string
 	Err            error
 	CanCancel      bool
@@ -569,6 +571,7 @@ func (e *WorkshopStepExecution) Snapshot() WorkshopStepSnapshot {
 		StepID:         e.StepID,
 		AgentSessionID: e.AgentSessionID,
 		Status:         e.Status,
+		CreatedAt:      e.CreatedAt,
 		Result:         e.Result,
 		Err:            e.Err,
 		CanCancel:      e.cancel != nil,
@@ -641,6 +644,12 @@ func NewWorkshopStepRegistry() *WorkshopStepRegistry {
 
 // Register adds a new execution entry to the registry
 func (r *WorkshopStepRegistry) Register(exec *WorkshopStepExecution) {
+	exec.mu.Lock()
+	if exec.CreatedAt.IsZero() {
+		exec.CreatedAt = time.Now()
+	}
+	exec.mu.Unlock()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.executions[exec.ID] = exec
@@ -663,6 +672,37 @@ func (r *WorkshopStepRegistry) GetSnapshot(id string) (WorkshopStepSnapshot, boo
 		return WorkshopStepSnapshot{}, false
 	}
 	return exec.Snapshot(), true
+}
+
+// LatestSnapshotForStep returns the newest tracked execution for a step.
+// Running executions are preferred; completed executions are used only when
+// nothing is running.
+func (r *WorkshopStepRegistry) LatestSnapshotForStep(stepID string) (WorkshopStepSnapshot, bool, []WorkshopStepSnapshot) {
+	r.mu.RLock()
+	snapshots := make([]WorkshopStepSnapshot, 0)
+	for _, exec := range r.executions {
+		snap := exec.Snapshot()
+		if snap.StepID == stepID {
+			snapshots = append(snapshots, snap)
+		}
+	}
+	r.mu.RUnlock()
+	if len(snapshots) == 0 {
+		return WorkshopStepSnapshot{}, false, nil
+	}
+
+	sort.SliceStable(snapshots, func(i, j int) bool {
+		leftRunning := snapshots[i].Status == WorkshopStepRunning
+		rightRunning := snapshots[j].Status == WorkshopStepRunning
+		if leftRunning != rightRunning {
+			return leftRunning
+		}
+		if snapshots[i].CreatedAt.Equal(snapshots[j].CreatedAt) {
+			return snapshots[i].ID > snapshots[j].ID
+		}
+		return snapshots[i].CreatedAt.After(snapshots[j].CreatedAt)
+	})
+	return snapshots[0], true, snapshots
 }
 
 // Cancel cancels an execution by ID and returns its updated snapshot.
@@ -2006,7 +2046,7 @@ For a todo_task route, use `+"`message_sequence`"+` when the orchestrator should
 - When the user describes what they want, respond with a proposed plan (step breakdown, types, context flow) and ask for confirmation before creating any steps in plan.json
 - If the user is just asking questions, brainstorming, or exploring possibilities, engage in discussion — do NOT jump to creating steps
 - Add, remove, reorder, and configure steps freely once the plan is confirmed
-- Test steps to verify they produce correct output — use `+"`execute_step(step_id, group_name=...)`"+` for one step at a time. Keep the returned `+"`execution_id`"+` and use `+"`query_step(execution_id)`"+` to inspect live progress and tool calls while it runs.
+- Test steps to verify they produce correct output — use `+"`execute_step(step_id, group_name=...)`"+` for one step at a time, then use `+"`query_step(step_id=...)`"+` to inspect execution status and captured structured MCP tool calls while it runs. For coding CLI providers, terminal/TUI progress is surfaced separately in the UI terminal stream.
 - Set up servers, tools, and context dependencies
 
 **Builder execution rule:** Do not use `+"`run_full_workflow`"+` as the primary debug loop. Build and repair with `+"`execute_step`"+`, `+"`query_step`"+`, and `+"`debug_step`"+` first. Use `+"`run_full_workflow(group_name=\"...\")`"+` only for end-to-end verification after the affected steps pass individually, or when the user explicitly asks to run the whole workflow. If a full run fails, switch back to single-step debugging for the failing step before running the full workflow again.
@@ -2145,7 +2185,7 @@ The user here is usually **non-technical** — a stakeholder, a teammate, an end
 - **Do the work directly** when the user's request is narrower than a workflow run. Read the relevant KB/learnings/db/run artifacts, use available tools, and answer with the result.
 - **Run the workflow** when asked: use `+"`run_full_workflow`"+` with an explicit `+"`group_name`"+`. For multi-group workflows, default to sequential one-group-at-a-time execution unless the user explicitly asks to run groups in parallel.
 - **Run one step or orphan utility step** when asked: identify the step from the user's words, ask only if ambiguous, then call `+"`execute_step`"+` with `+"`group_name`"+`. Orphan steps are valid Run-mode tools when they are designed as manual utilities, data checks, shared route agents, or one-off investigations. Keep the `+"`execution_id`"+` for follow-up status checks.
-- **Answer status questions**: if the user asks "is it running?", "what is it doing?", "why is it stuck?", or "what happened?", first use `+"`list_executions`"+` if you don't know the execution id, then `+"`query_step(execution_id)`"+`. For completed steps, use `+"`debug_step(step_id, group_name=...)`"+` and targeted output reads.
+- **Answer status questions**: if the user asks "is it running?", "what is it doing?", "why is it stuck?", or "what happened?", call `+"`query_step(step_id=...)`"+` for the relevant step. For completed steps, use `+"`debug_step(step_id, group_name=...)`"+` and targeted output reads.
 - **Answer result questions**: read the latest run's outputs, `+"`db/`"+` data, report-bound JSON, KB notes, and the evaluation report when useful. Lead with the answer, then give the evidence in plain language.
 - **Answer "did it work?" / "what happened?"**: give a one-paragraph human summary. Lead with the outcome (worked / partial / failed), then the headline numbers, then offer to dig deeper.
 - **Answer "how much did it cost?" / "how long?"**: use the review tools and report numbers in plain language ("about ₹12, took 4 minutes").
@@ -2338,7 +2378,7 @@ All background agents **automatically notify you** when they complete:
 - Notifications arrive as messages prefixed with **[AUTO-NOTIFICATION]** — they are **system-generated, NOT from the user**. Do not treat them as user requests.
 - **Do NOT poll** with query_step in a loop or ask the user when something finishes — the system handles this.
 - **Notifications may be delayed** — they can arrive after you've moved on or the user has changed the plan. Always check whether a notification is still relevant to the **current** context before acting on it.
-- Use **query_step** for a live status check — it shows which tools the step is calling in real time.
+- Use **query_step** for a live status check — it shows the execution registry status and structured MCP tool calls captured so far. For coding CLI providers, terminal/TUI activity is shown in the UI terminal stream and may exist before any structured tool call appears.
 
 ### Stopping Tasks
 When the user asks you to "stop", "cancel", or "abort" running tasks, you MUST call **stop_all_executions()** or **stop_step(execution_id)**. Simply responding with text does NOT stop anything — tasks run independently in the background.
@@ -2353,7 +2393,7 @@ When a step doesn't do what it should — wrong output, missing actions, incompl
 
 {{if eq .WorkshopMode "builder"}}
 **Builder investigation workflow:**
-1. If the step is still running, call `+"`query_step(execution_id)`"+` first. Use it to see current status, active tool calls, and where the step is stuck.
+1. If the step is still running, call `+"`query_step(step_id=...)`"+` first. Use it to see current status and structured MCP tool calls captured so far. No listed tool calls does not prove the step is stuck, especially for coding CLI providers whose terminal/TUI progress is shown separately in the UI.
 2. If the step already finished or failed, inspect it with `+"`debug_step(step_id, group_name=...)`"+` plus targeted file/log reads.
 3. Fix the plan directly: tighten the step description, context dependencies, step config, or validation schema.
 4. Re-run the single step with `+"`execute_step`"+`, then use `+"`query_step`"+` again while it runs to verify the agent is following the intended path.
@@ -2370,8 +2410,8 @@ When a step doesn't do what it should — wrong output, missing actions, incompl
 3. If the issue is step behavior, db shape, KB/learnings, evaluation scoring, or hardening, explain the finding and tell the user to switch to Builder or Optimizer. Do not call harden_workflow or mutate plan/config/eval from Reporting.
 {{else}}
 **Run investigation workflow:**
-1. If the user asks for live status and you do not know the id, call `+"`list_executions(status_filter=\"running\")`"+`; then call `+"`query_step(execution_id)`"+`.
-2. If a running step appears stuck, use `+"`query_step`"+` to inspect active tool calls and summarize what it is waiting on. Do not poll in a tight loop; give the user the current status and wait for auto-notification unless they ask you to check again.
+1. If the user asks for live status, call `+"`query_step(step_id=...)`"+` for the relevant step. Use `+"`list_executions(status_filter=\"running\")`"+` only if you need to identify running steps.
+2. If a running step appears stuck, use `+"`query_step`"+` to inspect captured structured MCP tool calls and summarize what is known. If no tool calls are listed for a coding CLI provider, say that terminal/TUI progress is separate and wait for auto-notification unless the user asks you to stop or check again. Do not poll in a tight loop.
 3. If a step already completed or failed, use `+"`debug_step(step_id, group_name=...)`"+` plus targeted reads of run outputs/log summaries. For whole-run questions, use `+"`review_workflow_results`"+`, timing, and cost reviews.
 4. Explain the observed failure or data gap in plain English and offer retry/skip/help when appropriate.
 5. If the right action is a targeted retry, utility check, or one-off investigation, run the relevant normal or orphan step with `+"`execute_step`"+`; if the request needs the whole workflow, call `+"`run_full_workflow`"+`.
@@ -2743,7 +2783,7 @@ Rules:
 - **execute_step(step_id, group_name, instructions?, human_input?, tier?, message_sequence_restart?)** — Start a single step in background; returns `+"`execution_id`"+`. In Builder mode, this is the primary way to test one step after adding or editing it. Execution uses `+"`iteration-0`"+`. For message_sequence, pass human_input to resume with one new user message, or message_sequence_restart=true to start from scratch. For human_input steps, human_input is used as the response. For other executable steps, human_input is high-priority custom context.
 {{if eq .WorkshopMode "optimizer"}}- **execute_step(step_id, group_name, fast_path_only=true)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
 {{end}}
-- **query_step(execution_id, tool_call_id?)** — Live status check for a running single step. Use this immediately after `+"`execute_step`"+` when debugging: it shows progress, active tool calls, and tool-call details without waiting for completion.
+- **query_step(step_id, tool_call_id?)** — Live status check for a running single step. Use this after `+"`execute_step`"+` when debugging: it resolves the latest execution for that step and shows execution status plus structured MCP tool calls and tool-call details captured so far. For coding CLI providers, terminal/TUI progress is surfaced in the UI terminal stream and may not appear here.
 - **debug_step(step_id, iteration, group_name)** — Rich insights: learning status, validation result, log paths
 - **list_executions(status_filter?)** — List all background executions
 - **stop_step(execution_id)** / **stop_all_executions()** — Cancel running steps
@@ -3572,7 +3612,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
-			execID := fmt.Sprintf("exec-%s-%05d", stepID, time.Now().UnixNano()%100000)
+			execID := fmt.Sprintf("exec-%s-%d", stepID, time.Now().UnixNano())
 			execCtx, cancel, ctxErr := iwm.newExecContext()
 			if ctxErr != nil {
 				return "Session was stopped — execution skipped", nil
@@ -3771,7 +3811,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				learningInfo = "Code exec scripted mode: this step does not use a separate post-step SKILL learning phase. The saved Python script is the learning artifact, and the run may create/update that script directly."
 			}
 			logger.Info(fmt.Sprintf("🚀 Workshop: step %q started in background, execution_id=%q%s, fast_path_only=%v", stepID, execID, groupInfo, fastPathOnly))
-			return fmt.Sprintf("Step %q started in background.\nexecution_id: %q\n%s\nYou will be automatically notified when it completes.", stepID, execID, learningInfo), nil
+			return fmt.Sprintf("Step %q started in background.\nexecution_id: %q\nUse query_step(step_id=%q) to inspect live status.\n%s\nYou will be automatically notified when it completes.", stepID, execID, stepID, learningInfo), nil
 		},
 		"workflow",
 	); err != nil {
@@ -3930,34 +3970,43 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_in_background tool: %v", err))
 	}
 
-	// Tool 2: query_step — unified status + real-time tool call visibility
-	// When running: shows status + live tool calls (auto-enriched)
+	// Tool 2: query_step — execution status + structured MCP tool call visibility
+	// When running: shows status + captured structured tool calls (auto-enriched)
 	// When done/failed/cancelled: shows result
 	if err := mcpAgent.RegisterCustomTool(
 		"query_step",
-		"Check the status of a background step execution. When running, also shows which tools the step is currently calling in real time. When done, shows the result. Pass tool_call_id to get full input/output for a specific tool call. Use debug_step for file-based insights (learnings, validation, logs).",
+		"Check the status of a workflow step by step_id. The backend resolves the latest matching execution_id automatically, preferring a running execution. When running, shows registry status and structured MCP tool calls captured so far. Important: coding CLI providers can show terminal/TUI activity before structured tool_call events exist, so 'no tool calls observed yet' does NOT mean the step failed to start or is stuck. Do not stop or re-run solely because query_step has no tool calls; wait for the completion notification unless the user explicitly asks to stop/retry. Pass tool_call_id to get full input/output for a specific tool call. Use debug_step for file-based insights.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"step_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The workflow step ID to inspect. Preferred and normally required. The backend resolves the latest execution for this step automatically.",
+				},
 				"execution_id": map[string]interface{}{
 					"type":        "string",
-					"description": "The execution_id returned by execute_step",
+					"description": "Optional legacy/disambiguation ID. Normally omit and pass step_id.",
 				},
 				"tool_call_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional: a specific tool_call_id from a previous query_step summary to get full input/output details for that call",
 				},
 			},
-			"required": []string{"execution_id"},
+			"required": []string{"step_id"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			execIDRaw, ok := args["execution_id"]
-			if !ok || execIDRaw == nil {
-				return "execution_id is required", nil
+			stepIDRaw, ok := args["step_id"]
+			if !ok || stepIDRaw == nil {
+				return "step_id is required", nil
 			}
-			execID, ok := execIDRaw.(string)
-			if !ok || execID == "" {
-				return "execution_id must be a non-empty string", nil
+			stepID, ok := stepIDRaw.(string)
+			if !ok || stepID == "" {
+				return "step_id must be a non-empty string", nil
+			}
+			if err := iwm.controller.LoadPlanForWorkshop(ctx); err == nil {
+				if resolvedID, resolveErr := resolveWorkshopStepID(iwm.controller, stepID); resolveErr == nil {
+					stepID = resolvedID
+				}
 			}
 
 			// Optional: specific tool_call_id for detailed view
@@ -3968,13 +4017,48 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
-			exec, found := iwm.stepRegistry.GetSnapshot(execID)
-			if !found {
-				return fmt.Sprintf("execution %q not found", execID), nil
+			execID := ""
+			if execIDRaw, ok := args["execution_id"]; ok && execIDRaw != nil {
+				if s, ok := execIDRaw.(string); ok {
+					execID = strings.TrimSpace(s)
+				}
+			}
+
+			var exec WorkshopStepSnapshot
+			var found bool
+			if execID != "" {
+				exec, found = iwm.stepRegistry.GetSnapshot(execID)
+				if !found {
+					return fmt.Sprintf("execution %q not found for step %q", execID, stepID), nil
+				}
+				if exec.StepID != stepID {
+					return fmt.Sprintf("execution %q belongs to step %q, not step %q", execID, exec.StepID, stepID), nil
+				}
+			} else {
+				var matches []WorkshopStepSnapshot
+				exec, found, matches = iwm.stepRegistry.LatestSnapshotForStep(stepID)
+				if !found {
+					return fmt.Sprintf("No tracked execution found for step %q. Start it with execute_step(step_id=%q, group_name=...).", stepID, stepID), nil
+				}
+				execID = exec.ID
+				runningCount := 0
+				for _, match := range matches {
+					if match.Status == WorkshopStepRunning {
+						runningCount++
+					}
+				}
+				if runningCount > 1 {
+					var ids []string
+					for _, match := range matches {
+						if match.Status == WorkshopStepRunning {
+							ids = append(ids, match.ID)
+						}
+					}
+					return fmt.Sprintf("Step %q has multiple running executions: %s. Use list_executions to inspect them or stop the duplicates.", stepID, strings.Join(ids, ", ")), nil
+				}
 			}
 
 			status := exec.Status
-			stepID := exec.StepID
 			result := exec.Result
 			execErr := exec.Err
 			agentSessID := exec.AgentSessionID
@@ -3988,12 +4072,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					if mainSessID == "" {
 						mainSessID = iwm.sessionID
 					}
-					summary := iwm.toolCallQueryFunc(mainSessID, agentSessID, toolCallID)
+					summary := iwm.toolCallQueryFunc(mainSessID, agentSessID, stepID, toolCallID)
 					if toolCallID != "" && summary != "" {
-						return fmt.Sprintf("Step %q — tool call detail:\n%s", stepID, summary), nil
+						return fmt.Sprintf("Step %q (execution_id: %s) — tool call detail:\n%s", stepID, execID, summary), nil
 					}
 					if summary != "" {
-						toolCallInfo = fmt.Sprintf("\n\n**Live tool calls:**\n%s", summary)
+						toolCallInfo = fmt.Sprintf("\n\n**Structured MCP tool calls:**\n%s", summary)
 					}
 				}
 
@@ -4005,25 +4089,25 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 
 				if toolCallInfo == "" {
-					return fmt.Sprintf("Step %q is still running. No tool calls observed yet.%s", stepID, hint), nil
+					return fmt.Sprintf("Step %q is registered and running.\nexecution_id: %s\n\nNo structured MCP tool calls have been captured for this execution yet. This is normal for coding CLI providers while they are booting, thinking, using terminal/TUI output, or before they make their first api-bridge call. It does not mean the step failed to start or is stuck.\n\nDo not stop or re-run this execution solely because no tool calls are listed; wait for the automatic completion notification unless the user explicitly asks you to stop/retry.%s", stepID, execID, hint), nil
 				}
-				return fmt.Sprintf("Step %q is still running.%s%s", stepID, toolCallInfo, hint), nil
+				return fmt.Sprintf("Step %q is still running.\nexecution_id: %s%s%s", stepID, execID, toolCallInfo, hint), nil
 
 			case WorkshopStepDone:
 				// Background tasks get a generic completion response (no step-specific hints)
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q completed.\n\n%s", stepID, result), nil
 				}
-				return fmt.Sprintf("Step %q completed.\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read shared workflow guidance: 'cat learnings/_global/SKILL.md'. If this is a learn_code step, also inspect 'cat learnings/%s/main.py'.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — only consider locking SKILL.md after the step has at least 3 successful runs on the same description hash and repeated no-new-learning outcomes. For learn_code, lock_code requires explicit user intent plus 10+ scenario-covering successful runs.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, result, stepID, stepID, stepID, stepID), nil
+				return fmt.Sprintf("Step %q completed.\nexecution_id: %s\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read shared workflow guidance: 'cat learnings/_global/SKILL.md'. If this is a learn_code step, also inspect 'cat learnings/%s/main.py'.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — only consider locking SKILL.md after the step has at least 3 successful runs on the same description hash and repeated no-new-learning outcomes. For learn_code, lock_code requires explicit user intent plus 10+ scenario-covering successful runs.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, execID, result, stepID, stepID, stepID, stepID), nil
 			case WorkshopStepFailed:
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q failed: %v", stepID, execErr), nil
 				}
-				return fmt.Sprintf("Step %q failed: %v\n\n**Next**: Investigate the failure. Call debug_step(%q) for detailed execution insights, then fix the root cause (description, validation, context deps) before re-running.", stepID, execErr, stepID), nil
+				return fmt.Sprintf("Step %q failed.\nexecution_id: %s\nerror: %v\n\n**Next**: Investigate the failure. Call debug_step(%q) for detailed execution insights, then fix the root cause (description, validation, context deps) before re-running.", stepID, execID, execErr, stepID), nil
 			case WorkshopStepCancelled:
-				return fmt.Sprintf("Step %q was cancelled.", stepID), nil
+				return fmt.Sprintf("Step %q was cancelled.\nexecution_id: %s", stepID, execID), nil
 			default:
-				return fmt.Sprintf("Step %q has unknown status: %s", stepID, status), nil
+				return fmt.Sprintf("Step %q has unknown status: %s\nexecution_id: %s", stepID, status, execID), nil
 			}
 		},
 		"workflow",
@@ -4209,9 +4293,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			allExecs := iwm.stepRegistry.ListSnapshots()
 
-			// Sort by ID (contains timestamp) for chronological order
+			// Sort by creation time for chronological order.
 			sort.Slice(allExecs, func(i, j int) bool {
-				return allExecs[i].ID < allExecs[j].ID
+				if allExecs[i].CreatedAt.Equal(allExecs[j].CreatedAt) {
+					return allExecs[i].ID < allExecs[j].ID
+				}
+				return allExecs[i].CreatedAt.Before(allExecs[j].CreatedAt)
 			})
 
 			// Build set of registry IDs for dedup against server agents

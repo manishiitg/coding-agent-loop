@@ -195,6 +195,8 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
   const hasLiveTerminalStream = Boolean(currentStreamingTerminalText && currentStreamingTerminalActive)
   const streamingPanelTitle = currentStreamingTerminalText && !hasLiveStreamingText ? 'Terminal output' : 'Generating...'
   const showStreamingPanelHeader = Boolean(hasLiveStreamingText && (!currentStreamingTerminalText || hasLiveTerminalStream))
+  const shouldShowTerminalOutput = Boolean(currentStreamingTerminalText && terminalOutputOpen)
+  const shouldShowHiddenTerminalStatus = Boolean(currentStreamingTerminalText && !terminalOutputOpen && !currentStreamingText && !currentStreamingStatus)
   const terminalOutputRef = React.useRef<HTMLDivElement | null>(null)
   const terminalAutoFollowRef = React.useRef(true)
   const isTerminalNearBottom = React.useCallback((el: HTMLDivElement) => (
@@ -310,7 +312,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
                 <span className="inline-block w-1.5 h-3 bg-gray-500 animate-pulse ml-0.5" />
               </div>
             )}
-            {currentStreamingTerminalText && (
+            {shouldShowTerminalOutput && (
               <details
                 className="min-w-0"
                 open={terminalOutputOpen}
@@ -323,6 +325,14 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
                 </summary>
                 {terminalOutputBlock}
               </details>
+            )}
+            {shouldShowHiddenTerminalStatus && (
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" />
+                <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-600 dark:text-gray-400 font-medium`}>
+                  Generating... Agent is working.
+                </span>
+              </div>
             )}
             {currentStreamingStatus && (
               <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-500 dark:text-gray-400 italic mt-1 opacity-75`}>

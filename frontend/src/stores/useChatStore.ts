@@ -455,9 +455,12 @@ interface ChatState extends StoreActions {
   streamingStatus: Record<string, string>  // sessionId → latest status/heartbeat message (⏳/⚠️ messages)
   streamingTerminalText: Record<string, string>  // sessionId → latest live terminal/screen snapshot
   streamingTerminalActive: Record<string, boolean>  // sessionId → true while live terminal snapshots are arriving
+  ownedStreamingTerminalText: Record<string, string>  // ownerKey → latest live terminal/screen snapshot for sub-agents/steps
+  ownedStreamingTerminalActive: Record<string, boolean>  // ownerKey → true while owner terminal snapshots are arriving
   terminalOutputOpen: Record<string, boolean>  // sessionId → user-controlled terminal panel open state
   lastStreamingChunkIndex: Record<string, number>  // sessionId → last processed chunk_index (dedup guard)
   lastStreamingTerminalChunkIndex: Record<string, number>  // sessionId → last terminal snapshot chunk_index
+  lastOwnedStreamingTerminalChunkIndex: Record<string, number>  // ownerKey → last terminal snapshot chunk_index
   completedStreamingText: Record<string, string>  // sessionId → preserved streaming text after generation completes
 
   // Sub-agent streaming text accumulation (per delegation)
@@ -563,6 +566,9 @@ interface ChatState extends StoreActions {
   appendStreamingChunk: (sessionId: string, chunkIndex: number, chunk: string) => void
   setStreamingTerminalSnapshot: (sessionId: string, chunkIndex: number, chunk: string) => void
   setStreamingTerminalActive: (sessionId: string, active: boolean) => void
+  setOwnedStreamingTerminalSnapshot: (ownerKey: string, chunkIndex: number, chunk: string) => void
+  setOwnedStreamingTerminalActive: (ownerKey: string, active: boolean) => void
+  clearOwnedStreamingTerminal: (ownerKey: string) => void
   setTerminalOutputOpen: (sessionId: string, open: boolean) => void
   toggleTerminalOutputOpen: (sessionId: string) => void
   clearStreamingText: (sessionId: string) => void
@@ -625,9 +631,12 @@ export const useChatStore = create<ChatState>()(
       streamingStatus: {},
       streamingTerminalText: {},
       streamingTerminalActive: {},
+      ownedStreamingTerminalText: {},
+      ownedStreamingTerminalActive: {},
       terminalOutputOpen: {},
       lastStreamingChunkIndex: {},
       lastStreamingTerminalChunkIndex: {},
+      lastOwnedStreamingTerminalChunkIndex: {},
       completedStreamingText: {},
 
       // Sub-agent streaming text accumulation (per delegation)
@@ -943,6 +952,19 @@ export const useChatStore = create<ChatState>()(
           delete newStreamingTerminalText[sessionId]
           const newStreamingTerminalActive = { ...state.streamingTerminalActive }
           delete newStreamingTerminalActive[sessionId]
+          const newOwnedStreamingTerminalText = { ...state.ownedStreamingTerminalText }
+          const newOwnedStreamingTerminalActive = { ...state.ownedStreamingTerminalActive }
+          const newLastOwnedStreamingTerminalChunkIndex = { ...state.lastOwnedStreamingTerminalChunkIndex }
+          const ownedPrefix = `${sessionId}:`
+          for (const key of Object.keys(newOwnedStreamingTerminalText)) {
+            if (key.startsWith(ownedPrefix)) delete newOwnedStreamingTerminalText[key]
+          }
+          for (const key of Object.keys(newOwnedStreamingTerminalActive)) {
+            if (key.startsWith(ownedPrefix)) delete newOwnedStreamingTerminalActive[key]
+          }
+          for (const key of Object.keys(newLastOwnedStreamingTerminalChunkIndex)) {
+            if (key.startsWith(ownedPrefix)) delete newLastOwnedStreamingTerminalChunkIndex[key]
+          }
           const newTerminalOutputOpen = { ...state.terminalOutputOpen }
           delete newTerminalOutputOpen[sessionId]
           const newLastStreamingTerminalChunkIndex = { ...state.lastStreamingTerminalChunkIndex }
@@ -960,9 +982,12 @@ export const useChatStore = create<ChatState>()(
             streamingStatus: newStreamingStatus,
             streamingTerminalText: newStreamingTerminalText,
             streamingTerminalActive: newStreamingTerminalActive,
+            ownedStreamingTerminalText: newOwnedStreamingTerminalText,
+            ownedStreamingTerminalActive: newOwnedStreamingTerminalActive,
             terminalOutputOpen: newTerminalOutputOpen,
             lastStreamingChunkIndex: newLastStreamingChunkIndex,
             lastStreamingTerminalChunkIndex: newLastStreamingTerminalChunkIndex,
+            lastOwnedStreamingTerminalChunkIndex: newLastOwnedStreamingTerminalChunkIndex,
             completedStreamingText: newCompletedStreamingText
           }
         })
@@ -1263,6 +1288,60 @@ export const useChatStore = create<ChatState>()(
         })
       },
 
+      setOwnedStreamingTerminalSnapshot: (ownerKey: string, chunkIndex: number, chunk: string) => {
+        if (typeof chunk !== 'string' || !chunk) return
+
+        set((state) => {
+          const lastIndex = state.lastOwnedStreamingTerminalChunkIndex[ownerKey] ?? -1
+          if (chunkIndex >= 0 && chunkIndex <= lastIndex) {
+            return state
+          }
+          return {
+            ownedStreamingTerminalText: {
+              ...state.ownedStreamingTerminalText,
+              [ownerKey]: chunk
+            },
+            ownedStreamingTerminalActive: {
+              ...state.ownedStreamingTerminalActive,
+              [ownerKey]: true
+            },
+            lastOwnedStreamingTerminalChunkIndex: {
+              ...state.lastOwnedStreamingTerminalChunkIndex,
+              [ownerKey]: chunkIndex
+            }
+          }
+        })
+      },
+
+      setOwnedStreamingTerminalActive: (ownerKey: string, active: boolean) => {
+        set((state) => {
+          const nextOwnedStreamingTerminalActive = { ...state.ownedStreamingTerminalActive }
+          if (active) {
+            nextOwnedStreamingTerminalActive[ownerKey] = true
+          } else {
+            delete nextOwnedStreamingTerminalActive[ownerKey]
+          }
+          return { ownedStreamingTerminalActive: nextOwnedStreamingTerminalActive }
+        })
+      },
+
+      clearOwnedStreamingTerminal: (ownerKey: string) => {
+        if (!ownerKey) return
+        set((state) => {
+          const newOwnedStreamingTerminalText = { ...state.ownedStreamingTerminalText }
+          delete newOwnedStreamingTerminalText[ownerKey]
+          const newOwnedStreamingTerminalActive = { ...state.ownedStreamingTerminalActive }
+          delete newOwnedStreamingTerminalActive[ownerKey]
+          const newLastOwnedStreamingTerminalChunkIndex = { ...state.lastOwnedStreamingTerminalChunkIndex }
+          delete newLastOwnedStreamingTerminalChunkIndex[ownerKey]
+          return {
+            ownedStreamingTerminalText: newOwnedStreamingTerminalText,
+            ownedStreamingTerminalActive: newOwnedStreamingTerminalActive,
+            lastOwnedStreamingTerminalChunkIndex: newLastOwnedStreamingTerminalChunkIndex
+          }
+        })
+      },
+
       setTerminalOutputOpen: (sessionId: string, open: boolean) => {
         set((state) => {
           if (!sessionId || state.terminalOutputOpen[sessionId] === open) return state
@@ -1461,12 +1540,16 @@ export const useChatStore = create<ChatState>()(
           const newStreamingStatus = { ...s.streamingStatus }
           const newStreamingTerminalText = { ...s.streamingTerminalText }
           const newStreamingTerminalActive = { ...s.streamingTerminalActive }
+          const newOwnedStreamingTerminalText = { ...s.ownedStreamingTerminalText }
+          const newOwnedStreamingTerminalActive = { ...s.ownedStreamingTerminalActive }
           const newTerminalOutputOpen = { ...s.terminalOutputOpen }
           const newLastStreamingChunkIndex = { ...s.lastStreamingChunkIndex }
           const newLastStreamingTerminalChunkIndex = { ...s.lastStreamingTerminalChunkIndex }
+          const newLastOwnedStreamingTerminalChunkIndex = { ...s.lastOwnedStreamingTerminalChunkIndex }
           const newCompletedStreamingText = { ...s.completedStreamingText }
           const newSSE = { ...s.sseConnections }
           if (oldSessionId) {
+            const oldOwnedPrefix = `${oldSessionId}:`
             delete newTabEvents[oldSessionId]
             delete newTabEventIndices[oldSessionId]
             delete newTabHasMore[oldSessionId]
@@ -1479,6 +1562,15 @@ export const useChatStore = create<ChatState>()(
             delete newLastStreamingTerminalChunkIndex[oldSessionId]
             delete newCompletedStreamingText[oldSessionId]
             delete newSSE[oldSessionId]
+            for (const key of Object.keys(newOwnedStreamingTerminalText)) {
+              if (key.startsWith(oldOwnedPrefix)) delete newOwnedStreamingTerminalText[key]
+            }
+            for (const key of Object.keys(newOwnedStreamingTerminalActive)) {
+              if (key.startsWith(oldOwnedPrefix)) delete newOwnedStreamingTerminalActive[key]
+            }
+            for (const key of Object.keys(newLastOwnedStreamingTerminalChunkIndex)) {
+              if (key.startsWith(oldOwnedPrefix)) delete newLastOwnedStreamingTerminalChunkIndex[key]
+            }
           }
           return {
             chatTabs: {
@@ -1492,9 +1584,12 @@ export const useChatStore = create<ChatState>()(
             streamingStatus: newStreamingStatus,
             streamingTerminalText: newStreamingTerminalText,
             streamingTerminalActive: newStreamingTerminalActive,
+            ownedStreamingTerminalText: newOwnedStreamingTerminalText,
+            ownedStreamingTerminalActive: newOwnedStreamingTerminalActive,
             terminalOutputOpen: newTerminalOutputOpen,
             lastStreamingChunkIndex: newLastStreamingChunkIndex,
             lastStreamingTerminalChunkIndex: newLastStreamingTerminalChunkIndex,
+            lastOwnedStreamingTerminalChunkIndex: newLastOwnedStreamingTerminalChunkIndex,
             completedStreamingText: newCompletedStreamingText,
             sseConnections: newSSE,
           }
@@ -1545,9 +1640,12 @@ export const useChatStore = create<ChatState>()(
           streamingStatus: {},
           streamingTerminalText: {},
           streamingTerminalActive: {},
+          ownedStreamingTerminalText: {},
+          ownedStreamingTerminalActive: {},
           terminalOutputOpen: {},
           lastStreamingChunkIndex: {},
           lastStreamingTerminalChunkIndex: {},
+          lastOwnedStreamingTerminalChunkIndex: {},
           completedStreamingText: {},
           delegationStreamingText: {},
           lastDelegationChunkIndex: {}
@@ -1827,6 +1925,23 @@ export const useChatStore = create<ChatState>()(
           const newStreamingTerminalActive = { ...state.streamingTerminalActive }
           delete newStreamingTerminalActive[tab.sessionId]
           updates.streamingTerminalActive = newStreamingTerminalActive
+
+          const ownedPrefix = `${tab.sessionId}:`
+          const newOwnedStreamingTerminalText = { ...state.ownedStreamingTerminalText }
+          const newOwnedStreamingTerminalActive = { ...state.ownedStreamingTerminalActive }
+          const newLastOwnedStreamingTerminalChunkIndex = { ...state.lastOwnedStreamingTerminalChunkIndex }
+          for (const key of Object.keys(newOwnedStreamingTerminalText)) {
+            if (key.startsWith(ownedPrefix)) delete newOwnedStreamingTerminalText[key]
+          }
+          for (const key of Object.keys(newOwnedStreamingTerminalActive)) {
+            if (key.startsWith(ownedPrefix)) delete newOwnedStreamingTerminalActive[key]
+          }
+          for (const key of Object.keys(newLastOwnedStreamingTerminalChunkIndex)) {
+            if (key.startsWith(ownedPrefix)) delete newLastOwnedStreamingTerminalChunkIndex[key]
+          }
+          updates.ownedStreamingTerminalText = newOwnedStreamingTerminalText
+          updates.ownedStreamingTerminalActive = newOwnedStreamingTerminalActive
+          updates.lastOwnedStreamingTerminalChunkIndex = newLastOwnedStreamingTerminalChunkIndex
 
           const newTerminalOutputOpen = { ...state.terminalOutputOpen }
           delete newTerminalOutputOpen[tab.sessionId]

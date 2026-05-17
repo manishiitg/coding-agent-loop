@@ -21,6 +21,7 @@ type ChatHistorySession struct {
 	SessionID        string                      `json:"session_id"`
 	AgentMode        string                      `json:"agent_mode"`
 	Runtime          *ChatHistoryAgentRuntime    `json:"runtime,omitempty"`
+	WorkshopMode     string                      `json:"workshop_mode,omitempty"`
 	Status           string                      `json:"status"`
 	Query            string                      `json:"query,omitempty"`
 	UserID           string                      `json:"user_id"`
@@ -43,6 +44,7 @@ type ChatHistoryAgentRuntime struct {
 	ResumeFlag        string `json:"resume_flag,omitempty"`
 	ProjectDirID      string `json:"project_dir_id,omitempty"`
 	WorkspacePath     string `json:"workspace_path,omitempty"`
+	WorkshopMode      string `json:"workshop_mode,omitempty"`
 	CapturedAt        string `json:"captured_at,omitempty"`
 }
 
@@ -461,6 +463,7 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 		SessionID string                    `json:"session_id"`
 		AgentMode string                    `json:"agent_mode"`
 		Runtime   *ChatHistoryAgentRuntime  `json:"runtime,omitempty"`
+		Mode      string                    `json:"workshop_mode,omitempty"`
 		History   []llmtypes.MessageContent `json:"conversation_history"`
 		UpdatedAt string                    `json:"updated_at"`
 	}
@@ -473,6 +476,10 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 	if raw.UpdatedAt == "" {
 		raw.UpdatedAt = fallbackUpdatedAt.Format(time.RFC3339)
 	}
+	raw.Mode = normalizeChatHistoryWorkshopMode(raw.Mode)
+	if raw.Runtime != nil && raw.Runtime.WorkshopMode == "" {
+		raw.Runtime.WorkshopMode = raw.Mode
+	}
 
 	query := firstHumanText(raw.History)
 	if len(query) > 200 {
@@ -483,6 +490,7 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 		SessionID:        raw.SessionID,
 		AgentMode:        raw.AgentMode,
 		Runtime:          raw.Runtime,
+		WorkshopMode:     raw.Mode,
 		Query:            query,
 		UserID:           userID,
 		WorkspacePath:    workflowPath,
@@ -491,6 +499,19 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 		MessageCount:     len(raw.History),
 		PreviewMessages:  chatHistoryPreviewMessages(raw.History),
 	}, true
+}
+
+func normalizeChatHistoryWorkshopMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "builder", "optimizer", "run", "reporting":
+		return strings.ToLower(strings.TrimSpace(mode))
+	case "ask", "debugger", "runner":
+		return "run"
+	case "eval", "output":
+		return "builder"
+	default:
+		return ""
+	}
 }
 
 func paginateChatHistorySessions(sessions []ChatHistorySession, limit, offset int) []ChatHistorySession {
@@ -774,12 +795,16 @@ func ReadChatHistoryRuntimeFromPath(userID, conversationPath string) (*ChatHisto
 
 	var raw struct {
 		Runtime *ChatHistoryAgentRuntime `json:"runtime,omitempty"`
+		Mode    string                   `json:"workshop_mode,omitempty"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, true, err
 	}
 	if raw.Runtime == nil {
 		return nil, true, nil
+	}
+	if raw.Runtime.WorkshopMode == "" {
+		raw.Runtime.WorkshopMode = normalizeChatHistoryWorkshopMode(raw.Mode)
 	}
 	return raw.Runtime, true, nil
 }
@@ -996,6 +1021,80 @@ func readWorkflowScopedChatHistoryConversationDirect(sessionID, workspacePath st
 		return nil, true, err
 	}
 	return json.RawMessage(data), true, nil
+}
+
+func findWorkflowScopedChatHistoryConversationPath(sessionID, workspacePath string) (string, bool, error) {
+	sessionID = sanitizeChatHistorySessionID(sessionID)
+	workspacePath = normalizeChatHistoryWorkspacePath(workspacePath)
+	if sessionID == "" || workspacePath == "" {
+		return "", false, nil
+	}
+
+	fileName := fmt.Sprintf("session-%s-conversation.json", sessionID)
+	if workflowDir, ok := resolveLocalWorkflowDir(workspacePath); ok {
+		patterns := []string{
+			filepath.Join(workflowDir, "builder", fileName),
+			filepath.Join(workflowDir, "builder", "conversation", "*", fileName),
+		}
+		type candidate struct {
+			path    string
+			modTime time.Time
+		}
+		var latest *candidate
+		for _, pattern := range patterns {
+			matches, err := filepath.Glob(pattern)
+			if err != nil {
+				return "", false, err
+			}
+			for _, match := range matches {
+				info, err := os.Stat(match)
+				if err != nil || info.IsDir() {
+					continue
+				}
+				if latest == nil || info.ModTime().After(latest.modTime) || (info.ModTime().Equal(latest.modTime) && match > latest.path) {
+					latest = &candidate{path: match, modTime: info.ModTime()}
+				}
+			}
+		}
+		if latest != nil {
+			return workspaceRelativePathFromLocalPath(latest.path), true, nil
+		}
+	}
+
+	conversationRoot := pathpkg.Join(workspacePath, "builder", "conversation")
+	filePaths, err := listWorkspaceFilesRecursive(context.Background(), conversationRoot)
+	if err != nil {
+		return "", false, err
+	}
+	latestPath := ""
+	for _, candidatePath := range filePaths {
+		candidatePath = filepath.ToSlash(candidatePath)
+		if pathpkg.Base(candidatePath) != fileName {
+			continue
+		}
+		if latestPath == "" || candidatePath > latestPath {
+			latestPath = candidatePath
+		}
+	}
+	if latestPath == "" {
+		return "", false, nil
+	}
+	return workspaceRelativePathFromLocalPath(latestPath), true, nil
+}
+
+func workspaceRelativePathFromLocalPath(localPath string) string {
+	slashPath := filepath.ToSlash(localPath)
+	root := filepath.ToSlash(fsutil.WorkspaceDocsRoot())
+	if rel, err := filepath.Rel(root, localPath); err == nil {
+		rel = filepath.ToSlash(rel)
+		if rel != "." && !strings.HasPrefix(rel, "../") && rel != ".." {
+			return rel
+		}
+	}
+	if idx := strings.LastIndex(slashPath, "/workspace-docs/"); idx >= 0 {
+		return slashPath[idx+len("/workspace-docs/"):]
+	}
+	return strings.TrimPrefix(slashPath, "/")
 }
 
 func DeleteChatHistoryOlderThan(userID string, olderThanDays int, workspacePath string) (ChatHistoryCleanupResult, error) {

@@ -783,6 +783,7 @@ export interface ChatHistoryConversation {
   session_id: string;
   agent_mode?: string;
   runtime?: ChatHistoryAgentRuntime;
+  workshop_mode?: 'builder' | 'optimizer' | 'run' | 'reporting' | string;
   conversation_history: ChatHistoryMessage[];
   ui_events?: PollingEventSchema[];
   updated_at?: string;
@@ -797,6 +798,7 @@ export interface ChatHistoryAgentRuntime {
   resume_flag?: string;
   project_dir_id?: string;
   workspace_path?: string;
+  workshop_mode?: 'builder' | 'optimizer' | 'run' | 'reporting' | string;
   captured_at?: string;
 }
 
@@ -809,6 +811,7 @@ export interface ChatHistorySession {
   session_id: string;
   agent_mode?: string;
   runtime?: ChatHistoryAgentRuntime;
+  workshop_mode?: 'builder' | 'optimizer' | 'run' | 'reporting' | string;
   status?: string;
   query?: string;
   user_id?: string;

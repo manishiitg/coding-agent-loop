@@ -151,6 +151,99 @@ const DelegationStreamingCard: React.FC<{ delegationId: string }> = ({ delegatio
   )
 }
 
+const OwnedTerminalStreamCard: React.FC<{ ownerKey?: string; sessionId?: string; compact?: boolean }> = ({ ownerKey, sessionId, compact }) => {
+  const text = useChatStore(state => ownerKey ? state.ownedStreamingTerminalText[ownerKey] || '' : '')
+  const active = useChatStore(state => ownerKey ? state.ownedStreamingTerminalActive[ownerKey] || false : false)
+  const visible = useChatStore(state => sessionId ? state.terminalOutputOpen[sessionId] ?? true : true)
+  if (!ownerKey || !text || !visible) return null
+
+  return (
+    <details className={`${compact ? 'ml-3 pl-2' : 'ml-5 pl-3'} mt-2 min-w-0 border-l border-gray-300/70 dark:border-gray-700`} open>
+      <summary className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-500 dark:text-gray-400 cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 select-none`}>
+        <span className="inline-flex items-center gap-1.5">
+          <span className={`inline-block w-1.5 h-1.5 rounded-full bg-gray-500 ${active ? 'animate-pulse' : 'opacity-60'}`} />
+          <span>Terminal output</span>
+        </span>
+      </summary>
+      <div
+        className={`${compact ? 'max-h-56 text-[10px] leading-4' : 'max-h-80 text-xs leading-5'} mt-1 overflow-y-auto overflow-x-auto overscroll-y-contain rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-neutral-950/60 [scrollbar-gutter:stable]`}
+        role="region"
+        aria-label="Terminal output"
+        tabIndex={0}
+      >
+        <pre className={`m-0 min-w-max ${compact ? 'p-2' : 'p-3'} whitespace-pre font-mono text-gray-800 dark:text-gray-200`}>{text}</pre>
+      </div>
+    </details>
+  )
+}
+
+function getOwnedTerminalOwnerKey(event: PollingEvent, payload?: Record<string, unknown>): string | undefined {
+  const sessionId = event.session_id?.trim()
+  if (!sessionId) return undefined
+
+  const normalizeOwnerId = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null
+    const trimmed = value.trim()
+    if (!trimmed || trimmed.startsWith('main:')) return null
+    for (const prefix of ['delegation:', 'workflow:', 'background:', 'agent:', 'batch:']) {
+      if (trimmed.startsWith(prefix)) {
+        const unprefixed = trimmed.slice(prefix.length).trim()
+        return unprefixed && !unprefixed.startsWith('main:') ? unprefixed : null
+      }
+    }
+    return trimmed
+  }
+
+  const eventRecord = event as unknown as Record<string, unknown>
+  const data = event.data && typeof event.data === 'object'
+    ? event.data as Record<string, unknown>
+    : undefined
+  const innerData = data?.data && typeof data.data === 'object'
+    ? data.data as Record<string, unknown>
+    : undefined
+  const metadata = payload?.metadata && typeof payload.metadata === 'object'
+    ? payload.metadata as Record<string, unknown>
+    : innerData?.metadata && typeof innerData.metadata === 'object'
+      ? innerData.metadata as Record<string, unknown>
+      : data?.metadata && typeof data.metadata === 'object'
+        ? data.metadata as Record<string, unknown>
+        : undefined
+
+  const candidates = [
+    payload?.delegation_id,
+    payload?.agent_id,
+    payload?.execution_id,
+    payload?.correlation_id,
+    payload?.background_agent_id,
+    innerData?.delegation_id,
+    innerData?.background_agent_id,
+    innerData?.agent_id,
+    innerData?.execution_id,
+    innerData?.correlation_id,
+    data?.delegation_id,
+    data?.background_agent_id,
+    data?.agent_id,
+    data?.execution_id,
+    data?.correlation_id,
+    metadata?.delegation_id,
+    metadata?.background_agent_id,
+    metadata?.agent_id,
+    metadata?.workshop_step_id,
+    metadata?.current_step_id,
+    metadata?.orchestrator_step_id,
+    metadata?.workflow_step_id,
+    metadata?.step_id,
+    eventRecord.execution_id,
+    eventRecord.correlation_id,
+  ]
+
+  for (const candidate of candidates) {
+    const ownerId = normalizeOwnerId(candidate)
+    if (ownerId) return `${sessionId}:${ownerId}`
+  }
+  return undefined
+}
+
 export interface DelegationStats {
   toolCalls: number
   inputTokens: number
@@ -577,7 +670,13 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     return <CompactWrapper compact={compact}><LLMGenerationWithRetryEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'agent_start')) {
-    return <CompactWrapper compact={compact}><WithContext Component={AgentStartEventComponent} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    const data = getEventData(event) as Record<string, unknown>
+    return (
+      <CompactWrapper compact={compact}>
+        <WithContext Component={AgentStartEventComponent} data={data} compact={compact} />
+        <OwnedTerminalStreamCard ownerKey={getOwnedTerminalOwnerKey(event, data)} sessionId={event.session_id} compact={compact} />
+      </CompactWrapper>
+    )
   }
   if (isEventType(event, 'agent_end')) {
     return <CompactWrapper compact={compact}><WithContext Component={AgentEndEventComponent} data={getEventData(event)} compact={compact} /></CompactWrapper>
@@ -722,6 +821,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
           toolCallCount={liveStats?.toolCalls}
         />
         {ownerSummaryEvents}
+        <OwnedTerminalStreamCard ownerKey={getOwnedTerminalOwnerKey(event, data as Record<string, unknown>)} sessionId={event.session_id} compact={compact} />
         {!isOwnedLogPanelOpen && hasOwnedLogs && (
           <div className="mt-1 ml-1">
             <button
@@ -860,7 +960,13 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     return <CompactWrapper compact={compact}><BatchGroupEndEvent event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'batch_execution_start')) {
-    return <CompactWrapper compact={compact}><BatchExecutionStartEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+    const data = getEventData(event) as Record<string, unknown>
+    return (
+      <CompactWrapper compact={compact}>
+        <BatchExecutionStartEventDisplay event={data} compact={compact} />
+        <OwnedTerminalStreamCard ownerKey={getOwnedTerminalOwnerKey(event, data)} sessionId={event.session_id} compact={compact} />
+      </CompactWrapper>
+    )
   }
   if (isEventType(event, 'batch_execution_end')) {
     return <CompactWrapper compact={compact}><BatchExecutionEndEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
@@ -1467,6 +1573,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         </details>
 
         {ownerSummaryEvents}
+        {delegationId && (
+          <OwnedTerminalStreamCard ownerKey={event.session_id ? `${event.session_id}:${delegationId}` : undefined} sessionId={event.session_id} compact={compact} />
+        )}
 
         {/* Tool calls toggle — show "+ N tool calls" when collapsed, full list when expanded */}
         {!isOwnedLogPanelOpen && (childrenCount ?? 0) > 0 && (
@@ -1689,6 +1798,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
           </div>
         </div>
         {ownerSummaryEvents}
+        {agentId && (
+          <OwnedTerminalStreamCard ownerKey={event.session_id ? `${event.session_id}:${agentId}` : undefined} sessionId={event.session_id} compact={compact} />
+        )}
         {!isOwnedLogPanelOpen && childCount > 0 && (
           <div className="mt-1 ml-1">
             <button

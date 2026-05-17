@@ -78,6 +78,60 @@ function formatAutoNotificationTime(event: PollingEvent): string {
   })
 }
 
+function getOwnedTerminalStreamKey(
+  sessionId: string,
+  event: PollingEvent,
+  innerData: Record<string, unknown> | undefined,
+  agentEvent: Record<string, unknown> | undefined,
+  correlationId: unknown,
+  metadata?: Record<string, unknown>,
+): string | null {
+  const eventRecord = event as unknown as Record<string, unknown>
+  const normalizeOwnerId = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null
+    const trimmed = value.trim()
+    if (!trimmed || trimmed.startsWith('main:')) return null
+    for (const prefix of ['delegation:', 'workflow:', 'background:', 'agent:', 'batch:']) {
+      if (trimmed.startsWith(prefix)) {
+        const unprefixed = trimmed.slice(prefix.length).trim()
+        return unprefixed && !unprefixed.startsWith('main:') ? unprefixed : null
+      }
+    }
+    return trimmed
+  }
+
+  const correlationText = typeof correlationId === 'string' ? correlationId.trim() : ''
+  if (correlationText.startsWith('delegation-') || correlationText.startsWith('workshop-')) {
+    const ownerId = normalizeOwnerId(correlationText)
+    return ownerId ? `${sessionId}:${ownerId}` : null
+  }
+
+  const candidates: unknown[] = [
+    innerData?.delegation_id,
+    agentEvent?.delegation_id,
+    metadata?.delegation_id,
+    innerData?.background_agent_id,
+    agentEvent?.background_agent_id,
+    metadata?.background_agent_id,
+    innerData?.agent_id,
+    agentEvent?.agent_id,
+    metadata?.agent_id,
+    metadata?.workshop_step_id,
+    metadata?.current_step_id,
+    metadata?.orchestrator_step_id,
+    metadata?.workflow_step_id,
+    metadata?.step_id,
+    innerData?.execution_id,
+    agentEvent?.execution_id,
+    eventRecord.execution_id,
+  ]
+  for (const candidate of candidates) {
+    const ownerId = normalizeOwnerId(candidate)
+    if (ownerId) return `${sessionId}:${ownerId}`
+  }
+  return null
+}
+
 function isStaleAutoNotificationEvent(event: PollingEvent): boolean {
   const ts = getEventTimestampMs(event)
   return ts !== null && Date.now() - ts > AUTO_NOTIFICATION_MAX_AGE_MS
@@ -1330,6 +1384,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       if (event.type === 'streaming_start') {
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
         const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+        const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
+        const ownedTerminalKey = getOwnedTerminalStreamKey(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
+        if (ownedTerminalKey) {
+          chatStore.clearOwnedStreamingTerminal(ownedTerminalKey)
+        }
         // Workshop background agents (execute_step, harden_workflow, generate_learnings) use
         // workshop-* correlation IDs. Drop their streaming events — they render in EventDisplay cards.
         const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
@@ -1351,7 +1410,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
         const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
         const isTerminalStreaming = metadata?.kind === 'terminal'
-        if (isDelegationStreaming) {
+        const ownedTerminalKey = isTerminalStreaming
+          ? getOwnedTerminalStreamKey(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
+          : null
+        if (ownedTerminalKey && content) {
+          chatStore.setOwnedStreamingTerminalSnapshot(ownedTerminalKey, chunkIndex, content)
+        } else if (isDelegationStreaming) {
           if (content) {
             if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearDelegationStreamingText(correlationId as string)
             chatStore.appendDelegationStreamingChunk(correlationId as string, chunkIndex, content)
@@ -1370,6 +1434,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
         const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
         const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
+        const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
+        const ownedTerminalKey = getOwnedTerminalStreamKey(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
+        if (ownedTerminalKey) {
+          chatStore.setOwnedStreamingTerminalActive(ownedTerminalKey, false)
+        }
         if (!isDelegationStreaming && !isWorkshopStreaming) {
           chatStore.clearStreamingStatus(actualSessionId)
           chatStore.setStreamingTerminalActive(actualSessionId, false)
@@ -1689,6 +1758,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         if (event.type === 'streaming_start') {
           const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
           const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+          const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
+          const ownedTerminalKey = getOwnedTerminalStreamKey(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
+          if (ownedTerminalKey) {
+            chatStore.clearOwnedStreamingTerminal(ownedTerminalKey)
+          }
           const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
           if (isDelegation) {
             chatStore.clearDelegationStreamingText(correlationId as string)
@@ -1706,7 +1780,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
           const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
           const isTerminalStreaming = metadata?.kind === 'terminal'
-          if (isDelegation) {
+          const ownedTerminalKey = isTerminalStreaming
+            ? getOwnedTerminalStreamKey(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
+            : null
+          if (ownedTerminalKey && content) {
+            chatStore.setOwnedStreamingTerminalSnapshot(ownedTerminalKey, chunkIndex, content)
+          } else if (isDelegation) {
             if (content) {
               if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearDelegationStreamingText(correlationId as string)
               chatStore.appendDelegationStreamingChunk(correlationId as string, chunkIndex, content)
@@ -1721,6 +1800,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
           const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
           const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
+          const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
+          const ownedTerminalKey = getOwnedTerminalStreamKey(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
+          if (ownedTerminalKey) {
+            chatStore.setOwnedStreamingTerminalActive(ownedTerminalKey, false)
+          }
           if (!isDelegation && !isWorkshopStreaming) {
             chatStore.clearStreamingStatus(actualSessionId)
             chatStore.setStreamingTerminalActive(actualSessionId, false)

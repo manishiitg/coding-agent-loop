@@ -622,6 +622,17 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         }
       }
     }
+
+    if (event.type === 'delegation_start') {
+      const data = event.data as Record<string, unknown>
+      const payload = (data.data && typeof data.data === 'object')
+        ? data.data as Record<string, unknown>
+        : data
+      const backgroundAgentId = payload.background_agent_id
+      if (typeof backgroundAgentId === 'string' && backgroundAgentId.trim() && event.session_id) {
+        return `${event.session_id}_background_agent_started_${backgroundAgentId.trim()}`
+      }
+    }
     return undefined;
   }, []);
 

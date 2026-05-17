@@ -36,6 +36,16 @@ export function chatHistoryRuntimeLabel(session: ChatHistorySession): string | u
   return provider
 }
 
+export function chatHistoryWorkshopModeLabel(session: ChatHistorySession): string | undefined {
+  const raw = (session.runtime?.workshop_mode || session.workshop_mode || '').trim().toLowerCase()
+  if (!raw) return undefined
+  if (raw === 'optimizer') return 'Optimizer'
+  if (raw === 'builder') return 'Builder'
+  if (raw === 'run') return 'Run'
+  if (raw === 'reporting') return 'Reporting'
+  return raw.replace(/_/g, ' ')
+}
+
 const formatChatTime = (value?: string): string => {
   if (!value) return 'Unknown time'
   const date = new Date(value)
@@ -343,6 +353,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               const isExpanded = expandedSessionIds.has(session.session_id)
               const isLoadingDetails = loadingExpandedSessionIds.has(session.session_id)
               const runtimeLabel = chatHistoryRuntimeLabel(session)
+              const workshopModeLabel = chatHistoryWorkshopModeLabel(session)
 
               return (
                 <div key={session.session_id} className="group bg-background transition-colors hover:bg-muted/20">
@@ -367,6 +378,11 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                         <span>{formatChatTime(session.updated_at || session.created_at)}</span>
                         {typeof session.message_count === 'number' && <span>{session.message_count} messages</span>}
                         {session.agent_mode && <span>{session.agent_mode.replace(/_/g, ' ')}</span>}
+                        {workshopModeLabel && (
+                          <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-medium text-foreground">
+                            {workshopModeLabel}
+                          </span>
+                        )}
                         {runtimeLabel && (
                           <span className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-1.5 py-0.5 font-medium text-foreground">
                             <Code2 className="h-3 w-3" />

@@ -45,7 +45,7 @@ func providerUsesNativeContextManagement(provider llm.Provider) bool {
 
 func providerNeedsPlainTextHistory(provider llm.Provider) bool {
 	switch strings.ToLower(strings.TrimSpace(string(provider))) {
-	case "claude-code", "gemini-cli", "codex-cli", "cursor-cli", "kimi":
+	case "claude-code", "gemini-cli", "codex-cli", "cursor-cli":
 		return true
 	default:
 		return false
@@ -1000,9 +1000,6 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 						continue
 					}
 					label := "Agent"
-					if strings.Contains(strings.ToLower(w.config.ModelID), "kimi") {
-						label = "Kimi"
-					}
 					w.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
 						BaseEventData: events.BaseEventData{Timestamp: time.Now()},
 						Content:       fmt.Sprintf("⏳ %s is still working...", label),
@@ -1025,37 +1022,6 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 				select {
 				case <-ctx.Done():
 				case textChan <- chunk.Content:
-				}
-			}
-			// Kimi Code CLI executes its builtin tools inside the subprocess — they never
-			// reach executor/handlers.go, so toolcalllog never fires. Emit tool_call events
-			// directly from the stream chunks so they appear in the UI.
-			if w.config.Provider == "kimi" && w.agent != nil {
-				switch chunk.Type {
-				case llmtypes.StreamChunkTypeToolCallStart:
-					ev := events.NewToolCallStartEventWithCorrelation(
-						1,
-						chunk.ToolName,
-						events.ToolParams{Arguments: chunk.ToolArgs},
-						"kimi-cli",
-						string(w.agent.TraceID),
-						string(w.agent.TraceID),
-					)
-					ev.ToolCallID = chunk.ToolCallID
-					w.agent.EmitTypedEvent(ctx, ev)
-				case llmtypes.StreamChunkTypeToolCallEnd:
-					ev := events.NewToolCallEndEventWithTokenUsageAndModel(
-						1,
-						chunk.ToolName,
-						chunk.ToolResult,
-						"kimi-cli",
-						chunk.ToolDuration,
-						"",
-						0, 0, 0,
-						w.config.ModelID,
-					)
-					ev.ToolCallID = chunk.ToolCallID
-					w.agent.EmitTypedEvent(ctx, ev)
 				}
 			}
 			// Chain to previous callback if any

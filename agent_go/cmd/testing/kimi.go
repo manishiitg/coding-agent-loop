@@ -16,7 +16,7 @@ import (
 
 var kimiTestCmd = &cobra.Command{
 	Use:   "kimi",
-	Short: "Smoke test Kimi via the Claude Code CLI bridge",
+	Short: "Smoke test the Kimi API provider",
 	Long: `Smoke test Kimi provider integration from the builder repo.
 
 This test:
@@ -25,12 +25,12 @@ This test:
 
 Examples:
   orchestrator test kimi
-  orchestrator test kimi --model kimi-code`,
+  orchestrator test kimi --model kimi-k2.6`,
 	RunE: runKimiTest,
 }
 
 func init() {
-	kimiTestCmd.Flags().String("model", "", "Kimi model to use (default: kimi-code)")
+	kimiTestCmd.Flags().String("model", "", "Kimi model to use (default: kimi-k2.6)")
 	_ = viper.BindPFlag("kimi.model", kimiTestCmd.Flags().Lookup("model"))
 }
 
@@ -44,7 +44,7 @@ func runKimiTest(cmd *cobra.Command, args []string) error {
 
 	modelID := strings.TrimSpace(viper.GetString("kimi.model"))
 	if modelID == "" {
-		modelID = "kimi-code"
+		modelID = "kimi-k2.6"
 	}
 
 	apiKey := strings.TrimSpace(os.Getenv("KIMI_API_KEY"))

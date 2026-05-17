@@ -99,7 +99,7 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
   },
   kimi: {
     name: 'Kimi',
-    authDescription: 'API Key via Claude Code',
+    authDescription: 'API Key',
     colorClass: 'text-rose-600 dark:text-rose-400',
   },
   'claude-code': {
@@ -188,9 +188,6 @@ export function getProviderIntegrationKind(provider?: string, modelId?: string):
   const normalizedModel = (modelId || '').trim().toLowerCase()
 
   if (CODING_AGENT_PROVIDERS.has(normalizedProvider)) {
-    return 'coding_agent'
-  }
-  if (normalizedProvider === 'kimi' && normalizedModel === 'kimi-code') {
     return 'coding_agent'
   }
   if (AUDIO_PROVIDER_PROVIDERS.has(normalizedProvider)) {

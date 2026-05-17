@@ -10,7 +10,7 @@ func TestWorkshopConvertTieredLLMConfigHandlesPartialTiers(t *testing.T) {
 	tiered := workshopConvertTieredLLMConfig(&workflowtypes.TieredLLMConfig{
 		Tier2: &workflowtypes.AgentLLMConfig{
 			Provider: "kimi",
-			ModelID:  "kimi-code",
+			ModelID:  "kimi-k2.6",
 		},
 	})
 
@@ -23,11 +23,10 @@ func TestWorkshopConvertTieredLLMConfigHandlesPartialTiers(t *testing.T) {
 	if tiered.Tier2 == nil {
 		t.Fatal("expected non-nil tier2")
 	}
-	if tiered.Tier2.Provider != "kimi" || tiered.Tier2.ModelID != "kimi-code" {
+	if tiered.Tier2.Provider != "kimi" || tiered.Tier2.ModelID != "kimi-k2.6" {
 		t.Fatalf("unexpected tier2 config: %+v", tiered.Tier2)
 	}
 	if tiered.Tier3 != nil {
 		t.Fatalf("expected nil tier3, got %+v", tiered.Tier3)
 	}
 }
-

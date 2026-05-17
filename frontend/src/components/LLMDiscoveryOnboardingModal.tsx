@@ -153,7 +153,6 @@ function publishedName(candidate: LLMDiscoveryCandidate): string {
   if (candidate.provider === 'cursor-cli') return 'Cursor CLI'
   if (candidate.provider === 'claude-code') return 'Claude Code'
   if (candidate.provider === 'gemini-cli') return `Gemini CLI (${candidate.model_id})`
-  if (candidate.provider === 'kimi' && candidate.model_id === 'kimi-code') return 'Kimi Code'
   return candidate.label
 }
 

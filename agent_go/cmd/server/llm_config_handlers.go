@@ -349,7 +349,7 @@ func modelNameForProviderModel(provider, modelID string) string {
 
 func discoveryCandidateKind(provider string) string {
 	switch provider {
-	case "codex-cli", "cursor-cli", "claude-code", "gemini-cli", "kimi":
+	case "codex-cli", "cursor-cli", "claude-code", "gemini-cli":
 		return "local_cli"
 	default:
 		return "api"
@@ -367,7 +367,7 @@ func discoveryModelOptions(provider string) []string {
 	case "gemini-cli":
 		return []string{"auto", "high", "medium", "low"}
 	case "kimi":
-		return []string{"kimi-code", "kimi-k2.6"}
+		return []string{"kimi-k2.6"}
 	default:
 		return nil
 	}
@@ -384,8 +384,6 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 			return "Install Claude Code so the claude command is available on the backend PATH."
 		case "gemini-cli":
 			return "Install Gemini CLI so the gemini command is available on the backend PATH."
-		case "kimi":
-			return "Install Kimi Code CLI so the kimi command is available on the backend PATH."
 		default:
 			return "Install the provider CLI so its command is available on the backend PATH."
 		}
@@ -400,23 +398,8 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 		return "Run claude to finish Claude Code authentication, then test again."
 	case "gemini-cli":
 		return "Set GEMINI_API_KEY or finish Gemini CLI authentication, then test again."
-	case "kimi":
-		return "Run kimi login or set KIMI_API_KEY, then test again."
 	default:
 		return "Provider auth was not detected in the server environment or workspace provider keys."
-	}
-}
-
-func shouldUseKimiCodeDiscoveryCLITransport() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("KIMI_CODE_TRANSPORT"))) {
-	case "":
-		return true
-	case "cli", "native", "kimi-cli", "kimi-code-cli":
-		return true
-	case "http", "api", "anthropic", "anthropic-http", "off", "false", "0":
-		return false
-	default:
-		return true
 	}
 }
 
@@ -454,18 +437,6 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 		authConfigured, authSource := providerAuthConfigured(provider, keys)
 		usable, runtimeCommand, runtimeOK := providerUsable(provider, authConfigured)
 		modelID := llm.GetDefaultModel(llm.Provider(provider))
-		if provider == "kimi" {
-			modelID = "kimi-code"
-			if shouldUseKimiCodeDiscoveryCLITransport() {
-				runtimeCommand = "kimi"
-				runtimeOK = runtimeAvailable(runtimeCommand)
-				usable = runtimeOK != nil && *runtimeOK
-				if usable {
-					authConfigured = true
-					authSource = "Kimi Code CLI login"
-				}
-			}
-		}
 		if modelID == "" {
 			continue
 		}
@@ -858,62 +829,9 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 	case "cursor-cli":
 		return validateCursorCLI(req.APIKey, req.ModelID)
 	case "kimi":
-		if req.ModelID == "kimi-code" && shouldUseKimiCodeDiscoveryCLITransport() && strings.TrimSpace(req.APIKey) == "" {
-			return validateKimiCodeCLI()
-		}
 		return llm.ValidateAPIKey(req)
 	default:
 		return llm.ValidateAPIKey(req)
-	}
-}
-
-func validateKimiCodeCLI() llm.APIKeyValidationResponse {
-	log.Printf("[KIMI-CODE VALIDATION] Starting CLI validation")
-
-	kimiPath, err := exec.LookPath("kimi")
-	if err != nil {
-		log.Printf("[KIMI-CODE VALIDATION] CLI not found on PATH: %v", err)
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: "Kimi CLI not found. Install Kimi Code and run 'kimi login'.",
-		}
-	}
-	log.Printf("[KIMI-CODE VALIDATION] CLI found at: %s", kimiPath)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "kimi", "--print", "Say hello in one short sentence.")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		errMsg := strings.TrimSpace(string(output))
-		if ctx.Err() == context.DeadlineExceeded {
-			log.Printf("[KIMI-CODE VALIDATION] CLI test timed out")
-			return llm.APIKeyValidationResponse{
-				Valid:   false,
-				Message: "Kimi CLI timed out after 60s. Check that you are authenticated (run 'kimi login').",
-			}
-		}
-		log.Printf("[KIMI-CODE VALIDATION] CLI test failed: %v — output: %s", err, errMsg)
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: fmt.Sprintf("Kimi CLI error: %s", errMsg),
-		}
-	}
-
-	responseText := strings.TrimSpace(string(output))
-	if responseText == "" {
-		log.Printf("[KIMI-CODE VALIDATION] CLI returned empty response")
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: "Kimi CLI returned an empty response. Check authentication with 'kimi login'.",
-		}
-	}
-
-	log.Printf("[KIMI-CODE VALIDATION SUCCESS] Got response: %s", responseText)
-	return llm.APIKeyValidationResponse{
-		Valid:   true,
-		Message: fmt.Sprintf("Kimi CLI is working. Response: %s", responseText),
 	}
 }
 

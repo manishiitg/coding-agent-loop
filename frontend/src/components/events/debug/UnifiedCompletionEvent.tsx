@@ -25,7 +25,7 @@ interface UnifiedCompletionEventDisplayProps {
   event: UnifiedCompletionEvent
 }
 
-const codingAgentProviders = new Set(['claude-code', 'codex-cli', 'gemini-cli', 'kimi'])
+const codingAgentProviders = new Set(['claude-code', 'codex-cli', 'gemini-cli', 'cursor-cli'])
 
 const metadataBool = (value: unknown): boolean => value === true || value === 'true'
 

@@ -2,6 +2,8 @@ package chathistory
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -17,10 +19,11 @@ import (
 )
 
 // FilesystemStore is the filesystem-backed implementation of Store. It owns
-// two small JSON files under workspace-docs:
+// small JSON files under workspace-docs:
 //
 //	config/bot-connectors.json          — operator-level bot connector configs
-//	_users/<userID>/secrets.json        — per-user encrypted secret blobs
+//	_users/<userID>/secrets.json                         — per-user encrypted secret blobs
+//	_users/<userID>/workflow_secrets/<workflow-hash>.json - per-workflow encrypted secret blobs
 //
 // Both are loaded into memory on first access and mutated under narrow
 // mutexes. The store is built for single-instance deployments.
@@ -33,8 +36,9 @@ type FilesystemStore struct {
 	botCfgFile       string
 	botCfgLegacyFile string
 
-	// Per-user secrets mutexes, created on-demand (one per sanitized userID).
-	secretsMu sync.Map // userID → *sync.Mutex
+	// Secrets mutexes, created on-demand.
+	secretsMu         sync.Map // userID -> *sync.Mutex
+	workflowSecretsMu sync.Map // userID + workflow path -> *sync.Mutex
 }
 
 // sanitizeUserID returns a safe folder segment for a user ID. Empty or
@@ -213,8 +217,43 @@ type userSecretRecord struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+type workflowSecretsDocument struct {
+	WorkflowPath string                       `json:"workflow_path"`
+	Secrets      map[string]*userSecretRecord `json:"secrets"`
+}
+
+func normalizeWorkflowSecretPath(workflowPath string) (string, error) {
+	workflowPath = strings.TrimSpace(filepath.ToSlash(workflowPath))
+	workflowPath = strings.Trim(workflowPath, "/")
+	if workflowPath == "" {
+		return "", fmt.Errorf("chathistory: workflow path is required")
+	}
+	if strings.Contains(workflowPath, "\x00") {
+		return "", fmt.Errorf("chathistory: workflow path contains invalid character")
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(workflowPath))
+	cleaned = strings.Trim(cleaned, "/")
+	if cleaned == "." || cleaned == "" || strings.HasPrefix(cleaned, "../") || cleaned == ".." || strings.Contains(cleaned, "/../") {
+		return "", fmt.Errorf("chathistory: invalid workflow path %q", workflowPath)
+	}
+	return cleaned, nil
+}
+
+func workflowSecretPathHash(workflowPath string) string {
+	sum := sha256.Sum256([]byte(workflowPath))
+	return hex.EncodeToString(sum[:])
+}
+
 func (s *FilesystemStore) userSecretsFile(userID string) string {
 	return filepath.Join(s.rootDir, "_users", sanitizeUserID(userID), "secrets.json")
+}
+
+func (s *FilesystemStore) workflowSecretsFile(userID, workflowPath string) (string, string, error) {
+	normalized, err := normalizeWorkflowSecretPath(workflowPath)
+	if err != nil {
+		return "", "", err
+	}
+	return filepath.Join(s.rootDir, "_users", sanitizeUserID(userID), "workflow_secrets", workflowSecretPathHash(normalized)+".json"), normalized, nil
 }
 
 // secretsLock returns a per-user mutex, created on demand.
@@ -225,6 +264,20 @@ func (s *FilesystemStore) secretsLock(userID string) *sync.Mutex {
 	}
 	m := &sync.Mutex{}
 	actual, _ := s.secretsMu.LoadOrStore(key, m)
+	return actual.(*sync.Mutex)
+}
+
+func (s *FilesystemStore) workflowSecretsLock(userID, workflowPath string) *sync.Mutex {
+	normalized, err := normalizeWorkflowSecretPath(workflowPath)
+	if err != nil {
+		normalized = strings.TrimSpace(workflowPath)
+	}
+	key := sanitizeUserID(userID) + ":" + workflowSecretPathHash(normalized)
+	if m, ok := s.workflowSecretsMu.Load(key); ok {
+		return m.(*sync.Mutex)
+	}
+	m := &sync.Mutex{}
+	actual, _ := s.workflowSecretsMu.LoadOrStore(key, m)
 	return actual.(*sync.Mutex)
 }
 
@@ -313,6 +366,115 @@ func (s *FilesystemStore) ListUserSecrets(ctx context.Context, userID string) ([
 		out = append(out, UserSecret{
 			UserID:         sanitizeUserID(userID),
 			Name:           name,
+			EncryptedValue: rec.EncryptedValue,
+			CreatedAt:      rec.CreatedAt,
+			UpdatedAt:      rec.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
+func (s *FilesystemStore) loadWorkflowSecretsLocked(userID, workflowPath string) (string, map[string]*userSecretRecord, error) {
+	path, normalized, err := s.workflowSecretsFile(userID, workflowPath)
+	if err != nil {
+		return "", nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return normalized, make(map[string]*userSecretRecord), nil
+		}
+		return "", nil, err
+	}
+	if len(data) == 0 {
+		return normalized, make(map[string]*userSecretRecord), nil
+	}
+
+	var doc workflowSecretsDocument
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return "", nil, fmt.Errorf("chathistory: parse %s: %w", path, err)
+	}
+	if doc.Secrets == nil {
+		doc.Secrets = make(map[string]*userSecretRecord)
+	}
+	return normalized, doc.Secrets, nil
+}
+
+func (s *FilesystemStore) saveWorkflowSecretsLocked(userID, workflowPath string, secrets map[string]*userSecretRecord) error {
+	path, normalized, err := s.workflowSecretsFile(userID, workflowPath)
+	if err != nil {
+		return err
+	}
+	doc := workflowSecretsDocument{
+		WorkflowPath: normalized,
+		Secrets:      secrets,
+	}
+	return fsutil.WriteJSONAtomic(path, doc, 0600)
+}
+
+func (s *FilesystemStore) UpsertWorkflowSecret(ctx context.Context, userID, workflowPath, name, encryptedValue string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("chathistory: secret name is required")
+	}
+	mux := s.workflowSecretsLock(userID, workflowPath)
+	mux.Lock()
+	defer mux.Unlock()
+
+	normalized, secrets, err := s.loadWorkflowSecretsLocked(userID, workflowPath)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if existing, ok := secrets[name]; ok {
+		existing.EncryptedValue = encryptedValue
+		existing.UpdatedAt = now
+	} else {
+		secrets[name] = &userSecretRecord{
+			EncryptedValue: encryptedValue,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}
+	}
+	return s.saveWorkflowSecretsLocked(userID, normalized, secrets)
+}
+
+func (s *FilesystemStore) DeleteWorkflowSecret(ctx context.Context, userID, workflowPath, name string) error {
+	mux := s.workflowSecretsLock(userID, workflowPath)
+	mux.Lock()
+	defer mux.Unlock()
+
+	normalized, secrets, err := s.loadWorkflowSecretsLocked(userID, workflowPath)
+	if err != nil {
+		return err
+	}
+	if _, ok := secrets[name]; !ok {
+		return nil
+	}
+	delete(secrets, name)
+	return s.saveWorkflowSecretsLocked(userID, normalized, secrets)
+}
+
+func (s *FilesystemStore) ListWorkflowSecrets(ctx context.Context, userID, workflowPath string) ([]UserSecret, error) {
+	mux := s.workflowSecretsLock(userID, workflowPath)
+	mux.Lock()
+	defer mux.Unlock()
+
+	normalized, secrets, err := s.loadWorkflowSecretsLocked(userID, workflowPath)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(secrets))
+	for n := range secrets {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]UserSecret, 0, len(names))
+	for _, name := range names {
+		rec := secrets[name]
+		out = append(out, UserSecret{
+			UserID:         sanitizeUserID(userID),
+			Name:           name,
+			WorkflowPath:   normalized,
 			EncryptedValue: rec.EncryptedValue,
 			CreatedAt:      rec.CreatedAt,
 			UpdatedAt:      rec.UpdatedAt,

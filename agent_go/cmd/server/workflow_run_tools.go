@@ -345,7 +345,7 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 
 	// Load user-stored secrets from manifest selection
 	if len(caps.SelectedSecrets) > 0 {
-		decryptedSecrets := api.loadSelectedUserSecrets(context.Background(), userID, caps.SelectedSecrets)
+		decryptedSecrets := api.loadSelectedSecrets(context.Background(), userID, workflowPath, caps.SelectedSecrets)
 		if len(decryptedSecrets) > 0 {
 			secretsList := make([]map[string]string, len(decryptedSecrets))
 			for i, s := range decryptedSecrets {

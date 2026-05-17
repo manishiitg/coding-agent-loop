@@ -88,6 +88,7 @@ export function buildQueryRequestPayload(params: {
   hasActivePreset: boolean
   decryptedSecrets?: Array<{ name: string; value: string }>
   selectedGlobalSecrets?: string[] | null
+  restoredConversationPath?: string
 }): AgentQueryRequest {
   const {
     queryWithContext, correctAgentMode, selectedModeCategory,
@@ -96,6 +97,7 @@ export function buildQueryRequestPayload(params: {
     executionOptions, workflowPresetId, chatPresetId,
     filteredPresetTools, hasActivePreset, decryptedSecrets,
     selectedGlobalSecrets,
+    restoredConversationPath,
   } = params
 
   const isMultiAgentMode = selectedModeCategory === 'multi-agent'
@@ -184,6 +186,7 @@ export function buildQueryRequestPayload(params: {
     workflow_context_paths: (isChatWithExtras || selectedModeCategory === 'workflow') && currentTab?.config?.workflowContext?.length
       ? currentTab.config.workflowContext.map(w => w.workspacePath)
       : undefined,
+    restored_conversation_path: restoredConversationPath?.trim() || undefined,
     enable_image_generation: isChatWithExtras ? (currentTab?.config?.enableImageGeneration ?? false) : undefined,
     image_gen_config: (() => {
       if (!isChatWithExtras) return undefined

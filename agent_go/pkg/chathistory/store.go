@@ -5,8 +5,9 @@
 //
 // Layout on disk (under the workspace-docs root):
 //
-//	_users/<userID>/secrets.json        per-user encrypted secret blobs
-//	config/bot-connectors.json          operator-level bot connector config
+//	_users/<userID>/secrets.json                           per-user encrypted secret blobs
+//	_users/<userID>/workflow_secrets/<workflow-hash>.json   per-workflow encrypted secret blobs
+//	config/bot-connectors.json                             operator-level bot connector config
 //
 // The package name is historical; what remains is an operator-config store
 // rather than chat history.
@@ -58,6 +59,7 @@ type UserSecret struct {
 	ID             string    `json:"id"`
 	UserID         string    `json:"user_id"`
 	Name           string    `json:"name"`
+	WorkflowPath   string    `json:"workflow_path,omitempty"`
 	EncryptedValue string    `json:"encrypted_value"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
@@ -76,6 +78,11 @@ type Store interface {
 	UpsertUserSecret(ctx context.Context, userID, name, encryptedValue string) error
 	DeleteUserSecret(ctx context.Context, userID, name string) error
 	ListUserSecrets(ctx context.Context, userID string) ([]UserSecret, error)
+
+	// Workflow secrets (encrypted per-user blobs scoped to one workflow path).
+	UpsertWorkflowSecret(ctx context.Context, userID, workflowPath, name, encryptedValue string) error
+	DeleteWorkflowSecret(ctx context.Context, userID, workflowPath, name string) error
+	ListWorkflowSecrets(ctx context.Context, userID, workflowPath string) ([]UserSecret, error)
 
 	Close() error
 }

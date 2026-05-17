@@ -1312,7 +1312,7 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 
 	// Load user-level secrets if configured
 	if len(sctx.Capabilities.SelectedSecrets) > 0 && sctx.UserID != "" {
-		userSecrets := s.api.loadSelectedUserSecrets(context.Background(), sctx.UserID, sctx.Capabilities.SelectedSecrets)
+		userSecrets := s.api.loadSelectedSecrets(context.Background(), sctx.UserID, sctx.WorkspacePath, sctx.Capabilities.SelectedSecrets)
 		if len(userSecrets) > 0 {
 			reqMap["decrypted_secrets"] = userSecrets
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Loaded %d user secrets for multi-agent schedule %s", len(userSecrets), sctx.Schedule.ID)

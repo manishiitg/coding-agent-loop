@@ -2532,6 +2532,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         hasActivePreset: !!activePreset,
         decryptedSecrets,
         selectedGlobalSecrets: activePreset?.selectedGlobalSecretNames ?? undefined,
+        restoredConversationPath,
       })
 
       // Validate execution groups for workflow mode

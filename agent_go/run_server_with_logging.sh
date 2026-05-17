@@ -6,6 +6,31 @@
 # Get script directory first (needed for both test and server modes)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# When this script is launched from a non-login environment, system package
+# managers may not be on PATH even though they are available in the user's
+# normal terminal. Import the login-shell PATH once, then keep common host
+# package locations as a fallback for native workspace shell commands.
+import_login_shell_path() {
+    local login_shell="${SHELL:-/bin/zsh}"
+    local login_path=""
+    if [ -x "$login_shell" ]; then
+        login_path="$("$login_shell" -ilc 'printf "%s" "$PATH"' 2>/dev/null || true)"
+    fi
+    if [ -n "$login_path" ]; then
+        PATH="$login_path:$PATH"
+    fi
+    local candidate
+    for candidate in "$HOME/.local/bin" "$HOME/go/bin" "$HOME/.cargo/bin" "$HOME/.bun/bin" /opt/homebrew/bin /opt/homebrew/sbin /usr/local/bin /usr/local/sbin; do
+        case ":$PATH:" in
+            *":$candidate:"*) ;;
+            *) PATH="$candidate:$PATH" ;;
+        esac
+    done
+    export PATH
+}
+
+import_login_shell_path
+
 TEST_CONNECTIONS=false
 BACKGROUND_MODE=false
 WITH_WORKSPACE=false
@@ -109,6 +134,31 @@ kill_process_tree() {
 
     echo "⚠️  $label (PID: $root_pid) did not stop after SIGTERM; forcing stop..."
     kill -9 "$root_pid" 2>/dev/null || true
+}
+
+cleanup_coding_agent_tmux_sessions() {
+    command -v tmux >/dev/null 2>&1 || return 0
+
+    local sessions
+    sessions="$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)"
+    [ -n "$sessions" ] || return 0
+
+    local session
+    local count=0
+    while IFS= read -r session; do
+        case "$session" in
+            mlp-claude-code-exp*|mlp-codex-cli-int*|mlp-gemini-cli-int*)
+                tmux kill-session -t "$session" 2>/dev/null || true
+                count=$((count + 1))
+                ;;
+        esac
+    done <<EOF
+$sessions
+EOF
+
+    if [ "$count" -gt 0 ]; then
+        echo "🧹 Cleaned up $count coding-agent tmux session(s)"
+    fi
 }
 
 choose_frontend_port() {
@@ -867,6 +917,7 @@ stop_agent_server() {
         wait "$SERVER_PID" 2>/dev/null
         print_port_status "$AGENT_PORT" "agent"
     fi
+    cleanup_coding_agent_tmux_sessions
 }
 
 cleanup_on_exit() {
@@ -924,6 +975,8 @@ start_native_workspace() {
     echo "=========================================" >> "$WORKSPACE_LOG_PATH"
     echo "- Port: $WORKSPACE_PORT" >> "$WORKSPACE_LOG_PATH"
     echo "- Docs Path: $WORKSPACE_DOCS_PATH" >> "$WORKSPACE_LOG_PATH"
+    echo "- Native Workspace: ${NATIVE_WORKSPACE:-}" >> "$WORKSPACE_LOG_PATH"
+    echo "- PATH: $PATH" >> "$WORKSPACE_LOG_PATH"
     echo "=========================================" >> "$WORKSPACE_LOG_PATH"
     echo "" >> "$WORKSPACE_LOG_PATH"
 

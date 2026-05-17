@@ -410,6 +410,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	return false, todoTaskStep.NextStepID, nil
 }
 
+func formatMessageSequenceRoutePromptBlock(step PlanStepInterface) string {
+	if !isMessageSequenceStep(step) {
+		return ""
+	}
+	return strings.TrimSpace(`Step type: message_sequence
+Conversation: route-scoped session resumes within this orchestrator run
+First call: starts the sequence and sends the configured item queue
+Initial instructions: call_sub_agent instructions are added as initial context before the configured queue
+Re-entry: later call_sub_agent instructions are sent as the next user message in the existing conversation
+Start fresh: set message_sequence_restart=true to archive the existing route session and replay the configured queue`)
+}
+
 // buildTodoTaskOrchestratorTemplateVars builds template variables for the orchestrator agent
 func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars(
 	ctx context.Context,
@@ -438,6 +450,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 				fmt.Fprintf(&routesBuilder, " → output: `%s` | folder: `%s/`", contextOutput, subExecAbsPath)
 			} else {
 				fmt.Fprintf(&routesBuilder, " → folder: `%s/`", subExecAbsPath)
+			}
+			if isMessageSequenceStep(route.SubAgentStep) {
+				fmt.Fprintf(&routesBuilder, " | repeated calls resume; `message_sequence_restart=true` starts fresh")
 			}
 		}
 	}
@@ -589,7 +604,7 @@ func routeStepBehaviorDetails(step PlanStepInterface) string {
 	}
 	switch step.StepType() {
 	case StepTypeMessageSeq:
-		return "Stateful sequence worker. Calling this route sends the provided instructions as the next user message. If a session already exists, it resumes the same saved conversation instead of replaying the original queue."
+		return "Stateful sequence worker. First call sends the configured item queue with the provided instructions as initial context. Later calls resume the same saved conversation and send instructions as the re-entry user message. Set message_sequence_restart=true to archive the existing route session and replay the queue from the beginning."
 	case StepTypeRegular:
 		return "Stateless worker. Each call executes the task as a normal one-off step."
 	case StepTypeTodoTask:
@@ -1007,6 +1022,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutedSubAgentStep(
 
 	if isMessageSequenceStep(stepToExecute) {
 		reentryMessage := strings.TrimSpace(stepToExecute.GetDescription())
+		messageSequenceRestart, _ := ctx.Value(virtualtools.SubAgentMessageSequenceRestartKey).(bool)
 		executionResult, capturedHistory, err := hcpo.executeMessageSequenceStep(
 			ctx,
 			stepToExecute,
@@ -1018,6 +1034,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutedSubAgentStep(
 			messageSequenceCallOptions{
 				Source:         "orchestrator_reentry",
 				ReentryMessage: reentryMessage,
+				Restart:        messageSequenceRestart,
 			},
 		)
 		return executionResult, capturedHistory, err

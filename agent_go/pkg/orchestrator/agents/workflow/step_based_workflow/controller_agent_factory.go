@@ -2126,6 +2126,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 					desc += "\n\nRoute type: " + routeStepTypeSummary(route.SubAgentStep)
 					desc += "\nBehavior: " + routeStepBehaviorDetails(route.SubAgentStep)
 					desc += "\n\nDescription: " + ResolveVariables(route.SubAgentStep.GetDescription(), hcpo.variableValues)
+					if sequenceRouteInfo := formatMessageSequenceRoutePromptBlock(route.SubAgentStep); sequenceRouteInfo != "" {
+						desc += "\n\n" + sequenceRouteInfo
+					}
 				}
 				routeDescriptions[route.RouteID] = desc
 			}

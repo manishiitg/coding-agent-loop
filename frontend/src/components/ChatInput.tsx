@@ -1,7 +1,7 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
 
 const DBG = '[skill-popup]'
-import { Send, Square, Code2, Sparkles, Wand2, Loader2, Search, Globe, Layers, X, History, Bot, Server, Download, Paperclip, CalendarClock, MessageSquare, Trash2 } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Wand2, Loader2, Search, Globe, Layers, X, History, Bot, Server, Download, Paperclip, CalendarClock, MessageSquare, Trash2, Terminal } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -229,7 +229,7 @@ const resumeChatConversationPath = (session: ChatHistorySession): string => {
 const resumeChatRuntimeLabel = (session: ChatHistorySession): string | undefined => {
   const runtime = session.runtime
   const provider = runtime?.provider?.trim()
-  if (runtime?.kind !== 'coding_agent' || !provider) return undefined
+  if (!runtime || !provider) return undefined
 
   const model = runtime.model_id?.trim()
   if (model && model !== provider) return `${provider} · ${model}`
@@ -545,14 +545,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const isWorkflowPhaseChat = !!workflowPhaseId
   const isWorkflowMode = selectedModeCategory === 'workflow'
   const workflowPhasePreset = useGlobalPresetStore(state => state.getActivePreset('workflow'))
-  // Read phase LLM from workflow manifest (source of truth), not the global preset
-  const manifestPhaseLLM = useMemo(() => {
-    if (!isWorkflowPhaseChat) return null
-    const workspacePath = workflowPhasePreset?.selectedFolder?.filepath
-    if (!workspacePath) return null
-    const wf = useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)
+  // Read phase LLM from workflow manifest (source of truth), not the global preset.
+  // Subscribe to the manifest store so the provider/model badge updates without reopening the chat.
+  const workflowPhaseWorkspacePath = isWorkflowPhaseChat ? workflowPhasePreset?.selectedFolder?.filepath : undefined
+  const manifestPhaseLLM = useWorkflowManifestStore(state => {
+    if (!workflowPhaseWorkspacePath) return null
+    const wf = state.workflows.find(item => item.workspace_path === workflowPhaseWorkspacePath)
     return wf?.manifest?.capabilities?.llm_config?.phase_llm ?? null
-  }, [isWorkflowPhaseChat, workflowPhasePreset?.selectedFolder?.filepath])
+  })
   // Hide extras (servers, skills, agent mode, etc.) in workflow mode but show in multi-agent
   const hideExtras = isWorkflowMode
 
@@ -585,6 +585,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const canSteer = activeTab?.canSteer ?? false
   const tabSessionId = activeTab?.sessionId ?? null
   const isViewOnly = activeTab?.metadata?.isViewOnly ?? false
+  const terminalOutputSessionKey = tabSessionId || activeTabId || '__default__'
+  const terminalOutputOpen = useChatStore(state => state.terminalOutputOpen[terminalOutputSessionKey] ?? true)
+  const toggleTerminalOutputOpen = useChatStore(state => state.toggleTerminalOutputOpen)
   
   // Note: activeTab may be undefined during initial render before tabs are created
   // This is expected and will resolve once the tab store initializes
@@ -1351,7 +1354,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
     return getCurrentLLMOption()
-  }, [tabConfig?.llmConfig, availableLLMs, getCurrentLLMOption, isWorkflowPhaseChat, getActivePreset, workflowPrimaryConfig])
+  }, [tabConfig?.llmConfig, availableLLMs, getCurrentLLMOption, isWorkflowPhaseChat, getActivePreset, workflowPrimaryConfig, manifestPhaseLLM?.provider, manifestPhaseLLM?.model_id])
+
+  const activeLLMLabel = useMemo(() => {
+    if (!primaryLLM?.provider) return 'LLM'
+    const model = primaryLLM.model?.split('/').pop()
+    return model ? `${primaryLLM.provider}/${model}` : primaryLLM.provider
+  }, [primaryLLM?.model, primaryLLM?.provider])
+
+  const handleTerminalOutputButtonClick = useCallback(() => {
+    toggleTerminalOutputOpen(terminalOutputSessionKey)
+  }, [terminalOutputSessionKey, toggleTerminalOutputOpen])
   
   // Preset folder selection
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -2917,7 +2930,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         ].filter(Boolean).join(' · '),
         isSelected: contextPaths.has(path),
         leadingIcon,
-        badge: runtimeLabel ? 'coding' : kind === 'schedule' ? 'scheduled' : kind === 'bot' ? 'bot' : undefined,
+        badge: runtimeLabel ? (session.runtime?.kind === 'coding_agent' ? 'coding' : 'llm') : kind === 'schedule' ? 'scheduled' : kind === 'bot' ? 'bot' : undefined,
         details: resumeChatDetails(session),
       }
     })
@@ -3168,8 +3181,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               <div className="flex items-center gap-2">
                 {/* Workflow phase chat: show active LLM label */}
                 {hideExtras && isWorkflowPhaseChat && (
-                  <div className="flex items-center gap-1 px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-xs">
-                    {primaryLLM?.provider && primaryLLM?.model ? `${primaryLLM.provider}/${primaryLLM.model.split('/').pop()}` : 'LLM'}
+                  <div className="flex max-w-[18rem] items-center gap-1 rounded-md border border-gray-300 bg-gray-100 px-2 py-1.5 text-xs text-gray-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400">
+                    <span className="truncate">{activeLLMLabel}</span>
+                    {supportsLiveCodingAgentInput && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={handleTerminalOutputButtonClick}
+                            aria-pressed={terminalOutputOpen}
+                            aria-label={terminalOutputOpen ? 'Hide terminal output' : 'Show terminal output'}
+                            className={`ml-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors ${
+                              terminalOutputOpen
+                                ? 'border-gray-400 bg-gray-200 text-gray-800 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-100'
+                                : 'border-transparent text-gray-500 hover:bg-gray-200 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
+                            }`}
+                          >
+                            <Terminal className="h-3.5 w-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">
+                          <p>{terminalOutputOpen ? 'Hide terminal output' : 'Show terminal output'}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                   </div>
                 )}
 

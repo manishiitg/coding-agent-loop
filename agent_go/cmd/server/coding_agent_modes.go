@@ -10,7 +10,12 @@ import (
 )
 
 func codingAgentPersistentInteractiveFlags(provider string) (claudeCode bool, codexCLI bool, geminiCLI bool, cursorCLI bool) {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
+	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
+	if !llm.IsTmuxCodingAgentProvider(llm.Provider(normalizedProvider), "") {
+		return false, false, false, false
+	}
+
+	switch normalizedProvider {
 	case strings.ToLower(string(llm.ProviderClaudeCode)):
 		return true, false, false, false
 	case strings.ToLower(string(llm.ProviderCodexCLI)):

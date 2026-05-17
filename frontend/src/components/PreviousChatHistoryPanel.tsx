@@ -29,7 +29,7 @@ export function chatHistoryConversationPath(session: ChatHistorySession): string
 export function chatHistoryRuntimeLabel(session: ChatHistorySession): string | undefined {
   const runtime = session.runtime
   const provider = runtime?.provider?.trim()
-  if (runtime?.kind !== 'coding_agent' || !provider) return undefined
+  if (!runtime || !provider) return undefined
 
   const model = runtime.model_id?.trim()
   if (model && model !== provider) return `${provider} · ${model}`

@@ -800,7 +800,7 @@ func (iwm *InteractiveWorkshopManager) persistWorkflowConfigToManifest(ctx conte
 	caps["selected_skills"] = iwm.controller.GetSelectedSkills()
 
 	// Update secrets (names only, never values). Write to BOTH manifest fields:
-	//   - selected_secrets           → used by loadSelectedUserSecrets to decrypt user-stored values
+	//   - selected_secrets           → used by loadSelectedSecrets to decrypt workflow/user-stored values
 	//   - selected_global_secret_names → used by mergeGlobalSecrets to filter GLOBAL_SECRET_* env vars
 	// Each loader path ignores names it can't resolve in its own bucket, so writing the
 	// union to both fields lets user and global names each resolve via their own path.
@@ -942,8 +942,9 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"execute_shell_command", "diff_patch_workspace_file",
 		"read_image", "read_video", "read_pdf", "generate_text_llm", "search_web_llm",
 		"image_gen", "image_edit", "generate_video", "text_to_speech", "speech_to_text", "generate_music",
-		// Secret management tools (user-scoped; global secrets are read-only)
-		"list_secrets", "set_user_secret", "delete_user_secret",
+		// Secret management tools. Global secrets are read-only; workflow/user
+		// encrypted stores are writable when the corresponding tools are registered.
+		"list_secrets", "set_workflow_secret", "delete_workflow_secret", "set_user_secret", "delete_user_secret",
 		// Human tools — the builder is already in a chat, so it asks users
 		// directly instead of calling human_feedback. submit_human_answer is
 		// how it resolves human_input steps from workflows it launches.
@@ -1982,6 +1983,21 @@ Learning writes and KB access/writes are **opt-in** for every step. Global learn
 {{end}}
 {{end}}
 
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
+## MESSAGE SEQUENCE ROUTE PATTERNS
+
+Use these patterns when designing or hardening todo_task predefined routes:
+- **Stateful Specialist**: one todo_task route owns an expert conversation the orchestrator can re-enter across feedback loops.
+- **Test/Fix Loop**: orchestrator calls the same message_sequence route, runs validation/tests, then re-enters it with failures instead of starting over.
+- **Maker + Reviewer**: one route creates output and a separate message_sequence reviewer route remembers standards, prior issues, and review history.
+- **Panel of Specialists**: several message_sequence routes keep separate memory for different domains while the todo_task orchestrator coordinates decisions.
+- **Clean-Room Retry**: use `+"`message_sequence_restart=true`"+` when a clean second attempt is needed because prior context is stale, wrong, or contaminated.
+- **Human-in-the-Loop Re-entry**: human_input or operator feedback can be sent back into the same sequence conversation as the next user message.
+- **Top-Level Scripted Conversation**: use a top-level message_sequence when the workflow is a fixed linear conversation and does not need orchestration.
+
+For a todo_task route, use `+"`message_sequence`"+` when the orchestrator should preserve specialist memory across critique, test feedback, validation feedback, or follow-up calls. Reuse the same route for re-entry; restart only when the prior conversation is stale, wrong, or contaminated.
+{{end}}
+
 {{if eq .WorkshopMode "builder"}}
 **BUILD MODE** — Design, build, and test the workflow. Focus on getting a working plan with steps that produce correct output.
 
@@ -2229,6 +2245,10 @@ Every step reads from prior steps and writes for downstream steps:
 - **Self-contained** — clear inputs/outputs, can be validated independently
 - **Worth optimizing** — complex enough that accumulated learnings improve reliability
 
+Route sub-agents can be `+"`regular`"+` for stateless one-off work, `+"`message_sequence`"+` for a stateful specialist conversation, or `+"`todo_task`"+` for one nested orchestration layer.
+
+Use a `+"`message_sequence`"+` route when the parent orchestrator should be able to call the same specialist repeatedly with memory. Normal repeated calls reuse the route session and send the new instructions as the re-entry user message. Use `+"`message_sequence_restart=true`"+` only when the orchestrator intentionally needs a clean rerun that archives the existing route session and replays the configured queue from the beginning.
+
 **Use the generic agent** (no predefined route) for tasks that are:
 - **Dynamic** — unpredictable at design time
 - **Trivial** — too simple for a dedicated sub-agent
@@ -2244,6 +2264,7 @@ Use `+"`message_sequence`"+` only when the user explicitly wants one persistent 
 - Add explicit reference-check, hallucination-check, critique, or self-validation items when reliability needs it.
 - Reads for KB, db, and learnings are always available. Writes are item-scoped through `+"`write_access`"+`.
 - Python `+"`code`"+` items are for deterministic parsing/transforms. On success, the next user_message gets script path, output paths, and summarized logs as prepended context.
+- As a todo_task predefined route, a message_sequence behaves like a reusable specialist sub-agent: reuse the same route for critique, test feedback, validation feedback, or follow-up work that should keep prior context; restart only when the prior conversation is stale, wrong, or contaminated.
 
 ### Step 6: Design Validation
 
@@ -2271,7 +2292,7 @@ Step-level `+"`success_criteria`"+` is deprecated. Rely on a strong `+"`descript
 ### Step Types Reference
 
 - **Regular** (type: "regular"): Standard task. Executes an agent that produces a context_output file.
-- **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes**. Each route can either define an inline **sub_agent_step** or reuse a plan-local orphan definition via **orphan_step_ref**. Route sub-agents are usually **regular** steps, but can also be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
+- **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes**. Each route can either define an inline **sub_agent_step** or reuse a plan-local orphan definition via **orphan_step_ref**. Route sub-agents are usually **regular** steps, can be **message_sequence** when the route needs persistent specialist memory with re-entry/restart behavior, and can be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
 - **Message Sequence** (type: "message_sequence"): Persistent single-agent conversation with ordered `+"`items`"+`. Use short user_message items, optional prevalidation items, and optional Python code items. The sequence can resume and receive a new user message without replaying the queue.
 - **Routing / Orchestration** (type: "routing"): N-way LLM-based routing. Has an **orchestration_step** and **orchestration_routes** — each route has a **sub_agent_step**.
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports: 'text', 'yesno', 'multiple_choice'. Can route based on response.
@@ -2824,23 +2845,24 @@ Skills are reusable instruction sets injected into step agents at runtime. They 
 Use `+"`get_workflow_config`"+` to see the workflow's selected skills. Use `+"`list_skills`"+` to see all installed skills.
 
 ### Secrets
-Secrets are credentials (API keys, tokens, passwords) injected into step agents as `+"`$SECRET_<NAME>`"+` environment variables at execution time. They exist in two buckets:
-- **User secrets** — per-user, encrypted server-side, full CRUD via chat.
+Secrets are credentials (API keys, tokens, passwords) injected into step agents as `+"`$SECRET_<NAME>`"+` environment variables at execution time. They exist in three buckets:
+- **Workflow secrets** — per-user, encrypted server-side, scoped only to this workflow. Use these by default for workflow-specific credentials.
+- **User secrets** — per-user, encrypted server-side, reusable across workflows.
 - **Global secrets** — operator-managed via `+"`GLOBAL_SECRET_*`"+` env vars on the server. Read-only from chat.
 
 **Adding a secret is a TWO-STEP flow. Doing only step 2 is a common silent-failure trap: the name gets attached but `+"`$SECRET_<NAME>`"+` is empty at runtime.**
 
-1. **Store the value** (user secrets only): `+"`set_user_secret(name=\"BUFFER_API_KEY\", value=\"<plaintext>\")`"+` — AES-GCM encrypts and stores per-user. Names that already exist as globals are rejected.
-2. **Attach to this workflow**: `+"`update_workflow_config(add_secrets=[\"BUFFER_API_KEY\"])`"+`. This step validates that a value exists (user store OR global); attaching an orphan name is rejected with an error pointing to step 1.
+1. **Store the value**: prefer `+"`set_workflow_secret(name=\"BUFFER_API_KEY\", value=\"<plaintext>\")`"+` for workflow-only credentials. Use `+"`set_user_secret`"+` only when the same credential should be reusable across workflows.
+2. **Attach to this workflow**: `+"`update_workflow_config(add_secrets=[\"BUFFER_API_KEY\"])`"+`. This step validates that a value exists (workflow store, user store, or global); attaching an orphan name is rejected with an error pointing to step 1.
 
-**When the user asks you to add/save/set a secret for this workflow, complete both steps in the same turn.** Do not stop after `+"`set_user_secret`"+`; immediately call `+"`update_workflow_config(add_secrets=[...])`"+` so the next step run receives `+"`$SECRET_<NAME>`"+`. If the user only gives a name and no value, call `+"`list_secrets`"+` first and attach an existing available secret if present; otherwise ask for the value. If the user pastes a value in chat, store it and then refer to it by name only.
+**When the user asks you to add/save/set a secret for this workflow, complete both steps in the same turn.** Do not stop after `+"`set_workflow_secret`"+` or `+"`set_user_secret`"+`; immediately call `+"`update_workflow_config(add_secrets=[...])`"+` so the next step run receives `+"`$SECRET_<NAME>`"+`. If the user only gives a name and no value, call `+"`list_secrets`"+` first and attach an existing available secret if present; otherwise ask for the value. If the user pastes a value in chat, store it and then refer to it by name only.
 
 Do **not** give boilerplate advice like "rotate this secret" after a normal user-requested save. Recommend rotation only when there is a concrete exposure reason: the value was printed into logs/output, committed to a file, sent to the wrong channel, or the user explicitly asks for security remediation.
 
 **Other secret ops:**
-- **Inspect**: `+"`list_secrets`"+` returns `+"`global`"+` (read-only names) and `+"`user`"+` (CRUD names) buckets — values are never exposed.
-- **Edit a value**: `+"`set_user_secret`"+` again with the same name — it upserts.
-- **Delete from store**: `+"`delete_user_secret(name)`"+`. Workflow attachments are separate — also run `+"`update_workflow_config(remove_secrets=[\"NAME\"])`"+` to detach.
+- **Inspect**: `+"`list_secrets`"+` returns `+"`global`"+`, `+"`workflow`"+`, and `+"`user`"+` buckets — values are never exposed.
+- **Edit a value**: call `+"`set_workflow_secret`"+` or `+"`set_user_secret`"+` again with the same name — it upserts.
+- **Delete from store**: `+"`delete_workflow_secret(name)`"+` or `+"`delete_user_secret(name)`"+`. Workflow attachments are separate — also run `+"`update_workflow_config(remove_secrets=[\"NAME\"])`"+` to detach.
 - **Detach only (keep value)**: `+"`update_workflow_config(remove_secrets=[\"NAME\"])`"+`.
 
 Secret VALUES are never rendered into prompts, logs, or tool outputs. Step agents read them only from `+"`$SECRET_<NAME>`"+` in `+"`execute_shell_command`"+`. Never echo, print, or hardcode a secret value in descriptions, learnings, or main.py.
@@ -7474,7 +7496,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"add_secrets": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Secret names to attach to the workflow. Each name MUST already have a stored value — either a GLOBAL_SECRET_* env var or a user secret (store via set_user_secret) — otherwise the request is rejected. Attaching only wires the name: runtime injects $SECRET_<NAME> with the looked-up value. Use list_secrets to see what's available.",
+					"description": "Secret names to attach to the workflow. Each name MUST already have a stored value — either a GLOBAL_SECRET_* env var, a workflow secret (store via set_workflow_secret), or a reusable user secret (store via set_user_secret) — otherwise the request is rejected. Attaching only wires the name: runtime injects $SECRET_<NAME> with the looked-up value. Use list_secrets to see what's available.",
 				},
 				"remove_secrets": map[string]interface{}{
 					"type":        "array",
@@ -7653,8 +7675,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					// Attaching a name without a stored value is a silent foot-gun: runtime
 					// drops the empty entry and $SECRET_<NAME> ends up unset, masking the
 					// real "no value stored" error with a downstream graceful-fallback.
-					// Reject up front if any requested name has no value in user store or
-					// global env. The caller must store the value (set_user_secret) first.
+					// Reject up front if any requested name has no value in workflow store,
+					// user store, or global env. The caller must store the value first.
 					availableNames := map[string]bool{}
 					if iwm.listAvailableSecrets != nil {
 						if names, listErr := iwm.listAvailableSecrets(ctx); listErr == nil {
@@ -7676,10 +7698,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					if len(missing) > 0 {
 						return fmt.Sprintf(
 							"Error: cannot attach secret(s) with no stored value: %v.\n\n"+
-								"These names have no value in the user secret store and no matching GLOBAL_SECRET_* env var. "+
+								"These names have no value in the workflow secret store, reusable user secret store, or matching GLOBAL_SECRET_* env var. "+
 								"Attaching them would set $SECRET_<NAME> to an empty string at runtime and silently break any step that reads them.\n\n"+
 								"Fix:\n"+
-								"  1. Store the value first: set_user_secret(name=\"%s\", value=\"<plaintext>\").\n"+
+								"  1. Store the value first: set_workflow_secret(name=\"%s\", value=\"<plaintext>\") for this workflow, or set_user_secret(...) for a reusable value.\n"+
 								"  2. Then re-run update_workflow_config(add_secrets=[...]).",
 							missing, missing[0],
 						), nil

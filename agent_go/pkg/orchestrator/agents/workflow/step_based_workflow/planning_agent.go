@@ -4698,7 +4698,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_message_sequence_step",
-		"Add a message_sequence step to the plan. Use this only when the user asks for a persistent single-agent conversation with an ordered queue of short user messages, optional prevalidation items, and optional Python code items. Reads for KB/db/learnings are always open; writes are item-scoped through write_access. Prefer small focused user messages, and add reference-check, hallucination-check, critique, or self-validation messages where helpful.",
+		"Add a message_sequence step to the plan. Use this only when the user asks for a persistent single-agent conversation with an ordered queue of short user messages, optional prevalidation items, and optional Python code items. As a todo_task predefined route, use message_sequence when the orchestrator should reuse the same specialist conversation for critique, test feedback, validation feedback, or follow-up work; restart is controlled at execution time with message_sequence_restart. Reads for KB/db/learnings are always open; writes are item-scoped through write_access. Prefer small focused user messages, and add reference-check, hallucination-check, critique, or self-validation messages where helpful.",
 		messageSequenceParams,
 		createAddMessageSequenceStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
@@ -4737,7 +4737,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_todo_task_step",
-		"Add a todo task orchestration step to the plan. Use this when you need to manage a dynamic todo list with trackable tasks. The main orchestrator creates/assigns tasks, then delegates to predefined sub-agents (with learning and prevalidation) or a generic agent (workspace tools only, no learning). Predefined routes have MCP tool access and accumulate learnings. The generic agent is for simple, ad-hoc tasks. Provide: id, title, todo_task_step (main orchestrator metadata), predefined_routes (optional, specialized sub-agents), enable_generic_agent (optional, default true), next_step_id, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
+		"Add a todo task orchestration step to the plan. Use this when you need to manage a dynamic todo list with trackable tasks. The main orchestrator creates/assigns tasks, then delegates to predefined sub-agents (with learning and prevalidation) or a generic agent (workspace tools only, no learning). Predefined routes have MCP tool access and accumulate learnings. A route sub_agent_step can be regular for stateless work, message_sequence for a reusable specialist conversation with re-entry/restart behavior, or todo_task for one nested orchestration layer. The generic agent is for simple, ad-hoc tasks. Provide: id, title, todo_task_step (main orchestrator metadata), predefined_routes (optional, specialized sub-agents), enable_generic_agent (optional, default true), next_step_id, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
 		todoTaskParams,
 		createAddTodoTaskStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",

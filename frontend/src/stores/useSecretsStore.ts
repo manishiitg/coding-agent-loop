@@ -14,9 +14,19 @@ export interface GlobalSecret {
   name: string
 }
 
+export interface WorkflowSecret {
+  name: string
+}
+
+export interface StoredUserSecret {
+  name: string
+}
+
 interface SecretsState {
   secrets: StoredSecret[]
   globalSecrets: GlobalSecret[]
+  storedUserSecrets: StoredUserSecret[]
+  workflowSecretsByPath: Record<string, WorkflowSecret[]>
   // null = all global secrets selected (default), string[] = only these names selected
   selectedGlobalSecretNames: string[] | null
   botEnabledNames: Set<string>
@@ -26,6 +36,10 @@ interface SecretsState {
   getSecret: (id: string) => StoredSecret | undefined
   getSecretByName: (name: string) => StoredSecret | undefined
   fetchGlobalSecrets: () => Promise<void>
+  fetchStoredUserSecrets: () => Promise<void>
+  fetchWorkflowSecrets: (workspacePath: string) => Promise<void>
+  addWorkflowSecret: (workspacePath: string, name: string, encryptedValue: string) => Promise<void>
+  removeWorkflowSecret: (workspacePath: string, name: string) => Promise<void>
   setSelectedGlobalSecretNames: (names: string[] | null) => void
   fetchBotSecrets: () => Promise<void>
   toggleBotAccess: (id: string) => Promise<void>
@@ -36,6 +50,8 @@ export const useSecretsStore = create<SecretsState>()(
     (set, get) => ({
       secrets: [],
       globalSecrets: [],
+      storedUserSecrets: [],
+      workflowSecretsByPath: {},
       selectedGlobalSecretNames: null,
       botEnabledNames: new Set<string>(),
 
@@ -50,6 +66,9 @@ export const useSecretsStore = create<SecretsState>()(
         }
         set((state) => ({
           secrets: [...state.secrets, newSecret],
+          storedUserSecrets: state.storedUserSecrets.some((s) => s.name === secret.name)
+            ? state.storedUserSecrets
+            : [...state.storedUserSecrets, { name: secret.name }].sort((a, b) => a.name.localeCompare(b.name)),
           botEnabledNames: new Set([...state.botEnabledNames, secret.name]),
         }))
         // Fire-and-forget sync to server for bot session access
@@ -67,6 +86,12 @@ export const useSecretsStore = create<SecretsState>()(
               ? { ...s, ...updates, updatedAt: Date.now() }
               : s
           ),
+          storedUserSecrets: updates.name && oldSecret
+            ? [
+                ...state.storedUserSecrets.filter((s) => s.name !== oldSecret.name && s.name !== updates.name),
+                { name: updates.name },
+              ].sort((a, b) => a.name.localeCompare(b.name))
+            : state.storedUserSecrets,
         }))
 
         if (wasEnabled && oldSecret) {
@@ -94,6 +119,9 @@ export const useSecretsStore = create<SecretsState>()(
 
         set((state) => ({
           secrets: state.secrets.filter((s) => s.id !== id),
+          storedUserSecrets: secret
+            ? state.storedUserSecrets.filter((s) => s.name !== secret.name)
+            : state.storedUserSecrets,
         }))
 
         // Only delete from server if bot access was enabled
@@ -124,6 +152,69 @@ export const useSecretsStore = create<SecretsState>()(
         }
       },
 
+      fetchStoredUserSecrets: async () => {
+        try {
+          const result = await secretsApi.listStoredSecrets()
+          set({
+            storedUserSecrets: result,
+            botEnabledNames: new Set(result.map((s) => s.name)),
+          })
+        } catch {
+          set({ storedUserSecrets: [] })
+        }
+      },
+
+      fetchWorkflowSecrets: async (workspacePath) => {
+        const trimmed = workspacePath.trim()
+        if (!trimmed) return
+        try {
+          const result = await secretsApi.listWorkflowSecrets(trimmed)
+          set((state) => ({
+            workflowSecretsByPath: {
+              ...state.workflowSecretsByPath,
+              [trimmed]: result,
+            },
+          }))
+        } catch {
+          set((state) => ({
+            workflowSecretsByPath: {
+              ...state.workflowSecretsByPath,
+              [trimmed]: [],
+            },
+          }))
+        }
+      },
+
+      addWorkflowSecret: async (workspacePath, name, encryptedValue) => {
+        const trimmed = workspacePath.trim()
+        if (!trimmed) return
+        await secretsApi.storeWorkflowSecret(trimmed, name, encryptedValue)
+        set((state) => {
+          const existing = state.workflowSecretsByPath[trimmed] || []
+          const next = existing.some((s) => s.name === name)
+            ? existing
+            : [...existing, { name }].sort((a, b) => a.name.localeCompare(b.name))
+          return {
+            workflowSecretsByPath: {
+              ...state.workflowSecretsByPath,
+              [trimmed]: next,
+            },
+          }
+        })
+      },
+
+      removeWorkflowSecret: async (workspacePath, name) => {
+        const trimmed = workspacePath.trim()
+        if (!trimmed) return
+        await secretsApi.deleteWorkflowSecret(trimmed, name)
+        set((state) => ({
+          workflowSecretsByPath: {
+            ...state.workflowSecretsByPath,
+            [trimmed]: (state.workflowSecretsByPath[trimmed] || []).filter((s) => s.name !== name),
+          },
+        }))
+      },
+
       setSelectedGlobalSecretNames: (names) => {
         set({ selectedGlobalSecretNames: names })
       },
@@ -131,7 +222,10 @@ export const useSecretsStore = create<SecretsState>()(
       fetchBotSecrets: async () => {
         try {
           const result = await secretsApi.listStoredSecrets()
-          set({ botEnabledNames: new Set(result.map((s) => s.name)) })
+          set({
+            storedUserSecrets: result,
+            botEnabledNames: new Set(result.map((s) => s.name)),
+          })
         } catch {
           // Silently fail
         }

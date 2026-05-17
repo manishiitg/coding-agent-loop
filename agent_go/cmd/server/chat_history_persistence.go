@@ -749,6 +749,64 @@ func ReadChatHistoryConversation(userID, sessionID, workspacePath string) (json.
 	return json.RawMessage(data), nil
 }
 
+func ReadChatHistoryRuntimeFromPath(userID, conversationPath string) (*ChatHistoryAgentRuntime, bool, error) {
+	normalizedPath, ok := normalizeRestoredChatHistoryConversationPath(userID, conversationPath)
+	if !ok {
+		return nil, false, nil
+	}
+
+	var data []byte
+	localPath := filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(normalizedPath))
+	if localData, err := os.ReadFile(localPath); err == nil {
+		data = localData
+	} else if !os.IsNotExist(err) {
+		return nil, false, err
+	} else {
+		workspaceData, exists, err := readFileFromWorkspace(context.Background(), normalizedPath)
+		if err != nil {
+			return nil, false, err
+		}
+		if !exists {
+			return nil, false, nil
+		}
+		data = []byte(workspaceData)
+	}
+
+	var raw struct {
+		Runtime *ChatHistoryAgentRuntime `json:"runtime,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, true, err
+	}
+	if raw.Runtime == nil {
+		return nil, true, nil
+	}
+	return raw.Runtime, true, nil
+}
+
+func normalizeRestoredChatHistoryConversationPath(userID, conversationPath string) (string, bool) {
+	conversationPath = strings.TrimSpace(filepath.ToSlash(conversationPath))
+	if conversationPath == "" {
+		return "", false
+	}
+	if idx := strings.LastIndex(conversationPath, "/workspace-docs/"); idx >= 0 {
+		conversationPath = conversationPath[idx+len("/workspace-docs/"):]
+	}
+	conversationPath = strings.TrimPrefix(conversationPath, "/")
+	cleaned := pathpkg.Clean(conversationPath)
+	if cleaned == "." || strings.HasPrefix(cleaned, "../") || cleaned == ".." {
+		return "", false
+	}
+	userRoot := chatHistoryRoot(userID)
+	if cleaned == userRoot || strings.HasPrefix(cleaned, userRoot+"/") {
+		return cleaned, true
+	}
+	if strings.HasPrefix(cleaned, "Workflow/") && strings.Contains(cleaned, "/builder/") && strings.HasSuffix(cleaned, ".json") {
+		return cleaned, true
+	}
+	return "", false
+}
+
 func readUserChatHistoryConversationDirect(userID, sessionID string) (json.RawMessage, bool, error) {
 	root := chatHistoryRoot(userID)
 	baseDir, ok := resolveLocalChatHistoryDir(root)

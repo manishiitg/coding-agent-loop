@@ -68,6 +68,13 @@ import (
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 )
 
+var (
+	cleanupClaudeCodeProviderSessions = llmproviders.CleanupClaudeCodeExperimentalSessions
+	cleanupCodexCLIProviderSessions   = llmproviders.CleanupCodexCLIInteractiveSessions
+	cleanupGeminiCLIProviderSessions  = llmproviders.CleanupGeminiCLIInteractiveSessions
+	cleanupCursorCLIProviderSessions  = llmproviders.CleanupCursorCLIInteractiveSessions
+)
+
 // ServerCmd represents the server command
 var ServerCmd = &cobra.Command{
 	Use:   "server",
@@ -369,6 +376,9 @@ type QueryRequest struct {
 	SelectedGlobalSecrets *[]string `json:"selected_global_secrets,omitempty"`
 	// Workspace paths of workflows to inject context for (via # selector in chat)
 	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
+	// Conversation JSON selected from /resume or previous chats. Used to seed
+	// native coding-agent resume state from its saved runtime metadata.
+	RestoredConversationPath string `json:"restored_conversation_path,omitempty"`
 
 	// Workflow phase chat: phase ID for running a phase as a conversational chat session
 	// When agent_mode is "workflow_phase", this specifies which phase to run (e.g., "planning", "plan-improvement")
@@ -599,7 +609,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Clean up stale agent-browser runtime state (dead PID files, sockets)
 	// to prevent "CDP response channel closed" errors on first browser use.
 	browser.CleanupStaleRuntimeState()
-	cleanupClaudeCodeExperimentalSessions("startup")
 
 	// Start background reaper: kills browser sessions idle for >15 min so
 	// Chrome/daemon processes don't accumulate and exhaust memory.
@@ -997,6 +1006,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/secrets/store", api.handleStoreUserSecret).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/store/{name}", api.handleDeleteUserSecret).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/stored", api.handleListStoredSecrets).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/secrets/workflow/store", api.handleStoreWorkflowSecret).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/secrets/workflow/store/{name}", api.handleDeleteWorkflowSecret).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/secrets/workflow/stored", api.handleListStoredWorkflowSecrets).Methods("GET", "OPTIONS")
 
 	// Provider API keys (encrypted file storage for scheduled runs)
 	apiRouter.HandleFunc("/provider-keys", api.handleSaveProviderKeys).Methods("PUT", "OPTIONS")
@@ -1339,7 +1351,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	// request from the frontend gets real data instead of an empty list.
 	fmt.Printf("🔄 Initializing tool cache on server startup...\n")
 	api.initializeToolCache()
-	cleanupClaudeCodeExperimentalSessions("startup")
 
 	// Sync system skills (skill-creator, agent-browser, etc.) in background
 	go func() {
@@ -1380,9 +1391,25 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	fmt.Println("\n🛑 Shutting down server...")
 
+	// Cancel active agents first. Coding-agent tmux sessions are owned by those
+	// turns, so killing tmux before the handlers observe cancellation can race
+	// with capture/poll commands and make shutdown hang.
+	fmt.Println("⏹️ Canceling active agent work...")
+	api.cancelActiveWorkForShutdown()
+
 	// Stop background discovery
 	fmt.Println("⏹️ Stopping background tool discovery...")
 	api.stopPeriodicRefresh()
+
+	// Create a deadline for HTTP handlers to observe cancellation and return.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Shutdown server before final process cleanup. If a handler is still stuck,
+	// continue cleanup anyway so detached tmux/browser sessions do not survive.
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("Server graceful shutdown timed out: %v", err)
+	}
 
 	// Close all MCP session connections to prevent orphaned subprocesses
 	fmt.Println("🧹 Closing all MCP sessions...")
@@ -1391,33 +1418,96 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Kill all active browser daemons and Chrome processes so they don't linger
 	fmt.Println("🧹 Killing all browser sessions...")
 	browser.KillAllTrackedSessions()
-	cleanupClaudeCodeExperimentalSessions("shutdown")
-
-	// Create a deadline for shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	// Shutdown server
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
-	}
+	cleanupCodingAgentInteractiveSessions("shutdown")
 
 	fmt.Println("✅ Server shutdown complete")
 }
 
 func cleanupClaudeCodeExperimentalSessions(phase string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	cleanupCodingAgentInteractiveSessions(phase)
+}
 
-	if err := llmproviders.CleanupClaudeCodeExperimentalSessions(ctx); err != nil {
-		log.Printf("[CLAUDE-CODE] %s cleanup failed: %v", phase, err)
+func cleanupCodingAgentInteractiveSessions(phase string) {
+	cleanupProvider := func(name string, cleanup func(context.Context) error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := cleanup(ctx); err != nil {
+			log.Printf("[%s] %s cleanup failed: %v", name, phase, err)
+		}
 	}
-	if err := llmproviders.CleanupCodexCLIInteractiveSessions(ctx); err != nil {
-		log.Printf("[CODEX-CLI] %s cleanup failed: %v", phase, err)
+
+	cleanupProvider("CLAUDE-CODE", cleanupClaudeCodeProviderSessions)
+	cleanupProvider("CODEX-CLI", cleanupCodexCLIProviderSessions)
+	cleanupProvider("GEMINI-CLI", cleanupGeminiCLIProviderSessions)
+	cleanupProvider("CURSOR-CLI", cleanupCursorCLIProviderSessions)
+}
+
+func (api *StreamingAPI) cancelActiveWorkForShutdown() {
+	if api == nil {
+		return
 	}
-	if err := llmproviders.CleanupGeminiCLIInteractiveSessions(ctx); err != nil {
-		log.Printf("[GEMINI-CLI] %s cleanup failed: %v", phase, err)
+
+	var agentCancels []context.CancelFunc
+	api.agentCancelMux.Lock()
+	for sessionID, cancelFunc := range api.agentCancelFuncs {
+		if cancelFunc != nil {
+			agentCancels = append(agentCancels, cancelFunc)
+		}
+		delete(api.agentCancelFuncs, sessionID)
 	}
+	api.agentCancelMux.Unlock()
+	for _, cancelFunc := range agentCancels {
+		cancelFunc()
+	}
+
+	var workflowCancels []context.CancelFunc
+	api.workflowOrchestratorContextMux.Lock()
+	for queryID, cancelFunc := range api.workflowOrchestratorContexts {
+		if cancelFunc != nil {
+			workflowCancels = append(workflowCancels, cancelFunc)
+		}
+		delete(api.workflowOrchestratorContexts, queryID)
+	}
+	api.workflowOrchestratorContextMux.Unlock()
+	for _, cancelFunc := range workflowCancels {
+		cancelFunc()
+	}
+
+	sessionIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+	api.activeSessionsMux.RLock()
+	for sessionID := range api.activeSessions {
+		seen[sessionID] = struct{}{}
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	api.activeSessionsMux.RUnlock()
+
+	api.sessionQueryIDMux.Lock()
+	for sessionID := range api.sessionQueryIDs {
+		if _, ok := seen[sessionID]; !ok {
+			seen[sessionID] = struct{}{}
+			sessionIDs = append(sessionIDs, sessionID)
+		}
+	}
+	api.sessionQueryIDs = map[string][]string{}
+	api.sessionQueryIDMux.Unlock()
+
+	for _, sessionID := range sessionIDs {
+		if api.bgAgentRegistry != nil {
+			api.bgAgentRegistry.CancelAll(sessionID)
+		}
+		api.cancelTrackedExecutionsForSession(sessionID)
+		api.setSessionBusy(sessionID, false)
+		api.setSyntheticTurn(sessionID, false)
+	}
+
+	api.workshopChatSessions.Range(func(key, value interface{}) bool {
+		if ws, ok := value.(interface{ Close() }); ok {
+			ws.Close()
+		}
+		api.workshopChatSessions.Delete(key)
+		return true
+	})
 }
 
 // GetAPIURL returns the base URL for the API server
@@ -1582,11 +1672,7 @@ func mergeGlobalSecrets(userSecrets []struct {
 	return merged
 }
 
-// loadSelectedUserSecrets decrypts the named user-stored secrets from the
-// filesystem chat store. Workflow manifests store only selected secret names,
-// so runtime must rehydrate the actual values server-side instead of relying
-// on stale request payloads.
-func (api *StreamingAPI) loadSelectedUserSecrets(ctx context.Context, userID string, selectedNames []string) []struct {
+func (api *StreamingAPI) loadSelectedSecrets(ctx context.Context, userID, workflowPath string, selectedNames []string) []struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 } {
@@ -1606,15 +1692,20 @@ func (api *StreamingAPI) loadSelectedUserSecrets(ctx context.Context, userID str
 	}
 
 	// Track which selected names were actually resolved so we can surface orphans.
-	// An orphan is a name attached to the workflow with no value in the user store
-	// and no matching GLOBAL_SECRET_* env var — runtime would silently set
+	// An orphan is a name attached to the workflow with no value in the workflow/user
+	// stores and no matching GLOBAL_SECRET_* env var — runtime would silently set
 	// $SECRET_<NAME> to empty, masking downstream failures.
 	resolved := make(map[string]bool, len(selectedNames))
 
-	var result []struct {
-		Name  string `json:"name"`
-		Value string `json:"value"`
+	resultByName := make(map[string]string, len(selectedNames))
+	var resultOrder []string
+	addResult := func(name, value string) {
+		if _, exists := resultByName[name]; !exists {
+			resultOrder = append(resultOrder, name)
+		}
+		resultByName[name] = value
 	}
+
 	for _, s := range stored {
 		if !selectedSet[s.Name] {
 			continue
@@ -1624,11 +1715,39 @@ func (api *StreamingAPI) loadSelectedUserSecrets(ctx context.Context, userID str
 			log.Printf("[SECRETS] Failed to decrypt stored secret %q for user %s: %v", s.Name, userID, err)
 			continue
 		}
+		addResult(s.Name, plaintext)
+		resolved[s.Name] = true
+	}
+
+	if strings.TrimSpace(workflowPath) != "" {
+		workflowSecrets, err := api.chatStore.ListWorkflowSecrets(ctx, userID, workflowPath)
+		if err != nil {
+			log.Printf("[SECRETS] Failed to list workflow secrets for %s (%s): %v", userID, workflowPath, err)
+		} else {
+			for _, s := range workflowSecrets {
+				if !selectedSet[s.Name] {
+					continue
+				}
+				plaintext, err := decryptSecretValue(s.EncryptedValue, userID)
+				if err != nil {
+					log.Printf("[SECRETS] Failed to decrypt workflow secret %q for user %s workflow %s: %v", s.Name, userID, workflowPath, err)
+					continue
+				}
+				addResult(s.Name, plaintext)
+				resolved[s.Name] = true
+			}
+		}
+	}
+
+	var result []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+	for _, name := range resultOrder {
 		result = append(result, struct {
 			Name  string `json:"name"`
 			Value string `json:"value"`
-		}{Name: s.Name, Value: plaintext})
-		resolved[s.Name] = true
+		}{Name: name, Value: resultByName[name]})
 	}
 
 	// Also treat globals as resolved — mergeGlobalSecrets layers these in separately.
@@ -1645,7 +1764,7 @@ func (api *StreamingAPI) loadSelectedUserSecrets(ctx context.Context, userID str
 		}
 	}
 	if len(orphans) > 0 {
-		log.Printf("[SECRETS] ⚠️  Workflow attaches secret name(s) with no stored value for user %s: %v — $SECRET_<NAME> will be EMPTY at runtime. Store a value with set_user_secret or detach via update_workflow_config(remove_secrets=[...]).", userID, orphans)
+		log.Printf("[SECRETS] ⚠️  Workflow attaches secret name(s) with no stored value for user %s workflow %s: %v — $SECRET_<NAME> will be EMPTY at runtime. Store a value with set_workflow_secret/set_user_secret or detach via update_workflow_config(remove_secrets=[...]).", userID, workflowPath, orphans)
 	}
 
 	return result
@@ -2326,7 +2445,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					req.SelectedGlobalSecrets = manifest.Capabilities.SelectedGlobalSecretNames
 				}
 				// Manifest is the source of truth for workflow-selected user secrets too.
-				req.DecryptedSecrets = api.loadSelectedUserSecrets(context.Background(), currentUserID, manifest.Capabilities.SelectedSecrets)
+				req.DecryptedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, resolvedWPath, manifest.Capabilities.SelectedSecrets)
 
 				// Manifest is the source of truth for servers and browser mode.
 				if len(manifest.Capabilities.SelectedServers) > 0 {
@@ -2429,7 +2548,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					req.SelectedGlobalSecrets = caps.SelectedGlobalSecretNames
 				}
 				// User-stored secrets from manifest are authoritative for workflow UI edits.
-				req.DecryptedSecrets = api.loadSelectedUserSecrets(context.Background(), currentUserID, caps.SelectedSecrets)
+				req.DecryptedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, manifestWorkspacePath, caps.SelectedSecrets)
 
 				// Browser mode from manifest
 				if caps.BrowserMode != "" && caps.BrowserMode != "none" && req.BrowserMode == "" {
@@ -4012,6 +4131,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					case "workspace_tools", virtualtools.GetWorkspaceAdvancedToolCategory(), virtualtools.GetWorkspaceBrowserToolCategory():
 						continue
 					}
+					// Multi-agent chat registers these tools earlier with session-aware
+					// wrappers. Re-registering the raw createCustomTools executors here
+					// replaces async delegate/run behavior with blocking fallback behavior.
+					if !isWorkflowPhase && isPreRegisteredMultiAgentTool(toolName) {
+						log.Printf("[CUSTOM TOOLS] Skipping pre-registered multi-agent tool: %s", toolName)
+						continue
+					}
 
 					if executor, exists := allExecutors[toolName]; exists {
 						// Convert executor to the expected function signature
@@ -4199,12 +4325,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				logfWithContext(queryLogCtx, "[EMPLOYEE TOOLS] Registered employee management tools")
 
-				if err := api.registerSecretManagementTools(underlyingAgent, currentUserID, "secret_tools", nil); err != nil {
+				if err := api.registerSecretManagementTools(underlyingAgent, currentUserID, "", "secret_tools", nil); err != nil {
 					logfWithContext(queryLogCtx, "[SECRET TOOLS] Failed to register multi-agent secret tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent secret tools: %v", err), true)
 					return
 				}
-				logfWithContext(queryLogCtx, "[SECRET TOOLS] Registered multi-agent secret tools (list_secrets, set_user_secret, delete_user_secret)")
+				logfWithContext(queryLogCtx, "[SECRET TOOLS] Registered multi-agent secret tools (list_secrets, set_user_secret, delete_user_secret; global names read-only)")
 			}
 
 			// Read session state early for guidance injection
@@ -4777,7 +4903,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								skillsParsed := true
 
 								// Refresh secrets
-								refreshedUserSecrets := api.loadSelectedUserSecrets(context.Background(), currentUserID, caps.SelectedSecrets)
+								refreshedUserSecrets := api.loadSelectedSecrets(context.Background(), currentUserID, phaseWorkspacePath, caps.SelectedSecrets)
 								effectiveSecretSelection := req.SelectedGlobalSecrets
 								if caps.SelectedGlobalSecretNames != nil {
 									effectiveSecretSelection = caps.SelectedGlobalSecretNames
@@ -4894,10 +5020,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							}
 							return builderSession.DetachSecretFromWorkflow(ctx, name)
 						}
-						if err := api.registerSecretManagementTools(underlyingAgent, currentUserID, "secret_tools", afterDelete); err != nil {
+						if err := api.registerSecretManagementTools(underlyingAgent, currentUserID, phaseWorkspacePath, "secret_tools", afterDelete); err != nil {
 							log.Printf("[WORKFLOW_PHASE] Warning: Failed to register secret tools in %s: %v", workflowPhaseID, err)
 						} else {
-							log.Printf("[WORKFLOW_PHASE] Registered secret tools in %s (list_secrets, set_user_secret, delete_user_secret) with workflow auto-detach", workflowPhaseID)
+							log.Printf("[WORKFLOW_PHASE] Registered secret tools in %s (list_secrets, set_workflow_secret, delete_workflow_secret, set_user_secret, delete_user_secret) with workflow auto-detach", workflowPhaseID)
 						}
 					}
 
@@ -5213,7 +5339,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+			restoredNativeCodingResume := false
+			if restoredRuntime, ok, err := ReadChatHistoryRuntimeFromPath(currentUserID, req.RestoredConversationPath); err != nil {
+				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime from %s: %v", req.RestoredConversationPath, err)
+			} else if ok {
+				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, restoredRuntime, underlyingAgent)
+			}
 			api.restoreCodingAgentRuntime(sessionID, underlyingAgent)
+			if restoredNativeCodingResume {
+				cleanedChatQuery := cleanChatHistoryQuery(chatQuery)
+				if cleanedChatQuery != chatQuery {
+					chatQuery = cleanedChatQuery
+					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Using native coding-agent resume; stripped restored conversation attach context from prompt")
+				}
+			}
 		}
 
 		// Store the fully configured agent before streaming starts so ultra-fast background
@@ -5929,6 +6068,62 @@ func (api *StreamingAPI) restoreCodingAgentRuntime(sessionID string, underlyingA
 		workspace.SetSessionGeminiProjectDirID(sessionID, gDirID)
 		log.Printf("[GEMINI CLI] Restored project dir ID %s for session %s", gDirID, sessionID)
 	}
+}
+
+func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionID, currentProvider string, runtime *ChatHistoryAgentRuntime, underlyingAgent *mcpagent.Agent) bool {
+	if api == nil || underlyingAgent == nil || runtime == nil {
+		return false
+	}
+	if runtime.Kind != "coding_agent" || !runtime.ResumeSupported {
+		return false
+	}
+	provider := strings.ToLower(strings.TrimSpace(runtime.Provider))
+	currentProvider = strings.ToLower(strings.TrimSpace(currentProvider))
+	if provider == "" || (currentProvider != "" && provider != currentProvider) {
+		return false
+	}
+	externalSessionID := strings.TrimSpace(runtime.ExternalSessionID)
+	projectDirID := strings.TrimSpace(runtime.ProjectDirID)
+	if externalSessionID == "" && projectDirID == "" {
+		return false
+	}
+
+	api.conversationMux.Lock()
+	defer api.conversationMux.Unlock()
+	if api.claudeCodeSessionIDs == nil {
+		api.claudeCodeSessionIDs = make(map[string]string)
+	}
+	if api.geminiSessionIDs == nil {
+		api.geminiSessionIDs = make(map[string]string)
+	}
+	if api.geminiProjectDirIDs == nil {
+		api.geminiProjectDirIDs = make(map[string]string)
+	}
+
+	switch provider {
+	case "claude-code":
+		if externalSessionID == "" {
+			return false
+		}
+		api.claudeCodeSessionIDs[sessionID] = externalSessionID
+		underlyingAgent.ClaudeCodeSessionID = externalSessionID
+		log.Printf("[CLAUDE CODE] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
+		return true
+	case "gemini-cli":
+		if externalSessionID != "" {
+			api.geminiSessionIDs[sessionID] = externalSessionID
+			underlyingAgent.GeminiSessionID = externalSessionID
+			log.Printf("[GEMINI CLI] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
+		}
+		if projectDirID != "" {
+			api.geminiProjectDirIDs[sessionID] = projectDirID
+			underlyingAgent.GeminiProjectDirID = projectDirID
+			workspace.SetSessionGeminiProjectDirID(sessionID, projectDirID)
+			log.Printf("[GEMINI CLI] Restored project dir ID %s from chat history for session %s", projectDirID, sessionID)
+		}
+		return externalSessionID != "" || projectDirID != ""
+	}
+	return false
 }
 
 // updateSessionActivity updates the LastActivity timestamp for a session when events are added
@@ -8623,7 +8818,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	userSecrets := req.DecryptedSecrets
 	if workspacePath != "" {
 		if manifest, found, err := ReadWorkflowManifest(context.Background(), workspacePath); err == nil && found {
-			userSecrets = api.loadSelectedUserSecrets(context.Background(), currentUserID, manifest.Capabilities.SelectedSecrets)
+			userSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, workspacePath, manifest.Capabilities.SelectedSecrets)
 		}
 	}
 	allSecrets := mergeGlobalSecrets(userSecrets, effectiveGlobalSecretSelection)
@@ -8693,6 +8888,14 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				nameSet[us.Name] = true
 			}
 		}
+		if workspacePath != "" {
+			workflowSecrets, err := api.chatStore.ListWorkflowSecrets(ctx, currentUserID, workspacePath)
+			if err == nil {
+				for _, ws := range workflowSecrets {
+					nameSet[ws.Name] = true
+				}
+			}
+		}
 		names := make([]string, 0, len(nameSet))
 		for name := range nameSet {
 			names = append(names, name)
@@ -8715,7 +8918,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				out[gs.Name] = gs.Value
 			}
 		}
-		decrypted := api.loadSelectedUserSecrets(ctx, currentUserID, names)
+		decrypted := api.loadSelectedSecrets(ctx, currentUserID, workspacePath, names)
 		for _, s := range decrypted {
 			out[s.Name] = s.Value
 		}

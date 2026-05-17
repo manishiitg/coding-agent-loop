@@ -99,9 +99,14 @@ import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chat
 // Stable empty array for Zustand selector (must be module-level to avoid referential instability)
 const EMPTY_WORKFLOW_EVENTS: PollingEvent[] = []
 const WORKFLOW_RESTORE_TIMEOUT_MS = 8000
+const WORKFLOW_CHAT_CONTENT_EVENT_TYPES = new Set(['user_message', 'conversation_end', 'unified_completion'])
 
 function normalizeWorkflowPath(path?: string | null): string {
   return (path || '').replace(/\/+$/, '')
+}
+
+function hasWorkflowChatContent(events?: PollingEvent[]): boolean {
+  return (events || []).some(event => WORKFLOW_CHAT_CONTENT_EVENT_TYPES.has(event.type || ''))
 }
 
 const WorkflowPreviousChatsPanel: React.FC<{
@@ -109,21 +114,38 @@ const WorkflowPreviousChatsPanel: React.FC<{
   onHasChatsChange?: (hasChats: boolean) => void
 }> = ({ workspacePath, onHasChatsChange }) => {
   const activeTabId = useChatStore(state => state.activeTabId)
+  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const activeSessionId = useChatStore(state => {
     const tabId = state.activeTabId
-    return tabId ? state.chatTabs[tabId]?.sessionId : undefined
+    const tab = tabId ? state.chatTabs[tabId] : undefined
+    if (!tab?.sessionId || tab.metadata?.mode !== 'workflow') return undefined
+    return hasWorkflowChatContent(state.tabEvents[tab.sessionId]) ? tab.sessionId : undefined
   })
   const setTabConfig = useChatStore(state => state.setTabConfig)
   const addToast = useChatStore(state => state.addToast)
 
-  const handleAttachPreviousChat = useCallback((session: ChatHistorySession) => {
+  const handleAttachPreviousChat = useCallback(async (session: ChatHistorySession) => {
     if (!activeTabId) {
       addToast('No active workflow chat to attach to', 'error')
       return
     }
 
+    let targetTabId = activeTabId
+    const chatStore = useChatStore.getState()
+    const targetTab = chatStore.chatTabs[targetTabId]
+
+    if (targetTab?.sessionId === session.session_id) {
+      targetTabId = await chatStore.createChatTab('Workflow Builder', {
+        mode: 'workflow',
+        phaseId: 'workflow-builder',
+        phaseName: 'Workflow Builder',
+        presetQueryId: activePresetId || undefined,
+      })
+      chatStore.switchTab(targetTabId)
+    }
+
     const path = chatHistoryConversationPath(session)
-    const existingContext = useChatStore.getState().getTabConfig(activeTabId)?.fileContext || []
+    const existingContext = useChatStore.getState().getTabConfig(targetTabId)?.fileContext || []
     const nextFileContext = existingContext.some(item => item.path === path)
       ? existingContext
       : [
@@ -135,13 +157,13 @@ const WorkflowPreviousChatsPanel: React.FC<{
           },
         ]
 
-    setTabConfig(activeTabId, {
+    setTabConfig(targetTabId, {
       fileContext: nextFileContext,
       restoredConversationPath: path,
       restoredConversationSummary: undefined,
     })
     addToast('Previous chat added to context', 'success')
-  }, [activeTabId, addToast, setTabConfig])
+  }, [activePresetId, activeTabId, addToast, setTabConfig])
 
   return (
     <PreviousChatHistoryPanel
@@ -511,8 +533,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     ) {
       return false
     }
-    const eventCount = tab.sessionId ? (state.tabEvents[tab.sessionId]?.length || 0) : 0
-    return eventCount === 0
+    const tabEvents = tab.sessionId ? state.tabEvents[tab.sessionId] : undefined
+    return !hasWorkflowChatContent(tabEvents)
   })
   // Keep the last concrete workspace path for the active preset during manifest
   // refreshes. A transient null here unmounts the report pane and makes toolbar

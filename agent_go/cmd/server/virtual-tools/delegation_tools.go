@@ -691,22 +691,25 @@ cat _users/` + userID + `/multiagent-schedules.json 2>/dev/null || echo '{"sched
 
 ## Secret Management
 
-Secrets are credentials (API keys, tokens, passwords) stored encrypted per-user. Two buckets:
+	Secrets are credentials (API keys, tokens, passwords). They may come from three buckets:
 
-- **User secrets** — per-user, AES-GCM encrypted, full CRUD via chat.
-- **Global secrets** — operator-managed via ` + "`GLOBAL_SECRET_*`" + ` env vars. Read-only from chat.
+	- **Workflow secrets** — per-user, AES-GCM encrypted, scoped only to one workflow. Use these by default for workflow-specific credentials when the workflow secret tools are available.
+	- **User secrets** — per-user, AES-GCM encrypted, reusable across workflows.
+	- **Global secrets** — operator-managed via ` + "`GLOBAL_SECRET_*`" + ` env vars. Read-only from chat.
 
 ### Tools
 
-- **` + "`list_secrets`" + `** — returns ` + "`global`" + ` (read-only names) and ` + "`user`" + ` (CRUD names) buckets. Values are never exposed. Call before set/delete to avoid name collisions.
-- **` + "`set_user_secret(name, value)`" + `** — create or update a user secret value. Names that collide with a global are rejected. Use ` + "`UPPER_SNAKE_CASE`" + ` (e.g. ` + "`SLACK_TOKEN`" + `).
-- **` + "`delete_user_secret(name)`" + `** — delete a user secret from the store. Globals cannot be deleted.
+	- **` + "`list_secrets`" + `** — returns ` + "`global`" + ` (read-only names), ` + "`workflow`" + ` (current workflow names, when scoped), and ` + "`user`" + ` (reusable names) buckets. Values are never exposed. Call before set/delete/attach.
+	- **` + "`set_workflow_secret(name, value)`" + `** — create or update a workflow-scoped value. Available only in workflow-scoped builder/workshop chats.
+	- **` + "`delete_workflow_secret(name)`" + `** — delete a workflow-scoped value. Available only in workflow-scoped builder/workshop chats.
+	- **` + "`set_user_secret(name, value)`" + `** — create or update a reusable user secret value. Names that collide with a global are rejected. Use ` + "`UPPER_SNAKE_CASE`" + ` (e.g. ` + "`SLACK_TOKEN`" + `).
+	- **` + "`delete_user_secret(name)`" + `** — delete a reusable user secret from the store. Globals cannot be deleted.
 
 ### When a user says "store / save / set this key"
 
-1. Call ` + "`list_secrets`" + ` first to check if the name already exists and whether it's global (read-only).
-2. Call ` + "`set_user_secret(name, value)`" + ` with the plaintext.
-3. If the request is for a workflow, attach the stored/existing secret to that workflow with the workflow config tool (for example ` + "`update_workflow_config(add_secrets=[\"NAME\"])`" + `). Storing without attaching leaves runtime ` + "`$SECRET_<NAME>`" + ` unavailable to steps.
+	1. Call ` + "`list_secrets`" + ` first to check if the name already exists and which bucket owns it.
+	2. In a workflow builder/workshop chat, prefer ` + "`set_workflow_secret(name, value)`" + ` for workflow-only credentials. Use ` + "`set_user_secret(name, value)`" + ` only when the same credential should be reusable across workflows.
+	3. If the request is for a workflow, attach the stored/existing secret to that workflow with the workflow config tool (for example ` + "`update_workflow_config(add_secrets=[\"NAME\"])`" + `). Storing without attaching leaves runtime ` + "`$SECRET_<NAME>`" + ` unavailable to steps.
 4. Confirm success. Do NOT echo the plaintext value back to the user — acknowledge by name only.
 
 Secret values must never be printed, echoed, logged, or pasted into another tool's arguments. If a user pastes a secret in chat, treat it as sensitive: store it, then acknowledge only by name.

@@ -93,11 +93,18 @@ When delegating to a sub-agent, pass the exact output file paths and required st
 
 ## Sub-Agent Tools
 
-### call_sub_agent(route_id, todo_id, instructions, success_criteria, preferred_tier{{if .HasBrowserAccess}}, share_browser{{end}})
+### call_sub_agent(route_id, todo_id, instructions, success_criteria, preferred_tier, message_sequence_restart{{if .HasBrowserAccess}}, share_browser{{end}})
 Execute a predefined route.{{if .HasBrowserAccess}} Set share_browser=false for parallel browser sessions — this gives each sub-agent its own isolated browser session (separate Playwright connection or separate agent-browser process), preventing them from interfering with each other.
 **Browser session limits:** Max **{{.MaxBrowserSessionsPerWorkflow}}** concurrent isolated browser sessions per workflow (applies to all browser types — agent-browser and Playwright). If you need more than {{.MaxBrowserSessionsPerWorkflow}} parallel browser sub-agents, run them in batches — wait for the first batch to finish before dispatching the next. Sub-agents with share_browser=true (default) reuse the parent browser and do NOT count toward this limit.{{end}}
 
-If the selected route is marked `+"`type: message_sequence`"+`, it is a stateful sequence worker. Send one small, concrete instruction per call. Calling the same route again resumes that worker's saved conversation and sends `+"`instructions`"+` as the next user message; it does not replay the original queue. Use the same sequence route when you want the same specialist memory, and use a different route for different specialist memory.
+**Message sequence routes**:
+Some predefined routes may be message_sequence routes. get_route_description(route_id) will mark them with "Step type: message_sequence" when applicable.
+- First call starts the route conversation and sends the configured item queue.
+- On first call, your instructions are added as initial context before that queue starts.
+- Later calls to the same route resume the existing route conversation.
+- On later calls, your instructions become the re-entry user message sent next in that existing conversation.
+- Use the same route again when critique, test, or output feedback should go back to the original specialist with prior context.
+- Set message_sequence_restart=true only when you intentionally want to start fresh: the existing route conversation is archived and the configured queue is replayed from the beginning.
 
 ### call_generic_agent(todo_id, instructions, success_criteria, preferred_tier{{if .HasBrowserAccess}}, share_browser{{end}})
 Execute any ad-hoc task. Same tool access as predefined agents.{{if .HasBrowserAccess}} Same browser session limits apply: max {{.MaxBrowserSessionsPerWorkflow}} concurrent isolated sessions.{{end}}
@@ -198,7 +205,7 @@ Do not guess tool names or invent bridge-prefixed variants. Discover the exact c
 
 {{if .ShowToolsSection}}
 ## Tools Reference (CLI Provider)
-- call_sub_agent(route_id, todo_id, instructions, preferred_tier{{if .HasBrowserAccess}}, share_browser{{end}})
+- call_sub_agent(route_id, todo_id, instructions, preferred_tier, message_sequence_restart{{if .HasBrowserAccess}}, share_browser{{end}})
 - call_generic_agent(todo_id, instructions, preferred_tier{{if .HasBrowserAccess}}, share_browser{{end}})
 - get_route_description(route_id)
 - get_sub_agent_conversation(todo_id, from_last_x, offset_last_x)

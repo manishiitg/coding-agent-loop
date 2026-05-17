@@ -455,12 +455,12 @@ type WorkshopConfig struct {
 	// LLMToolsFuncs provides callbacks for LLM management operations.
 	// Set by server.go which has access to provider keys and model metadata.
 	LLMToolsFuncs *LLMToolsCallbacks
-	// ListAvailableSecrets returns names of all available secrets (global + user-stored).
+	// ListAvailableSecrets returns names of all available secrets (global + workflow/user-stored).
 	// Used by get_workflow_config to show which secrets can be added.
 	ListAvailableSecrets func(ctx context.Context) ([]string, error)
 	// ResolveSecretValues returns plaintext values for the given secret names, merging
-	// user-stored secrets and global env secrets. Missing names are simply absent from
-	// the returned map — never an error. Used by update_workflow_config to refresh the
+	// workflow/user-stored secrets and global env secrets. Missing names are simply absent from
+	// the returned map - never an error. Used by update_workflow_config to refresh the
 	// workshop shell's SECRET_* env vars mid-session without a session restart.
 	ResolveSecretValues func(ctx context.Context, names []string) map[string]string
 }
@@ -863,7 +863,7 @@ func (s *WorkshopChatSession) DetachSecretFromWorkflow(ctx context.Context, name
 	}
 
 	// Persist the updated secret-name list to workflow.json. Mirrors the update
-	// block in persistWorkflowConfigToManifest but touches only selected_global_secret_names.
+	// block in persistWorkflowConfigToManifest for selected_secrets and selected_global_secret_names.
 	wsPath := s.controller.GetWorkspacePath()
 	if wsPath == "" {
 		return nil
@@ -888,8 +888,8 @@ func (s *WorkshopChatSession) DetachSecretFromWorkflow(ctx context.Context, name
 			names = append(names, s.Name)
 		}
 	}
-	// Write to BOTH fields — see persistWorkflowConfigToManifest for why (user secrets
-	// are looked up via selected_secrets; globals via selected_global_secret_names).
+	// Write to BOTH fields - see persistWorkflowConfigToManifest for why (workflow/user
+	// secrets are looked up via selected_secrets; globals via selected_global_secret_names).
 	caps["selected_secrets"] = names
 	caps["selected_global_secret_names"] = names
 	manifest["capabilities"] = caps

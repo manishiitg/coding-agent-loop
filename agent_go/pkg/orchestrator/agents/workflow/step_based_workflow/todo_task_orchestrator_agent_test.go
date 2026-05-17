@@ -48,6 +48,53 @@ func TestTodoTaskOrchestratorPromptIncludesSharedCodeExecutionSection(t *testing
 	}
 }
 
+func TestTodoTaskOrchestratorPromptDocumentsMessageSequenceRoutes(t *testing.T) {
+	agent := &WorkflowTodoTaskOrchestratorAgent{}
+
+	prompt := agent.todoTaskOrchestratorSystemPromptProcessor(map[string]string{
+		"ShowToolsSection":    "true",
+		"IsCodeExecutionMode": "false",
+		"PredefinedRoutes":    "- route-sequence",
+	})
+
+	requiredSnippets := []string{
+		"**Message sequence routes**:",
+		"Step type: message_sequence",
+		"First call starts the route conversation",
+		"instructions are added as initial context",
+		"Later calls to the same route resume",
+		"instructions become the re-entry user message",
+		"message_sequence_restart=true",
+		"configured queue is replayed from the beginning",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("expected prompt to contain %q\n\nPrompt:\n%s", snippet, prompt)
+		}
+	}
+}
+
+func TestFormatMessageSequenceRoutePromptBlock(t *testing.T) {
+	block := formatMessageSequenceRoutePromptBlock(&MessageSequencePlanStep{})
+
+	requiredSnippets := []string{
+		"Step type: message_sequence",
+		"route-scoped session resumes",
+		"Initial instructions",
+		"Re-entry",
+		"message_sequence_restart=true",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(block, snippet) {
+			t.Fatalf("expected block to contain %q\n\nBlock:\n%s", snippet, block)
+		}
+	}
+
+	if got := formatMessageSequenceRoutePromptBlock(&RegularPlanStep{}); got != "" {
+		t.Fatalf("expected non-message sequence routes to produce no block, got %q", got)
+	}
+}
+
 func TestTodoTaskOrchestratorUserPromptIncludesWorkshopHumanInput(t *testing.T) {
 	agent := &WorkflowTodoTaskOrchestratorAgent{}
 

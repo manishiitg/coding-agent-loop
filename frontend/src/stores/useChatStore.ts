@@ -455,6 +455,7 @@ interface ChatState extends StoreActions {
   streamingStatus: Record<string, string>  // sessionId → latest status/heartbeat message (⏳/⚠️ messages)
   streamingTerminalText: Record<string, string>  // sessionId → latest live terminal/screen snapshot
   streamingTerminalActive: Record<string, boolean>  // sessionId → true while live terminal snapshots are arriving
+  terminalOutputOpen: Record<string, boolean>  // sessionId → user-controlled terminal panel open state
   lastStreamingChunkIndex: Record<string, number>  // sessionId → last processed chunk_index (dedup guard)
   lastStreamingTerminalChunkIndex: Record<string, number>  // sessionId → last terminal snapshot chunk_index
   completedStreamingText: Record<string, string>  // sessionId → preserved streaming text after generation completes
@@ -562,6 +563,8 @@ interface ChatState extends StoreActions {
   appendStreamingChunk: (sessionId: string, chunkIndex: number, chunk: string) => void
   setStreamingTerminalSnapshot: (sessionId: string, chunkIndex: number, chunk: string) => void
   setStreamingTerminalActive: (sessionId: string, active: boolean) => void
+  setTerminalOutputOpen: (sessionId: string, open: boolean) => void
+  toggleTerminalOutputOpen: (sessionId: string) => void
   clearStreamingText: (sessionId: string) => void
   clearStreamingTerminal: (sessionId: string) => void
   clearStreamingStatus: (sessionId: string) => void
@@ -622,6 +625,7 @@ export const useChatStore = create<ChatState>()(
       streamingStatus: {},
       streamingTerminalText: {},
       streamingTerminalActive: {},
+      terminalOutputOpen: {},
       lastStreamingChunkIndex: {},
       lastStreamingTerminalChunkIndex: {},
       completedStreamingText: {},
@@ -939,6 +943,8 @@ export const useChatStore = create<ChatState>()(
           delete newStreamingTerminalText[sessionId]
           const newStreamingTerminalActive = { ...state.streamingTerminalActive }
           delete newStreamingTerminalActive[sessionId]
+          const newTerminalOutputOpen = { ...state.terminalOutputOpen }
+          delete newTerminalOutputOpen[sessionId]
           const newLastStreamingTerminalChunkIndex = { ...state.lastStreamingTerminalChunkIndex }
           delete newLastStreamingTerminalChunkIndex[sessionId]
           const newLastStreamingChunkIndex = { ...state.lastStreamingChunkIndex }
@@ -954,6 +960,7 @@ export const useChatStore = create<ChatState>()(
             streamingStatus: newStreamingStatus,
             streamingTerminalText: newStreamingTerminalText,
             streamingTerminalActive: newStreamingTerminalActive,
+            terminalOutputOpen: newTerminalOutputOpen,
             lastStreamingChunkIndex: newLastStreamingChunkIndex,
             lastStreamingTerminalChunkIndex: newLastStreamingTerminalChunkIndex,
             completedStreamingText: newCompletedStreamingText
@@ -1256,6 +1263,31 @@ export const useChatStore = create<ChatState>()(
         })
       },
 
+      setTerminalOutputOpen: (sessionId: string, open: boolean) => {
+        set((state) => {
+          if (!sessionId || state.terminalOutputOpen[sessionId] === open) return state
+          return {
+            terminalOutputOpen: {
+              ...state.terminalOutputOpen,
+              [sessionId]: open,
+            },
+          }
+        })
+      },
+
+      toggleTerminalOutputOpen: (sessionId: string) => {
+        set((state) => {
+          if (!sessionId) return state
+          const current = state.terminalOutputOpen[sessionId] ?? true
+          return {
+            terminalOutputOpen: {
+              ...state.terminalOutputOpen,
+              [sessionId]: !current,
+            },
+          }
+        })
+      },
+
       clearStreamingText: (sessionId: string) => {
         // Cancel any pending inactivity timer
         if (_streamingInactivityTimers[sessionId]) {
@@ -1426,12 +1458,26 @@ export const useChatStore = create<ChatState>()(
           const newTabEventIndices = { ...s.tabEventIndices }
           const newTabHasMore = { ...s.tabHasMoreOlderEvents }
           const newStreamingText = { ...s.streamingText }
+          const newStreamingStatus = { ...s.streamingStatus }
+          const newStreamingTerminalText = { ...s.streamingTerminalText }
+          const newStreamingTerminalActive = { ...s.streamingTerminalActive }
+          const newTerminalOutputOpen = { ...s.terminalOutputOpen }
+          const newLastStreamingChunkIndex = { ...s.lastStreamingChunkIndex }
+          const newLastStreamingTerminalChunkIndex = { ...s.lastStreamingTerminalChunkIndex }
+          const newCompletedStreamingText = { ...s.completedStreamingText }
           const newSSE = { ...s.sseConnections }
           if (oldSessionId) {
             delete newTabEvents[oldSessionId]
             delete newTabEventIndices[oldSessionId]
             delete newTabHasMore[oldSessionId]
             delete newStreamingText[oldSessionId]
+            delete newStreamingStatus[oldSessionId]
+            delete newStreamingTerminalText[oldSessionId]
+            delete newStreamingTerminalActive[oldSessionId]
+            delete newTerminalOutputOpen[oldSessionId]
+            delete newLastStreamingChunkIndex[oldSessionId]
+            delete newLastStreamingTerminalChunkIndex[oldSessionId]
+            delete newCompletedStreamingText[oldSessionId]
             delete newSSE[oldSessionId]
           }
           return {
@@ -1443,6 +1489,13 @@ export const useChatStore = create<ChatState>()(
             tabEventIndices: newTabEventIndices,
             tabHasMoreOlderEvents: newTabHasMore,
             streamingText: newStreamingText,
+            streamingStatus: newStreamingStatus,
+            streamingTerminalText: newStreamingTerminalText,
+            streamingTerminalActive: newStreamingTerminalActive,
+            terminalOutputOpen: newTerminalOutputOpen,
+            lastStreamingChunkIndex: newLastStreamingChunkIndex,
+            lastStreamingTerminalChunkIndex: newLastStreamingTerminalChunkIndex,
+            completedStreamingText: newCompletedStreamingText,
             sseConnections: newSSE,
           }
         })
@@ -1492,6 +1545,7 @@ export const useChatStore = create<ChatState>()(
           streamingStatus: {},
           streamingTerminalText: {},
           streamingTerminalActive: {},
+          terminalOutputOpen: {},
           lastStreamingChunkIndex: {},
           lastStreamingTerminalChunkIndex: {},
           completedStreamingText: {},
@@ -1773,6 +1827,10 @@ export const useChatStore = create<ChatState>()(
           const newStreamingTerminalActive = { ...state.streamingTerminalActive }
           delete newStreamingTerminalActive[tab.sessionId]
           updates.streamingTerminalActive = newStreamingTerminalActive
+
+          const newTerminalOutputOpen = { ...state.terminalOutputOpen }
+          delete newTerminalOutputOpen[tab.sessionId]
+          updates.terminalOutputOpen = newTerminalOutputOpen
 
           const newLastChunkIndex = { ...state.lastStreamingChunkIndex }
           delete newLastChunkIndex[tab.sessionId]

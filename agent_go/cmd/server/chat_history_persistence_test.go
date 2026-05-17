@@ -373,3 +373,89 @@ func TestRestoreCodingAgentRuntimeRestoresGeminiProjectDirForNextTurn(t *testing
 		t.Fatalf("workspace shell Gemini project dir config = %#v", cfg)
 	}
 }
+
+func TestReadChatHistoryRuntimeFromPathReadsDateBucketRuntime(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	convDir := filepath.Join(root, "_users", "default", "chat_history", "2026-05-17")
+	if err := os.MkdirAll(convDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	convPath := filepath.Join(convDir, "session-chat-1-conversation.json")
+	if err := os.WriteFile(convPath, []byte(`{
+  "session_id": "chat-1",
+  "runtime": {
+    "kind": "coding_agent",
+    "provider": "claude-code",
+    "model_id": "claude-sonnet-4-6",
+    "external_session_id": "claude-native-1",
+    "resume_supported": true,
+    "resume_flag": "--resume"
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime, ok, err := ReadChatHistoryRuntimeFromPath("default", "_users/default/chat_history/2026-05-17/session-chat-1-conversation.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || runtime == nil {
+		t.Fatalf("expected runtime metadata, ok=%v runtime=%#v", ok, runtime)
+	}
+	if runtime.Provider != "claude-code" || runtime.ExternalSessionID != "claude-native-1" {
+		t.Fatalf("unexpected runtime: %#v", runtime)
+	}
+}
+
+func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresClaude(t *testing.T) {
+	api := &StreamingAPI{
+		claudeCodeSessionIDs: make(map[string]string),
+		geminiSessionIDs:     make(map[string]string),
+		geminiProjectDirIDs:  make(map[string]string),
+	}
+	agent := &mcpagent.Agent{}
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:              "coding_agent",
+		Provider:          "claude-code",
+		ExternalSessionID: "claude-native-restored",
+		ResumeSupported:   true,
+	}
+
+	if !api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "claude-code", runtime, agent) {
+		t.Fatal("expected native resume state to be seeded")
+	}
+
+	if agent.ClaudeCodeSessionID != "claude-native-restored" {
+		t.Fatalf("agent ClaudeCodeSessionID = %q", agent.ClaudeCodeSessionID)
+	}
+	if got := api.claudeCodeSessionIDs["new-ui-session"]; got != "claude-native-restored" {
+		t.Fatalf("stored Claude session ID = %q", got)
+	}
+}
+
+func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsProviderMismatch(t *testing.T) {
+	api := &StreamingAPI{
+		claudeCodeSessionIDs: make(map[string]string),
+		geminiSessionIDs:     make(map[string]string),
+		geminiProjectDirIDs:  make(map[string]string),
+	}
+	agent := &mcpagent.Agent{}
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:              "coding_agent",
+		Provider:          "claude-code",
+		ExternalSessionID: "claude-native-restored",
+		ResumeSupported:   true,
+	}
+
+	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "gemini-cli", runtime, agent) {
+		t.Fatal("expected provider mismatch to skip native resume")
+	}
+	if agent.ClaudeCodeSessionID != "" {
+		t.Fatalf("agent ClaudeCodeSessionID = %q", agent.ClaudeCodeSessionID)
+	}
+	if got := api.claudeCodeSessionIDs["new-ui-session"]; got != "" {
+		t.Fatalf("stored Claude session ID = %q", got)
+	}
+}

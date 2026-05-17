@@ -163,7 +163,7 @@ func defaultCodingAgentE2EModel(provider string) string {
 	case "cursor-cli":
 		return "cursor-cli"
 	case "claude-code":
-		return "claude-haiku-4.5"
+		return "claude-code"
 	default:
 		return ""
 	}

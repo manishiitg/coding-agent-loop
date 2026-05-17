@@ -148,6 +148,9 @@ export interface AgentQueryRequest {
   selected_global_secrets?: string[]
   // Workspace paths of workflows to inject context for (via # selector in chat)
   workflow_context_paths?: string[]
+  // Conversation JSON selected from /resume or a previous chat panel. The backend
+  // can use its runtime metadata for native coding-agent resume.
+  restored_conversation_path?: string
   // Image generation configuration
   enable_image_generation?: boolean
   image_gen_config?: {

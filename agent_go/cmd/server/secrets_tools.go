@@ -16,13 +16,14 @@ import (
 )
 
 // registerSecretManagementTools registers list_secrets, set_user_secret, and
-// delete_user_secret on the given agent. Global secrets (env-backed) are
-// exposed read-only; user secrets support full CRUD on encrypted values.
+// delete_user_secret on the given agent. In workflow contexts it also registers
+// set_workflow_secret and delete_workflow_secret. Global secrets (env-backed)
+// are exposed read-only; user/workflow secrets support CRUD on encrypted values.
 // toolCategory groups the tools in the agent's tool registry (e.g. "secret_tools").
 // afterDelete, if non-nil, is invoked after a successful delete_user_secret so
 // callers can clean up workspace state (e.g. detach from workflow.json + refresh
 // workshop shell env). Errors returned by afterDelete are surfaced to the agent.
-func (api *StreamingAPI) registerSecretManagementTools(agent *mcpagent.Agent, userID, toolCategory string, afterDelete func(ctx context.Context, name string) error) error {
+func (api *StreamingAPI) registerSecretManagementTools(agent *mcpagent.Agent, userID, workflowPath, toolCategory string, afterDelete func(ctx context.Context, name string) error) error {
 	if agent == nil {
 		return fmt.Errorf("agent is nil")
 	}
@@ -63,7 +64,7 @@ func (api *StreamingAPI) registerSecretManagementTools(agent *mcpagent.Agent, us
 
 	if err := registerTool(
 		"list_secrets",
-		"List all secrets available to the current user. Returns JSON with two buckets: 'global' (env-backed, read-only) and 'user' (encrypted per-user, full CRUD). Values are never returned — only names. Use this before set_user_secret / delete_user_secret to avoid name collisions with global secrets.",
+		"List all secrets available to the current user. Returns JSON buckets: 'global' (env-backed, read-only), 'workflow' (encrypted per-user and scoped to this workflow when applicable), and 'user' (encrypted per-user, reusable). Values are never returned — only names. Use this before setting, deleting, or attaching secrets.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -86,11 +87,30 @@ func (api *StreamingAPI) registerSecretManagementTools(agent *mcpagent.Agent, us
 			}
 			sort.Strings(userNames)
 
+			workflowNames := []string{}
+			if strings.TrimSpace(workflowPath) != "" {
+				workflowSecrets, err := api.chatStore.ListWorkflowSecrets(ctx, userID, workflowPath)
+				if err != nil {
+					return "", fmt.Errorf("failed to list workflow secrets: %w", err)
+				}
+				workflowNames = make([]string, 0, len(workflowSecrets))
+				for _, ws := range workflowSecrets {
+					workflowNames = append(workflowNames, ws.Name)
+				}
+				sort.Strings(workflowNames)
+			}
+
 			out, _ := json.MarshalIndent(map[string]interface{}{
 				"global": map[string]interface{}{
 					"read_only": true,
 					"source":    "GLOBAL_SECRET_* env vars",
 					"names":     globalNames,
+				},
+				"workflow": map[string]interface{}{
+					"read_only":     false,
+					"source":        "per-user encrypted workflow store",
+					"workflow_path": workflowPath,
+					"names":         workflowNames,
 				},
 				"user": map[string]interface{}{
 					"read_only": false,
@@ -187,6 +207,86 @@ func (api *StreamingAPI) registerSecretManagementTools(agent *mcpagent.Agent, us
 		},
 	); err != nil {
 		return fmt.Errorf("register delete_user_secret: %w", err)
+	}
+
+	if strings.TrimSpace(workflowPath) != "" {
+		if err := registerTool(
+			"set_workflow_secret",
+			"Create or update a secret scoped only to the active workflow. The value is AES-256-GCM encrypted and stored server-side under this workflow/user scope, so other workflows cannot list or attach it. In workflow-builder/workshop contexts, if the user asked to use this secret immediately, follow this with update_workflow_config add_secrets so runtime steps receive $SECRET_<NAME>.",
+			map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Secret name. Becomes SECRET_<name> env var at execution. Use UPPER_SNAKE_CASE (e.g. SLACK_TOKEN, OPENAI_API_KEY).",
+					},
+					"value": map[string]interface{}{
+						"type":        "string",
+						"description": "Plaintext secret value. Encrypted before storage; not logged.",
+					},
+				},
+				"required": []string{"name", "value"},
+			},
+			func(ctx context.Context, args map[string]interface{}) (string, error) {
+				name, _ := args["name"].(string)
+				value, _ := args["value"].(string)
+				name = strings.TrimSpace(name)
+				if name == "" {
+					return "Error: 'name' is required.", nil
+				}
+				if value == "" {
+					return "Error: 'value' is required (use delete_workflow_secret to remove a workflow secret).", nil
+				}
+				encrypted, err := encryptValue(value)
+				if err != nil {
+					return "", fmt.Errorf("encrypt failed: %w", err)
+				}
+				if err := api.chatStore.UpsertWorkflowSecret(ctx, userID, workflowPath, name, encrypted); err != nil {
+					return "", fmt.Errorf("store workflow secret: %w", err)
+				}
+				return fmt.Sprintf("✅ Stored workflow-scoped secret %q (encrypted) for %s. Attach it with update_workflow_config add_secrets=[%q] so steps receive $SECRET_%s.", name, workflowPath, name, name), nil
+			},
+		); err != nil {
+			return fmt.Errorf("register set_workflow_secret: %w", err)
+		}
+
+		if err := registerTool(
+			"delete_workflow_secret",
+			"Delete a workflow-scoped secret from the encrypted store. Does NOT detach the name from workflows that reference it — call update_workflow_config remove_secrets separately if needed.",
+			map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Name of the workflow-scoped secret to delete.",
+					},
+				},
+				"required": []string{"name"},
+			},
+			func(ctx context.Context, args map[string]interface{}) (string, error) {
+				name, _ := args["name"].(string)
+				name = strings.TrimSpace(name)
+				if name == "" {
+					return "Error: 'name' is required.", nil
+				}
+				if err := api.chatStore.DeleteWorkflowSecret(ctx, userID, workflowPath, name); err != nil {
+					return "", fmt.Errorf("delete workflow secret: %w", err)
+				}
+				detached := false
+				if afterDelete != nil {
+					if hookErr := afterDelete(ctx, name); hookErr != nil {
+						return fmt.Sprintf("✅ Deleted workflow secret %q from store, but workshop cleanup failed: %v\nYou may need to run update_workflow_config(remove_secrets=[%q]) manually.", name, hookErr, name), nil
+					}
+					detached = true
+				}
+				if detached {
+					return fmt.Sprintf("✅ Deleted workflow secret %q and detached from the active workflow. $SECRET_%s is no longer available in this session.", name, name), nil
+				}
+				return fmt.Sprintf("✅ Deleted workflow secret %q. If this workflow still references it, run update_workflow_config(remove_secrets=[%q]) to detach.", name, name), nil
+			},
+		); err != nil {
+			return fmt.Errorf("register delete_workflow_secret: %w", err)
+		}
 	}
 
 	return nil

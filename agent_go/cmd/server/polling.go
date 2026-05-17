@@ -345,7 +345,11 @@ func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInf
 			enriched.WorkflowName = workflowName
 			enriched.WorkflowLabel = workflowName
 		}
-		if active.Status != "" {
+		// Workshop background executions should make the session display as
+		// background-busy via HasRunningBackgroundAgents, but they must not turn
+		// a completed foreground chat turn back into status=running. The frontend
+		// uses Status to decide whether the current chat bubble is still generating.
+		if active.Status != "" && exec.Source != trackedExecutionSourceWorkshopBackground {
 			enriched.Status = active.Status
 		}
 	}

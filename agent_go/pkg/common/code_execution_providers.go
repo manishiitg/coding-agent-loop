@@ -10,8 +10,12 @@ import "strings"
 //   - HTTP api-bridge tool mapping (mcp__api-bridge__*)
 //   - native conversation/context management (the CLI maintains its own history)
 //
-// Add new CLI providers here. Every other site in the codebase that needed
-// this decision was duplicating a literal list — call IsCLIProvider instead.
+// Add new CLI runtime providers here only when prompt/tool mapping needs to
+// treat the entire provider as CLI-native. The stricter coding-agent capability
+// contract lives in multi-llm-provider-go's coding_agent_contract.go and is
+// exposed through llm.IsCodingAgentProvider / llm.IsTmuxCodingAgentProvider.
+// Use that contract for transport, live input, tmux, cleanup, and resume
+// behavior.
 //
 // NOTE: This is *only* the "is this a CLI runtime?" question. It is **not**
 // the "should this agent run in code-execution mode?" question — code-exec

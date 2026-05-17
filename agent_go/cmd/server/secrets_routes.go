@@ -244,6 +244,7 @@ func decryptSecretValue(encryptedBase64 string, userID string) (string, error) {
 type storeSecretRequest struct {
 	Name           string `json:"name"`
 	EncryptedValue string `json:"encrypted_value"`
+	WorkspacePath  string `json:"workspace_path,omitempty"`
 }
 
 // handleStoreUserSecret upserts a user secret in the database
@@ -301,6 +302,80 @@ func (api *StreamingAPI) handleListStoredSecrets(w http.ResponseWriter, r *http.
 	if err != nil {
 		log.Printf("[SECRETS] Failed to list stored secrets: %v", err)
 		http.Error(w, "Failed to list secrets", http.StatusInternalServerError)
+		return
+	}
+
+	type entry struct {
+		Name string `json:"name"`
+	}
+	result := make([]entry, len(secrets))
+	for i, s := range secrets {
+		result[i] = entry{Name: s.Name}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+// handleStoreWorkflowSecret upserts a workflow-scoped user secret in the server-side store.
+// PUT /api/secrets/workflow/store
+func (api *StreamingAPI) handleStoreWorkflowSecret(w http.ResponseWriter, r *http.Request) {
+	var req storeSecretRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.WorkspacePath == "" || req.Name == "" || req.EncryptedValue == "" {
+		http.Error(w, "workspace_path, name, and encrypted_value are required", http.StatusBadRequest)
+		return
+	}
+
+	userID := GetUserIDFromContext(r.Context())
+	if err := api.chatStore.UpsertWorkflowSecret(r.Context(), userID, req.WorkspacePath, req.Name, req.EncryptedValue); err != nil {
+		log.Printf("[SECRETS] Failed to store workflow secret: %v", err)
+		http.Error(w, "Failed to store workflow secret", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// handleDeleteWorkflowSecret deletes a workflow-scoped user secret.
+// DELETE /api/secrets/workflow/store/{name}?workspace_path=Workflow/foo
+func (api *StreamingAPI) handleDeleteWorkflowSecret(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	workspacePath := r.URL.Query().Get("workspace_path")
+	if name == "" || workspacePath == "" {
+		http.Error(w, "Secret name and workspace_path are required", http.StatusBadRequest)
+		return
+	}
+
+	userID := GetUserIDFromContext(r.Context())
+	if err := api.chatStore.DeleteWorkflowSecret(r.Context(), userID, workspacePath, name); err != nil {
+		log.Printf("[SECRETS] Failed to delete workflow secret: %v", err)
+		http.Error(w, "Failed to delete workflow secret", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// handleListStoredWorkflowSecrets returns workflow-scoped secret names (no values).
+// GET /api/secrets/workflow/stored?workspace_path=Workflow/foo
+func (api *StreamingAPI) handleListStoredWorkflowSecrets(w http.ResponseWriter, r *http.Request) {
+	workspacePath := r.URL.Query().Get("workspace_path")
+	if workspacePath == "" {
+		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+
+	userID := GetUserIDFromContext(r.Context())
+	secrets, err := api.chatStore.ListWorkflowSecrets(r.Context(), userID, workspacePath)
+	if err != nil {
+		log.Printf("[SECRETS] Failed to list workflow secrets: %v", err)
+		http.Error(w, "Failed to list workflow secrets", http.StatusInternalServerError)
 		return
 	}
 

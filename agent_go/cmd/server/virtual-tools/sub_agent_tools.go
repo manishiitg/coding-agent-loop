@@ -37,6 +37,8 @@ const (
 	SubAgentShareBrowserKey subAgentContextKey = "share_browser"
 	// SubAgentIsolatedSessionIDKey is the context key for the isolated MCP session ID (set when share_browser=false)
 	SubAgentIsolatedSessionIDKey subAgentContextKey = "isolated_session_id"
+	// SubAgentMessageSequenceRestartKey is the context key for forcing a message_sequence route to start fresh.
+	SubAgentMessageSequenceRestartKey subAgentContextKey = "message_sequence_restart"
 	// GetSubAgentConversationKey is the context key for the get_sub_agent_conversation function
 	GetSubAgentConversationKey subAgentContextKey = "get_sub_agent_conversation"
 	// RouteDescriptionsKey is the context key for a map of route_id -> description string
@@ -105,13 +107,17 @@ func CreateSubAgentTools() []llmtypes.Tool {
 			"description": "REQUIRED. LLM reasoning tier for this sub-agent. 1 = high reasoning (complex/novel tasks), 2 = medium reasoning (routine tasks), 3 = low reasoning (simple/validation tasks). You must pick a tier for every call based on the task's difficulty.",
 			"enum":        []int{1, 2, 3},
 		},
+		"message_sequence_restart": map[string]interface{}{
+			"type":        "boolean",
+			"description": "Optional. Only for message_sequence routes. If true, archive the existing route conversation and replay the configured item queue from the beginning. Default: false, which resumes the existing route conversation and sends instructions as the re-entry message.",
+		},
 	}
 	callSubAgentRequired := []string{"route_id", "todo_id", "instructions", "preferred_tier"}
 	callSubAgentTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "call_sub_agent",
-			Description: "Execute a predefined sub-agent to perform a specific task. The sub-agent will run to completion and return its result. Use this for tasks that match one of the predefined agent routes.",
+			Description: "Execute a predefined sub-agent to perform a specific task. The sub-agent will run to completion and return its result. For message_sequence routes, repeated calls resume the route conversation unless message_sequence_restart is true.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type":       "object",
 				"properties": callSubAgentProperties,
@@ -189,7 +195,7 @@ func CreateSubAgentTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_route_description",
-			Description: "Get the full description and instructions for a predefined sub-agent route. Call this before delegating to understand what the route does and what instructions to pass.",
+			Description: "Get the full description and instructions for a predefined sub-agent route. Call this before delegating to understand what the route does, what instructions to pass, and whether it is a message_sequence route with resume/restart behavior.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -250,6 +256,9 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 	// Extract share_browser param (defaults to true — shared browser)
 	if sb, ok := args["share_browser"].(bool); ok && !sb {
 		ctx = context.WithValue(ctx, SubAgentShareBrowserKey, false)
+	}
+	if restart, ok := args["message_sequence_restart"].(bool); ok && restart {
+		ctx = context.WithValue(ctx, SubAgentMessageSequenceRestartKey, true)
 	}
 
 	// Get the execution function from context

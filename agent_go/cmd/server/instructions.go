@@ -559,7 +559,7 @@ Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1
 - ` + "`selected_servers`" + ` — MCP server names the workflow uses (array of strings)
 - ` + "`selected_tools`" + ` — specific tool names to allow-list from those servers (optional)
 - ` + "`selected_skills`" + ` — skill folder names to auto-activate
-- ` + "`selected_secrets`" + ` — secret names the workflow needs
+- ` + "`selected_secrets`" + ` — secret names the workflow needs; values resolve at runtime from workflow-scoped secrets, reusable user secrets, or GLOBAL_SECRET_* globals
 - ` + "`browser_mode`" + ` — ` + "`none`" + ` | ` + "`headless`" + ` | ` + "`cdp`" + ` | ` + "`playwright`" + `
 - ` + "`use_code_execution_mode`" + ` — ` + "`true`" + ` if steps should run scripted Python; ` + "`false`" + ` for direct tool calls
 - ` + "`llm_config`" + ` — set to ` + "`null`" + ` unless the user asked for a specific provider/model

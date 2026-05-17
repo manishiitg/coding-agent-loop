@@ -165,9 +165,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames, browserMode) => {
         const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
 
-        // Convert secret IDs to names for backend persistence (names are device-independent)
+        // Convert legacy local secret IDs to names for backend persistence.
+        // Workflow-scoped secrets are already represented by name.
         const secretNamesForBackend = selectedSecrets
-          ?.map(secretId => useSecretsStore.getState().getSecret(secretId)?.name)
+          ?.map(secretIdOrName => useSecretsStore.getState().getSecret(secretIdOrName)?.name || secretIdOrName)
           .filter((n): n is string => !!n) || []
 
         // Only manifest-based workflow saves are supported

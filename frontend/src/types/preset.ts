@@ -9,7 +9,7 @@ export interface CustomPreset {
   selectedServers?: string[];
   selectedTools?: string[]; // NEW: Array of "server:tool" strings
   selectedSkills?: string[]; // Skill folder names for workflow
-  selectedSecrets?: string[]; // Secret IDs for injection (persisted to DB as names)
+  selectedSecrets?: string[]; // Secret names for workflow injection
   selectedGlobalSecretNames?: string[] | null; // null=all global secrets, []=none, [...]=specific
   agentMode?: 'simple' | 'workflow';
   selectedFolder?: PlannerFile; // Single folder

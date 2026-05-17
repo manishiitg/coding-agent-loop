@@ -2,6 +2,7 @@ package security
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -79,10 +80,13 @@ func buildNativeEnvironment() []string {
 	}
 
 	var env []string
+	pathValue := ""
 	for _, kv := range os.Environ() {
 		key := kv
+		value := ""
 		if idx := strings.IndexByte(kv, '='); idx >= 0 {
 			key = kv[:idx]
+			value = kv[idx+1:]
 		}
 
 		if blockedExact[key] {
@@ -101,11 +105,71 @@ func buildNativeEnvironment() []string {
 			continue
 		}
 
+		if key == "PATH" {
+			pathValue = value
+			continue
+		}
+
 		env = append(env, kv)
 	}
+
+	env = append(env, "PATH="+buildNativePath(pathValue))
 
 	// Ensure Python output buffering is disabled
 	env = append(env, "PYTHONUNBUFFERED=1")
 
 	return env
+}
+
+func buildNativePath(existing string) string {
+	parts := splitPath(existing)
+	add := func(path string) {
+		if path == "" || containsPath(parts, path) {
+			return
+		}
+		parts = append(parts, path)
+	}
+
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		add(filepath.Join(home, ".local", "bin"))
+		add(filepath.Join(home, "go", "bin"))
+		add(filepath.Join(home, ".cargo", "bin"))
+		add(filepath.Join(home, ".bun", "bin"))
+	}
+
+	add("/opt/homebrew/bin")
+	add("/opt/homebrew/sbin")
+	add("/usr/local/bin")
+	add("/usr/local/sbin")
+	add("/usr/bin")
+	add("/bin")
+	add("/usr/sbin")
+	add("/sbin")
+
+	return strings.Join(parts, ":")
+}
+
+func splitPath(pathValue string) []string {
+	if strings.TrimSpace(pathValue) == "" {
+		return nil
+	}
+	raw := strings.Split(pathValue, ":")
+	parts := make([]string, 0, len(raw))
+	for _, part := range raw {
+		part = strings.TrimSpace(part)
+		if part == "" || containsPath(parts, part) {
+			continue
+		}
+		parts = append(parts, part)
+	}
+	return parts
+}
+
+func containsPath(paths []string, target string) bool {
+	for _, path := range paths {
+		if path == target {
+			return true
+		}
+	}
+	return false
 }

@@ -418,7 +418,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         false, // useCodeExecutionMode — backend determines mode from browser selection
         enableContextSummarization,
         enableBrowserAccess, // Browser automation access
-        selectedSecrets, // Secret IDs for injection
+        selectedSecrets, // Secret names for workflow injection
         selectedGlobalSecrets, // Per-preset global secret selection (null=all)
         browserMode // Browser mode: none|headless|cdp|playwright
       );
@@ -806,6 +806,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     onSecretChange={setSelectedSecrets}
                     selectedGlobalSecrets={selectedGlobalSecrets}
                     onGlobalSecretChange={setSelectedGlobalSecrets}
+                    workflowPath={selectedFolder?.filepath}
                   />
                 )}
 

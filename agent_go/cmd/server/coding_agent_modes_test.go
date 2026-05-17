@@ -59,6 +59,26 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 	}
 }
 
+func TestCodingAgentPersistentInteractiveFlagsCoverTmuxContracts(t *testing.T) {
+	for _, contract := range llm.CodingAgentProviderContracts() {
+		if contract.Transport != llm.CodingAgentTransportTmux {
+			continue
+		}
+		t.Run(string(contract.Provider), func(t *testing.T) {
+			gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI := codingAgentPersistentInteractiveFlags(string(contract.Provider))
+			count := 0
+			for _, enabled := range []bool{gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI} {
+				if enabled {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Fatalf("provider %q enables %d persistent flags, want exactly one", contract.Provider, count)
+			}
+		})
+	}
+}
+
 func TestCodingAgentClaudeCodeChatTransport(t *testing.T) {
 	if got := codingAgentClaudeCodeChatTransport(string(llm.ProviderClaudeCode)); got != llm.ClaudeCodeTransportExperimental {
 		t.Fatalf("claude-code chat transport = %q, want %q", got, llm.ClaudeCodeTransportExperimental)

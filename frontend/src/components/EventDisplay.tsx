@@ -152,6 +152,9 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
   const currentStreamingTerminalActive = useChatStore(state =>
     sessionId ? state.streamingTerminalActive[sessionId] || false : false
   )
+  const terminalOutputSessionKey = sessionId || tabId || '__default__'
+  const terminalOutputOpen = useChatStore(state => state.terminalOutputOpen[terminalOutputSessionKey] ?? true)
+  const setTerminalOutputOpen = useChatStore(state => state.setTerminalOutputOpen)
   const completedStreamingText = useChatStore(state =>
     sessionId ? state.completedStreamingText[sessionId] || '' : ''
   )
@@ -192,9 +195,6 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
   const hasLiveTerminalStream = Boolean(currentStreamingTerminalText && currentStreamingTerminalActive)
   const streamingPanelTitle = currentStreamingTerminalText && !hasLiveStreamingText ? 'Terminal output' : 'Generating...'
   const showStreamingPanelHeader = Boolean(hasLiveStreamingText && (!currentStreamingTerminalText || hasLiveTerminalStream))
-  const [terminalOutputOpenBySession, setTerminalOutputOpenBySession] = React.useState<Record<string, boolean>>({})
-  const terminalOutputSessionKey = sessionId || '__default__'
-  const terminalOutputOpen = terminalOutputOpenBySession[terminalOutputSessionKey] ?? true
   const terminalOutputRef = React.useRef<HTMLDivElement | null>(null)
   const terminalAutoFollowRef = React.useRef(true)
   const isTerminalNearBottom = React.useCallback((el: HTMLDivElement) => (
@@ -224,15 +224,11 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
   }, [currentStreamingTerminalText, terminalOutputOpen, scrollTerminalOutputToBottom])
   const handleTerminalOutputToggle = React.useCallback((event: React.SyntheticEvent<HTMLDetailsElement>) => {
     const isOpen = event.currentTarget.open
-    setTerminalOutputOpenBySession(prev => (
-      prev[terminalOutputSessionKey] === isOpen
-        ? prev
-        : { ...prev, [terminalOutputSessionKey]: isOpen }
-    ))
+    setTerminalOutputOpen(terminalOutputSessionKey, isOpen)
     if (isOpen) {
       scrollTerminalOutputToBottom(true)
     }
-  }, [scrollTerminalOutputToBottom, terminalOutputSessionKey])
+  }, [scrollTerminalOutputToBottom, setTerminalOutputOpen, terminalOutputSessionKey])
   const terminalOutputBlock = currentStreamingTerminalText ? (
     <div
       ref={terminalOutputRef}

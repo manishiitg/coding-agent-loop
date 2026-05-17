@@ -40,13 +40,36 @@ export const secretsApi = {
     return response.data;
   },
 
+  storeWorkflowSecret: async (workspacePath: string, name: string, encryptedValue: string): Promise<{ success: boolean }> => {
+    const response = await api.put('/api/secrets/workflow/store', {
+      workspace_path: workspacePath,
+      name,
+      encrypted_value: encryptedValue,
+    });
+    return response.data;
+  },
+
   deleteStoredSecret: async (name: string): Promise<{ success: boolean }> => {
     const response = await api.delete(`/api/secrets/store/${encodeURIComponent(name)}`);
     return response.data;
   },
 
+  deleteWorkflowSecret: async (workspacePath: string, name: string): Promise<{ success: boolean }> => {
+    const response = await api.delete(`/api/secrets/workflow/store/${encodeURIComponent(name)}`, {
+      params: { workspace_path: workspacePath },
+    });
+    return response.data;
+  },
+
   listStoredSecrets: async (): Promise<{ name: string }[]> => {
     const response = await api.get('/api/secrets/stored');
+    return response.data;
+  },
+
+  listWorkflowSecrets: async (workspacePath: string): Promise<{ name: string }[]> => {
+    const response = await api.get('/api/secrets/workflow/stored', {
+      params: { workspace_path: workspacePath },
+    });
     return response.data;
   },
 };

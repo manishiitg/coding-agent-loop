@@ -3249,7 +3249,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create new agent with streamCtx instead of r.Context()
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
-		claudeCodePersistentInteractive, codexPersistentInteractive, geminiPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
+		claudeCodePersistentInteractive, codexPersistentInteractive, geminiPersistentInteractive, cursorPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
 		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
 		chatWorkingFolder := perUserChatsFolder
 		if isWorkflowPhase && workflowPhaseFolder != "" && workflowPhaseFolder != "default_workspace" {
@@ -3289,6 +3289,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			ClaudeCodePersistentInteractiveSession: claudeCodePersistentInteractive,
 			CodexPersistentInteractiveSession:      codexPersistentInteractive,
 			GeminiPersistentInteractiveSession:     geminiPersistentInteractive,
+			CursorPersistentInteractiveSession:     cursorPersistentInteractive,
 			ClaudeCodeTransport:                    claudeCodeTransport,
 			CodingAgentWorkingDir:                  chatWorkingDir,
 			APIKeys:                                mergedAPIKeys,
@@ -8266,6 +8267,22 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 			return
 		} else {
 			log.Printf("[STEER] Gemini CLI live input unavailable for session %s, falling back to agent queue: %v", sessionID, err)
+		}
+	}
+	if runningAgent.GetProvider() == llm.ProviderCursorCLI {
+		steerCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := llmproviders.SendCursorCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
+			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
+			log.Printf("[STEER] Sent live message to Cursor CLI session %s: %.80s", sessionID, req.Message)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "Steer message sent to coding agent",
+			})
+			return
+		} else {
+			log.Printf("[STEER] Cursor CLI live input unavailable for session %s, falling back to agent queue: %v", sessionID, err)
 		}
 	}
 

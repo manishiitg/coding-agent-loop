@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, SlidersHorizontal, Bot, Building2, PanelRightOpen, HelpCircle } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
@@ -21,8 +21,13 @@ import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { GlobalActivityMonitor } from './GlobalActivityMonitor'
 import WorkflowWalkthrough from './workflow/WorkflowWalkthrough'
-
-const WORKFLOW_WALKTHROUGH_DISMISSED_KEY = 'workflow_walkthrough_dismissed'
+import {
+  LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT,
+  LLM_DISCOVERY_ONBOARDING_OPENED_EVENT,
+  dismissWorkflowWalkthrough,
+  getLLMDiscoveryOnboardingState,
+  isWorkflowWalkthroughDismissed,
+} from '../utils/onboarding'
 
 const getModeIcon = (category: string) => {
   switch (category) {
@@ -166,6 +171,8 @@ export const ModePresetBar: React.FC = () => {
   const [showWorkflowsPopup, setShowWorkflowsPopup] = useState(false)
   const [showWorkflowWalkthrough, setShowWorkflowWalkthrough] = useState(false)
   const [workflowWalkthroughOpenToken, setWorkflowWalkthroughOpenToken] = useState(0)
+  const pendingAutoWalkthroughAfterLLMDiscoveryRef = useRef(false)
+  const evaluatedAutoWalkthroughRef = useRef(false)
   const showWorkflowsOverview = useAppStore(s => s.showWorkflowsOverview)
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
   const setSelectedFile = useWorkspaceStore(state => state.setSelectedFile)
@@ -183,11 +190,7 @@ export const ModePresetBar: React.FC = () => {
 
   const closeWorkflowWalkthrough = useCallback(() => {
     setShowWorkflowWalkthrough(false)
-    try {
-      localStorage.setItem(WORKFLOW_WALKTHROUGH_DISMISSED_KEY, 'true')
-    } catch {
-      // Ignore storage failures; the walkthrough can still close for this session.
-    }
+    dismissWorkflowWalkthrough()
   }, [])
 
   useEffect(() => {
@@ -197,14 +200,39 @@ export const ModePresetBar: React.FC = () => {
   }, [openWorkflowWalkthrough])
 
   useEffect(() => {
-    try {
-      if (localStorage.getItem(WORKFLOW_WALKTHROUGH_DISMISSED_KEY) !== 'true') {
-        setShowWorkflowWalkthrough(true)
-      }
-    } catch {
-      // If storage is unavailable, users can still launch it from the header.
+    const handleLLMDiscoveryOpened = () => {
+      setShowWorkflowWalkthrough(false)
     }
-  }, [])
+
+    const handleLLMDiscoveryCleared = () => {
+      if (!pendingAutoWalkthroughAfterLLMDiscoveryRef.current) return
+      pendingAutoWalkthroughAfterLLMDiscoveryRef.current = false
+      if (!isWorkflowWalkthroughDismissed()) {
+        openWorkflowWalkthrough()
+      }
+    }
+
+    window.addEventListener(LLM_DISCOVERY_ONBOARDING_OPENED_EVENT, handleLLMDiscoveryOpened)
+    window.addEventListener(LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT, handleLLMDiscoveryCleared)
+    return () => {
+      window.removeEventListener(LLM_DISCOVERY_ONBOARDING_OPENED_EVENT, handleLLMDiscoveryOpened)
+      window.removeEventListener(LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT, handleLLMDiscoveryCleared)
+    }
+  }, [openWorkflowWalkthrough])
+
+  useEffect(() => {
+    if (evaluatedAutoWalkthroughRef.current) return
+    evaluatedAutoWalkthroughRef.current = true
+    if (isWorkflowWalkthroughDismissed()) return
+
+    const llmDiscoveryState = getLLMDiscoveryOnboardingState()
+    if (llmDiscoveryState === 'cleared') {
+      openWorkflowWalkthrough()
+      return
+    }
+
+    pendingAutoWalkthroughAfterLLMDiscoveryRef.current = true
+  }, [openWorkflowWalkthrough])
 
   const handleModePillClick = useCallback((modeKey: 'multi-agent' | 'workflow') => {
     setModeCategory(modeKey)

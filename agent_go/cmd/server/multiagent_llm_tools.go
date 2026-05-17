@@ -76,6 +76,8 @@ func getStoredProviderAPIKey(keys *StoredProviderKeys, provider string) string {
 		return strings.TrimSpace(keys.Vertex)
 	case "gemini-cli":
 		return strings.TrimSpace(keys.GeminiCLI)
+	case "cursor-cli":
+		return strings.TrimSpace(keys.CursorCLI)
 	case "minimax":
 		return strings.TrimSpace(keys.MiniMax)
 	case "minimax-coding-plan":
@@ -108,6 +110,8 @@ func setStoredProviderAPIKey(keys *StoredProviderKeys, provider, apiKey string) 
 		keys.Vertex = value
 	case "gemini-cli":
 		keys.GeminiCLI = value
+	case "cursor-cli":
+		keys.CursorCLI = value
 	case "minimax":
 		keys.MiniMax = value
 	case "minimax-coding-plan":
@@ -279,6 +283,8 @@ func providerRuntime(provider string) string {
 		return "codex"
 	case string(llm.ProviderGeminiCLI):
 		return "gemini"
+	case string(llm.ProviderCursorCLI):
+		return "cursor-agent"
 	case string(llm.ProviderMiniMaxCodingPlan):
 		return "mmx"
 	default:
@@ -309,6 +315,8 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 		return keys.GeminiCLI != nil && strings.TrimSpace(*keys.GeminiCLI) != "", "GEMINI_API_KEY or workspace provider auth"
 	case string(llm.ProviderCodexCLI):
 		return true, "Codex CLI login or CODEX_API_KEY/workspace provider auth"
+	case string(llm.ProviderCursorCLI):
+		return true, "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
 	case string(llm.ProviderMiniMax):
 		return keys.MiniMax != nil && strings.TrimSpace(*keys.MiniMax) != "", "MINIMAX_API_KEY or workspace provider auth"
 	case string(llm.ProviderMiniMaxCodingPlan):
@@ -382,6 +390,7 @@ func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, configFile string,
 		string(llm.ProviderMiniMax),
 		string(llm.ProviderMiniMaxCodingPlan),
 		string(llm.ProviderCodexCLI),
+		string(llm.ProviderCursorCLI),
 		string(llm.ProviderZAI),
 		string(llm.ProviderKimi),
 		string(llm.ProviderClaudeCode),
@@ -471,13 +480,15 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 				map[string][]string{
 					string(llm.ProviderClaudeCode):        {"claude-code"},
 					string(llm.ProviderCodexCLI):          {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
+					string(llm.ProviderCursorCLI):         {"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
 					string(llm.ProviderGeminiCLI):         {"gemini CLI models"},
 					string(llm.ProviderMiniMaxCodingPlan): {"MiniMax coding-plan search via mmx"},
 					string(llm.ProviderVertex):            {"gemini* models only"},
 				},
 				map[string]string{},
 				map[string][]string{
-					string(llm.ProviderVertex): {"Only published Vertex models whose model_id starts with gemini are search-capable."},
+					string(llm.ProviderCursorCLI): {"Uses Cursor Agent CLI through tmux; model availability follows the signed-in Cursor account."},
+					string(llm.ProviderVertex):    {"Only published Vertex models whose model_id starts with gemini are search-capable."},
 				},
 			),
 			"routing_fields": map[string]interface{}{
@@ -499,6 +510,7 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 					string(llm.ProviderZAI):        {"glm-4.6v", "glm-5v-turbo"},
 					string(llm.ProviderKimi):       {"kimi-k2.6"},
 					string(llm.ProviderCodexCLI):   {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
+					string(llm.ProviderCursorCLI):  {"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
 					string(llm.ProviderClaudeCode): {"claude-code"},
 				},
 				map[string]string{
@@ -506,10 +518,12 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 					string(llm.ProviderZAI):        "glm-4.6v",
 					string(llm.ProviderKimi):       "kimi-k2.6",
 					string(llm.ProviderCodexCLI):   "gpt-5.4-mini",
+					string(llm.ProviderCursorCLI):  "cursor-cli",
 					string(llm.ProviderClaudeCode): "claude-code",
 				},
 				map[string][]string{
 					string(llm.ProviderCodexCLI):   {"Uses the local workspace image path because Codex CLI does not consume base64 ImageContent through the adapter."},
+					string(llm.ProviderCursorCLI):  {"Uses the local workspace image path because Cursor CLI tmux transport does not consume base64 ImageContent through the adapter."},
 					string(llm.ProviderClaudeCode): {"Uses the local workspace image path through Claude Code CLI."},
 				},
 			),
@@ -1199,7 +1213,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as openai, openrouter, anthropic, z-ai, vertex, azure, minimax, minimax-coding-plan, gemini-cli, claude-code, codex-cli, or bedrock.",
+					"description": "Provider id such as openai, openrouter, anthropic, z-ai, vertex, azure, minimax, minimax-coding-plan, gemini-cli, claude-code, codex-cli, cursor-cli, or bedrock.",
 				},
 				"model_id": map[string]interface{}{
 					"type":        "string",
@@ -1348,7 +1362,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 				},
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as openai, openrouter, anthropic, z-ai, vertex, azure, minimax, gemini-cli, claude-code, or codex-cli.",
+					"description": "Provider id such as openai, openrouter, anthropic, z-ai, vertex, azure, minimax, gemini-cli, claude-code, codex-cli, or cursor-cli.",
 				},
 				"model_id": map[string]interface{}{
 					"type":        "string",
@@ -1509,7 +1523,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id: openrouter, openai, anthropic, z-ai, vertex, gemini-cli, minimax, minimax-coding-plan, elevenlabs, deepgram, bedrock, or azure.",
+					"description": "Provider id: openrouter, openai, anthropic, z-ai, vertex, gemini-cli, cursor-cli, minimax, minimax-coding-plan, elevenlabs, deepgram, bedrock, or azure.",
 				},
 				"api_key": map[string]interface{}{
 					"type":        "string",

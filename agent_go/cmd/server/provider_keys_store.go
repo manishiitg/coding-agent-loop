@@ -27,6 +27,7 @@ type StoredProviderKeys struct {
 	Kimi              string               `json:"kimi,omitempty"`
 	Vertex            string               `json:"vertex,omitempty"`
 	GeminiCLI         string               `json:"gemini_cli,omitempty"`
+	CursorCLI         string               `json:"cursor_cli,omitempty"`
 	MiniMax           string               `json:"minimax,omitempty"`
 	MiniMaxCodingPlan string               `json:"minimax_coding_plan,omitempty"`
 	ElevenLabs        string               `json:"elevenlabs,omitempty"`
@@ -121,6 +122,9 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	if keys.GeminiCLI != "" {
 		m["gemini_cli"] = keys.GeminiCLI
 	}
+	if keys.CursorCLI != "" {
+		m["cursor_cli"] = keys.CursorCLI
+	}
 	if keys.MiniMax != "" {
 		m["minimax"] = keys.MiniMax
 	}
@@ -181,6 +185,9 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if keys.GeminiCLI != "" {
 		result.GeminiCLI = &keys.GeminiCLI
 	}
+	if keys.CursorCLI != "" {
+		result.CursorCLI = &keys.CursorCLI
+	}
 	if keys.MiniMax != "" {
 		result.MiniMax = &keys.MiniMax
 	}
@@ -208,6 +215,9 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	var loaded []string
 	if result.GeminiCLI != nil {
 		loaded = append(loaded, "gemini-cli")
+	}
+	if result.CursorCLI != nil {
+		loaded = append(loaded, "cursor-cli")
 	}
 	if result.OpenRouter != nil {
 		loaded = append(loaded, "openrouter")
@@ -281,6 +291,7 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		Vertex:            pick(envKeys.Vertex, wsKeys.Vertex),
 		GeminiCLI:         pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
 		CodexCLI:          pick(envKeys.CodexCLI, wsKeys.CodexCLI),
+		CursorCLI:         pick(envKeys.CursorCLI, wsKeys.CursorCLI),
 		MiniMax:           pick(envKeys.MiniMax, wsKeys.MiniMax),
 		MiniMaxCodingPlan: pick(envKeys.MiniMaxCodingPlan, wsKeys.MiniMaxCodingPlan),
 		ElevenLabs:        pick(envKeys.ElevenLabs, wsKeys.ElevenLabs),
@@ -421,6 +432,7 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 		Kimi:              pick(existing.Kimi, incoming.Kimi),
 		Vertex:            pick(existing.Vertex, incoming.Vertex),
 		GeminiCLI:         pick(existing.GeminiCLI, incoming.GeminiCLI),
+		CursorCLI:         pick(existing.CursorCLI, incoming.CursorCLI),
 		MiniMax:           pick(existing.MiniMax, incoming.MiniMax),
 		MiniMaxCodingPlan: pick(existing.MiniMaxCodingPlan, incoming.MiniMaxCodingPlan),
 		ElevenLabs:        pick(existing.ElevenLabs, incoming.ElevenLabs),

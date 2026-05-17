@@ -6,43 +6,39 @@ import { useLLMStore } from '../stores'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 import { CodingAgentCapabilities } from './llm/CodingAgentCapabilities'
 
-interface ClaudeCodeSectionProps {
+interface CursorCLISectionProps {
   onPublished?: () => void
   metadata?: ModelMetadata[]
 }
 
-export function ClaudeCodeSection({ onPublished, metadata = [] }: ClaudeCodeSectionProps) {
+export function CursorCLISection({ onPublished, metadata = [] }: CursorCLISectionProps) {
   const [isPublishing, setIsPublishing] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [publishName, setPublishName] = useState('')
   const [publishStatus, setPublishStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [publishError, setPublishError] = useState<string | null>(null)
-  const [selectedModel, setSelectedModel] = useState('claude-code')
-  const [effortLevel, setEffortLevel] = useState('high')
+  const [selectedModel, setSelectedModel] = useState('cursor-cli')
   const { saveLLM, savedLLMs } = useLLMStore()
 
-  // Test connection state
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'valid' | 'invalid'>('idle')
   const [testMessage, setTestMessage] = useState<string | null>(null)
-  const claudeModels = useMemo(
-    () => metadata.filter(m => m.provider === 'claude-code'),
+
+  const cursorModels = useMemo(
+    () => metadata.filter(m => m.provider === 'cursor-cli'),
     [metadata]
   )
-  const currentModelMetadata = claudeModels.find(m => m.model_id === selectedModel)
-  const effortLevels = currentModelMetadata?.reasoning_effort_levels?.length
-    ? currentModelMetadata.reasoning_effort_levels
-    : ['low', 'medium', 'high', 'max']
+  const currentModelMetadata = cursorModels.find(m => m.model_id === selectedModel)
 
   useEffect(() => {
-    if (claudeModels.length === 0) return
-    const modelExists = claudeModels.some(m => m.model_id === selectedModel)
+    if (cursorModels.length === 0) return
+    const modelExists = cursorModels.some(m => m.model_id === selectedModel)
     if (!modelExists) {
-      setSelectedModel(claudeModels[0].model_id)
+      setSelectedModel(cursorModels[0].model_id)
     }
-  }, [claudeModels, selectedModel])
+  }, [cursorModels, selectedModel])
 
   const alreadyPublished = savedLLMs.some(
-    llm => llm.provider === 'claude-code' && llm.model_id === selectedModel
+    llm => llm.provider === 'cursor-cli' && llm.model_id === selectedModel
   )
 
   const handleTestConnection = async () => {
@@ -51,12 +47,13 @@ export function ClaudeCodeSection({ onPublished, metadata = [] }: ClaudeCodeSect
 
     try {
       const response = await llmConfigService.validateAPIKey({
-        provider: 'claude-code',
+        provider: 'cursor-cli',
+        model_id: selectedModel,
       })
 
       if (response.valid) {
         setTestStatus('valid')
-        setTestMessage(response.message || 'Claude Code CLI is working.')
+        setTestMessage(response.message || 'Cursor CLI is working.')
       } else {
         setTestStatus('invalid')
         setTestMessage(response.message || response.error || 'Validation failed.')
@@ -75,12 +72,11 @@ export function ClaudeCodeSection({ onPublished, metadata = [] }: ClaudeCodeSect
 
     try {
       const llmModel = {
-        provider: 'claude-code' as const,
+        provider: 'cursor-cli' as const,
         model_id: selectedModel,
-        options: { reasoning_effort: effortLevel },
       }
 
-      await saveLLM(llmModel, publishName.trim(), 'Claude Code CLI', 'none', currentModelMetadata)
+      await saveLLM(llmModel, publishName.trim(), 'Cursor CLI', 'none', currentModelMetadata)
       setPublishName('')
       setIsPublishing(false)
       setPublishStatus('success')
@@ -97,7 +93,7 @@ export function ClaudeCodeSection({ onPublished, metadata = [] }: ClaudeCodeSect
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-foreground">Claude Code Configuration</h3>
+        <h3 className="text-lg font-semibold text-foreground">Cursor CLI Configuration</h3>
       </div>
 
       <Card className="p-4">
@@ -106,17 +102,17 @@ export function ClaudeCodeSection({ onPublished, metadata = [] }: ClaudeCodeSect
           <div className="space-y-2">
             <h4 className="font-medium text-foreground">Local CLI Provider</h4>
             <p className="text-sm text-muted-foreground">
-              Claude Code uses the locally installed <code className="text-xs bg-secondary px-1 py-0.5 rounded">claude</code> CLI for inference.
-              It handles its own authentication, model selection, and tool execution — no API key, model picker, or temperature setting is needed.
+              Cursor CLI uses the locally installed <code className="text-xs bg-secondary px-1 py-0.5 rounded">cursor-agent</code> CLI through tmux.
+              Authentication is handled by Cursor login or <code className="text-xs bg-secondary px-1 py-0.5 rounded">CURSOR_API_KEY</code>.
             </p>
             <p className="text-sm text-muted-foreground">
-              Some agent features (context summarization, tool search, code execution mode, context editing) are automatically disabled when using this provider.
+              The backend passes Runloop tools through the MCP bridge and keeps live chat turns steerable while the Cursor agent is running.
             </p>
           </div>
         </div>
       </Card>
 
-      <CodingAgentCapabilities provider="claude-code" modelId={selectedModel} />
+      <CodingAgentCapabilities provider="cursor-cli" modelId={selectedModel} />
 
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-3">Model</h4>
@@ -125,11 +121,15 @@ export function ClaudeCodeSection({ onPublished, metadata = [] }: ClaudeCodeSect
           onChange={e => setSelectedModel(e.target.value)}
           className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
         >
-          {claudeModels.map(m => (
+          {cursorModels.map(m => (
             <option key={m.model_id} value={m.model_id}>{m.model_name || m.model_id}</option>
           ))}
         </select>
-        {selectedModel !== 'claude-code' && (
+        {selectedModel === 'cursor-cli' ? (
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Uses Cursor's default routing for the signed-in account.
+          </p>
+        ) : (
           <p className="mt-1.5 text-xs text-muted-foreground">
             Passes <code className="bg-secondary px-1 py-0.5 rounded">--model {selectedModel}</code> to the CLI.
           </p>
@@ -137,28 +137,9 @@ export function ClaudeCodeSection({ onPublished, metadata = [] }: ClaudeCodeSect
       </Card>
 
       <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-3">Effort Level</h4>
-        <select
-          value={effortLevel}
-          onChange={e => setEffortLevel(e.target.value)}
-          className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-        >
-          {effortLevels.map(level => (
-            <option key={level} value={level}>
-              {level.charAt(0).toUpperCase() + level.slice(1)}
-            </option>
-          ))}
-        </select>
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          Controls how deeply Claude reasons. Passes <code className="bg-secondary px-1 py-0.5 rounded">--effort {effortLevel}</code> to the CLI.
-        </p>
-      </Card>
-
-      {/* Test Connection */}
-      <Card className="p-4">
         <h4 className="font-medium text-foreground mb-3">Test Connection</h4>
         <p className="text-sm text-muted-foreground mb-3">
-          Sends a test prompt to the Claude Code CLI to verify it is installed and authenticated.
+          Sends a real test prompt through Cursor CLI tmux mode to verify it is installed and authenticated.
         </p>
         <div className="space-y-3">
           <Button
@@ -203,14 +184,13 @@ export function ClaudeCodeSection({ onPublished, metadata = [] }: ClaudeCodeSect
         </div>
       </Card>
 
-      {/* Publish to Library */}
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-3">Publish to Library</h4>
 
         {alreadyPublished && !isPublishing && (
           <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400 mb-3">
             <CheckCircle className="w-4 h-4" />
-            Claude Code is already published in your library.
+            Cursor CLI is already published in your library.
           </div>
         )}
 
@@ -221,62 +201,59 @@ export function ClaudeCodeSection({ onPublished, metadata = [] }: ClaudeCodeSect
           </div>
         )}
 
+        {publishError && (
+          <div className="flex items-center gap-2 text-sm text-red-500 mb-3">
+            <AlertCircle className="w-4 h-4" />
+            {publishError}
+          </div>
+        )}
+
         {!isPublishing ? (
           <Button
-            variant="outline"
-            size="sm"
             onClick={() => {
+              setPublishName(currentModelMetadata?.model_name || 'Cursor CLI')
               setIsPublishing(true)
-              setPublishName(currentModelMetadata ? `Claude Code (${currentModelMetadata.model_name}, ${effortLevel} effort)` : 'Claude Code')
               setPublishError(null)
             }}
+            disabled={alreadyPublished}
+            size="sm"
           >
             Publish to Library
           </Button>
         ) : (
           <div className="space-y-3">
-            <div>
-              <label className="block text-sm font-medium text-muted-foreground mb-1">Display Name</label>
-              <input
-                type="text"
-                value={publishName}
-                onChange={(e) => {
-                  setPublishName(e.target.value)
-                  setPublishError(null)
-                }}
-                className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder="e.g., Claude Code"
-              />
-            </div>
-            {publishError && (
-              <div className="flex items-center gap-2 text-sm text-red-500">
-                <AlertCircle className="w-4 h-4" />
-                {publishError}
-              </div>
-            )}
-            <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={publishName}
+              onChange={e => setPublishName(e.target.value)}
+              placeholder="Display name"
+              className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+              autoFocus
+            />
+            <div className="flex gap-2">
               <Button
-                variant="default"
-                size="sm"
                 onClick={handlePublishToLibrary}
-                disabled={isSubmitting || !publishName.trim()}
+                disabled={!publishName.trim() || isSubmitting}
+                size="sm"
               >
                 {isSubmitting ? (
                   <>
-                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     Publishing...
                   </>
                 ) : (
-                  'Confirm'
+                  'Publish'
                 )}
               </Button>
               <Button
-                variant="ghost"
-                size="sm"
+                variant="outline"
                 onClick={() => {
                   setIsPublishing(false)
+                  setPublishName('')
                   setPublishError(null)
                 }}
+                disabled={isSubmitting}
+                size="sm"
               >
                 Cancel
               </Button>

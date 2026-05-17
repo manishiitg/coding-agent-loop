@@ -172,7 +172,7 @@ func searchWebLLMToolDef() llmtypes.Tool {
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Required published provider, e.g. gemini-cli, vertex, claude-code, codex-cli, or minimax-coding-plan. Discover usable providers with list_llm_capabilities(capability=\"search_web\", include_models=true).",
+						"description": "Required published provider, e.g. gemini-cli, vertex, claude-code, codex-cli, cursor-cli, or minimax-coding-plan. Discover usable providers with list_llm_capabilities(capability=\"search_web\", include_models=true).",
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",

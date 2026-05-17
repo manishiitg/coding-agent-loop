@@ -4,6 +4,7 @@ import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 import { useLLMStore } from '../stores'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
+import { CodingAgentCapabilities } from './llm/CodingAgentCapabilities'
 
 interface GeminiCLISectionProps {
   onPublished?: () => void
@@ -113,6 +114,8 @@ export function GeminiCLISection({ onPublished, onModelChange, metadata = [] }: 
           </div>
         </div>
       </Card>
+
+      <CodingAgentCapabilities provider="gemini-cli" modelId={geminiCliModel} />
 
       {/* API Key */}
       <Card className="p-4">

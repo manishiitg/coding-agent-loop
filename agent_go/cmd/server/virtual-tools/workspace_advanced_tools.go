@@ -337,7 +337,7 @@ func createSearchWebLLMExecutor(workspaceURL string) func(ctx context.Context, a
 
 func isSearchCapableProvider(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case string(llm.ProviderClaudeCode), string(llm.ProviderCodexCLI), string(llm.ProviderGeminiCLI), string(llm.ProviderMiniMaxCodingPlan), string(llm.ProviderVertex):
+	case string(llm.ProviderClaudeCode), string(llm.ProviderCodexCLI), string(llm.ProviderCursorCLI), string(llm.ProviderGeminiCLI), string(llm.ProviderMiniMaxCodingPlan), string(llm.ProviderVertex):
 		return true
 	default:
 		return false
@@ -361,7 +361,7 @@ func hasSearchProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case string(llm.ProviderClaudeCode):
 		return apiKeys != nil && apiKeys.Anthropic != nil && strings.TrimSpace(*apiKeys.Anthropic) != ""
-	case string(llm.ProviderCodexCLI):
+	case string(llm.ProviderCodexCLI), string(llm.ProviderCursorCLI):
 		return true
 	case string(llm.ProviderGeminiCLI):
 		return apiKeys != nil && apiKeys.GeminiCLI != nil && strings.TrimSpace(*apiKeys.GeminiCLI) != ""
@@ -384,6 +384,9 @@ func isSearchProviderAvailable(provider string) bool {
 		return err == nil
 	case string(llm.ProviderCodexCLI):
 		_, err := exec.LookPath("codex")
+		return err == nil
+	case string(llm.ProviderCursorCLI):
+		_, err := exec.LookPath("cursor-agent")
 		return err == nil
 	case string(llm.ProviderMiniMaxCodingPlan):
 		_, err := exec.LookPath("mmx")
@@ -453,6 +456,17 @@ func preferredSearchModelRank(provider, modelID string) int {
 		case "gpt-5.3-codex":
 			return 3
 		}
+	case string(llm.ProviderCursorCLI):
+		switch modelID {
+		case "cursor-cli":
+			return 0
+		case "gpt-5":
+			return 1
+		case "sonnet-4-thinking":
+			return 2
+		case "sonnet-4":
+			return 3
+		}
 	case string(llm.ProviderGeminiCLI):
 		if modelID == "auto" {
 			return 0
@@ -472,6 +486,8 @@ func searchModelAlias(provider, modelID string) string {
 		switch provider {
 		case string(llm.ProviderCodexCLI):
 			return "gpt-5.4-mini"
+		case string(llm.ProviderCursorCLI):
+			return "cursor-cli"
 		case string(llm.ProviderGeminiCLI):
 			return "auto"
 		case string(llm.ProviderMiniMaxCodingPlan):
@@ -750,6 +766,10 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 		v := value
 		keys.CodexCLI = &v
 	}
+	if value, ok := rawKeys["cursor_cli"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.CursorCLI = &v
+	}
 	if value, ok := rawKeys["minimax"].(string); ok && strings.TrimSpace(value) != "" {
 		v := value
 		keys.MiniMax = &v
@@ -808,6 +828,8 @@ func createPublishedSearchLLM(ctx context.Context, workspaceURL string, requeste
 		}
 	case llm.ProviderCodexCLI:
 		// Codex CLI can use workspace auth, CODEX_API_KEY, or its own stored login state.
+	case llm.ProviderCursorCLI:
+		// Cursor CLI can use workspace auth, CURSOR_API_KEY, or its own stored login state.
 	case llm.ProviderClaudeCode:
 		if apiKeys == nil || apiKeys.Anthropic == nil || strings.TrimSpace(*apiKeys.Anthropic) == "" {
 			return nil, fmt.Errorf("search_web_llm requires Anthropic auth in config/provider-api-keys.json for the published Claude Code provider")
@@ -1458,8 +1480,8 @@ func wrapReadImageWithLLM(
 
 		// Step 4: Make the LLM call with the image + query.
 		// CLI providers can inspect local files when given the workspace path
-		// directly. Codex CLI also does not consume ImageContent through the
-		// adapter today, so keep CLI image analysis path-based.
+		// directly. Codex/Cursor tmux transports do not consume ImageContent
+		// through the adapter today, so keep CLI image analysis path-based.
 		parts := []llmtypes.ContentPart{
 			llmtypes.TextContent{Text: imageData.Query},
 			llmtypes.ImageContent{
@@ -1468,7 +1490,7 @@ func wrapReadImageWithLLM(
 				Data:       imageData.Data,
 			},
 		}
-		if strings.EqualFold(provider, string(llm.ProviderCodexCLI)) || strings.EqualFold(provider, string(llm.ProviderClaudeCode)) {
+		if strings.EqualFold(provider, string(llm.ProviderCodexCLI)) || strings.EqualFold(provider, string(llm.ProviderCursorCLI)) || strings.EqualFold(provider, string(llm.ProviderClaudeCode)) {
 			absoluteImagePath := workspaceAbsolutePath(normalizeWorkspaceDocumentPath(imageData.Filepath))
 			if _, statErr := os.Stat(absoluteImagePath); statErr != nil {
 				return "", fmt.Errorf("%s image analysis requires a readable local workspace file at %q: %w", provider, absoluteImagePath, statErr)
@@ -1713,6 +1735,8 @@ func createLLMFromConfig(ctx context.Context, config mcpagent.LLMModel) (llmtype
 			apiKeys.GeminiCLI = config.APIKey
 		case llm.ProviderCodexCLI:
 			apiKeys.CodexCLI = config.APIKey
+		case llm.ProviderCursorCLI:
+			apiKeys.CursorCLI = config.APIKey
 		case llm.ProviderMiniMax:
 			apiKeys.MiniMax = config.APIKey
 		case llm.ProviderMiniMaxCodingPlan:

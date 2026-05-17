@@ -9,16 +9,18 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 )
 
-func codingAgentPersistentInteractiveFlags(provider string) (claudeCode bool, codexCLI bool, geminiCLI bool) {
+func codingAgentPersistentInteractiveFlags(provider string) (claudeCode bool, codexCLI bool, geminiCLI bool, cursorCLI bool) {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case strings.ToLower(string(llm.ProviderClaudeCode)):
-		return true, false, false
+		return true, false, false, false
 	case strings.ToLower(string(llm.ProviderCodexCLI)):
-		return false, true, false
+		return false, true, false, false
 	case strings.ToLower(string(llm.ProviderGeminiCLI)):
-		return false, false, true
+		return false, false, true, false
+	case strings.ToLower(string(llm.ProviderCursorCLI)):
+		return false, false, false, true
 	default:
-		return false, false, false
+		return false, false, false, false
 	}
 }
 

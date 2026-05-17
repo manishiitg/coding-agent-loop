@@ -45,7 +45,7 @@ func providerUsesNativeContextManagement(provider llm.Provider) bool {
 
 func providerNeedsPlainTextHistory(provider llm.Provider) bool {
 	switch strings.ToLower(strings.TrimSpace(string(provider))) {
-	case "claude-code", "gemini-cli", "codex-cli", "kimi":
+	case "claude-code", "gemini-cli", "codex-cli", "cursor-cli", "kimi":
 		return true
 	default:
 		return false
@@ -203,6 +203,7 @@ type LLMAgentConfig struct {
 	ClaudeCodePersistentInteractiveSession bool
 	CodexPersistentInteractiveSession      bool
 	GeminiPersistentInteractiveSession     bool
+	CursorPersistentInteractiveSession     bool
 	ClaudeCodeTransport                    string
 	CodingAgentWorkingDir                  string
 	APIKeys                                *llm.ProviderAPIKeys // API keys for providers
@@ -440,6 +441,10 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.GeminiPersistentInteractiveSession {
 		agentOptions = append(agentOptions, mcpagent.WithGeminiPersistentInteractiveSession(true))
 		logger.Info("🔗 Gemini CLI persistent interactive tmux session enabled")
+	}
+	if config.CursorPersistentInteractiveSession {
+		agentOptions = append(agentOptions, mcpagent.WithCursorPersistentInteractiveSession(true))
+		logger.Info("🔗 Cursor CLI persistent interactive tmux session enabled")
 	}
 
 	// Add session ID for MCP connection reuse (e.g., Playwright browser sharing)

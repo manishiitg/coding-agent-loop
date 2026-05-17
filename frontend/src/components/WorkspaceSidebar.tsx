@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import SidebarHeader from './sidebar/SidebarHeader'
 import { RunloopMark } from './branding/RunloopLogo'
 import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
@@ -17,9 +17,14 @@ import { Download, KeyRound, LogOut, PanelLeftClose, ServerCog, User, Bell, Bell
 import { useAuthStore } from '../stores/useAuthStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { playNotificationSound } from '../utils/sound'
+import {
+  dismissLLMDiscoveryOnboarding,
+  isLLMDiscoveryOnboardingDismissed,
+  markLLMDiscoveryOnboardingCleared,
+  markLLMDiscoveryOnboardingOpen,
+} from '../utils/onboarding'
 
 const FORCE_LLM_DISCOVERY_ONBOARDING_FOR_TESTING = false
-const LLM_DISCOVERY_ONBOARDING_DISMISSED_KEY = 'llm_discovery_onboarding_dismissed'
 
 interface WorkspaceSidebarProps {
   // Minimize functionality
@@ -53,6 +58,7 @@ export default function WorkspaceSidebar({
   const closeDialog = useCommandDialogStore(state => state.closeDialog)
   const [showTierModal, setShowTierModal] = useState(false)
   const [showLLMDiscoveryModal, setShowLLMDiscoveryModal] = useState(false)
+  const [releaseWalkthroughAfterLLMModalClose, setReleaseWalkthroughAfterLLMModalClose] = useState(false)
   const [isElectron, setIsElectron] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
   const [osPermission, setOsPermission] = useState<NotificationPermission>('default')
@@ -65,14 +71,31 @@ export default function WorkspaceSidebar({
     [primaryConfig, chatPrimaryConfig, workflowPrimaryConfig].some(config => Boolean(config?.provider && config?.model_id?.trim())) ||
     [agentConfig, chatAgentConfig, workflowAgentConfig].some(config => Boolean(config?.primary?.provider && config?.primary?.model_id?.trim()))
 
-  const openLLMDiscoveryModal = () => {
+  const openLLMDiscoveryModal = useCallback(() => {
+    markLLMDiscoveryOnboardingOpen()
     setShowLLMDiscoveryModal(true)
-  }
+  }, [])
 
-  const closeLLMDiscoveryModal = () => {
-    localStorage.setItem(LLM_DISCOVERY_ONBOARDING_DISMISSED_KEY, 'true')
+  const closeLLMDiscoveryModal = useCallback(() => {
+    dismissLLMDiscoveryOnboarding()
     setShowLLMDiscoveryModal(false)
-  }
+    markLLMDiscoveryOnboardingCleared()
+  }, [])
+
+  const openAdvancedSetupFromDiscovery = useCallback(() => {
+    dismissLLMDiscoveryOnboarding()
+    setShowLLMDiscoveryModal(false)
+    setReleaseWalkthroughAfterLLMModalClose(true)
+    setShowLLMModal(true)
+  }, [setShowLLMModal])
+
+  const closeLLMConfigurationModal = useCallback(() => {
+    setShowLLMModal(false)
+    if (releaseWalkthroughAfterLLMModalClose) {
+      setReleaseWalkthroughAfterLLMModalClose(false)
+      markLLMDiscoveryOnboardingCleared()
+    }
+  }, [releaseWalkthroughAfterLLMModalClose, setShowLLMModal])
 
   useEffect(() => {
     // Check if running in Electron via preload API
@@ -157,24 +180,34 @@ export default function WorkspaceSidebar({
   // the advanced tier configuration modal.
   useEffect(() => {
     if (FORCE_LLM_DISCOVERY_ONBOARDING_FOR_TESTING) {
-      setShowLLMDiscoveryModal(true)
+      openLLMDiscoveryModal()
       return
     }
     if (!defaultsLoaded || hasConfiguredLLM) return
-    if (localStorage.getItem(LLM_DISCOVERY_ONBOARDING_DISMISSED_KEY) === 'true') return
-    setShowLLMDiscoveryModal(true)
+    if (isLLMDiscoveryOnboardingDismissed()) {
+      markLLMDiscoveryOnboardingCleared()
+      return
+    }
+    openLLMDiscoveryModal()
+  }, [defaultsLoaded, hasConfiguredLLM, openLLMDiscoveryModal])
+
+  useEffect(() => {
+    if (!defaultsLoaded) return
+    if (hasConfiguredLLM || isLLMDiscoveryOnboardingDismissed()) {
+      markLLMDiscoveryOnboardingCleared()
+    }
   }, [defaultsLoaded, hasConfiguredLLM])
 
   // Auto-show tier config modal when entering multi-agent mode without tiers configured
   useEffect(() => {
     if (FORCE_LLM_DISCOVERY_ONBOARDING_FOR_TESTING) {
-      setShowLLMDiscoveryModal(true)
+      openLLMDiscoveryModal()
       return
     }
     if (selectedModeCategory !== 'multi-agent') return
     if (!hasConfiguredLLM) {
-      if (localStorage.getItem(LLM_DISCOVERY_ONBOARDING_DISMISSED_KEY) !== 'true') {
-        setShowLLMDiscoveryModal(true)
+      if (!isLLMDiscoveryOnboardingDismissed()) {
+        openLLMDiscoveryModal()
       }
       return
     }
@@ -182,7 +215,7 @@ export default function WorkspaceSidebar({
     if (!hasTiers) {
       setShowTierModal(true)
     }
-  }, [selectedModeCategory, delegationTierConfig, hasConfiguredLLM])
+  }, [selectedModeCategory, delegationTierConfig, hasConfiguredLLM, openLLMDiscoveryModal])
 
   return (
     <TooltipProvider>
@@ -535,7 +568,7 @@ export default function WorkspaceSidebar({
       {/* LLM Configuration Modal */}
       <LLMConfigurationModal
         isOpen={showLLMModal}
-        onClose={() => setShowLLMModal(false)}
+        onClose={closeLLMConfigurationModal}
         onOpenDiscovery={openLLMDiscoveryModal}
       />
 
@@ -543,7 +576,7 @@ export default function WorkspaceSidebar({
       <LLMDiscoveryOnboardingModal
         isOpen={showLLMDiscoveryModal}
         onClose={closeLLMDiscoveryModal}
-        onAdvancedSetup={() => setShowLLMModal(true)}
+        onAdvancedSetup={openAdvancedSetupFromDiscovery}
       />
 
       {/* Delegation Tier Configuration Modal */}

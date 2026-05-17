@@ -14,16 +14,52 @@ export type ProviderType =
   | 'claude-code'
   | 'gemini-cli'
   | 'codex-cli'
+  | 'cursor-cli'
   | 'minimax'
   | 'minimax-coding-plan'
   | 'elevenlabs'
   | 'deepgram'
+
+export type LLMIntegrationKind = 'coding_agent' | 'api_model' | 'audio_provider'
 
 type ProviderDisplayInfo = {
   name: string
   authDescription: string
   colorClass: string
 }
+
+export type LLMIntegrationDisplayInfo = {
+  label: string
+  description: string
+  toneClass: string
+}
+
+export const LLM_INTEGRATION_ORDER: LLMIntegrationKind[] = [
+  'coding_agent',
+  'api_model',
+  'audio_provider',
+]
+
+export const LLM_INTEGRATION_DISPLAY_INFO: Record<LLMIntegrationKind, LLMIntegrationDisplayInfo> = {
+  coding_agent: {
+    label: 'Coding Agents',
+    description: 'Local agent runtimes',
+    toneClass: 'text-amber-700 dark:text-amber-300',
+  },
+  api_model: {
+    label: 'API Providers',
+    description: 'Provider-hosted chat models',
+    toneClass: 'text-blue-700 dark:text-blue-300',
+  },
+  audio_provider: {
+    label: 'Audio Providers',
+    description: 'Speech, voice, and media models',
+    toneClass: 'text-violet-700 dark:text-violet-300',
+  },
+}
+
+const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli'])
+const AUDIO_PROVIDER_PROVIDERS = new Set(['elevenlabs', 'deepgram'])
 
 const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
   openrouter: {
@@ -81,6 +117,11 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
     authDescription: 'Local CLI (API key optional)',
     colorClass: 'text-emerald-600 dark:text-emerald-400',
   },
+  'cursor-cli': {
+    name: 'Cursor CLI',
+    authDescription: 'Local CLI (API key optional)',
+    colorClass: 'text-slate-600 dark:text-slate-300',
+  },
   minimax: {
     name: 'MiniMax',
     authDescription: 'API Key',
@@ -104,6 +145,10 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
 }
 
 export const PROVIDER_ORDER: ProviderType[] = [
+  'codex-cli',
+  'cursor-cli',
+  'claude-code',
+  'gemini-cli',
   'openrouter',
   'bedrock',
   'openai',
@@ -116,9 +161,6 @@ export const PROVIDER_ORDER: ProviderType[] = [
   'elevenlabs',
   'deepgram',
   'minimax-coding-plan',
-  'claude-code',
-  'gemini-cli',
-  'codex-cli',
 ]
 
 export function getProviderDisplayInfo(provider?: string): ProviderDisplayInfo {
@@ -139,6 +181,37 @@ export function getProviderDisplayInfo(provider?: string): ProviderDisplayInfo {
     authDescription: 'API Key',
     colorClass: 'text-gray-600 dark:text-gray-400',
   }
+}
+
+export function getProviderIntegrationKind(provider?: string, modelId?: string): LLMIntegrationKind {
+  const normalizedProvider = (provider || '').trim().toLowerCase()
+  const normalizedModel = (modelId || '').trim().toLowerCase()
+
+  if (CODING_AGENT_PROVIDERS.has(normalizedProvider)) {
+    return 'coding_agent'
+  }
+  if (normalizedProvider === 'kimi' && normalizedModel === 'kimi-code') {
+    return 'coding_agent'
+  }
+  if (AUDIO_PROVIDER_PROVIDERS.has(normalizedProvider)) {
+    return 'audio_provider'
+  }
+  if (normalizedProvider === 'minimax' && /^(speech|music|audio|voice)[-_]/.test(normalizedModel)) {
+    return 'audio_provider'
+  }
+  return 'api_model'
+}
+
+export function getProviderIntegrationInfo(provider?: string, modelId?: string): LLMIntegrationDisplayInfo {
+  return LLM_INTEGRATION_DISPLAY_INFO[getProviderIntegrationKind(provider, modelId)]
+}
+
+export function shouldShowLLMPricing(provider?: string, modelId?: string): boolean {
+  const normalizedProvider = (provider || '').trim().toLowerCase()
+  if (normalizedProvider === 'minimax-coding-plan') {
+    return false
+  }
+  return getProviderIntegrationKind(provider, modelId) !== 'coding_agent'
 }
 
 type ModelDisplayNameOptions = {

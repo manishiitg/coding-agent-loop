@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/azure"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/utils"
 
@@ -37,6 +38,7 @@ var supportedLLMProviders = []string{
 	"claude-code",
 	"gemini-cli",
 	"codex-cli",
+	"cursor-cli",
 }
 
 const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
@@ -242,6 +244,9 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	if s := os.Getenv("CODEX_API_KEY"); s != "" {
 		keys.CodexCLI = &s
 	}
+	if s := os.Getenv("CURSOR_API_KEY"); s != "" {
+		keys.CursorCLI = &s
+	}
 	if s := os.Getenv("MINIMAX_API_KEY"); s != "" {
 		keys.MiniMax = &s
 	}
@@ -296,6 +301,8 @@ func providerDisplayLabel(provider string) string {
 	switch provider {
 	case "codex-cli":
 		return "OpenAI Codex CLI"
+	case "cursor-cli":
+		return "Cursor CLI"
 	case "claude-code":
 		return "Claude Code"
 	case "gemini-cli":
@@ -342,7 +349,7 @@ func modelNameForProviderModel(provider, modelID string) string {
 
 func discoveryCandidateKind(provider string) string {
 	switch provider {
-	case "codex-cli", "claude-code", "gemini-cli", "kimi":
+	case "codex-cli", "cursor-cli", "claude-code", "gemini-cli", "kimi":
 		return "local_cli"
 	default:
 		return "api"
@@ -353,6 +360,8 @@ func discoveryModelOptions(provider string) []string {
 	switch provider {
 	case "codex-cli":
 		return []string{"codex-cli", "high", "medium", "low"}
+	case "cursor-cli":
+		return []string{"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"}
 	case "claude-code":
 		return []string{"claude-code", "high", "medium", "low"}
 	case "gemini-cli":
@@ -361,6 +370,40 @@ func discoveryModelOptions(provider string) []string {
 		return []string{"kimi-code", "kimi-k2.6"}
 	default:
 		return nil
+	}
+}
+
+func discoverySetupHint(provider string, runtimeMissing bool) string {
+	if runtimeMissing {
+		switch provider {
+		case "codex-cli":
+			return "Install Codex CLI so the codex command is available on the backend PATH."
+		case "cursor-cli":
+			return "Install Cursor CLI so the cursor-agent command is available on the backend PATH."
+		case "claude-code":
+			return "Install Claude Code so the claude command is available on the backend PATH."
+		case "gemini-cli":
+			return "Install Gemini CLI so the gemini command is available on the backend PATH."
+		case "kimi":
+			return "Install Kimi Code CLI so the kimi command is available on the backend PATH."
+		default:
+			return "Install the provider CLI so its command is available on the backend PATH."
+		}
+	}
+
+	switch provider {
+	case "codex-cli":
+		return "Run codex login or set CODEX_API_KEY, then test again."
+	case "cursor-cli":
+		return "Run cursor-agent login or set CURSOR_API_KEY, then test again."
+	case "claude-code":
+		return "Run claude to finish Claude Code authentication, then test again."
+	case "gemini-cli":
+		return "Set GEMINI_API_KEY or finish Gemini CLI authentication, then test again."
+	case "kimi":
+		return "Run kimi login or set KIMI_API_KEY, then test again."
+	default:
+		return "Provider auth was not detected in the server environment or workspace provider keys."
 	}
 }
 
@@ -387,6 +430,7 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 
 	providerOrder := []string{
 		"codex-cli",
+		"cursor-cli",
 		"claude-code",
 		"gemini-cli",
 		"kimi",
@@ -426,34 +470,30 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 			continue
 		}
 
+		kind := discoveryCandidateKind(provider)
 		discovered := authConfigured || usable
 		if runtimeOK != nil && *runtimeOK {
 			discovered = true
 		}
-		if !discovered {
+		if !discovered && kind != "local_cli" {
 			continue
 		}
 
-		kind := discoveryCandidateKind(provider)
 		source := "Environment or workspace auth"
 		if runtimeOK != nil && *runtimeOK {
 			source = "Local CLI"
+		} else if runtimeOK != nil && !*runtimeOK {
+			source = "CLI not found"
 		}
 
 		reason := "Ready to enable."
 		setupHint := ""
-		if !usable {
-			switch provider {
-			case "codex-cli":
-				setupHint = "Run codex login or set CODEX_API_KEY, then test again."
-			case "claude-code":
-				setupHint = "Run claude to finish Claude Code authentication, then test again."
-			case "gemini-cli":
-				setupHint = "Set GEMINI_API_KEY or finish Gemini CLI authentication, then test again."
-			default:
-				setupHint = "Provider auth was not detected in the server environment or workspace provider keys."
-			}
+		if runtimeOK != nil && !*runtimeOK {
+			reason = "CLI runtime was not detected."
+			setupHint = discoverySetupHint(provider, true)
+		} else if !usable {
 			reason = "Detected, but setup may be incomplete."
+			setupHint = discoverySetupHint(provider, false)
 		}
 
 		candidates = append(candidates, llmDiscoveryCandidate{
@@ -776,6 +816,8 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 		setAPIKey(keys.GeminiCLI)
 	case "codex-cli":
 		setAPIKey(keys.CodexCLI)
+	case "cursor-cli":
+		setAPIKey(keys.CursorCLI)
 	case "minimax":
 		setAPIKey(keys.MiniMax)
 	case "minimax-coding-plan":
@@ -813,6 +855,8 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 		return validateGeminiCLI(req.APIKey)
 	case "codex-cli":
 		return validateCodexCLI(req.APIKey)
+	case "cursor-cli":
+		return validateCursorCLI(req.APIKey, req.ModelID)
 	case "kimi":
 		if req.ModelID == "kimi-code" && shouldUseKimiCodeDiscoveryCLITransport() && strings.TrimSpace(req.APIKey) == "" {
 			return validateKimiCodeCLI()
@@ -1142,6 +1186,103 @@ func validateCodexCLI(apiKey string) llm.APIKeyValidationResponse {
 	return llm.APIKeyValidationResponse{
 		Valid:   true,
 		Message: fmt.Sprintf("Codex CLI is working. Response: %s", responseText),
+	}
+}
+
+// validateCursorCLI validates Cursor Agent CLI through the real tmux adapter path.
+func validateCursorCLI(apiKey, modelID string) llm.APIKeyValidationResponse {
+	log.Printf("[CURSOR-CLI VALIDATION] Starting CLI validation")
+
+	cursorPath, err := exec.LookPath("cursor-agent")
+	if err != nil {
+		log.Printf("[CURSOR-CLI VALIDATION] CLI not found on PATH: %v", err)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Cursor Agent CLI not found. Install it with: curl https://cursor.com/install -fsS | bash",
+		}
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		log.Printf("[CURSOR-CLI VALIDATION] tmux not found on PATH: %v", err)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "tmux not found. Cursor CLI integration requires tmux for interactive mode.",
+		}
+	}
+	log.Printf("[CURSOR-CLI VALIDATION] CLI found at: %s", cursorPath)
+
+	if modelID == "" {
+		modelID = "cursor-cli"
+	}
+
+	workspaceDir, err := os.MkdirTemp("", "cursor-cli-validation-*")
+	if err != nil {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Could not create a temporary workspace for Cursor CLI validation.",
+		}
+	}
+	defer os.RemoveAll(workspaceDir)
+
+	keys := &llm.ProviderAPIKeys{}
+	if apiKey == "" {
+		apiKey = os.Getenv("CURSOR_API_KEY")
+	}
+	if strings.TrimSpace(apiKey) != "" {
+		keys.CursorCLI = &apiKey
+	}
+
+	model, err := llm.InitializeLLM(llm.Config{
+		Provider: llm.ProviderCursorCLI,
+		ModelID:  modelID,
+		APIKeys:  keys,
+		Context:  context.Background(),
+	})
+	if err != nil {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Failed to initialize Cursor CLI: %v", err),
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	resp, err := model.GenerateContent(ctx, []llmtypes.MessageContent{
+		{
+			Role: llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: "Reply with exactly: Cursor CLI is working."},
+			},
+		},
+	}, llm.WithCursorWorkingDir(workspaceDir))
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return llm.APIKeyValidationResponse{
+				Valid:   false,
+				Message: "Cursor CLI timed out after 90s. Check that you are authenticated with Cursor Agent CLI.",
+			}
+		}
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Cursor CLI error: %s", strings.TrimSpace(err.Error())),
+		}
+	}
+
+	responseText := ""
+	if resp != nil && len(resp.Choices) > 0 {
+		responseText = strings.TrimSpace(resp.Choices[0].Content)
+	}
+	if responseText == "" {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Cursor CLI returned an empty response. Check authentication with 'cursor-agent login'.",
+		}
+	}
+
+	log.Printf("[CURSOR-CLI VALIDATION SUCCESS] Got response: %s", responseText)
+	return llm.APIKeyValidationResponse{
+		Valid:   true,
+		Message: fmt.Sprintf("Cursor CLI is working. Response: %s", responseText),
 	}
 }
 

@@ -68,6 +68,7 @@ function hasStoredProviderKeys(keys?: StoredProviderKeys | null): boolean {
     keys?.kimi ||
     keys?.vertex ||
     keys?.gemini_cli ||
+    keys?.cursor_cli ||
     keys?.minimax ||
     keys?.minimax_coding_plan ||
     keys?.elevenlabs ||
@@ -454,7 +455,7 @@ export const useLLMStore = create<LLMState>()(
         delegationTierConfig: null,
 
         // Supported providers (always load fresh from backend, default to all)
-        supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'z-ai', 'kimi', 'claude-code', 'gemini-cli', 'codex-cli', 'minimax', 'minimax-coding-plan', 'elevenlabs', 'deepgram'],
+        supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'z-ai', 'kimi', 'claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'minimax', 'minimax-coding-plan', 'elevenlabs', 'deepgram'],
         providerCapabilities: {},
         llmConfigLocked: false,
         lockedProviders: [],
@@ -1006,7 +1007,7 @@ export const useLLMStore = create<LLMState>()(
               availableElevenLabsModels: defaults.available_models.elevenlabs || [],
               availableDeepgramModels: defaults.available_models.deepgram || [],
               supportedProviders: (() => {
-                const sp = defaults.supported_providers || ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'z-ai', 'kimi', 'claude-code', 'gemini-cli', 'codex-cli', 'minimax', 'minimax-coding-plan', 'elevenlabs', 'deepgram']
+                const sp = defaults.supported_providers || ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'z-ai', 'kimi', 'claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'minimax', 'minimax-coding-plan', 'elevenlabs', 'deepgram']
                 console.log('[useLLMStore] supported_providers from backend:', defaults.supported_providers, '→ using:', sp)
                 return sp
               })(),

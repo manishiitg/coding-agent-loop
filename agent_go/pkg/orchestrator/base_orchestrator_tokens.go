@@ -15,6 +15,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/azure"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/bedrock"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex"
 )
@@ -69,6 +70,8 @@ func getModelMetadata(provider, modelID string) (*llmtypes.ModelMetadata, error)
 		return azure.GetAzureModelMetadata(resolvedModelID)
 	case "codex-cli":
 		return codexcli.NewCodexCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
+	case "cursor-cli":
+		return cursorcli.NewCursorCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -90,6 +93,11 @@ func resolvePricingProviderAndModel(provider, modelID string) (string, string) {
 			return "codex-cli", openai.ModelGPT54
 		}
 		return "codex-cli", normalizedModelID
+	case "cursor-cli":
+		if normalizedModelLower == "" || normalizedModelLower == "auto" || normalizedModelLower == "cursor-cli" {
+			return "cursor-cli", "cursor-cli"
+		}
+		return "cursor-cli", normalizedModelID
 	case "gemini-cli":
 		switch normalizedModelLower {
 		case "", "auto", "gemini-cli":

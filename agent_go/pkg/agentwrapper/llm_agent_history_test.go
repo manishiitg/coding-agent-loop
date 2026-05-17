@@ -80,6 +80,9 @@ func TestProviderNeedsPlainTextHistory(t *testing.T) {
 	if !providerNeedsPlainTextHistory(llm.Provider("claude-code")) {
 		t.Fatal("expected claude-code to use plain text history")
 	}
+	if !providerNeedsPlainTextHistory(llm.Provider("cursor-cli")) {
+		t.Fatal("expected cursor-cli to use plain text history")
+	}
 	if providerNeedsPlainTextHistory(llm.Provider("anthropic")) {
 		t.Fatal("did not expect anthropic to use plain text history")
 	}

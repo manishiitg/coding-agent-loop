@@ -15,6 +15,7 @@ export type LLMProvider =
   | 'claude-code'
   | 'gemini-cli'
   | 'codex-cli'
+  | 'cursor-cli'
   | 'minimax'
   | 'minimax-coding-plan'
   | 'elevenlabs'
@@ -66,7 +67,7 @@ export interface LLMConfiguration {
   model_id: string
   fallback_models: string[]
   cross_provider_fallback?: {
-    provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic' | 'azure' | 'claude-code'
+    provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'cursor-cli'
     models: string[]
   }
   // API keys for each provider

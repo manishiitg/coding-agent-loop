@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { X, Settings, Lock, WandSparkles } from 'lucide-react'
 import { Button } from './ui/Button'
 import { TooltipProvider } from './ui/tooltip'
-import { useLLMStore, useAppStore, useChatStore } from '../stores'
-import type { LLMConfiguration, ExtendedLLMConfiguration, AgentLLMConfiguration, SavedLLM } from '../services/api-types'
+import { useLLMStore, useAppStore } from '../stores'
+import type { LLMConfiguration, ExtendedLLMConfiguration, AgentLLMConfiguration } from '../services/api-types'
 import { AnthropicSection } from './AnthropicSection'
 import { OpenRouterSection } from './OpenRouterSection'
 import { BedrockSection } from './BedrockSection'
@@ -13,12 +13,13 @@ import { AzureSection } from './AzureSection'
 import { ClaudeCodeSection } from './ClaudeCodeSection'
 import { GeminiCLISection } from './GeminiCLISection'
 import { CodexCLISection } from './CodexCLISection'
+import { CursorCLISection } from './CursorCLISection'
 import { MiniMaxSection } from './MiniMaxSection'
 import { MiniMaxCodingPlanSection } from './MiniMaxCodingPlanSection'
 import { APIKeyProviderSection } from './APIKeyProviderSection'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 import { LibraryTab } from './llm/LibraryTab'
-import { PROVIDER_ORDER, getProviderDisplayInfo, type ProviderType } from '../utils/llmDisplay'
+import { PROVIDER_ORDER, getProviderDisplayInfo, getProviderIntegrationKind, type ProviderType } from '../utils/llmDisplay'
 import ModalPortal from './ui/ModalPortal'
 
 interface LLMConfigurationModalProps {
@@ -76,10 +77,6 @@ const FALLBACK_AUDIO_PROVIDER_ITEMS: Array<{
 ]
 
 export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery }: LLMConfigurationModalProps) {
-  const activeTabId = useChatStore(state => state.activeTabId)
-  const setTabConfig = useChatStore(state => state.setTabConfig)
-  const getTabConfig = useChatStore(state => state.getTabConfig)
-
   // Get current mode from app store
   const agentMode = useAppStore(state => state.agentMode)
   // Map 'simple' to 'multi-agent' for our mode-specific configs
@@ -143,7 +140,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
   const getProviderForTab = (tab: TabType): APIKeyProviderType | null => {
     if (tab === 'audio-gemini') return 'vertex'
     if (tab === 'audio-minimax') return 'minimax'
-    if (tab === 'library' || tab === 'claude-code' || tab === 'gemini-cli' || tab === 'codex-cli') return null
+    if (tab === 'library' || tab === 'claude-code' || tab === 'gemini-cli' || tab === 'codex-cli' || tab === 'cursor-cli') return null
     return tab
   }
 
@@ -163,6 +160,16 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
       return hasCapability(provider, CHAT_CAPABILITIES)
     })
   ), [hasCapability, hasProviderCapabilityData, isProviderSupported])
+
+  const apiProviderTabs = useMemo(
+    () => llmProviderTabs.filter(provider => getProviderIntegrationKind(provider) === 'api_model'),
+    [llmProviderTabs]
+  )
+
+  const codingAgentProviderTabs = useMemo(
+    () => llmProviderTabs.filter(provider => getProviderIntegrationKind(provider) === 'coding_agent'),
+    [llmProviderTabs]
+  )
 
   const audioProviderItems = useMemo(() => {
     if (!hasProviderCapabilityData) {
@@ -402,84 +409,6 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
     syncPrimaryConfig(provider, config)
   }, [providerConfigMap, syncPrimaryConfig])
 
-  // Handle setting primary provider (mode-specific)
-  const handleSetPrimaryProvider = useCallback((provider: APIKeyProviderType) => {
-    const configToUse = providerConfigMap[provider].config
-
-    // Update mode-specific primary config
-    const newPrimaryConfig: LLMConfiguration = {
-      provider: provider,
-      model_id: configToUse.model_id,
-      fallback_models: configToUse.fallback_models,
-      cross_provider_fallback: configToUse.cross_provider_fallback
-    }
-    setModePrimaryConfig(newPrimaryConfig)
-
-    // Update mode-specific agent config
-    if (modeAgentConfig) {
-      setModeAgentConfig({
-        ...modeAgentConfig,
-        primary: {
-          provider: provider,
-          model_id: configToUse.model_id,
-          options: configToUse.options
-        }
-      })
-    }
-
-    refreshAvailableLLMs()
-  }, [providerConfigMap, modeAgentConfig, setModeAgentConfig, setModePrimaryConfig, refreshAvailableLLMs])
-
-  // Handle library selection
-  // Sync the active tab's llmConfig so ChatInput + sidebar pick up the change immediately
-  const syncActiveTabLLM = useCallback((provider: string, model_id: string) => {
-    if (!activeTabId) return
-    const existing = getTabConfig(activeTabId)
-    setTabConfig(activeTabId, {
-      llmConfig: {
-        ...(existing?.llmConfig ?? {}),
-        provider,
-        model_id,
-      } as ExtendedLLMConfiguration,
-    })
-  }, [activeTabId, getTabConfig, setTabConfig])
-
-  const handleLibrarySelect = useCallback((llm: SavedLLM) => {
-    const provider = llm.provider
-
-    // CLI-based providers don't use provider config map — set primary directly
-    if (provider === 'claude-code' || provider === 'gemini-cli' || provider === 'codex-cli') {
-      const newPrimaryConfig: LLMConfiguration = {
-        provider,
-        model_id: llm.model_id,
-        fallback_models: [],
-        cross_provider_fallback: undefined
-      }
-      setModePrimaryConfig(newPrimaryConfig)
-      if (modeAgentConfig) {
-        setModeAgentConfig({
-          ...modeAgentConfig,
-          primary: { provider, model_id: llm.model_id }
-        })
-      }
-      syncActiveTabLLM(provider, llm.model_id)
-      refreshAvailableLLMs()
-      return
-    }
-
-    const { setConfig } = providerConfigMap[provider]
-
-    setConfig({
-      ...llm,
-      api_key: llm.api_key || '',
-      region: llm.region,
-      fallback_models: [],
-      cross_provider_fallback: undefined
-    })
-    handleSetPrimaryProvider(provider)
-    syncActiveTabLLM(provider, llm.model_id)
-  }, [providerConfigMap, handleSetPrimaryProvider, syncActiveTabLLM])
-
   if (!isOpen) return null
 
   if (llmConfigLocked) {
@@ -566,9 +495,11 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
                   <Settings className="w-4 h-4" />
                 </button>
 
-                <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">LLM Providers</h3>
-                {llmProviderTabs
-                  .map((provider) => (
+                {codingAgentProviderTabs.length > 0 && (
+                  <>
+                    <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">Coding Agents</h3>
+                    {codingAgentProviderTabs
+                      .map((provider) => (
                   (() => {
                     const providerInfo = getProviderDisplayInfo(provider)
                     return (
@@ -590,6 +521,37 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
                     )
                   })()
                 ))}
+                  </>
+                )}
+
+                {apiProviderTabs.length > 0 && (
+                  <>
+                    <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">API Providers</h3>
+                    {apiProviderTabs
+                      .map((provider) => (
+                  (() => {
+                    const providerInfo = getProviderDisplayInfo(provider)
+                    return (
+                  <button
+                    key={provider}
+                    onClick={() => setActiveTab(provider as typeof activeTab)}
+                    className={`w-full flex items-center gap-3 p-3 rounded-md text-left transition-colors ${
+                      activeTab === provider ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'
+                    }`}
+                  >
+                    <div className="flex-1">
+                      <div className="font-medium">{providerInfo.name}</div>
+                      <div className="text-xs opacity-75">
+                        {isProviderLocked(provider) ? 'Configured by admin' : providerInfo.authDescription}
+                      </div>
+                    </div>
+                    {isProviderLocked(provider) && <Lock className="w-4 h-4 opacity-60" />}
+                  </button>
+                    )
+                  })()
+                ))}
+                  </>
+                )}
 
                 {audioProviderItems.length > 0 && (
                   <>
@@ -624,7 +586,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
             {/* Right Content */}
             <div className="flex-1 p-3 sm:p-6 overflow-y-auto min-h-0">
               {activeTab === 'library' && (
-                <LibraryTab onSelect={handleLibrarySelect} />
+                <LibraryTab />
               )}
 
               {/* Locked provider read-only banner */}
@@ -894,6 +856,10 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
 
               {activeTab === 'codex-cli' && (
                 <CodexCLISection metadata={metadata} />
+              )}
+
+              {activeTab === 'cursor-cli' && (
+                <CursorCLISection metadata={metadata} />
               )}
             </div>
           </div>

@@ -61,6 +61,19 @@ func TestNormalizeImageAnalysisProviderAndModelClaudeCodeDefault(t *testing.T) {
 	}
 }
 
+func TestNormalizeImageAnalysisProviderAndModelCursorDefault(t *testing.T) {
+	provider, modelID, err := normalizeImageAnalysisProviderAndModel("cursor-cli", "")
+	if err != nil {
+		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
+	}
+	if provider != "cursor-cli" {
+		t.Fatalf("provider = %q, want cursor-cli", provider)
+	}
+	if modelID != "cursor-cli" {
+		t.Fatalf("modelID = %q, want cursor-cli", modelID)
+	}
+}
+
 func TestNormalizeImageAnalysisProviderAndModelInfersCodexFromModel(t *testing.T) {
 	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "gpt-5.4-mini")
 	if err != nil {
@@ -71,6 +84,19 @@ func TestNormalizeImageAnalysisProviderAndModelInfersCodexFromModel(t *testing.T
 	}
 	if modelID != "gpt-5.4-mini" {
 		t.Fatalf("modelID = %q, want gpt-5.4-mini", modelID)
+	}
+}
+
+func TestNormalizeImageAnalysisProviderAndModelInfersCursorFromModel(t *testing.T) {
+	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "sonnet-4-thinking")
+	if err != nil {
+		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
+	}
+	if provider != "cursor-cli" {
+		t.Fatalf("provider = %q, want cursor-cli", provider)
+	}
+	if modelID != "sonnet-4-thinking" {
+		t.Fatalf("modelID = %q, want sonnet-4-thinking", modelID)
 	}
 }
 

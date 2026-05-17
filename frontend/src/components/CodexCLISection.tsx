@@ -4,6 +4,7 @@ import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 import { useLLMStore } from '../stores'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
+import { CodingAgentCapabilities } from './llm/CodingAgentCapabilities'
 
 interface CodexCLISectionProps {
   onPublished?: () => void
@@ -114,6 +115,8 @@ export function CodexCLISection({ onPublished, metadata = [] }: CodexCLISectionP
           </div>
         </div>
       </Card>
+
+      <CodingAgentCapabilities provider="codex-cli" modelId={selectedModel} />
 
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-3">Model</h4>

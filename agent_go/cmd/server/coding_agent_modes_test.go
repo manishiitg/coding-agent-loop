@@ -21,6 +21,7 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 		wantClaudeCode bool
 		wantCodexCLI   bool
 		wantGeminiCLI  bool
+		wantCursorCLI  bool
 	}{
 		{
 			name:           "claude code chat gets persistent tmux",
@@ -38,6 +39,11 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 			wantGeminiCLI: true,
 		},
 		{
+			name:          "cursor chat gets persistent tmux",
+			provider:      string(llm.ProviderCursorCLI),
+			wantCursorCLI: true,
+		},
+		{
 			name:     "non coding provider never gets tmux",
 			provider: string(llm.ProviderOpenAI),
 		},
@@ -45,9 +51,9 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotClaudeCode, gotCodexCLI, gotGeminiCLI := codingAgentPersistentInteractiveFlags(tt.provider)
-			if gotClaudeCode != tt.wantClaudeCode || gotCodexCLI != tt.wantCodexCLI || gotGeminiCLI != tt.wantGeminiCLI {
-				t.Fatalf("flags = (%v, %v, %v), want (%v, %v, %v)", gotClaudeCode, gotCodexCLI, gotGeminiCLI, tt.wantClaudeCode, tt.wantCodexCLI, tt.wantGeminiCLI)
+			gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI := codingAgentPersistentInteractiveFlags(tt.provider)
+			if gotClaudeCode != tt.wantClaudeCode || gotCodexCLI != tt.wantCodexCLI || gotGeminiCLI != tt.wantGeminiCLI || gotCursorCLI != tt.wantCursorCLI {
+				t.Fatalf("flags = (%v, %v, %v, %v), want (%v, %v, %v, %v)", gotClaudeCode, gotCodexCLI, gotGeminiCLI, gotCursorCLI, tt.wantClaudeCode, tt.wantCodexCLI, tt.wantGeminiCLI, tt.wantCursorCLI)
 			}
 		})
 	}
@@ -127,6 +133,7 @@ func TestRecordLiveCodingAgentUserMessageCapturesVisibleEvent(t *testing.T) {
 		{name: "claude code", provider: llm.ProviderClaudeCode},
 		{name: "codex cli", provider: llm.ProviderCodexCLI},
 		{name: "gemini cli", provider: llm.ProviderGeminiCLI},
+		{name: "cursor cli", provider: llm.ProviderCursorCLI},
 	}
 
 	for _, tt := range tests {

@@ -10,6 +10,7 @@ func TestIsCLIProvider(t *testing.T) {
 		{"claude-code", true},
 		{"gemini-cli", true},
 		{"codex-cli", true},
+		{"cursor-cli", true},
 		{"kimi", true},
 		{"KIMI", true},
 		{" kimi ", true},

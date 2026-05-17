@@ -1,9 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
-import { Brain, ChevronDown, Check, RefreshCw, Search, Thermometer, Box, DollarSign } from 'lucide-react';
+import { Brain, ChevronDown, Check, RefreshCw, Search, Thermometer, Box, DollarSign, Terminal, KeyRound, AudioLines } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import type { LLMOption } from '../types/llm';
+import {
+  getProviderDisplayInfo,
+  getProviderIntegrationInfo,
+  getProviderIntegrationKind,
+  LLM_INTEGRATION_ORDER,
+  shouldShowLLMPricing,
+  type LLMIntegrationKind,
+} from '../utils/llmDisplay';
 
 // Helper to format context window size
 const formatContextWindow = (tokens?: number): string => {
@@ -122,6 +130,18 @@ export default function LLMSelectionDropdown({
         );
       })
     : availableLLMs;
+
+  const integrationIcons: Record<LLMIntegrationKind, typeof Terminal> = {
+    coding_agent: Terminal,
+    api_model: KeyRound,
+    audio_provider: AudioLines,
+  };
+
+  const groupedLLMsByIntegration = LLM_INTEGRATION_ORDER.map((kind) => ({
+    kind,
+    llms: filteredLLMs.filter((llm) => getProviderIntegrationKind(llm.provider, llm.model) === kind),
+  })).filter((group) => group.llms.length > 0);
+  const selectedShowPricing = selectedLLM ? shouldShowLLMPricing(selectedLLM.provider, selectedLLM.model) : false;
 
   return (
     <TooltipProvider>
@@ -244,12 +264,13 @@ export default function LLMSelectionDropdown({
                     </div>
                   </div>
 
-                  {/* LLM List - Grouped by Provider */}
+                  {/* LLM List - Grouped by Integration */}
                   <div className="max-h-48 overflow-y-auto space-y-2 border-border border rounded-md p-2 bg-background">
                     {filteredLLMs.length > 0 ? (
-                      (() => {
-                        // Group LLMs by provider
-                        const groupedLLMs = filteredLLMs.reduce((groups, llm) => {
+                      groupedLLMsByIntegration.map((group) => {
+                        const integrationInfo = getProviderIntegrationInfo(group.llms[0]?.provider, group.llms[0]?.model);
+                        const IntegrationIcon = integrationIcons[group.kind];
+                        const providerGroups = group.llms.reduce((groups, llm) => {
                           if (!groups[llm.provider]) {
                             groups[llm.provider] = [];
                           }
@@ -257,86 +278,96 @@ export default function LLMSelectionDropdown({
                           return groups;
                         }, {} as Record<string, LLMOption[]>);
 
-                        return Object.entries(groupedLLMs).map(([provider, llms]) => (
-                          <div key={provider} className="space-y-1">
-                            {/* Provider Header */}
-                            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-2 py-1 bg-secondary rounded">
-                              {provider}
+                        return (
+                          <div key={group.kind} className="space-y-1">
+                            <div className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide px-2 py-1 bg-secondary rounded ${integrationInfo.toneClass}`}>
+                              <IntegrationIcon className="w-3.5 h-3.5" />
+                              {integrationInfo.label}
                             </div>
-                            
-                            {/* Provider's LLMs */}
-                            {llms.map((llm, index) => {
-                              const optionsSummary = getOptionsSummary(llm.options);
-                              const hasMetadata = llm.contextWindow || llm.inputCostPer1M || llm.temperature !== undefined;
 
+                            {Object.entries(providerGroups).map(([provider, llms]) => {
+                              const providerInfo = getProviderDisplayInfo(provider);
                               return (
-                                <div
-                                  key={`${provider}-${llm.model}-${index}`}
-                                  className="flex items-start space-x-2 p-2 rounded-md hover:bg-secondary cursor-pointer ml-2"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleLLMSelect(llm);
-                                    setIsOpen(false);
-                                  }}
-                                  role="menuitem"
-                                  tabIndex={0}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                      e.preventDefault();
-                                      handleLLMSelect(llm);
-                                      setIsOpen(false);
-                                    }
-                                  }}
-                                  aria-label={`Select ${llm.label}`}
-                                >
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-medium text-foreground truncate">
-                                      {llm.label}
-                                    </div>
-                                    <div className="text-xs text-muted-foreground truncate">
-                                      {llm.model}
-                                    </div>
-
-                                    {/* Metadata row: context, cost, temperature */}
-                                    {hasMetadata && (
-                                      <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] text-muted-foreground">
-                                        {llm.contextWindow && (
-                                          <span className="flex items-center gap-0.5" title="Context window">
-                                            <Box className="w-3 h-3" />
-                                            {formatContextWindow(llm.contextWindow)}
-                                          </span>
-                                        )}
-                                        {llm.inputCostPer1M !== undefined && (
-                                          <span className="flex items-center gap-0.5" title="Input cost per 1M tokens">
-                                            <DollarSign className="w-3 h-3" />
-                                            {formatCost(llm.inputCostPer1M)}/1M
-                                          </span>
-                                        )}
-                                        {llm.temperature !== undefined && (
-                                          <span className="flex items-center gap-0.5" title="Temperature">
-                                            <Thermometer className="w-3 h-3" />
-                                            {llm.temperature.toFixed(1)}
-                                          </span>
-                                        )}
-                                      </div>
-                                    )}
-
-                                    {/* Options row: reasoning, thinking, etc. */}
-                                    {optionsSummary && (
-                                      <div className="text-[10px] text-primary/70 mt-0.5">
-                                        {optionsSummary}
-                                      </div>
-                                    )}
+                                <div key={provider} className="space-y-1">
+                                  <div className="text-[11px] font-medium text-muted-foreground px-2 pt-1">
+                                    {providerInfo.name}
                                   </div>
-                                  {selectedLLM && selectedLLM.provider === llm.provider && selectedLLM.model === llm.model && (
-                                    <Check className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
-                                  )}
+                                  {llms.map((llm, index) => {
+                                    const optionsSummary = getOptionsSummary(llm.options);
+                                    const showPricing = shouldShowLLMPricing(llm.provider, llm.model);
+                                    const hasMetadata = llm.contextWindow || (showPricing && llm.inputCostPer1M !== undefined) || llm.temperature !== undefined;
+
+                                    return (
+                                      <div
+                                        key={`${provider}-${llm.model}-${index}`}
+                                        className="flex items-start space-x-2 p-2 rounded-md hover:bg-secondary cursor-pointer ml-2"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleLLMSelect(llm);
+                                          setIsOpen(false);
+                                        }}
+                                        role="menuitem"
+                                        tabIndex={0}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter' || e.key === ' ') {
+                                            e.preventDefault();
+                                            handleLLMSelect(llm);
+                                            setIsOpen(false);
+                                          }
+                                        }}
+                                        aria-label={`Select ${llm.label}`}
+                                      >
+                                        <div className="flex-1 min-w-0">
+                                          <div className="text-sm font-medium text-foreground truncate">
+                                            {llm.label}
+                                          </div>
+                                          <div className="text-xs text-muted-foreground truncate">
+                                            {llm.model}
+                                          </div>
+
+                                          {/* Metadata row: context, cost, temperature */}
+                                          {hasMetadata && (
+                                            <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] text-muted-foreground">
+                                              {llm.contextWindow && (
+                                                <span className="flex items-center gap-0.5" title="Context window">
+                                                  <Box className="w-3 h-3" />
+                                                  {formatContextWindow(llm.contextWindow)}
+                                                </span>
+                                              )}
+                                              {showPricing && llm.inputCostPer1M !== undefined && (
+                                                <span className="flex items-center gap-0.5" title="Input cost per 1M tokens">
+                                                  <DollarSign className="w-3 h-3" />
+                                                  {formatCost(llm.inputCostPer1M)}/1M
+                                                </span>
+                                              )}
+                                              {llm.temperature !== undefined && (
+                                                <span className="flex items-center gap-0.5" title="Temperature">
+                                                  <Thermometer className="w-3 h-3" />
+                                                  {llm.temperature.toFixed(1)}
+                                                </span>
+                                              )}
+                                            </div>
+                                          )}
+
+                                          {/* Options row: reasoning, thinking, etc. */}
+                                          {optionsSummary && (
+                                            <div className="text-[10px] text-primary/70 mt-0.5">
+                                              {optionsSummary}
+                                            </div>
+                                          )}
+                                        </div>
+                                        {selectedLLM && selectedLLM.provider === llm.provider && selectedLLM.model === llm.model && (
+                                          <Check className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               );
                             })}
                           </div>
-                        ));
-                      })()
+                        );
+                      })
                     ) : availableLLMs.length > 0 ? (
                       <div className="text-sm text-muted-foreground text-center py-4">
                         No LLMs found matching "{searchQuery}"
@@ -363,7 +394,7 @@ export default function LLMSelectionDropdown({
                               {formatContextWindow(selectedLLM.contextWindow)} ctx
                             </span>
                           )}
-                          {selectedLLM.inputCostPer1M !== undefined && (
+                          {selectedShowPricing && selectedLLM.inputCostPer1M !== undefined && (
                             <span>
                               {formatCost(selectedLLM.inputCostPer1M)}/1M in
                             </span>

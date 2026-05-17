@@ -48,6 +48,12 @@ Example:
     --server-url http://localhost:8000 \
     --provider gemini-cli \
     --model gemini-3.1-flash-lite \
+    --selected-folder _users/default/Chats
+
+  mcp-agent test coding-agent-chat-e2e \
+    --server-url http://localhost:8000 \
+    --provider cursor-cli \
+    --model cursor-cli \
     --selected-folder _users/default/Chats`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), codingAgentChatE2EFlags.timeout)
@@ -130,8 +136,8 @@ Example:
 
 func init() {
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.serverURL, "server-url", "http://localhost:8000", "mcp-agent-builder-go server URL")
-	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.provider, "provider", "gemini-cli", "coding CLI provider: gemini-cli, codex-cli, or claude-code")
-	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.model, "model", "", "model ID; defaults to a low-cost model for the selected provider")
+	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.provider, "provider", "gemini-cli", "coding CLI provider: gemini-cli, codex-cli, cursor-cli, or claude-code")
+	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.model, "model", "", "model ID; defaults to the provider-specific E2E model")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.sessionID, "session-id", "", "session ID to reuse; generated when omitted")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.selectedFolder, "selected-folder", "_users/default/Chats", "workspace-relative folder for the chat session")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.agentMode, "agent-mode", "simple", "agent mode to send to /api/query")
@@ -154,6 +160,8 @@ func defaultCodingAgentE2EModel(provider string) string {
 		return "gemini-3.1-flash-lite"
 	case "codex-cli":
 		return "gpt-5.3-codex-spark"
+	case "cursor-cli":
+		return "cursor-cli"
 	case "claude-code":
 		return "claude-haiku-4.5"
 	default:

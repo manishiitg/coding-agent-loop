@@ -109,6 +109,39 @@ func extractCacheTokensSeparate(tokenEvent *events.TokenUsageEvent) CacheTokens 
 	return result
 }
 
+// effectiveModelIDFromTokenEvent returns the model the CLI/provider
+// actually served the turn with, as recorded in the GenerationInfo
+// Additional blob by the multi-llm-provider-go CLI adapters. Falls
+// back to "" when none of the known keys are present, in which case
+// the caller should keep the requested ModelID.
+//
+// Keys checked, in priority order:
+//   - cost_model_id         (canonical key all CLI adapters now emit)
+//   - claude_code_model     (claude-code legacy, structured + tmux)
+//   - codex_effective_model (codex tmux + JSON)
+//   - gemini_effective_model (gemini tmux); gemini_model (structured)
+//   - cursor_model          (cursor structured)
+func effectiveModelIDFromTokenEvent(tokenEvent *events.TokenUsageEvent) string {
+	if tokenEvent == nil || tokenEvent.GenerationInfo == nil {
+		return ""
+	}
+	for _, key := range []string{
+		"cost_model_id",
+		"claude_code_model",
+		"codex_effective_model",
+		"gemini_effective_model",
+		"gemini_model",
+		"cursor_model",
+	} {
+		if v, ok := tokenEvent.GenerationInfo[key]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
 // extractLLMCallCount extracts LLM call count from a TokenUsageEvent's GenerationInfo
 // Returns 1 if not available (fallback for single-call events like smart routing)
 // For conversation end events, this returns the cumulative call count

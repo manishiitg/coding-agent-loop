@@ -468,11 +468,23 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 			// Extract LLM call count from event (cumulative for conversation end, 1 for single calls)
 			llmCallCount := extractLLMCallCount(tokenEvent)
 
+			// Prefer the effective model the CLI/provider actually served
+			// the turn with — when the user picked an alias like "auto"
+			// or "cursor-cli", or when /model swap happened mid-session,
+			// the effective ID differs from the requested ModelID. Cost
+			// aggregation should bucket under the real model so a
+			// dashboard column "by_model" is accurate.
+			effectiveModelID := effectiveModelIDFromTokenEvent(tokenEvent)
+			modelIDForBucket := tokenEvent.ModelID
+			if effectiveModelID != "" {
+				modelIDForBucket = effectiveModelID
+			}
+
 			// Prepare model token data
 			var modelTokenData *ModelTokenData
-			if tokenEvent.ModelID != "" {
+			if modelIDForBucket != "" {
 				modelTokenData = &ModelTokenData{
-					ModelID:          tokenEvent.ModelID,
+					ModelID:          modelIDForBucket,
 					Provider:         tokenEvent.Provider,
 					InputTokens:      tokenEvent.PromptTokens,         // input tokens
 					OutputTokens:     tokenEvent.CompletionTokens,     // output tokens

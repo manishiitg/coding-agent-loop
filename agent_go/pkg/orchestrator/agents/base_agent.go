@@ -145,6 +145,7 @@ func NewBaseAgent(
 	apiKeys *AgentAPIKeys, // API keys for providers
 	mcpSessionID string, // MCP session ID for connection sharing across agents
 	codingAgentWorkingDir string, // CLI coding-agent process working directory
+	codingAgentKeepAlive bool, // Keep tmux-backed coding-agent sessions alive after this agent completes
 	runtimeOverrides mcpclient.RuntimeOverrides, // Runtime config overrides for MCP servers (e.g., output directories)
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
@@ -293,6 +294,16 @@ func NewBaseAgent(
 		options = append(options, mcpagent.WithCodingAgentWorkingDir(workingDir))
 		logger.Info("🔗 Using coding-agent working directory",
 			loggerv2.String("working_dir", workingDir),
+			loggerv2.String("agent_name", name))
+	}
+	if codingAgentKeepAlive {
+		options = append(options,
+			mcpagent.WithClaudeCodePersistentInteractiveSession(true),
+			mcpagent.WithCodexPersistentInteractiveSession(true),
+			mcpagent.WithGeminiPersistentInteractiveSession(true),
+			mcpagent.WithCursorPersistentInteractiveSession(true),
+		)
+		logger.Info("🔗 Keeping tmux-backed coding-agent session alive after completion",
 			loggerv2.String("agent_name", name))
 	}
 

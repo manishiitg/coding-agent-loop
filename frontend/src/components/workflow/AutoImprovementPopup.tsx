@@ -419,7 +419,7 @@ const MetricsPanel: React.FC<{ metrics: Metric[]; history: MetricSnapshotRow[] }
   }, [metrics])
 
   if (metrics.length === 0) {
-    return <p className="text-sm text-muted-foreground">No metrics defined yet. Run <code>/improve-setup-framework</code> in optimizer mode to bootstrap.</p>
+    return <p className="text-sm text-muted-foreground">No metrics defined yet. Run <code>/define-success</code> in optimizer mode to bootstrap.</p>
   }
 
   return (
@@ -513,8 +513,8 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
     },
     improve: {
       title: 'Improve log',
-      blurb: 'The optimizer agent\'s durable improvement ledger. Slash commands like /improve-eval, /improve-workflow, and /optimize-* read this on the way in and append structured decision blocks here.',
-      emptyHint: 'No entries yet. Run /improve-setup-framework or any /improve-* command to bootstrap it.',
+      blurb: 'The optimizer agent\'s durable improvement ledger. Slash commands like /improve-evaluation, /improve-workflow, and /optimize-* read this on the way in and append structured decision blocks here.',
+      emptyHint: 'No entries yet. Run /define-success to bootstrap it, then use /improve-* commands for ongoing changes.',
     },
     review: {
       title: 'Review log',

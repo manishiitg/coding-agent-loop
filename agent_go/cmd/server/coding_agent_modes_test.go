@@ -45,6 +45,11 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 			wantCursorCLI: true,
 		},
 		{
+			name:            "opencode chat is json based",
+			provider:        string(llm.ProviderOpenCodeCLI),
+			wantOpenCodeCLI: false,
+		},
+		{
 			name:     "non coding provider never gets tmux",
 			provider: string(llm.ProviderOpenAI),
 		},

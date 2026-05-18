@@ -67,6 +67,8 @@ import type {
   CostSummary,
   NotificationPreference,
   WorkflowBuilderSessionResponse,
+  ListTerminalsResponse,
+  TerminalSnapshot,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -642,6 +644,17 @@ export const agentApi = {
   // backend's bounded initial page and still returns last_processed_index.
   getRecentSessionEvents: async (sessionId: string): Promise<GetEventsResponse> => {
     return agentApi.getSessionEvents(sessionId, 0)
+  },
+
+  listTerminals: async (sessionId?: string): Promise<ListTerminalsResponse> => {
+    const params = sessionId ? { session_id: sessionId } : undefined
+    const response = await api.get('/api/terminals', { params })
+    return response.data
+  },
+
+  getTerminal: async (terminalId: string): Promise<TerminalSnapshot> => {
+    const response = await api.get(`/api/terminals/${encodeURIComponent(terminalId)}`)
+    return response.data
   },
 
   // Observer APIs removed - no longer needed

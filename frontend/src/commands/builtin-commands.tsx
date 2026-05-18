@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, BookOpen, History } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, Wrench, GitBranch, CheckCircle, Search, BookOpen, History } from 'lucide-react'
 import type { CommandContext, CommandDefinition } from './types'
 
 function submitGuidedWorkflowCommand(
@@ -98,63 +98,51 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'review-config',
-    description: 'Review per-step KB / db / lock_learnings / lock_code recommendations',
-    icon: <Lock className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
-    source: 'builtin',
-    execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'review-config')
-    }
-  },
-  {
-    command: 'review-sync',
-    description: 'Check whether plan changes were propagated to learnings, code, KB, db, reports, and eval',
+    command: 'review-artifact-drift',
+    description: 'Check whether artifacts drifted from recent plan changes',
     icon: <RefreshCw className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: ['builder', 'optimizer'],
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'review-sync')
+      submitGuidedWorkflowCommand(ctx, 'review-artifact-drift')
     }
   },
   {
-    command: 'improve-kb',
-    description: 'Improve knowledgebase notes with targeted cleanup or cross-step consolidation',
+    command: 'improve-knowledge',
+    description: 'Improve knowledge notes with targeted cleanup or cross-step consolidation',
     icon: <Layers className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: ['builder', 'optimizer'],
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'improve-kb')
+      submitGuidedWorkflowCommand(ctx, 'improve-knowledge')
     }
   },
   {
-    command: 'improve-learning',
-    description: 'Improve global learnings with targeted cleanup or current-plan consolidation',
+    command: 'improve-runbook',
+    description: 'Improve reusable runbook guidance with targeted cleanup or consolidation',
     icon: <BookOpen className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: ['builder', 'optimizer'],
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'improve-learning')
+      submitGuidedWorkflowCommand(ctx, 'improve-runbook')
     }
   },
   {
-    command: 'improve-db',
-    description: 'Improve db JSON contracts, schemas, and report compatibility',
+    command: 'improve-data',
+    description: 'Improve durable data contracts, schemas, and report compatibility',
     icon: <Server className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: ['builder', 'optimizer'],
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'improve-db')
+      submitGuidedWorkflowCommand(ctx, 'improve-data')
     }
   },
   {
@@ -170,7 +158,7 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'improve-eval',
+    command: 'improve-evaluation',
     description: 'Validate evaluation/evaluation_plan.json and improve goal/criteria coverage',
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
@@ -179,19 +167,19 @@ export const builtinCommands: CommandDefinition[] = [
     source: 'builtin',
     execute: (ctx) => {
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      submitGuidedWorkflowCommand(ctx, 'improve-eval', { runFolder })
+      submitGuidedWorkflowCommand(ctx, 'improve-evaluation', { runFolder })
     }
   },
   {
-    command: 'improve-continuously',
-    description: 'Set up recurring workflow run + frequent lightweight optimizer improvement',
+    command: 'auto-improve',
+    description: 'Set up recurring workflow runs and lightweight optimizer checks',
     icon: <Bot className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'improve-continuously')
+      submitGuidedWorkflowCommand(ctx, 'auto-improve')
     }
   },
   {
@@ -343,15 +331,15 @@ After the tool returns, tell me:
   // rules in conversation and offer to persist them via the
   // capture_context tool. A separate slash command would be redundant.
   {
-    command: 'improve-setup-framework',
-    description: 'One-time setup: write the Workflow Profile to improve.md and bootstrap metrics for the auto-improvement framework',
+    command: 'define-success',
+    description: 'Define success for optimization: workflow profile, metrics, and context anchors',
     icon: <Wrench className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'improve-setup-framework')
+      submitGuidedWorkflowCommand(ctx, 'define-success')
     }
   },
   {

@@ -420,6 +420,7 @@ interface ChatState extends StoreActions {
   // Chat UI state
   autoScroll: boolean
   eventViewModePreference: EventViewMode
+  terminalCenterOpen: boolean
   
   // Response state
   finalResponse: string
@@ -510,6 +511,8 @@ interface ChatState extends StoreActions {
   // UI actions
   setAutoScroll: (autoScroll: boolean) => void
   setEventViewModePreference: (viewMode: EventViewMode) => void
+  setTerminalCenterOpen: (open: boolean) => void
+  toggleTerminalCenterOpen: () => void
   
   // Response actions
   setFinalResponse: (response: string) => void
@@ -611,6 +614,7 @@ export const useChatStore = create<ChatState>()(
       hasActiveChat: false,
       autoScroll: true,
       eventViewModePreference: 'flat',
+      terminalCenterOpen: false,
       finalResponse: '',
       isCompleted: false,
       isLoadingHistory: false,
@@ -1110,6 +1114,14 @@ export const useChatStore = create<ChatState>()(
 
       setEventViewModePreference: (viewMode) => {
         set({ eventViewModePreference: normalizeEventViewMode(viewMode) })
+      },
+
+      setTerminalCenterOpen: (open) => {
+        set({ terminalCenterOpen: open })
+      },
+
+      toggleTerminalCenterOpen: () => {
+        set((state) => ({ terminalCenterOpen: !state.terminalCenterOpen }))
       },
 
       // Response actions

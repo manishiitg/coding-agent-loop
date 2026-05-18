@@ -13,7 +13,7 @@
 //     ...) and follow the returned instructions."
 //  2. A user described the same intent in chat ("help me improve this
 //     workflow"). The agent recognizes the intent and calls the tool.
-//  3. A scheduled fire (e.g. /improve-continuously's recurring optimizer
+//  3. A scheduled fire (e.g. /auto-improve's recurring optimizer
 //     message) calls the tool to get the same canonical flow.
 //
 // One source of truth, three callers.
@@ -60,28 +60,27 @@ var allKinds = map[string]kindMeta{
 	"ready-to-optimize": {Group: "builder", Description: "Pre-optimizer readiness checklist (objective, success criteria, runs, validation, etc.)", Modes: []string{"builder"}},
 
 	// Reviews — recommend, don't apply; appends to builder/review.md
-	"review-plan":   {Group: "review", Description: "Comprehensive workflow audit: plan, step descriptions, learnings, KB, db/*.json, reports, variables, and eval wiring", Modes: []string{"builder", "optimizer", "run"}},
-	"review-speed":  {Group: "review", Description: "Latency analysis with safe-speedup recommendations", Modes: []string{"optimizer"}},
-	"review-cost":   {Group: "review", Description: "Cost analysis with safe-reduction recommendations", Modes: []string{"optimizer"}},
-	"review-config": {Group: "review", Description: "Per-step KB / db / lock_learnings / lock_code recommendations", Modes: []string{"builder", "optimizer", "run"}},
-	"review-code":   {Group: "review", Description: "Saved main.py vs current step descriptions drift check", Modes: []string{"optimizer"}},
-	"review-sync":   {Group: "review", Description: "Audit plan changelog entries against dependent artifacts: learnings, main.py, KB, db, reports, and eval wiring", Modes: []string{"builder", "optimizer"}},
+	"review-plan":           {Group: "review", Description: "Comprehensive workflow audit: plan, step descriptions, learnings, KB, db/*.json, reports, variables, and eval wiring", Modes: []string{"builder", "optimizer", "run"}},
+	"review-speed":          {Group: "review", Description: "Latency analysis with safe-speedup recommendations", Modes: []string{"optimizer"}},
+	"review-cost":           {Group: "review", Description: "Cost analysis with safe-reduction recommendations", Modes: []string{"optimizer"}},
+	"review-code":           {Group: "review", Description: "Saved main.py vs current step descriptions drift check", Modes: []string{"optimizer"}},
+	"review-artifact-drift": {Group: "review", Description: "Audit plan changelog entries against dependent artifacts: learnings, main.py, KB, db, reports, and eval wiring", Modes: []string{"builder", "optimizer"}},
 
 	// Knowledgebase maintenance — applies targeted or cross-step KB cleanup
-	"improve-kb": {Group: "kb", Description: "Improve knowledgebase/notes with targeted cleanup or cross-step consolidation", Modes: []string{"builder", "optimizer"}},
+	"improve-knowledge": {Group: "kb", Description: "Improve knowledgebase/notes with targeted cleanup or cross-step consolidation", Modes: []string{"builder", "optimizer"}},
 
 	// Learning maintenance — applies targeted/cross-step cleanup to learnings/_global
-	"improve-learning": {Group: "learning", Description: "Improve learnings/_global with targeted cleanup or current-plan consolidation", Modes: []string{"builder", "optimizer"}},
+	"improve-runbook": {Group: "learning", Description: "Improve learnings/_global with targeted cleanup or current-plan consolidation", Modes: []string{"builder", "optimizer"}},
 
 	// DB maintenance — applies guarded schema/contract cleanup to db/*.json
-	"improve-db": {Group: "db", Description: "Improve db/*.json contracts, schemas, and report compatibility", Modes: []string{"builder", "optimizer"}},
+	"improve-data": {Group: "db", Description: "Improve db/*.json contracts, schemas, and report compatibility", Modes: []string{"builder", "optimizer"}},
 
 	// Improvements — metric-driven harden/replan flows
-	"improve-setup-framework": {Group: "improve", Description: "One-time bootstrap of the auto-improvement framework (Workflow Profile + metrics)", Modes: []string{"optimizer"}},
-	"improve-workflow":        {Group: "improve", Description: "Unified metric-driven workflow improvement: harden or replan from run/eval evidence", Modes: []string{"optimizer"}},
-	"improve-eval":            {Group: "improve", Description: "Evaluation plan changes and metric-source health checks", Modes: []string{"optimizer"}},
-	"improve-continuously":    {Group: "improve", Description: "Set up recurring run + optimizer schedules", Modes: []string{"optimizer"}},
-	"improve-report":          {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"builder", "optimizer", "reporting"}},
+	"define-success":     {Group: "improve", Description: "One-time bootstrap of optimization success criteria (Workflow Profile + metrics)", Modes: []string{"optimizer"}},
+	"improve-workflow":   {Group: "improve", Description: "Unified metric-driven workflow improvement: harden or replan from run/eval evidence", Modes: []string{"optimizer"}},
+	"improve-evaluation": {Group: "improve", Description: "Evaluation plan changes and metric-source health checks", Modes: []string{"optimizer"}},
+	"auto-improve":       {Group: "improve", Description: "Set up recurring run + optimizer schedules", Modes: []string{"optimizer"}},
+	"improve-report":     {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"builder", "optimizer", "reporting"}},
 }
 
 // tmplData is the typed context passed to every guidance template. Focus is
@@ -211,7 +210,7 @@ func RegisterGuidanceTool(agent *mcpagent.Agent, currentMode string, logger logg
 			},
 			"run_folder": map[string]interface{}{
 				"type":        "string",
-				"description": "Optional. Full run folder path (e.g. \"iteration-3/group-a\"). Used by review-speed / review-cost / improve-eval-style flows that anchor on a specific run.",
+				"description": "Optional. Full run folder path (e.g. \"iteration-3/group-a\"). Used by review-speed / review-cost / improve-evaluation-style flows that anchor on a specific run.",
 			},
 		},
 		"required": []string{"kind"},

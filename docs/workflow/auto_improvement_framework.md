@@ -37,10 +37,10 @@ Each improve pass should perform at most one primary action unless the user expl
 
 ## Commands
 
-- `/improve-setup-framework`: writes the workflow profile and starter metrics.
+- `/define-success`: writes the workflow profile and starter metrics.
 - `/improve-workflow`: reads prior improve/review logs and current evidence, then chooses harden, replan, eval-plan improvement, metric cleanup, or no action.
-- `/improve-eval`: improves eval coverage and rubric quality.
-- `/improve-continuously`: creates or updates Run-mode and Optimizer-mode schedules. The Optimizer schedule delegates each improvement pass to canonical `/improve-workflow` guidance, then performs only schedule cadence/group-scope self-tuning. Active workflows should usually be checked after every run or every two runs, not weekly, unless the workflow itself runs weekly or the user asks for a low-touch cadence.
+- `/improve-evaluation`: improves eval coverage and rubric quality.
+- `/auto-improve`: creates or updates Run-mode and Optimizer-mode schedules. The Optimizer schedule delegates each improvement pass to canonical `/improve-workflow` guidance, then performs only schedule cadence/group-scope self-tuning. Active workflows should usually be checked after every run or every two runs, not weekly, unless the workflow itself runs weekly or the user asks for a low-touch cadence.
 
 ## Audit Discipline
 

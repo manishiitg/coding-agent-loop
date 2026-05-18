@@ -117,6 +117,11 @@ type OrchestratorAgentConfig struct {
 	// coding providers. Workflow agents should run from the workflow folder, not
 	// from the server/project root.
 	CodingAgentWorkingDir string `json:"coding_agent_working_dir,omitempty"`
+	// CodingAgentKeepAlive keeps a tmux-backed coding provider session alive after
+	// the current agent turn finishes. Workflow steps default to false so each
+	// step/sub-agent owns a bounded terminal. Chat agents set provider-specific
+	// keepalive outside this orchestrator config.
+	CodingAgentKeepAlive bool `json:"coding_agent_keep_alive,omitempty"`
 	// Context offloading configuration
 	EnableContextOffloading *bool `json:"enable_context_offloading,omitempty"` // Enable/disable context offloading (default: true if nil)
 	LargeOutputThreshold    int   `json:"large_output_threshold,omitempty"`    // Token threshold for context offloading (0 = use default: 10000)

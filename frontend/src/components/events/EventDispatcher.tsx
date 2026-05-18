@@ -151,55 +151,7 @@ const DelegationStreamingCard: React.FC<{ delegationId: string }> = ({ delegatio
   )
 }
 
-const OwnedTerminalStreamCard: React.FC<{ ownerKey?: string; ownerKeys?: string[]; sessionId?: string; compact?: boolean }> = ({ ownerKey, ownerKeys, sessionId, compact }) => {
-  const candidateKeys = React.useMemo(() => {
-    const keys = [...(ownerKeys || []), ...(ownerKey ? [ownerKey] : [])]
-    return Array.from(new Set(keys.filter(Boolean)))
-  }, [ownerKey, ownerKeys])
-  const selectedKey = useChatStore(state => {
-    let bestKey = ''
-    let bestActive = false
-    let bestChunkIndex = -1
-    for (const key of candidateKeys) {
-      if (!state.ownedStreamingTerminalText[key]) continue
-      const active = state.ownedStreamingTerminalActive[key] || false
-      const chunkIndex = state.lastOwnedStreamingTerminalChunkIndex[key] ?? -1
-      if (
-        !bestKey ||
-        (active && !bestActive) ||
-        (active === bestActive && chunkIndex >= bestChunkIndex)
-      ) {
-        bestKey = key
-        bestActive = active
-        bestChunkIndex = chunkIndex
-      }
-    }
-    return bestKey
-  })
-  const text = useChatStore(state => selectedKey ? state.ownedStreamingTerminalText[selectedKey] || '' : '')
-  const active = useChatStore(state => selectedKey ? state.ownedStreamingTerminalActive[selectedKey] || false : false)
-  const visible = useChatStore(state => sessionId ? state.terminalOutputOpen[sessionId] ?? true : true)
-  if (candidateKeys.length === 0 || !text || !visible) return null
-
-  return (
-    <details className={`${compact ? 'ml-3 pl-2' : 'ml-5 pl-3'} mt-2 min-w-0 border-l border-gray-300/70 dark:border-gray-700`} open>
-      <summary className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-500 dark:text-gray-400 cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 select-none`}>
-        <span className="inline-flex items-center gap-1.5">
-          <span className={`inline-block w-1.5 h-1.5 rounded-full bg-gray-500 ${active ? 'animate-pulse' : 'opacity-60'}`} />
-          <span>Terminal output</span>
-        </span>
-      </summary>
-      <div
-        className={`${compact ? 'max-h-56 text-[10px] leading-4' : 'max-h-80 text-xs leading-5'} mt-1 overflow-y-auto overflow-x-auto overscroll-y-contain rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-neutral-950/60 [scrollbar-gutter:stable]`}
-        role="region"
-        aria-label="Terminal output"
-        tabIndex={0}
-      >
-        <pre className={`m-0 min-w-max ${compact ? 'p-2' : 'p-3'} whitespace-pre font-mono text-gray-800 dark:text-gray-200`}>{text}</pre>
-      </div>
-    </details>
-  )
-}
+const OwnedTerminalStreamCard: React.FC<{ ownerKey?: string; ownerKeys?: string[]; sessionId?: string; compact?: boolean }> = () => null
 
 export function getOwnedTerminalOwnerKeys(event: PollingEvent, payload?: Record<string, unknown>): string[] {
   const sessionId = event.session_id?.trim()

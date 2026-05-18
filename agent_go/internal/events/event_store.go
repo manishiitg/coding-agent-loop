@@ -406,6 +406,10 @@ func inferExecutionKind(executionID, sessionID string) string {
 // ActivityCallback is called when an event is added to update session activity
 type ActivityCallback func(sessionID string)
 
+// EventAddedCallback receives the stored/enriched event after AddEvent accepts it.
+// It runs outside the EventStore lock and must not mutate the event.
+type EventAddedCallback func(sessionID string, event Event)
+
 // Subscriber represents a client subscribed to real-time events for a session via SSE.
 type Subscriber struct {
 	Ch        chan Event
@@ -423,6 +427,7 @@ type EventStore struct {
 	cleanupTicker       *time.Ticker
 	stopCh              chan struct{}
 	activityCallback    ActivityCallback // Optional callback to update session activity
+	eventAddedCallback  EventAddedCallback
 
 	// SSE subscriber registry: sessionID -> list of subscribers
 	subscribers   map[string][]*Subscriber
@@ -485,6 +490,14 @@ func (es *EventStore) SetActivityCallback(callback ActivityCallback) {
 	es.activityCallback = callback
 }
 
+// SetEventAddedCallback sets a runtime callback for sidecar stores that should
+// observe accepted events without becoming part of durable event history.
+func (es *EventStore) SetEventAddedCallback(callback EventAddedCallback) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.eventAddedCallback = callback
+}
+
 // Subscribe creates a new subscriber for real-time events on a session.
 // The returned Subscriber's Ch channel receives events as they are added.
 // Buffer size is 256 to absorb bursts without blocking AddEvent.
@@ -542,11 +555,15 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 
 	// Call activity callback if set (call outside of lock to avoid deadlock)
 	activityCallback := es.activityCallback
+	eventAddedCallback := es.eventAddedCallback
 	es.mu.Unlock()
 
 	// Update session activity (call outside lock to avoid potential deadlock)
 	if activityCallback != nil && sessionID != "" {
 		activityCallback(sessionID)
+	}
+	if eventAddedCallback != nil && sessionID != "" {
+		eventAddedCallback(sessionID, event)
 	}
 
 	// Notify SSE subscribers (non-blocking send; drop if buffer full)

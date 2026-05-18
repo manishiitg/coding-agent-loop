@@ -119,7 +119,7 @@ After each applied change:
 Use this markdown shape for new entries so future scheduled fires can parse the history quickly:
 
 ```md
-### YYYY-MM-DD HH:MM UTC — /improve-workflow or /improve-continuously (...) — OUTCOME: <action/result>
+### YYYY-MM-DD HH:MM UTC — /improve-workflow or /auto-improve (...) — OUTCOME: <action/result>
 
 **Evidence reviewed:**
 - `<path>` — <what it showed>

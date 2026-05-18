@@ -146,6 +146,7 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.APIKeys,                     // Pass API keys
 		boa.config.MCPSessionID,                // MCP session ID for connection sharing
 		boa.config.CodingAgentWorkingDir,       // CLI coding-agent working directory
+		boa.config.CodingAgentKeepAlive,        // Keep tmux-backed coding sessions alive after completion
 		boa.config.RuntimeOverrides,            // Runtime config overrides for MCP servers
 	)
 	if err != nil {

@@ -7,6 +7,7 @@ import type { AgentMode } from '../stores/types'
 import { ChatInput } from './ChatInput'
 import type { ActiveAgentInfo } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
+import { TerminalCenter } from './TerminalCenter'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef, signalPlanModified } from './workflow'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
@@ -3030,7 +3031,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             )}
 
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={activeEventViewMode === 'flat'} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
+              <>
+                <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={activeEventViewMode === 'flat'} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
+                <TerminalCenter currentSessionId={activeTab.sessionId} compact={compact} />
+              </>
             )}
           </WorkflowModeHandler>
         ) : (
@@ -3058,7 +3062,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             )}
 
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={activeEventViewMode === 'flat'} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
+              <>
+                <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={activeEventViewMode === 'flat'} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
+                <TerminalCenter currentSessionId={activeTab.sessionId} compact={compact} />
+              </>
             )}
           </>
         )}

@@ -1,4 +1,4 @@
-Set up — or review — the auto-improvement framework on this workflow. Either bootstrap the framework (one-time configuration) or, if the framework is already in place, audit the existing setup and surface issues.{{if .Focus}}
+Define what success means for this workflow before optimization. Either bootstrap the auto-improvement framework (one-time configuration: Workflow Profile + metrics) or, if the framework is already in place, audit the existing setup and surface issues.{{if .Focus}}
 
 Focus / hints from user: {{.Focus}}{{end}}
 
@@ -132,10 +132,10 @@ You're auditing existing setup, not bootstrapping. Walk through these checks and
 Read the most recent rows of `db/metrics_history.jsonl` for each metric id. For each row with `has_value: false` and a `resolve_error`, categorize:
 
 - "no structured output (field=X)" — the metric specifies `field=X` but the eval step does not emit that key in structured output. Two fix paths:
-  (a) Update the eval step's Python to emit a structured JSON containing `X` (preferred — measures the named outcome explicitly). This is an eval-side change; recommend running `/improve-eval` with focus on that step.
+  (a) Update the eval step's Python to emit a structured JSON containing `X` (preferred — measures the named outcome explicitly). This is an eval-side change; recommend running `/improve-evaluation` with focus on that step.
   (b) Retire the metric if it no longer represents a real outcome.
 - "eval step <id> not found" — id mismatch. Either restore the eval step or retire the metric and propose a new one with the correct id.
-- Consistent NO VALUE without resolve_error — the eval step didn't run or produced no metric-ready value. Operational coverage gap; flag for `/improve-eval`.
+- Consistent NO VALUE without resolve_error — the eval step didn't run or produced no metric-ready value. Operational coverage gap; flag for `/improve-evaluation`.
 
 For each broken metric, name the metric, the resolve_error, and the recommended fix. Apply only after user confirms.
 

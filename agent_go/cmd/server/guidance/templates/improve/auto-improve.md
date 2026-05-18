@@ -14,7 +14,7 @@ DISCOVERY
 6. Read builder/review.md if present. Carry unresolved `F-...` findings into the scheduled optimizer message.
 7. Read planning/metrics.json and recent db/metrics_history.jsonl rows. Metrics are evidence for harden/replan decisions; they do not create a separate action path.
 8. Read planning/changelog/ if present and compare recent plan/config changes against builder/improve.md and builder/review.md. Recent plan changes increase regression risk and require tighter improve cadence until one or two post-change runs have been reviewed.
-9. If builder/improve.md has no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first." If the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty, also redirect.
+9. If builder/improve.md has no "## Workflow Profile" section, stop and redirect: "Run /define-success first." If the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty, also redirect.
 
 SCHEDULE STRATEGY
 1. Prefer updating or reusing good existing schedules instead of creating duplicates.
@@ -25,7 +25,7 @@ SCHEDULE STRATEGY
    - choose a frequent lightweight optimizer cadence that can observe, harden/replan when evidence justifies it, update cadence, or log no action
    - for unknown active workflows, start at every 6-12 hours, not weekly
 5. If planning/changelog shows material plan/config changes since the last builder/improve.md entry or unresolved builder/review.md finding, tighten the improve schedule for the next 24-48 hours or until the next one or two post-change runs have been reviewed.
-6. Because `/improve-continuously` runs in Optimizer mode, the scheduled optimizer may call schedule tools itself. It should review cadence on every fire and use update_schedule when builder/improve.md history, schedule run history, recent planning/changelog entries, or run/eval/metric evidence shows the cadence is too slow, too fast, stale, or mis-scoped.
+6. Because `/auto-improve` runs in Optimizer mode, the scheduled optimizer may call schedule tools itself. It should review cadence on every fire and use update_schedule when builder/improve.md history, schedule run history, recent planning/changelog entries, or run/eval/metric evidence shows the cadence is too slow, too fast, stale, or mis-scoped.
 7. Preserve a good existing timezone if one is already in use. Otherwise use the workflow's local/current timezone.
 
 RUN SCHEDULE
@@ -34,7 +34,7 @@ Create or update a schedule for normal recurring execution with:
 - workshop_mode="run"
 - valid group_names
 - a clear name and description that make it obvious this is the primary recurring run schedule
-- a single unattended scheduled message that names the exact group_names and tells Run mode to call run_full_workflow(group_name="<group>") for each configured group. Do not use mode="workflow" for /improve-continuously schedules.
+- a single unattended scheduled message that names the exact group_names and tells Run mode to call run_full_workflow(group_name="<group>") for each configured group. Do not use mode="workflow" for /auto-improve schedules.
 
 The run schedule message must encode:
 - Do not ask for confirmation; proceed autonomously.
@@ -111,7 +111,7 @@ If builder/improve.md is already long, compact it while preserving the ledger:
 
 SCHEDULE CREATION RULES
 1. Do NOT delete schedules unless they are clearly redundant and safe to remove. Prefer update over delete.
-2. If an existing run schedule already serves the purpose, keep it and refine it if needed. For /improve-continuously, convert/update direct mode="workflow" run schedules to mode="workshop", workshop_mode="run" rather than leaving them as direct workflow schedules.
+2. If an existing run schedule already serves the purpose, keep it and refine it if needed. For /auto-improve, convert/update direct mode="workflow" run schedules to mode="workshop", workshop_mode="run" rather than leaving them as direct workflow schedules.
 3. If an existing optimizer/improve schedule already serves the purpose, keep it and refine it if needed.
 4. Use create_schedule / update_schedule as appropriate.
 

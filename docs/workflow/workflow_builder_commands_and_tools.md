@@ -42,12 +42,15 @@ ready-to-optimize
 review-plan
 review-speed
 review-cost
-review-config
 review-code
-improve-setup-framework
+review-artifact-drift
+improve-knowledge
+improve-runbook
+improve-data
+define-success
 improve-workflow
-improve-eval
-improve-continuously
+improve-evaluation
+auto-improve
 improve-report
 ```
 
@@ -58,14 +61,17 @@ improve-report
 | `/design-flow` | Builder | Design step flow and context handoffs. |
 | `/ready-to-optimize` | Builder | Check whether the workflow is ready to hand to Optimizer. |
 | `/review-plan` | Builder, Optimizer, Run | Structural and artifact-sync review through `review_plan`. |
-| `/review-config` | Builder, Optimizer | Review step config, KB/db access, learn-code suitability, eval-step config, and learning metadata. |
 | `/review-code` | Optimizer | Review all saved code artifacts, including learn-code scripts and eval code. |
+| `/review-artifact-drift` | Builder, Optimizer | Audit whether learnings, code, KB, db, reports, and eval wiring drifted from recent plan changes. |
 | `/review-speed` | Optimizer | Review latency and safe speedups. |
 | `/review-cost` | Optimizer | Review cost and safe reductions. |
-| `/improve-setup-framework` | Optimizer | Write workflow profile and propose starter metrics. |
+| `/improve-knowledge` | Builder, Optimizer | Improve knowledgebase notes with targeted cleanup or cross-step consolidation. |
+| `/improve-runbook` | Builder, Optimizer | Improve reusable runbook guidance with targeted cleanup or consolidation. |
+| `/improve-data` | Builder, Optimizer | Improve durable data contracts, schemas, and report compatibility. |
+| `/define-success` | Optimizer | Write workflow profile and propose starter metrics. |
 | `/improve-workflow` | Optimizer | Read prior improve/review logs, run/eval/metric/log evidence, then choose harden, replan, eval-plan improvement, metric cleanup, or no action. |
-| `/improve-eval` | Optimizer | Improve evaluation coverage and rubric quality. |
-| `/improve-continuously` | Optimizer | Create/update frequent Run-mode and Optimizer-mode schedules. |
+| `/improve-evaluation` | Optimizer | Improve evaluation coverage and rubric quality. |
+| `/auto-improve` | Optimizer | Create/update frequent Run-mode and Optimizer-mode schedules. |
 | `/improve-report` | Builder, Optimizer | Improve report layout, color, density, and widget/data wiring. |
 
 ## Common Tool Groups
@@ -83,7 +89,7 @@ improve-report
 
 ## Continuous Improvement Cadence
 
-`/improve-continuously` creates or updates two workshop schedules:
+`/auto-improve` creates or updates two workshop schedules:
 
 - Run schedule: `mode="workshop"`, `workshop_mode="run"`, message can call `run_full_workflow(group_name=...)`, execute targeted/orphan steps, or answer directly from KB/learnings/db/run state when that is the scheduled job.
 - Improve schedule: `mode="workshop"`, `workshop_mode="optimizer"`, message performs a short cadence/group-scope check, then calls `get_workflow_command_guidance(kind="improve-workflow", ...)` and follows that canonical improvement flow. It does not duplicate the harden/replan decision model inline.

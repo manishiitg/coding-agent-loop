@@ -1771,7 +1771,7 @@ The workflow has a live frontend report viewer at the top toolbar's "Report" tab
 
 	Run mode can execute workflow-backed work directly, run individual/orphan steps, run the full workflow, and inspect results. It may read KB/learnings/db/report/run artifacts whenever they are needed to answer correctly, but it does not edit plan/config/eval/metrics/report artifacts. One exception is durable user-owned runtime context. If the user says something that future workflow runs should remember — rules, preferences, constraints, ICP filters, approval rules, brand voice, examples, or domain assumptions — ask whether to capture it.
 
-	If confirmed, call `+"`capture_context`"+` with a concise `+"`context_text`"+`, a section name, and existing `+"`target_metrics`"+`. Do not manually edit `+"`knowledgebase/context/context.md`"+`; the tool writes the structured improve.md audit entry. If there are no metrics yet, tell the user setup is needed before context can be anchored and suggest switching to Optimizer for `+"`/improve-setup-framework`"+`.
+	If confirmed, call `+"`capture_context`"+` with a concise `+"`context_text`"+`, a section name, and existing `+"`target_metrics`"+`. Do not manually edit `+"`knowledgebase/context/context.md`"+`; the tool writes the structured improve.md audit entry. If there are no metrics yet, tell the user setup is needed before context can be anchored and suggest switching to Optimizer for `+"`/define-success`"+`.
 	{{end}}
 
 	{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "reporting")}}
@@ -2594,7 +2594,7 @@ The step **description** in plan.json is the primary instruction the execution a
 - `+"`description_reviewed`"+` + `+"`review_notes`"+`
 If the step description changes later, clear `+"`description_reviewed`"+` yourself — the system does not auto-invalidate the review.
 
-**Artifact sync after material changes**: If you materially change a step's description, output contract, dependencies, validation, tools, execution mode, learnings, KB contribution, report wiring, or eval wiring, run the canonical `+"`/review-sync`"+` flow before declaring the work done. Call `+"`get_workflow_command_guidance(kind=\"review-sync\", focus=\"<step-id or change summary>\")`"+` and follow it. It uses `+"`builder/review.md`"+` as the cursor/checkpoint; do not create a separate sync state file.
+**Artifact drift after material changes**: If you materially change a step's description, output contract, dependencies, validation, tools, execution mode, learnings, KB contribution, report wiring, or eval wiring, run the canonical `+"`/review-artifact-drift`"+` flow before declaring the work done. Call `+"`get_workflow_command_guidance(kind=\"review-artifact-drift\", focus=\"<step-id or change summary>\")`"+` and follow it. It uses `+"`builder/review.md`"+` as the cursor/checkpoint; do not create a separate sync state file.
 
 ### 6. Post-Execution Step Review
 After running a step, review it for optimization — but follow this priority order. Fix fundamentals first before worrying about efficiency.
@@ -2816,8 +2816,8 @@ Rules:
 - **get_step_prompts(step_id, attempt?, iteration?)** — System prompt and user message for a step
 - **get_workflow_config** — Use this (not `+"`cat workflow.json`"+`) to inspect the workflow's current MCP servers, selected skills, available secrets, and LLM config. For the global installed skill catalog, use `+"`list_skills`"+`.
 - **get_llm_config** — Per-step LLM overrides
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}- **get_workflow_command_guidance(kind="review-sync", focus?)** — Canonical artifact-sync audit after material plan/config changes. Use it to check `+"`planning/changelog/`"+` entries against learnings, saved main.py, KB, db, reports, and eval wiring. It writes its cursor in `+"`builder/review.md`"+`; do not create a new state file.
-{{else}}- **Artifact sync reviews** belong in Builder/Optimizer. If a run/reporting issue appears caused by stale learnings, main.py, KB, db, reports, or eval wiring after a plan change, tell the user to switch to Builder or Optimizer and run `+"`/review-sync`"+`.
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}- **get_workflow_command_guidance(kind="review-artifact-drift", focus?)** — Canonical artifact drift audit after material plan/config changes. Use it to check `+"`planning/changelog/`"+` entries against learnings, saved main.py, KB, db, reports, and eval wiring. It writes its cursor in `+"`builder/review.md`"+`; do not create a new state file.
+{{else}}- **Artifact drift reviews** belong in Builder/Optimizer. If a run/reporting issue appears caused by stale learnings, main.py, KB, db, reports, or eval wiring after a plan change, tell the user to switch to Builder or Optimizer and run `+"`/review-artifact-drift`"+`.
 {{end}}
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
@@ -2848,7 +2848,7 @@ Rules:
   2. **Run** (mode=workshop, workshop_mode=run) — LLM-driven execution with per-step notifications. Requires `+"`messages`"+` array (e.g. a single message: "Run the full workflow using run_full_workflow(group_name=\"group-1\")").
   3. **Optimize** (mode=workshop, workshop_mode=optimizer) — LLM-driven optimizer run. Requires `+"`messages`"+` array with exact group scope, `+"`runs/iteration-0`"+` evidence scope, metric/eval/log review, and bounded stop conditions.
 - **Default mode rule**: choose `+"`mode=\"workflow\"`"+` unless the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule. Do not choose `+"`mode=\"workshop\"`"+` for normal recurring business runs.
-- **/improve-continuously exception**: When setting up continuous improvement, BOTH schedules must be workshop schedules. The recurring execution schedule uses `+"`mode=\"workshop\", workshop_mode=\"run\"`"+` and a message that calls `+"`run_full_workflow(group_name=\"...\")`"+` for each configured group. The recurring improvement schedule uses `+"`mode=\"workshop\", workshop_mode=\"optimizer\"`"+`. Do not use direct `+"`mode=\"workflow\"`"+` for this command.
+- **/auto-improve exception**: When setting up continuous improvement, BOTH schedules must be workshop schedules. The recurring execution schedule uses `+"`mode=\"workshop\", workshop_mode=\"run\"`"+` and a message that calls `+"`run_full_workflow(group_name=\"...\")`"+` for each configured group. The recurring improvement schedule uses `+"`mode=\"workshop\", workshop_mode=\"optimizer\"`"+`. Do not use direct `+"`mode=\"workflow\"`"+` for this command.
 - `+"`messages`"+` is an ordered queue of strings sent to the workshop LLM one-by-one as user turns. The LLM completes all tool calls triggered by message N before message N+1 is sent.
 - **How to write messages:**
   - Write each message as a plain instruction, like you would type in chat: "Run the full workflow", "Generate the final report"
@@ -2862,7 +2862,7 @@ Rules:
   - Tell the agent to skip or use defaults for anything unclear rather than pausing to ask
   - Never include open-ended questions or "let me know" style instructions
   - Bad: "Run the workflow and ask me which steps to optimize" — Good: "Review runs/iteration-0 for group-1, read metrics/eval/log evidence, then choose harden_workflow or replan_workflow_from_results using the scheduled decision model. Log no action if nothing is ready."
-- **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message around the exact recurring job. For `+"`/improve-continuously`"+`, the message should name the configured group_names, use only `+"`runs/iteration-0`"+` evidence for those groups, inspect run outputs plus execution/tool logs for failures, retries, wrong tool arguments, timeouts, validation errors, and stuck steps, read `+"`planning/metrics.json`"+` / `+"`db/metrics_history.jsonl`"+` / `+"`builder/improve.md`"+` / `+"`builder/review.md`"+` / recent `+"`planning/changelog/`"+` entries, and handle report-layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it. For active workflows, prefer an optimizer check after every workflow run, or at worst after every two runs; if cron cannot trigger on run completion, approximate with a frequent lightweight schedule that no-ops when there is no new evidence. Weekly continuous improvement is appropriate for weekly or explicitly low-touch workflows. After material plan/config changes, tighten the improve cadence for 24-48 hours or until the next one or two post-change iteration-0 runs have been reviewed.
+- **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message around the exact recurring job. For `+"`/auto-improve`"+`, the message should name the configured group_names, use only `+"`runs/iteration-0`"+` evidence for those groups, inspect run outputs plus execution/tool logs for failures, retries, wrong tool arguments, timeouts, validation errors, and stuck steps, read `+"`planning/metrics.json`"+` / `+"`db/metrics_history.jsonl`"+` / `+"`builder/improve.md`"+` / `+"`builder/review.md`"+` / recent `+"`planning/changelog/`"+` entries, and handle report-layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it. For active workflows, prefer an optimizer check after every workflow run, or at worst after every two runs; if cron cannot trigger on run completion, approximate with a frequent lightweight schedule that no-ops when there is no new evidence. Weekly continuous improvement is appropriate for weekly or explicitly low-touch workflows. After material plan/config changes, tighten the improve cadence for 24-48 hours or until the next one or two post-change iteration-0 runs have been reviewed.
 - **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) use bounded evidence review, (2) apply at most one primary harden/replan action per fire, (3) avoid fresh workflow reruns unless verification is explicitly needed, (4) stop after recording what was applied or deferred.
 
 {{end}}
@@ -4482,7 +4482,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"clear_fields": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Field names to CLEAR (remove from step_config.json) so the step inherits preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, description_reviewed, knowledgebase_access, knowledgebase_contribution, knowledgebase_write_method, learnings_access, learnings_write_method, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
+					"description": "Field names to CLEAR (remove from step_config.json) so the step inherits preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, coding_agent_tmux_lifecycle, description_reviewed, knowledgebase_access, knowledgebase_contribution, knowledgebase_write_method, learnings_access, learnings_write_method, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
 				},
 				"servers": map[string]interface{}{
 					"type":        "array",
@@ -4543,6 +4543,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"disable_parallel_tool_execution": map[string]interface{}{
 					"type":        "boolean",
 					"description": "If true, force the LLM to emit only one tool call per turn for this step. Use when tool calls must run strictly sequentially (e.g., stateful browser sessions, file edits with ordering dependencies, or when the agent is making mistakes by racing parallel calls). Default (omit/false) = parallel tool calls allowed. For todo_task steps, child tasks inherit this setting from the parent.",
+				},
+				"coding_agent_tmux_lifecycle": map[string]interface{}{
+					"type":        "string",
+					"enum":        []interface{}{"close_on_completion", "keep_alive"},
+					"description": "Lifecycle for tmux-backed coding providers on this step. Default/omit is close_on_completion: the step/sub-agent gets a bounded terminal that is closed when its turn completes. Use keep_alive only when a step intentionally needs its native coding-CLI session to survive after completion for later live steering or debugging; this can leave more tmux sessions open.",
 				},
 				"use_code_execution_mode": map[string]interface{}{
 					"type":        "boolean",
@@ -4767,6 +4772,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if val, ok := args["disable_parallel_tool_execution"]; ok && val != nil {
 				if b, ok := val.(bool); ok {
 					targetConfig.AgentConfigs.DisableParallelToolExecution = &b
+				}
+			}
+			if val, ok := args["coding_agent_tmux_lifecycle"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					lifecycle := strings.TrimSpace(s)
+					if normalized := normalizeCodingAgentTmuxLifecycle(lifecycle); normalized != "" {
+						lifecycle = normalized
+					}
+					targetConfig.AgentConfigs.CodingAgentTmuxLifecycle = lifecycle
 				}
 			}
 			if val, ok := args["use_code_execution_mode"]; ok && val != nil {
@@ -4998,6 +5012,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 				if targetConfig.AgentConfigs.ExecutionLLM != nil {
 					warnings = append(warnings, "execution_tier is set but execution_llm takes precedence, so the tier override will be ignored until execution_llm is cleared.")
+				}
+			}
+			if rawLifecycle := strings.TrimSpace(targetConfig.AgentConfigs.CodingAgentTmuxLifecycle); rawLifecycle != "" {
+				if normalizeCodingAgentTmuxLifecycle(rawLifecycle) == "" {
+					errors = append(errors, fmt.Sprintf("coding_agent_tmux_lifecycle %q is not recognized. Valid values: \"close_on_completion\", \"keep_alive\".", rawLifecycle))
 				}
 			}
 
@@ -6227,13 +6246,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
-			execID := fmt.Sprintf("review-sync-%05d", time.Now().UnixNano()%100000)
+			execID := fmt.Sprintf("review-artifact-drift-%05d", time.Now().UnixNano()%100000)
 			execCtx, cancel, ctxErr := iwm.newExecContext()
 			if ctxErr != nil {
 				return "Session was stopped — execution skipped", nil
 			}
 
-			agentSessionID := fmt.Sprintf("workshop-review-sync-%d", time.Now().UnixNano())
+			agentSessionID := fmt.Sprintf("workshop-review-artifact-drift-%d", time.Now().UnixNano())
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
 			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
 			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
@@ -6251,7 +6270,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
 					ID:                execID,
 					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
-					Name:              "Review Artifact Sync",
+					Name:              "Review Artifact Drift",
 					Cancel:            cancel,
 				})
 			}
@@ -6262,7 +6281,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				defer func() {
 					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if !skipNotify && iwm.executionNotifier != nil {
-						iwm.executionNotifier.OnExecutionComplete(execID, "Review Artifact Sync", result, nil, execErr)
+						iwm.executionNotifier.OnExecutionComplete(execID, "Review Artifact Drift", result, nil, execErr)
 					}
 				}()
 
@@ -6278,7 +6297,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				stepInfo = fmt.Sprintf("\nStep ID: %s", stepID)
 			}
 			logger.Info(fmt.Sprintf("🧪 Workshop: review_artifact_sync agent started in background, execution_id=%q, step_id=%q, focus=%q", execID, stepID, focus))
-			return fmt.Sprintf("Artifact sync review agent started in background.\nexecution_id: %q%s%s\nYou will be automatically notified when it completes.", execID, stepInfo, focusInfo), nil
+			return fmt.Sprintf("Artifact drift review agent started in background.\nexecution_id: %q%s%s\nYou will be automatically notified when it completes.", execID, stepInfo, focusInfo), nil
 		},
 		"workflow",
 	); err != nil {
@@ -8249,7 +8268,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. Default to mode='workflow' for normal recurring runs. Use mode='workshop' only when the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule; then messages are required. For /improve-continuously, BOTH schedules must be workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the improve schedule uses workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, retained-run evidence window selection, metric/eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For active workflows, prefer continuous-improvement checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable. Weekly cadence fits workflows that run weekly or are explicitly low-touch.",
+		"Create a new cron schedule for this workflow. Default to mode='workflow' for normal recurring runs. Use mode='workshop' only when the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule; then messages are required. For /auto-improve, BOTH schedules must be workshop schedules: the run schedule uses workshop_mode='run' with a message that calls run_full_workflow(group_name=...), and the improve schedule uses workshop_mode='optimizer'. For optimizer schedules (workshop_mode='optimizer'), the message MUST include exact group scope, retained-run evidence window selection, metric/eval/log review, and bounded stop conditions so unattended runs cannot loop indefinitely. For active workflows, prefer continuous-improvement checks after every run or every two runs, approximated with frequent lightweight cron if run-completion triggers are unavailable. Weekly cadence fits workflows that run weekly or are explicitly low-touch.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -9384,7 +9403,7 @@ Return a concise summary:
 - next recommended fix owner: Builder vs Optimizer
 `)
 
-var reviewArtifactSyncAgentUserTemplate = MustRegisterTemplate("reviewArtifactSyncAgentUser", `Run the artifact sync review. Read planning/changelog entries after the Artifact Sync Cursor in builder/review.md, audit changed step artifacts, append findings to builder/review.md, and update the cursor.{{if .StepID}} Limit to step "{{.StepID}}" and do not advance past uninspected entries.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var reviewArtifactSyncAgentUserTemplate = MustRegisterTemplate("reviewArtifactSyncAgentUser", `Run the artifact drift review. Read planning/changelog entries after the Artifact Sync Cursor in builder/review.md, audit changed step artifacts, append findings to builder/review.md, and update the cursor.{{if .StepID}} Limit to step "{{.StepID}}" and do not advance past uninspected entries.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 var reviewWorkflowResultsAgentSystemTemplate = MustRegisterTemplate("reviewWorkflowResultsAgentSystem", `# Workflow Results Review Agent
 

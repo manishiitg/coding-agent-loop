@@ -172,7 +172,7 @@ func validateContextTargetMetrics(ctx context.Context, workspacePath string, tar
 		return fmt.Errorf("read metrics.json: %w", err)
 	}
 	if !exists || file == nil || len(file.Metrics) == 0 {
-		return fmt.Errorf("capture_context requires existing planning/metrics.json metrics; run /improve-setup-framework before capturing context")
+		return fmt.Errorf("capture_context requires existing planning/metrics.json metrics; run /define-success before capturing context")
 	}
 	active := make(map[string]struct{}, len(file.Metrics))
 	for _, metric := range file.Metrics {

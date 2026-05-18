@@ -9,7 +9,7 @@ import { agentApi, getApiBaseUrl } from '../services/api'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useModeStore } from '../stores/useModeStore'
-import type { PollingEvent, SessionExecutionTreeResponse } from '../services/api-types'
+import type { PollingEvent, SessionExecutionTreeResponse, TerminalSnapshot } from '../services/api-types'
 import { useRenderLogger } from '../utils/renderLogger'
 import { normalizeMarkdownContent } from './ui/MarkdownRenderer'
 
@@ -146,18 +146,10 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
   const currentStreamingStatus = useChatStore(state =>
     sessionId ? state.streamingStatus[sessionId] || '' : ''
   )
-  const currentStreamingTerminalText = useChatStore(state =>
-    sessionId ? state.streamingTerminalText[sessionId] || '' : ''
-  )
-  const currentStreamingTerminalActive = useChatStore(state =>
-    sessionId ? state.streamingTerminalActive[sessionId] || false : false
-  )
-  const terminalOutputSessionKey = sessionId || tabId || '__default__'
-  const terminalOutputOpen = useChatStore(state => state.terminalOutputOpen[terminalOutputSessionKey] ?? true)
-  const setTerminalOutputOpen = useChatStore(state => state.setTerminalOutputOpen)
   const completedStreamingText = useChatStore(state =>
     sessionId ? state.completedStreamingText[sessionId] || '' : ''
   )
+  const [terminalSnapshots, setTerminalSnapshots] = React.useState<TerminalSnapshot[]>([])
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
 
   // CRITICAL: Always use prop events - never fall back to global events to prevent cross-tab mixing
@@ -173,18 +165,29 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
     events: events.length,
     hasStreamingText: !!currentStreamingText,
     streamingTextLen: currentStreamingText.length,
-    streamingTerminalTextLen: currentStreamingTerminalText.length,
-    streamingTerminalActive: currentStreamingTerminalActive,
     finalResponse: !!finalResponse,
     isCompleted,
     sessionId,
   })
 
-  // Check if events already contain a completion event (to avoid showing duplicate "Thinking" text)
-  const hasCompletionEvent = React.useMemo(
-    () => events.some(e => e.type === 'unified_completion' || e.type === 'llm_generation_end'),
-    [events]
-  )
+  // Check completion only for the latest visible user turn. Multi-turn chats keep
+  // old completion events in the same session, so a session-wide check would hide
+  // live streaming for the next message.
+  const hasCompletionEvent = React.useMemo(() => {
+    let latestUserMessageIndex = -1
+    let latestCompletionIndex = -1
+
+    events.forEach((event, index) => {
+      if (event.type === 'user_message') {
+        latestUserMessageIndex = index
+      }
+      if (event.type === 'unified_completion' || event.type === 'llm_generation_end') {
+        latestCompletionIndex = index
+      }
+    })
+
+    return latestCompletionIndex >= 0 && (latestUserMessageIndex < 0 || latestCompletionIndex > latestUserMessageIndex)
+  }, [events])
 
   // Memoize markdown components to avoid re-creating on every render
   const markdownComponents = React.useMemo(() => getMarkdownComponents(compact), [compact])
@@ -192,57 +195,47 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
   const normalizedCompletedStreamingText = React.useMemo(() => normalizeMarkdownContent(completedStreamingText), [completedStreamingText])
   const normalizedFinalResponse = React.useMemo(() => normalizeMarkdownContent(finalResponse || ''), [finalResponse])
   const hasLiveStreamingText = Boolean(currentStreamingText || currentStreamingStatus)
-  const hasLiveTerminalStream = Boolean(currentStreamingTerminalText && currentStreamingTerminalActive)
-  const streamingPanelTitle = currentStreamingTerminalText && !hasLiveStreamingText ? 'Terminal output' : 'Generating...'
-  const showStreamingPanelHeader = Boolean(hasLiveStreamingText && (!currentStreamingTerminalText || hasLiveTerminalStream))
-  const shouldShowTerminalOutput = Boolean(currentStreamingTerminalText && terminalOutputOpen)
-  const shouldShowHiddenTerminalStatus = Boolean(currentStreamingTerminalText && !terminalOutputOpen && !currentStreamingText && !currentStreamingStatus)
-  const terminalOutputRef = React.useRef<HTMLDivElement | null>(null)
-  const terminalAutoFollowRef = React.useRef(true)
-  const isTerminalNearBottom = React.useCallback((el: HTMLDivElement) => (
-    el.scrollHeight - el.scrollTop - el.clientHeight < 48
-  ), [])
-  const scrollTerminalOutputToBottom = React.useCallback((force = false) => {
-    requestAnimationFrame(() => {
-      const el = terminalOutputRef.current
-      if (el && (force || terminalAutoFollowRef.current)) {
-        el.scrollTop = el.scrollHeight
-        terminalAutoFollowRef.current = true
+  const shouldPollTerminalStatus = Boolean(sessionId) && !hasCompletionEvent
+  React.useEffect(() => {
+    if (!sessionId || !shouldPollTerminalStatus) {
+      setTerminalSnapshots([])
+      return
+    }
+
+    let cancelled = false
+    const fetchTerminals = async () => {
+      try {
+        const response = await agentApi.listTerminals(sessionId)
+        if (!cancelled) {
+          setTerminalSnapshots(response.terminals || [])
+        }
+      } catch {
+        if (!cancelled) {
+          setTerminalSnapshots([])
+        }
       }
-    })
-  }, [])
-  const handleTerminalOutputScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
-    terminalAutoFollowRef.current = isTerminalNearBottom(event.currentTarget)
-  }, [isTerminalNearBottom])
-  React.useEffect(() => {
-    if (currentStreamingTerminalActive) {
-      terminalAutoFollowRef.current = true
     }
-  }, [currentStreamingTerminalActive])
-  React.useEffect(() => {
-    if (currentStreamingTerminalText && terminalOutputOpen) {
-      scrollTerminalOutputToBottom()
+
+    void fetchTerminals()
+    const interval = window.setInterval(fetchTerminals, 1500)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
     }
-  }, [currentStreamingTerminalText, terminalOutputOpen, scrollTerminalOutputToBottom])
-  const handleTerminalOutputToggle = React.useCallback((event: React.SyntheticEvent<HTMLDetailsElement>) => {
-    const isOpen = event.currentTarget.open
-    setTerminalOutputOpen(terminalOutputSessionKey, isOpen)
-    if (isOpen) {
-      scrollTerminalOutputToBottom(true)
-    }
-  }, [scrollTerminalOutputToBottom, setTerminalOutputOpen, terminalOutputSessionKey])
-  const terminalOutputBlock = currentStreamingTerminalText ? (
-    <div
-      ref={terminalOutputRef}
-      className={`mt-2 ${compact ? 'min-h-[220px] max-h-[60vh] text-[11px] leading-4' : 'min-h-[320px] max-h-[70vh] text-xs leading-5'} overflow-y-auto overflow-x-auto overscroll-y-auto rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-neutral-950/60 [scrollbar-gutter:stable]`}
-      role="region"
-      aria-label="Terminal output"
-      tabIndex={0}
-      onScroll={handleTerminalOutputScroll}
-    >
-      <pre className={`m-0 min-w-max ${compact ? 'p-2' : 'p-3'} whitespace-pre font-mono text-gray-800 dark:text-gray-200`}>{currentStreamingTerminalText}</pre>
-    </div>
-  ) : null
+  }, [sessionId, shouldPollTerminalStatus])
+
+  const activeTerminalSnapshots = React.useMemo(
+    () => terminalSnapshots.filter(terminal => terminal.active),
+    [terminalSnapshots],
+  )
+  const currentTerminalStatus = activeTerminalSnapshots[0]?.status
+  const terminalStatusText = currentTerminalStatus?.assistant_preview || currentTerminalStatus?.status_text || ''
+  const terminalToolSummary = currentTerminalStatus?.tool_summary || ''
+  const terminalProviderLabel = currentTerminalStatus?.provider_label || 'Coding agent'
+  const hasActiveTerminalStatus = activeTerminalSnapshots.length > 0 && Boolean(terminalStatusText || terminalToolSummary)
+  const streamingPanelTitle = 'Generating...'
+  const shouldShowStreamingPanel = !hasCompletionEvent && (hasLiveStreamingText || hasActiveTerminalStatus)
+  const showStreamingPanelHeader = shouldShowStreamingPanel && (hasLiveStreamingText || hasActiveTerminalStatus)
 
   // Handle workflow approval
   const handleApproveWorkflow = React.useCallback(async (requestId: string) => {
@@ -291,7 +284,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
       )}
 
       {/* Streaming Text Display - shows LLM output as it generates */}
-      {(currentStreamingText || currentStreamingTerminalText || currentStreamingStatus) && (
+      {shouldShowStreamingPanel && (
         <Card className="border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-neutral-900/40 shadow-sm min-w-0">
           <CardContent className={`${compact ? 'p-2' : 'p-3'} min-w-0`}>
             {showStreamingPanelHeader && (
@@ -312,26 +305,21 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
                 <span className="inline-block w-1.5 h-3 bg-gray-500 animate-pulse ml-0.5" />
               </div>
             )}
-            {shouldShowTerminalOutput && (
-              <details
-                className="min-w-0"
-                open={terminalOutputOpen}
-                onToggle={handleTerminalOutputToggle}
-              >
-                <summary className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-500 dark:text-gray-400 cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 select-none`}>
-                  <span className="inline-flex items-center">
-                    <span>Terminal output</span>
-                  </span>
-                </summary>
-                {terminalOutputBlock}
-              </details>
-            )}
-            {shouldShowHiddenTerminalStatus && (
-              <div className="flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" />
-                <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-600 dark:text-gray-400 font-medium`}>
-                  Generating... Agent is working.
-                </span>
+            {hasActiveTerminalStatus && !currentStreamingText && (
+              <div className={`${compact ? 'text-[10px]' : 'text-xs'} min-w-0 text-gray-700 dark:text-gray-200`}>
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="font-medium">{terminalStatusText || `${terminalProviderLabel} is working`}</span>
+                  {terminalToolSummary && (
+                    <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                      {terminalToolSummary}
+                    </span>
+                  )}
+                  {activeTerminalSnapshots.length > 1 && (
+                    <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                      {activeTerminalSnapshots.length} terminals active
+                    </span>
+                  )}
+                </div>
               </div>
             )}
             {currentStreamingStatus && (

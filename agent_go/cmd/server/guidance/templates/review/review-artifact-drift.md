@@ -1,4 +1,4 @@
-Run the artifact sync review through the dedicated background tool. This command checks whether recent plan/config changes were propagated to dependent artifacts: step config, learnings, saved main.py, KB notes, db files, reports, evaluation, and recent run outputs. It is a review command, not a fix command.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Run the artifact drift review through the dedicated background tool. This command checks whether dependent artifacts drifted from recent plan/config changes: step config, learnings, saved main.py, KB notes, db files, reports, evaluation, and recent run outputs. It is a review command, not a fix command.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 PROCEDURE
 

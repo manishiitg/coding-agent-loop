@@ -60,6 +60,7 @@ import (
 	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
 	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/internal/terminals"
 	browserinstructions "mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 	"strconv"
@@ -191,6 +192,9 @@ type StreamingAPI struct {
 
 	// Polling system components
 	eventStore *events.EventStore
+
+	// View-only runtime terminal snapshots for coding-agent TUI streams.
+	terminalStore *terminals.Store
 
 	// Workflow orchestrator configuration
 	provider      string
@@ -674,6 +678,8 @@ func runServer(cmd *cobra.Command, args []string) {
 		}
 	}
 	eventStore := events.NewEventStore(maxSessionEvents)
+	terminalStore := terminals.NewStore()
+	eventStore.SetEventAddedCallback(terminalStore.HandleEvent)
 	log.Printf("📡 EventStore retention: max %d events per session", maxSessionEvents)
 
 	// Initialize the operator-state store (bot connector configs + user
@@ -733,6 +739,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		chatStore:                    chatStore,
 		costLedger:                   costLedger,
 		eventStore:                   eventStore,
+		terminalStore:                terminalStore,
 		provider:                     config.Provider,
 		model:                        config.ModelID,
 		mcpConfigPath:                configPath,
@@ -1045,6 +1052,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/sessions/{session_id}/status", api.handleGetSessionStatus).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/execution-tree", api.handleGetSessionExecutionTree).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/dismiss", api.handleDismissSession).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/terminals", api.handleListTerminals).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/terminals/{terminal_id}", api.handleGetTerminal).Methods("GET", "OPTIONS")
 
 	// LLM Guidance API routes
 	apiRouter.HandleFunc("/sessions/{session_id}/llm-guidance", api.handleSetLLMGuidance).Methods("POST", "OPTIONS")
@@ -8244,6 +8253,9 @@ func (api *StreamingAPI) cleanupInactiveSessions() {
 		for _, sessionID := range sessionsToDelete {
 			if session, exists := api.activeSessions[sessionID]; exists {
 				delete(api.activeSessions, sessionID)
+				if api.terminalStore != nil {
+					api.terminalStore.RemoveSession(sessionID)
+				}
 				log.Printf("[ACTIVE_SESSION] Cleanup: Removed old %s session %s from memory (>24h)", session.Status, sessionID)
 			}
 		}

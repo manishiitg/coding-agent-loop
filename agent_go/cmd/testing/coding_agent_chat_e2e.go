@@ -111,6 +111,10 @@ Example:
 			if err := client.waitUntilCanSteer(ctx, sessionID, 45*time.Second); err != nil {
 				return fmt.Errorf("live steer session never became steerable: %w", err)
 			}
+			if err := client.waitForDerivedTerminalStatus(ctx, sessionID, 45*time.Second); err != nil {
+				return fmt.Errorf("derived terminal status was not available during live turn: %w", err)
+			}
+			fmt.Println("PASS live status: terminal stream produced derived status text")
 			if err := client.sendSteer(ctx, sessionID, fmt.Sprintf("Live follow-up: include the exact token %s in your final answer.", liveToken)); err != nil {
 				return fmt.Errorf("live steer POST failed: %w", err)
 			}
@@ -288,9 +292,67 @@ type codingAgentEventsResponse struct {
 	CanSteer           bool                     `json:"can_steer"`
 }
 
+type codingAgentTerminalsResponse struct {
+	Terminals []codingAgentTerminalSnapshot `json:"terminals"`
+	Total     int                           `json:"total"`
+}
+
+type codingAgentTerminalSnapshot struct {
+	TerminalID string                    `json:"terminal_id"`
+	SessionID  string                    `json:"session_id"`
+	Active     bool                      `json:"active"`
+	Content    string                    `json:"content"`
+	Status     codingAgentTerminalStatus `json:"status"`
+}
+
+type codingAgentTerminalStatus struct {
+	StatusText       string `json:"status_text"`
+	AssistantPreview string `json:"assistant_preview"`
+	ToolSummary      string `json:"tool_summary"`
+	ProviderLabel    string `json:"provider_label"`
+}
+
 func (c *codingAgentChatE2EClient) getEvents(ctx context.Context, sessionID string) (*codingAgentEventsResponse, string, error) {
 	endpoint := fmt.Sprintf("/api/sessions/%s/events?since=0", url.PathEscape(sessionID))
 	var resp codingAgentEventsResponse
+	raw, err := c.doJSONRaw(ctx, http.MethodGet, endpoint, sessionID, nil, &resp)
+	if err != nil {
+		return nil, raw, err
+	}
+	return &resp, raw, nil
+}
+
+func (c *codingAgentChatE2EClient) waitForDerivedTerminalStatus(ctx context.Context, sessionID string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, raw, err := c.getTerminals(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		for _, terminal := range resp.Terminals {
+			if !terminal.Active {
+				continue
+			}
+			if strings.TrimSpace(terminal.Content) == "" {
+				continue
+			}
+			if strings.TrimSpace(terminal.Status.StatusText) != "" || strings.TrimSpace(terminal.Status.ToolSummary) != "" {
+				return nil
+			}
+		}
+		if strings.Contains(raw, `"active":true`) && strings.Contains(raw, `"status"`) {
+			return nil
+		}
+		if err := sleepContext(ctx, 750*time.Millisecond); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("timed out after %s", timeout)
+}
+
+func (c *codingAgentChatE2EClient) getTerminals(ctx context.Context, sessionID string) (*codingAgentTerminalsResponse, string, error) {
+	endpoint := fmt.Sprintf("/api/terminals?session_id=%s", url.QueryEscape(sessionID))
+	var resp codingAgentTerminalsResponse
 	raw, err := c.doJSONRaw(ctx, http.MethodGet, endpoint, sessionID, nil, &resp)
 	if err != nil {
 		return nil, raw, err

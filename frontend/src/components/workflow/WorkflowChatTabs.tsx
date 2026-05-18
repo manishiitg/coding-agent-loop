@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { X, ArrowDown, List, ListTree, Radio } from 'lucide-react'
+import { X, ArrowDown, List, ListTree, Radio, Terminal } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
@@ -107,6 +107,8 @@ export const WorkflowChatTabs: React.FC = () => {
     autoScroll,
     setAutoScroll,
     setTabViewMode,
+    terminalCenterOpen,
+    toggleTerminalCenterOpen,
   } = useChatStore(useShallow(state => ({
     chatTabs: state.chatTabs,
     activeTabId: state.activeTabId,
@@ -116,6 +118,8 @@ export const WorkflowChatTabs: React.FC = () => {
     autoScroll: state.autoScroll,
     setAutoScroll: state.setAutoScroll,
     setTabViewMode: state.setTabViewMode,
+    terminalCenterOpen: state.terminalCenterOpen,
+    toggleTerminalCenterOpen: state.toggleTerminalCenterOpen,
   })))
 
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
@@ -212,6 +216,31 @@ export const WorkflowChatTabs: React.FC = () => {
         {/* Auto-scroll Toggle and Close Button - only show when there are workflow tabs */}
         {activeWorkflowTabs.length > 0 && (
           <div className="flex shrink-0 items-center gap-1 border-l border-gray-200 pl-2 dark:border-gray-700">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    toggleTerminalCenterOpen()
+                  }}
+                  className={`flex items-center gap-1 p-1.5 rounded text-xs font-medium transition-colors
+                    ${terminalCenterOpen
+                      ? 'bg-gray-200 text-gray-900 dark:bg-gray-700 dark:text-gray-100'
+                      : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+                    }
+                    hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100
+                  `}
+                  aria-label={terminalCenterOpen ? 'Hide terminals' : 'Show terminals'}
+                  aria-pressed={terminalCenterOpen}
+                >
+                  <Terminal className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{terminalCenterOpen ? 'Hide terminals' : 'Show terminals'}</p>
+              </TooltipContent>
+            </Tooltip>
+
             <button
               onClick={(e) => {
                 e.stopPropagation()

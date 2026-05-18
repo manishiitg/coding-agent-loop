@@ -57,6 +57,56 @@ func TestCreateStandardAgentConfigUsesWorkflowFolderForCodingAgentWorkingDir(t *
 	}
 }
 
+func TestApplyStepConfigToAgentConfigDefaultsCodingAgentTmuxCloseOnCompletion(t *testing.T) {
+	hcpo := newAgentFactoryTestOrchestrator(t)
+	config := agents.NewOrchestratorAgentConfig("step-agent")
+	config.LLMConfig.Primary.Provider = string(mcpllm.ProviderCodexCLI)
+
+	hcpo.applyStepConfigToAgentConfig(config, &AgentConfigs{}, true)
+
+	if config.CodingAgentKeepAlive {
+		t.Fatal("expected workflow step coding-agent tmux lifecycle to close on completion by default")
+	}
+}
+
+func TestApplyStepConfigToAgentConfigSupportsCodingAgentTmuxKeepAlive(t *testing.T) {
+	hcpo := newAgentFactoryTestOrchestrator(t)
+	config := agents.NewOrchestratorAgentConfig("step-agent")
+	config.LLMConfig.Primary.Provider = string(mcpllm.ProviderCodexCLI)
+
+	hcpo.applyStepConfigToAgentConfig(config, &AgentConfigs{
+		CodingAgentTmuxLifecycle: CodingAgentTmuxLifecycleKeepAlive,
+	}, true)
+
+	if !config.CodingAgentKeepAlive {
+		t.Fatal("expected explicit keep_alive lifecycle to keep coding-agent tmux session alive")
+	}
+}
+
+func newAgentFactoryTestOrchestrator(t *testing.T) *StepBasedWorkflowOrchestrator {
+	t.Helper()
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(),
+		nil,
+		orchestrator.OrchestratorTypeWorkflow,
+		"",
+		0,
+		"",
+		[]string{"api-bridge"},
+		[]string{"api-bridge:execute_shell_command"},
+		false,
+		&orchestrator.LLMConfig{},
+		1,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+	return &StepBasedWorkflowOrchestrator{BaseOrchestrator: base}
+}
+
 func TestInjectStepEnvIntoShellExecutor_OverridesStaleMCPSessionEnv(t *testing.T) {
 	t.Setenv("MCP_API_URL", "http://example.test/s/parent-session")
 

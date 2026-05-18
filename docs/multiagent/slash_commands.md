@@ -94,16 +94,15 @@ Workflow slash commands are wrappers around the backend `get_workflow_command_gu
 | `/review-plan` | Critically analyze the workflow plan and dependent artifacts | Builder, Optimizer, Run | `review-plan` |
 | `/review-speed` | Review workflow latency and how to make it faster | Optimizer | `review-speed` |
 | `/review-cost` | Review workflow cost and how to reduce it safely | Optimizer | `review-cost` |
-| `/review-config` | Review per-step KB / db / lock_learnings / lock_code recommendations | Builder, Optimizer, Run | `review-config` |
-| `/review-sync` | Check whether plan changes were propagated to learnings, code, KB, db, reports, and eval | Builder, Optimizer | `review-sync` |
+| `/review-artifact-drift` | Check whether artifacts drifted from recent plan changes | Builder, Optimizer | `review-artifact-drift` |
 | `/review-code` | Review saved scripts (`main.py`) against step descriptions to detect drift | Optimizer | `review-code` |
-| `/improve-kb` | Improve knowledgebase notes with targeted cleanup or cross-step consolidation | Builder, Optimizer | `improve-kb` |
-| `/improve-learning` | Improve global learnings with targeted cleanup or current-plan consolidation | Builder, Optimizer | `improve-learning` |
-| `/improve-db` | Improve db JSON contracts, schemas, and report compatibility | Builder, Optimizer | `improve-db` |
+| `/improve-knowledge` | Improve knowledge notes with targeted cleanup or cross-step consolidation | Builder, Optimizer | `improve-knowledge` |
+| `/improve-runbook` | Improve reusable runbook guidance with targeted cleanup or consolidation | Builder, Optimizer | `improve-runbook` |
+| `/improve-data` | Improve durable data contracts, schemas, and report compatibility | Builder, Optimizer | `improve-data` |
 | `/improve-report` | Validate `reports/report_plan.json` and suggest layout/color improvements | Builder, Optimizer, Reporting | `improve-report` |
-| `/improve-setup-framework` | One-time setup: write the Workflow Profile to `builder/improve.md` and bootstrap metrics | Optimizer | `improve-setup-framework` |
-| `/improve-eval` | Validate `evaluation/evaluation_plan.json` and improve goal/criteria coverage | Optimizer | `improve-eval` |
-| `/improve-continuously` | Set up recurring workflow run + frequent lightweight optimizer improvement | Optimizer | `improve-continuously` |
+| `/define-success` | One-time setup: write the Workflow Profile to `builder/improve.md` and bootstrap metrics | Optimizer | `define-success` |
+| `/improve-evaluation` | Validate `evaluation/evaluation_plan.json` and improve goal/criteria coverage | Optimizer | `improve-evaluation` |
+| `/auto-improve` | Set up recurring workflow run + frequent lightweight optimizer improvement | Optimizer | `auto-improve` |
 | `/improve-workflow` | Use existing run evidence to review, replan if needed, harden, then optionally verify | Optimizer | `improve-workflow` |
 
 The workflow command source of truth is split across:

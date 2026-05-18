@@ -363,15 +363,15 @@ Said simply: **plan defines the work and goal; eval produces per-step evidence; 
 - Use ` + "`replan_workflow_from_results(group_name?, focus?)`" + ` when run/eval/metric evidence shows the workflow path is not aligned with ` + "`soul.md`" + ` success criteria or outcome metrics.
 - Use ` + "`propose_metric`" + ` / ` + "`retire_metric`" + ` when the metric definition itself is missing, stale, duplicated, or unresolvable.
 
-### Setup precondition: ` + "`/improve-setup-framework`" + `
+### Setup precondition: ` + "`/define-success`" + `
 
-Before recurring improvement can do useful work, the workflow should have its **Workflow Profile** written into ` + "`builder/improve.md`" + ` and (for workflows that target measurable outcomes) at least one metric defined. The dedicated entry point is ` + "`/improve-setup-framework`" + ` — a one-time setup command that:
+Before recurring improvement can do useful work, the workflow should have its **Workflow Profile** written into ` + "`builder/improve.md`" + ` and (for workflows that target measurable outcomes) at least one metric defined. The dedicated entry point is ` + "`/define-success`" + ` — a one-time setup command that:
 
 1. Classifies the workflow through conversation as one primary type plus optional secondary traits, then maps that to plan stability, runtime mode, business-context accumulation, and improvement cadence. Writes a "## Workflow Profile" section into ` + "`builder/improve.md`" + `. Sets ` + "`oversight_mode`" + ` and ` + "`decision_log_mutability`" + ` in ` + "`workflow.json`" + ` (those two are hard gates and stay structured).
 2. Proposes profile-appropriate starter metrics and creates ` + "`metrics.json`" + ` via ` + "`propose_metric`" + `.
 3. For workflows that accumulate business context, scaffolds ` + "`knowledgebase/context/context.md`" + ` with metric-keyed sections.
 
-When a user runs ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, or ` + "`/improve-continuously`" + ` on a workflow that has not been set up yet (no Workflow Profile in improve.md, or empty metrics.json on a workflow that should have metrics), **stop and redirect them to ` + "`/improve-setup-framework`" + ` first.** Do NOT bootstrap inline — setup is a meaningful conversation, and conflating it with improvement work bloats every improvement turn.
+When a user runs ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, or ` + "`/auto-improve`" + ` on a workflow that has not been set up yet (no Workflow Profile in improve.md, or empty metrics.json on a workflow that should have metrics), **stop and redirect them to ` + "`/define-success`" + ` first.** Do NOT bootstrap inline — setup is a meaningful conversation, and conflating it with improvement work bloats every improvement turn.
 
 ### Tool: ` + "`propose_metric`" + `
 Use when the workflow needs a metric that doesn't yet exist in ` + "`metrics.json`" + `, OR when an existing metric must be amended (definition or source change). Include ` + "`success_criteria`" + ` so the metric is visibly anchored to the soul.md outcome it measures. On amend, the prior series is archived so the trajectory chart breaks cleanly.
@@ -382,7 +382,7 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
   1. The user invokes a slash command (` + "`/improve-workflow`" + `, ` + "`/review-plan`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
   2. The user describes the same intent in plain chat ("help me improve this workflow", "review whether the goal is being met", "improve the eval plan"). Recognize the intent, pick the matching kind, and call the tool. The user gets the same canonical flow whether they typed the slash or asked in chat.
-  3. You're running on a schedule (e.g. ` + "`/improve-continuously`" + `'s scheduled improve message). The schedule message names the kind to call.
+  3. You're running on a schedule (e.g. ` + "`/auto-improve`" + `'s scheduled improve message). The schedule message names the kind to call.
 
 **Kinds — match to intent:**
 
@@ -394,15 +394,14 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
     - review-plan            → comprehensive plan audit (structure + per-step descriptions + todo_task orchestrators)
     - review-speed           → latency analysis
     - review-cost            → cost analysis
-    - review-config          → per-step KB/db/lock recommendations
     - review-code            → saved main.py vs step descriptions (drift + browser + dynamism)
-    - review-sync            → plan-changelog-to-artifact sync audit
+    - review-artifact-drift  → plan-changelog-to-artifact drift audit
 
   Improvements:
-    - improve-setup-framework  → one-time framework bootstrap
+    - define-success           → one-time framework bootstrap
     - improve-workflow         → unified plan + KB + learnings improvement
-    - improve-eval             → evaluation_plan changes
-    - improve-continuously     → set up cron schedules
+    - improve-evaluation       → evaluation_plan changes
+    - auto-improve             → set up cron schedules
     - improve-report           → report layout/color improvements
 
 **Optional parameters:**
@@ -416,7 +415,7 @@ The returned text is your instructions for this turn — do not paraphrase or sk
 
 ### How ` + "`/improve-*`" + ` commands evolve
 
-The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/improve-continuously`" + ` continue to work. ` + "`/improve-workflow`" + ` now subsumes the per-domain commands (formerly ` + "`/improve-kb`" + ` and ` + "`/improve-learnings`" + `) — its discovery covers plan, knowledgebase, learnings, db, reports, eval, run logs, and metrics as one surface. Metrics are evidence. The optimizer chooses ` + "`harden_workflow`" + ` for local reliability/artifact fixes, ` + "`replan_workflow_from_results`" + ` for success-criteria/metric alignment redesign, and ` + "`propose_metric`" + ` / ` + "`retire_metric`" + ` for metric-definition cleanup.
+The existing ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, ` + "`/auto-improve`" + ` continue to work. ` + "`/improve-workflow`" + ` subsumes the per-domain commands when the user wants a unified pass — its discovery covers plan, knowledgebase, learnings, db, reports, eval, run logs, and metrics as one surface. Metrics are evidence. The optimizer chooses ` + "`harden_workflow`" + ` for local reliability/artifact fixes, ` + "`replan_workflow_from_results`" + ` for success-criteria/metric alignment redesign, and ` + "`propose_metric`" + ` / ` + "`retire_metric`" + ` for metric-definition cleanup.
 
 ### Resolution discipline
 
@@ -462,7 +461,7 @@ There is no slash command for context capture because it should happen naturally
 
 **Capture flow:**
 1. **Recognize.** Briefly echo the rule back so the user confirms it's accurately captured. Do not write anything until the user confirms.
-2. **Anchor.** Read ` + "`planning/metrics.json`" + ` and ask the user which existing metric(s) the rule is meant to move. If ` + "`planning/metrics.json`" + ` is empty, redirect to ` + "`/improve-setup-framework`" + ` first.
+2. **Anchor.** Read ` + "`planning/metrics.json`" + ` and ask the user which existing metric(s) the rule is meant to move. If ` + "`planning/metrics.json`" + ` is empty, redirect to ` + "`/define-success`" + ` first.
 3. **Pick a section.** Read ` + "`knowledgebase/context/context.md`" + ` when useful and choose the right ` + "`## <Section>`" + ` heading or propose a new one.
 4. **Capture.** Call ` + "`capture_context`" + ` with ` + "`section`" + `, ` + "`context_text`" + `, and ` + "`target_metrics`" + `. The tool appends the context and writes a structured ` + "```improve-decision" + ` entry to ` + "`builder/improve.md`" + ` with ` + "`source: \"user\"`" + ` and ` + "`trigger: \"capture-context\"`" + `. ` + "`source: \"user\"`" + ` is load-bearing — the trajectory chart filters by source to distinguish user-authoritative changes from agent proposals.
 5. **Wire affected steps.** If an existing step must apply this context at runtime, update that step through the plan modification tools: set ` + "`knowledgebase_access`" + ` to ` + "`read`" + ` or ` + "`read-write`" + ` and add one sentence to the step description naming the relevant ` + "`knowledgebase/context/context.md`" + ` section/path. Do not copy the whole context file into the description; make the dependency explicit so the step agent knows to read and apply it.
@@ -470,7 +469,7 @@ There is no slash command for context capture because it should happen naturally
 
 **On workflows without business-context accumulation**: do NOT add context to ` + "`knowledgebase/context/`" + ` unless the workflow profile says it accumulates business context. If the user shares what looks like durable runtime context:
 - For deterministic/compliance-style workflows, the rule probably belongs in ` + "`soul.md`" + `, the eval plan, or a hardened validation check; offer that path.
-- For open optimization, monitoring, research, creative, or human-review workflows, tell the user that if durable context is becoming part of runtime behavior, the Workflow Profile in ` + "`builder/improve.md`" + ` should be updated to add ` + "`business_context_accumulating`" + ` as primary/secondary or set ` + "`Business context: accumulating`" + ` — then ` + "`/improve-setup-framework`" + ` will bootstrap metrics and the context folder.
+- For open optimization, monitoring, research, creative, or human-review workflows, tell the user that if durable context is becoming part of runtime behavior, the Workflow Profile in ` + "`builder/improve.md`" + ` should be updated to add ` + "`business_context_accumulating`" + ` as primary/secondary or set ` + "`Business context: accumulating`" + ` — then ` + "`/define-success`" + ` will bootstrap metrics and the context folder.
 
 **Be conservative.** It's better to ask "should I capture that as a rule?" than to silently start writing to the user's context store. The user's context is their content; you write to it only with explicit OK.
 

@@ -10,8 +10,8 @@ Eval changes are special-cased in the framework: they change WHAT is measured, n
 Focus on: {{.Focus}}.{{end}}
 
 PASS 0 — FRAMEWORK PRECHECK + METRIC HEALTH
-1. Read builder/improve.md's active sections: Workflow Profile, Active Improvement Index, Archive Index, and Recent Entries. If there is no index/retention structure yet, read it in full. If an archive row references an older eval/metric semantic change that affects a metric or eval step you may edit, read that `builder/improve-archive/YYYY-MM.md` file. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first."
-2. Read <workflow>/planning/metrics.json. If absent or empty AND the Workflow Profile declares business-context accumulation OR a frozen/ratchet plan, stop and redirect to /improve-setup-framework. Plain mutable+exploratory workflows may proceed without metrics.
+1. Read builder/improve.md's active sections: Workflow Profile, Active Improvement Index, Archive Index, and Recent Entries. If there is no index/retention structure yet, read it in full. If an archive row references an older eval/metric semantic change that affects a metric or eval step you may edit, read that `builder/improve-archive/YYYY-MM.md` file. If there is no "## Workflow Profile" section, stop and redirect: "Run /define-success first."
+2. Read <workflow>/planning/metrics.json. If absent or empty AND the Workflow Profile declares business-context accumulation OR a frozen/ratchet plan, stop and redirect to /define-success. Plain mutable+exploratory workflows may proceed without metrics.
 3. **Metric impact guard.** For every metric sourced from an eval step you might edit, note its `role` and `category`, then note whether the metric trajectory may change meaning. Primary metrics require extra care: preserve semantics unless the user explicitly agrees to a metric redesign. If the structured-output schema or value semantics change enough that pre/post values are no longer comparable, retire the old metric and propose a replacement with a new id; otherwise append a structured `improve-decision` rubric-change entry in builder/improve.md so future readers know where the line changed.
 4. **Metric health check.** Read db/metrics_history.jsonl (the last ~10 rows per metric id is usually enough). For each metric, check whether the most recent rows have `has_value: true` or carry a `resolve_error`. Categorize each broken metric by what the eval would need to fix it:
    - **Missing structured output** — `resolve_error` says "no structured output (field=X)" or "field X not present". The metric specifies `source.field=X` but the targeted eval step does not emit that numeric key in `output_content`. Two fix paths:
@@ -126,7 +126,7 @@ PASS 4 — RECORD THE CHANGE (every eval edit)
 After applying any change to evaluation/evaluation_plan.json:
 1. Append a structured fenced block to builder/improve.md using diff_patch_workspace_file:
    ```improve-decision
-   {"id": "<short-id-or-uuid>", "ts": "<ISO-8601 UTC>", "source": "agent", "trigger": "improve-eval", "applied_changes": ["evaluation/evaluation_plan.json"], "rationale": "<one-line summary of what changed and why>", "target_metrics": [<list of metric ids whose source.id points to edited eval steps, if any>]}
+   {"id": "<short-id-or-uuid>", "ts": "<ISO-8601 UTC>", "source": "agent", "trigger": "improve-evaluation", "applied_changes": ["evaluation/evaluation_plan.json"], "rationale": "<one-line summary of what changed and why>", "target_metrics": [<list of metric ids whose source.id points to edited eval steps, if any>]}
    ```
 2. The improve-decision entry serves as a "rubric change" marker. Trajectory chart renderers should break the line at this timestamp because pre-change and post-change scores aren't comparable.
 
@@ -141,7 +141,7 @@ Each new entry that records a *proposed but not-yet-applied* eval change gets a 
 
 CLOSE-OUT EDITS — read this carefully.
 
-Before applying eval changes in this run, scan builder/review.md for findings that the change addresses (for example from /review-plan, /review-config, or /review-code findings that surface weak measurement or broken eval contracts). The match is by intent, not exact wording. Collect the matching `F-YYYY-MM-DD-NNN` ids before you apply.
+Before applying eval changes in this run, scan builder/review.md for findings that the change addresses (for example from /review-plan or /review-code findings that surface weak measurement or broken eval contracts). The match is by intent, not exact wording. Collect the matching `F-YYYY-MM-DD-NNN` ids before you apply.
 
 After each eval change is applied:
 

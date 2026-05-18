@@ -435,6 +435,48 @@ export interface GetEventsResponse {
   can_steer?: boolean // True when a live foreground agent can accept steer injection
 }
 
+export interface TerminalSnapshot {
+  terminal_id: string
+  session_id: string
+  owner_id?: string
+  execution_id?: string
+  execution_kind?: string
+  label?: string
+  scope?: string
+  workflow_path?: string
+  workflow_name?: string
+  workflow_label?: string
+  step_id?: string
+  step_name?: string
+  agent_name?: string
+  display_title?: string
+  display_meta?: string
+  tmux_session?: string
+  content: string
+  chunk_index: number
+  active: boolean
+  state?: 'running' | 'completed' | 'failed' | 'idle' | 'closing' | string
+  closes_at?: string
+  retention_seconds?: number
+  status: TerminalStatus
+  created_at: string
+  updated_at: string
+}
+
+export interface TerminalStatus {
+  provider_label?: string
+  status_text?: string
+  assistant_preview?: string
+  tool_summary?: string
+  tool_name?: string
+  tool_count?: number
+}
+
+export interface ListTerminalsResponse {
+  terminals: TerminalSnapshot[]
+  total: number
+}
+
 // Observer APIs removed - no longer needed
 
 // Active Session Management Types

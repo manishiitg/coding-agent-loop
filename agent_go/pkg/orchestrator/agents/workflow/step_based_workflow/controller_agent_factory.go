@@ -733,6 +733,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		config.UseCodeExecutionMode = false
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Provider '%s': code execution mode disabled (not CLI provider)", actualProvider))
 	}
+	config.CodingAgentKeepAlive = false
+	if stepConfig != nil && strings.TrimSpace(stepConfig.CodingAgentTmuxLifecycle) != "" {
+		normalizedLifecycle := normalizeCodingAgentTmuxLifecycle(stepConfig.CodingAgentTmuxLifecycle)
+		if normalizedLifecycle == "" {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown coding_agent_tmux_lifecycle=%q for provider '%s'; defaulting to close_on_completion", stepConfig.CodingAgentTmuxLifecycle, actualProvider))
+		} else if normalizedLifecycle == CodingAgentTmuxLifecycleKeepAlive {
+			config.CodingAgentKeepAlive = true
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Coding-agent tmux lifecycle for provider '%s': %s", actualProvider, normalizedLifecycle))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Coding-agent tmux lifecycle for provider '%s': %s", actualProvider, normalizedLifecycle))
+		}
+	}
 
 	// Set EnableContextOffloading if specified
 	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo } from 'react'
-import { X, Plus, ArrowDown } from 'lucide-react'
+import { X, Plus, ArrowDown, Terminal } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -24,7 +24,9 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     tabSessionStatus,
     tabEvents,
     autoScroll: storeAutoScroll,
-    setAutoScroll
+    setAutoScroll,
+    terminalCenterOpen,
+    toggleTerminalCenterOpen,
   } = useChatStore()
 
   const isHiddenOrganizationTab = useCallback((tab: ChatTab) => {
@@ -280,24 +282,38 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
         </button>
       )}
       
-      {/* Auto-scroll Toggle - only show when there are tabs */}
-      {handleToggleAutoScroll && modeTabs.length > 0 && (
+      {/* Right-side view controls - only show when there are tabs */}
+      {modeTabs.length > 0 && (
         <div className="ml-auto flex items-center border-l border-gray-200 dark:border-gray-700 pl-2">
           <button
-            onClick={handleToggleAutoScroll}
-            className={`
-              flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors
-              ${effectiveAutoScroll
-                ? 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-                : 'text-gray-500 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
-              }
-            `}
+            onClick={toggleTerminalCenterOpen}
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+              terminalCenterOpen
+                ? 'bg-gray-200 text-gray-900 dark:bg-gray-700 dark:text-gray-100'
+                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
+            }`}
+            title={terminalCenterOpen ? 'Hide terminals' : 'Show terminals'}
+            aria-pressed={terminalCenterOpen}
           >
-            <ArrowDown className={`w-3.5 h-3.5 ${effectiveAutoScroll ? 'opacity-70' : 'opacity-40'}`} />
-            <span className="hidden sm:inline">
-              {effectiveAutoScroll ? 'Auto-scroll' : 'Manual'}
-            </span>
+            <Terminal className="h-3.5 w-3.5" />
           </button>
+          {handleToggleAutoScroll && (
+            <button
+              onClick={handleToggleAutoScroll}
+              className={`
+                flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors
+                ${effectiveAutoScroll
+                  ? 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                  : 'text-gray-500 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
+                }
+              `}
+            >
+              <ArrowDown className={`w-3.5 h-3.5 ${effectiveAutoScroll ? 'opacity-70' : 'opacity-40'}`} />
+              <span className="hidden sm:inline">
+                {effectiveAutoScroll ? 'Auto-scroll' : 'Manual'}
+              </span>
+            </button>
+          )}
         </div>
       )}
     </div>

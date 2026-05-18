@@ -176,7 +176,7 @@
         "source": { "$ref": "#/$defs/DecisionSource" },
         "trigger": {
           "type": "string",
-          "description": "Origin of the decision. Slash command name (e.g., improve-eval, capture-context), system action name, or override action."
+          "description": "Origin of the decision. Slash command name (e.g., improve-evaluation, capture-context), system action name, or override action."
         },
         "rationale": {
           "type": "string",

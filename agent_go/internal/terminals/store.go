@@ -1,0 +1,559 @@
+package terminals
+
+import (
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	storeevents "mcp-agent-builder-go/agent_go/internal/events"
+
+	agentevents "github.com/manishiitg/mcpagent/events"
+)
+
+// Snapshot is the latest view-only terminal/TUI screen for one coding-agent execution.
+type Snapshot struct {
+	TerminalID       string     `json:"terminal_id"`
+	SessionID        string     `json:"session_id"`
+	OwnerID          string     `json:"owner_id,omitempty"`
+	ExecutionID      string     `json:"execution_id,omitempty"`
+	ExecutionKind    string     `json:"execution_kind,omitempty"`
+	Label            string     `json:"label,omitempty"`
+	Scope            string     `json:"scope,omitempty"`
+	WorkflowPath     string     `json:"workflow_path,omitempty"`
+	WorkflowName     string     `json:"workflow_name,omitempty"`
+	WorkflowLabel    string     `json:"workflow_label,omitempty"`
+	StepID           string     `json:"step_id,omitempty"`
+	StepName         string     `json:"step_name,omitempty"`
+	AgentName        string     `json:"agent_name,omitempty"`
+	DisplayTitle     string     `json:"display_title,omitempty"`
+	DisplayMeta      string     `json:"display_meta,omitempty"`
+	TmuxSession      string     `json:"tmux_session,omitempty"`
+	Content          string     `json:"content"`
+	ChunkIndex       int        `json:"chunk_index"`
+	Active           bool       `json:"active"`
+	State            string     `json:"state"`
+	ClosesAt         *time.Time `json:"closes_at,omitempty"`
+	RetentionSeconds int        `json:"retention_seconds,omitempty"`
+	Status           Status     `json:"status"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+// Status is a conservative, human-readable summary derived from the raw TUI.
+type Status struct {
+	ProviderLabel    string `json:"provider_label,omitempty"`
+	StatusText       string `json:"status_text,omitempty"`
+	AssistantPreview string `json:"assistant_preview,omitempty"`
+	ToolSummary      string `json:"tool_summary,omitempty"`
+	ToolName         string `json:"tool_name,omitempty"`
+	ToolCount        int    `json:"tool_count,omitempty"`
+}
+
+// Context contains higher-level session data used to enrich terminal labels.
+type Context struct {
+	WorkflowName  string
+	WorkflowLabel string
+	WorkspacePath string
+	ExecutionName string
+}
+
+// Store keeps current terminal screens outside durable event history.
+type Store struct {
+	mu        sync.RWMutex
+	byID      map[string]Snapshot
+	bySession map[string]map[string]struct{}
+}
+
+func NewStore() *Store {
+	return &Store{
+		byID:      make(map[string]Snapshot),
+		bySession: make(map[string]map[string]struct{}),
+	}
+}
+
+// HandleEvent ingests terminal streaming events emitted by coding-agent adapters.
+func (s *Store) HandleEvent(sessionID string, event storeevents.Event) {
+	if s == nil {
+		return
+	}
+	sessionID = firstNonEmpty(sessionID, event.SessionID)
+	if sessionID == "" {
+		return
+	}
+
+	switch event.Type {
+	case "streaming_chunk":
+		content, chunkIndex, metadata, ok := terminalChunk(event)
+		if !ok || strings.TrimSpace(content) == "" || !isTerminalMetadata(metadata) {
+			return
+		}
+		s.upsertTerminal(sessionID, event, metadata, content, chunkIndex)
+	case "streaming_end":
+		metadata := metadataForEvent(event)
+		if !isTerminalMetadata(metadata) {
+			return
+		}
+		s.markInactive(sessionID, terminalOwnerID(sessionID, event, metadata), metadata)
+	}
+}
+
+func (s *Store) List(sessionID string) []Snapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var out []Snapshot
+	if strings.TrimSpace(sessionID) != "" {
+		for terminalID := range s.bySession[sessionID] {
+			if snapshot, ok := s.byID[terminalID]; ok {
+				out = append(out, snapshot)
+			}
+		}
+	} else {
+		out = make([]Snapshot, 0, len(s.byID))
+		for _, snapshot := range s.byID {
+			out = append(out, snapshot)
+		}
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Active != out[j].Active {
+			return out[i].Active
+		}
+		return out[i].UpdatedAt.After(out[j].UpdatedAt)
+	})
+	return out
+}
+
+func (s *Store) Get(terminalID string) (Snapshot, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	snapshot, ok := s.byID[strings.TrimSpace(terminalID)]
+	return snapshot, ok
+}
+
+func (s *Store) RemoveSession(sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if s == nil || sessionID == "" {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for terminalID := range s.bySession[sessionID] {
+		delete(s.byID, terminalID)
+	}
+	delete(s.bySession, sessionID)
+}
+
+func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metadata map[string]interface{}, content string, chunkIndex int) {
+	ownerID := terminalOwnerID(sessionID, event, metadata)
+	terminalID := terminalIDFor(sessionID, ownerID)
+	now := event.Timestamp
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	current, exists := s.byID[terminalID]
+	if exists && chunkIndex < current.ChunkIndex && !isNewTerminalTurn(current, now, chunkIndex) {
+		return
+	}
+	if !exists {
+		current = Snapshot{
+			TerminalID: terminalID,
+			SessionID:  sessionID,
+			OwnerID:    ownerID,
+			CreatedAt:  now,
+		}
+	}
+
+	current.ExecutionID = firstNonEmpty(event.ExecutionID, stringValue(metadata, "execution_id"), stringValue(metadata, "execution_owner_id"), ownerID)
+	current.ExecutionKind = firstNonEmpty(event.ExecutionKind, stringValue(metadata, "execution_kind"))
+	current.Label = terminalLabel(event, metadata, ownerID)
+	current.Scope = terminalScope(event, metadata)
+	current.WorkflowPath = firstNonEmpty(stringValue(metadata, "workflow_path"), stringValue(metadata, "workspace_path"), stringValue(metadata, "working_directory"))
+	current.WorkflowName = firstNonEmpty(stringValue(metadata, "workflow_name"), stringValue(metadata, "workflow_id"), workflowNameFromPath(current.WorkflowPath))
+	current.WorkflowLabel = firstNonEmpty(stringValue(metadata, "workflow_label"), stringValue(metadata, "preset_name"), current.WorkflowName)
+	current.StepID = firstNonEmpty(stringValue(metadata, "current_step_id"), stringValue(metadata, "workflow_step_id"), stringValue(metadata, "step_id"))
+	current.StepName = firstNonEmpty(stringValue(metadata, "step_title"), stringValue(metadata, "current_step_title"))
+	current.AgentName = firstNonEmpty(stringValue(metadata, "agent_name"), stringValue(metadata, "orchestrator_agent_name"))
+	current.TmuxSession = firstNonEmpty(
+		stringValue(metadata, "tmux_session"),
+		stringValue(metadata, "tmux_session_name"),
+		stringValue(metadata, "claude_code_interactive_session"),
+		stringValue(metadata, "codex_interactive_session"),
+		stringValue(metadata, "gemini_interactive_session"),
+		stringValue(metadata, "cursor_interactive_session"),
+	)
+	current.Content = content
+	current.ChunkIndex = chunkIndex
+	current.Active = true
+	current.State = terminalStateFromContent(content, true)
+	current.ClosesAt = nil
+	current.RetentionSeconds = 0
+	current.Status = DeriveStatus(content, metadata)
+	current.UpdatedAt = now
+	fillDisplayContext(&current)
+
+	s.byID[terminalID] = current
+	if _, ok := s.bySession[sessionID]; !ok {
+		s.bySession[sessionID] = make(map[string]struct{})
+	}
+	s.bySession[sessionID][terminalID] = struct{}{}
+}
+
+func isNewTerminalTurn(current Snapshot, eventTime time.Time, chunkIndex int) bool {
+	if !current.Active {
+		return true
+	}
+	if chunkIndex > 2 {
+		return false
+	}
+	if eventTime.IsZero() || current.UpdatedAt.IsZero() {
+		return false
+	}
+	return eventTime.After(current.UpdatedAt.Add(250 * time.Millisecond))
+}
+
+// WithContext returns a copy enriched with session-level context. Terminal
+// stream metadata wins; session context fills gaps.
+func (snapshot Snapshot) WithContext(ctx Context) Snapshot {
+	snapshot.WorkflowPath = firstNonEmpty(snapshot.WorkflowPath, ctx.WorkspacePath)
+	snapshot.WorkflowName = firstNonEmpty(snapshot.WorkflowName, ctx.WorkflowName, workflowNameFromPath(snapshot.WorkflowPath))
+	snapshot.WorkflowLabel = firstNonEmpty(snapshot.WorkflowLabel, ctx.WorkflowLabel, snapshot.WorkflowName)
+	if snapshot.Scope == "" && ctx.ExecutionName != "" {
+		snapshot.Scope = "session"
+	}
+	if snapshot.StepName == "" && snapshot.ExecutionKind != "main_agent" {
+		snapshot.StepName = ctx.ExecutionName
+	}
+	if snapshot.AgentName == "" && snapshot.ExecutionKind == "main_agent" {
+		snapshot.AgentName = firstNonEmpty(ctx.ExecutionName, "Main agent")
+	}
+	fillDisplayContext(&snapshot)
+	return snapshot
+}
+
+func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]interface{}) {
+	terminalID := terminalIDFor(sessionID, ownerID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return
+	}
+	snapshot.Active = false
+	state := terminalStateFromContent(snapshot.Content, false)
+	retentionSeconds := intValue(metadata["terminal_retention_seconds"])
+	now := time.Now()
+	if retentionSeconds > 0 {
+		closesAt := now.Add(time.Duration(retentionSeconds) * time.Second)
+		snapshot.ClosesAt = &closesAt
+		snapshot.RetentionSeconds = retentionSeconds
+		if state != "failed" {
+			state = "closing"
+		}
+	}
+	snapshot.State = state
+	snapshot.UpdatedAt = now
+	s.byID[terminalID] = snapshot
+}
+
+func terminalChunk(event storeevents.Event) (string, int, map[string]interface{}, bool) {
+	metadata := metadataForEvent(event)
+	if event.Data == nil || event.Data.Data == nil {
+		return "", 0, metadata, false
+	}
+
+	switch data := event.Data.Data.(type) {
+	case *agentevents.StreamingChunkEvent:
+		metadata = mergeMetadata(metadata, data.Metadata)
+		return data.Content, data.ChunkIndex, metadata, true
+	case *agentevents.GenericEventData:
+		metadata = mergeMetadata(metadata, data.Metadata)
+		content, _ := data.Data["content"].(string)
+		return content, intValue(data.Data["chunk_index"]), metadata, content != ""
+	default:
+		return "", 0, metadata, false
+	}
+}
+
+func metadataForEvent(event storeevents.Event) map[string]interface{} {
+	metadata := map[string]interface{}{}
+	if event.Data == nil {
+		return metadata
+	}
+	if event.Data.SessionID != "" {
+		metadata["session_id"] = event.Data.SessionID
+	}
+	if event.Data.CorrelationID != "" {
+		metadata["correlation_id"] = event.Data.CorrelationID
+	}
+	switch data := event.Data.Data.(type) {
+	case *agentevents.StreamingEndEvent:
+		metadata = mergeMetadata(metadata, data.Metadata)
+	case *agentevents.GenericEventData:
+		metadata = mergeMetadata(metadata, data.Metadata)
+		if nested, ok := data.Data["metadata"].(map[string]interface{}); ok {
+			metadata = mergeMetadata(metadata, nested)
+		}
+	}
+	return metadata
+}
+
+func mergeMetadata(base, extra map[string]interface{}) map[string]interface{} {
+	if base == nil {
+		base = map[string]interface{}{}
+	}
+	for key, value := range extra {
+		base[key] = value
+	}
+	return base
+}
+
+func isTerminalMetadata(metadata map[string]interface{}) bool {
+	kind := strings.ToLower(firstNonEmpty(
+		stringValue(metadata, "kind"),
+		stringValue(metadata, "stream_kind"),
+		stringValue(metadata, "display_kind"),
+		stringValue(metadata, "mode"),
+	))
+	return kind == "terminal" || kind == "tmux" || kind == "tui"
+}
+
+func terminalOwnerID(sessionID string, event storeevents.Event, metadata map[string]interface{}) string {
+	candidates := []string{
+		event.ExecutionID,
+		stringValue(metadata, "execution_owner_id"),
+		stringValue(metadata, "owner_execution_id"),
+		stringValue(metadata, "execution_id"),
+		stringValue(metadata, "background_agent_id"),
+		stringValue(metadata, "delegation_id"),
+		stringValue(metadata, "agent_id"),
+		stringValue(metadata, "current_step_id"),
+		stringValue(metadata, "workflow_step_id"),
+		stringValue(metadata, "step_id"),
+		stringValue(metadata, "correlation_id"),
+	}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" && candidate != sessionID {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func terminalIDFor(sessionID, ownerID string) string {
+	if ownerID == "" {
+		return sessionID
+	}
+	return fmt.Sprintf("%s:%s", sessionID, ownerID)
+}
+
+func terminalLabel(event storeevents.Event, metadata map[string]interface{}, ownerID string) string {
+	return firstNonEmpty(
+		stringValue(metadata, "agent_name"),
+		stringValue(metadata, "orchestrator_agent_name"),
+		stringValue(metadata, "step_title"),
+		stringValue(metadata, "title"),
+		stringValue(metadata, "name"),
+		stringValue(metadata, "current_step_id"),
+		stringValue(metadata, "workflow_step_id"),
+		stringValue(metadata, "step_id"),
+		event.ExecutionID,
+		ownerID,
+		"Terminal",
+	)
+}
+
+func fillDisplayContext(snapshot *Snapshot) {
+	if snapshot == nil {
+		return
+	}
+	workflowLabel := firstNonEmpty(snapshot.WorkflowLabel, snapshot.WorkflowName, workflowNameFromPath(snapshot.WorkflowPath))
+	kindLabel := executionKindLabel(snapshot.ExecutionKind, snapshot.Scope)
+	taskLabel := firstNonEmpty(snapshot.StepName, snapshot.AgentName, cleanOpaqueLabel(snapshot.Label))
+
+	switch {
+	case workflowLabel != "" && taskLabel != "" && kindLabel != "":
+		snapshot.DisplayTitle = fmt.Sprintf("%s -> %s", workflowLabel, taskLabel)
+		snapshot.DisplayMeta = kindLabel
+	case workflowLabel != "" && kindLabel != "":
+		snapshot.DisplayTitle = fmt.Sprintf("%s -> %s", workflowLabel, kindLabel)
+		snapshot.DisplayMeta = taskLabel
+	case taskLabel != "" && kindLabel != "":
+		snapshot.DisplayTitle = fmt.Sprintf("%s -> %s", kindLabel, taskLabel)
+		snapshot.DisplayMeta = workflowLabel
+	case taskLabel != "":
+		snapshot.DisplayTitle = taskLabel
+		snapshot.DisplayMeta = firstNonEmpty(workflowLabel, kindLabel)
+	default:
+		snapshot.DisplayTitle = firstNonEmpty(workflowLabel, kindLabel, "Terminal")
+		snapshot.DisplayMeta = cleanOpaqueLabel(firstNonEmpty(snapshot.ExecutionID, snapshot.OwnerID))
+	}
+
+	snapshot.DisplayMeta = strings.Join(uniqueNonEmpty(snapshot.DisplayMeta), " · ")
+}
+
+func executionKindLabel(kind, scope string) string {
+	switch firstNonEmpty(kind, scope) {
+	case "main_agent":
+		return "Main agent"
+	case "workflow_step", "step", "execution_only":
+		return "Workflow step"
+	case "background_agent", "background":
+		return "Background agent"
+	case "delegation", "todo_task", "sub_agent":
+		return "Sub-agent"
+	case "session":
+		return "Session"
+	case "execution":
+		return "Execution"
+	default:
+		return humanizeIdentifier(firstNonEmpty(kind, scope))
+	}
+}
+
+func workflowNameFromPath(path string) string {
+	trimmed := strings.Trim(strings.TrimSpace(path), "/")
+	if trimmed == "" {
+		return ""
+	}
+	parts := strings.FieldsFunc(trimmed, func(r rune) bool {
+		return r == '/' || r == '\\'
+	})
+	for i, part := range parts {
+		if part == "Workflow" && i+1 < len(parts) {
+			return humanizeIdentifier(parts[i+1])
+		}
+	}
+	return humanizeIdentifier(parts[len(parts)-1])
+}
+
+func cleanOpaqueLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || looksOpaqueID(value) {
+		return ""
+	}
+	return humanizeIdentifier(value)
+}
+
+func looksOpaqueID(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "" {
+		return false
+	}
+	if strings.HasPrefix(lower, "main:") && len(lower) > len("main:")+16 {
+		return true
+	}
+	hexish := 0
+	for _, r := range lower {
+		if (r >= 'a' && r <= 'f') || (r >= '0' && r <= '9') || r == '-' {
+			hexish++
+		}
+	}
+	return len(lower) >= 24 && hexish == len(lower)
+}
+
+func humanizeIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.TrimPrefix(value, "exec-")
+	value = strings.TrimPrefix(value, "exec_")
+	value = strings.ReplaceAll(value, "_", " ")
+	value = strings.ReplaceAll(value, "-", " ")
+	value = strings.Join(strings.Fields(value), " ")
+	if value == "" {
+		return ""
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
+}
+
+func uniqueNonEmpty(values ...string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func terminalScope(event storeevents.Event, metadata map[string]interface{}) string {
+	if scope := stringValue(metadata, "scope"); scope != "" {
+		return scope
+	}
+	switch event.ExecutionKind {
+	case "workflow_step", "step", "execution_only":
+		return "workflow_step"
+	case "background_agent", "background":
+		return "background_agent"
+	case "delegation", "todo_task", "sub_agent":
+		return "delegation"
+	}
+	if terminalOwnerID(event.SessionID, event, metadata) == "" {
+		return "session"
+	}
+	return "execution"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func stringValue(values map[string]interface{}, key string) string {
+	if values == nil {
+		return ""
+	}
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	}
+}
+
+func intValue(value interface{}) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed
+	default:
+		return 0
+	}
+}

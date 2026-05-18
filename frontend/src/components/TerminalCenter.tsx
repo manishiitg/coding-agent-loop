@@ -55,31 +55,34 @@ function formatExecutionKind(kind?: string): string {
   }
 }
 
-function formatTerminalTitle(terminal: TerminalSnapshot): string {
-  if (terminal.display_title) return terminal.display_title
-  if (terminal.workflow_label && (terminal.step_name || terminal.agent_name)) {
-    return `${terminal.workflow_label} -> ${terminal.step_name || terminal.agent_name}`
-  }
-  if (terminal.workflow_name && (terminal.step_name || terminal.agent_name)) {
-    return `${terminal.workflow_name} -> ${terminal.step_name || terminal.agent_name}`
-  }
-  const workflowName = workflowNameFromPath(terminal.workflow_path)
-  const kindLabel = formatExecutionKind(terminal.execution_kind)
-  const rawLabel = terminal.label || terminal.execution_id || terminal.owner_id || ''
-  const label = isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel)
+function terminalWorkflowLabel(terminal: TerminalSnapshot): string {
+  return terminal.workflow_label || terminal.workflow_name || workflowNameFromPath(terminal.workflow_path)
+}
 
+function terminalTaskLabel(terminal: TerminalSnapshot): string {
+  const rawLabel = terminal.label || terminal.execution_id || terminal.owner_id || ''
+  return terminal.step_name || terminal.agent_name || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
+}
+
+function formatTerminalTitle(terminal: TerminalSnapshot): string {
+  const workflowName = terminalWorkflowLabel(terminal)
+  const kindLabel = formatExecutionKind(terminal.execution_kind)
+  const taskLabel = terminalTaskLabel(terminal)
+
+  if (workflowName && kindLabel && taskLabel && taskLabel.toLowerCase() !== kindLabel.toLowerCase()) {
+    return `${workflowName} -> ${kindLabel} -> ${taskLabel}`
+  }
+  if (workflowName && taskLabel) return `${workflowName} -> ${taskLabel}`
   if (workflowName && kindLabel) return `${workflowName} -> ${kindLabel}`
-  if (label && kindLabel && label.toLowerCase() !== kindLabel.toLowerCase()) return `${kindLabel} -> ${label}`
-  return label || kindLabel || workflowName || 'Terminal'
+  if (taskLabel && kindLabel && taskLabel.toLowerCase() !== kindLabel.toLowerCase()) return `${kindLabel} -> ${taskLabel}`
+  return taskLabel || kindLabel || terminal.display_title || workflowName || 'Terminal'
 }
 
 function formatTerminalMeta(terminal: TerminalSnapshot): string {
-  if (terminal.display_meta) return terminal.display_meta
   const parts = [
-    formatExecutionKind(terminal.execution_kind),
+    terminal.step_id ? `step ${terminal.step_id}` : '',
     terminal.scope ? humanizeIdentifier(terminal.scope) : '',
-    terminal.step_id ? humanizeIdentifier(terminal.step_id) : '',
-    workflowNameFromPath(terminal.workflow_path),
+    terminal.display_meta,
   ].filter(Boolean)
   return [...new Set(parts)].join(' · ')
 }
@@ -217,7 +220,19 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     const selected = terminals.find(terminal => terminal.terminal_id === selectedID)
     const userSelected = terminals.find(terminal => terminal.terminal_id === userSelectedID)
     const latestActive = terminals.find(terminal => terminal.active)
-    if (!selectedID || !selected || (!selected.active && latestActive && !userSelected?.active)) {
+
+    if (userSelected) {
+      if (selectedID !== userSelected.terminal_id) {
+        setSelectedID(userSelected.terminal_id)
+      }
+      return
+    }
+
+    if (userSelectedID && !userSelected) {
+      setUserSelectedID(null)
+    }
+
+    if (!selectedID || !selected || (!selected.active && latestActive)) {
       setSelectedID((latestActive || terminals[0]).terminal_id)
     }
   }, [selectedID, terminals, userSelectedID])
@@ -351,26 +366,6 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       )}
                     </button>
                   </div>
-                </div>
-                <div className="flex flex-wrap gap-1.5 border-b border-white/10 px-2.5 py-2 text-[10px] text-neutral-500">
-                  {selectedTerminal.tmux_session && (
-                    <span className="rounded bg-neutral-900 px-1.5 py-0.5" title={selectedTerminal.tmux_session}>
-                      tmux {shortDebugID(selectedTerminal.tmux_session)}
-                    </span>
-                  )}
-                  <span className="rounded bg-neutral-900 px-1.5 py-0.5" title={selectedTerminal.terminal_id}>
-                    terminal {shortDebugID(selectedTerminal.terminal_id)}
-                  </span>
-                  {selectedTerminal.owner_id && (
-                    <span className="rounded bg-neutral-900 px-1.5 py-0.5" title={selectedTerminal.owner_id}>
-                      owner {shortDebugID(selectedTerminal.owner_id)}
-                    </span>
-                  )}
-                  {selectedTerminal.execution_id && selectedTerminal.execution_id !== selectedTerminal.owner_id && (
-                    <span className="rounded bg-neutral-900 px-1.5 py-0.5" title={selectedTerminal.execution_id}>
-                      exec {shortDebugID(selectedTerminal.execution_id)}
-                    </span>
-                  )}
                 </div>
                 <pre ref={terminalOutputRef} className="max-h-[46vh] overflow-auto overscroll-contain p-2.5 font-mono text-[12px] leading-5 text-gray-100 whitespace-pre">
                   {selectedTerminal.content}

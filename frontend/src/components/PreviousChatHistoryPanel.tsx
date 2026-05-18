@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, LayoutList, Loader2, MessageSquare, Paperclip } from 'lucide-react'
+import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, LayoutList, Loader2, MessageSquare, Paperclip, Trash2 } from 'lucide-react'
 import { agentApi } from '../services/api'
 import {
   type ChatHistoryConversation,
@@ -64,6 +64,32 @@ const formatChatTime = (value?: string): string => {
   })
 }
 
+const compactSnippet = (value?: string, maxLength = 180): string => {
+  const text = value?.replace(/\s+/g, ' ').trim() || ''
+  if (!text) return ''
+  return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text
+}
+
+const previewRoleLabel = (role?: string): string => {
+  const normalized = (role || '').toLowerCase().trim()
+  if (normalized === 'ai' || normalized === 'assistant') return 'Assistant'
+  return 'User'
+}
+
+const latestPreviewMessage = (messages: ChatHistoryPreviewMessage[]): ChatHistoryPreviewMessage | undefined => {
+  return [...messages].reverse().find(message => message.text?.trim())
+}
+
+const sessionHasMessages = (session: ChatHistorySession): boolean => {
+  return (session.message_count ?? 0) > 0 || (session.preview_messages?.length ?? 0) > 0 || !!session.query?.trim()
+}
+
+const isSessionOlderThanDays = (session: ChatHistorySession, days: number): boolean => {
+  const timestamp = Date.parse(session.updated_at || session.created_at || '')
+  if (Number.isNaN(timestamp)) return false
+  return timestamp < Date.now() - days * 24 * 60 * 60 * 1000
+}
+
 const getChatKind = (session: ChatHistorySession): Exclude<PreviousChatFilter, 'all'> => {
   if (session.session_id.startsWith('schedule-cron--')) return 'schedule'
   if (session.session_id.startsWith('bot-')) return 'bot'
@@ -84,6 +110,7 @@ const cleanMessageText = (text: string): string => {
   const markers = [
     '\n\nPrevious workflow-builder conversation file:',
     '\n\nPrevious builder chat file available:',
+    '\n\nPrevious conversation file:',
   ]
   for (const marker of markers) {
     const markerIndex = text.indexOf(marker)
@@ -154,6 +181,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 }) => {
   const [sessions, setSessions] = useState<ChatHistorySession[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isCleanupLoading, setIsCleanupLoading] = useState(false)
+  const [deletingSessionIds, setDeletingSessionIds] = useState<Set<string>>(() => new Set())
   const [activeFilter, setActiveFilter] = useState<PreviousChatFilter>('chat')
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
@@ -221,6 +250,11 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
       ? visibleSessions
       : visibleSessions.filter(session => getChatKind(session) === activeFilter),
     [activeFilter, visibleSessions]
+  )
+
+  const oldVisibleSessionCount = useMemo(
+    () => visibleSessions.filter(session => sessionHasMessages(session) && isSessionOlderThanDays(session, 14)).length,
+    [visibleSessions]
   )
 
   const displayedSessions = useMemo(
@@ -296,6 +330,68 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     void onSelectSession(session)
   }, [onSelectSession])
 
+  const handleDeleteSession = useCallback(async (session: ChatHistorySession) => {
+    const title = chatHistorySessionTitle(session, 80)
+    if (!window.confirm(`Delete this chat?\n\n${title}`)) return
+
+    const sessionId = session.session_id
+    setDeletingSessionIds(current => {
+      const next = new Set(current)
+      next.add(sessionId)
+      return next
+    })
+    try {
+      await agentApi.deleteChatHistorySession(sessionId, workspacePath)
+      setSessions(current => current.filter(item => item.session_id !== sessionId))
+      setExpandedSessionIds(current => {
+        const next = new Set(current)
+        next.delete(sessionId)
+        return next
+      })
+      setExpandedMessagesBySession(current => {
+        const next = { ...current }
+        delete next[sessionId]
+        expandedMessagesRef.current = next
+        return next
+      })
+      addToast('Deleted previous chat', 'success')
+    } catch {
+      addToast('Failed to delete previous chat', 'error')
+    } finally {
+      setDeletingSessionIds(current => {
+        const next = new Set(current)
+        next.delete(sessionId)
+        return next
+      })
+    }
+  }, [addToast, workspacePath])
+
+  const handleCleanupOldChats = useCallback(async () => {
+    const scopeLabel = workspacePath || 'all chats'
+    if (!window.confirm(`Delete all chats older than 14 days from ${scopeLabel}? This cannot be undone.`)) return
+
+    setIsCleanupLoading(true)
+    try {
+      const response = await agentApi.cleanupChatHistorySessions(14, workspacePath)
+      const deletedCount = response.result?.deleted_count ?? 0
+      const refreshed = await agentApi.listChatHistorySessions(FETCH_LIMIT, 0, workspacePath)
+      setSessions(mergeSessions([], refreshed.sessions || []))
+      setExpandedSessionIds(new Set())
+      setExpandedMessagesBySession({})
+      expandedMessagesRef.current = {}
+      addToast(
+        deletedCount === 0
+          ? 'No chats older than 14 days'
+          : `Deleted ${deletedCount} chat${deletedCount === 1 ? '' : 's'} older than 14 days`,
+        'success'
+      )
+    } catch {
+      addToast('Failed to delete old chats', 'error')
+    } finally {
+      setIsCleanupLoading(false)
+    }
+  }, [addToast, workspacePath])
+
   const ActionIcon = actionLabel.toLowerCase() === 'attach' ? Paperclip : ArrowUpRight
   const filterItems = [
     { filter: 'chat' as const, label: 'Chat', icon: MessageSquare },
@@ -316,32 +412,46 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
           {isLoading ? (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
           ) : visibleSessions.length > 0 ? (
-            <div className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-muted/30 p-0.5">
-              {filterItems.map(({ filter, label, icon: Icon }) => {
-              const isActive = activeFilter === filter
-              return (
+            <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+              <div className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-muted/30 p-0.5">
+                {filterItems.map(({ filter, label, icon: Icon }) => {
+                const isActive = activeFilter === filter
+                return (
+                  <button
+                    key={filter}
+                    type="button"
+                    onClick={() => setActiveFilter(filter)}
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
+                      isActive
+                        ? 'bg-background text-foreground shadow-sm ring-1 ring-border/40'
+                        : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    <span>{label}</span>
+                    <span className={`min-w-4 rounded-full px-1 py-0.5 text-center text-[10px] leading-none ${
+                      isActive
+                        ? 'bg-muted text-foreground'
+                        : 'bg-background/60 text-muted-foreground'
+                    }`}>
+                      {filterCounts[filter]}
+                    </span>
+                  </button>
+                )
+                })}
+              </div>
+              {oldVisibleSessionCount > 0 && (
                 <button
-                  key={filter}
                   type="button"
-                  onClick={() => setActiveFilter(filter)}
-                  className={`inline-flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
-                    isActive
-                      ? 'bg-background text-foreground shadow-sm ring-1 ring-border/40'
-                      : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
-                  }`}
+                  onClick={handleCleanupOldChats}
+                  disabled={isCleanupLoading}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={`Delete ${oldVisibleSessionCount} chat${oldVisibleSessionCount === 1 ? '' : 's'} older than 14 days`}
                 >
-                  <Icon className="h-3.5 w-3.5" />
-                  <span>{label}</span>
-                  <span className={`min-w-4 rounded-full px-1 py-0.5 text-center text-[10px] leading-none ${
-                    isActive
-                      ? 'bg-muted text-foreground'
-                      : 'bg-background/60 text-muted-foreground'
-                  }`}>
-                    {filterCounts[filter]}
-                  </span>
+                  {isCleanupLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                  <span>Delete &gt;14d ({oldVisibleSessionCount})</span>
                 </button>
-              )
-              })}
+              )}
             </div>
           ) : null}
         </div>
@@ -360,6 +470,10 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               const isLoadingDetails = loadingExpandedSessionIds.has(session.session_id)
               const runtimeLabel = chatHistoryRuntimeLabel(session)
               const workshopModeLabel = chatHistoryWorkshopModeLabel(session)
+              const isDeleting = deletingSessionIds.has(session.session_id)
+              const firstUserText = compactSnippet(session.query, 180)
+              const latestMessage = latestPreviewMessage(messages)
+              const latestMessageText = compactSnippet(latestMessage?.text, 180)
 
               return (
                 <div key={session.session_id} className="group bg-background transition-colors hover:bg-muted/20">
@@ -396,16 +510,44 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                           </span>
                         )}
                       </div>
+                      {(firstUserText || latestMessageText) && (
+                        <div className="mt-1 space-y-0.5 text-[11px] leading-snug text-muted-foreground">
+                          {firstUserText && (
+                            <div className="flex min-w-0 gap-1">
+                              <span className="shrink-0 font-medium text-foreground/80">First user:</span>
+                              <span className="line-clamp-1 min-w-0">{firstUserText}</span>
+                            </div>
+                          )}
+                          {latestMessageText && (
+                            <div className="flex min-w-0 gap-1">
+                              <span className="shrink-0 font-medium text-foreground/80">Latest {previewRoleLabel(latestMessage?.role)}:</span>
+                              <span className="line-clamp-1 min-w-0">{latestMessageText}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handleSelect(session)}
-                      className="inline-flex shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground opacity-80 transition-colors hover:border-primary/40 hover:text-foreground group-hover:opacity-100"
-                    >
-                      <ActionIcon className="h-3.5 w-3.5" />
-                      <span>{actionLabel}</span>
-                    </button>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => { void handleDeleteSession(session) }}
+                        disabled={isDeleting}
+                        className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-destructive opacity-70 transition-colors hover:bg-destructive/10 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Delete this chat"
+                        aria-label="Delete this chat"
+                      >
+                        {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSelect(session)}
+                        className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground opacity-80 transition-colors hover:border-primary/40 hover:text-foreground group-hover:opacity-100"
+                      >
+                        <ActionIcon className="h-3.5 w-3.5" />
+                        <span>{actionLabel}</span>
+                      </button>
+                    </div>
                   </div>
 
                   {isExpanded && (

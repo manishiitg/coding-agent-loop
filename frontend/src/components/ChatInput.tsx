@@ -40,6 +40,25 @@ const removePasteMarkersFromText = (text: string, markers: string[]) => {
   }, text)
 }
 
+const getHttpErrorStatus = (err: unknown): number | undefined => {
+  return (err as { response?: { status?: number } } | undefined)?.response?.status
+}
+
+const isLiveCodingSessionGoneStatus = (status: number | undefined) => {
+  return status === 404 || status === 409 || status === 410
+}
+
+const isLikelyBackendUnavailableError = (err: unknown) => {
+  const status = getHttpErrorStatus(err)
+  if (status !== undefined) return false
+  const candidate = err as { code?: string; request?: unknown; message?: string } | undefined
+  const message = String(candidate?.message ?? '').toLowerCase()
+  return Boolean(candidate?.request)
+    || candidate?.code === 'ERR_NETWORK'
+    || message.includes('network error')
+    || message.includes('failed to fetch')
+}
+
 function WorkshopModeToggle() {
   const canWriteWorkflow = useAuthStore(state => hasWorkflowWriteAccess(state.user, state.isMultiUserMode))
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -219,6 +238,35 @@ const resumeChatTitle = (session: ChatHistorySession): string => {
   const query = session.query?.replace(/\s+/g, ' ').trim()
   if (query) return query.length > 140 ? `${query.slice(0, 140)}...` : query
   return `${(session.agent_mode || 'chat').replace(/_/g, ' ')} ${session.session_id.slice(0, 8)}`
+}
+
+const resumeChatSnippet = (value?: string, maxLength = 120): string => {
+  const text = value?.replace(/\s+/g, ' ').trim() || ''
+  if (!text) return ''
+  return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text
+}
+
+const resumePreviewRoleLabel = (role?: string): string => {
+  const normalized = (role || '').toLowerCase().trim()
+  if (normalized === 'ai' || normalized === 'assistant') return 'Assistant'
+  return 'User'
+}
+
+const resumeLatestPreviewLabel = (session: ChatHistorySession): string | undefined => {
+  const latest = [...(session.preview_messages || [])].reverse().find(message => message.text?.trim())
+  const text = resumeChatSnippet(latest?.text)
+  if (!latest || !text) return undefined
+  return `Latest ${resumePreviewRoleLabel(latest.role)}: ${text}`
+}
+
+const resumeSessionHasMessages = (session: ChatHistorySession): boolean => {
+  return (session.message_count ?? 0) > 0 || (session.preview_messages?.length ?? 0) > 0 || !!session.query?.trim()
+}
+
+const resumeSessionOlderThanDays = (session: ChatHistorySession, days: number): boolean => {
+  const timestamp = Date.parse(session.updated_at || session.created_at || '')
+  if (Number.isNaN(timestamp)) return false
+  return timestamp < Date.now() - days * 24 * 60 * 60 * 1000
 }
 
 const resumeChatConversationPath = (session: ChatHistorySession): string => {
@@ -1113,12 +1161,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       await agentApi.steerMessage(tabSessionId, msg)
       removeQueuedMessageAtIndex(index)
     } catch (err) {
-      const status = (err as { response?: { status?: number } })?.response?.status
-      if (status === 404) {
+      const status = getHttpErrorStatus(err)
+      if (isLiveCodingSessionGoneStatus(status)) {
         if (activeTabId) {
-          useChatStore.getState().setTabCanSteer(activeTabId, false)
+          const chatStore = useChatStore.getState()
+          chatStore.setTabCanSteer(activeTabId, false)
+          chatStore.setTabStreaming(activeTabId, false)
         }
-        addToast('No live agent is available to steer right now. Wait for the next active turn, or let the queued message send normally.', 'warning')
+        addToast('The live agent turn has ended. The queued message will send as the next turn.', 'info')
+      } else if (isLikelyBackendUnavailableError(err)) {
+        addToast('Backend is unavailable. The queued message is still saved.', 'error')
       } else {
         addToast('Failed to steer message: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error')
       }
@@ -1538,7 +1590,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return () => { cancelled = true }
   }, [activeWorkflowWorkspacePath, addToast, showResumeDialog])
 
+  const oldResumeSessionCount = useMemo(
+    () => resumeSessions.filter(session => resumeSessionHasMessages(session) && resumeSessionOlderThanDays(session, 14)).length,
+    [resumeSessions]
+  )
+
   const handleResumeCleanupOldChats = useCallback(async () => {
+    if (oldResumeSessionCount === 0) {
+      addToast('No conversations older than 14 days', 'info')
+      return
+    }
     const scopeLabel = activeWorkflowWorkspacePath || 'all chats'
     const confirmed = window.confirm(`Delete conversations older than 14 days from ${scopeLabel}? This cannot be undone.`)
     if (!confirmed) return
@@ -1563,7 +1624,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     } finally {
       setResumeCleanupLoading(false)
     }
-  }, [activeWorkflowWorkspacePath, addToast])
+  }, [activeWorkflowWorkspacePath, addToast, oldResumeSessionCount])
 
   // Auto-resize textarea based on content
   const adjustTextareaHeight = useCallback(() => {
@@ -1741,20 +1802,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const trimmed = msg.trim()
     if (!trimmed || !isStreaming || !supportsLiveCodingAgentInput || !tabSessionId) return false
 
-    clearInputState()
     try {
       await agentApi.steerMessage(tabSessionId, msg)
+      clearInputState()
     } catch (err) {
-      const status = (err as { response?: { status?: number } })?.response?.status
-      queueStreamingMessage(trimmed)
-      if (status === 404) {
-        addToast('No live coding agent is available yet — message queued.', 'warning')
+      const status = getHttpErrorStatus(err)
+      if (isLiveCodingSessionGoneStatus(status)) {
+        clearInputState()
+        queueStreamingMessage(trimmed)
+        if (activeTabId) {
+          const chatStore = useChatStore.getState()
+          chatStore.setTabCanSteer(activeTabId, false)
+          chatStore.setTabStreaming(activeTabId, false)
+        }
+        addToast('The live coding-agent turn has ended. Sending this as the next turn.', 'info')
+      } else if (isLikelyBackendUnavailableError(err)) {
+        addToast('Backend is unavailable. Your message was not sent.', 'error')
       } else {
+        clearInputState()
+        queueStreamingMessage(trimmed)
         addToast('Failed to send to coding agent — message queued.', 'warning')
       }
     }
     return true
-  }, [addToast, clearInputState, isStreaming, queueStreamingMessage, supportsLiveCodingAgentInput, tabSessionId])
+  }, [activeTabId, addToast, clearInputState, isStreaming, queueStreamingMessage, supportsLiveCodingAgentInput, tabSessionId])
 
   const ensureMultiAgentTabReady = useCallback(async (): Promise<boolean> => {
     if (!isMultiAgentMode || showWorkflowsOverview) return false
@@ -3000,6 +3071,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const mode = botProvider || (session.agent_mode || 'chat').replace(/_/g, ' ')
       const messageCount = session.message_count ?? 0
       const countLabel = messageCount > 0 ? `${messageCount} message${messageCount === 1 ? '' : 's'}` : 'conversation'
+      const latestLabel = resumeLatestPreviewLabel(session)
       const leadingIcon =
         kind === 'schedule'
           ? <CalendarClock className="h-4 w-4 text-amber-500" />
@@ -3010,6 +3082,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         id: session.session_id,
         name: resumeChatTitle(session),
         description: [
+          latestLabel,
           formatResumeChatTime(session.updated_at || session.created_at),
           mode,
           workshopModeLabel,
@@ -3973,19 +4046,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         activeFilterId={resumeFilter}
         onFilterChange={id => setResumeFilter(id as ResumeFilter)}
         footerSummary={resumeFooterSummary}
-        footerActions={
+        footerActions={oldResumeSessionCount > 0 ? (
           <button
             type="button"
             onMouseDown={e => e.preventDefault()}
             onClick={handleResumeCleanupOldChats}
             disabled={resumeCleanupLoading || resumeSessionsLoading}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
-            title="Delete conversations older than 14 days"
+            title={`Delete ${oldResumeSessionCount} conversation${oldResumeSessionCount === 1 ? '' : 's'} older than 14 days`}
           >
             {resumeCleanupLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-            Delete &gt;14d
+            Delete &gt;14d ({oldResumeSessionCount})
           </button>
-        }
+        ) : undefined}
         searchPlaceholder="Search previous context..."
         widthClassName="w-[min(720px,calc(100vw-32px))] max-w-[720px]"
         enterHint="Enter to attach"

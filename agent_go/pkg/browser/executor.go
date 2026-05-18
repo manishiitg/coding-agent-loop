@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
@@ -100,6 +101,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	if cdpArgErr != nil {
 		return "", cdpArgErr
 	}
+	argsWithoutCDP = stripRedundantTabCommandArg(command, argsWithoutCDP)
 
 	// Build command arguments
 	var cmdArgs []string
@@ -283,6 +285,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			inlineCDPTab = openTabArg
 		}
 	}
+	commandArgs = normalizeAgentBrowserCommandArgs(command, commandArgs)
 
 	for _, argStr := range commandArgs {
 		cmdArgs = append(cmdArgs, argStr)
@@ -367,9 +370,11 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	cdpOwner := ""
 	if isCdpMode {
 		cdpOwner = cdpOwnerID(workflowSessionID, agentSessionID, session)
-		lock := sharedCDPLock(cdpPort)
-		lock.Lock()
-		defer lock.Unlock()
+		unlock, err := acquireSharedCDPLock(ctx, cdpPort)
+		if err != nil {
+			return "", err
+		}
+		defer unlock()
 
 		if command == "reset" {
 			clearCDPTabSelectionsForPort(cdpPort)
@@ -390,16 +395,17 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 				if isBrowserOpenCommand(command) {
 					return "", fmt.Errorf("CDP shared-browser mode requires selecting or creating a tab before %q.\n\nExisting tabs:\n%s\n\nUse agent_browser(command=\"tab\", args=[\"<tab-id-or-label>\"]) to select an existing tab, or agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"]) to create one. Then call agent_browser(command=\"open\", args=[\"https://example.com\"]).", command, strings.TrimSpace(tabsOutput))
 				}
-				return "", fmt.Errorf("CDP shared-browser mode requires every page action to include a tab before %q.\n\nExisting tabs:\n%s\n\nUse args like [\"tab\", \"<tab-id-or-label>\", ...commandArgs] or [\"--tab\", \"<tab-id-or-label>\", ...commandArgs]. To inspect tabs, call agent_browser(command=\"tab\", args=[]). To create a labeled tab, call agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"])", command, strings.TrimSpace(tabsOutput))
+				return "", missingCDPPageActionTabError(command, commandArgs, tabsOutput)
 			}
 			if getCDPActiveTab(cdpPort) == tabForCommand {
 				log.Printf("[BROWSER] CDP: tab %q already active before %q; skipping select", tabForCommand, command)
 			} else {
-				if err := e.selectCDPTab(ctx, session, tabForCommand, cdpURL, opts); err != nil {
-					return "", e.cdpTabSelectionError(ctx, session, cdpURL, opts, tabForCommand, command, err)
+				selectedTab, err := e.selectCDPTabForCommand(ctx, session, cdpURL, opts, cdpPort, cdpOwner, tabForCommand, command)
+				if err != nil {
+					return "", err
 				}
-				setCDPActiveTab(cdpPort, tabForCommand)
-				log.Printf("[BROWSER] CDP: selected tab %q before %q", tabForCommand, command)
+				setCDPActiveTab(cdpPort, selectedTab)
+				log.Printf("[BROWSER] CDP: selected tab %q before %q", selectedTab, command)
 			}
 		}
 	}
@@ -409,8 +415,13 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	// keep failing — it gives a completely clean slate for the next open.
 	if command == "reset" {
 		log.Printf("[BROWSER] Reset requested for session %q — killing daemon and clearing state", session)
-		killSessionRuntime(session)
-		removeSessionFiles(session)
+		if isCdpMode {
+			resetCDPSessionRuntime(session)
+			clearCDPTabSelectionsForPort(cdpPort)
+		} else {
+			killSessionRuntime(session)
+			removeSessionFiles(session)
+		}
 		if isHeadless {
 			tracker.Remove(session)
 		}
@@ -465,11 +476,12 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 				if getCDPActiveTab(cdpPort) == tabForRetry {
 					log.Printf("[BROWSER] CDP: tab %q already active before retrying %q; skipping select", tabForRetry, command)
 				} else {
-					if selectErr := e.selectCDPTab(ctx, session, tabForRetry, cdpURL, opts); selectErr != nil {
-						return "", e.cdpTabSelectionError(ctx, session, cdpURL, opts, tabForRetry, command, selectErr)
+					selectedTab, selectErr := e.selectCDPTabForCommand(ctx, session, cdpURL, opts, cdpPort, cdpOwner, tabForRetry, command)
+					if selectErr != nil {
+						return "", selectErr
 					}
-					setCDPActiveTab(cdpPort, tabForRetry)
-					log.Printf("[BROWSER] CDP: re-selected tab %q before retrying %q", tabForRetry, command)
+					setCDPActiveTab(cdpPort, selectedTab)
+					log.Printf("[BROWSER] CDP: re-selected tab %q before retrying %q", selectedTab, command)
 				}
 			}
 		}
@@ -478,6 +490,24 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		if err == nil && isOpenCommand {
 			captureChromePID(session)
 		}
+	}
+
+	if err != nil && isCdpMode && isCommandTimeoutError(err) && shouldRetryCDPTimeout(command) {
+		log.Printf("[BROWSER] CDP command timed out for session %q (%v), resetting agent-browser CDP daemon and retrying once", session, err)
+		resetCDPSessionRuntime(session)
+		clearCDPActiveTabForPort(cdpPort)
+		time.Sleep(500 * time.Millisecond)
+		output, err = e.Client.ExecuteCommand(ctx, cmdArgs, opts)
+	} else if err != nil && isCdpMode && isCommandTimeoutError(err) {
+		log.Printf("[BROWSER] CDP wait timed out for session %q (%v), not retrying the same wait condition", session, err)
+	}
+
+	if err != nil && isCdpMode && isCDPRuntimeStartupError(err) {
+		log.Printf("[BROWSER] CDP runtime startup failed for session %q (%v), resetting agent-browser CDP daemon and retrying once", session, err)
+		resetCDPSessionRuntime(session)
+		clearCDPActiveTabForPort(cdpPort)
+		time.Sleep(500 * time.Millisecond)
+		output, err = e.Client.ExecuteCommand(ctx, cmdArgs, opts)
 	}
 
 	// If the final error is a dead session on an open command, remove it from the
@@ -499,11 +529,19 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 					clearCDPTabSelection(cdpPort, cdpOwner)
 					log.Printf("[BROWSER] CDP: cleared selected tab for owner=%q port=%d", cdpOwner, cdpPort)
 				}
+				aliasTabID := getCDPTabAlias(cdpPort, cdpOwner, tab)
 				clearCDPActiveTab(cdpPort, tab)
+				clearCDPActiveTab(cdpPort, aliasTabID)
+				clearCDPTabAlias(cdpPort, cdpOwner, tab)
 			} else if tab != "" {
 				setCDPTabSelection(cdpPort, cdpOwner, tab)
-				setCDPActiveTab(cdpPort, tab)
-				log.Printf("[BROWSER] CDP: selected tab %q for owner=%q port=%d", tab, cdpOwner, cdpPort)
+				activeTab := tab
+				if tabID := findCDPTabID(output, tab); tabID != "" {
+					setCDPTabAlias(cdpPort, cdpOwner, tab, tabID)
+					activeTab = tabID
+				}
+				setCDPActiveTab(cdpPort, activeTab)
+				log.Printf("[BROWSER] CDP: selected tab %q for owner=%q port=%d", activeTab, cdpOwner, cdpPort)
 			}
 		}
 	}
@@ -520,14 +558,38 @@ func (e *Executor) listCDPTabs(ctx context.Context, session, cdpURL string, opts
 	}, opts)
 }
 
-func (e *Executor) selectCDPTab(ctx context.Context, session, tab, cdpURL string, opts *ExecuteOptions) error {
-	_, err := e.Client.ExecuteCommand(ctx, []string{
+func (e *Executor) selectCDPTab(ctx context.Context, session, tab, cdpURL string, opts *ExecuteOptions) (string, error) {
+	return e.Client.ExecuteCommand(ctx, []string{
 		"--session", session,
 		"tab", tab,
 		"--cdp", cdpURL,
 		"--json",
 	}, opts)
-	return err
+}
+
+func (e *Executor) selectCDPTabForCommand(ctx context.Context, session, cdpURL string, opts *ExecuteOptions, port int, ownerID, tab, command string) (string, error) {
+	output, err := e.selectCDPTab(ctx, session, tab, cdpURL, opts)
+	if err == nil {
+		if tabID := findCDPTabID(output, tab); tabID != "" {
+			setCDPTabAlias(port, ownerID, tab, tabID)
+			return tabID, nil
+		}
+		return tab, nil
+	}
+
+	if aliasTabID := getCDPTabAlias(port, ownerID, tab); aliasTabID != "" {
+		aliasOutput, aliasErr := e.selectCDPTab(ctx, session, aliasTabID, cdpURL, opts)
+		if aliasErr == nil {
+			if tabID := findCDPTabID(aliasOutput, aliasTabID); tabID != "" {
+				aliasTabID = tabID
+			}
+			log.Printf("[BROWSER] CDP: selected remembered tab id %q for missing label %q before %q", aliasTabID, tab, command)
+			return aliasTabID, nil
+		}
+		err = fmt.Errorf("%w; remembered tab id %q for label %q also failed: %v", err, aliasTabID, tab, aliasErr)
+	}
+
+	return "", e.cdpTabSelectionError(ctx, session, cdpURL, opts, tab, command, err)
 }
 
 func (e *Executor) cdpTabSelectionError(ctx context.Context, session, cdpURL string, opts *ExecuteOptions, tab, command string, selectErr error) error {
@@ -535,7 +597,26 @@ func (e *Executor) cdpTabSelectionError(ctx context.Context, session, cdpURL str
 	if tabsErr != nil {
 		return fmt.Errorf("failed to select CDP tab %q before %q: %w; listing tabs also failed: %v", tab, command, selectErr, tabsErr)
 	}
-	return fmt.Errorf("failed to select CDP tab %q before %q: %w\n\nExisting tabs:\n%s\n\nChoose an existing tab by id/label in args like [\"tab\", \"<tab-id-or-label>\", ...commandArgs], or create a labeled tab with agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"])", tab, command, selectErr, strings.TrimSpace(tabsOutput))
+	return fmt.Errorf("failed to select CDP tab %q before %q: %w\n\nExisting tabs:\n%s\n\nThe tab label/id %q is not currently selectable. Do not retry page actions with this label until `tab list` shows it. First call agent_browser(command=\"tab\", args=[]), then either choose an existing tab by id/label in args like [\"tab\", \"<tab-id-or-label>\", ...commandArgs] or create a labeled tab with agent_browser(command=\"tab\", args=[\"new\", \"--label\", %q, \"<url>\"]).", tab, command, selectErr, strings.TrimSpace(tabsOutput), tab, tab)
+}
+
+func missingCDPPageActionTabError(command string, commandArgs []string, tabsOutput string) error {
+	normalizedArgs := normalizeAgentBrowserCommandArgs(command, commandArgs)
+	tabRetryArgs := append([]string{"tab", "<tab-id-or-label>"}, normalizedArgs...)
+	flagRetryArgs := append([]string{"--tab", "<tab-id-or-label>"}, normalizedArgs...)
+	return fmt.Errorf("CDP shared-browser mode requires every page action to include a tab before %q.\n\nExisting tabs:\n%s\n\nRetry the same command with the tab inline:\nagent_browser(command=%q, args=%s)\nor:\nagent_browser(command=%q, args=%s)\n\nDo not put the command name inside args. For wait, use milliseconds or native wait options, for example:\nagent_browser(command=\"wait\", args=[\"tab\", \"<tab-id-or-label>\", \"6000\"])\nagent_browser(command=\"wait\", args=[\"tab\", \"<tab-id-or-label>\", \"--load\", \"networkidle\"])\nagent_browser(command=\"wait\", args=[\"tab\", \"<tab-id-or-label>\", \"--text\", \"Submit proposals\"])\n\nIf the desired label is absent, first call agent_browser(command=\"tab\", args=[]), then select an existing tab or create a labeled one with agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"]).", command, strings.TrimSpace(tabsOutput), command, jsonStringSlice(tabRetryArgs), command, jsonStringSlice(flagRetryArgs))
+}
+
+func jsonStringSlice(args []string) string {
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return fmt.Sprintf("%v", args)
+	}
+	s := string(raw)
+	s = strings.ReplaceAll(s, "\\u003c", "<")
+	s = strings.ReplaceAll(s, "\\u003e", ">")
+	s = strings.ReplaceAll(s, "\\u0026", "&")
+	return s
 }
 
 // resolveCdpURL builds the CDP URL for agent-browser.
@@ -567,6 +648,32 @@ func getTimeoutForCommand(command string) time.Duration {
 	default:
 		return 30 * time.Second // Default timeout for most operations
 	}
+}
+
+func isCommandTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "command timed out") ||
+		strings.Contains(msg, "command execution timed out") ||
+		strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "context canceled") ||
+		strings.Contains(msg, "exceeded timeout")
+}
+
+func shouldRetryCDPTimeout(command string) bool {
+	return command != "wait"
+}
+
+func isCDPRuntimeStartupError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "auto-launch failed") ||
+		strings.Contains(msg, "invalid cdp url") ||
+		strings.Contains(msg, "empty host")
 }
 
 // sessionDirs returns the directories where agent-browser stores session files.
@@ -691,6 +798,34 @@ func killSessionRuntime(session string) {
 	// Step 5: kill any orphaned Chrome processes (PPID=1, agent-browser user-data-dir)
 	// that slipped through — daemon may have restarted Chrome right before dying.
 	killOrphanedChrome(session)
+}
+
+// resetCDPSessionRuntime kills only the agent-browser daemon for a shared CDP
+// session and removes its state files. It intentionally does not call
+// agent-browser close and does not kill Chrome children, because shared CDP mode
+// attaches to the user's existing Chrome instead of owning a browser process.
+func resetCDPSessionRuntime(session string) {
+	for _, dir := range sessionDirs() {
+		pidFile := filepath.Join(dir, session+".pid")
+		pidBytes, err := os.ReadFile(pidFile)
+		if err != nil {
+			continue
+		}
+		daemonPID, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+		if err != nil || daemonPID <= 0 {
+			continue
+		}
+		proc, err := os.FindProcess(daemonPID)
+		if err != nil {
+			continue
+		}
+		if err := proc.Signal(syscall.SIGKILL); err != nil {
+			log.Printf("[BROWSER] Could not kill CDP runtime PID %d for session %q: %v", daemonPID, session, err)
+		} else {
+			log.Printf("[BROWSER] Killed CDP runtime PID %d for session %q", daemonPID, session)
+		}
+	}
+	removeSessionFiles(session)
 }
 
 // gracefulCloseSession asks the agent-browser daemon to close the session cleanly.

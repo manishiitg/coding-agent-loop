@@ -14,6 +14,7 @@ func ChatHistoryRoutes(router *mux.Router, api *StreamingAPI) {
 	r.HandleFunc("/sessions", listChatHistoryHandler(api)).Methods("GET")
 	r.HandleFunc("/sessions/cleanup", cleanupChatHistoryHandler(api)).Methods("DELETE")
 	r.HandleFunc("/sessions/{session_id}", getChatHistoryConversationHandler(api)).Methods("GET")
+	r.HandleFunc("/sessions/{session_id}", deleteChatHistorySessionHandler(api)).Methods("DELETE")
 }
 
 func listChatHistoryHandler(api *StreamingAPI) http.HandlerFunc {
@@ -97,5 +98,32 @@ func getChatHistoryConversationHandler(api *StreamingAPI) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(data)
+	}
+}
+
+func deleteChatHistorySessionHandler(api *StreamingAPI) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := GetUserIDFromContext(r.Context())
+		if userID == "" {
+			userID = "default"
+		}
+		sessionID := mux.Vars(r)["session_id"]
+		workspacePath := r.URL.Query().Get("workspace_path")
+
+		result, err := DeleteChatHistorySession(userID, sessionID, workspacePath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if result.DeletedCount == 0 {
+			http.Error(w, "Session not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"result":  result,
+		})
 	}
 }

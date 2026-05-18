@@ -717,6 +717,13 @@ export const agentApi = {
     return response.data
   },
 
+  deleteChatHistorySession: async (sessionId: string, workspacePath?: string): Promise<{ success: boolean; result: ChatHistoryCleanupResult }> => {
+    const params: Record<string, string> = {}
+    if (workspacePath) params.workspace_path = workspacePath
+    const response = await api.delete(`/api/chat-history/sessions/${sessionId}`, { params })
+    return response.data
+  },
+
   // Reconnect to an active session
   reconnectSession: async (sessionId: string): Promise<ReconnectSessionResponse> => {
     const response = await api.post(`/api/sessions/${sessionId}/reconnect`)

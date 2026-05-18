@@ -202,6 +202,42 @@ func TestListChatHistorySessionsFromDiskReadsDateBucketLayout(t *testing.T) {
 	}
 }
 
+func TestDeleteChatHistorySessionDeletesUserDateBucketAndLegacyFiles(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	legacyDir := filepath.Join(root, "_users", "default", "chat_history", "chat-1")
+	dateDir := filepath.Join(root, "_users", "default", "chat_history", "2026-05-17")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatalf("mkdir legacy dir: %v", err)
+	}
+	if err := os.MkdirAll(dateDir, 0o755); err != nil {
+		t.Fatalf("mkdir date dir: %v", err)
+	}
+	legacyPath := filepath.Join(legacyDir, "conversation.json")
+	datePath := filepath.Join(dateDir, "session-chat-1-conversation.json")
+	if err := os.WriteFile(legacyPath, []byte(`{"session_id":"chat-1","conversation_history":[]}`), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	if err := os.WriteFile(datePath, []byte(`{"session_id":"chat-1","conversation_history":[]}`), 0o600); err != nil {
+		t.Fatalf("write date bucket: %v", err)
+	}
+
+	result, err := DeleteChatHistorySession("default", "chat-1", "")
+	if err != nil {
+		t.Fatalf("delete error = %v", err)
+	}
+	if result.DeletedCount != 2 {
+		t.Fatalf("deleted count = %d, want 2: %#v", result.DeletedCount, result.DeletedPaths)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy conversation still exists or stat failed unexpectedly: %v", err)
+	}
+	if _, err := os.Stat(datePath); !os.IsNotExist(err) {
+		t.Fatalf("date conversation still exists or stat failed unexpectedly: %v", err)
+	}
+}
+
 func TestReadUserChatHistoryConversationDirectPrefersNewestDateBucket(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", root)

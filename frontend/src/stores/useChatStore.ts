@@ -14,6 +14,7 @@ import { MAX_EVENTS_TO_PROCESS, CLEANUP_THRESHOLD } from '../constants/events'
 import { logger } from '../utils/logger'
 import { compareEventsChronologically, compareEventsReverseChronologically } from '../utils/eventOrdering'
 import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
+import { splitStreamingStatusAndText } from '../utils/streamingStatus'
 
 // Active sessions cache TTL (30 seconds - shorter than polling interval to allow force refresh)
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
@@ -117,17 +118,6 @@ const capCompletedStreamingText = (value: string): string => {
   if (value.length <= MAX_COMPLETED_STREAMING_TEXT_CHARS) return value
   const omitted = value.length - MAX_COMPLETED_STREAMING_TEXT_CHARS
   return `[Trimmed ${omitted.toLocaleString()} chars of older streaming text to keep the UI responsive.]\n\n${value.slice(-MAX_COMPLETED_STREAMING_TEXT_CHARS)}`
-}
-
-const isStreamingStatusChunk = (chunk: string): boolean => {
-  const trimmed = chunk.trim()
-  return (
-    chunk.includes('⏳') ||
-    chunk.includes('⚠️ Gemini') ||
-    trimmed === 'Claude Code is working...' ||
-    trimmed === 'Calling api-bridge...' ||
-    /^Called api-bridge(?: \d+ times)?$/.test(trimmed)
-  )
 }
 
 // Persistent event ID index — avoids O(n) Set rebuild on every addTabEvents call.
@@ -1228,14 +1218,15 @@ export const useChatStore = create<ChatState>()(
             ? (() => { const c = { ...state.completedStreamingText }; delete c[sessionId]; return c })()
             : state.completedStreamingText
 
-          // Route heartbeat/provider progress messages to streamingStatus instead of streamingText.
-          // This keeps the visible response area focused on assistant markdown.
-          const isStatusMessage = isStreamingStatusChunk(chunk)
-          if (isStatusMessage) {
+          // Route heartbeat/provider/tool progress messages to streamingStatus instead of streamingText.
+          // Mixed chunks are split so raw markers like "api-bridge - execute_shell_command (MCP)"
+          // cannot leak into the visible assistant markdown.
+          const { statusText, text } = splitStreamingStatusAndText(chunk)
+          if (statusText && !text) {
             return {
               streamingStatus: {
                 ...state.streamingStatus,
-                [sessionId]: chunk.trim()
+                [sessionId]: statusText
               },
               lastStreamingChunkIndex: {
                 ...state.lastStreamingChunkIndex,
@@ -1247,12 +1238,16 @@ export const useChatStore = create<ChatState>()(
 
           // Clear status once real content arrives
           const newStreamingStatus = { ...state.streamingStatus }
-          delete newStreamingStatus[sessionId]
+          if (statusText) {
+            newStreamingStatus[sessionId] = statusText
+          } else {
+            delete newStreamingStatus[sessionId]
+          }
 
           return {
             streamingText: {
               ...state.streamingText,
-              [sessionId]: currentText + chunk
+              [sessionId]: currentText + text
             },
             streamingStatus: newStreamingStatus,
             lastStreamingChunkIndex: {

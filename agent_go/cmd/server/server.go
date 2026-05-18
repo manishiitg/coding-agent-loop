@@ -8460,7 +8460,9 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 			})
 			return
 		} else {
-			log.Printf("[STEER] Claude Code live input unavailable for session %s, falling back to agent queue: %v", sessionID, err)
+			log.Printf("[STEER] Claude Code live input unavailable for session %s: %v", sessionID, err)
+			http.Error(w, fmt.Sprintf("Live Claude Code input unavailable: %v", err), http.StatusConflict)
+			return
 		}
 	}
 	if runningAgent.GetProvider() == llm.ProviderCodexCLI {
@@ -8476,7 +8478,9 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 			})
 			return
 		} else {
-			log.Printf("[STEER] Codex CLI live input unavailable for session %s, falling back to agent queue: %v", sessionID, err)
+			log.Printf("[STEER] Codex CLI live input unavailable for session %s: %v", sessionID, err)
+			http.Error(w, fmt.Sprintf("Live Codex CLI input unavailable: %v", err), http.StatusConflict)
+			return
 		}
 	}
 	if runningAgent.GetProvider() == llm.ProviderGeminiCLI {
@@ -8492,7 +8496,9 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 			})
 			return
 		} else {
-			log.Printf("[STEER] Gemini CLI live input unavailable for session %s, falling back to agent queue: %v", sessionID, err)
+			log.Printf("[STEER] Gemini CLI live input unavailable for session %s: %v", sessionID, err)
+			http.Error(w, fmt.Sprintf("Live Gemini CLI input unavailable: %v", err), http.StatusConflict)
+			return
 		}
 	}
 	if runningAgent.GetProvider() == llm.ProviderCursorCLI {
@@ -8508,7 +8514,9 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 			})
 			return
 		} else {
-			log.Printf("[STEER] Cursor CLI live input unavailable for session %s, falling back to agent queue: %v", sessionID, err)
+			log.Printf("[STEER] Cursor CLI live input unavailable for session %s: %v", sessionID, err)
+			http.Error(w, fmt.Sprintf("Live Cursor CLI input unavailable: %v", err), http.StatusConflict)
+			return
 		}
 	}
 	if runningAgent.GetProvider() == llm.ProviderOpenCodeCLI {
@@ -8524,7 +8532,9 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 			})
 			return
 		} else {
-			log.Printf("[STEER] OpenCode CLI live input unavailable for session %s, falling back to agent queue: %v", sessionID, err)
+			log.Printf("[STEER] OpenCode CLI live input unavailable for session %s: %v", sessionID, err)
+			http.Error(w, fmt.Sprintf("Live OpenCode CLI input unavailable: %v", err), http.StatusConflict)
+			return
 		}
 	}
 

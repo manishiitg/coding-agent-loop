@@ -222,8 +222,37 @@ function terminalUpdatedTime(terminal: TerminalSnapshot): number {
   return Number.isNaN(value) ? 0 : value
 }
 
+function terminalCreatedTime(terminal: TerminalSnapshot): number {
+  const value = new Date(terminal.created_at || terminal.updated_at).getTime()
+  return Number.isNaN(value) ? 0 : value
+}
+
 function sortTerminalsNewestFirst(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
   return [...terminals].sort((a, b) => terminalUpdatedTime(b) - terminalUpdatedTime(a))
+}
+
+function sortActiveTerminalsStable(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
+  return [...terminals].sort((a, b) => {
+    const createdDelta = terminalCreatedTime(a) - terminalCreatedTime(b)
+    if (createdDelta !== 0) return createdDelta
+    return terminalPaneKey(a).localeCompare(terminalPaneKey(b))
+  })
+}
+
+function terminalPaneKey(terminal: TerminalSnapshot): string {
+  return terminal.tmux_session || terminal.terminal_id
+}
+
+function dedupeTerminalsByPane(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
+  const byPane = new Map<string, TerminalSnapshot>()
+  for (const terminal of terminals) {
+    const key = terminalPaneKey(terminal)
+    const existing = byPane.get(key)
+    if (!existing || terminalUpdatedTime(terminal) >= terminalUpdatedTime(existing)) {
+      byPane.set(key, terminal)
+    }
+  }
+  return Array.from(byPane.values())
 }
 
 export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId, compact }) => {
@@ -248,7 +277,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const fetchTerminals = useCallback(async () => {
     try {
       const response = await agentApi.listTerminals(viewAll ? undefined : currentSessionId)
-      setTerminals((response.terminals || []).filter(terminal => !dismissedTerminalIDs.has(terminal.terminal_id)))
+      const visibleTerminals = (response.terminals || []).filter(terminal => !dismissedTerminalIDs.has(terminal.terminal_id))
+      setTerminals(dedupeTerminalsByPane(visibleTerminals))
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load terminals')
@@ -263,10 +293,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       return next
     })
     setTerminals(current => current.filter(item => item.terminal_id !== terminal.terminal_id))
-    if (selectedID === terminal.terminal_id) {
+    if (selectedID === terminalPaneKey(terminal)) {
       setSelectedID(null)
     }
-    if (userSelectedID === terminal.terminal_id) {
+    if (userSelectedID === terminalPaneKey(terminal)) {
       setUserSelectedID(null)
     }
     try {
@@ -279,11 +309,12 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   }, [selectedID, userSelectedID])
 
   const groupedTerminals = useMemo(() => {
-    const activeTerminals = sortTerminalsNewestFirst(
-      terminals.filter(terminal => terminalState(terminal) === 'running'),
+    const uniqueTerminals = dedupeTerminalsByPane(terminals)
+    const activeTerminals = sortActiveTerminalsStable(
+      uniqueTerminals.filter(terminal => terminalState(terminal) === 'running'),
     )
     const finishedTerminals = sortTerminalsNewestFirst(
-      terminals.filter(terminal => terminalState(terminal) !== 'running'),
+      uniqueTerminals.filter(terminal => terminalState(terminal) !== 'running'),
     )
     return {
       activeTerminals,
@@ -304,13 +335,14 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       setSelectedID(null)
       return
     }
-    const selected = groupedTerminals.orderedTerminals.find(terminal => terminal.terminal_id === selectedID)
-    const userSelected = groupedTerminals.orderedTerminals.find(terminal => terminal.terminal_id === userSelectedID)
+    const selected = groupedTerminals.orderedTerminals.find(terminal => terminalPaneKey(terminal) === selectedID)
+    const userSelected = groupedTerminals.orderedTerminals.find(terminal => terminalPaneKey(terminal) === userSelectedID)
     const latestActive = groupedTerminals.activeTerminals[0]
 
     if (userSelected) {
-      if (selectedID !== userSelected.terminal_id) {
-        setSelectedID(userSelected.terminal_id)
+      const userSelectedKey = terminalPaneKey(userSelected)
+      if (selectedID !== userSelectedKey) {
+        setSelectedID(userSelectedKey)
       }
       return
     }
@@ -319,15 +351,19 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       setUserSelectedID(null)
     }
 
-    if (!selectedID || !selected || (!selected.active && latestActive)) {
-      setSelectedID((latestActive || groupedTerminals.orderedTerminals[0]).terminal_id)
+    if (!selectedID || !selected) {
+      setSelectedID(terminalPaneKey(latestActive || groupedTerminals.orderedTerminals[0]))
     }
   }, [groupedTerminals, selectedID, userSelectedID])
 
   const selectedTerminal = useMemo(
-    () => groupedTerminals.orderedTerminals.find(terminal => terminal.terminal_id === selectedID) || groupedTerminals.orderedTerminals[0],
+    () => {
+      if (!selectedID) return null
+      return groupedTerminals.orderedTerminals.find(terminal => terminalPaneKey(terminal) === selectedID) || null
+    },
     [groupedTerminals, selectedID],
   )
+  const selectedTerminalKey = selectedTerminal ? terminalPaneKey(selectedTerminal) : null
   const activeCount = groupedTerminals.activeTerminals.length
 
   const handleTerminalScroll = useCallback(() => {
@@ -340,9 +376,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     const el = terminalOutputRef.current
     if (!el || !selectedTerminal?.content) return
 
-    const terminalChanged = selectedTerminalIDRef.current !== selectedTerminal.terminal_id
+    const terminalChanged = selectedTerminalIDRef.current !== selectedTerminalKey
     if (terminalChanged) {
-      selectedTerminalIDRef.current = selectedTerminal.terminal_id
+      selectedTerminalIDRef.current = selectedTerminalKey
       terminalAutoScrollRef.current = true
     }
 
@@ -352,7 +388,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       el.scrollTop = el.scrollHeight
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [selectedTerminal?.terminal_id, selectedTerminal?.content])
+  }, [selectedTerminalKey, selectedTerminal?.content])
 
   if (!terminalCenterOpen) {
     return null
@@ -360,22 +396,22 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
 
   const renderTerminalCard = (terminal: TerminalSnapshot) => (
     <div
-      key={terminal.terminal_id}
+      key={terminalPaneKey(terminal)}
       role="button"
       tabIndex={0}
       onClick={() => {
-        setSelectedID(terminal.terminal_id)
-        setUserSelectedID(terminal.terminal_id)
+        setSelectedID(terminalPaneKey(terminal))
+        setUserSelectedID(terminalPaneKey(terminal))
       }}
       onKeyDown={event => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
-          setSelectedID(terminal.terminal_id)
-          setUserSelectedID(terminal.terminal_id)
+          setSelectedID(terminalPaneKey(terminal))
+          setUserSelectedID(terminalPaneKey(terminal))
         }
       }}
       className={`min-w-[180px] max-w-[280px] rounded border px-2.5 py-2 text-left text-xs transition-colors ${
-        terminal.terminal_id === selectedTerminal?.terminal_id
+        terminalPaneKey(terminal) === selectedTerminalKey
           ? 'border-neutral-500 bg-neutral-800 text-neutral-100 shadow-sm'
           : 'border-neutral-700 bg-neutral-900/30 text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200'
       }`}

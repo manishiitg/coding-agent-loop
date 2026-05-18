@@ -83,6 +83,83 @@ func TestStoreTracksTerminalChunksByOwner(t *testing.T) {
 	}
 }
 
+func TestStoreCollapsesSnapshotsForSameTmuxSession(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:workflow-full-1:route-pick-topic",
+		"route topic screen",
+		1,
+		map[string]interface{}{
+			"tmux_session":    "shared-pane",
+			"current_step_id": "route-pick-topic",
+			"execution_kind":  "workflow_step",
+			"scope":           "workflow_step",
+			"workflow_path":   "Workflow/instagram",
+		},
+		now,
+	))
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:workflow-full-1:step-create-reel",
+		"create reel screen",
+		2,
+		map[string]interface{}{
+			"tmux_session":    "shared-pane",
+			"current_step_id": "route-pick-topic",
+			"execution_kind":  "workflow_step",
+			"scope":           "workflow_step",
+			"workflow_path":   "Workflow/instagram",
+		},
+		now.Add(time.Second),
+	))
+
+	snapshots := store.List("session-1")
+	if len(snapshots) != 1 {
+		t.Fatalf("expected one terminal snapshot for one tmux pane, got %d", len(snapshots))
+	}
+	snapshot := snapshots[0]
+	if snapshot.TerminalID != "session-1:workflow-step:workflow-full-1:step-create-reel" {
+		t.Fatalf("unexpected terminal id: %s", snapshot.TerminalID)
+	}
+	if snapshot.Content != "create reel screen" {
+		t.Fatalf("unexpected content: %q", snapshot.Content)
+	}
+	if snapshot.StepID != "step-create-reel" {
+		t.Fatalf("step id should come from workflow-step owner, got %q", snapshot.StepID)
+	}
+	if _, ok := store.Get("session-1:workflow-step:workflow-full-1:route-pick-topic"); ok {
+		t.Fatalf("old terminal alias for the same tmux pane should be removed")
+	}
+}
+
+func TestStorePrefersWorkflowStepOwnerOverStaleCurrentStepMetadata(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:workflow-full-1:step-create-reel",
+		"screen",
+		1,
+		map[string]interface{}{
+			"current_step_id": "route-pick-topic",
+			"execution_kind":  "workflow_step",
+			"scope":           "workflow_step",
+			"workflow_path":   "Workflow/instagram",
+		},
+		time.Time{},
+	))
+
+	snapshot, ok := store.Get("session-1:workflow-step:workflow-full-1:step-create-reel")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.StepID != "step-create-reel" {
+		t.Fatalf("step id = %q, want step-create-reel", snapshot.StepID)
+	}
+	if snapshot.DisplayTitle != "Instagram -> step-create-reel" {
+		t.Fatalf("display title = %q", snapshot.DisplayTitle)
+	}
+}
+
 func TestSnapshotWithContextFillsReadableDisplay(t *testing.T) {
 	snapshot := Snapshot{
 		TerminalID:    "session-1:main:7f6d",
@@ -263,6 +340,27 @@ func TestStoreMarksTerminalClosingWithRetention(t *testing.T) {
 	}
 }
 
+func TestStorePrunesExpiredClosingTerminalsOnListAndGet(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "screen", 1))
+	store.HandleEvent("session-1", terminalEndEvent("exec-1", map[string]interface{}{"terminal_retention_seconds": 300}))
+
+	terminalID := "session-1:exec-1"
+	expiredAt := time.Now().Add(-time.Second)
+	store.mu.Lock()
+	snapshot := store.byID[terminalID]
+	snapshot.ClosesAt = &expiredAt
+	store.byID[terminalID] = snapshot
+	store.mu.Unlock()
+
+	if _, ok := store.Get(terminalID); ok {
+		t.Fatalf("expired closing terminal should be pruned on Get")
+	}
+	if snapshots := store.List("session-1"); len(snapshots) != 0 {
+		t.Fatalf("expired closing terminal should be pruned on List, got %d", len(snapshots))
+	}
+}
+
 func TestStoreDetectsFailedTerminalState(t *testing.T) {
 	store := NewStore()
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "LLM Generation Error\nSTATUS: FAILED", 1))
@@ -376,6 +474,18 @@ func terminalEvent(eventType, executionID, content string, chunkIndex int) store
 }
 
 func terminalEventAt(eventType, executionID, content string, chunkIndex int, timestamp time.Time) storeevents.Event {
+	return terminalEventWithMetadataAt(eventType, executionID, content, chunkIndex, nil, timestamp)
+}
+
+func terminalEventWithMetadata(executionID, content string, chunkIndex int, metadata map[string]interface{}, timestamp time.Time) storeevents.Event {
+	return terminalEventWithMetadataAt("streaming_chunk", executionID, content, chunkIndex, metadata, timestamp)
+}
+
+func terminalEventWithMetadataAt(eventType, executionID, content string, chunkIndex int, metadata map[string]interface{}, timestamp time.Time) storeevents.Event {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadata["kind"] = "terminal"
 	return storeevents.Event{
 		Type:        eventType,
 		Timestamp:   timestamp,
@@ -385,7 +495,7 @@ func terminalEventAt(eventType, executionID, content string, chunkIndex int, tim
 			Type: agentevents.StreamingChunk,
 			Data: &agentevents.StreamingChunkEvent{
 				BaseEventData: agentevents.BaseEventData{
-					Metadata: map[string]interface{}{"kind": "terminal"},
+					Metadata: metadata,
 				},
 				Content:    content,
 				ChunkIndex: chunkIndex,

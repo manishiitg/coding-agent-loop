@@ -1,8 +1,14 @@
 package browser
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
 
-import "mcp-agent-builder-go/agent_go/pkg/common"
+	"mcp-agent-builder-go/agent_go/pkg/common"
+)
 
 func TestParseTabSelection(t *testing.T) {
 	tests := []struct {
@@ -36,6 +42,116 @@ func TestParseTabSelection(t *testing.T) {
 				t.Fatalf("parseTabSelection() = (%q, %v), want (%q, %v)", gotTab, gotClear, tt.wantTab, tt.wantClear)
 			}
 		})
+	}
+}
+
+func TestStripRedundantTabCommandArg(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		args    []string
+		want    []string
+	}{
+		{name: "tab command repeated before new", command: "tab", args: []string{"tab", "new", "--label", "daily-post", "https://example.com"}, want: []string{"new", "--label", "daily-post", "https://example.com"}},
+		{name: "tab command repeated before select", command: "tab", args: []string{"tab", "daily-post"}, want: []string{"daily-post"}},
+		{name: "multiple repeated tab tokens", command: "tab", args: []string{"tab", "tab", "new", "--label", "daily-post"}, want: []string{"new", "--label", "daily-post"}},
+		{name: "single tab token remains selectable", command: "tab", args: []string{"tab"}, want: []string{"tab"}},
+		{name: "other command unchanged", command: "snapshot", args: []string{"tab", "daily-post", "-i"}, want: []string{"tab", "daily-post", "-i"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripRedundantTabCommandArg(tt.command, tt.args)
+			if len(got) != len(tt.want) {
+				t.Fatalf("len = %d, want %d (%v)", len(got), len(tt.want), got)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestNormalizeAgentBrowserCommandArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		args    []string
+		want    []string
+	}{
+		{name: "wait command repeated with duration", command: "wait", args: []string{"wait", "6s"}, want: []string{"6000"}},
+		{name: "snapshot command repeated", command: "snapshot", args: []string{"snapshot", "-i"}, want: []string{"-i"}},
+		{name: "wait text option unchanged", command: "wait", args: []string{"--text", "Welcome"}, want: []string{"--text", "Welcome"}},
+		{name: "single wait token unchanged", command: "wait", args: []string{"wait"}, want: []string{"wait"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeAgentBrowserCommandArgs(tt.command, tt.args)
+			if len(got) != len(tt.want) {
+				t.Fatalf("len = %d, want %d (%v)", len(got), len(tt.want), got)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestMissingCDPPageActionTabErrorShowsWaitRetry(t *testing.T) {
+	err := missingCDPPageActionTabError("wait", []string{"wait", "6s"}, "tabs")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		`agent_browser(command="wait", args=["tab","<tab-id-or-label>","6000"])`,
+		"Do not put the command name inside args",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+func TestCDPTabAliasCache(t *testing.T) {
+	port := 20922
+	owner := "owner-for-alias-test"
+	clearCDPTabSelectionsForPort(port)
+	t.Cleanup(func() { clearCDPTabSelectionsForPort(port) })
+
+	output := `{"success":true,"data":{"tabs":[{"active":true,"label":"upwork_proposal","tabId":"t12","title":"Submit a Proposal","url":"https://www.upwork.com/nx/proposals/job/~02/apply/"}]},"error":null}`
+	if got := findCDPTabID(output, "upwork_proposal"); got != "t12" {
+		t.Fatalf("findCDPTabID() = %q, want t12", got)
+	}
+	if got := findCDPTabID(output, "t12"); got != "t12" {
+		t.Fatalf("findCDPTabID(tab id) = %q, want t12", got)
+	}
+
+	setCDPTabAlias(port, owner, "upwork_proposal", "t12")
+	setCDPTabSelection(port, owner, "upwork_proposal")
+	setCDPActiveTab(port, "t12")
+	clearCDPActiveTabForPort(port)
+	if got := getCDPActiveTab(port); got != "" {
+		t.Fatalf("active tab after daemon reset clear = %q, want empty", got)
+	}
+	if got := getCDPTabAlias(port, owner, "upwork_proposal"); got != "t12" {
+		t.Fatalf("getCDPTabAlias() = %q, want t12", got)
+	}
+	if got := getCDPTabSelection(port, owner); got != "upwork_proposal" {
+		t.Fatalf("selection after daemon reset clear = %q, want upwork_proposal", got)
+	}
+	if got := getCDPTabAlias(port, owner, "t12"); got != "" {
+		t.Fatalf("tab ids should not resolve as aliases, got %q", got)
+	}
+
+	clearCDPTabAlias(port, owner, "upwork_proposal")
+	if got := getCDPTabAlias(port, owner, "upwork_proposal"); got != "" {
+		t.Fatalf("alias after clear = %q, want empty", got)
 	}
 }
 
@@ -178,5 +294,23 @@ func TestCDPActiveTabTracksPortSelection(t *testing.T) {
 	clearCDPActiveTab(port, "workflow-tab")
 	if got := getCDPActiveTab(port); got != "" {
 		t.Fatalf("active tab = %q, want empty after clearing active tab", got)
+	}
+}
+
+func TestAcquireSharedCDPLockHonorsContext(t *testing.T) {
+	port := 19922
+	unlock, err := acquireSharedCDPLock(context.Background(), port)
+	if err != nil {
+		t.Fatalf("first acquireSharedCDPLock() error = %v", err)
+	}
+	defer unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if secondUnlock, err := acquireSharedCDPLock(ctx, port); err == nil {
+		secondUnlock()
+		t.Fatalf("second acquireSharedCDPLock() unexpectedly succeeded while lock was held")
+	} else if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second acquireSharedCDPLock() error = %v, want context deadline", err)
 	}
 }

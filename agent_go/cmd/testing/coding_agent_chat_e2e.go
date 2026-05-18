@@ -18,17 +18,19 @@ import (
 )
 
 var codingAgentChatE2EFlags struct {
-	serverURL      string
-	provider       string
-	model          string
-	sessionID      string
-	selectedFolder string
-	agentMode      string
-	presetQueryID  string
-	phaseID        string
-	workshopMode   string
-	timeout        time.Duration
-	skipLiveSteer  bool
+	serverURL           string
+	provider            string
+	model               string
+	sessionID           string
+	selectedFolder      string
+	agentMode           string
+	presetQueryID       string
+	phaseID             string
+	workshopMode        string
+	enabledServers      string
+	timeout             time.Duration
+	skipLiveSteer       bool
+	skipCompletionProbe bool
 }
 
 var codingAgentChatE2ECmd = &cobra.Command{
@@ -42,6 +44,8 @@ This intentionally does not call the provider adapter directly. It exercises:
 3. a second /api/query turn using the same chat session
 4. optional /api/sessions/{session_id}/steer live input while a coding CLI is running
 5. /api/sessions/{session_id}/events polling and unified completion extraction
+6. terminal-backed completion detection after a real MCP bridge tool call
+7. /api/terminals pane alias checks using tmux_session metadata
 
 Example:
   mcp-agent test coding-agent-chat-e2e \
@@ -99,6 +103,18 @@ Example:
 		}
 		fmt.Println("PASS turn 2: same chat session retained native coding-agent context")
 
+		if !codingAgentChatE2EFlags.skipCompletionProbe {
+			completionToken := "COMPLETION_E2E_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+			completionQuery := fmt.Sprintf("Use execute_shell_command exactly once to run `printf %s`. After the tool returns, reply with exactly DONE_%s and nothing else.", completionToken, completionToken)
+			if err := client.runAndAssertContains(ctx, sessionID, provider, model, completionQuery, []string{"DONE_" + completionToken}); err != nil {
+				return fmt.Errorf("terminal completion probe failed: %w", err)
+			}
+			if err := client.assertNoDuplicateTerminalPanes(ctx, sessionID); err != nil {
+				return fmt.Errorf("terminal pane alias check failed after completion probe: %w", err)
+			}
+			fmt.Println("PASS terminal completion: tool-backed turn reached unified completion and terminal panes are not duplicated")
+		}
+
 		if !codingAgentChatE2EFlags.skipLiveSteer {
 			liveToken := "LIVE_ACK_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 			liveQuery := fmt.Sprintf("Use execute_shell_command once to run `sleep 8; echo READY_FOR_LIVE_INPUT`. After the tool returns, answer briefly. If a live user message arrives during this turn, include its requested acknowledgement token in your final answer.")
@@ -113,6 +129,9 @@ Example:
 			}
 			if err := client.waitForDerivedTerminalStatus(ctx, sessionID, 45*time.Second); err != nil {
 				return fmt.Errorf("derived terminal status was not available during live turn: %w", err)
+			}
+			if err := client.assertNoDuplicateTerminalPanes(ctx, sessionID); err != nil {
+				return fmt.Errorf("terminal pane alias check failed during live turn: %w", err)
 			}
 			fmt.Println("PASS live status: terminal stream produced derived status text")
 			if err := client.sendSteer(ctx, sessionID, fmt.Sprintf("Live follow-up: include the exact token %s in your final answer.", liveToken)); err != nil {
@@ -148,8 +167,10 @@ func init() {
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.presetQueryID, "preset-query-id", "", "workflow preset ID for workflow_phase chat")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.phaseID, "phase-id", "", "workflow phase ID for workflow_phase chat")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.workshopMode, "workshop-mode", "", "optional workflow workshop mode, for example builder or run")
+	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.enabledServers, "enabled-servers", "api-bridge", "comma-separated MCP servers to expose during the E2E")
 	codingAgentChatE2ECmd.Flags().DurationVar(&codingAgentChatE2EFlags.timeout, "timeout", 6*time.Minute, "overall test timeout")
 	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.skipLiveSteer, "skip-live-steer", false, "skip the in-flight /steer regression test")
+	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.skipCompletionProbe, "skip-completion-probe", false, "skip the tool-backed completion detection regression test")
 }
 
 type codingAgentChatE2EClient struct {
@@ -205,7 +226,7 @@ func (c *codingAgentChatE2EClient) startQuery(ctx context.Context, sessionID, pr
 			"fallbacks": []interface{}{},
 		},
 		"agent_mode":      codingAgentChatE2EFlags.agentMode,
-		"enabled_servers": []string{"NO_SERVERS"},
+		"enabled_servers": splitCSVOrDefault(codingAgentChatE2EFlags.enabledServers, []string{"api-bridge"}),
 		"selected_folder": codingAgentChatE2EFlags.selectedFolder,
 		"max_turns":       -1,
 	}
@@ -298,11 +319,12 @@ type codingAgentTerminalsResponse struct {
 }
 
 type codingAgentTerminalSnapshot struct {
-	TerminalID string                    `json:"terminal_id"`
-	SessionID  string                    `json:"session_id"`
-	Active     bool                      `json:"active"`
-	Content    string                    `json:"content"`
-	Status     codingAgentTerminalStatus `json:"status"`
+	TerminalID  string                    `json:"terminal_id"`
+	SessionID   string                    `json:"session_id"`
+	TmuxSession string                    `json:"tmux_session"`
+	Active      bool                      `json:"active"`
+	Content     string                    `json:"content"`
+	Status      codingAgentTerminalStatus `json:"status"`
 }
 
 type codingAgentTerminalStatus struct {
@@ -358,6 +380,25 @@ func (c *codingAgentChatE2EClient) getTerminals(ctx context.Context, sessionID s
 		return nil, raw, err
 	}
 	return &resp, raw, nil
+}
+
+func (c *codingAgentChatE2EClient) assertNoDuplicateTerminalPanes(ctx context.Context, sessionID string) error {
+	resp, raw, err := c.getTerminals(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	byTmux := map[string]string{}
+	for _, terminal := range resp.Terminals {
+		tmuxSession := strings.TrimSpace(terminal.TmuxSession)
+		if tmuxSession == "" {
+			continue
+		}
+		if previousID := byTmux[tmuxSession]; previousID != "" && previousID != terminal.TerminalID {
+			return fmt.Errorf("tmux session %q appears in multiple terminal snapshots: %s and %s; raw=%s", tmuxSession, previousID, terminal.TerminalID, raw)
+		}
+		byTmux[tmuxSession] = terminal.TerminalID
+	}
+	return nil
 }
 
 func (c *codingAgentChatE2EClient) sendSteer(ctx context.Context, sessionID, message string) error {
@@ -464,6 +505,20 @@ func rawContainsProvider(raw, provider string) bool {
 	compactNeedle := fmt.Sprintf(`"provider":"%s"`, provider)
 	spacedNeedle := fmt.Sprintf(`"provider": "%s"`, provider)
 	return strings.Contains(raw, compactNeedle) || strings.Contains(raw, spacedNeedle)
+}
+
+func splitCSVOrDefault(value string, fallback []string) []string {
+	var out []string
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	if len(out) == 0 {
+		return fallback
+	}
+	return out
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

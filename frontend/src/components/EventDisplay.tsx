@@ -12,6 +12,7 @@ import { useModeStore } from '../stores/useModeStore'
 import type { PollingEvent, SessionExecutionTreeResponse, TerminalSnapshot } from '../services/api-types'
 import { useRenderLogger } from '../utils/renderLogger'
 import { normalizeMarkdownContent } from './ui/MarkdownRenderer'
+import { sanitizeStreamingDisplayText } from '../utils/streamingStatus'
 
 interface EventDisplayProps {
   onFeedbackSubmitted?: () => void
@@ -191,10 +192,12 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
 
   // Memoize markdown components to avoid re-creating on every render
   const markdownComponents = React.useMemo(() => getMarkdownComponents(compact), [compact])
-  const normalizedStreamingText = React.useMemo(() => normalizeMarkdownContent(currentStreamingText), [currentStreamingText])
-  const normalizedCompletedStreamingText = React.useMemo(() => normalizeMarkdownContent(completedStreamingText), [completedStreamingText])
+  const displayStreamingText = React.useMemo(() => sanitizeStreamingDisplayText(currentStreamingText), [currentStreamingText])
+  const displayCompletedStreamingText = React.useMemo(() => sanitizeStreamingDisplayText(completedStreamingText), [completedStreamingText])
+  const normalizedStreamingText = React.useMemo(() => normalizeMarkdownContent(displayStreamingText), [displayStreamingText])
+  const normalizedCompletedStreamingText = React.useMemo(() => normalizeMarkdownContent(displayCompletedStreamingText), [displayCompletedStreamingText])
   const normalizedFinalResponse = React.useMemo(() => normalizeMarkdownContent(finalResponse || ''), [finalResponse])
-  const hasLiveStreamingText = Boolean(currentStreamingText || currentStreamingStatus)
+  const hasLiveStreamingText = Boolean(displayStreamingText || currentStreamingStatus)
   const shouldPollTerminalStatus = Boolean(sessionId) && !hasCompletionEvent
   React.useEffect(() => {
     if (!sessionId || !shouldPollTerminalStatus) {
@@ -233,9 +236,11 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
   const terminalToolSummary = currentTerminalStatus?.tool_summary || ''
   const terminalProviderLabel = currentTerminalStatus?.provider_label || 'Coding agent'
   const hasActiveTerminalStatus = activeTerminalSnapshots.length > 0 && Boolean(terminalStatusText || terminalToolSummary)
+  const terminalProgressLine = terminalStatusText || `${terminalProviderLabel} is working`
   const streamingPanelTitle = 'Generating...'
   const shouldShowStreamingPanel = !hasCompletionEvent && (hasLiveStreamingText || hasActiveTerminalStatus)
   const showStreamingPanelHeader = shouldShowStreamingPanel && (hasLiveStreamingText || hasActiveTerminalStatus)
+  const showStatusOnlyLine = Boolean(currentStreamingStatus && !displayStreamingText && !hasActiveTerminalStatus)
 
   // Handle workflow approval
   const handleApproveWorkflow = React.useCallback(async (requestId: string) => {
@@ -297,7 +302,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
                 </span>
               </div>
             )}
-            {currentStreamingText && (
+            {displayStreamingText && (
               <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                   {normalizedStreamingText}
@@ -305,24 +310,26 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
                 <span className="inline-block w-1.5 h-3 bg-gray-500 animate-pulse ml-0.5" />
               </div>
             )}
-            {hasActiveTerminalStatus && !currentStreamingText && (
+            {hasActiveTerminalStatus && !displayStreamingText && (
               <div className={`${compact ? 'text-[10px]' : 'text-xs'} min-w-0 text-gray-700 dark:text-gray-200`}>
-                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="font-medium">{terminalStatusText || `${terminalProviderLabel} is working`}</span>
-                  {terminalToolSummary && (
-                    <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-                      {terminalToolSummary}
-                    </span>
-                  )}
+                <div className="min-w-0">
+                  <div className="max-h-40 overflow-hidden whitespace-pre-wrap break-words font-medium leading-relaxed">
+                    {terminalProgressLine}
+                  </div>
                   {activeTerminalSnapshots.length > 1 && (
-                    <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                    <div className="mt-1 text-[10px] text-gray-500 dark:text-gray-400">
                       {activeTerminalSnapshots.length} terminals active
-                    </span>
+                    </div>
                   )}
                 </div>
               </div>
             )}
-            {currentStreamingStatus && (
+            {showStatusOnlyLine && (
+              <div className={`${compact ? 'text-[10px]' : 'text-xs'} min-w-0 text-gray-700 dark:text-gray-200`}>
+                <span className="font-medium">{currentStreamingStatus}</span>
+              </div>
+            )}
+            {currentStreamingStatus && !showStatusOnlyLine && (
               <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-500 dark:text-gray-400 italic mt-1 opacity-75`}>
                 {currentStreamingStatus}
               </div>
@@ -333,7 +340,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
 
       {/* Completed Streaming Text - preserved intermediate output from generation */}
       {/* Hide when content is identical to finalResponse or when a unified_completion event already shows the result */}
-      {completedStreamingText && !currentStreamingText && completedStreamingText.trim() !== finalResponse?.trim() && !hasCompletionEvent && (
+      {displayCompletedStreamingText && !displayStreamingText && displayCompletedStreamingText.trim() !== finalResponse?.trim() && !hasCompletionEvent && (
         <details className="min-w-0 group" open={selectedModeCategory === 'workflow'}>
           <summary className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300 select-none`}>
             Thinking

@@ -1113,6 +1113,115 @@ func workspaceRelativePathFromLocalPath(localPath string) string {
 	return strings.TrimPrefix(slashPath, "/")
 }
 
+func DeleteChatHistorySession(userID, sessionID, workspacePath string) (ChatHistoryCleanupResult, error) {
+	if userID == "" {
+		userID = "default"
+	}
+	sessionID = sanitizeChatHistorySessionID(sessionID)
+	workspacePath = normalizeChatHistoryWorkspacePath(workspacePath)
+	result := ChatHistoryCleanupResult{
+		DeletedPaths: []string{},
+		Scope:        "global",
+	}
+	if workspacePath != "" {
+		result.Scope = workspacePath
+	}
+	if sessionID == "" {
+		return result, fmt.Errorf("invalid session id")
+	}
+
+	if workspacePath != "" {
+		return deleteWorkflowChatHistorySession(result, sessionID, workspacePath)
+	}
+	return deleteUserChatHistorySession(result, userID, sessionID)
+}
+
+func deleteWorkflowChatHistorySession(result ChatHistoryCleanupResult, sessionID, workspacePath string) (ChatHistoryCleanupResult, error) {
+	workflowDir, ok := resolveLocalWorkflowDir(workspacePath)
+	if !ok {
+		return result, nil
+	}
+	fileName := fmt.Sprintf("session-%s-conversation.json", sessionID)
+	patterns := []string{
+		filepath.Join(workflowDir, "builder", fileName),
+		filepath.Join(workflowDir, "builder", "conversation", "*", fileName),
+	}
+	seen := map[string]bool{}
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return result, err
+		}
+		for _, convPath := range matches {
+			if seen[convPath] {
+				continue
+			}
+			seen[convPath] = true
+			info, err := os.Stat(convPath)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			if err := os.Remove(convPath); err != nil {
+				return result, err
+			}
+			result.DeletedCount++
+			result.DeletedPaths = append(result.DeletedPaths, workflowRelativeConversationPath(workspacePath, workflowDir, convPath))
+			parentDir := filepath.Dir(convPath)
+			if filepath.Base(filepath.Dir(parentDir)) == "conversation" {
+				_ = os.Remove(parentDir)
+			}
+		}
+	}
+	return result, nil
+}
+
+func deleteUserChatHistorySession(result ChatHistoryCleanupResult, userID, sessionID string) (ChatHistoryCleanupResult, error) {
+	root := chatHistoryRoot(userID)
+	baseDir, ok := resolveLocalChatHistoryDir(root)
+	if !ok {
+		return result, nil
+	}
+	patterns := []string{
+		filepath.Join(baseDir, "*", chatHistoryConversationFileName(sessionID)),
+		filepath.Join(baseDir, sessionID, "conversation.json"),
+	}
+	seen := map[string]bool{}
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return result, err
+		}
+		for _, convPath := range matches {
+			if seen[convPath] {
+				continue
+			}
+			seen[convPath] = true
+			info, err := os.Stat(convPath)
+			if err != nil || info.IsDir() {
+				continue
+			}
+
+			parentDir := filepath.Dir(convPath)
+			if filepath.Base(convPath) == "conversation.json" && filepath.Base(parentDir) == sessionID {
+				if err := os.RemoveAll(parentDir); err != nil {
+					return result, err
+				}
+				result.DeletedCount++
+				result.DeletedPaths = append(result.DeletedPaths, pathpkg.Join(root, sessionID))
+				continue
+			}
+
+			if err := os.Remove(convPath); err != nil {
+				return result, err
+			}
+			result.DeletedCount++
+			result.DeletedPaths = append(result.DeletedPaths, pathpkg.Join(root, filepath.Base(parentDir), filepath.Base(convPath)))
+			_ = os.Remove(parentDir)
+		}
+	}
+	return result, nil
+}
+
 func DeleteChatHistoryOlderThan(userID string, olderThanDays int, workspacePath string) (ChatHistoryCleanupResult, error) {
 	if userID == "" {
 		userID = "default"

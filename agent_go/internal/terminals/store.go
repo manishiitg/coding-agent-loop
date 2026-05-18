@@ -104,8 +104,9 @@ func (s *Store) HandleEvent(sessionID string, event storeevents.Event) {
 }
 
 func (s *Store) List(sessionID string) []Snapshot {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
 
 	var out []Snapshot
 	if strings.TrimSpace(sessionID) != "" {
@@ -131,9 +132,11 @@ func (s *Store) List(sessionID string) []Snapshot {
 }
 
 func (s *Store) Get(terminalID string) (Snapshot, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	snapshot, ok := s.byID[strings.TrimSpace(terminalID)]
+	terminalID = strings.TrimSpace(terminalID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
+	snapshot, ok := s.byID[terminalID]
 	return snapshot, ok
 }
 
@@ -160,17 +163,10 @@ func (s *Store) Dismiss(terminalID string) bool {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	snapshot, ok := s.byID[terminalID]
-	if !ok {
+	if _, ok := s.byID[terminalID]; !ok {
 		return false
 	}
-	delete(s.byID, terminalID)
-	if snapshot.SessionID != "" {
-		delete(s.bySession[snapshot.SessionID], terminalID)
-		if len(s.bySession[snapshot.SessionID]) == 0 {
-			delete(s.bySession, snapshot.SessionID)
-		}
-	}
+	s.removeTerminalLocked(terminalID)
 	s.dismissed[terminalID] = struct{}{}
 	return true
 }
@@ -209,7 +205,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.WorkflowPath = firstNonEmpty(stringValue(metadata, "workflow_path"), stringValue(metadata, "workspace_path"), stringValue(metadata, "working_directory"))
 	current.WorkflowName = firstNonEmpty(stringValue(metadata, "workflow_name"), stringValue(metadata, "workflow_id"), workflowNameFromPath(current.WorkflowPath))
 	current.WorkflowLabel = firstNonEmpty(stringValue(metadata, "workflow_label"), stringValue(metadata, "preset_name"), current.WorkflowName)
-	current.StepID = firstNonEmpty(stringValue(metadata, "current_step_id"), stringValue(metadata, "workflow_step_id"), stringValue(metadata, "step_id"))
+	current.StepID = firstNonEmpty(workflowStepIDFromOwner(ownerID), stringValue(metadata, "current_step_id"), stringValue(metadata, "workflow_step_id"), stringValue(metadata, "step_id"))
 	current.StepName = firstNonEmpty(stringValue(metadata, "step_title"), stringValue(metadata, "current_step_title"))
 	current.StepType = firstNonEmpty(stringValue(metadata, "current_step_type"), stringValue(metadata, "workflow_step_type"), stringValue(metadata, "step_type"), stringValue(metadata, "plan_step_type"))
 	current.AgentName = firstNonEmpty(stringValue(metadata, "agent_name"), stringValue(metadata, "orchestrator_agent_name"))
@@ -231,11 +227,60 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.UpdatedAt = now
 	fillDisplayContext(&current)
 
+	s.removeTmuxAliasesLocked(sessionID, terminalID, current.TmuxSession)
 	s.byID[terminalID] = current
 	if _, ok := s.bySession[sessionID]; !ok {
 		s.bySession[sessionID] = make(map[string]struct{})
 	}
 	s.bySession[sessionID][terminalID] = struct{}{}
+}
+
+func (s *Store) removeTmuxAliasesLocked(sessionID, terminalID, tmuxSession string) {
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	if tmuxSession == "" {
+		return
+	}
+	for existingID := range s.bySession[sessionID] {
+		if existingID == terminalID {
+			continue
+		}
+		existing, ok := s.byID[existingID]
+		if !ok || strings.TrimSpace(existing.TmuxSession) != tmuxSession {
+			continue
+		}
+		delete(s.byID, existingID)
+		delete(s.bySession[sessionID], existingID)
+	}
+	if len(s.bySession[sessionID]) == 0 {
+		delete(s.bySession, sessionID)
+	}
+}
+
+func (s *Store) pruneExpiredLocked(now time.Time) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	for terminalID, snapshot := range s.byID {
+		if snapshot.Active || snapshot.ClosesAt == nil || now.Before(*snapshot.ClosesAt) {
+			continue
+		}
+		s.removeTerminalLocked(terminalID)
+	}
+}
+
+func (s *Store) removeTerminalLocked(terminalID string) {
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return
+	}
+	delete(s.byID, terminalID)
+	if snapshot.SessionID == "" {
+		return
+	}
+	delete(s.bySession[snapshot.SessionID], terminalID)
+	if len(s.bySession[snapshot.SessionID]) == 0 {
+		delete(s.bySession, snapshot.SessionID)
+	}
 }
 
 func isNewTerminalTurn(current Snapshot, eventTime time.Time, chunkIndex int) bool {
@@ -394,6 +439,14 @@ func terminalIDFor(sessionID, ownerID string) string {
 		return sessionID
 	}
 	return fmt.Sprintf("%s:%s", sessionID, ownerID)
+}
+
+func workflowStepIDFromOwner(ownerID string) string {
+	parts := strings.Split(strings.TrimSpace(ownerID), ":")
+	if len(parts) < 3 || parts[0] != "workflow-step" {
+		return ""
+	}
+	return strings.TrimSpace(parts[len(parts)-1])
 }
 
 func terminalLabel(event storeevents.Event, metadata map[string]interface{}, ownerID string) string {

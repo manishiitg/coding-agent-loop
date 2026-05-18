@@ -53,7 +53,7 @@ func (c *Client) ExecuteCommand(ctx context.Context, args []string, opts *Execut
 	// Chrome rejects HTTP requests with non-IP/non-localhost Host headers, so we
 	// resolve host.docker.internal to its IP at runtime inside the Docker container.
 	if strings.Contains(fullCommand, "host.docker.internal") {
-		fullCommand = `HOST_IP=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1}' || echo 'localhost') && ` +
+		fullCommand = `HOST_IP=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1; exit}'); if [ -z "$HOST_IP" ]; then HOST_IP=localhost; fi; ` +
 			strings.ReplaceAll(fullCommand, "host.docker.internal", "${HOST_IP}")
 	}
 

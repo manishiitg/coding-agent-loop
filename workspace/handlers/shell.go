@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
@@ -161,6 +162,8 @@ func ExecuteShellCommand(c *gin.Context) {
 		cmd.Env = security.BuildSafeEnvironment()
 	}
 
+	configureShellCommandProcessGroup(cmd)
+
 	// Check browser session limits for agent-browser commands (both direct and via code exec)
 	if browserLimitMsg := CheckBrowserSessionLimit(req.Command, req.ExtraEnv); browserLimitMsg != "" {
 		c.JSON(http.StatusOK, models.APIResponse[models.ExecuteShellResponse]{
@@ -209,7 +212,16 @@ func ExecuteShellCommand(c *gin.Context) {
 	startTime := time.Now()
 
 	// Execute command
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			killShellCommandProcessGroup(cmd)
+		case <-done:
+		}
+	}()
 	err := cmd.Run()
+	close(done)
 	executionTime := time.Since(startTime)
 
 	// Get exit code
@@ -287,4 +299,30 @@ func stripShellPrefix(cmd string) string {
 		}
 	}
 	return cmd
+}
+
+func configureShellCommandProcessGroup(cmd *exec.Cmd) {
+	if cmd == nil {
+		return
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
+}
+
+func killShellCommandProcessGroup(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	pid := cmd.Process.Pid
+	if pid <= 0 {
+		return
+	}
+	if pgid, err := syscall.Getpgid(pid); err == nil && pgid > 0 {
+		if err := syscall.Kill(-pgid, syscall.SIGKILL); err == nil {
+			return
+		}
+	}
+	_ = cmd.Process.Kill()
 }

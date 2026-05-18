@@ -197,6 +197,7 @@ import { useModeStore } from '../stores/useModeStore'
 import { agentApi, getApiBaseUrl } from '../services/api'
 import { skillsApi } from '../api/skills'
 import type { Skill } from '../types/skills'
+import { chatHistorySupportsNativeResume } from './PreviousChatHistoryPanel'
 
 // MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown.
 const DEDICATED_MCP_SERVERS = new Set(['playwright'])
@@ -816,6 +817,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Memoize to prevent unnecessary re-renders when other config values change
   const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
   const chatPastedAttachments = useMemo(() => tabConfig?.pastedAttachments || [], [tabConfig?.pastedAttachments])
+  const restoredConversationPath = tabConfig?.restoredConversationPath?.trim() || ''
 
   // Get input text from tab config (source of truth for persistence)
   const storedInputText = tabConfig?.inputText || ''
@@ -909,7 +911,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (activeTabId && activeTab) {
       const newFileContext = chatFileContext.filter(f => f.path !== path)
       const configUpdate = activeTab.config?.restoredConversationPath === path
-        ? { fileContext: newFileContext, restoredConversationPath: undefined, restoredConversationSummary: undefined }
+        ? {
+            fileContext: newFileContext,
+            restoredConversationPath: undefined,
+            restoredConversationSummary: undefined,
+            restoredConversationTitle: undefined,
+            restoredConversationWorkshopModeLabel: undefined,
+            restoredConversationRuntimeLabel: undefined,
+            restoredConversationNativeResume: undefined,
+          }
         : { fileContext: newFileContext }
       setTabConfig(activeTabId, configUpdate)
     }
@@ -917,7 +927,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   
   const clearFileContext = useCallback(() => {
     if (activeTabId) {
-      setTabConfig(activeTabId, { fileContext: [], restoredConversationPath: undefined, restoredConversationSummary: undefined })
+      setTabConfig(activeTabId, {
+        fileContext: [],
+        restoredConversationPath: undefined,
+        restoredConversationSummary: undefined,
+        restoredConversationTitle: undefined,
+        restoredConversationWorkshopModeLabel: undefined,
+        restoredConversationRuntimeLabel: undefined,
+        restoredConversationNativeResume: undefined,
+      })
     }
   }, [activeTabId, setTabConfig])
   
@@ -1447,6 +1465,49 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [resumeSessionsLoading, setResumeSessionsLoading] = useState(false)
   const [resumeCleanupLoading, setResumeCleanupLoading] = useState(false)
   const [resumeFilter, setResumeFilter] = useState<ResumeFilter>('chat')
+
+  const restoredResumeSession = useMemo(() => {
+    if (!restoredConversationPath) return undefined
+    return resumeSessions.find(session => resumeChatConversationPath(session) === restoredConversationPath)
+  }, [restoredConversationPath, resumeSessions])
+
+  const restoredResumeTitle = useMemo(() => {
+    if (tabConfig?.restoredConversationTitle?.trim()) return tabConfig.restoredConversationTitle.trim()
+    if (restoredResumeSession) return resumeChatTitle(restoredResumeSession)
+    return restoredConversationPath.split('/').pop() || 'Previous chat'
+  }, [restoredConversationPath, restoredResumeSession, tabConfig?.restoredConversationTitle])
+
+  const restoredResumeRuntimeLabel = useMemo(() => {
+    if (tabConfig?.restoredConversationRuntimeLabel?.trim()) return tabConfig.restoredConversationRuntimeLabel.trim()
+    return restoredResumeSession ? resumeChatRuntimeLabel(restoredResumeSession) : undefined
+  }, [restoredResumeSession, tabConfig?.restoredConversationRuntimeLabel])
+
+  const restoredResumeWorkshopModeLabel = useMemo(() => {
+    if (tabConfig?.restoredConversationWorkshopModeLabel?.trim()) return tabConfig.restoredConversationWorkshopModeLabel.trim()
+    return restoredResumeSession ? resumeChatWorkshopModeLabel(restoredResumeSession) : undefined
+  }, [restoredResumeSession, tabConfig?.restoredConversationWorkshopModeLabel])
+
+  const restoredResumeUsesNative = useMemo(() => {
+    if (typeof tabConfig?.restoredConversationNativeResume === 'boolean') return tabConfig.restoredConversationNativeResume
+    return restoredResumeSession ? chatHistorySupportsNativeResume(restoredResumeSession) : false
+  }, [restoredResumeSession, tabConfig?.restoredConversationNativeResume])
+
+  const clearRestoredConversation = useCallback(() => {
+    if (!activeTabId) return
+    setTabConfig(activeTabId, {
+      fileContext: restoredConversationPath
+        ? chatFileContext.filter(item => item.path !== restoredConversationPath)
+        : chatFileContext,
+      restoredConversationPath: undefined,
+      restoredConversationSummary: undefined,
+      restoredConversationTitle: undefined,
+      restoredConversationWorkshopModeLabel: undefined,
+      restoredConversationRuntimeLabel: undefined,
+      restoredConversationNativeResume: undefined,
+    })
+    addToast('Resume cleared', 'info')
+    setTimeout(() => textareaRef.current?.focus(), 0)
+  }, [activeTabId, addToast, chatFileContext, restoredConversationPath, setTabConfig])
 
   // Command editor dialog state
   const [showCommandEditor, setShowCommandEditor] = useState(false)
@@ -2657,25 +2718,32 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!session) return
 
     const path = resumeChatConversationPath(session)
+    const useNativeResume = chatHistorySupportsNativeResume(session)
     const existingContext = useChatStore.getState().getTabConfig(activeTabId)?.fileContext || chatFileContext
-    const nextFileContext = existingContext.some((item: { path: string }) => item.path === path)
-      ? existingContext
-      : [
-          ...existingContext,
-          {
-            name: resumeChatTitle(session),
-            path,
-            type: 'file' as const,
-          },
-        ]
+    const nextFileContext = useNativeResume
+      ? existingContext.filter((item: { path: string }) => item.path !== path)
+      : existingContext.some((item: { path: string }) => item.path === path)
+        ? existingContext
+        : [
+            ...existingContext,
+            {
+              name: resumeChatTitle(session),
+              path,
+              type: 'file' as const,
+            },
+          ]
 
     setTabConfig(activeTabId, {
       fileContext: nextFileContext,
       restoredConversationPath: path,
       restoredConversationSummary: undefined,
+      restoredConversationTitle: resumeChatTitle(session),
+      restoredConversationWorkshopModeLabel: resumeChatWorkshopModeLabel(session),
+      restoredConversationRuntimeLabel: resumeChatRuntimeLabel(session),
+      restoredConversationNativeResume: useNativeResume,
     })
     setShowResumeDialog(false)
-    addToast('Previous chat added to context', 'success')
+    addToast(useNativeResume ? 'Previous chat ready to resume' : 'Previous chat added to context', 'success')
     setTimeout(() => textareaRef.current?.focus(), 0)
   }, [activeTabId, addToast, chatFileContext, resumeSessions, setTabConfig])
 
@@ -2954,7 +3022,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [resumeKindCounts])
 
   const resumeChatItems: InlineSelectionItem[] = useMemo(() => {
-    const contextPaths = new Set(chatFileContext.map(item => item.path))
+    const contextPaths = new Set([
+      ...chatFileContext.map(item => item.path),
+      restoredConversationPath,
+    ].filter(Boolean))
     const visibleSessions = resumeFilter === 'all'
       ? resumeSessions
       : resumeSessions.filter(session => getResumeSessionKind(session) === resumeFilter)
@@ -2990,7 +3061,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         details: resumeChatDetails(session),
       }
     })
-  }, [chatFileContext, resumeFilter, resumeSessions])
+  }, [chatFileContext, restoredConversationPath, resumeFilter, resumeSessions])
 
   // When user presses → on a folder in the file dialog, set search context to that folder (input after @ becomes folder path)
   const handleNavigateIntoFolder = useCallback((folderPath: string) => {
@@ -3090,6 +3161,47 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:underline ml-0.5"
               >
                 Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pending resume indicator */}
+      {restoredConversationPath && (
+        <div className="px-4 border-t border-border">
+          <div className="mb-1 rounded-md border border-border bg-card px-2 py-1 shadow-sm">
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-1.5 text-xs text-foreground">
+                {restoredResumeUsesNative ? (
+                  <Terminal className="h-3.5 w-3.5 shrink-0 text-primary" />
+                ) : (
+                  <History className="h-3.5 w-3.5 shrink-0 text-primary" />
+                )}
+                <span className="shrink-0 font-semibold">
+                  {restoredResumeUsesNative ? 'Resuming coding session' : 'Resuming previous chat'}
+                </span>
+                <span className="truncate text-muted-foreground" title={restoredConversationPath}>
+                  {restoredResumeTitle}
+                </span>
+                {restoredResumeWorkshopModeLabel && (
+                  <span className="hidden shrink-0 rounded border border-border bg-background px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground sm:inline">
+                    Mode: {restoredResumeWorkshopModeLabel}
+                  </span>
+                )}
+                {restoredResumeRuntimeLabel && (
+                  <span className="hidden shrink-0 rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px] uppercase text-muted-foreground sm:inline">
+                    {restoredResumeRuntimeLabel}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={clearRestoredConversation}
+                className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                title="Clear pending resume"
+              >
+                <X className="h-3 w-3" />
               </button>
             </div>
           </div>

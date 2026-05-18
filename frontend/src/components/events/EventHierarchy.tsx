@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import type { PollingEvent, SessionExecutionTreeResponse } from '../../services/api-types';
-import { EventDispatcher, type DelegationStats, type EventNode } from './EventDispatcher';
+import { EventDispatcher, getOwnedTerminalOwnerKeys, type DelegationStats, type EventNode } from './EventDispatcher';
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
 import { MAX_EVENTS_TO_PROCESS, MAX_CHILD_EVENTS_PER_DELEGATION } from '../../constants/events';
@@ -87,6 +87,23 @@ function isEventHierarchyDebugEnabled(): boolean {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
+}
+
+function getTerminalOwnerPayload(event: PollingEvent): Record<string, unknown> | undefined {
+  const data = asRecord(event.data);
+  const payload = asRecord(data?.data) || data;
+  return asRecord(payload?.fields) || payload;
+}
+
+function isSyntheticFullWorkflowWrapperEvent(event: PollingEvent): boolean {
+  const type = event.type || '';
+  if (type !== 'orchestrator_agent_start' && type !== 'orchestrator_agent_end') return false;
+
+  const payload = getTerminalOwnerPayload(event);
+  const agentType = payload?.agent_type;
+  const agentName = payload?.agent_name;
+
+  return agentType === 'workshop-workflow-execution' && agentName === 'Full Workflow Execution';
 }
 
 function firstStringField(records: Array<Record<string, unknown> | undefined>, fields: string[]): string | undefined {
@@ -475,6 +492,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
       // Never-display events
       if (NEVER_DISPLAY_EVENTS.has(type)) continue;
+
+      // The background-agent lifecycle card already represents full workflow
+      // execution. The orchestrator event is an internal wrapper for the same
+      // execution and otherwise duplicates the visible terminal panel.
+      if (isSyntheticFullWorkflowWrapperEvent(event)) continue;
 
       // Hidden events — never rendered, filtering here prevents them from
       // breaking consecutive tool-call groups into tiny fragments.
@@ -1532,6 +1554,28 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   useMemoLogger('EH.eventTree', eventTree, eventTree.length)
   useMemoLogger('EH.flattenedItems', flattenedItems, flattenedItems.length)
 
+  const terminalOwnerPreference = useMemo(() => {
+    const preferred = new Map<string, { eventId: string; depth: number; index: number }>();
+
+    flattenedItems.forEach((item, index) => {
+      const node = item.node;
+      if (!node || !isExecutionOwnerEvent(node.event)) return;
+
+      const keys = getOwnedTerminalOwnerKeys(node.event, getTerminalOwnerPayload(node.event));
+      if (keys.length === 0) return;
+
+      const depth = Math.max(0, node.level + (item.levelOffset ?? 0));
+      for (const key of keys) {
+        const current = preferred.get(key);
+        if (!current || depth > current.depth || (depth === current.depth && index > current.index)) {
+          preferred.set(key, { eventId: node.event.id, depth, index });
+        }
+      }
+    });
+
+    return new Map(Array.from(preferred.entries()).map(([key, value]) => [key, value.eventId]));
+  }, [flattenedItems]);
+
   const handleLoadMore = useCallback(async () => {
     if (!sessionId || isLoadingOlder) return;
     setIsLoadingOlder(true);
@@ -1598,6 +1642,12 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const hasChildren = children.length > 0;
     const ownsInternalLogPanel = event.type === 'delegation_start' || event.type === 'orchestrator_agent_start' || event.type === 'background_agent_started';
     const isOwnedLogPanelOpen = ownsInternalLogPanel && expandedOwnedLogPanels.has(event.id);
+    const terminalOwnerKeys = ownsInternalLogPanel
+      ? getOwnedTerminalOwnerKeys(event, getTerminalOwnerPayload(event))
+      : [];
+    const showOwnedTerminal = !ownsInternalLogPanel ||
+      terminalOwnerKeys.length === 0 ||
+      terminalOwnerKeys.some(key => terminalOwnerPreference.get(key) === event.id);
     const ownerNonExecutionChildren = ownsInternalLogPanel
       ? children.filter(child => !isExecutionOwnerEvent(child.event))
       : [];
@@ -1678,13 +1728,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
                 onToggleNode={toggleNode}
                 ownedLogPanelOpen={isOwnedLogPanelOpen}
                 onToggleOwnedLogPanel={ownsInternalLogPanel ? (open) => toggleOwnedLogPanel(event.id, open) : undefined}
+                showOwnedTerminal={showOwnedTerminal}
               />
             </div>
           </div>
         </div>
       </div>
     );
-  }, [collapsedSessions, expandedOwnedLogPanels, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, flatHierarchy, delegationStats, backgroundAgentStats, showMoreToolCalls, toggleToolCallGroup]);
+  }, [collapsedSessions, expandedOwnedLogPanels, findEventsBetweenStartEnd, getAgentSessionKey, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, flatHierarchy, delegationStats, backgroundAgentStats, showMoreToolCalls, toggleToolCallGroup]);
 
   // Only auto-scroll when new top-level items are added (not when sub-agent events update internals).
   // Sub-agent events change displayEvents but don't add items to flattenedItems.

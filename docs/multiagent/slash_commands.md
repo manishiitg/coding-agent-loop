@@ -1,11 +1,11 @@
 # Slash Commands System
 
-Slash commands are quick actions triggered by typing `/` in the chat input. The system supports built-in commands (summarize, spawn, build-skill, etc.) and user-defined prompt shortcut commands stored as workspace files.
+Slash commands are quick actions triggered by typing `/` in the chat input. The system supports built-in commands for multi-agent chat, workflow guidance, and user-defined prompt shortcut commands stored as workspace files.
 
 ## Overview
 
 - **Trigger**: Type `/` in the chat input to open the command picker dialog.
-- **Built-in Commands**: Commands covering summarization, skill building, MCP management, workflow tooling, etc.
+- **Built-in Commands**: Commands covering workflow guidance, skill import/building, MCP management, model settings, workflow extraction, chat resume, and memory enrichment.
 - **User Commands**: Custom prompt shortcuts stored in `workspace-docs/commands/custom/`.
 - **Registry**: A unified command registry (`frontend/src/commands/`) so adding a command is a single-file change.
 
@@ -15,10 +15,13 @@ All commands — built-in and user-defined — share a single `CommandDefinition
 
 ```typescript
 interface CommandDefinition {
-  command: string           // Slash command name (e.g. "summarize")
+  command: string           // Slash command name (e.g. "review-plan")
   description: string       // Shown in the picker dialog
   icon: ReactNode           // Lucide icon
   modes?: ModeCategory[]    // If set, only visible in these modes (empty = all)
+  requiredWorkflowMode?: 'plan' | 'eval' | 'output'
+  requiredWorkshopMode?: WorkshopMode | WorkshopMode[]
+  validate?: (ctx: CommandContext) => string | null
   hidden?: boolean          // Executable but not shown in picker (e.g. "compact")
   source: 'builtin' | 'user'
   execute: (ctx: CommandContext) => void
@@ -37,22 +40,27 @@ interface CommandContext {
   isStreaming: boolean
   onSubmit: (msg: string) => void
   openDialog: (name: string) => void
+  openResumeDialog?: () => void
   setTabConfig: (tabId: string, config: any) => void
   addToast: (msg: string, type: 'success' | 'error' | 'info') => void
   handleSummarize: (ctx?: string) => void
   handleCompact: (ctx?: string) => void
   getAppStore: () => any
   getWorkspaceStore: () => any
+  getWorkflowStore: () => any
+  workflowMode?: 'plan' | 'eval' | 'output'
+  workshopMode?: 'builder' | 'optimizer' | 'run' | 'reporting'
+  workflowPhaseId?: string
 }
 ```
 
 ### Registry API
 
 ```typescript
-// Get all visible commands, optionally filtered by mode
-getCommands(mode?: ModeCategory): CommandDefinition[]
+// Get all visible commands, optionally filtered by chat mode and workshop mode
+getCommands(mode?: ModeCategory, workshopMode?: WorkshopMode): CommandDefinition[]
 
-// Find a command by name (includes hidden commands)
+// Find a visible command by name for the current mode
 findCommand(name: string): CommandDefinition | undefined
 
 // Replace user commands (called after loading from API)
@@ -62,23 +70,49 @@ setUserCommands(cmds: CommandDefinition[]): void
 loadAndRegisterUserCommands(): Promise<void>
 ```
 
-## Built-in Commands
+## Built-in Commands: Multi-Agent Chat
 
 | Command | Description | Modes | Hidden |
 |---------|-------------|-------|--------|
-| `/build-skill` | Build a new skill using skill-creator | All | No |
-| `/build-subagent` | Build a new sub-agent template | All | No |
-| `/add-skill` | Import a skill from GitHub | All | No |
-| `/mcp` | View MCP server details and tools | All | No |
-| `/mcp-add` | Add or edit MCP server configuration | All | No |
-| `/models` | Open LLM model configuration | All | No |
-| `/resume` | Resume a previous conversation | All | No |
+| `/build-skill` | Build a new skill using the skill-creator | Multi-Agent | No |
+| `/add-skill` | Import a skill from GitHub | Multi-Agent | No |
+| `/mcp` | View MCP server details and tools | Multi-Agent | No |
+| `/mcp-add` | Add or edit MCP server configuration | Multi-Agent | No |
+| `/models` | Open LLM model configuration | Multi-Agent | No |
 | `/workflow-builder` | Build a workflow from existing plans | Multi-Agent | No |
 | `/enrich-memory` | Distil recent chats into memory, consolidate, and delete chats older than 7 days | Multi-Agent | No |
-| `/improve-setup-framework` | One-time setup: classify workflow type and bootstrap metrics for the auto-improvement framework | Workflow (plan + builder/optimizer) | No |
-| `/exp-abort` | Revert and abort the active experiment | Workflow (optimizer) | No |
-| `/exp-extend` | Add more measurement runs to the active experiment | Workflow (optimizer) | No |
-| `/exp-conclude` | Manually render a verdict on the active experiment (overrides the evaluator) | Workflow (optimizer) | No |
+
+## Built-in Commands: Workflow Chat
+
+Workflow slash commands are wrappers around the backend `get_workflow_command_guidance` tool. The frontend submits a message asking the agent to call that tool with the matching `kind`, and the backend returns the canonical guided-flow text from `agent_go/cmd/server/guidance/templates/`.
+
+| Command | Description | Workshop Modes | Backend Kind |
+|---------|-------------|----------------|--------------|
+| `/resume` | Attach a previous chat conversation as context | Builder, Optimizer, Run | N/A |
+| `/design-flow` | Validate context dependency chain between steps | Builder | `design-flow` |
+| `/ready-to-optimize` | Check if workflow is ready to move to optimizer mode | Builder | `ready-to-optimize` |
+| `/review-plan` | Critically analyze the workflow plan and dependent artifacts | Builder, Optimizer, Run | `review-plan` |
+| `/review-speed` | Review workflow latency and how to make it faster | Optimizer | `review-speed` |
+| `/review-cost` | Review workflow cost and how to reduce it safely | Optimizer | `review-cost` |
+| `/review-config` | Review per-step KB / db / lock_learnings / lock_code recommendations | Builder, Optimizer, Run | `review-config` |
+| `/review-sync` | Check whether plan changes were propagated to learnings, code, KB, db, reports, and eval | Builder, Optimizer | `review-sync` |
+| `/review-code` | Review saved scripts (`main.py`) against step descriptions to detect drift | Optimizer | `review-code` |
+| `/improve-kb` | Improve knowledgebase notes with targeted cleanup or cross-step consolidation | Builder, Optimizer | `improve-kb` |
+| `/improve-learning` | Improve global learnings with targeted cleanup or current-plan consolidation | Builder, Optimizer | `improve-learning` |
+| `/improve-db` | Improve db JSON contracts, schemas, and report compatibility | Builder, Optimizer | `improve-db` |
+| `/improve-report` | Validate `reports/report_plan.json` and suggest layout/color improvements | Builder, Optimizer, Reporting | `improve-report` |
+| `/improve-setup-framework` | One-time setup: write the Workflow Profile to `builder/improve.md` and bootstrap metrics | Optimizer | `improve-setup-framework` |
+| `/improve-eval` | Validate `evaluation/evaluation_plan.json` and improve goal/criteria coverage | Optimizer | `improve-eval` |
+| `/improve-continuously` | Set up recurring workflow run + frequent lightweight optimizer improvement | Optimizer | `improve-continuously` |
+| `/improve-workflow` | Use existing run evidence to review, replan if needed, harden, then optionally verify | Optimizer | `improve-workflow` |
+
+The workflow command source of truth is split across:
+
+- Frontend registry: `frontend/src/commands/builtin-commands.tsx`
+- Backend guidance kind registry: `agent_go/cmd/server/guidance/guidance.go`
+- Backend guidance templates: `agent_go/cmd/server/guidance/templates/**/<kind>.md`
+
+When adding or removing a workflow guidance command, keep those three places in sync.
 
 ## Adding a New Built-in Command
 
@@ -89,7 +123,7 @@ Add a single entry to `frontend/src/commands/builtin-commands.tsx`:
   command: 'my-command',
   description: 'Does something useful',
   icon: <Sparkles className="w-4 h-4" />,
-  modes: ['chat'],       // optional: restrict to specific modes
+  modes: ['multi-agent'],  // optional: restrict to specific modes
   source: 'builtin',
   execute: (ctx) => {
     ctx.onSubmit('Do the thing')
@@ -97,7 +131,7 @@ Add a single entry to `frontend/src/commands/builtin-commands.tsx`:
 }
 ```
 
-No other files need to be changed.
+For non-guidance commands, this is usually the only required frontend change. For workflow guidance commands, also add the backend guidance kind in `agent_go/cmd/server/guidance/guidance.go` and the markdown template under `agent_go/cmd/server/guidance/templates/`.
 
 ## User-Defined Commands
 
@@ -228,8 +262,9 @@ frontend/src/commands/
 ├── user-commands.ts      # Load user commands from API, icon mapping
 └── index.ts              # Re-exports
 
-frontend/src/components/commands/
-└── CommandEditorDialog.tsx   # Create/edit command modal form
+frontend/src/components/
+├── CommandSelectionDialog.tsx          # Slash-command picker
+└── commands/CommandEditorDialog.tsx    # Create/edit command modal form
 
 frontend/src/api/commands.ts     # CRUD API client
 frontend/src/types/commands.ts   # Backend model types
@@ -259,7 +294,7 @@ export const commandsApi = {
 
 ### Component Integration
 
-- **`CommandSelectionDialog.tsx`**: Uses `getCommands(mode)` from the registry. Shows edit/delete buttons on hover for user commands. Has a `+ New` button in the footer.
+- **`CommandSelectionDialog.tsx`**: Uses `getCommands(mode, workshopMode)` from the registry. Shows edit/delete buttons on hover for user commands. Has a `New` button in the footer.
 - **`ChatInput.tsx`**: Uses `findCommand(name)` to look up and execute commands. Builds a `CommandContext` from component state and passes it to `cmd.execute(ctx)`. Manages the command editor dialog state.
 
 ## Usage Flow

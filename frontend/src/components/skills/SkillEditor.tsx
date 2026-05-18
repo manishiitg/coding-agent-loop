@@ -123,7 +123,7 @@ export default function SkillEditor({ skill, onClose, onSave }: SkillEditorProps
 name: my-skill
 description: A description of what the skill does
 argument-hint: <file-path>
-allowed-tools: [&quot;read_workspace_file&quot;]
+allowed-tools: [&quot;execute_shell_command&quot;, &quot;diff_patch_workspace_file&quot;]
 ---
 
 Your skill instructions here..."

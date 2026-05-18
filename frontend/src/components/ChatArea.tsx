@@ -15,7 +15,7 @@ import { WorkflowExplanation } from './WorkflowExplanation'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore, useGlobalPresetStore } from '../stores'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { ModeEmptyState } from './ModeEmptyState'
-import { PreviousChatHistoryPanel, chatHistoryConversationPath, chatHistorySessionTitle } from './PreviousChatHistoryPanel'
+import { PreviousChatHistoryPanel, chatHistoryConversationPath, chatHistoryRuntimeLabel, chatHistorySessionTitle, chatHistorySupportsNativeResume, chatHistoryWorkshopModeLabel } from './PreviousChatHistoryPanel'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { normalizeEventViewMode, type ChatTab } from '../stores/useChatStore'
@@ -78,14 +78,14 @@ function formatAutoNotificationTime(event: PollingEvent): string {
   })
 }
 
-function getOwnedTerminalStreamKey(
+function getOwnedTerminalStreamKeys(
   sessionId: string,
   event: PollingEvent,
   innerData: Record<string, unknown> | undefined,
   agentEvent: Record<string, unknown> | undefined,
   correlationId: unknown,
   metadata?: Record<string, unknown>,
-): string | null {
+): string[] {
   const eventRecord = event as unknown as Record<string, unknown>
   const normalizeOwnerId = (value: unknown): string | null => {
     if (typeof value !== 'string') return null
@@ -100,13 +100,13 @@ function getOwnedTerminalStreamKey(
     return trimmed
   }
 
-  const correlationText = typeof correlationId === 'string' ? correlationId.trim() : ''
-  if (correlationText.startsWith('delegation-') || correlationText.startsWith('workshop-')) {
-    const ownerId = normalizeOwnerId(correlationText)
-    return ownerId ? `${sessionId}:${ownerId}` : null
-  }
-
   const candidates: unknown[] = [
+    eventRecord.execution_id,
+    metadata?.execution_id,
+    innerData?.execution_id,
+    agentEvent?.execution_id,
+    metadata?.owner_execution_id,
+    metadata?.execution_owner_id,
     innerData?.delegation_id,
     agentEvent?.delegation_id,
     metadata?.delegation_id,
@@ -116,20 +116,23 @@ function getOwnedTerminalStreamKey(
     innerData?.agent_id,
     agentEvent?.agent_id,
     metadata?.agent_id,
+    innerData?.agent_name,
+    agentEvent?.agent_name,
+    metadata?.orchestrator_agent_name,
+    typeof correlationId === 'string' && (correlationId.startsWith('delegation-') || correlationId.startsWith('workshop-'))
+      ? correlationId
+      : undefined,
     metadata?.workshop_step_id,
     metadata?.current_step_id,
     metadata?.orchestrator_step_id,
     metadata?.workflow_step_id,
     metadata?.step_id,
-    innerData?.execution_id,
-    agentEvent?.execution_id,
-    eventRecord.execution_id,
   ]
   for (const candidate of candidates) {
     const ownerId = normalizeOwnerId(candidate)
-    if (ownerId) return `${sessionId}:${ownerId}`
+    if (ownerId) return [`${sessionId}:${ownerId}`]
   }
-  return null
+  return []
 }
 
 function isStaleAutoNotificationEvent(event: PollingEvent): boolean {
@@ -750,42 +753,47 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
   }, [showNormalPreviousChatsPanel])
 
-  const handleOpenPreviousChat = useCallback(async (session: ChatHistorySession) => {
-    try {
-      const restoredTabId = await restoreSession(session.session_id, {
-        title: chatHistorySessionTitle(session),
-        source: 'previous-chat-panel',
-      })
-      switchTab(restoredTabId)
-    } catch (error) {
-      logger.error('ChatArea', 'Failed to open previous chat:', error)
-      const chatStore = useChatStore.getState()
-      let targetTabId = chatStore.activeTabId || undefined
-      let targetTab = targetTabId ? chatStore.chatTabs[targetTabId] : undefined
-      if (!targetTab || targetTab.metadata?.mode !== 'multi-agent') {
-        targetTabId = await chatStore.createChatTab('Agent Chat 1', { mode: 'multi-agent' })
-        targetTab = chatStore.chatTabs[targetTabId]
-      }
-      if (!targetTabId || !targetTab) {
-        addToast('Failed to attach previous chat', 'error')
-        return
-      }
+  const handleResumePreviousChat = useCallback(async (session: ChatHistorySession) => {
+    const chatStore = useChatStore.getState()
+    let targetTabId = chatStore.activeTabId || undefined
+    let targetTab = targetTabId ? chatStore.chatTabs[targetTabId] : undefined
 
-      const path = chatHistoryConversationPath(session)
-      const title = chatHistorySessionTitle(session)
-      const existingContext = chatStore.getTabConfig(targetTabId)?.fileContext || []
-      const nextFileContext = existingContext.some(item => item.path === path)
+    if (!targetTab || targetTab.metadata?.mode !== 'multi-agent') {
+      targetTabId = await chatStore.createChatTab('Agent Chat 1', { mode: 'multi-agent' })
+      targetTab = useChatStore.getState().chatTabs[targetTabId]
+    }
+
+    if (!targetTabId || !targetTab) {
+      addToast('Failed to resume previous chat', 'error')
+      return
+    }
+
+    if (targetTab.sessionId === session.session_id) {
+      chatStore.resetTabChat(targetTabId)
+    }
+
+    const path = chatHistoryConversationPath(session)
+    const title = chatHistorySessionTitle(session)
+    const useNativeResume = chatHistorySupportsNativeResume(session)
+    const latestStore = useChatStore.getState()
+    const existingContext = latestStore.getTabConfig(targetTabId)?.fileContext || []
+    const nextFileContext = useNativeResume
+      ? existingContext.filter(item => item.path !== path)
+      : existingContext.some(item => item.path === path)
         ? existingContext
         : [...existingContext, { name: title, path, type: 'file' as const }]
 
-      chatStore.setTabConfig(targetTabId, {
-        fileContext: nextFileContext,
-        restoredConversationPath: path,
-        restoredConversationSummary: undefined,
-      })
-      switchTab(targetTabId)
-      addToast('Could not restore; previous chat attached as context', 'success')
-    }
+    latestStore.setTabConfig(targetTabId, {
+      fileContext: nextFileContext,
+      restoredConversationPath: path,
+      restoredConversationSummary: undefined,
+      restoredConversationTitle: title,
+      restoredConversationWorkshopModeLabel: chatHistoryWorkshopModeLabel(session),
+      restoredConversationRuntimeLabel: chatHistoryRuntimeLabel(session),
+      restoredConversationNativeResume: useNativeResume,
+    })
+    switchTab(targetTabId)
+    addToast('Previous chat ready to resume', 'success')
   }, [addToast, switchTab])
 
   // State for mode switch dialog
@@ -1385,8 +1393,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
         const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
         const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
-        const ownedTerminalKey = getOwnedTerminalStreamKey(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
-        if (ownedTerminalKey) {
+        const ownedTerminalKeys = getOwnedTerminalStreamKeys(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
+        for (const ownedTerminalKey of ownedTerminalKeys) {
           chatStore.clearOwnedStreamingTerminal(ownedTerminalKey)
         }
         // Workshop background agents (execute_step, harden_workflow, generate_learnings) use
@@ -1410,11 +1418,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
         const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
         const isTerminalStreaming = metadata?.kind === 'terminal'
-        const ownedTerminalKey = isTerminalStreaming
-          ? getOwnedTerminalStreamKey(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
-          : null
-        if (ownedTerminalKey && content) {
-          chatStore.setOwnedStreamingTerminalSnapshot(ownedTerminalKey, chunkIndex, content)
+        const ownedTerminalKeys = isTerminalStreaming
+          ? getOwnedTerminalStreamKeys(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
+          : []
+        if (ownedTerminalKeys.length > 0 && content) {
+          for (const ownedTerminalKey of ownedTerminalKeys) {
+            chatStore.setOwnedStreamingTerminalSnapshot(ownedTerminalKey, chunkIndex, content)
+          }
         } else if (isDelegationStreaming) {
           if (content) {
             if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearDelegationStreamingText(correlationId as string)
@@ -1435,8 +1445,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
         const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
         const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
-        const ownedTerminalKey = getOwnedTerminalStreamKey(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
-        if (ownedTerminalKey) {
+        const ownedTerminalKeys = getOwnedTerminalStreamKeys(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
+        for (const ownedTerminalKey of ownedTerminalKeys) {
           chatStore.setOwnedStreamingTerminalActive(ownedTerminalKey, false)
         }
         if (!isDelegationStreaming && !isWorkshopStreaming) {
@@ -1759,8 +1769,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
           const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
           const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
-          const ownedTerminalKey = getOwnedTerminalStreamKey(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
-          if (ownedTerminalKey) {
+          const ownedTerminalKeys = getOwnedTerminalStreamKeys(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
+          for (const ownedTerminalKey of ownedTerminalKeys) {
             chatStore.clearOwnedStreamingTerminal(ownedTerminalKey)
           }
           const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
@@ -1780,11 +1790,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
           const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
           const isTerminalStreaming = metadata?.kind === 'terminal'
-          const ownedTerminalKey = isTerminalStreaming
-            ? getOwnedTerminalStreamKey(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
-            : null
-          if (ownedTerminalKey && content) {
-            chatStore.setOwnedStreamingTerminalSnapshot(ownedTerminalKey, chunkIndex, content)
+          const ownedTerminalKeys = isTerminalStreaming
+            ? getOwnedTerminalStreamKeys(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
+            : []
+          if (ownedTerminalKeys.length > 0 && content) {
+            for (const ownedTerminalKey of ownedTerminalKeys) {
+              chatStore.setOwnedStreamingTerminalSnapshot(ownedTerminalKey, chunkIndex, content)
+            }
           } else if (isDelegation) {
             if (content) {
               if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearDelegationStreamingText(correlationId as string)
@@ -1801,8 +1813,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
           const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
           const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
-          const ownedTerminalKey = getOwnedTerminalStreamKey(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
-          if (ownedTerminalKey) {
+          const ownedTerminalKeys = getOwnedTerminalStreamKeys(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
+          for (const ownedTerminalKey of ownedTerminalKeys) {
             chatStore.setOwnedStreamingTerminalActive(ownedTerminalKey, false)
           }
           if (!isDelegation && !isWorkshopStreaming) {
@@ -2401,22 +2413,29 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       : null
     // Only include visible/removable file context from tab config. Workflow execution
     // folders still travel through workflow_context_paths; restored conversation files
-    // are attached only while their chip remains in fileContext.
+    // use restoredConversationPath so coding agents can native-resume without a visible
+    // file chip.
     let effectiveFileContext: Array<{ name: string; path: string; type: 'file' | 'folder' }> = []
     if ((selectedModeCategory === 'multi-agent' || selectedModeCategory === 'workflow') && currentTab?.config) {
       effectiveFileContext = currentTab.config.fileContext
     }
 
-    const shouldAttachRestoredConversation =
-      selectedModeCategory === 'workflow' &&
-      !!currentTab?.metadata?.phaseId &&
-      isChatCompatiblePhase(currentTab.metadata.phaseId)
-    const storedRestoredConversationPath = shouldAttachRestoredConversation
+    const shouldResumeRestoredConversation =
+      selectedModeCategory === 'multi-agent' ||
+      (
+        selectedModeCategory === 'workflow' &&
+        !!currentTab?.metadata?.phaseId &&
+        isChatCompatiblePhase(currentTab.metadata.phaseId)
+      )
+    const storedRestoredConversationPath = shouldResumeRestoredConversation
       ? currentTab?.config?.restoredConversationPath?.trim()
       : ''
     const restoredConversationPath = storedRestoredConversationPath || ''
     const restoredConversationSummary = currentTab?.config?.restoredConversationSummary?.trim()
-    const restoredConversationContext = restoredConversationPath
+    const restoredConversationHasVisibleFallback = restoredConversationPath
+      ? effectiveFileContext.some((file) => file.path === restoredConversationPath)
+      : false
+    const restoredConversationContext = restoredConversationPath && restoredConversationHasVisibleFallback
       ? `\n\nPrevious workflow-builder conversation file: ${restoredConversationPath}\nThis file is JSON with a top-level conversation_history array. User messages have Role \"human\" or \"user\" and text in Parts[].Text; assistant replies have Role \"ai\" or \"assistant\"; tool calls/results may be interleaved and are usually noisy. To understand the recent context, scan conversation_history from the end for the latest user/assistant Text parts. Do not treat the last JSON entry as the last user request, because it may be a tool result or function call.${restoredConversationSummary ? `\n\n${restoredConversationSummary}` : ''}`
       : ''
     const fileContextForPrompt = restoredConversationPath
@@ -2489,6 +2508,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         fileContext: [],
         restoredConversationPath: undefined,
         restoredConversationSummary: undefined,
+        restoredConversationTitle: undefined,
+        restoredConversationWorkshopModeLabel: undefined,
+        restoredConversationRuntimeLabel: undefined,
+        restoredConversationNativeResume: undefined,
       })
     }
 
@@ -3023,10 +3046,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               <PreviousChatHistoryPanel
                 activeSessionId={hasConversationContent ? activeTab?.sessionId ?? undefined : undefined}
                 title="Previous chats"
-                actionLabel="Open"
+                actionLabel="Resume"
                 emptyText="No previous chats yet."
                 onHasChatsChange={setHasPreviousNormalChats}
-                onSelectSession={handleOpenPreviousChat}
+                onSelectSession={handleResumePreviousChat}
               />
             )}
             {/* Empty State - Show when no events and not in historical session */}

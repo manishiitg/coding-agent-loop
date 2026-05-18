@@ -31,7 +31,7 @@ A valid skill folder must contain `SKILL.md`:
 name: code-review
 description: Performs a comprehensive code review
 argument-hint: <file-path>
-allowed-tools: ["read_workspace_file", "regex_search_workspace_files"]
+allowed-tools: ["execute_shell_command", "diff_patch_workspace_file"]
 model: openrouter/anthropic/claude-sonnet-4
 ---
 
@@ -48,7 +48,7 @@ Review the code at `$ARGUMENTS` focusing on:
 | `name` | Yes | Display name of the skill |
 | `description` | Yes | Brief description of what the skill does |
 | `argument-hint` | No | Hint for arguments the skill accepts |
-| `allowed-tools` | No | List of tools the skill is allowed to use |
+| `allowed-tools` | No | List of tools the skill is allowed to use. For current workflow agents, prefer exposed tools such as `execute_shell_command` and `diff_patch_workspace_file`; legacy workspace-basic names like `read_workspace_file`, `update_workspace_file`, and `delete_workspace_file` are internal/API wrappers unless explicitly exposed by the session. |
 | `model` | No | Preferred LLM model for this skill |
 
 ## Configuration Hierarchy

@@ -93,7 +93,7 @@ func DiffPatchDocument(c *gin.Context) {
 		var suggestions []string
 		if strings.Contains(err.Error(), "malformed patch") {
 			suggestions = []string{
-				"Use read_workspace_file first to see exact current content",
+				"Read the target file first with an available file-read mechanism",
 				"Context lines (starting with SPACE) must exactly match the file",
 				"Hunk headers (@@) must show correct line numbers",
 				"Use proper unified diff format with ---/+++ headers",
@@ -107,18 +107,18 @@ func DiffPatchDocument(c *gin.Context) {
 				"The diff ends properly with a newline",
 				"No truncated lines in the diff",
 				"Generate complete unified diff format",
-				"Use read_workspace_file to get exact file content",
+				"Use exact current file content from an available read tool",
 			}
 		} else if strings.Contains(err.Error(), "diff validation failed") {
 			suggestions = []string{
 				"Diff has proper headers (--- a/file, +++ b/file)",
 				"At least one hunk header (@@ -start,count +start,count @@)",
 				"Diff ends with a newline character",
-				"Use read_workspace_file first to get exact content",
+				"Read exact current content before generating the diff",
 			}
 		} else if strings.Contains(err.Error(), "patch hunk failed to apply") {
 			suggestions = []string{
-				"Use read_workspace_file first to see exact current content",
+				"Read the target file first with an available file-read mechanism",
 				"Copy context lines EXACTLY from the file (including spaces/tabs)",
 				"Verify line numbers in hunk headers match actual file",
 				"Ensure no extra whitespace or missing characters",
@@ -126,7 +126,7 @@ func DiffPatchDocument(c *gin.Context) {
 			}
 		} else {
 			suggestions = []string{
-				"Use read_workspace_file first to see exact current content",
+				"Read the target file first with an available file-read mechanism",
 				"Ensure diff format follows unified diff standard",
 				"Check that context lines match file content exactly",
 				"Verify hunk headers have correct line numbers",
@@ -762,7 +762,7 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 			fmt.Printf("❌ Could not find match for hunk — refusing to apply to prevent corruption\n")
 
-			return "", fmt.Errorf("patch hunk failed to apply: could not find matching context lines in the file. Use read_workspace_file to get current content and retry with an accurate diff")
+			return "", fmt.Errorf("patch hunk failed to apply: could not find matching context lines in the file. Read the current file content with an available tool and retry with an accurate diff")
 
 		}
 

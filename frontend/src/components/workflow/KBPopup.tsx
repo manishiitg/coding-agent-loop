@@ -48,6 +48,10 @@ type LegacyKBTopicMeta = {
   section_count?: unknown
 }
 
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
 async function readJSON<T>(filepath: string): Promise<T | null> {
   try {
     const resp = await agentApi.getPlannerFileContent(filepath)
@@ -72,6 +76,15 @@ function topicIdFromFile(file: string): string {
   return file.replace(/\.md$/i, '')
 }
 
+function normalizeTopicFilePath(value: unknown, topicId: string): string {
+  let file = stringValue(value).replace(/^\/+/, '')
+  const notesPrefix = 'knowledgebase/notes/'
+  const shortNotesPrefix = 'notes/'
+  if (file.startsWith(notesPrefix)) file = file.slice(notesPrefix.length)
+  if (file.startsWith(shortNotesPrefix)) file = file.slice(shortNotesPrefix.length)
+  return file || (topicId ? `${topicId}.md` : '')
+}
+
 function normalizeUpdatedBy(value: unknown): KBNotesTopic['last_updated_by'] {
   if (!value) return undefined
   if (typeof value === 'string') return { step: value }
@@ -83,54 +96,64 @@ function normalizeUpdatedBy(value: unknown): KBNotesTopic['last_updated_by'] {
   }
 }
 
+function normalizeTopic(value: unknown, fallbackFile?: string): KBNotesTopic | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  const topicId = stringValue(record.id) || stringValue(record.topic_id) || stringValue(record.topic)
+  const file = normalizeTopicFilePath(record.file ?? record.file_path ?? record.path ?? fallbackFile, topicId)
+  const id = topicId || topicIdFromFile(file)
+  if (!id || !file) return null
+  return {
+    id,
+    file,
+    covers: Array.isArray(record.covers)
+      ? record.covers.filter((item): item is string => typeof item === 'string')
+      : undefined,
+    last_updated: typeof record.last_updated === 'string' ? record.last_updated : undefined,
+    last_updated_by: normalizeUpdatedBy(record.last_updated_by),
+    size_bytes: typeof record.size_bytes === 'number' ? record.size_bytes : undefined,
+    section_count: typeof record.section_count === 'number' ? record.section_count : undefined,
+  }
+}
+
 function normalizeKBIndex(raw: unknown): KBNotesIndex | null {
   if (!raw || typeof raw !== 'object') return null
   const record = raw as Record<string, unknown>
 
   // Existing shape: { topics: [{ id, file, ... }] }
   if (Array.isArray(record.topics)) {
-    return raw as KBNotesIndex
+    const topics = record.topics
+      .map((topic) => normalizeTopic(topic))
+      .filter((topic): topic is KBNotesTopic => topic !== null)
+      .sort((a, b) => a.id.localeCompare(b.id))
+    return {
+      topics,
+      last_updated: typeof record.last_updated === 'string' ? record.last_updated : undefined,
+      last_updated_by: normalizeUpdatedBy(record.last_updated_by),
+    }
   }
 
   // Current shape: { notes: [{ topic_id, file_path, ... }] }
   if (Array.isArray(record.notes)) {
-    const topics: KBNotesTopic[] = (record.notes as unknown[])
-      .filter((n): n is Record<string, unknown> => !!n && typeof n === 'object')
-      .map((n) => {
-        const topicId = typeof n.topic_id === 'string' ? n.topic_id : ''
-        const filePath = typeof n.file_path === 'string' ? n.file_path : ''
-        const file = filePath || (topicId ? `${topicId}.md` : '')
-        const id = topicId || topicIdFromFile(file)
-        return {
-          id,
-          file,
-          covers: Array.isArray(n.covers) ? (n.covers as unknown[]).filter((item): item is string => typeof item === 'string') : undefined,
-          last_updated: typeof n.last_updated === 'string' ? n.last_updated : undefined,
-          last_updated_by: normalizeUpdatedBy(n.last_updated_by),
-          size_bytes: typeof n.size_bytes === 'number' ? n.size_bytes : undefined,
-          section_count: typeof n.section_count === 'number' ? n.section_count : undefined,
-        }
-      })
-      .filter(t => t.id && t.file)
+    const topics = record.notes
+      .map((note) => normalizeTopic(note))
+      .filter((topic): topic is KBNotesTopic => topic !== null)
       .sort((a, b) => a.id.localeCompare(b.id))
-    return { topics }
+    return {
+      topics,
+      last_updated: typeof record.last_updated === 'string' ? record.last_updated : undefined,
+      last_updated_by: normalizeUpdatedBy(record.last_updated_by),
+    }
   }
 
   // Legacy flat shape: { "<file>.md": { ...meta } }
-  const topics: KBNotesTopic[] = Object.entries(record)
+  const topics = Object.entries(record)
     .filter(([file, meta]) => file.toLowerCase().endsWith('.md') && meta && typeof meta === 'object' && !Array.isArray(meta))
     .map(([file, rawMeta]) => {
       const meta = rawMeta as LegacyKBTopicMeta
-      return {
-        id: topicIdFromFile(file),
-        file,
-        covers: Array.isArray(meta.covers) ? meta.covers.filter((item): item is string => typeof item === 'string') : undefined,
-        last_updated: typeof meta.last_updated === 'string' ? meta.last_updated : undefined,
-        last_updated_by: normalizeUpdatedBy(meta.last_updated_by),
-        size_bytes: typeof meta.size_bytes === 'number' ? meta.size_bytes : undefined,
-        section_count: typeof meta.section_count === 'number' ? meta.section_count : undefined,
-      }
+      return normalizeTopic({ ...meta, file }, file)
     })
+    .filter((topic): topic is KBNotesTopic => topic !== null)
     .sort((a, b) => a.id.localeCompare(b.id))
 
   return { topics }

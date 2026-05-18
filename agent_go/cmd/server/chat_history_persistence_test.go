@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +40,20 @@ func TestCleanChatHistoryForPersistenceRemovesRestoredConversationContext(t *tes
 	}
 	if history[0].Parts[0].(llmtypes.TextContent).Text != originalText {
 		t.Fatalf("expected original history to remain unchanged")
+	}
+}
+
+func TestAppendRestoredConversationContextAddsFallbackAndCleans(t *testing.T) {
+	withContext := appendRestoredConversationContext("continue this", "_users/default/chat_history/2026-05-18/session/conversation.json")
+
+	if !strings.Contains(withContext, "\n\nPrevious conversation file: _users/default/chat_history/2026-05-18/session/conversation.json") {
+		t.Fatalf("expected fallback conversation file context, got %q", withContext)
+	}
+	if got := cleanChatHistoryQuery(withContext); got != "continue this" {
+		t.Fatalf("expected restored context to clean back to user query, got %q", got)
+	}
+	if got := appendRestoredConversationContext(withContext, "_users/default/chat_history/other/conversation.json"); got != withContext {
+		t.Fatalf("expected existing restored context to remain unchanged")
 	}
 }
 

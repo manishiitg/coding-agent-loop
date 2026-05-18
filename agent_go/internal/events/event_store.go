@@ -166,6 +166,9 @@ func (e *Event) ensureExecutionOwnership(sessionID string, previous []Event) {
 	backgroundAgentID := firstNonEmptyString(
 		stringField(payload, "background_agent_id"),
 		stringField(payload, "agent_id"),
+		stringField(metadata, "background_agent_id"),
+		stringField(metadata, "agent_id"),
+		stringField(metadata, "execution_owner_id"),
 	)
 	parentExecutionID := firstNonEmptyString(
 		stringField(metadata, "parent_execution_id"),

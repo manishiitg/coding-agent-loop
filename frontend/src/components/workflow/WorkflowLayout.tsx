@@ -14,7 +14,10 @@ import { logger } from '../../utils/logger'
 import {
   PreviousChatHistoryPanel,
   chatHistoryConversationPath,
+  chatHistoryRuntimeLabel,
   chatHistorySessionTitle,
+  chatHistorySupportsNativeResume,
+  chatHistoryWorkshopModeLabel,
 } from '../PreviousChatHistoryPanel'
 import {
   REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
@@ -114,7 +117,6 @@ const WorkflowPreviousChatsPanel: React.FC<{
   onHasChatsChange?: (hasChats: boolean) => void
 }> = ({ workspacePath, onHasChatsChange }) => {
   const activeTabId = useChatStore(state => state.activeTabId)
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const activeSessionId = useChatStore(state => {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : undefined
@@ -124,9 +126,9 @@ const WorkflowPreviousChatsPanel: React.FC<{
   const setTabConfig = useChatStore(state => state.setTabConfig)
   const addToast = useChatStore(state => state.addToast)
 
-  const handleAttachPreviousChat = useCallback(async (session: ChatHistorySession) => {
+  const handleResumePreviousChat = useCallback(async (session: ChatHistorySession) => {
     if (!activeTabId) {
-      addToast('No active workflow chat to attach to', 'error')
+      addToast('No active workflow chat to resume in', 'error')
       return
     }
 
@@ -135,45 +137,46 @@ const WorkflowPreviousChatsPanel: React.FC<{
     const targetTab = chatStore.chatTabs[targetTabId]
 
     if (targetTab?.sessionId === session.session_id) {
-      targetTabId = await chatStore.createChatTab('Workflow Builder', {
-        mode: 'workflow',
-        phaseId: 'workflow-builder',
-        phaseName: 'Workflow Builder',
-        presetQueryId: activePresetId || undefined,
-      })
-      chatStore.switchTab(targetTabId)
+      chatStore.resetTabChat(targetTabId)
     }
 
     const path = chatHistoryConversationPath(session)
+    const useNativeResume = chatHistorySupportsNativeResume(session)
     const existingContext = useChatStore.getState().getTabConfig(targetTabId)?.fileContext || []
-    const nextFileContext = existingContext.some(item => item.path === path)
-      ? existingContext
-      : [
-          ...existingContext,
-          {
-            name: chatHistorySessionTitle(session),
-            path,
-            type: 'file' as const,
-          },
-        ]
+    const nextFileContext = useNativeResume
+      ? existingContext.filter(item => item.path !== path)
+      : existingContext.some(item => item.path === path)
+        ? existingContext
+        : [
+            ...existingContext,
+            {
+              name: chatHistorySessionTitle(session),
+              path,
+              type: 'file' as const,
+            },
+          ]
 
     setTabConfig(targetTabId, {
       fileContext: nextFileContext,
       restoredConversationPath: path,
       restoredConversationSummary: undefined,
+      restoredConversationTitle: chatHistorySessionTitle(session),
+      restoredConversationWorkshopModeLabel: chatHistoryWorkshopModeLabel(session),
+      restoredConversationRuntimeLabel: chatHistoryRuntimeLabel(session),
+      restoredConversationNativeResume: useNativeResume,
     })
-    addToast('Previous chat added to context', 'success')
-  }, [activePresetId, activeTabId, addToast, setTabConfig])
+    addToast('Previous workflow chat ready to resume', 'success')
+  }, [activeTabId, addToast, setTabConfig])
 
   return (
     <PreviousChatHistoryPanel
       workspacePath={workspacePath}
       activeSessionId={activeSessionId ?? undefined}
       title="Previous workflow chats"
-      actionLabel="Attach"
+      actionLabel="Resume"
       emptyText="No previous workflow chats yet."
       onHasChatsChange={onHasChatsChange}
-      onSelectSession={handleAttachPreviousChat}
+      onSelectSession={handleResumePreviousChat}
     />
   )
 }

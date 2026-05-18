@@ -363,13 +363,12 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 				}
 
 				if tool.Function.Name == "call_sub_agent" {
-					const subAgentToolTimeout = 90 * time.Minute
 					if err := mcpAgent.RegisterCustomToolWithTimeout(
 						tool.Function.Name,
 						tool.Function.Description,
 						params,
 						finalExecutor,
-						subAgentToolTimeout,
+						0,
 						toolCategory,
 					); err != nil {
 						return fmt.Errorf("failed to register tool %s with extended timeout: %w", tool.Function.Name, err)

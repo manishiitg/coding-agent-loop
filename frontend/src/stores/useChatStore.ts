@@ -275,6 +275,10 @@ export interface ChatTabConfig {
   }>  // Workflow presets selected via # in chat input
   restoredConversationPath?: string  // Durable conversation file for UI-restored tabs
   restoredConversationSummary?: string  // Compact recent context from a restored workflow-builder conversation
+  restoredConversationTitle?: string  // Display title for pending resumed conversation
+  restoredConversationWorkshopModeLabel?: string  // Builder/Optimizer/Run label for pending resumed workflow conversation
+  restoredConversationRuntimeLabel?: string  // Provider/model display for pending resumed conversation
+  restoredConversationNativeResume?: boolean  // Whether the backend should native-resume instead of attaching as file context
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   pastedAttachments?: PastedAttachment[]  // Long pastes captured as attachment chips, prepended on send
   isQueueProcessing?: boolean  // Lock to prevent multiple ChatArea instances from double-processing the queue

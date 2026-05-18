@@ -2,13 +2,11 @@ package virtual_tools
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"time"
 )
 
 // callAPI makes an HTTP POST request to the specified endpoint with the given payload
@@ -25,11 +23,7 @@ func callAPI(endpoint string, payload map[string]interface{}) string {
 		panic(fmt.Sprintf("failed to marshal request: %v", err))
 	}
 
-	// Create request with 300 second timeout (from agent ToolTimeout)
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL+endpoint, bytes.NewBuffer(reqBody))
+	req, err := http.NewRequest("POST", apiURL+endpoint, bytes.NewBuffer(reqBody))
 	if err != nil {
 		panic(fmt.Sprintf("failed to create request: %v", err))
 	}
@@ -61,4 +55,3 @@ func callAPI(endpoint string, payload map[string]interface{}) string {
 	// Return result string - tool execution errors will be in result (check output for error indicators)
 	return result.Result
 }
-

@@ -3265,8 +3265,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Validate LLM provider - no need to initialize since agent wrapper handles it
 		_ = llmProvider // Use provider variable to avoid unused variable error
 
-		// Create context with timeout for the entire streaming operation
-		streamCtx, cancel := context.WithTimeout(context.Background(), 60*3*time.Minute)
+		// Create a detached context for the entire streaming operation.
+		// Execution is stopped by explicit cancellation, not by a wall-clock timeout.
+		streamCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		// Load selected tools and code execution mode from preset if available (for simple/ReAct agents)
@@ -3352,14 +3353,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			MaxTurns:           req.MaxTurns,
 			ToolChoice:         "auto",
 			StreamingChunkSize: 50,
-			Timeout:            0, // No per-Invoke timeout; streamCtx (3h) provides the outer bound
+			Timeout:            0, // No per-Invoke timeout; streamCtx is explicitly cancelled when needed.
 			ToolTimeout: func() time.Duration {
 				if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
-					if timeout, err := time.ParseDuration(envVal); err == nil && timeout > 0 {
+					if timeout, err := time.ParseDuration(envVal); err == nil {
 						return timeout
 					}
 				}
-				return 5 * time.Minute
+				return 0
 			}(),
 			SelectedTools: selectedTools, // NEW: Pass selected tools
 
@@ -5311,8 +5312,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 			restoredNativeCodingResume := false
-			if restoredRuntime, ok, err := ReadChatHistoryRuntimeFromPath(currentUserID, req.RestoredConversationPath); err != nil {
-				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime from %s: %v", req.RestoredConversationPath, err)
+			restoredConversationPath := strings.TrimSpace(req.RestoredConversationPath)
+			if restoredRuntime, ok, err := ReadChatHistoryRuntimeFromPath(currentUserID, restoredConversationPath); err != nil {
+				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime from %s: %v", restoredConversationPath, err)
 			} else if ok {
 				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
 			}
@@ -5322,6 +5324,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if cleanedChatQuery != chatQuery {
 					chatQuery = cleanedChatQuery
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Using native coding-agent resume; stripped restored conversation attach context from prompt")
+				}
+			} else if restoredConversationPath != "" {
+				nextChatQuery := appendRestoredConversationContext(chatQuery, restoredConversationPath)
+				if nextChatQuery != chatQuery {
+					chatQuery = nextChatQuery
+					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Native resume unavailable; attached restored conversation file as fallback context")
 				}
 			}
 		}
@@ -6372,11 +6380,11 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// No Timeout set — sub-agent lifetime is controlled by the parent context.
 		ToolTimeout: func() time.Duration {
 			if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
-				if timeout, err := time.ParseDuration(envVal); err == nil && timeout > 0 {
+				if timeout, err := time.ParseDuration(envVal); err == nil {
 					return timeout
 				}
 			}
-			return 5 * time.Minute
+			return 0
 		}(),
 		// Sub-agent mode uses the resolved values (from delegate call, template default, or auto-enable).
 		UseCodeExecutionMode:  useCodeExec,

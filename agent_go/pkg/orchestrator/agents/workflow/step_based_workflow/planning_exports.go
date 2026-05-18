@@ -1535,7 +1535,6 @@ func RegisterRunFullWorkflowTool(
 
 				var result string
 				var execErr error
-				eventBridge := session.controller.GetContextAwareBridge()
 				execMeta := map[string]string{
 					"workshop_mode":  "runner",
 					"execution_type": "full-workflow",
@@ -1551,57 +1550,10 @@ func RegisterRunFullWorkflowTool(
 				}
 				defer func() {
 					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
-					if eventBridge != nil {
-						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-workflow-execution",
-							AgentName:     "Full Workflow Execution",
-							Success:       execErr == nil && !skipNotify,
-							InputData: map[string]string{
-								"execution_strategy": strategy,
-								"execution_type":     "full-workflow",
-								"disable_eval":       fmt.Sprintf("%v", disableEval),
-							},
-						}
-						if execErr != nil {
-							if skipNotify || execCtx.Err() != nil {
-								endEvent.Result = fmt.Sprintf("Canceled: %v", execErr)
-							} else {
-								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-							}
-						} else {
-							endEvent.Result = firstNonEmpty(result, "Workflow execution completed successfully.")
-						}
-						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-							Type:          orchestrator_events.OrchestratorAgentEnd,
-							Timestamp:     time.Now(),
-							Data:          endEvent,
-							CorrelationID: agentSessionID,
-						})
-					}
 					if !skipNotify && session.executionNotifier != nil {
 						session.executionNotifier.OnExecutionComplete(execID, "Full Workflow Execution", result, execMeta, execErr)
 					}
 				}()
-
-				if eventBridge != nil {
-					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-workflow-execution",
-						AgentName:     "Full Workflow Execution",
-						InputData: map[string]string{
-							"execution_strategy": strategy,
-							"execution_type":     "full-workflow",
-							"disable_eval":       fmt.Sprintf("%v", disableEval),
-						},
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentStart,
-						Timestamp:     time.Now(),
-						Data:          startEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
 
 				// Wrap event bridge with progress listener to send per-step notifications
 				progressBridge := &workflowProgressBridge{

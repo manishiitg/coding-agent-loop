@@ -11,3 +11,7 @@
 -  what i am using personally in claude code is like a single step but divided into multiple user messages like 1. check if aws works 2. do this x 3. valid x y z 4. give proof.. instead of a multiple sptes we can have a single step also do this ? if we have auto summization
 
 68. implement agent sdk closer to 15th june when claude will have the plan for it 
+
+67. we should implement proper tree vs flat view. 
+
+68. optimize open code for kimi, glm, minimax, deepseek and free plans and go plan

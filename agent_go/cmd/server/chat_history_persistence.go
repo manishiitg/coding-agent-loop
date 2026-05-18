@@ -670,17 +670,33 @@ func shouldSkipChatHistoryPreviewText(text string) bool {
 		strings.HasPrefix(trimmed, "[Previous tool result")
 }
 
+var restoredConversationContextMarkers = []string{
+	"\n\nPrevious workflow-builder conversation file:",
+	"\n\nPrevious builder chat file available:",
+	"\n\nPrevious conversation file:",
+}
+
 func cleanChatHistoryQuery(text string) string {
-	markers := []string{
-		"\n\nPrevious workflow-builder conversation file:",
-		"\n\nPrevious builder chat file available:",
-	}
-	for _, marker := range markers {
+	for _, marker := range restoredConversationContextMarkers {
 		if idx := strings.Index(text, marker); idx >= 0 {
 			return strings.TrimSpace(text[:idx])
 		}
 	}
 	return strings.TrimSpace(text)
+}
+
+func appendRestoredConversationContext(query, path string) string {
+	query = strings.TrimSpace(query)
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return query
+	}
+	for _, marker := range restoredConversationContextMarkers {
+		if strings.Contains(query, strings.TrimSpace(marker)) {
+			return query
+		}
+	}
+	return query + "\n\nPrevious conversation file: " + path + "\nThis file is JSON with a top-level conversation_history array. User messages have Role \"human\" or \"user\" and text in Parts[].Text; assistant replies have Role \"ai\" or \"assistant\". Scan conversation_history from the end for recent user/assistant Text parts."
 }
 
 // cleanChatHistoryForPersistence removes hidden prompt context that the frontend

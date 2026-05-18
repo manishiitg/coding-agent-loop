@@ -353,6 +353,9 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	hasOrchestratorContext := currentPhase != ""
 	hasBatchContext := totalGroups > 0
 	hasStepID := currentStepID != ""
+	executionOwnerID, hasExecutionOwner := ctx.Value(orchevents.ParentExecutionIDKey).(string)
+	executionOwnerID = strings.TrimSpace(executionOwnerID)
+	hasExecutionOwner = hasExecutionOwner && executionOwnerID != ""
 
 	// Step-scoped agents already get a workflow-specific orchestrator_agent_end
 	// event with the final text. Forwarding generic agent_end/unified_completion
@@ -369,7 +372,7 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	}
 
 	// Add context to metadata if we have any context (step ID, batch, or orchestrator)
-	if hasOrchestratorContext || hasBatchContext || hasStepID {
+	if hasOrchestratorContext || hasBatchContext || hasStepID || hasExecutionOwner {
 		c.logger.Debug(fmt.Sprintf("🔍 ContextAwareBridge: Processing event %s with step %s, batch %s", event.Type, currentStepID, currentGroupName))
 
 		// Add context to metadata
@@ -391,6 +394,14 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 				newMeta := make(map[string]any, len(baseData.Metadata)+8)
 				for k, v := range baseData.Metadata {
 					newMeta[k] = v
+				}
+
+				// Parallel workflow sub-agents share the bridge's step context, so the
+				// step id alone is not a reliable terminal-stream owner. The execution
+				// owner comes from the request context and stays goroutine-local.
+				if hasExecutionOwner {
+					newMeta["execution_owner_id"] = executionOwnerID
+					newMeta["background_agent_id"] = executionOwnerID
 				}
 
 				// Add current step ID (simple tracking - which step is running)

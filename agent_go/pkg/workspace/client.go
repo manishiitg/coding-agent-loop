@@ -327,6 +327,10 @@ func (c *Client) getUserIDFromContext(ctx context.Context) string {
 // Used by ExecuteShellCommand where shell commands (especially those wrapping call_sub_agent)
 // can run far longer than the default 5-minute client timeout.
 func (c *Client) requestWithTimeout(ctx context.Context, method, path string, body interface{}, timeout time.Duration) ([]byte, error) {
+	if timeout <= 0 {
+		noTimeoutClient := &http.Client{}
+		return c.doRequest(ctx, method, path, body, noTimeoutClient)
+	}
 	longClient := &http.Client{Timeout: timeout}
 	return c.doRequest(ctx, method, path, body, longClient)
 }

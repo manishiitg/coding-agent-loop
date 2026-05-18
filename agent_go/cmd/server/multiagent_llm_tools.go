@@ -279,15 +279,6 @@ var llmPricingCatalog = []llmPricingCatalogEntry{
 	},
 }
 
-func runtimeAvailable(command string) *bool {
-	if command == "" {
-		return nil
-	}
-	_, err := exec.LookPath(command)
-	ok := err == nil
-	return &ok
-}
-
 func runtimeAvailableForProvider(provider string) (string, error) {
 	command := providerRuntime(provider)
 	if command == "" {

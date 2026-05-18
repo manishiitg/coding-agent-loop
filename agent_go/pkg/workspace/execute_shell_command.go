@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
@@ -264,14 +263,10 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	}
 
 	path := "/api/execute"
-	// Use a long-timeout HTTP client for shell execution. The default workspace
-	// client has a 5-minute timeout (sufficient for file operations), but shell
-	// commands can run much longer — e.g., when a Python script wraps a
+	// Use a no-timeout HTTP client for shell execution. Shell commands can run
+	// much longer than normal file operations, especially when they wrap a
 	// call_sub_agent HTTP call that blocks until the sub-agent completes.
-	// Without this, the Go HTTP client times out before the shell finishes,
-	// the LLM sees "context deadline exceeded", retries, and spawns duplicate
-	// sub-agents while the original is still running on its detached context.
-	respBody, err := c.requestWithTimeout(ctx, "POST", path, params, 90*time.Minute)
+	respBody, err := c.requestWithTimeout(ctx, "POST", path, params, 0)
 	if err != nil {
 		return ShellCommandResult{}, err
 	}

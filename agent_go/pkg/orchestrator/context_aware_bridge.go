@@ -34,6 +34,7 @@ type orchestratorContext struct {
 	phase     string
 	step      int
 	stepID    string
+	stepType  string
 	agentName string
 }
 
@@ -91,6 +92,7 @@ type ContextAwareEventBridge struct {
 	currentPhase     string
 	currentStep      int    // Step index (deprecated, kept for backward compat)
 	currentStepID    string // Step ID (e.g., "fetch-data", "process-results")
+	currentStepType  string // Plan step type (e.g., "regular", "todo_task", "routing")
 	currentAgentName string
 	// Batch execution context (for batch progress tracking in frontend)
 	currentGroupName string // Current group name being executed
@@ -152,6 +154,7 @@ func (c *ContextAwareEventBridge) SetOrchestratorContext(phase string, step int,
 	c.currentPhase = phase
 	c.currentStep = step
 	c.currentStepID = stepID
+	c.currentStepType = ""
 	c.currentAgentName = agentName
 
 	c.logger.Info(fmt.Sprintf("🎯 Set orchestrator context: %s (step %d, ID: %s)", phase, step+1, stepID))
@@ -168,6 +171,7 @@ func (c *ContextAwareEventBridge) PushContext(phase string, step int, stepID str
 		phase:     c.currentPhase,
 		step:      c.currentStep,
 		stepID:    c.currentStepID,
+		stepType:  c.currentStepType,
 		agentName: c.currentAgentName,
 	})
 
@@ -175,6 +179,7 @@ func (c *ContextAwareEventBridge) PushContext(phase string, step int, stepID str
 	c.currentPhase = phase
 	c.currentStep = step
 	c.currentStepID = stepID
+	c.currentStepType = ""
 	c.currentAgentName = agentName
 
 	c.logger.Info(fmt.Sprintf("📥 Pushed context (stack depth: %d): %s (step %d, ID: %s)", len(c.contextStack), phase, step+1, stepID))
@@ -200,6 +205,7 @@ func (c *ContextAwareEventBridge) PopContext() {
 	c.currentPhase = prevContext.phase
 	c.currentStep = prevContext.step
 	c.currentStepID = prevContext.stepID
+	c.currentStepType = prevContext.stepType
 	c.currentAgentName = prevContext.agentName
 
 	c.logger.Info(fmt.Sprintf("📤 Popped context (stack depth: %d): restored to %s (step %d, ID: %s)", len(c.contextStack), c.currentPhase, c.currentStep+1, c.currentStepID))
@@ -220,6 +226,7 @@ func (c *ContextAwareEventBridge) ClearOrchestratorContext() {
 	c.currentPhase = ""
 	c.currentStep = 0
 	c.currentStepID = ""
+	c.currentStepType = ""
 	c.currentAgentName = ""
 
 	c.logger.Info("🧹 Cleared orchestrator context")
@@ -255,8 +262,20 @@ func (c *ContextAwareEventBridge) SetCurrentStepID(stepID string) {
 	defer c.mu.Unlock()
 
 	c.currentStepID = stepID
+	c.currentStepType = ""
 
 	c.logger.Info(fmt.Sprintf("🎯 Set current step ID: %s", stepID))
+}
+
+// SetCurrentStepContext sets the current workflow plan step ID and type for all events.
+func (c *ContextAwareEventBridge) SetCurrentStepContext(stepID, stepType string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.currentStepID = stepID
+	c.currentStepType = strings.TrimSpace(stepType)
+
+	c.logger.Info(fmt.Sprintf("🎯 Set current step context: %s (%s)", stepID, c.currentStepType))
 }
 
 // ClearCurrentStepID clears the current step ID
@@ -265,6 +284,7 @@ func (c *ContextAwareEventBridge) ClearCurrentStepID() {
 	defer c.mu.Unlock()
 
 	c.currentStepID = ""
+	c.currentStepType = ""
 
 	c.logger.Info("🧹 Cleared current step ID")
 }
@@ -343,6 +363,7 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	currentPhase := c.currentPhase
 	currentStep := c.currentStep
 	currentStepID := c.currentStepID
+	currentStepType := c.currentStepType
 	currentAgentName := c.currentAgentName
 	currentGroupName := c.currentGroupName
 	currentGroupIdx := c.currentGroupIdx
@@ -407,6 +428,9 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 				// Add current step ID (simple tracking - which step is running)
 				if hasStepID {
 					newMeta["current_step_id"] = currentStepID
+					if currentStepType != "" {
+						newMeta["current_step_type"] = currentStepType
+					}
 				}
 
 				// Add batch context (which group is running)

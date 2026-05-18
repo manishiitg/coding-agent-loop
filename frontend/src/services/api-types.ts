@@ -457,6 +457,7 @@ export interface TerminalSnapshot {
   workflow_label?: string
   step_id?: string
   step_name?: string
+  step_type?: string
   agent_name?: string
   display_title?: string
   display_meta?: string

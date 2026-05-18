@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Info, Terminal } from 'lucide-react'
+import { Check, Info, Terminal, X } from 'lucide-react'
 import { agentApi } from '../services/api'
 import type { TerminalSnapshot } from '../services/api-types'
 import { useChatStore } from '../stores/useChatStore'
@@ -55,18 +55,30 @@ function formatExecutionKind(kind?: string): string {
   }
 }
 
+function formatTerminalKindLabel(terminal: TerminalSnapshot): string {
+  const kind = terminal.execution_kind || terminal.scope
+  if ((kind === 'workflow_step' || kind === 'execution_only' || kind === 'step') && terminal.step_type) {
+    return `${humanizeIdentifier(terminal.step_type)} step`
+  }
+  return formatExecutionKind(terminal.execution_kind)
+}
+
 function terminalWorkflowLabel(terminal: TerminalSnapshot): string {
   return terminal.workflow_label || terminal.workflow_name || workflowNameFromPath(terminal.workflow_path)
 }
 
 function terminalTaskLabel(terminal: TerminalSnapshot): string {
   const rawLabel = terminal.label || terminal.execution_id || terminal.owner_id || ''
-  return terminal.step_name || terminal.agent_name || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
+  const kind = terminal.execution_kind || terminal.scope
+  if (kind === 'workflow_step' || kind === 'step' || kind === 'execution_only') {
+    return terminal.step_id || terminal.step_name || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
+  }
+  return terminal.step_name || terminal.agent_name || terminal.step_id || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
 }
 
 function formatTerminalTitle(terminal: TerminalSnapshot): string {
   const workflowName = terminalWorkflowLabel(terminal)
-  const kindLabel = formatExecutionKind(terminal.execution_kind)
+  const kindLabel = formatTerminalKindLabel(terminal)
   const taskLabel = terminalTaskLabel(terminal)
 
   if (workflowName && kindLabel && taskLabel && taskLabel.toLowerCase() !== kindLabel.toLowerCase()) {
@@ -81,6 +93,7 @@ function formatTerminalTitle(terminal: TerminalSnapshot): string {
 function formatTerminalMeta(terminal: TerminalSnapshot): string {
   const parts = [
     terminal.step_id ? `step ${terminal.step_id}` : '',
+    terminal.step_type ? humanizeIdentifier(terminal.step_type) : '',
     terminal.scope ? humanizeIdentifier(terminal.scope) : '',
     terminal.display_meta,
   ].filter(Boolean)
@@ -128,6 +141,21 @@ function terminalStateLabel(terminal: TerminalSnapshot): string {
   }
 }
 
+function terminalStateDescription(terminal: TerminalSnapshot): string {
+  switch (terminalState(terminal)) {
+    case 'running':
+      return 'Active: the coding agent is still running and this terminal is updating.'
+    case 'completed':
+      return 'Completed: the coding agent finished; this is the retained terminal snapshot.'
+    case 'failed':
+      return 'Failed: the coding agent or workflow step ended with an error.'
+    case 'closing':
+      return `Closing: the agent finished and this terminal will be removed in ${formatCloseCountdown(terminalSecondsUntilClose(terminal))}.`
+    default:
+      return terminal.active ? 'Active terminal' : 'Inactive terminal snapshot'
+  }
+}
+
 function terminalDotClass(terminal: TerminalSnapshot): string {
   switch (terminalState(terminal)) {
     case 'running':
@@ -158,6 +186,11 @@ function terminalStateTextClass(terminal: TerminalSnapshot): string {
   }
 }
 
+function canDismissTerminal(terminal: TerminalSnapshot): boolean {
+  const state = terminalState(terminal)
+  return state === 'completed' || state === 'closing' || state === 'failed'
+}
+
 function shortDebugID(value?: string): string {
   if (!value) return ''
   if (value.length <= 18) return value
@@ -172,6 +205,7 @@ function terminalDebugText(terminal: TerminalSnapshot): string {
     terminal.owner_id ? `owner_id=${terminal.owner_id}` : '',
     terminal.execution_id ? `execution_id=${terminal.execution_id}` : '',
     terminal.execution_kind ? `execution_kind=${terminal.execution_kind}` : '',
+    terminal.step_type ? `step_type=${terminal.step_type}` : '',
     terminal.state ? `state=${terminal.state}` : '',
     terminal.closes_at ? `closes_at=${terminal.closes_at}` : '',
     terminal.retention_seconds ? `retention_seconds=${terminal.retention_seconds}` : '',
@@ -183,6 +217,15 @@ function isScrolledNearBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 24
 }
 
+function terminalUpdatedTime(terminal: TerminalSnapshot): number {
+  const value = new Date(terminal.updated_at || terminal.created_at).getTime()
+  return Number.isNaN(value) ? 0 : value
+}
+
+function sortTerminalsNewestFirst(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
+  return [...terminals].sort((a, b) => terminalUpdatedTime(b) - terminalUpdatedTime(a))
+}
+
 export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId, compact }) => {
   const terminalCenterOpen = useChatStore(state => state.terminalCenterOpen)
   const [viewAll, setViewAll] = useState(false)
@@ -190,6 +233,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [selectedID, setSelectedID] = useState<string | null>(null)
   const [userSelectedID, setUserSelectedID] = useState<string | null>(null)
   const [copiedTerminalID, setCopiedTerminalID] = useState<string | null>(null)
+  const [dismissedTerminalIDs, setDismissedTerminalIDs] = useState<Set<string>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
   const terminalOutputRef = useRef<HTMLPreElement | null>(null)
   const terminalAutoScrollRef = useRef(true)
@@ -204,12 +248,49 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const fetchTerminals = useCallback(async () => {
     try {
       const response = await agentApi.listTerminals(viewAll ? undefined : currentSessionId)
-      setTerminals(response.terminals || [])
+      setTerminals((response.terminals || []).filter(terminal => !dismissedTerminalIDs.has(terminal.terminal_id)))
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load terminals')
     }
-  }, [currentSessionId, viewAll])
+  }, [currentSessionId, dismissedTerminalIDs, viewAll])
+
+  const dismissTerminal = useCallback(async (terminal: TerminalSnapshot) => {
+    if (!canDismissTerminal(terminal)) return
+    setDismissedTerminalIDs(current => {
+      const next = new Set(current)
+      next.add(terminal.terminal_id)
+      return next
+    })
+    setTerminals(current => current.filter(item => item.terminal_id !== terminal.terminal_id))
+    if (selectedID === terminal.terminal_id) {
+      setSelectedID(null)
+    }
+    if (userSelectedID === terminal.terminal_id) {
+      setUserSelectedID(null)
+    }
+    try {
+      await agentApi.dismissTerminal(terminal.terminal_id)
+    } catch (err) {
+      // Keep the terminal hidden locally even if the running backend has not picked up
+      // the DELETE route yet. A backend restart will make dismissal persistent there too.
+      console.warn('Failed to dismiss terminal on backend', err)
+    }
+  }, [selectedID, userSelectedID])
+
+  const groupedTerminals = useMemo(() => {
+    const activeTerminals = sortTerminalsNewestFirst(
+      terminals.filter(terminal => terminalState(terminal) === 'running'),
+    )
+    const finishedTerminals = sortTerminalsNewestFirst(
+      terminals.filter(terminal => terminalState(terminal) !== 'running'),
+    )
+    return {
+      activeTerminals,
+      finishedTerminals,
+      orderedTerminals: [...activeTerminals, ...finishedTerminals],
+    }
+  }, [terminals])
 
   useEffect(() => {
     if (!terminalCenterOpen) return
@@ -219,13 +300,13 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   }, [terminalCenterOpen, fetchTerminals])
 
   useEffect(() => {
-    if (terminals.length === 0) {
+    if (groupedTerminals.orderedTerminals.length === 0) {
       setSelectedID(null)
       return
     }
-    const selected = terminals.find(terminal => terminal.terminal_id === selectedID)
-    const userSelected = terminals.find(terminal => terminal.terminal_id === userSelectedID)
-    const latestActive = terminals.find(terminal => terminal.active)
+    const selected = groupedTerminals.orderedTerminals.find(terminal => terminal.terminal_id === selectedID)
+    const userSelected = groupedTerminals.orderedTerminals.find(terminal => terminal.terminal_id === userSelectedID)
+    const latestActive = groupedTerminals.activeTerminals[0]
 
     if (userSelected) {
       if (selectedID !== userSelected.terminal_id) {
@@ -239,15 +320,15 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
 
     if (!selectedID || !selected || (!selected.active && latestActive)) {
-      setSelectedID((latestActive || terminals[0]).terminal_id)
+      setSelectedID((latestActive || groupedTerminals.orderedTerminals[0]).terminal_id)
     }
-  }, [selectedID, terminals, userSelectedID])
+  }, [groupedTerminals, selectedID, userSelectedID])
 
   const selectedTerminal = useMemo(
-    () => terminals.find(terminal => terminal.terminal_id === selectedID) || terminals[0],
-    [selectedID, terminals],
+    () => groupedTerminals.orderedTerminals.find(terminal => terminal.terminal_id === selectedID) || groupedTerminals.orderedTerminals[0],
+    [groupedTerminals, selectedID],
   )
-  const activeCount = terminals.filter(terminal => terminal.active).length
+  const activeCount = groupedTerminals.activeTerminals.length
 
   const handleTerminalScroll = useCallback(() => {
     const el = terminalOutputRef.current
@@ -276,6 +357,72 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   if (!terminalCenterOpen) {
     return null
   }
+
+  const renderTerminalCard = (terminal: TerminalSnapshot) => (
+    <div
+      key={terminal.terminal_id}
+      role="button"
+      tabIndex={0}
+      onClick={() => {
+        setSelectedID(terminal.terminal_id)
+        setUserSelectedID(terminal.terminal_id)
+      }}
+      onKeyDown={event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          setSelectedID(terminal.terminal_id)
+          setUserSelectedID(terminal.terminal_id)
+        }
+      }}
+      className={`min-w-[180px] max-w-[280px] rounded border px-2.5 py-2 text-left text-xs transition-colors ${
+        terminal.terminal_id === selectedTerminal?.terminal_id
+          ? 'border-neutral-500 bg-neutral-800 text-neutral-100 shadow-sm'
+          : 'border-neutral-700 bg-neutral-900/30 text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200'
+      }`}
+    >
+      <div className="flex items-center gap-1.5">
+        <span
+          className={`h-2 w-2 rounded-full ${terminalDotClass(terminal)}`}
+          title={terminalStateDescription(terminal)}
+          aria-label={terminalStateDescription(terminal)}
+        />
+        <span className="min-w-0 flex-1 truncate font-medium">{formatTerminalTitle(terminal)}</span>
+        <button
+          type="button"
+          onClick={event => {
+            event.stopPropagation()
+            void copyTerminalDebug(terminal)
+          }}
+          className="shrink-0 rounded p-0.5 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-100"
+          title="Copy terminal debug IDs"
+          aria-label="Copy terminal debug IDs"
+        >
+          {copiedTerminalID === terminal.terminal_id ? (
+            <Check className="h-3.5 w-3.5 text-emerald-300" />
+          ) : (
+            <Info className="h-3.5 w-3.5" />
+          )}
+        </button>
+        {canDismissTerminal(terminal) && (
+          <button
+            type="button"
+            onClick={event => {
+              event.stopPropagation()
+              void dismissTerminal(terminal)
+            }}
+            className="shrink-0 rounded p-0.5 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-100"
+            title="Remove terminal from UI"
+            aria-label="Remove terminal from UI"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      <div className="mt-1 truncate text-[11px] opacity-70">
+        {formatTerminalMeta(terminal) || 'Current session'} · {terminalStateLabel(terminal)}
+      </div>
+    </div>
+  )
 
   return (
     <div className={`${compact ? 'my-2' : 'my-3'} rounded-md border border-neutral-700 bg-[#202020] text-neutral-100 shadow-sm`}>
@@ -319,53 +466,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         {terminals.length > 0 && (
           <>
             <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
-              {terminals.map(terminal => (
-                <div
-                  key={terminal.terminal_id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    setSelectedID(terminal.terminal_id)
-                    setUserSelectedID(terminal.terminal_id)
-                  }}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      setSelectedID(terminal.terminal_id)
-                      setUserSelectedID(terminal.terminal_id)
-                    }
-                  }}
-                  className={`min-w-[180px] max-w-[280px] rounded border px-2.5 py-2 text-left text-xs transition-colors ${
-                    terminal.terminal_id === selectedTerminal?.terminal_id
-                      ? 'border-neutral-500 bg-neutral-800 text-neutral-100 shadow-sm'
-                      : 'border-neutral-700 bg-neutral-900/30 text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span className={`h-2 w-2 rounded-full ${terminalDotClass(terminal)}`} />
-                    <span className="min-w-0 flex-1 truncate font-medium">{formatTerminalTitle(terminal)}</span>
-                    <button
-                      type="button"
-                      onClick={event => {
-                        event.stopPropagation()
-                        void copyTerminalDebug(terminal)
-                      }}
-                      className="shrink-0 rounded p-0.5 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-100"
-                      title="Copy terminal debug IDs"
-                      aria-label="Copy terminal debug IDs"
-                    >
-                      {copiedTerminalID === terminal.terminal_id ? (
-                        <Check className="h-3.5 w-3.5 text-emerald-300" />
-                      ) : (
-                        <Info className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                  </div>
-                  <div className="mt-1 truncate text-[11px] opacity-70">
-                    {formatTerminalMeta(terminal) || 'Current session'} · {terminalStateLabel(terminal)}
-                  </div>
-                </div>
-              ))}
+              {groupedTerminals.activeTerminals.map(renderTerminalCard)}
+              {groupedTerminals.finishedTerminals.map(renderTerminalCard)}
             </div>
 
             {selectedTerminal && (
@@ -373,7 +475,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2 text-xs text-gray-400">
                   <span className="truncate">{formatTerminalTitle(selectedTerminal)}</span>
                   <div className="flex shrink-0 items-center gap-2">
-                    <span className={terminalStateTextClass(selectedTerminal)}>
+                    <span
+                      className={terminalStateTextClass(selectedTerminal)}
+                      title={terminalStateDescription(selectedTerminal)}
+                    >
                       {terminalStateLabel(selectedTerminal)}
                     </span>
                     <button
@@ -389,6 +494,17 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                         <Info className="h-3.5 w-3.5" />
                       )}
                     </button>
+                    {canDismissTerminal(selectedTerminal) && (
+                      <button
+                        type="button"
+                        onClick={() => void dismissTerminal(selectedTerminal)}
+                        className="inline-flex items-center justify-center rounded border border-neutral-700 p-1 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
+                        title="Remove terminal from UI"
+                        aria-label="Remove terminal from UI"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
                 <pre ref={terminalOutputRef} onScroll={handleTerminalScroll} className="max-h-[46vh] overflow-auto overscroll-contain p-2.5 font-mono text-[12px] leading-5 text-gray-100 whitespace-pre">

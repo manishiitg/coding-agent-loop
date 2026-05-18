@@ -73,6 +73,36 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 	_ = json.NewEncoder(w).Encode(api.enrichTerminalSnapshot(snapshot))
 }
 
+// handleDismissTerminal removes one terminal snapshot from the UI.
+// DELETE /api/terminals/{terminal_id}
+func (api *StreamingAPI) handleDismissTerminal(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if api.terminalStore == nil {
+		http.Error(w, "Terminal not found", http.StatusNotFound)
+		return
+	}
+
+	terminalID := strings.TrimSpace(mux.Vars(r)["terminal_id"])
+	if terminalID == "" {
+		http.Error(w, "Terminal ID is required", http.StatusBadRequest)
+		return
+	}
+	snapshot, ok := api.terminalStore.Get(terminalID)
+	if !ok || !api.canAccessTerminalSession(r, snapshot.SessionID) {
+		http.Error(w, "Terminal not found", http.StatusNotFound)
+		return
+	}
+	if !api.terminalStore.Dismiss(terminalID) {
+		http.Error(w, "Terminal not found", http.StatusNotFound)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]bool{"dismissed": true})
+}
+
 func (api *StreamingAPI) enrichTerminalSnapshot(snapshot terminals.Snapshot) terminals.Snapshot {
 	active, exists := api.getActiveSession(snapshot.SessionID)
 	if !exists || active == nil {

@@ -27,6 +27,7 @@ func TestStoreTracksTerminalChunksByOwner(t *testing.T) {
 						"kind":          "terminal",
 						"step_id":       "step-sentry-evidence",
 						"step_title":    "Pull Sentry Evidence",
+						"step_type":     "todo_task",
 						"workflow_path": "Workflow/rtsrca",
 					},
 				},
@@ -68,8 +69,14 @@ func TestStoreTracksTerminalChunksByOwner(t *testing.T) {
 	if snapshot.StepName != "Pull Sentry Evidence" {
 		t.Fatalf("unexpected step name: %q", snapshot.StepName)
 	}
-	if snapshot.DisplayTitle != "Rtsrca -> Pull Sentry Evidence" {
+	if snapshot.StepType != "todo_task" {
+		t.Fatalf("unexpected step type: %q", snapshot.StepType)
+	}
+	if snapshot.DisplayTitle != "Rtsrca -> step-sentry-evidence" {
 		t.Fatalf("unexpected display title: %q", snapshot.DisplayTitle)
+	}
+	if snapshot.DisplayMeta != "Todo task · Workflow step" {
+		t.Fatalf("unexpected display meta: %q", snapshot.DisplayMeta)
 	}
 	if snapshot.Status.StatusText == "" {
 		t.Fatalf("expected derived status text")
@@ -104,6 +111,30 @@ func TestSnapshotWithContextFillsReadableDisplay(t *testing.T) {
 	}
 	if enriched.AgentName != "Workflow builder" {
 		t.Fatalf("agent name = %q", enriched.AgentName)
+	}
+}
+
+func TestSnapshotWithContextKeepsWorkflowStepIDInTitle(t *testing.T) {
+	snapshot := Snapshot{
+		TerminalID:    "session-1:workflow-step:run:bid-submit",
+		SessionID:     "session-1",
+		OwnerID:       "workflow-step:run:bid-submit",
+		ExecutionKind: "workflow_step",
+		StepID:        "bid-submit",
+		Scope:         "workflow_step",
+	}
+
+	enriched := snapshot.WithContext(Context{
+		WorkflowLabel: "upwork",
+		WorkspacePath: "Workflow/upwork",
+		ExecutionName: "full-workflow [daily-bid / iteration-0]",
+	})
+
+	if enriched.DisplayTitle != "upwork -> bid-submit" {
+		t.Fatalf("display title = %q", enriched.DisplayTitle)
+	}
+	if enriched.StepName != "" {
+		t.Fatalf("step name should not be filled from execution name when step id exists, got %q", enriched.StepName)
 	}
 }
 
@@ -235,6 +266,7 @@ func TestStoreMarksTerminalClosingWithRetention(t *testing.T) {
 func TestStoreDetectsFailedTerminalState(t *testing.T) {
 	store := NewStore()
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "LLM Generation Error\nSTATUS: FAILED", 1))
+	store.HandleEvent("session-1", terminalEndEvent("exec-1", nil))
 
 	snapshot, ok := store.Get("session-1:exec-1")
 	if !ok {
@@ -242,6 +274,80 @@ func TestStoreDetectsFailedTerminalState(t *testing.T) {
 	}
 	if snapshot.State != "failed" {
 		t.Fatalf("state = %q, want failed", snapshot.State)
+	}
+}
+
+func TestStoreKeepsActiveTerminalRunningWhenScreenContainsFailureText(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "Checking if the browser failed to start...\n• Working (2m • esc to interrupt)", 1))
+
+	snapshot, ok := store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
+	}
+}
+
+func TestStoreKeepsTerminalRunningWhenEndArrivesDuringBusyPane(t *testing.T) {
+	store := NewStore()
+	screen := `╭──────────────────────────────────────────────────────────────────────────╮
+│ ✓ agent_browser (api-bridge MCP Server) {"action":"wait","timeout":10} │
+╰──────────────────────────────────────────────────────────────────────────╯
+ERROR: Custom tool execution failed: command timed out after 2m0s
+
+⊷ agent_browser (api-bridge MCP Server) {"action":"wait","timeout":10}
+
+⠇ Thinking... (esc to cancel, 14m 30s)
+──────────────────────────────────────────────────────────────────────────────
+ >   Type your message or @path/to/file
+workspace (/directory)                         sandbox                  /model
+/tmp/project                                   no sandbox       Auto (Gemini 3)`
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", screen, 1))
+	store.HandleEvent("session-1", terminalEndEvent("exec-1", nil))
+
+	snapshot, ok := store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if !snapshot.Active {
+		t.Fatalf("terminal should remain active while pane is still thinking")
+	}
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
+	}
+}
+
+func TestStoreCompletedStatusWinsOverPreviousFailureText(t *testing.T) {
+	store := NewStore()
+	screen := "PRE-VALIDATION FAILED on retry 1\nRecovered and wrote cdp_status.json\nSTATUS: COMPLETED"
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", screen, 1))
+	store.HandleEvent("session-1", terminalEndEvent("exec-1", nil))
+
+	snapshot, ok := store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.State != "completed" {
+		t.Fatalf("state = %q, want completed", snapshot.State)
+	}
+}
+
+func TestStoreDismissRemovesTerminalAndSuppressesFutureChunks(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "screen one", 1))
+
+	if !store.Dismiss("session-1:exec-1") {
+		t.Fatalf("expected dismiss to remove terminal")
+	}
+	if _, ok := store.Get("session-1:exec-1"); ok {
+		t.Fatalf("terminal should be removed after dismiss")
+	}
+
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "screen two", 2))
+	if _, ok := store.Get("session-1:exec-1"); ok {
+		t.Fatalf("dismissed terminal should not be recreated by future chunks")
 	}
 }
 
@@ -288,6 +394,26 @@ func terminalEventAt(eventType, executionID, content string, chunkIndex int, tim
 	}
 }
 
+func terminalEndEvent(executionID string, metadata map[string]interface{}) storeevents.Event {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadata["kind"] = "terminal"
+	return storeevents.Event{
+		Type:        "streaming_end",
+		SessionID:   "session-1",
+		ExecutionID: executionID,
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.StreamingEnd,
+			Data: &agentevents.StreamingEndEvent{
+				BaseEventData: agentevents.BaseEventData{
+					Metadata: metadata,
+				},
+			},
+		},
+	}
+}
+
 func TestDeriveStatusExtractsClaudeAssistantPreview(t *testing.T) {
 	screen := `╭─── Claude Code v2.1.143 ───╮
 ❯ check the current state
@@ -328,6 +454,25 @@ Shift+Tab to accept edits`
 	}
 	if status.ToolSummary != "execute_shell_command" {
 		t.Fatalf("tool summary = %q", status.ToolSummary)
+	}
+}
+
+func TestDeriveStatusPreservesMultilineAssistantPreview(t *testing.T) {
+	screen := `▝▜▄ Gemini CLI v0.42.0
+✦ Here is what I found:
+- First useful detail
+- Second useful detail
+- Third useful detail
+
+╭────────────────────────────╮
+│ ✓ execute_shell_command (api-bridge MCP Server) {"command":"pwd"} │
+╰────────────────────────────╯
+? for shortcuts`
+
+	status := DeriveStatus(screen, map[string]interface{}{"provider": "gemini-cli"})
+	want := "Here is what I found:\n- First useful detail\n- Second useful detail\n- Third useful detail"
+	if status.AssistantPreview != want {
+		t.Fatalf("assistant preview = %q, want %q", status.AssistantPreview, want)
 	}
 }
 

@@ -14,8 +14,13 @@ var (
 	longSeparatorPattern  = regexp.MustCompile(`^[\s─━═-]{16,}$`)
 	boxDrawingOnlyPattern = regexp.MustCompile(`^[\s│┃║┌┐└┘├┤┬┴┼╭╮╰╯─━═╎╏]+$`)
 	whitespacePattern     = regexp.MustCompile(`\s+`)
-	leadingMarkerPattern  = regexp.MustCompile(`^[\s│┃║╎╏>›❯•*-]+`)
+	leadingMarkerPattern  = regexp.MustCompile(`^[\s│┃║╎╏>›❯]+`)
 	trailingStatusPattern = regexp.MustCompile(`\s*(?:\?|for shortcuts|Shift\+Tab.*|esc to interrupt.*)$`)
+)
+
+const (
+	maxAssistantPreviewLines = 12
+	maxAssistantPreviewChars = 1200
 )
 
 // DeriveStatus extracts a compact progress summary from a terminal screen.
@@ -101,7 +106,7 @@ func markerPreview(content, marker string) string {
 			continue
 		}
 		candidateParts := []string{strings.TrimSpace(line[markerIndex+len(marker):])}
-		for j := i + 1; j < len(lines) && len(candidateParts) < 4; j++ {
+		for j := i + 1; j < len(lines) && len(candidateParts) < maxAssistantPreviewLines; j++ {
 			next := strings.TrimSpace(lines[j])
 			if strings.Contains(next, marker) || isNoisyTerminalLine(next) {
 				break
@@ -110,7 +115,7 @@ func markerPreview(content, marker string) string {
 				candidateParts = append(candidateParts, next)
 			}
 		}
-		candidate := cleanPreview(strings.Join(candidateParts, " "))
+		candidate := cleanPreviewBlock(candidateParts)
 		if candidate != "" {
 			best = candidate
 		}
@@ -187,7 +192,25 @@ func cleanedLines(content string) []string {
 	return lines
 }
 
-func cleanPreview(value string) string {
+func cleanPreviewBlock(lines []string) string {
+	cleaned := make([]string, 0, len(lines))
+	for _, line := range lines {
+		cleanedLine := cleanPreviewLine(line)
+		if cleanedLine != "" {
+			cleaned = append(cleaned, cleanedLine)
+		}
+	}
+	value := strings.TrimSpace(strings.Join(cleaned, "\n"))
+	if value == "" || isNoisyTerminalLine(value) {
+		return ""
+	}
+	if len(value) > maxAssistantPreviewChars {
+		value = strings.TrimSpace(value[:maxAssistantPreviewChars]) + "..."
+	}
+	return value
+}
+
+func cleanPreviewLine(value string) string {
 	value = strings.TrimSpace(value)
 	value = leadingMarkerPattern.ReplaceAllString(value, "")
 	value = trailingStatusPattern.ReplaceAllString(value, "")
@@ -195,9 +218,6 @@ func cleanPreview(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || isNoisyTerminalLine(value) {
 		return ""
-	}
-	if len(value) > 180 {
-		value = strings.TrimSpace(value[:180]) + "..."
 	}
 	return value
 }
@@ -252,23 +272,73 @@ func isNoisyTerminalLine(line string) bool {
 }
 
 func terminalStateFromContent(content string, active bool) string {
+	if active {
+		return "running"
+	}
 	lower := strings.ToLower(strings.Join(cleanedLines(content), "\n"))
 	switch {
+	case strings.Contains(lower, "status: completed"),
+		strings.Contains(lower, "completed successfully"),
+		strings.Contains(lower, "status: complete"):
+		return "completed"
+	case terminalContentLooksBusy(content):
+		return "running"
 	case strings.Contains(lower, "status: failed"),
 		strings.Contains(lower, "pre-validation failed"),
 		strings.Contains(lower, "llm generation error"),
 		strings.Contains(lower, "conversation error"),
 		strings.Contains(lower, "agent error:"),
-		strings.Contains(lower, "failed to "),
 		strings.Contains(lower, " error details:"):
 		return "failed"
-	case strings.Contains(lower, "status: completed"),
-		strings.Contains(lower, "completed successfully"),
-		strings.Contains(lower, "status: complete"):
-		return "completed"
-	case active:
-		return "running"
 	default:
 		return "completed"
 	}
+}
+
+func terminalContentLooksBusy(content string) bool {
+	lines := cleanedLines(content)
+	if len(lines) == 0 {
+		return false
+	}
+	start := 0
+	if len(lines) > 80 {
+		start = len(lines) - 80
+	}
+	for _, line := range lines[start:] {
+		if isTerminalBusyLine(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTerminalBusyLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "agent is still working") {
+		return true
+	}
+	if strings.Contains(lower, "esc to cancel") || strings.Contains(lower, "esc to interrupt") {
+		return strings.Contains(lower, "thinking") ||
+			strings.Contains(lower, "working") ||
+			strings.Contains(lower, "processing") ||
+			strings.Contains(lower, "running") ||
+			strings.Contains(lower, "executing")
+	}
+	if strings.HasPrefix(trimmed, "⊷") || strings.HasPrefix(trimmed, "⠇") {
+		return strings.Contains(lower, "thinking") ||
+			strings.Contains(lower, "processing") ||
+			strings.Contains(lower, "running") ||
+			strings.Contains(lower, "agent_browser") ||
+			strings.Contains(lower, "execute_")
+	}
+	if strings.HasPrefix(trimmed, "✳") || strings.HasPrefix(trimmed, "✽") {
+		return strings.Contains(lower, "tokens") ||
+			strings.Contains(lower, "thought") ||
+			strings.Contains(lower, "thinking")
+	}
+	return false
 }

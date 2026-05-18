@@ -657,6 +657,10 @@ export const agentApi = {
     return response.data
   },
 
+  dismissTerminal: async (terminalId: string): Promise<void> => {
+    await api.delete(`/api/terminals/${encodeURIComponent(terminalId)}`)
+  },
+
   // Observer APIs removed - no longer needed
 
   // Stop session/agent execution (preserves conversation history)

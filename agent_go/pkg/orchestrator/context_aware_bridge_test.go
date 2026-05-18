@@ -24,7 +24,7 @@ func (l *captureEventListener) HandleEvent(ctx context.Context, event *mcpagent_
 func TestContextAwareBridgeTagsTerminalStreamWithExecutionOwner(t *testing.T) {
 	listener := &captureEventListener{}
 	bridge := NewContextAwareEventBridge(listener, loggerv2.NewNoop())
-	bridge.SetCurrentStepID("shared-step")
+	bridge.SetCurrentStepContext("shared-step", "todo_task")
 
 	ctx := context.WithValue(context.Background(), orchevents.ParentExecutionIDKey, "sub-exec-rds-evidence-123")
 	event := &mcpagent_events.AgentEvent{
@@ -61,5 +61,8 @@ func TestContextAwareBridgeTagsTerminalStreamWithExecutionOwner(t *testing.T) {
 	}
 	if got := metadata["current_step_id"]; got != "shared-step" {
 		t.Fatalf("current_step_id = %v, want shared-step", got)
+	}
+	if got := metadata["current_step_type"]; got != "todo_task" {
+		t.Fatalf("current_step_type = %v, want todo_task", got)
 	}
 }

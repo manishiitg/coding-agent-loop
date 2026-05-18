@@ -27,6 +27,7 @@ type Snapshot struct {
 	WorkflowLabel    string     `json:"workflow_label,omitempty"`
 	StepID           string     `json:"step_id,omitempty"`
 	StepName         string     `json:"step_name,omitempty"`
+	StepType         string     `json:"step_type,omitempty"`
 	AgentName        string     `json:"agent_name,omitempty"`
 	DisplayTitle     string     `json:"display_title,omitempty"`
 	DisplayMeta      string     `json:"display_meta,omitempty"`
@@ -65,12 +66,14 @@ type Store struct {
 	mu        sync.RWMutex
 	byID      map[string]Snapshot
 	bySession map[string]map[string]struct{}
+	dismissed map[string]struct{}
 }
 
 func NewStore() *Store {
 	return &Store{
 		byID:      make(map[string]Snapshot),
 		bySession: make(map[string]map[string]struct{}),
+		dismissed: make(map[string]struct{}),
 	}
 }
 
@@ -144,8 +147,32 @@ func (s *Store) RemoveSession(sessionID string) {
 	defer s.mu.Unlock()
 	for terminalID := range s.bySession[sessionID] {
 		delete(s.byID, terminalID)
+		delete(s.dismissed, terminalID)
 	}
 	delete(s.bySession, sessionID)
+}
+
+func (s *Store) Dismiss(terminalID string) bool {
+	terminalID = strings.TrimSpace(terminalID)
+	if s == nil || terminalID == "" {
+		return false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return false
+	}
+	delete(s.byID, terminalID)
+	if snapshot.SessionID != "" {
+		delete(s.bySession[snapshot.SessionID], terminalID)
+		if len(s.bySession[snapshot.SessionID]) == 0 {
+			delete(s.bySession, snapshot.SessionID)
+		}
+	}
+	s.dismissed[terminalID] = struct{}{}
+	return true
 }
 
 func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metadata map[string]interface{}, content string, chunkIndex int) {
@@ -158,6 +185,9 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.dismissed[terminalID]; ok {
+		return
+	}
 
 	current, exists := s.byID[terminalID]
 	if exists && chunkIndex < current.ChunkIndex && !isNewTerminalTurn(current, now, chunkIndex) {
@@ -181,6 +211,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.WorkflowLabel = firstNonEmpty(stringValue(metadata, "workflow_label"), stringValue(metadata, "preset_name"), current.WorkflowName)
 	current.StepID = firstNonEmpty(stringValue(metadata, "current_step_id"), stringValue(metadata, "workflow_step_id"), stringValue(metadata, "step_id"))
 	current.StepName = firstNonEmpty(stringValue(metadata, "step_title"), stringValue(metadata, "current_step_title"))
+	current.StepType = firstNonEmpty(stringValue(metadata, "current_step_type"), stringValue(metadata, "workflow_step_type"), stringValue(metadata, "step_type"), stringValue(metadata, "plan_step_type"))
 	current.AgentName = firstNonEmpty(stringValue(metadata, "agent_name"), stringValue(metadata, "orchestrator_agent_name"))
 	current.TmuxSession = firstNonEmpty(
 		stringValue(metadata, "tmux_session"),
@@ -229,7 +260,7 @@ func (snapshot Snapshot) WithContext(ctx Context) Snapshot {
 	if snapshot.Scope == "" && ctx.ExecutionName != "" {
 		snapshot.Scope = "session"
 	}
-	if snapshot.StepName == "" && snapshot.ExecutionKind != "main_agent" {
+	if snapshot.StepName == "" && snapshot.StepID == "" && snapshot.ExecutionKind != "main_agent" {
 		snapshot.StepName = ctx.ExecutionName
 	}
 	if snapshot.AgentName == "" && snapshot.ExecutionKind == "main_agent" {
@@ -247,10 +278,19 @@ func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]inte
 	if !ok {
 		return
 	}
-	snapshot.Active = false
 	state := terminalStateFromContent(snapshot.Content, false)
-	retentionSeconds := intValue(metadata["terminal_retention_seconds"])
 	now := time.Now()
+	if state == "running" {
+		snapshot.Active = true
+		snapshot.State = "running"
+		snapshot.ClosesAt = nil
+		snapshot.RetentionSeconds = 0
+		snapshot.UpdatedAt = now
+		s.byID[terminalID] = snapshot
+		return
+	}
+	snapshot.Active = false
+	retentionSeconds := intValue(metadata["terminal_retention_seconds"])
 	if retentionSeconds > 0 {
 		closesAt := now.Add(time.Duration(retentionSeconds) * time.Second)
 		snapshot.ClosesAt = &closesAt
@@ -378,27 +418,37 @@ func fillDisplayContext(snapshot *Snapshot) {
 	}
 	workflowLabel := firstNonEmpty(snapshot.WorkflowLabel, snapshot.WorkflowName, workflowNameFromPath(snapshot.WorkflowPath))
 	kindLabel := executionKindLabel(snapshot.ExecutionKind, snapshot.Scope)
-	taskLabel := firstNonEmpty(snapshot.StepName, snapshot.AgentName, cleanOpaqueLabel(snapshot.Label))
+	taskLabel := firstNonEmpty(terminalTaskLabel(*snapshot), cleanOpaqueLabel(snapshot.Label))
+	stepTypeLabel := humanizeIdentifier(snapshot.StepType)
 
 	switch {
 	case workflowLabel != "" && taskLabel != "" && kindLabel != "":
 		snapshot.DisplayTitle = fmt.Sprintf("%s -> %s", workflowLabel, taskLabel)
-		snapshot.DisplayMeta = kindLabel
+		snapshot.DisplayMeta = strings.Join(uniqueNonEmpty(stepTypeLabel, kindLabel), " · ")
 	case workflowLabel != "" && kindLabel != "":
 		snapshot.DisplayTitle = fmt.Sprintf("%s -> %s", workflowLabel, kindLabel)
-		snapshot.DisplayMeta = taskLabel
+		snapshot.DisplayMeta = strings.Join(uniqueNonEmpty(stepTypeLabel, taskLabel), " · ")
 	case taskLabel != "" && kindLabel != "":
 		snapshot.DisplayTitle = fmt.Sprintf("%s -> %s", kindLabel, taskLabel)
-		snapshot.DisplayMeta = workflowLabel
+		snapshot.DisplayMeta = strings.Join(uniqueNonEmpty(stepTypeLabel, workflowLabel), " · ")
 	case taskLabel != "":
 		snapshot.DisplayTitle = taskLabel
-		snapshot.DisplayMeta = firstNonEmpty(workflowLabel, kindLabel)
+		snapshot.DisplayMeta = strings.Join(uniqueNonEmpty(stepTypeLabel, firstNonEmpty(workflowLabel, kindLabel)), " · ")
 	default:
 		snapshot.DisplayTitle = firstNonEmpty(workflowLabel, kindLabel, "Terminal")
-		snapshot.DisplayMeta = cleanOpaqueLabel(firstNonEmpty(snapshot.ExecutionID, snapshot.OwnerID))
+		snapshot.DisplayMeta = strings.Join(uniqueNonEmpty(stepTypeLabel, cleanOpaqueLabel(firstNonEmpty(snapshot.ExecutionID, snapshot.OwnerID))), " · ")
 	}
 
 	snapshot.DisplayMeta = strings.Join(uniqueNonEmpty(snapshot.DisplayMeta), " · ")
+}
+
+func terminalTaskLabel(snapshot Snapshot) string {
+	switch firstNonEmpty(snapshot.ExecutionKind, snapshot.Scope) {
+	case "workflow_step", "step", "execution_only":
+		return firstNonEmpty(snapshot.StepID, snapshot.StepName)
+	default:
+		return firstNonEmpty(snapshot.StepName, snapshot.AgentName, snapshot.StepID)
+	}
 }
 
 func executionKindLabel(kind, scope string) string {

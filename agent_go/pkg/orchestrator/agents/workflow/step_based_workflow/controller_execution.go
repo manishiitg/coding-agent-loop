@@ -3042,6 +3042,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 		}
 		if bridge := hcpo.GetContextAwareBridge(); bridge != nil {
 			if stepBridge, ok := bridge.(interface {
+				SetCurrentStepContext(stepID, stepType string)
+			}); ok {
+				stepBridge.SetCurrentStepContext(stepID, string(step.StepType()))
+			} else if stepBridge, ok := bridge.(interface {
 				SetCurrentStepID(stepID string)
 			}); ok {
 				stepBridge.SetCurrentStepID(stepID)

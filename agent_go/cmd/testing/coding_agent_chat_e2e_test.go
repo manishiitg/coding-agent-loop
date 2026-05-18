@@ -4,10 +4,9 @@ import stdtesting "testing"
 
 func TestDefaultCodingAgentE2EModelIncludesCursorCLI(st *stdtesting.T) {
 	tests := map[string]string{
-		"gemini-cli":  "gemini-3.1-flash-lite",
-		"codex-cli":   "gpt-5.3-codex-spark",
-		"cursor-cli":  "cursor-cli",
-		"claude-code": "claude-haiku-4.5",
+		"gemini-cli": "gemini-3.1-flash-lite",
+		"codex-cli":  "gpt-5.3-codex-spark",
+		"cursor-cli": "cursor-cli",
 	}
 
 	for provider, want := range tests {

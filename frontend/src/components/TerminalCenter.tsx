@@ -179,6 +179,10 @@ function terminalDebugText(terminal: TerminalSnapshot): string {
   ].filter(Boolean).join('\n')
 }
 
+function isScrolledNearBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 24
+}
+
 export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId, compact }) => {
   const terminalCenterOpen = useChatStore(state => state.terminalCenterOpen)
   const [viewAll, setViewAll] = useState(false)
@@ -188,6 +192,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [copiedTerminalID, setCopiedTerminalID] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const terminalOutputRef = useRef<HTMLPreElement | null>(null)
+  const terminalAutoScrollRef = useRef(true)
+  const selectedTerminalIDRef = useRef<string | null>(null)
 
   const copyTerminalDebug = useCallback(async (terminal: TerminalSnapshot) => {
     await navigator.clipboard.writeText(terminalDebugText(terminal))
@@ -243,10 +249,28 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   )
   const activeCount = terminals.filter(terminal => terminal.active).length
 
+  const handleTerminalScroll = useCallback(() => {
+    const el = terminalOutputRef.current
+    if (!el) return
+    terminalAutoScrollRef.current = isScrolledNearBottom(el)
+  }, [])
+
   useEffect(() => {
     const el = terminalOutputRef.current
     if (!el || !selectedTerminal?.content) return
-    el.scrollTop = el.scrollHeight
+
+    const terminalChanged = selectedTerminalIDRef.current !== selectedTerminal.terminal_id
+    if (terminalChanged) {
+      selectedTerminalIDRef.current = selectedTerminal.terminal_id
+      terminalAutoScrollRef.current = true
+    }
+
+    if (!terminalAutoScrollRef.current) return
+
+    const frame = window.requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight
+    })
+    return () => window.cancelAnimationFrame(frame)
   }, [selectedTerminal?.terminal_id, selectedTerminal?.content])
 
   if (!terminalCenterOpen) {
@@ -367,7 +391,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                     </button>
                   </div>
                 </div>
-                <pre ref={terminalOutputRef} className="max-h-[46vh] overflow-auto overscroll-contain p-2.5 font-mono text-[12px] leading-5 text-gray-100 whitespace-pre">
+                <pre ref={terminalOutputRef} onScroll={handleTerminalScroll} className="max-h-[46vh] overflow-auto overscroll-contain p-2.5 font-mono text-[12px] leading-5 text-gray-100 whitespace-pre">
                   {selectedTerminal.content}
                 </pre>
               </div>

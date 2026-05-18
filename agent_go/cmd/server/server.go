@@ -3375,6 +3375,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			CodexPersistentInteractiveSession:      codexPersistentInteractive,
 			GeminiPersistentInteractiveSession:     geminiPersistentInteractive,
 			CursorPersistentInteractiveSession:     cursorPersistentInteractive,
+			CursorBridgeToolsMode:                  cursorPersistentInteractive,
 			OpenCodePersistentInteractiveSession:   openCodePersistentInteractive,
 			ClaudeCodeTransport:                    claudeCodeTransport,
 			CodingAgentWorkingDir:                  chatWorkingDir,

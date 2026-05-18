@@ -204,6 +204,7 @@ type LLMAgentConfig struct {
 	CodexPersistentInteractiveSession      bool
 	GeminiPersistentInteractiveSession     bool
 	CursorPersistentInteractiveSession     bool
+	CursorBridgeToolsMode                  bool
 	OpenCodePersistentInteractiveSession   bool
 	ClaudeCodeTransport                    string
 	CodingAgentWorkingDir                  string
@@ -446,6 +447,10 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.CursorPersistentInteractiveSession {
 		agentOptions = append(agentOptions, mcpagent.WithCursorPersistentInteractiveSession(true))
 		logger.Info("🔗 Cursor CLI persistent interactive tmux session enabled")
+	}
+	if config.CursorBridgeToolsMode {
+		agentOptions = append(agentOptions, mcpagent.WithCursorBridgeToolsMode(true))
+		logger.Info("🔗 Cursor CLI bridge tools mode enabled (--mode ask blocks built-in Write/Shell)")
 	}
 	if config.OpenCodePersistentInteractiveSession {
 		agentOptions = append(agentOptions, mcpagent.WithOpenCodePersistentInteractiveSession(true))

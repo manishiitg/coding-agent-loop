@@ -328,6 +328,18 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	} else if envKeys.Azure != nil {
 		result.Azure = envKeys.Azure
 	}
+
+	// OpenCode CLI sub-provider credentials: merge env + workspace into
+	// the shared ProviderAPIKeys struct so InitializeLLM can pull the
+	// matching key when constructing a sub-provider-scoped adapter.
+	if subKeys := MergedOpenCodeSubProviderKeys(ctx); len(subKeys) > 0 {
+		copied := make(map[string]string, len(subKeys))
+		for k, v := range subKeys {
+			copied[k] = v
+		}
+		result.OpenCodeCLISubKeys = copied
+	}
+
 	return result
 }
 

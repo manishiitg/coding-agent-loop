@@ -46,6 +46,20 @@ func (o *costObserver) HandleEvent(_ context.Context, event *unifiedevents.Agent
 	}
 
 	cacheRead, cacheWrite := extractCacheTokens(tu.GenerationInfo)
+	effectiveModel, estimatedCost := extractCostAndEffectiveModel(tu.GenerationInfo)
+
+	// Provider-blessed cost wins over the adapter-side estimate; the
+	// estimate only fills in for CLIs whose JSON doesn't ship USD
+	// (codex / cursor / gemini-cli) or for tmux paths.
+	totalCostUSD := tu.TotalCost
+	costSource := ""
+	if totalCostUSD > 0 {
+		costSource = "provider"
+	} else if estimatedCost > 0 {
+		totalCostUSD = estimatedCost
+		costSource = "estimated"
+	}
+
 	entry := costledger.Entry{
 		Timestamp:        event.Timestamp,
 		SessionID:        o.sessionID,
@@ -55,17 +69,58 @@ func (o *costObserver) HandleEvent(_ context.Context, event *unifiedevents.Agent
 		CorrelationID:    event.CorrelationID,
 		Provider:         tu.Provider,
 		ModelID:          tu.ModelID,
+		EffectiveModelID: effectiveModel,
 		PromptTokens:     tu.PromptTokens,
 		CompletionTokens: tu.CompletionTokens,
 		ReasoningTokens:  tu.ReasoningTokens,
 		CacheReadTokens:  cacheRead,
 		CacheWriteTokens: cacheWrite,
-		TotalCostUSD:     tu.TotalCost,
+		TotalCostUSD:     totalCostUSD,
+		CostUSDSource:    costSource,
 	}
 	if err := o.ledger.Append(entry); err != nil {
 		log.Printf("[COST_LEDGER] Failed to append entry: %v", err)
 	}
 	return nil
+}
+
+// extractCostAndEffectiveModel pulls the unified cost+model fields the
+// CLI adapters now emit on GenerationInfo.Additional:
+//
+//	cost_usd_estimated  — float, computed from tokens × registry rates
+//	cost_model_id       — string, model used for the rate lookup
+//	<provider>_effective_model / claude_code_model / cursor_model /
+//	  gemini_effective_model / codex_effective_model — string, the model
+//	  the CLI actually served the turn with
+//
+// Returns ("", 0) when none of those are present.
+func extractCostAndEffectiveModel(info map[string]interface{}) (effectiveModel string, estimatedCost float64) {
+	if info == nil {
+		return "", 0
+	}
+	if v, ok := info["cost_usd_estimated"]; ok {
+		switch n := v.(type) {
+		case float64:
+			estimatedCost = n
+		case float32:
+			estimatedCost = float64(n)
+		}
+	}
+	for _, key := range []string{
+		"cost_model_id",
+		"claude_code_model",
+		"codex_effective_model",
+		"gemini_effective_model",
+		"cursor_model",
+	} {
+		if v, ok := info[key]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				effectiveModel = s
+				break
+			}
+		}
+	}
+	return effectiveModel, estimatedCost
 }
 
 // extractCacheTokens pulls cache_read_input_tokens / cache_creation_input_tokens

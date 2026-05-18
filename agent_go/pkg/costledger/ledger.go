@@ -37,12 +37,24 @@ type Entry struct {
 	CorrelationID    string    `json:"correlation_id,omitempty"`
 	Provider         string    `json:"provider,omitempty"`
 	ModelID          string    `json:"model_id,omitempty"`
+	// EffectiveModelID is the model the CLI/provider ACTUALLY served
+	// the turn with — may drift from ModelID when the user picked an
+	// alias like "auto" or "cursor-cli", or when a /model swap happened
+	// mid-session. Empty when the provider doesn't surface it.
+	EffectiveModelID string    `json:"effective_model_id,omitempty"`
 	PromptTokens     int       `json:"prompt_tokens,omitempty"`
 	CompletionTokens int       `json:"completion_tokens,omitempty"`
 	ReasoningTokens  int       `json:"reasoning_tokens,omitempty"`
 	CacheReadTokens  int       `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens int       `json:"cache_write_tokens,omitempty"`
 	TotalCostUSD     float64   `json:"total_cost_usd,omitempty"`
+	// CostUSDSource flags whether TotalCostUSD came from the provider
+	// ("provider", e.g. claude's total_cost_usd) or was computed
+	// downstream from tokens × registry rates ("estimated"). For
+	// subscription-billed CLIs (Cursor, Codex Pro) "estimated" is a
+	// SHADOW cost — what the same workload would cost via the
+	// underlying per-token API, NOT the flat-plan bill.
+	CostUSDSource string `json:"cost_usd_source,omitempty"`
 }
 
 // Aggregate is the rolled-up token + cost total for a date/model bucket.

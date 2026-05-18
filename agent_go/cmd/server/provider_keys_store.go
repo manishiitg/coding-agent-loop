@@ -11,14 +11,24 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/manishiitg/mcpagent/llm"
 )
+
+func getenvTrim(k string) string { return strings.TrimSpace(os.Getenv(k)) }
 
 const providerKeysFilePath = "config/provider-api-keys.json"
 
 // StoredProviderKeys holds all LLM provider API keys in a single global structure.
 // Encrypted and stored in the workspace config folder.
+//
+// OpenCode CLI is exposed as multiple first-class sub-provider tiles
+// (Kimi / DeepSeek / Qwen / MiniMax / GLM / Free). Each sub-provider has its
+// own credential field below so the encrypted store can hold them
+// independently; the server only injects the credential matching the
+// sub-provider that owns the current call.
 type StoredProviderKeys struct {
 	OpenRouter        string               `json:"openrouter,omitempty"`
 	OpenAI            string               `json:"openai,omitempty"`
@@ -36,6 +46,12 @@ type StoredProviderKeys struct {
 	Deepgram          string               `json:"deepgram,omitempty"`
 	Bedrock           *StoredBedrockConfig `json:"bedrock,omitempty"`
 	Azure             *StoredAzureConfig   `json:"azure,omitempty"`
+
+	// OpenCode CLI sub-provider credentials. Keys are env-var names
+	// understood by the OpenCode bundled SDKs:
+	//   KIMI_API_KEY, DEEPSEEK_API_KEY, DASHSCOPE_API_KEY,
+	//   MINIMAX_API_KEY, ZHIPU_API_KEY.
+	OpenCodeCLISubKeys map[string]string `json:"opencode_cli_sub_keys,omitempty"`
 }
 
 // StoredBedrockConfig holds Bedrock region config.
@@ -313,6 +329,56 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		result.Azure = envKeys.Azure
 	}
 	return result
+}
+
+// MergedOpenCodeSubProviderKeys returns the merged env+workspace credentials
+// for OpenCode CLI sub-providers (Kimi / DeepSeek / Qwen / MiniMax / GLM).
+// Returns a map keyed by env var name. Workspace-stored values win over the
+// process env when both are set.
+//
+// The free sub-provider (opencode-cli-free) is omitted because it does not
+// require a credential.
+func MergedOpenCodeSubProviderKeys(ctx context.Context) map[string]string {
+	out := make(map[string]string)
+
+	// Env layer: every sub-provider env var the OpenCode bundled SDK reads.
+	for _, envVar := range openCodeSubProviderEnvVars() {
+		if v := getenvTrim(envVar); v != "" {
+			out[envVar] = v
+		}
+	}
+
+	// Workspace layer: encrypted values win over env when set.
+	stored, err := LoadProviderKeys(ctx)
+	if err != nil || stored == nil {
+		return out
+	}
+	// Legacy single-keyed fields that also carry a sub-provider key.
+	legacyAliases := map[string]string{
+		"KIMI_API_KEY":    stored.Kimi,
+		"MINIMAX_API_KEY": stored.MiniMax,
+		"ZHIPU_API_KEY":   stored.ZAI,
+	}
+	for envVar, val := range legacyAliases {
+		if v := strings.TrimSpace(val); v != "" {
+			out[envVar] = v
+		}
+	}
+	// Modern per-sub-provider map wins last.
+	for envVar, val := range stored.OpenCodeCLISubKeys {
+		if v := strings.TrimSpace(val); v != "" {
+			out[envVar] = v
+		}
+	}
+	return out
+}
+
+// openCodeSubProviderEnvVars returns the env-var names every OpenCode
+// sub-provider tile may use. Sourced from the opencodecli sub-provider
+// catalog so it stays in sync automatically; the import sits in a separate
+// file (llm_provider_manifest.go) so this file keeps no extra dependencies.
+func openCodeSubProviderEnvVars() []string {
+	return openCodeSubProviderEnvVarsImpl()
 }
 
 // encryptProviderKeys encrypts data using AES-256-GCM with the derived secrets key.

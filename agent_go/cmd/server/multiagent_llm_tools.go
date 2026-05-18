@@ -325,7 +325,8 @@ func providerRuntimeAvailable(provider string) *bool {
 }
 
 func providerRuntime(provider string) string {
-	switch normalizeManagedProvider(provider) {
+	normalized := normalizeManagedProvider(provider)
+	switch normalized {
 	case string(llm.ProviderClaudeCode):
 		return "claude"
 	case string(llm.ProviderCodexCLI):
@@ -336,9 +337,22 @@ func providerRuntime(provider string) string {
 		return "cursor-agent"
 	case string(llm.ProviderOpenCodeCLI):
 		return "opencode"
-	default:
-		return ""
 	}
+	// OpenCode CLI sub-provider tiles all run through the `opencode`
+	// binary; route them here so runtime availability checks reuse the
+	// existing opencode-cli code path.
+	if isOpenCodeSubProviderID(normalized) {
+		return "opencode"
+	}
+	return ""
+}
+
+// isOpenCodeSubProviderID reports whether the given provider identifier is
+// one of the OpenCode CLI sub-provider tiles ("opencode-cli-kimi",
+// "opencode-cli-deepseek", etc.). The check is namespace-based so adding a
+// new tile to the opencodecli catalog requires no edits here.
+func isOpenCodeSubProviderID(provider string) bool {
+	return strings.HasPrefix(provider, "opencode-cli-")
 }
 
 func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, string) {
@@ -366,6 +380,27 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 		return true, "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
 	case string(llm.ProviderOpenCodeCLI):
 		return true, "OpenCode CLI provider auth or OPENCODE_API_KEY/workspace provider auth"
+	case "opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
+		"opencode-cli-minimax", "opencode-cli-glm":
+		// Sub-provider auth is sourced from per-sub-provider env vars or
+		// the workspace-encrypted sub-key map. The manifest endpoint
+		// already inspects MergedOpenCodeSubProviderKeys to populate the
+		// auth_configured flag, so here we return false-with-a-reason
+		// only when no credential is reachable.
+		envVar := openCodeSubProviderEnvVarForID(normalizeManagedProvider(provider))
+		if envVar == "" {
+			return false, "unknown OpenCode sub-provider"
+		}
+		// We don't have ctx here; rely on env-only check + presence in
+		// the merged map being authoritative for the manifest. This
+		// helper is used by code paths that don't pass ctx, so env-only
+		// check is the closest we can get.
+		if v := getenvTrim(envVar); v != "" {
+			return true, envVar + " or workspace provider auth"
+		}
+		return false, envVar + " required (set in OpenCode sub-provider tile)"
+	case "opencode-cli-free":
+		return true, "No API key required (rate-limited free tier)"
 	case string(llm.ProviderMiniMax):
 		return keys.MiniMax != nil && strings.TrimSpace(*keys.MiniMax) != "", "MINIMAX_API_KEY or workspace provider auth"
 	case string(llm.ProviderElevenLabs):

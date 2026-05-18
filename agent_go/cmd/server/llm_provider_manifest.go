@@ -229,7 +229,10 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 	capabilitiesByProvider := buildProviderCapabilities(ctx)
 
 	providerOrder := []string{
-		"codex-cli", "cursor-cli", "opencode-cli", "claude-code", "gemini-cli",
+		"codex-cli", "cursor-cli", "opencode-cli",
+		"opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
+		"opencode-cli-minimax", "opencode-cli-glm", "opencode-cli-free",
+		"claude-code", "gemini-cli",
 		"openai", "anthropic", "vertex", "bedrock", "azure",
 		"elevenlabs", "deepgram", "minimax",
 	}
@@ -240,8 +243,26 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 		supportedSet[p] = true
 	}
 
+	// Resolve OpenCode CLI runtime once; sub-provider tiles share it.
+	_, _, openCodeRuntimeOK := providerUsable("opencode-cli", true)
+	openCodeRuntimeAvailable := openCodeRuntimeOK != nil && *openCodeRuntimeOK
+	openCodeSubKeys := MergedOpenCodeSubProviderKeys(ctx)
+	openCodeSubEntries := openCodeSubProviderManifestEntries(openCodeRuntimeAvailable, openCodeSubKeys)
+	openCodeSubByID := make(map[string]providerManifestEntry, len(openCodeSubEntries))
+	for _, e := range openCodeSubEntries {
+		openCodeSubByID[e.ID] = e
+	}
+
 	entries := make([]providerManifestEntry, 0, len(providerOrder))
 	for _, provider := range providerOrder {
+		// OpenCode sub-provider tiles short-circuit the generic
+		// static-info pipeline — their entries are fully constructed
+		// from the opencodecli sub-provider catalog.
+		if subEntry, ok := openCodeSubByID[provider]; ok {
+			entries = append(entries, subEntry)
+			continue
+		}
+
 		if !supportedSet[provider] {
 			continue
 		}

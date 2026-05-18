@@ -36,6 +36,15 @@ var supportedLLMProviders = []string{
 	"codex-cli",
 	"cursor-cli",
 	"opencode-cli",
+	// OpenCode CLI sub-provider tiles. Each routes back to the same
+	// `opencode` binary but with sub-provider-scoped credentials and a
+	// curated model catalog.
+	"opencode-cli-kimi",
+	"opencode-cli-deepseek",
+	"opencode-cli-qwen",
+	"opencode-cli-minimax",
+	"opencode-cli-glm",
+	"opencode-cli-free",
 }
 
 const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
@@ -43,7 +52,9 @@ const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
 func isPublishedLLMProviderAllowed(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "gemini-cli", "codex-cli", "cursor-cli", "opencode-cli":
+		"claude-code", "gemini-cli", "codex-cli", "cursor-cli", "opencode-cli",
+		"opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
+		"opencode-cli-minimax", "opencode-cli-glm", "opencode-cli-free":
 		return true
 	default:
 		return false

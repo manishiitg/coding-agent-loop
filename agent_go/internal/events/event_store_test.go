@@ -449,3 +449,159 @@ func TestAddEventAssignsAutoNotificationToCompletedBackgroundExecution(t *testin
 		t.Fatalf("expected workflow kind, got %q", events[0].ExecutionKind)
 	}
 }
+
+func TestSubscribeReceivesLiveEvents(t *testing.T) {
+	store := NewEventStore(100)
+	defer store.Stop()
+
+	sessionID := "session-sub-live"
+	sub := store.Subscribe(sessionID)
+	defer store.Unsubscribe(sessionID, sub)
+
+	store.AddEvent(sessionID, Event{
+		ID:        "evt-1",
+		Type:      "user_message",
+		Timestamp: time.Now(),
+		SessionID: sessionID,
+		Data: &pkgevents.AgentEvent{
+			Type:      pkgevents.EventType("user_message"),
+			Timestamp: time.Now(),
+		},
+	})
+
+	select {
+	case event := <-sub.Ch:
+		if event.Type != "user_message" {
+			t.Fatalf("event type = %q, want user_message", event.Type)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscriber did not receive event within 2s")
+	}
+}
+
+func TestSubscribeFiltersHiddenEvents(t *testing.T) {
+	store := NewEventStore(100)
+	defer store.Stop()
+
+	sessionID := "session-sub-hidden"
+	sub := store.Subscribe(sessionID)
+	defer store.Unsubscribe(sessionID, sub)
+
+	store.AddEvent(sessionID, Event{
+		ID:        "evt-hidden",
+		Type:      "agent_error",
+		Timestamp: time.Now(),
+		SessionID: sessionID,
+		Data: &pkgevents.AgentEvent{
+			Type:      pkgevents.EventType("agent_error"),
+			Timestamp: time.Now(),
+		},
+	})
+
+	store.AddEvent(sessionID, Event{
+		ID:        "evt-visible",
+		Type:      "unified_completion",
+		Timestamp: time.Now(),
+		SessionID: sessionID,
+		Data: &pkgevents.AgentEvent{
+			Type:      pkgevents.EventType("unified_completion"),
+			Timestamp: time.Now(),
+		},
+	})
+
+	select {
+	case event := <-sub.Ch:
+		if event.Type == "agent_error" {
+			t.Fatal("subscriber should not receive HIDDEN_EVENTS (agent_error)")
+		}
+		if event.Type != "unified_completion" {
+			t.Fatalf("first received event = %q, want unified_completion", event.Type)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscriber did not receive any events")
+	}
+}
+
+func TestSubscribeAlwaysReceivesStreamingEvents(t *testing.T) {
+	store := NewEventStore(100)
+	defer store.Stop()
+
+	sessionID := "session-sub-streaming"
+	sub := store.Subscribe(sessionID)
+	defer store.Unsubscribe(sessionID, sub)
+
+	for _, eventType := range []string{"streaming_start", "streaming_chunk", "streaming_end"} {
+		store.AddEvent(sessionID, Event{
+			ID:        "evt-" + eventType,
+			Type:      eventType,
+			Timestamp: time.Now(),
+			SessionID: sessionID,
+			Data: &pkgevents.AgentEvent{
+				Type:      pkgevents.EventType(eventType),
+				Timestamp: time.Now(),
+			},
+		})
+	}
+
+	var received []string
+	for i := 0; i < 3; i++ {
+		select {
+		case event := <-sub.Ch:
+			received = append(received, event.Type)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for event %d, received so far: %v", i, received)
+		}
+	}
+
+	if len(received) != 3 {
+		t.Fatalf("received %d events, want 3: %v", len(received), received)
+	}
+	if !contains(received, "streaming_start") || !contains(received, "streaming_chunk") || !contains(received, "streaming_end") {
+		t.Fatalf("streaming events not all delivered to subscriber: %v", received)
+	}
+}
+
+func TestUnsubscribeClosesChannel(t *testing.T) {
+	store := NewEventStore(100)
+	defer store.Stop()
+
+	sessionID := "session-unsub"
+	sub := store.Subscribe(sessionID)
+
+	store.Unsubscribe(sessionID, sub)
+
+	_, ok := <-sub.Ch
+	if ok {
+		t.Fatal("channel should be closed after Unsubscribe")
+	}
+}
+
+func TestShouldShowEventFiltersCorrectly(t *testing.T) {
+	tests := []struct {
+		eventType string
+		want      bool
+	}{
+		{"user_message", true},
+		{"unified_completion", true},
+		{"tool_call_start", true},
+		{"tool_call_end", true},
+		{"streaming_end", true},
+		{"agent_error", false},
+		{"agent_start", false},
+		{"system_prompt", false},
+		{"conversation_start", false},
+		{"streaming_start", false},
+		{"streaming_chunk", false},
+		{"tool_execution", false},
+		{"cache_event", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.eventType, func(t *testing.T) {
+			if got := ShouldShowEvent(tt.eventType); got != tt.want {
+				t.Fatalf("ShouldShowEvent(%q) = %v, want %v", tt.eventType, got, tt.want)
+			}
+		})
+	}
+}

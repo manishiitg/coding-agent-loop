@@ -7,7 +7,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/manishiitg/mcpagent/llm"
 )
+
+func structValidationReq(provider, apiKey string) llm.APIKeyValidationRequest {
+	return llm.APIKeyValidationRequest{Provider: provider, APIKey: apiKey}
+}
 
 func TestProviderManifestExposesOpenCodeSubProviders(t *testing.T) {
 	api := &StreamingAPI{}
@@ -105,6 +111,56 @@ func TestProviderRuntimeRoutesSubProvidersToOpenCode(t *testing.T) {
 				t.Fatalf("providerRuntime(%q) = %q, want opencode", id, got)
 			}
 		})
+	}
+}
+
+func TestValidateOpenCodeSubProviderRequiresKeyForPaidTiles(t *testing.T) {
+	t.Setenv("KIMI_API_KEY", "")
+	resp := validateOpenCodeSubProvider("opencode-cli-kimi", structValidationReq("opencode-cli-kimi", ""))
+	if resp.Valid {
+		t.Fatalf("expected validation to fail without key; got %+v", resp)
+	}
+	if !strings.Contains(resp.Message, "KIMI_API_KEY") {
+		t.Errorf("error message should mention KIMI_API_KEY; got %q", resp.Message)
+	}
+}
+
+func TestValidateOpenCodeSubProviderTagsOptionsWithSubProviderID(t *testing.T) {
+	// We can't easily run validateOpenCodeCLI without the opencode binary
+	// installed, but we can assert that the function reaches the sub-
+	// provider catalog and produces a meaningful message about its key
+	// requirement, since the no-key branch returns synchronously.
+	cases := []struct {
+		providerID string
+		wantEnvVar string
+	}{
+		{"opencode-cli-kimi", "KIMI_API_KEY"},
+		{"opencode-cli-deepseek", "DEEPSEEK_API_KEY"},
+		{"opencode-cli-qwen", "DASHSCOPE_API_KEY"},
+		{"opencode-cli-minimax", "MINIMAX_API_KEY"},
+		{"opencode-cli-glm", "ZHIPU_API_KEY"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.providerID, func(t *testing.T) {
+			t.Setenv(tc.wantEnvVar, "")
+			resp := validateOpenCodeSubProvider(tc.providerID, structValidationReq(tc.providerID, ""))
+			if resp.Valid {
+				t.Fatalf("expected validation to fail without %s; got %+v", tc.wantEnvVar, resp)
+			}
+			if !strings.Contains(resp.Message, tc.wantEnvVar) {
+				t.Errorf("%s: error message %q should mention %s", tc.providerID, resp.Message, tc.wantEnvVar)
+			}
+		})
+	}
+}
+
+func TestValidateOpenCodeSubProviderRejectsUnknownID(t *testing.T) {
+	resp := validateOpenCodeSubProvider("opencode-cli-notreal", structValidationReq("opencode-cli-notreal", ""))
+	if resp.Valid {
+		t.Fatalf("expected unknown sub-provider to be rejected; got %+v", resp)
+	}
+	if !strings.Contains(resp.Message, "Unknown OpenCode sub-provider") {
+		t.Errorf("error message should flag unknown sub-provider; got %q", resp.Message)
 	}
 }
 

@@ -17,6 +17,15 @@ export type LLMProvider =
   | 'codex-cli'
   | 'cursor-cli'
   | 'opencode-cli'
+  // OpenCode CLI sub-provider tiles. Each routes through the `opencode`
+  // binary with sub-provider-scoped credentials and a curated model
+  // catalog.
+  | 'opencode-cli-kimi'
+  | 'opencode-cli-deepseek'
+  | 'opencode-cli-qwen'
+  | 'opencode-cli-minimax'
+  | 'opencode-cli-glm'
+  | 'opencode-cli-free'
   | 'minimax'
   | 'minimax-coding-plan'
   | 'elevenlabs'

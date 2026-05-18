@@ -17,6 +17,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/azure"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/utils"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
@@ -836,6 +837,26 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 	if req == nil {
 		return
 	}
+
+	provider := strings.ToLower(strings.TrimSpace(req.Provider))
+
+	// OpenCode CLI sub-provider tiles: pull from the per-env-var sub-key
+	// map. We do this before MergedProviderAPIKeys() so the sub-provider
+	// key is preferred over any unrelated entry the shared map might
+	// surface for a same-named field.
+	if isOpenCodeSubProviderID(provider) {
+		if req.APIKey == "" {
+			envVar := openCodeSubProviderEnvVarForID(provider)
+			if envVar != "" {
+				subKeys := MergedOpenCodeSubProviderKeys(ctx)
+				if v, ok := subKeys[envVar]; ok && strings.TrimSpace(v) != "" {
+					req.APIKey = strings.TrimSpace(v)
+				}
+			}
+		}
+		return
+	}
+
 	keys := MergedProviderAPIKeys(ctx)
 	if keys == nil {
 		return
@@ -846,7 +867,7 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 		}
 	}
 
-	switch strings.ToLower(strings.TrimSpace(req.Provider)) {
+	switch provider {
 	case "openai":
 		setAPIKey(keys.OpenAI)
 	case "anthropic":
@@ -889,7 +910,8 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 }
 
 func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidationResponse {
-	switch strings.ToLower(strings.TrimSpace(req.Provider)) {
+	provider := strings.ToLower(strings.TrimSpace(req.Provider))
+	switch provider {
 	case "openrouter", "minimax-coding-plan":
 		return llm.APIKeyValidationResponse{
 			Valid:   false,
@@ -897,7 +919,15 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 		}
 	}
 
-	switch req.Provider {
+	// OpenCode CLI sub-provider tiles route through the same validator as
+	// the legacy `opencode-cli` tile but with the sub-provider's curated
+	// default model and an Options map carrying the sub-provider id so
+	// the OpenCode adapter scopes credentials correctly.
+	if isOpenCodeSubProviderID(provider) {
+		return validateOpenCodeSubProvider(provider, req)
+	}
+
+	switch provider {
 	case "claude-code":
 		return validateClaudeCodeCLI()
 	case "gemini-cli":
@@ -913,6 +943,43 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 	default:
 		return llm.ValidateAPIKey(req)
 	}
+}
+
+// validateOpenCodeSubProvider runs the OpenCode CLI validation for one
+// sub-provider tile (e.g. opencode-cli-kimi). It defaults the model id to
+// the tile's curated default when none was supplied and tags the request
+// options with `opencode_sub_provider_id` so the underlying validator can
+// scope credentials and tier shortcuts to the right namespace.
+func validateOpenCodeSubProvider(providerID string, req llm.APIKeyValidationRequest) llm.APIKeyValidationResponse {
+	sp, ok := opencodecli.FindOpenCodeSubProvider(providerID)
+	if !ok {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Unknown OpenCode sub-provider %q", providerID),
+		}
+	}
+	if sp.RequiresAPIKey && strings.TrimSpace(req.APIKey) == "" {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("%s requires an API key. Paste a %s value into the tile.", sp.DisplayName, sp.APIKeyEnvVar),
+		}
+	}
+
+	modelID := strings.TrimSpace(req.ModelID)
+	if modelID == "" {
+		modelID = sp.DefaultModelID
+	}
+
+	options := req.Options
+	if options == nil {
+		options = map[string]interface{}{}
+	}
+	// Tag the request so the validator (and any downstream adapter
+	// instantiation) picks the right sub-provider scope.
+	options["opencode_sub_provider_id"] = sp.ID
+	options["opencode_sub_provider_env_var"] = sp.APIKeyEnvVar
+
+	return validateOpenCodeCLI(req.APIKey, modelID, options)
 }
 
 // validateOpenCodeCLI validates OpenCode CLI through the shared tmux adapter path.

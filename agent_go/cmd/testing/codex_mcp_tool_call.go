@@ -23,7 +23,7 @@ var codexMCPToolCallTestCmd = &cobra.Command{
 	Long: `Tests that Codex CLI can execute an MCP tool through the provider adapter.
 
 This catches Codex CLI approval regressions where MCP calls immediately return
-"user cancelled MCP tool call" in non-interactive exec mode.`,
+"user canceled MCP tool call" in non-interactive exec mode.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logLevel := "debug"
 		logFile := viper.GetString("log-file")
@@ -139,7 +139,7 @@ func verifyCodexMCPToolCall(llmInstance llmtypes.Model, serverPath string, logge
 			}
 		case llmtypes.StreamChunkTypeToolCallEnd:
 			result := strings.TrimSpace(chunk.ToolResult)
-			if strings.Contains(result, "user cancelled MCP tool call") {
+			if strings.Contains(result, "user canceled MCP tool call") {
 				sawCancelledToolCall = true
 			}
 			if strings.Contains(result, codexMCPExpectedOutput) {
@@ -154,8 +154,8 @@ func verifyCodexMCPToolCall(llmInstance llmtypes.Model, serverPath string, logge
 		content = strings.TrimSpace(resp.Choices[0].Content)
 	}
 
-	if sawCancelledToolCall || strings.Contains(content, "user cancelled MCP tool call") {
-		return fmt.Errorf("Codex MCP tool call was cancelled instead of executed")
+	if sawCancelledToolCall || strings.Contains(content, "user canceled MCP tool call") {
+		return fmt.Errorf("Codex MCP tool call was canceled instead of executed")
 	}
 	if !sawToolStart {
 		return fmt.Errorf("Codex did not stream an MCP probe ping tool start")

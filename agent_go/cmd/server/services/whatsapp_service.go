@@ -44,7 +44,7 @@ import (
 // Business API, verified business, or approved templates are required.
 //
 // Tradeoff: whatsmeow uses the unofficial WhatsApp Web protocol. Meta may ban
-// numbers exhibiting bot-like behaviour at scale, so this is best suited to
+// numbers exhibiting bot-like behavior at scale, so this is best suited to
 // personal / internal use, not customer-facing commercial volume.
 //
 // NOTE on storage: this is the ONE place in the server that uses a database.
@@ -142,7 +142,7 @@ func (w *WhatsAppService) pairingStarted() time.Time {
 }
 
 // WhatsAppOwner records which workspace user owns the paired WhatsApp
-// account. Serialised to JSON alongside the SQLite session file.
+// account. Serialized to JSON alongside the SQLite session file.
 type WhatsAppOwner struct {
 	UserID   string    `json:"user_id"`
 	Email    string    `json:"email"`
@@ -172,7 +172,7 @@ func NewWhatsAppService(dbPath string) *WhatsAppService {
 // Name returns the connector name used in routing and logs.
 func (w *WhatsAppService) Name() string { return "whatsapp" }
 
-// IsEnabled reports whether the underlying client has been initialised via
+// IsEnabled reports whether the underlying client has been initialized via
 // StartListening. Note: enabled != paired != connected.
 func (w *WhatsAppService) IsEnabled() bool {
 	w.mu.RLock()
@@ -200,7 +200,7 @@ func (w *WhatsAppService) StartListening(ctx context.Context) error {
 	// Self-chat reply prefix. Empty = no prefix (default). Mirrors OpenClaw's
 	// configurable messages.responsePrefix — timing + bubble rhythm usually
 	// makes bot replies obvious, but set this env var if you want explicit
-	// labelling. A trailing space is up to you; this is concatenated verbatim.
+	// labeling. A trailing space is up to you; this is concatenated verbatim.
 	w.selfChatPrefix = os.Getenv("WHATSAPP_SELF_CHAT_PREFIX")
 
 	// Open the metadata side of the same SQLite file and load the owner
@@ -379,7 +379,7 @@ func (w *WhatsAppService) StopListening() {
 	}
 }
 
-// Unpair disconnects the client, drops the session DB, and re-initialises a
+// Unpair disconnects the client, drops the session DB, and re-initializes a
 // fresh empty store so the next pairing attempt starts with a clean slate.
 // After Unpair returns, the service is back in "unpaired" state — the next
 // pairing QR will be generated on the next reconnect.
@@ -450,7 +450,7 @@ func (w *WhatsAppService) EnsurePairingQR(ctx context.Context) error {
 	client := w.client
 	w.mu.RUnlock()
 	if client == nil {
-		return fmt.Errorf("whatsapp: client not initialised")
+		return fmt.Errorf("whatsapp: client not initialized")
 	}
 	if started := w.pairingStarted(); !started.IsZero() && time.Since(started) > whatsappPairingStartupTimeout {
 		log.Printf("[WHATSAPP] Pairing attempt has been waiting for %s; disconnecting stale client before retry", time.Since(started).Round(time.Second))
@@ -531,7 +531,7 @@ type whatsappDownloadedMedia struct {
 
 // openMetaStore opens the lightweight metadata connection and ensures the
 // whatsapp_meta table exists. Called from StartListening after sqlstore has
-// been set up, so the underlying SQLite file is already initialised.
+// been set up, so the underlying SQLite file is already initialized.
 func (w *WhatsAppService) openMetaStore(ctx context.Context) error {
 	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)", w.dbPath)
 	db, err := sql.Open("sqlite", dsn)
@@ -879,7 +879,7 @@ func (w *WhatsAppService) downloadIncomingMedia(ctx context.Context, msg *waProt
 	client := w.client
 	w.mu.RUnlock()
 	if client == nil {
-		return nil, fmt.Errorf("whatsapp: client not initialised")
+		return nil, fmt.Errorf("whatsapp: client not initialized")
 	}
 
 	var (
@@ -1251,7 +1251,7 @@ func normalizeWhatsAppRouteMode(raw string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "run", "r":
 		return "run", true
-	case "optimize", "optimizer", "optimise", "optimiser", "opt":
+	case "optimize", "optimizer", "optimiser", "opt":
 		return "optimizer", true
 	case "builder", "build", "b":
 		return "builder", true
@@ -2165,13 +2165,13 @@ func extractWhatsAppText(m *waProto.Message) string {
 // configured via WHATSAPP_SELF_CHAT_PREFIX is prepended so bot output is
 // visually distinguishable from the user's own typing (both render as "from
 // me"). Default is empty — timing + bubble rhythm is usually enough — and
-// the user can set the env var to "🤖 " or similar if they want labelling.
+// the user can set the env var to "🤖 " or similar if they want labeling.
 func (w *WhatsAppService) SendThreadMessage(ctx context.Context, threadID ThreadID, message string) (string, error) {
 	w.mu.RLock()
 	client := w.client
 	w.mu.RUnlock()
 	if client == nil {
-		return "", fmt.Errorf("whatsapp: client not initialised")
+		return "", fmt.Errorf("whatsapp: client not initialized")
 	}
 	jid, err := types.ParseJID(threadID.ChannelID)
 	if err != nil {

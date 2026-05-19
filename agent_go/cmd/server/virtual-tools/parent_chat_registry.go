@@ -56,7 +56,7 @@ func getSpawnListener() SpawnListener {
 }
 
 // RegisterParentChat associates a workflow session with its invoking chat session.
-// Any installed SpawnListener is notified so it can attach side-channel behaviour
+// Any installed SpawnListener is notified so it can attach side-channel behavior
 // (e.g. mirror the child's agent messages into the parent chat's Slack thread).
 func RegisterParentChat(workflowSessionID string, pc *ParentChatContext) {
 	if workflowSessionID == "" || pc == nil || pc.SessionID == "" {
@@ -83,7 +83,7 @@ func GetParentChat(workflowSessionID string) *ParentChatContext {
 
 // UnregisterParentChat removes the mapping (called when the workflow ends).
 // Any installed SpawnListener is notified with the parent/child pair so it
-// can tear down side-channel behaviour (e.g. stop mirroring the child).
+// can tear down side-channel behavior (e.g. stop mirroring the child).
 func UnregisterParentChat(workflowSessionID string) {
 	if workflowSessionID == "" {
 		return

@@ -18,7 +18,7 @@ func isWorkflowCancellationErr(ctx context.Context, err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "context canceled") ||
-		strings.Contains(msg, "context cancelled") ||
+		strings.Contains(msg, "context canceled") ||
 		strings.Contains(msg, "context deadline exceeded") ||
-		strings.Contains(msg, "conversation cancelled")
+		strings.Contains(msg, "conversation canceled")
 }

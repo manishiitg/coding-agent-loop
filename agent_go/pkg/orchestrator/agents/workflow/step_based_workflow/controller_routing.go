@@ -252,7 +252,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		routingResponse, err = conditionalAgent.EvaluateRouting(ctx, executionResult, conditionContext, routingStep.RoutingQuestion, routingStep.Routes, stepIndex, 0, agentConfigUseCodeExecutionMode(conditionalAgent.GetConfig()), variableNames, variableValues)
 		if err != nil {
 			if isWorkflowCancellationErr(ctx, err) {
-				hcpo.GetLogger().Info(fmt.Sprintf("Routing step %d cancelled while evaluating route", stepIndex+1))
+				hcpo.GetLogger().Info(fmt.Sprintf("Routing step %d canceled while evaluating route", stepIndex+1))
 				return "", "", context.Canceled
 			}
 			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate routing step %d: %v", stepIndex+1, err), nil)

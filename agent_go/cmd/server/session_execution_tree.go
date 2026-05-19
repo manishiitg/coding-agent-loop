@@ -224,7 +224,7 @@ func eventDerivedExecutionStatus(event internalevents.Event, payload map[string]
 		return trackedExecutionStatusCompleted, true, false
 	case "orchestrator_agent_error", "background_agent_failed":
 		return trackedExecutionStatusFailed, true, true
-	case "background_agent_terminated", "background_agent_canceled", "batch_execution_canceled", "context_cancelled":
+	case "background_agent_terminated", "background_agent_canceled", "batch_execution_canceled", "context_canceled":
 		return trackedExecutionStatusCanceled, true, false
 	default:
 		return trackedExecutionStatusRunning, false, false

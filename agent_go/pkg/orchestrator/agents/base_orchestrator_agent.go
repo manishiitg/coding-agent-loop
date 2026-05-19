@@ -769,7 +769,7 @@ func (boa *BaseOrchestratorAgent) getStructFieldNames(v interface{}) []string {
 	typ := reflect.TypeOf(v)
 
 	// Handle pointers
-	if val.Kind() == reflect.Ptr {
+	if val.Kind() == reflect.Pointer {
 		if val.IsNil() {
 			return []string{}
 		}

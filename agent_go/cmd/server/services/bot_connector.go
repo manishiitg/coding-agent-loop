@@ -274,12 +274,12 @@ type activeBotSession struct {
 
 	// Background workflow tracking — when the builder agent fires
 	// run_full_workflow (or any tool that registers a parent chat), we bump
-	// pendingWorkflows so the session context isn't cancelled until the
+	// pendingWorkflows so the session context isn't canceled until the
 	// workflow drains. Workflow step events publish to this parent session's
 	// own event stream (routed by the orchestrator's ContextAwareBridge), so
 	// the existing BotEventFilter forwards them to Slack — no separate mirror
 	// subscription is needed. Access under mu.
-	builderDone      bool            // event filter signalled the parent session finished its own turn
+	builderDone      bool            // event filter signaled the parent session finished its own turn
 	pendingWorkflows int             // live workflows attached via SpawnListener (>0 defers cancel)
 	activeWorkflows  map[string]bool // wfSessionID set, for idempotent NotifyWorkflowEnded
 	queuedMessages   []BotIncomingMessage
@@ -671,7 +671,7 @@ func (m *BotConversationManager) loadRecentChatTurns(ctx context.Context, userID
 
 // buildStaleSessionPreamble turns a handful of recent turns into a text
 // preamble that's prepended to the user's new message. The preamble is
-// labelled as "context only" so the LLM doesn't mistake the old turns for
+// labeled as "context only" so the LLM doesn't mistake the old turns for
 // current instructions.
 func buildStaleSessionPreamble(history []ThreadMessage, idleFor time.Duration) string {
 	if len(history) == 0 {
@@ -1431,7 +1431,7 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 
 	// Wire up session done callback — event filter signals when the builder's
 	// own turn is complete. If the builder launched background workflows via
-	// run_full_workflow, we hold off on cancelling the session context (and
+	// run_full_workflow, we hold off on canceling the session context (and
 	// therefore on clearing Slack reactions) until every mirrored workflow has
 	// drained. The last mirror to finish will call cancel() itself.
 	active.eventFilter.SetSessionDoneCallback(func() {
@@ -1683,7 +1683,7 @@ func (m *BotConversationManager) NotifyWorkflowStarted(parentSessionID, wfSessio
 
 // NotifyWorkflowEnded marks a background workflow as drained. When the last
 // outstanding workflow finishes AND the builder's own turn already ended, the
-// parent session context is cancelled so reactions get cleared and the
+// parent session context is canceled so reactions get cleared and the
 // session is marked completed. Safe to call more than once.
 func (m *BotConversationManager) NotifyWorkflowEnded(parentSessionID, wfSessionID string) {
 	if parentSessionID == "" || wfSessionID == "" {
@@ -1711,7 +1711,7 @@ func (m *BotConversationManager) NotifyWorkflowEnded(parentSessionID, wfSessionI
 		parentSessionID, wfSessionID, pending, builderDone)
 
 	if pending == 0 && builderDone && parentCancel != nil {
-		log.Printf("[BOT_MANAGER] All workflows drained after builder done — cancelling parent session %s", active.SessionID)
+		log.Printf("[BOT_MANAGER] All workflows drained after builder done — canceling parent session %s", active.SessionID)
 		parentCancel()
 	}
 }

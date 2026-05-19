@@ -3,6 +3,7 @@ package browser
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,7 +60,7 @@ func acquireSharedCDPLock(ctx context.Context, port int) (func(), error) {
 		if err == nil {
 			break
 		}
-		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
 			lockFile.Close()
 			local.Unlock()
 			return nil, fmt.Errorf("acquire shared CDP lock %s: %w", lockPath, err)

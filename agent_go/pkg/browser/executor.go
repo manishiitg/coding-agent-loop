@@ -586,7 +586,7 @@ func (e *Executor) selectCDPTabForCommand(ctx context.Context, session, cdpURL s
 			log.Printf("[BROWSER] CDP: selected remembered tab id %q for missing label %q before %q", aliasTabID, tab, command)
 			return aliasTabID, nil
 		}
-		err = fmt.Errorf("%w; remembered tab id %q for label %q also failed: %v", err, aliasTabID, tab, aliasErr)
+		err = fmt.Errorf("%w; remembered tab id %q for label %q also failed: %w", err, aliasTabID, tab, aliasErr)
 	}
 
 	return "", e.cdpTabSelectionError(ctx, session, cdpURL, opts, tab, command, err)
@@ -595,7 +595,7 @@ func (e *Executor) selectCDPTabForCommand(ctx context.Context, session, cdpURL s
 func (e *Executor) cdpTabSelectionError(ctx context.Context, session, cdpURL string, opts *ExecuteOptions, tab, command string, selectErr error) error {
 	tabsOutput, tabsErr := e.listCDPTabs(ctx, session, cdpURL, opts)
 	if tabsErr != nil {
-		return fmt.Errorf("failed to select CDP tab %q before %q: %w; listing tabs also failed: %v", tab, command, selectErr, tabsErr)
+		return fmt.Errorf("failed to select CDP tab %q before %q: %w; listing tabs also failed: %w", tab, command, selectErr, tabsErr)
 	}
 	return fmt.Errorf("failed to select CDP tab %q before %q: %w\n\nExisting tabs:\n%s\n\nThe tab label/id %q is not currently selectable. Do not retry page actions with this label until `tab list` shows it. First call agent_browser(command=\"tab\", args=[]), then either choose an existing tab by id/label in args like [\"tab\", \"<tab-id-or-label>\", ...commandArgs] or create a labeled tab with agent_browser(command=\"tab\", args=[\"new\", \"--label\", %q, \"<url>\"]).", tab, command, selectErr, strings.TrimSpace(tabsOutput), tab, tab)
 }

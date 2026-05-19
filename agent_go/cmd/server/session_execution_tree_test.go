@@ -190,7 +190,7 @@ func TestEventDerivedExecutionStatusTreatsWorkflowLifecycleAsTerminal(t *testing
 		{eventType: "batch_group_end", want: trackedExecutionStatusCompleted},
 		{eventType: "todo_task_step_completed", want: trackedExecutionStatusCompleted},
 		{eventType: "workflow_error", want: trackedExecutionStatusFailed, failed: true},
-		{eventType: "context_cancelled", want: trackedExecutionStatusCanceled},
+		{eventType: "context_canceled", want: trackedExecutionStatusCanceled},
 	}
 
 	for _, tt := range tests {

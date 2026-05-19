@@ -104,7 +104,7 @@ func (f *BotEventFilter) SetSendFullDetails(enabled bool) {
 // message (injected while the session is still held open, e.g. because a
 // background workflow is running) starts a fresh turn that can be tracked.
 // Without this, sessionDone latches on the first turn and later turns fire
-// no onSessionDone — the parent can then be cancelled mid-reply.
+// no onSessionDone — the parent can then be canceled mid-reply.
 func (f *BotEventFilter) ResetForNewTurn() {
 	f.mu.Lock()
 	f.sessionDone = false

@@ -98,7 +98,7 @@ func (s *HumanFeedbackStore) CreateRequestWithoutNotification(uniqueID, message 
 // dest is an optional destination hint passed through to the notification
 // fanout — connectors use it to override their workspace-wide default
 // (per-user prefs and per-request hints both flow through this). Pass nil
-// for the legacy "use whatever the connectors are configured for" behaviour.
+// for the legacy "use whatever the connectors are configured for" behavior.
 func (s *HumanFeedbackStore) CreateRequestWithSlack(ctx context.Context, uniqueID, message, contextMsg string, buttonOptions *services.ButtonOptions, dest *services.NotificationDestination) error {
 	// First register the request (without notifications)
 	if err := s.CreateRequestWithoutNotification(uniqueID, message); err != nil {

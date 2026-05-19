@@ -3175,7 +3175,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			selectedRouteID, _, err := hcpo.executeRoutingStep(ctx, step, i, progress, previousContextFiles, iteration, execCtx, breakdownSteps, previousExecutionResults)
 			if err != nil {
 				if isWorkflowCancellationErr(ctx, err) {
-					hcpo.GetLogger().Info(fmt.Sprintf("Routing step %d cancelled", i+1))
+					hcpo.GetLogger().Info(fmt.Sprintf("Routing step %d canceled", i+1))
 					return err
 				}
 				if strings.Contains(err.Error(), "WORKFLOW_END") {

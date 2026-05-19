@@ -436,7 +436,7 @@ type metricRunWindow struct {
 // window from runs/<runFolder>/run_metadata.json. The 6-hour grace tail
 // covers evaluation costs that get written after execution finishes (eval
 // runs sequentially after the workflow). Returns (zero, false, nil) when no
-// metadata file exists — caller should fall back to a behaviour that does
+// metadata file exists — caller should fall back to a behavior that does
 // not depend on the window.
 func readRunMetadataWindow(ctx context.Context, workspacePath, runFolder string) (metricRunWindow, bool, error) {
 	metaPath := path.Join(strings.Trim(workspacePath, "/"), "runs", strings.Trim(runFolder, "/"), "run_metadata.json")
@@ -477,7 +477,7 @@ func readRunMetadataWindow(ctx context.Context, workspacePath, runFolder string)
 // run's window.
 //
 // When run_metadata.json is missing, falls back to the legacy
-// merge-across-all-time behaviour so older workflows without metadata still
+// merge-across-all-time behavior so older workflows without metadata still
 // resolve a value. The fallback over-aggregates for reused folder names —
 // but the same was true before this change.
 func readRunTokenUsageForScope(ctx context.Context, workspacePath, runFolder string, scope orchestrator.CostScope) (*orchestrator.TokenUsageFile, bool, error) {
@@ -487,7 +487,7 @@ func readRunTokenUsageForScope(ctx context.Context, workspacePath, runFolder str
 	}
 	if !hasWindow {
 		// Legacy fallback: aggregate across all daily files. Equivalent to the
-		// pre-fix behaviour. Right answer for unique-per-run folder names;
+		// pre-fix behavior. Right answer for unique-per-run folder names;
 		// wrong answer for reused folder names but no worse than before.
 		all, err := readAllRunTokenUsageFromCosts(ctx, workspacePath, scope)
 		if err != nil {

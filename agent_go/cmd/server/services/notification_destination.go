@@ -6,7 +6,7 @@ package services
 // then to its workspace-wide default.
 //
 // A nil *NotificationDestination is equivalent to "no hints, do whatever your
-// configured default is" and preserves the pre-routing behaviour.
+// configured default is" and preserves the pre-routing behavior.
 type NotificationDestination struct {
 	Slack    *SlackDest    // Slack channel/thread hint
 	WhatsApp *WhatsAppDest // WhatsApp recipient hint

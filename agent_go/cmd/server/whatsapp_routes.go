@@ -42,7 +42,7 @@ func whatsappServiceForRequest(r *http.Request, manager *slackservice.WhatsAppSe
 //
 //	size — pixel dimension (default 384, clamped to [128, 1024])
 //
-// Auth behaviour: requesting the QR claims ownership of the pairing for the
+// Auth behavior: requesting the QR claims ownership of the pairing for the
 // authenticated user. Every incoming WhatsApp message will then route to
 // that user's per-user chat history / memory. If the pairing is already
 // bound to a different user, we return 409 so the UI can prompt "unpair

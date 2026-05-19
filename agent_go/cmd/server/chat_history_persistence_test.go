@@ -420,7 +420,7 @@ func TestParseLocalChatHistorySessionSkipsLowSignalTitle(t *testing.T) {
     },
     {
       "Role": "human",
-      "Parts": [{"Text": "ok.. which image generated tools do you ahve"}]
+      "Parts": [{"Text": "ok.. which image generated tools do you have"}]
     }
   ],
   "updated_at": "2026-05-15T10:00:00Z"
@@ -430,7 +430,7 @@ func TestParseLocalChatHistorySessionSkipsLowSignalTitle(t *testing.T) {
 	if !ok {
 		t.Fatal("expected session to parse")
 	}
-	if session.Query != "ok.. which image generated tools do you ahve" {
+	if session.Query != "ok.. which image generated tools do you have" {
 		t.Fatalf("expected substantive query title, got %q", session.Query)
 	}
 }

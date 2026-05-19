@@ -29,11 +29,11 @@ import (
 // The test exercises the complete chain the inspector panel relies
 // on in production:
 //
-//   real provider streaming
-//     → anthropic adapter emits InspectorEvents at every phase
-//     → ScopedInspectorSink injects StepContext (step_id, phase, etc.)
-//     → inspector.Store.Sink() forwards into the per-session ring
-//     → handleInspectorEvents reads the ring and serves JSON
+//	real provider streaming
+//	  → anthropic adapter emits InspectorEvents at every phase
+//	  → ScopedInspectorSink injects StepContext (step_id, phase, etc.)
+//	  → inspector.Store.Sink() forwards into the per-session ring
+//	  → handleInspectorEvents reads the ring and serves JSON
 //
 // What this catches:
 //
@@ -184,7 +184,7 @@ func TestInspectorHTTPUnknownSessionReturns404(t *testing.T) {
 }
 
 // TestInspectorHTTPMissingStoreReturns503 verifies the handler's
-// graceful behaviour when the inspector store is nil (e.g. during
+// graceful behavior when the inspector store is nil (e.g. during
 // startup or in a stripped-down test harness).
 func TestInspectorHTTPMissingStoreReturns503(t *testing.T) {
 	api := &StreamingAPI{} // no inspectorStore

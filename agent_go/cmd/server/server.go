@@ -3378,7 +3378,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			MaxTurns:           req.MaxTurns,
 			ToolChoice:         "auto",
 			StreamingChunkSize: 50,
-			Timeout:            0, // No per-Invoke timeout; streamCtx is explicitly cancelled when needed.
+			Timeout:            0, // No per-Invoke timeout; streamCtx is explicitly canceled when needed.
 			ToolTimeout: func() time.Duration {
 				if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
 					if timeout, err := time.ParseDuration(envVal); err == nil {
@@ -4513,9 +4513,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// The global map is read by execute_shell_command at call time.
 				if phaseWorkspacePath != "" && phaseWorkspacePath != "default_workspace" {
 					workspace.SetSessionWorkingDir(sessionID, phaseWorkspacePath)
-					if underlyingAgent != nil {
-						underlyingAgent.CodingAgentWorkingDir = codingAgentWorkspaceWorkingDir(phaseWorkspacePath)
-					}
+					// underlyingAgent is provably non-nil at this point
+					// (vet flags the prior nil check as tautological);
+					// nil-check removed to silence (govet/nilness).
+					underlyingAgent.CodingAgentWorkingDir = codingAgentWorkspaceWorkingDir(phaseWorkspacePath)
 					// Restrict shell commands to the workflow folder via Isolator
 					// Include #workflow read-only paths so the builder can read referenced workflows
 					phaseReadPaths := []string{phaseWorkspacePath, "Chats", "skills", "subagents", "Downloads"}

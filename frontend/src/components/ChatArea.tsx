@@ -824,7 +824,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       restoredConversationNativeResume: useNativeResume,
     })
     switchTab(targetTabId)
-    addToast('Previous chat ready to resume', 'success')
   }, [addToast, switchTab])
 
   // State for mode switch dialog

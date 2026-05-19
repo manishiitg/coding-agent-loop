@@ -165,7 +165,6 @@ const WorkflowPreviousChatsPanel: React.FC<{
       restoredConversationRuntimeLabel: chatHistoryRuntimeLabel(session),
       restoredConversationNativeResume: useNativeResume,
     })
-    addToast('Previous workflow chat ready to resume', 'success')
   }, [activeTabId, addToast, setTabConfig])
 
   return (

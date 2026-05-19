@@ -465,6 +465,7 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 		Runtime   *ChatHistoryAgentRuntime  `json:"runtime,omitempty"`
 		Mode      string                    `json:"workshop_mode,omitempty"`
 		History   []llmtypes.MessageContent `json:"conversation_history"`
+		CreatedAt string                    `json:"created_at"`
 		UpdatedAt string                    `json:"updated_at"`
 	}
 	if err := json.Unmarshal([]byte(data), &raw); err != nil {
@@ -474,7 +475,13 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 		raw.SessionID = fallbackSessionID
 	}
 	if raw.UpdatedAt == "" {
+		raw.UpdatedAt = raw.CreatedAt
+	}
+	if raw.UpdatedAt == "" {
 		raw.UpdatedAt = fallbackUpdatedAt.Format(time.RFC3339)
+	}
+	if raw.CreatedAt == "" {
+		raw.CreatedAt = raw.UpdatedAt
 	}
 	raw.Mode = normalizeChatHistoryWorkshopMode(raw.Mode)
 	if raw.Runtime != nil && raw.Runtime.WorkshopMode == "" {
@@ -495,6 +502,7 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 		UserID:           userID,
 		WorkspacePath:    workflowPath,
 		ConversationPath: pathpkg.Join(workspaceRoot, raw.SessionID, "conversation.json"),
+		CreatedAt:        raw.CreatedAt,
 		UpdatedAt:        raw.UpdatedAt,
 		MessageCount:     len(raw.History),
 		PreviewMessages:  chatHistoryPreviewMessages(raw.History),
@@ -1268,7 +1276,9 @@ func DeleteChatHistoryOlderThan(userID string, olderThanDays int, workspacePath 
 
 		// Legacy layout: chat_history/<session-id>/conversation.json
 		legacyConvPath := filepath.Join(entryDir, "conversation.json")
-		if info, err := os.Stat(legacyConvPath); err == nil && !info.IsDir() && info.ModTime().Before(cutoff) {
+		if shouldDelete, err := chatHistoryFileCleanupCandidate(legacyConvPath, cutoff); err != nil {
+			return result, err
+		} else if shouldDelete {
 			if err := os.RemoveAll(entryDir); err != nil {
 				return result, err
 			}
@@ -1283,8 +1293,11 @@ func DeleteChatHistoryOlderThan(userID string, olderThanDays int, workspacePath 
 			return result, err
 		}
 		for _, convPath := range matches {
-			info, err := os.Stat(convPath)
-			if err != nil || info.IsDir() || !info.ModTime().Before(cutoff) {
+			shouldDelete, err := chatHistoryFileCleanupCandidate(convPath, cutoff)
+			if err != nil {
+				return result, err
+			}
+			if !shouldDelete {
 				continue
 			}
 			if err := os.Remove(convPath); err != nil {
@@ -1308,8 +1321,11 @@ func deleteOldWorkflowBuilderConversations(result *ChatHistoryCleanupResult, wor
 		return err
 	}
 	for _, convPath := range matches {
-		info, err := os.Stat(convPath)
-		if err != nil || !info.ModTime().Before(cutoff) {
+		shouldDelete, err := chatHistoryFileCleanupCandidate(convPath, cutoff)
+		if err != nil {
+			return err
+		}
+		if !shouldDelete {
 			continue
 		}
 		if err := os.Remove(convPath); err != nil {
@@ -1319,4 +1335,59 @@ func deleteOldWorkflowBuilderConversations(result *ChatHistoryCleanupResult, wor
 		result.DeletedPaths = append(result.DeletedPaths, workflowRelativeConversationPath(workspacePath, workflowDir, convPath))
 	}
 	return nil
+}
+
+func chatHistoryFileCleanupCandidate(convPath string, cutoff time.Time) (bool, error) {
+	info, err := os.Stat(convPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.IsDir() {
+		return false, nil
+	}
+
+	data, err := os.ReadFile(convPath)
+	if err != nil {
+		return false, err
+	}
+
+	var raw struct {
+		ConversationHistory []json.RawMessage `json:"conversation_history"`
+		CreatedAt           string            `json:"created_at"`
+		UpdatedAt           string            `json:"updated_at"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false, nil
+	}
+	if len(raw.ConversationHistory) == 0 {
+		return false, nil
+	}
+
+	timestamp := info.ModTime()
+	if parsed, ok := parseChatHistoryCleanupTime(raw.UpdatedAt); ok {
+		timestamp = parsed
+	} else if parsed, ok := parseChatHistoryCleanupTime(raw.CreatedAt); ok {
+		timestamp = parsed
+	}
+
+	return timestamp.Before(cutoff), nil
+}
+
+func parseChatHistoryCleanupTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err == nil {
+		return parsed, true
+	}
+	parsed, err = time.Parse(time.RFC3339, value)
+	if err == nil {
+		return parsed, true
+	}
+	return time.Time{}, false
 }

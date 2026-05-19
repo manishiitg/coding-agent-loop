@@ -1,7 +1,7 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
 
 const DBG = '[skill-popup]'
-import { Send, Square, Code2, Sparkles, Wand2, Loader2, Search, Globe, Layers, X, History, Bot, Server, Download, Paperclip, CalendarClock, MessageSquare, Trash2, Terminal } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Wand2, Loader2, Search, Globe, Layers, X, History, Bot, Server, Download, Paperclip, CalendarClock, MessageSquare, Terminal } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -16,6 +16,11 @@ import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
 import { CommandEditorDialog } from './commands/CommandEditorDialog'
+import {
+  CHAT_HISTORY_CLEANUP_AGE_OPTIONS,
+  CleanupOldChatsDropdown,
+  type ChatHistoryCleanupAgeDays,
+} from './CleanupOldChatsDropdown'
 import { findCommand, findCommandAnyMode, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
 import { commandsApi } from '../api/commands'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
@@ -1587,28 +1592,36 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return () => { cancelled = true }
   }, [activeWorkflowWorkspacePath, addToast, showResumeDialog])
 
-  const oldResumeSessionCount = useMemo(
-    () => resumeSessions.filter(session => resumeSessionHasMessages(session) && resumeSessionOlderThanDays(session, 14)).length,
+  const oldResumeSessionCounts = useMemo(
+    () => CHAT_HISTORY_CLEANUP_AGE_OPTIONS.reduce((counts, days) => {
+      counts[days] = resumeSessions.filter(session => resumeSessionHasMessages(session) && resumeSessionOlderThanDays(session, days)).length
+      return counts
+    }, {} as Record<ChatHistoryCleanupAgeDays, number>),
     [resumeSessions]
   )
+  const hasOldResumeSessions = useMemo(
+    () => CHAT_HISTORY_CLEANUP_AGE_OPTIONS.some(days => oldResumeSessionCounts[days] > 0),
+    [oldResumeSessionCounts]
+  )
 
-  const handleResumeCleanupOldChats = useCallback(async () => {
+  const handleResumeCleanupOldChats = useCallback(async (olderThanDays: ChatHistoryCleanupAgeDays) => {
+    const oldResumeSessionCount = oldResumeSessionCounts[olderThanDays]
     if (oldResumeSessionCount === 0) {
-      addToast('No conversations older than 14 days', 'info')
+      addToast(`No conversations older than ${olderThanDays} days`, 'info')
       return
     }
     const scopeLabel = activeWorkflowWorkspacePath || 'all chats'
-    const confirmed = window.confirm(`Delete conversations older than 14 days from ${scopeLabel}? This cannot be undone.`)
+    const confirmed = window.confirm(`Delete ${oldResumeSessionCount} conversation${oldResumeSessionCount === 1 ? '' : 's'} older than ${olderThanDays} days from ${scopeLabel}? This cannot be undone.`)
     if (!confirmed) return
 
     setResumeCleanupLoading(true)
     try {
-      const response = await agentApi.cleanupChatHistorySessions(14, activeWorkflowWorkspacePath)
+      const response = await agentApi.cleanupChatHistorySessions(olderThanDays, activeWorkflowWorkspacePath)
       const deletedCount = response.result?.deleted_count ?? 0
       addToast(
         deletedCount === 0
-          ? 'No conversations older than 14 days'
-          : `Deleted ${deletedCount} old conversation${deletedCount === 1 ? '' : 's'}`,
+          ? `No conversations older than ${olderThanDays} days`
+          : `Deleted ${deletedCount} conversation${deletedCount === 1 ? '' : 's'} older than ${olderThanDays} days`,
         'success'
       )
       const refreshed = await agentApi.listChatHistorySessions(100, 0, activeWorkflowWorkspacePath)
@@ -1621,7 +1634,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     } finally {
       setResumeCleanupLoading(false)
     }
-  }, [activeWorkflowWorkspacePath, addToast, oldResumeSessionCount])
+  }, [activeWorkflowWorkspacePath, addToast, oldResumeSessionCounts])
 
   // Auto-resize textarea based on content
   const adjustTextareaHeight = useCallback(() => {
@@ -2772,9 +2785,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       restoredConversationNativeResume: useNativeResume,
     })
     setShowResumeDialog(false)
-    addToast(useNativeResume ? 'Previous chat ready to resume' : 'Previous chat added to context', 'success')
     setTimeout(() => textareaRef.current?.focus(), 0)
-  }, [activeTabId, addToast, chatFileContext, resumeSessions, setTabConfig])
+  }, [activeTabId, chatFileContext, resumeSessions, setTabConfig])
 
   const handleWorkflowSelect = useCallback((workflow: { presetId: string; label: string; workspacePath: string }) => {
     if (!textareaRef.current || hashPosition === -1 || !activeTabId) return
@@ -4043,18 +4055,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         activeFilterId={resumeFilter}
         onFilterChange={id => setResumeFilter(id as ResumeFilter)}
         footerSummary={resumeFooterSummary}
-        footerActions={oldResumeSessionCount > 0 ? (
-          <button
-            type="button"
-            onMouseDown={e => e.preventDefault()}
-            onClick={handleResumeCleanupOldChats}
-            disabled={resumeCleanupLoading || resumeSessionsLoading}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
-            title={`Delete ${oldResumeSessionCount} conversation${oldResumeSessionCount === 1 ? '' : 's'} older than 14 days`}
-          >
-            {resumeCleanupLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-            Delete &gt;14d ({oldResumeSessionCount})
-          </button>
+        footerActions={hasOldResumeSessions ? (
+          <CleanupOldChatsDropdown
+            counts={oldResumeSessionCounts}
+            isLoading={resumeCleanupLoading || resumeSessionsLoading}
+            onSelect={handleResumeCleanupOldChats}
+            className="h-auto border-0 px-2 py-1 text-[11px] text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
+          />
         ) : undefined}
         searchPlaceholder="Search previous context..."
         widthClassName="w-[min(720px,calc(100vw-32px))] max-w-[720px]"

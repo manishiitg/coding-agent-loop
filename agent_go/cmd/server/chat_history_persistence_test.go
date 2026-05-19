@@ -238,6 +238,106 @@ func TestDeleteChatHistorySessionDeletesUserDateBucketAndLegacyFiles(t *testing.
 	}
 }
 
+func TestDeleteChatHistoryOlderThanUsesJSONTimestampAndSkipsEmpty(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	convDir := filepath.Join(root, "_users", "default", "chat_history", "2026-05-17")
+	if err := os.MkdirAll(convDir, 0o755); err != nil {
+		t.Fatalf("mkdir conversation dir: %v", err)
+	}
+
+	oldWithFreshMTime := filepath.Join(convDir, "session-old-json-conversation.json")
+	if err := os.WriteFile(oldWithFreshMTime, []byte(`{
+  "session_id": "old-json",
+  "conversation_history": [{"Role": "human", "Parts": [{"Text": "old by json"}]}],
+  "updated_at": "`+time.Now().AddDate(0, 0, -15).Format(time.RFC3339)+`"
+}`), 0o600); err != nil {
+		t.Fatalf("write old-json: %v", err)
+	}
+
+	newWithOldMTime := filepath.Join(convDir, "session-new-json-conversation.json")
+	if err := os.WriteFile(newWithOldMTime, []byte(`{
+  "session_id": "new-json",
+  "conversation_history": [{"Role": "human", "Parts": [{"Text": "new by json"}]}],
+  "updated_at": "`+time.Now().Format(time.RFC3339)+`"
+}`), 0o600); err != nil {
+		t.Fatalf("write new-json: %v", err)
+	}
+	oldMTime := time.Now().AddDate(0, 0, -30)
+	if err := os.Chtimes(newWithOldMTime, oldMTime, oldMTime); err != nil {
+		t.Fatalf("chtimes new-json: %v", err)
+	}
+
+	emptyOld := filepath.Join(convDir, "session-empty-old-conversation.json")
+	if err := os.WriteFile(emptyOld, []byte(`{
+  "session_id": "empty-old",
+  "conversation_history": [],
+  "updated_at": "`+time.Now().AddDate(0, 0, -15).Format(time.RFC3339)+`"
+}`), 0o600); err != nil {
+		t.Fatalf("write empty-old: %v", err)
+	}
+
+	result, err := DeleteChatHistoryOlderThan("default", 14, "")
+	if err != nil {
+		t.Fatalf("cleanup error = %v", err)
+	}
+	if result.DeletedCount != 1 {
+		t.Fatalf("deleted count = %d, want 1: %#v", result.DeletedCount, result.DeletedPaths)
+	}
+	if _, err := os.Stat(oldWithFreshMTime); !os.IsNotExist(err) {
+		t.Fatalf("old json conversation still exists or stat failed unexpectedly: %v", err)
+	}
+	if _, err := os.Stat(newWithOldMTime); err != nil {
+		t.Fatalf("new json conversation should remain: %v", err)
+	}
+	if _, err := os.Stat(emptyOld); err != nil {
+		t.Fatalf("empty old conversation should remain: %v", err)
+	}
+}
+
+func TestDeleteChatHistoryOlderThanWorkflowUsesJSONTimestampAndSkipsEmpty(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	convDir := filepath.Join(root, "Workflow", "instagram", "builder", "conversation", "2026-05-17")
+	if err := os.MkdirAll(convDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow conversation dir: %v", err)
+	}
+
+	oldWorkflow := filepath.Join(convDir, "session-workflow-old-conversation.json")
+	if err := os.WriteFile(oldWorkflow, []byte(`{
+  "session_id": "workflow-old",
+  "conversation_history": [{"Role": "human", "Parts": [{"Text": "old workflow"}]}],
+  "updated_at": "`+time.Now().AddDate(0, 0, -15).Format(time.RFC3339)+`"
+}`), 0o600); err != nil {
+		t.Fatalf("write workflow-old: %v", err)
+	}
+
+	emptyWorkflow := filepath.Join(convDir, "session-workflow-empty-conversation.json")
+	if err := os.WriteFile(emptyWorkflow, []byte(`{
+  "session_id": "workflow-empty",
+  "conversation_history": [],
+  "updated_at": "`+time.Now().AddDate(0, 0, -15).Format(time.RFC3339)+`"
+}`), 0o600); err != nil {
+		t.Fatalf("write workflow-empty: %v", err)
+	}
+
+	result, err := DeleteChatHistoryOlderThan("default", 14, "Workflow/instagram")
+	if err != nil {
+		t.Fatalf("cleanup error = %v", err)
+	}
+	if result.DeletedCount != 1 {
+		t.Fatalf("deleted count = %d, want 1: %#v", result.DeletedCount, result.DeletedPaths)
+	}
+	if _, err := os.Stat(oldWorkflow); !os.IsNotExist(err) {
+		t.Fatalf("old workflow conversation still exists or stat failed unexpectedly: %v", err)
+	}
+	if _, err := os.Stat(emptyWorkflow); err != nil {
+		t.Fatalf("empty workflow conversation should remain: %v", err)
+	}
+}
+
 func TestReadUserChatHistoryConversationDirectPrefersNewestDateBucket(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", root)

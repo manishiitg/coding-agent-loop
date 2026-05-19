@@ -28,6 +28,7 @@ import (
 	"github.com/spf13/viper"
 
 	"mcp-agent-builder-go/agent_go/internal/events"
+	"mcp-agent-builder-go/agent_go/internal/inspector"
 	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
 	"mcp-agent-builder-go/agent_go/pkg/chathistory"
 	"mcp-agent-builder-go/agent_go/pkg/costledger"
@@ -189,6 +190,12 @@ type StreamingAPI struct {
 
 	// Global append-only cost ledger — one line per token_usage event.
 	costLedger *costledger.Ledger
+
+	// In-memory inspector event store. Holds the rolling debug-event
+	// timeline per session for the inspector panel. Per-session ring
+	// buffer; not persisted. Sessions opt in via
+	// POST /api/inspector/<session>/enable (see inspector_routes.go).
+	inspectorStore *inspector.Store
 
 	// Polling system components
 	eventStore *events.EventStore
@@ -738,6 +745,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		conversationHistory:          make(map[string][]llmtypes.MessageContent),
 		chatStore:                    chatStore,
 		costLedger:                   costLedger,
+		inspectorStore:               inspector.NewStore(),
 		eventStore:                   eventStore,
 		terminalStore:                terminalStore,
 		provider:                     config.Provider,
@@ -1076,6 +1084,13 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Global cost ledger summary.
 	apiRouter.HandleFunc("/cost/summary", api.handleCostSummary).Methods("GET")
+
+	// Inspector debug panel — opt-in per-session timeline of
+	// structured InspectorEvents emitted by the LLM adapters. See
+	// inspector_routes.go and internal/inspector/store.go.
+	apiRouter.HandleFunc("/inspector", api.handleInspectorSessions).Methods("GET")
+	apiRouter.HandleFunc("/inspector/{session_id}", api.handleInspectorEvents).Methods("GET")
+	apiRouter.HandleFunc("/inspector/{session_id}", api.handleInspectorClear).Methods("DELETE")
 
 	// Chat history (read-only, persisted to workspace)
 	ChatHistoryRoutes(router, api)

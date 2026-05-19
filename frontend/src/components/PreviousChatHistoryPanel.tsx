@@ -70,14 +70,11 @@ const compactSnippet = (value?: string, maxLength = 180): string => {
   return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text
 }
 
-const previewRoleLabel = (role?: string): string => {
-  const normalized = (role || '').toLowerCase().trim()
-  if (normalized === 'ai' || normalized === 'assistant') return 'Assistant'
-  return 'User'
-}
-
-const latestPreviewMessage = (messages: ChatHistoryPreviewMessage[]): ChatHistoryPreviewMessage | undefined => {
-  return [...messages].reverse().find(message => message.text?.trim())
+const latestUserPreviewMessage = (messages: ChatHistoryPreviewMessage[]): ChatHistoryPreviewMessage | undefined => {
+  return [...messages].reverse().find(message => {
+    const role = (message.role || '').toLowerCase().trim()
+    return (role === 'human' || role === 'user') && message.text?.trim()
+  })
 }
 
 const sessionHasMessages = (session: ChatHistorySession): boolean => {
@@ -472,8 +469,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               const workshopModeLabel = chatHistoryWorkshopModeLabel(session)
               const isDeleting = deletingSessionIds.has(session.session_id)
               const firstUserText = compactSnippet(session.query, 180)
-              const latestMessage = latestPreviewMessage(messages)
-              const latestMessageText = compactSnippet(latestMessage?.text, 180)
+              const lastUserMessageText = compactSnippet(latestUserPreviewMessage(messages)?.text, 180)
+              const showLastUserMessage = !!lastUserMessageText && lastUserMessageText !== firstUserText
 
               return (
                 <div key={session.session_id} className="group bg-background transition-colors hover:bg-muted/20">
@@ -510,20 +507,12 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                           </span>
                         )}
                       </div>
-                      {(firstUserText || latestMessageText) && (
+                      {showLastUserMessage && (
                         <div className="mt-1 space-y-0.5 text-[11px] leading-snug text-muted-foreground">
-                          {firstUserText && (
-                            <div className="flex min-w-0 gap-1">
-                              <span className="shrink-0 font-medium text-foreground/80">First user:</span>
-                              <span className="line-clamp-1 min-w-0">{firstUserText}</span>
-                            </div>
-                          )}
-                          {latestMessageText && (
-                            <div className="flex min-w-0 gap-1">
-                              <span className="shrink-0 font-medium text-foreground/80">Latest {previewRoleLabel(latestMessage?.role)}:</span>
-                              <span className="line-clamp-1 min-w-0">{latestMessageText}</span>
-                            </div>
-                          )}
+                          <div className="flex min-w-0 gap-1">
+                            <span className="shrink-0 font-medium text-foreground/80">Last user:</span>
+                            <span className="line-clamp-1 min-w-0">{lastUserMessageText}</span>
+                          </div>
                         </div>
                       )}
                     </button>

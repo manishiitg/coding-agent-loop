@@ -8,11 +8,9 @@ import { useChatStore } from '../stores'
 import { agentApi, getApiBaseUrl } from '../services/api'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useAppStore } from '../stores/useAppStore'
-import { useModeStore } from '../stores/useModeStore'
-import type { PollingEvent, SessionExecutionTreeResponse, TerminalSnapshot } from '../services/api-types'
+import type { PollingEvent, SessionExecutionTreeResponse } from '../services/api-types'
 import { useRenderLogger } from '../utils/renderLogger'
 import { normalizeMarkdownContent } from './ui/MarkdownRenderer'
-import { sanitizeStreamingDisplayText } from '../utils/streamingStatus'
 
 interface EventDisplayProps {
   onFeedbackSubmitted?: () => void
@@ -140,19 +138,6 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
     isApprovingWorkflow: state.isApprovingWorkflow
   })))
 
-  // Subscribe to streaming text for current session
-  const currentStreamingText = useChatStore(state =>
-    sessionId ? state.streamingText[sessionId] || '' : ''
-  )
-  const currentStreamingStatus = useChatStore(state =>
-    sessionId ? state.streamingStatus[sessionId] || '' : ''
-  )
-  const completedStreamingText = useChatStore(state =>
-    sessionId ? state.completedStreamingText[sessionId] || '' : ''
-  )
-  const [terminalSnapshots, setTerminalSnapshots] = React.useState<TerminalSnapshot[]>([])
-  const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
-
   // CRITICAL: Always use prop events - never fall back to global events to prevent cross-tab mixing
   // Events should always be passed from ChatArea (which uses tab-specific events)
   const events = React.useMemo(() => {
@@ -164,83 +149,14 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
 
   useRenderLogger('EventDisplay', {
     events: events.length,
-    hasStreamingText: !!currentStreamingText,
-    streamingTextLen: currentStreamingText.length,
     finalResponse: !!finalResponse,
     isCompleted,
     sessionId,
   })
 
-  // Check completion only for the latest visible user turn. Multi-turn chats keep
-  // old completion events in the same session, so a session-wide check would hide
-  // live streaming for the next message.
-  const hasCompletionEvent = React.useMemo(() => {
-    let latestUserMessageIndex = -1
-    let latestCompletionIndex = -1
-
-    events.forEach((event, index) => {
-      if (event.type === 'user_message') {
-        latestUserMessageIndex = index
-      }
-      if (event.type === 'unified_completion' || event.type === 'llm_generation_end') {
-        latestCompletionIndex = index
-      }
-    })
-
-    return latestCompletionIndex >= 0 && (latestUserMessageIndex < 0 || latestCompletionIndex > latestUserMessageIndex)
-  }, [events])
-
   // Memoize markdown components to avoid re-creating on every render
   const markdownComponents = React.useMemo(() => getMarkdownComponents(compact), [compact])
-  const displayStreamingText = React.useMemo(() => sanitizeStreamingDisplayText(currentStreamingText), [currentStreamingText])
-  const displayCompletedStreamingText = React.useMemo(() => sanitizeStreamingDisplayText(completedStreamingText), [completedStreamingText])
-  const normalizedStreamingText = React.useMemo(() => normalizeMarkdownContent(displayStreamingText), [displayStreamingText])
-  const normalizedCompletedStreamingText = React.useMemo(() => normalizeMarkdownContent(displayCompletedStreamingText), [displayCompletedStreamingText])
   const normalizedFinalResponse = React.useMemo(() => normalizeMarkdownContent(finalResponse || ''), [finalResponse])
-  const hasLiveStreamingText = Boolean(displayStreamingText || currentStreamingStatus)
-  const shouldPollTerminalStatus = Boolean(sessionId) && !hasCompletionEvent
-  React.useEffect(() => {
-    if (!sessionId || !shouldPollTerminalStatus) {
-      setTerminalSnapshots([])
-      return
-    }
-
-    let cancelled = false
-    const fetchTerminals = async () => {
-      try {
-        const response = await agentApi.listTerminals(sessionId)
-        if (!cancelled) {
-          setTerminalSnapshots(response.terminals || [])
-        }
-      } catch {
-        if (!cancelled) {
-          setTerminalSnapshots([])
-        }
-      }
-    }
-
-    void fetchTerminals()
-    const interval = window.setInterval(fetchTerminals, 1500)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [sessionId, shouldPollTerminalStatus])
-
-  const activeTerminalSnapshots = React.useMemo(
-    () => terminalSnapshots.filter(terminal => terminal.active),
-    [terminalSnapshots],
-  )
-  const currentTerminalStatus = activeTerminalSnapshots[0]?.status
-  const terminalStatusText = currentTerminalStatus?.assistant_preview || currentTerminalStatus?.status_text || ''
-  const terminalToolSummary = currentTerminalStatus?.tool_summary || ''
-  const terminalProviderLabel = currentTerminalStatus?.provider_label || 'Coding agent'
-  const hasActiveTerminalStatus = activeTerminalSnapshots.length > 0 && Boolean(terminalStatusText || terminalToolSummary)
-  const terminalProgressLine = terminalStatusText || `${terminalProviderLabel} is working`
-  const streamingPanelTitle = 'Generating...'
-  const shouldShowStreamingPanel = !hasCompletionEvent && (hasLiveStreamingText || hasActiveTerminalStatus)
-  const showStreamingPanelHeader = shouldShowStreamingPanel && (hasLiveStreamingText || hasActiveTerminalStatus)
-  const showStatusOnlyLine = Boolean(currentStreamingStatus && !displayStreamingText && !hasActiveTerminalStatus)
 
   // Handle workflow approval
   const handleApproveWorkflow = React.useCallback(async (requestId: string) => {
@@ -286,73 +202,6 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
             />
           </div>
         </div>
-      )}
-
-      {/* Streaming Text Display - shows LLM output as it generates */}
-      {shouldShowStreamingPanel && (
-        <Card className="border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-neutral-900/40 shadow-sm min-w-0">
-          <CardContent className={`${compact ? 'p-2' : 'p-3'} min-w-0`}>
-            {showStreamingPanelHeader && (
-              <div className="flex items-center gap-1.5 mb-1">
-                {hasLiveStreamingText && (
-                  <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" />
-                )}
-                <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-600 dark:text-gray-400 font-medium`}>
-                  {streamingPanelTitle}
-                </span>
-              </div>
-            )}
-            {displayStreamingText && (
-              <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {normalizedStreamingText}
-                </ReactMarkdown>
-                <span className="inline-block w-1.5 h-3 bg-gray-500 animate-pulse ml-0.5" />
-              </div>
-            )}
-            {hasActiveTerminalStatus && !displayStreamingText && (
-              <div className={`${compact ? 'text-[10px]' : 'text-xs'} min-w-0 text-gray-700 dark:text-gray-200`}>
-                <div className="min-w-0">
-                  <div className="max-h-40 overflow-hidden whitespace-pre-wrap break-words font-medium leading-relaxed">
-                    {terminalProgressLine}
-                  </div>
-                  {activeTerminalSnapshots.length > 1 && (
-                    <div className="mt-1 text-[10px] text-gray-500 dark:text-gray-400">
-                      {activeTerminalSnapshots.length} terminals active
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-            {showStatusOnlyLine && (
-              <div className={`${compact ? 'text-[10px]' : 'text-xs'} min-w-0 text-gray-700 dark:text-gray-200`}>
-                <span className="font-medium">{currentStreamingStatus}</span>
-              </div>
-            )}
-            {currentStreamingStatus && !showStatusOnlyLine && (
-              <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-500 dark:text-gray-400 italic mt-1 opacity-75`}>
-                {currentStreamingStatus}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Completed Streaming Text - preserved intermediate output from generation */}
-      {/* Hide when content is identical to finalResponse or when a unified_completion event already shows the result */}
-      {displayCompletedStreamingText && !displayStreamingText && displayCompletedStreamingText.trim() !== finalResponse?.trim() && !hasCompletionEvent && (
-        <details className="min-w-0 group" open={selectedModeCategory === 'workflow'}>
-          <summary className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300 select-none`}>
-            Thinking
-          </summary>
-          <div className="mt-1 border-l-2 border-gray-200 dark:border-gray-700 pl-2">
-            <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[9px]' : 'text-[10px]'} opacity-75`}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                {normalizedCompletedStreamingText}
-              </ReactMarkdown>
-            </div>
-          </div>
-        </details>
       )}
 
       {/* Final Response Display */}

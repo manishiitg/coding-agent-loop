@@ -246,17 +246,14 @@ const resumeChatSnippet = (value?: string, maxLength = 120): string => {
   return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text
 }
 
-const resumePreviewRoleLabel = (role?: string): string => {
-  const normalized = (role || '').toLowerCase().trim()
-  if (normalized === 'ai' || normalized === 'assistant') return 'Assistant'
-  return 'User'
-}
-
-const resumeLatestPreviewLabel = (session: ChatHistorySession): string | undefined => {
-  const latest = [...(session.preview_messages || [])].reverse().find(message => message.text?.trim())
-  const text = resumeChatSnippet(latest?.text)
-  if (!latest || !text) return undefined
-  return `Latest ${resumePreviewRoleLabel(latest.role)}: ${text}`
+const resumeLastUserPreviewLabel = (session: ChatHistorySession): string | undefined => {
+  const latestUser = [...(session.preview_messages || [])].reverse().find(message => {
+    const role = (message.role || '').toLowerCase().trim()
+    return (role === 'human' || role === 'user') && message.text?.trim()
+  })
+  const text = resumeChatSnippet(latestUser?.text)
+  if (!latestUser || !text || text === resumeChatSnippet(session.query)) return undefined
+  return `Last user: ${text}`
 }
 
 const resumeSessionHasMessages = (session: ChatHistorySession): boolean => {
@@ -3071,7 +3068,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const mode = botProvider || (session.agent_mode || 'chat').replace(/_/g, ' ')
       const messageCount = session.message_count ?? 0
       const countLabel = messageCount > 0 ? `${messageCount} message${messageCount === 1 ? '' : 's'}` : 'conversation'
-      const latestLabel = resumeLatestPreviewLabel(session)
+      const lastUserLabel = resumeLastUserPreviewLabel(session)
       const leadingIcon =
         kind === 'schedule'
           ? <CalendarClock className="h-4 w-4 text-amber-500" />
@@ -3082,7 +3079,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         id: session.session_id,
         name: resumeChatTitle(session),
         description: [
-          latestLabel,
+          lastUserLabel,
           formatResumeChatTime(session.updated_at || session.created_at),
           mode,
           workshopModeLabel,

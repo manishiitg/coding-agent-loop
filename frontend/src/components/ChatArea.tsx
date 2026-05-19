@@ -136,6 +136,35 @@ function getOwnedTerminalStreamKeys(
   return []
 }
 
+function isForegroundSessionEvent(
+  event: PollingEvent,
+  component: unknown,
+  correlationId: unknown,
+): boolean {
+  const componentText = typeof component === 'string' ? component : ''
+  const correlationText = typeof correlationId === 'string' ? correlationId : ''
+  if (
+    componentText.startsWith('delegation-') ||
+    componentText.startsWith('workshop-') ||
+    correlationText.startsWith('delegation-') ||
+    correlationText.startsWith('workshop-')
+  ) {
+    return false
+  }
+
+  const kind = (event.execution_kind || '').trim().toLowerCase()
+  if (kind && kind !== 'main_agent') {
+    return false
+  }
+
+  const executionId = (event.execution_id || '').trim().toLowerCase()
+  if (!executionId || executionId.startsWith('main:')) {
+    return true
+  }
+
+  return false
+}
+
 function isStaleAutoNotificationEvent(event: PollingEvent): boolean {
   const ts = getEventTimestampMs(event)
   return ts !== null && Date.now() - ts > AUTO_NOTIFICATION_MAX_AGE_MS
@@ -1069,26 +1098,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
   }, [scrollToBottom, setAutoScroll])
 
-  // Auto-scroll while the live "Generating..." card grows. New streaming chunks
-  // update the existing card instead of appending events, so displayEvents.length
-  // does not change and the normal event-scroll effect will not fire.
-  const streamingAutoScrollSignal = useChatStore(state => {
-    if (!activeSessionId) return ''
-    const textLength = state.streamingText[activeSessionId]?.length || 0
-    const statusLength = state.streamingStatus[activeSessionId]?.length || 0
-    return textLength > 0 || statusLength > 0 ? `${textLength}:${statusLength}` : ''
-  })
-  useEffect(() => {
-    if (!streamingAutoScrollSignal || !autoScroll || !chatContentRef.current) {
-      return
-    }
-
-    scrollToBottom('instant')
-    const timer = setTimeout(() => scrollToBottom('instant'), 50)
-    return () => clearTimeout(timer)
-  }, [streamingAutoScrollSignal, autoScroll, scrollToBottom])
-
-
   // Update refs when values change (for global observer)
   useEffect(() => {
     if (!activeTab) {
@@ -1374,8 +1383,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       const innerData = agentEvent?.data as Record<string, unknown> | undefined
       const rawComponent = (event as unknown as Record<string, unknown>).component ?? innerData?.component ?? agentEvent?.component
       const rawCorrelationId = (event as unknown as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
-      const isSubAgentEvent = (typeof rawComponent === 'string' && rawComponent.startsWith('delegation-'))
-        || (typeof rawCorrelationId === 'string' && (rawCorrelationId.startsWith('delegation-') || rawCorrelationId.startsWith('workshop-')))
+      const isForegroundSession = isForegroundSessionEvent(event, rawComponent, rawCorrelationId)
+      const isSubAgentEvent = !isForegroundSession
 
       // Skip backend user_message events when we already have a frontend-created one
       // (avoids duplicate user message bubbles in the chat)
@@ -1398,21 +1407,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         for (const ownedTerminalKey of ownedTerminalKeys) {
           chatStore.clearOwnedStreamingTerminal(ownedTerminalKey)
         }
-        // Workshop background agents (execute_step, harden_workflow, generate_learnings) use
-        // workshop-* correlation IDs. Drop their streaming events — they render in EventDisplay cards.
-        const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
         if (isDelegationStreaming) {
           chatStore.clearDelegationStreamingText(correlationId as string)
-        } else if (!isWorkshopStreaming) {
-          chatStore.clearStreamingText(actualSessionId)
-          chatStore.clearStreamingTerminal(actualSessionId)
         }
         continue
       }
       if (event.type === 'streaming_chunk') {
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
         const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
-        const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
         const rawContent = innerData?.content ?? agentEvent?.content
         const content = typeof rawContent === 'string' ? rawContent : ''
         const rawIndex = innerData?.chunk_index ?? agentEvent?.chunk_index
@@ -1431,37 +1433,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearDelegationStreamingText(correlationId as string)
             chatStore.appendDelegationStreamingChunk(correlationId as string, chunkIndex, content)
           }
-        } else if (!isWorkshopStreaming && isTerminalStreaming && content) {
-          chatStore.setStreamingTerminalSnapshot(actualSessionId, chunkIndex, content)
-        } else if (!isWorkshopStreaming && content) {
-          if (chunkIndex === 0 || chunkIndex === 1) {
-            chatStore.clearStreamingText(actualSessionId)
-          }
-          chatStore.appendStreamingChunk(actualSessionId, chunkIndex, content)
         }
         continue
       }
       if (event.type === 'streaming_end') {
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
-        const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
-        const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
         const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
         const ownedTerminalKeys = getOwnedTerminalStreamKeys(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
         for (const ownedTerminalKey of ownedTerminalKeys) {
           chatStore.setOwnedStreamingTerminalActive(ownedTerminalKey, false)
-        }
-        if (!isDelegationStreaming && !isWorkshopStreaming) {
-          chatStore.clearStreamingStatus(actualSessionId)
-          chatStore.setStreamingTerminalActive(actualSessionId, false)
-          const sidForClear = actualSessionId
-          const textSnapshot = useChatStore.getState().streamingText[sidForClear]
-          setTimeout(() => {
-            const currentText = useChatStore.getState().streamingText[sidForClear]
-            const match = currentText === textSnapshot
-            if (currentText && match) {
-              useChatStore.getState().clearStreamingText(sidForClear)
-            }
-          }, 500)
         }
         continue
       }
@@ -1685,18 +1665,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       }
     }
 
-    // Defer streaming text clear
-    if (hasCompletionEvent) {
-      const sid = actualSessionId
-      const textBeforeClear = useChatStore.getState().streamingText[sid]
-      requestAnimationFrame(() => {
-        const currentText = useChatStore.getState().streamingText[sid]
-        if (currentText === textBeforeClear) {
-          useChatStore.getState().clearStreamingText(sid)
-        }
-      })
-    }
-
     // Process workflow events — only for the ACTIVE preset's tabs
     // Background workflow tabs (different preset) still receive and store events via SSE,
     // but we skip side effects (canvas updates, step progress, workspace refresh) to avoid
@@ -1751,18 +1719,20 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getTabEvents, setTabLastEventIndex, setLastEventIndex, addTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, selectedModeCategory])
 
-  // Handle an incoming SSE event message: process streaming events immediately, non-streaming processed inline
+  // Handle an incoming SSE event message: ignore global streaming display events,
+  // then process non-streaming events inline.
   const handleSSEMessage = useCallback((msg: SSEEventMessage, sid: string) => {
     const chatStore = useChatStore.getState()
     const actualSessionId = (msg as unknown as Record<string, unknown>).session_id as string || sid
 
     const incomingEvents = msg.events
 
-    // Separate streaming events (immediate) from non-streaming events (batched)
+    // Streaming events are transport/progress noise for the main timeline. Keep
+    // delegation and owned terminal state, but do not populate the global
+    // generation card state.
     const nonStreamingEvents: PollingEvent[] = []
     for (const event of incomingEvents) {
       if (event.type === 'streaming_start' || event.type === 'streaming_chunk' || event.type === 'streaming_end') {
-        // Process streaming events immediately for real-time text display
         const agentEvent = event.data as Record<string, unknown> | undefined
         const innerData = agentEvent?.data as Record<string, unknown> | undefined
 
@@ -1774,17 +1744,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           for (const ownedTerminalKey of ownedTerminalKeys) {
             chatStore.clearOwnedStreamingTerminal(ownedTerminalKey)
           }
-          const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
           if (isDelegation) {
             chatStore.clearDelegationStreamingText(correlationId as string)
-          } else if (!isWorkshopStreaming) {
-            chatStore.clearStreamingText(actualSessionId)
-            chatStore.clearStreamingTerminal(actualSessionId)
           }
         } else if (event.type === 'streaming_chunk') {
           const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
           const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
-          const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
           const rawContent = innerData?.content ?? agentEvent?.content
           const content = typeof rawContent === 'string' ? rawContent : ''
           const rawIndex = innerData?.chunk_index ?? agentEvent?.chunk_index
@@ -1803,33 +1768,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearDelegationStreamingText(correlationId as string)
               chatStore.appendDelegationStreamingChunk(correlationId as string, chunkIndex, content)
             }
-          } else if (!isWorkshopStreaming && isTerminalStreaming && content) {
-            chatStore.setStreamingTerminalSnapshot(actualSessionId, chunkIndex, content)
-          } else if (!isWorkshopStreaming && content) {
-            if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearStreamingText(actualSessionId)
-            chatStore.appendStreamingChunk(actualSessionId, chunkIndex, content)
           }
         } else if (event.type === 'streaming_end') {
           const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
-          const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
-          const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
           const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
           const ownedTerminalKeys = getOwnedTerminalStreamKeys(actualSessionId, event, innerData, agentEvent, correlationId, metadata)
           for (const ownedTerminalKey of ownedTerminalKeys) {
             chatStore.setOwnedStreamingTerminalActive(ownedTerminalKey, false)
-          }
-          if (!isDelegation && !isWorkshopStreaming) {
-            chatStore.clearStreamingStatus(actualSessionId)
-            chatStore.setStreamingTerminalActive(actualSessionId, false)
-            const sidForClear = actualSessionId
-            const textSnapshot = useChatStore.getState().streamingText[sidForClear]
-            setTimeout(() => {
-              const currentText = useChatStore.getState().streamingText[sidForClear]
-              const match = currentText === textSnapshot
-              if (currentText && match) {
-                useChatStore.getState().clearStreamingText(sidForClear)
-              }
-            }, 500)
           }
         }
       } else {

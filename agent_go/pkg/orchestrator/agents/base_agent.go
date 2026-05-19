@@ -146,6 +146,7 @@ func NewBaseAgent(
 	mcpSessionID string, // MCP session ID for connection sharing across agents
 	codingAgentWorkingDir string, // CLI coding-agent process working directory
 	codingAgentKeepAlive bool, // Keep tmux-backed coding-agent sessions alive after this agent completes
+	forceStructuredCodingAgent bool, // Force structured JSON transport for coding-agent CLIs (overrides tmux default)
 	runtimeOverrides mcpclient.RuntimeOverrides, // Runtime config overrides for MCP servers (e.g., output directories)
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
@@ -304,6 +305,11 @@ func NewBaseAgent(
 			mcpagent.WithCursorPersistentInteractiveSession(true),
 		)
 		logger.Info("🔗 Keeping tmux-backed coding-agent session alive after completion",
+			loggerv2.String("agent_name", name))
+	}
+	if forceStructuredCodingAgent {
+		options = append(options, mcpagent.WithForceStructuredCodingAgent(true))
+		logger.Info("🔧 Forcing structured JSON transport for coding-agent CLIs (step transport=structured)",
 			loggerv2.String("agent_name", name))
 	}
 

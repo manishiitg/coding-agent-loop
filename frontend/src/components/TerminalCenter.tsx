@@ -77,27 +77,90 @@ function terminalTaskLabel(terminal: TerminalSnapshot): string {
 }
 
 function formatTerminalTitle(terminal: TerminalSnapshot): string {
-  const workflowName = terminalWorkflowLabel(terminal)
-  const kindLabel = formatTerminalKindLabel(terminal)
-  const taskLabel = terminalTaskLabel(terminal)
+  // Title is just the step_id (the most useful identifier). Everything
+  // else — parent, chip, workflow name, kind — moves to the meta row
+  // so the title stays minimal and scannable in dense lists.
+  return terminal.step_id || terminal.step_name || formatTerminalKindLabel(terminal) || terminal.display_title || 'Terminal'
+}
 
-  if (workflowName && kindLabel && taskLabel && taskLabel.toLowerCase() !== kindLabel.toLowerCase()) {
-    return `${workflowName} -> ${kindLabel} -> ${taskLabel}`
+// formatTransportChip returns "transport·provider" (e.g. "api·anthropic",
+// "structured·claudecode", "tmux·codex") for the title prefix. Falls
+// back to inference: tmux_session implies tmux; absence implies the
+// caller-supplied step_transport or "api".
+function formatTransportChip(terminal: TerminalSnapshot): string {
+  let transport = terminal.step_transport || ''
+  if (!transport) {
+    transport = terminal.tmux_session ? 'tmux' : 'api'
   }
-  if (workflowName && taskLabel) return `${workflowName} -> ${taskLabel}`
-  if (workflowName && kindLabel) return `${workflowName} -> ${kindLabel}`
-  if (taskLabel && kindLabel && taskLabel.toLowerCase() !== kindLabel.toLowerCase()) return `${kindLabel} -> ${taskLabel}`
-  return taskLabel || kindLabel || terminal.display_title || workflowName || 'Terminal'
+  // Normalize backend strings to the short chip form.
+  if (transport === 'structured_cli' || transport === 'structured') transport = 'structured'
+  if (transport === 'non_tmux') transport = 'api'
+  const provider = terminal.status?.provider_label?.toLowerCase() || ''
+  return provider ? `${transport}·${provider}` : transport
+}
+
+// extractDoneStats parses the synthetic terminal's "[done · 1240ms · 412 in
+// · 28 out · $0.000089]" trailer out of the pane content, so we can
+// surface duration / tokens / cost in the meta row without needing
+// dedicated backend fields. Returns empty when the trailer is absent —
+// tmux providers don't emit a Done line, only real pane scrapes.
+function extractDoneStats(content: string): { duration?: string; tokensIn?: string; tokensOut?: string; cost?: string } {
+  if (!content) return {}
+  const match = content.match(/\[done · ([^\]]+)\][^\[]*$/)
+  if (!match) return {}
+  const parts = match[1].split('·').map(p => p.trim())
+  const out: { duration?: string; tokensIn?: string; tokensOut?: string; cost?: string } = {}
+  for (const p of parts) {
+    // Backend now emits duration in human-readable form already
+    // ("234ms", "30.7s", "2m 14s", "1h 5m") — accept any non-token,
+    // non-cost segment as the duration.
+    if (p.endsWith(' in')) {
+      out.tokensIn = p.replace(' in', '')
+    } else if (p.endsWith(' out')) {
+      out.tokensOut = p.replace(' out', '')
+    } else if (p.startsWith('$')) {
+      out.cost = p
+    } else if (!out.duration && /\d/.test(p)) {
+      out.duration = p
+    }
+  }
+  return out
 }
 
 function formatTerminalMeta(terminal: TerminalSnapshot): string {
-  const parts = [
-    terminal.step_id ? `step ${terminal.step_id}` : '',
+  const chip = formatTransportChip(terminal)
+  const parts: string[] = [
+    chip,
     terminal.step_type ? humanizeIdentifier(terminal.step_type) : '',
     terminal.scope ? humanizeIdentifier(terminal.scope) : '',
-    terminal.display_meta,
-  ].filter(Boolean)
-  return [...new Set(parts)].join(' · ')
+  ]
+  if (terminal.step_index && terminal.step_total) {
+    parts.push(`step ${terminal.step_index}/${terminal.step_total}`)
+  }
+  if (terminal.step_attempt && terminal.step_attempt > 1) {
+    parts.push(`attempt ${terminal.step_attempt}`)
+  }
+  if (terminal.step_triggered_by) {
+    parts.push(`triggered by ${humanizeIdentifier(terminal.step_triggered_by)}`)
+  }
+  if (terminal.parent_step_id) {
+    parts.push(`parent ${terminal.parent_step_id}`)
+  }
+  if (terminal.step_execution_mode) {
+    parts.push(humanizeIdentifier(terminal.step_execution_mode))
+  }
+  // Cost / duration / tokens come from the synthetic Done trailer
+  // baked into the pane content. Cheap to parse, no backend wiring.
+  const stats = extractDoneStats(terminal.content)
+  if (stats.duration) parts.push(stats.duration)
+  if (stats.tokensIn && stats.tokensOut) parts.push(`${stats.tokensIn}↑ ${stats.tokensOut}↓`)
+  if (stats.cost) parts.push(stats.cost)
+  // Tool count from the live status (set by the adapter event listener).
+  if (terminal.status?.tool_count && terminal.status.tool_count > 0) {
+    parts.push(`${terminal.status.tool_count} tools`)
+  }
+  if (terminal.display_meta) parts.push(terminal.display_meta)
+  return [...new Set(parts.filter(Boolean))].join(' · ')
 }
 
 function terminalClosesAt(terminal: TerminalSnapshot): Date | null {
@@ -227,12 +290,27 @@ function terminalCreatedTime(terminal: TerminalSnapshot): number {
   return Number.isNaN(value) ? 0 : value
 }
 
+// isMainAgentTerminal returns true for the persistent chat-session
+// terminal that the user keeps coming back to. We pin it to the top of
+// every list so it's the first thing the eye lands on when switching
+// to Debug view.
+function isMainAgentTerminal(terminal: TerminalSnapshot): boolean {
+  const kind = (terminal.execution_kind || '').toLowerCase()
+  return kind === 'main_agent' || kind === 'main' || kind === 'chat'
+}
+
 function sortTerminalsNewestFirst(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
-  return [...terminals].sort((a, b) => terminalUpdatedTime(b) - terminalUpdatedTime(a))
+  return [...terminals].sort((a, b) => {
+    const mainDelta = (isMainAgentTerminal(b) ? 1 : 0) - (isMainAgentTerminal(a) ? 1 : 0)
+    if (mainDelta !== 0) return mainDelta
+    return terminalUpdatedTime(b) - terminalUpdatedTime(a)
+  })
 }
 
 function sortActiveTerminalsStable(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
   return [...terminals].sort((a, b) => {
+    const mainDelta = (isMainAgentTerminal(b) ? 1 : 0) - (isMainAgentTerminal(a) ? 1 : 0)
+    if (mainDelta !== 0) return mainDelta
     const createdDelta = terminalCreatedTime(a) - terminalCreatedTime(b)
     if (createdDelta !== 0) return createdDelta
     return terminalPaneKey(a).localeCompare(terminalPaneKey(b))
@@ -256,8 +334,15 @@ function dedupeTerminalsByPane(terminals: TerminalSnapshot[]): TerminalSnapshot[
 }
 
 export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId, compact }) => {
-  const terminalCenterOpen = useChatStore(state => state.terminalCenterOpen)
-  const [viewAll, setViewAll] = useState(false)
+  // terminalCenterOpen was the legacy toggle gate (separate sidekick
+  // panel); kept here for any callers that still pass the flag but no
+  // longer affects rendering — Debug-mode mount is the only gate.
+  // Default to listing all terminals (across workflow-step sessions
+  // and the main chat session), so workflow step panes show up
+  // automatically. The legacy Current/All toggle has been removed
+  // along with the box header; if per-session filtering is wanted
+  // back we'd re-introduce a control here.
+  const [viewAll, setViewAll] = useState(true)
   const [terminals, setTerminals] = useState<TerminalSnapshot[]>([])
   const [selectedID, setSelectedID] = useState<string | null>(null)
   const [userSelectedID, setUserSelectedID] = useState<string | null>(null)
@@ -324,11 +409,15 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   }, [terminals])
 
   useEffect(() => {
-    if (!terminalCenterOpen) return
+    // Component is now only mounted when Debug view is active (it's
+    // not a sidekick panel anymore), so polling should always run
+    // whenever this component is on screen. The previous
+    // terminalCenterOpen flag gated a standalone toggle that no
+    // longer exists.
     void fetchTerminals()
     const interval = window.setInterval(fetchTerminals, 600)
     return () => window.clearInterval(interval)
-  }, [terminalCenterOpen, fetchTerminals])
+  }, [fetchTerminals])
 
   useEffect(() => {
     if (groupedTerminals.orderedTerminals.length === 0) {
@@ -390,11 +479,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     return () => window.cancelAnimationFrame(frame)
   }, [selectedTerminalKey, selectedTerminal?.content])
 
-  if (!terminalCenterOpen) {
-    return null
-  }
 
-  const renderTerminalCard = (terminal: TerminalSnapshot) => (
+  // Rail item — one row in the left rail. Compact vertical layout:
+  // dot + step title (top line), transport chip + closing countdown
+  // (bottom line). Click → select; hover → highlight.
+  const renderRailItem = (terminal: TerminalSnapshot) => (
     <div
       key={terminalPaneKey(terminal)}
       role="button"
@@ -410,35 +499,19 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
           setUserSelectedID(terminalPaneKey(terminal))
         }
       }}
-      className={`min-w-[180px] max-w-[280px] rounded border px-2.5 py-2 text-left text-xs transition-colors ${
+      className={`group block w-full cursor-pointer border-l-2 px-2.5 py-1.5 text-left text-xs transition-colors ${
         terminalPaneKey(terminal) === selectedTerminalKey
-          ? 'border-neutral-500 bg-neutral-800 text-neutral-100 shadow-sm'
-          : 'border-neutral-700 bg-neutral-900/30 text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200'
+          ? 'border-l-blue-400 bg-neutral-800 text-neutral-100'
+          : 'border-l-transparent text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200'
       }`}
     >
       <div className="flex items-center gap-1.5">
         <span
-          className={`h-2 w-2 rounded-full ${terminalDotClass(terminal)}`}
+          className={`h-2 w-2 shrink-0 rounded-full ${terminalDotClass(terminal)}`}
           title={terminalStateDescription(terminal)}
           aria-label={terminalStateDescription(terminal)}
         />
         <span className="min-w-0 flex-1 truncate font-medium">{formatTerminalTitle(terminal)}</span>
-        <button
-          type="button"
-          onClick={event => {
-            event.stopPropagation()
-            void copyTerminalDebug(terminal)
-          }}
-          className="shrink-0 rounded p-0.5 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-100"
-          title="Copy terminal debug IDs"
-          aria-label="Copy terminal debug IDs"
-        >
-          {copiedTerminalID === terminal.terminal_id ? (
-            <Check className="h-3.5 w-3.5 text-emerald-300" />
-          ) : (
-            <Info className="h-3.5 w-3.5" />
-          )}
-        </button>
         {canDismissTerminal(terminal) && (
           <button
             type="button"
@@ -446,49 +519,26 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               event.stopPropagation()
               void dismissTerminal(terminal)
             }}
-            className="shrink-0 rounded p-0.5 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-100"
+            className="shrink-0 rounded p-0.5 text-neutral-500 opacity-0 hover:bg-neutral-700 hover:text-neutral-100 group-hover:opacity-100"
             title="Remove terminal from UI"
             aria-label="Remove terminal from UI"
           >
-            <X className="h-3.5 w-3.5" />
+            <X className="h-3 w-3" />
           </button>
         )}
       </div>
-      <div className="mt-1 truncate text-[11px] opacity-70">
-        {formatTerminalMeta(terminal) || 'Current session'} · {terminalStateLabel(terminal)}
+      <div className="mt-0.5 flex items-center gap-1.5 text-[10px] opacity-70">
+        <span className="min-w-0 truncate">{formatTransportChip(terminal)}</span>
+        {terminalState(terminal) === 'closing' && (
+          <span className="shrink-0 text-amber-300">· {terminalStateLabel(terminal)}</span>
+        )}
       </div>
     </div>
   )
 
   return (
-    <div className={`${compact ? 'my-2' : 'my-3'} rounded-md border border-neutral-700 bg-[#202020] text-neutral-100 shadow-sm`}>
-      <div className="flex items-center justify-between gap-3 border-b border-neutral-800 px-2.5 py-2">
-        <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-neutral-300">
-          <Terminal className="h-4 w-4 shrink-0" />
-          <span>Terminals</span>
-          <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-400">
-            {activeCount > 0 ? `${activeCount} active` : `${terminals.length} recent`}
-          </span>
-        </div>
-        <div className="flex items-center gap-1 text-xs">
-          <button
-            type="button"
-            onClick={() => setViewAll(false)}
-            className={`rounded px-2 py-1 ${!viewAll ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}
-          >
-            Current
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewAll(true)}
-            className={`rounded px-2 py-1 ${viewAll ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}
-          >
-            All
-          </button>
-        </div>
-      </div>
-
-      <div className="px-2 pb-2 pt-2">
+    <div className={`flex min-h-0 flex-col border border-neutral-700 bg-[#202020] text-neutral-100 shadow-sm ${compact ? 'my-2' : 'my-3 flex-1 overflow-hidden'}`}>
+      <div className="flex min-h-0 flex-1 flex-col px-2 pb-2 pt-2">
         {error && (
           <div className="rounded border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300">
             {error}
@@ -500,55 +550,76 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         )}
 
         {terminals.length > 0 && (
-          <>
-            <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
-              {groupedTerminals.activeTerminals.map(renderTerminalCard)}
-              {groupedTerminals.finishedTerminals.map(renderTerminalCard)}
+          <div className="flex min-h-0 flex-1 gap-0 overflow-hidden border border-neutral-800 bg-[#111]">
+            {/* Left rail — vertical list of all terminals. Scrolls
+                independently of the right pane so the user can navigate
+                a long list without losing the selected terminal's
+                content. Hidden below sm breakpoint to save space. */}
+            <div className="hidden w-60 shrink-0 flex-col overflow-y-auto border-r border-neutral-800 bg-[#0d0d0d] sm:flex">
+              {groupedTerminals.activeTerminals.map(renderRailItem)}
+              {groupedTerminals.finishedTerminals.length > 0 && groupedTerminals.activeTerminals.length > 0 && (
+                <div className="border-t border-neutral-800 px-2.5 py-1 text-[10px] uppercase tracking-wide text-neutral-500">
+                  Finished
+                </div>
+              )}
+              {groupedTerminals.finishedTerminals.map(renderRailItem)}
             </div>
 
-            {selectedTerminal && (
-              <div className="rounded-md border border-neutral-800 bg-[#111]">
-                <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2 text-xs text-gray-400">
-                  <span className="truncate">{formatTerminalTitle(selectedTerminal)}</span>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span
-                      className={terminalStateTextClass(selectedTerminal)}
-                      title={terminalStateDescription(selectedTerminal)}
-                    >
-                      {terminalStateLabel(selectedTerminal)}
+            {/* Right pane — the selected terminal's content. Header
+                bar at top (chip + meta + actions), content below. */}
+            <div className="flex min-w-0 flex-1 flex-col">
+              {selectedTerminal ? (
+                <>
+                  <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2 text-xs text-gray-400">
+                    <span className="min-w-0 flex-1 truncate opacity-80">
+                      {formatTerminalMeta(selectedTerminal)}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => void copyTerminalDebug(selectedTerminal)}
-                      className="inline-flex items-center justify-center rounded border border-neutral-700 p-1 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
-                      title="Copy terminal debug IDs"
-                      aria-label="Copy terminal debug IDs"
-                    >
-                      {copiedTerminalID === selectedTerminal.terminal_id ? (
-                        <Check className="h-3.5 w-3.5 text-emerald-300" />
-                      ) : (
-                        <Info className="h-3.5 w-3.5" />
+                    <div className="flex shrink-0 items-center gap-2">
+                      {terminalState(selectedTerminal) === 'closing' && (
+                        <span
+                          className="text-amber-300"
+                          title={terminalStateDescription(selectedTerminal)}
+                        >
+                          {terminalStateLabel(selectedTerminal)}
+                        </span>
                       )}
-                    </button>
-                    {canDismissTerminal(selectedTerminal) && (
                       <button
                         type="button"
-                        onClick={() => void dismissTerminal(selectedTerminal)}
-                        className="inline-flex items-center justify-center rounded border border-neutral-700 p-1 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
-                        title="Remove terminal from UI"
-                        aria-label="Remove terminal from UI"
+                        onClick={() => void copyTerminalDebug(selectedTerminal)}
+                        className="inline-flex items-center justify-center rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-100"
+                        title="Copy terminal debug IDs"
+                        aria-label="Copy terminal debug IDs"
                       >
-                        <X className="h-3.5 w-3.5" />
+                        {copiedTerminalID === selectedTerminal.terminal_id ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-300" />
+                        ) : (
+                          <Info className="h-3.5 w-3.5" />
+                        )}
                       </button>
-                    )}
+                      {canDismissTerminal(selectedTerminal) && (
+                        <button
+                          type="button"
+                          onClick={() => void dismissTerminal(selectedTerminal)}
+                          className="inline-flex items-center justify-center rounded border border-neutral-700 p-1 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
+                          title="Remove terminal from UI"
+                          aria-label="Remove terminal from UI"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
+                  <pre ref={terminalOutputRef} onScroll={handleTerminalScroll} className="flex-1 overflow-auto overscroll-contain p-2.5 font-mono text-[12px] leading-5 text-gray-100 whitespace-pre">
+                    {selectedTerminal.content}
+                  </pre>
+                </>
+              ) : (
+                <div className="flex flex-1 items-center justify-center text-xs text-neutral-500">
+                  Select a terminal from the rail to view its content.
                 </div>
-                <pre ref={terminalOutputRef} onScroll={handleTerminalScroll} className="max-h-[46vh] overflow-auto overscroll-contain p-2.5 font-mono text-[12px] leading-5 text-gray-100 whitespace-pre">
-                  {selectedTerminal.content}
-                </pre>
-              </div>
-            )}
-          </>
+              )}
+            </div>
+          </div>
         )}
       </div>
     </div>

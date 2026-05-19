@@ -2913,10 +2913,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
 
 
-      {/* Chat Content - Separated to prevent input re-renders */}
-      <div ref={chatContentRef} className={`flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative overscroll-y-none ${compact ? 'text-sm' : ''}`} style={{ scrollBehavior: 'auto' }}>
+      {/* Chat Content - Separated to prevent input re-renders.
+          In terminal mode the inner pane owns its own scrolling
+          (the rail + log scroll independently), so this wrapper
+          must NOT scroll — otherwise the whole page scrolls
+          around the fixed-height terminal box. */}
+      <div ref={chatContentRef} className={`flex-1 ${activeEventViewMode === 'terminal' ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden min-w-0 relative overscroll-y-none ${compact ? 'text-sm' : ''}`} style={{ scrollBehavior: 'auto' }}>
         
-        <div className={`min-h-full min-w-0 ${compact ? 'px-2 pb-2' : 'px-4 pb-4'}`}>
+        <div className={`min-w-0 ${activeEventViewMode === 'terminal' ? 'flex h-full flex-col' : 'min-h-full'} ${compact ? 'px-2 pb-2' : 'px-4 pb-4'}`}>
           {/* Loading indicator for historical events */}
           {isLoadingHistory && (
             <div className={`flex items-center justify-center ${compact ? 'py-4' : 'py-8'}`}>
@@ -3005,11 +3009,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               </div>
             )}
 
-            {activeTab?.sessionId && (
-              <>
-                <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={activeEventViewMode === 'flat'} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
-                <TerminalCenter currentSessionId={activeTab.sessionId} compact={compact} />
-              </>
+            {activeTab?.sessionId && activeEventViewMode === 'terminal' && (
+              <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} />
+            )}
+            {activeTab?.sessionId && activeEventViewMode !== 'terminal' && (
+              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={activeEventViewMode === 'flat'} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}
           </WorkflowModeHandler>
         ) : (
@@ -3036,11 +3040,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
 
-            {activeTab?.sessionId && (
-              <>
-                <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={activeEventViewMode === 'flat'} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
-                <TerminalCenter currentSessionId={activeTab.sessionId} compact={compact} />
-              </>
+            {activeTab?.sessionId && activeEventViewMode === 'terminal' && (
+              <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} />
+            )}
+            {activeTab?.sessionId && activeEventViewMode !== 'terminal' && (
+              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={activeEventViewMode === 'flat'} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}
           </>
         )}

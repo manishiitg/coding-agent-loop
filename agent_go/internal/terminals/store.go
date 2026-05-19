@@ -28,6 +28,13 @@ type Snapshot struct {
 	StepID           string     `json:"step_id,omitempty"`
 	StepName         string     `json:"step_name,omitempty"`
 	StepType         string     `json:"step_type,omitempty"`
+	StepIndex        int        `json:"step_index,omitempty"`
+	StepTotal        int        `json:"step_total,omitempty"`
+	ParentStepID     string     `json:"parent_step_id,omitempty"`
+	StepAttempt      int        `json:"step_attempt,omitempty"`
+	StepExecutionMode string    `json:"step_execution_mode,omitempty"` // "learn_code" | "code_exec"
+	StepTransport    string     `json:"step_transport,omitempty"`      // "tmux" | "structured"
+	StepTriggeredBy  string     `json:"step_triggered_by,omitempty"`   // e.g., "workflow_executor", "parent_step:X"
 	AgentName        string     `json:"agent_name,omitempty"`
 	DisplayTitle     string     `json:"display_title,omitempty"`
 	DisplayMeta      string     `json:"display_meta,omitempty"`
@@ -206,8 +213,17 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.WorkflowName = firstNonEmpty(stringValue(metadata, "workflow_name"), stringValue(metadata, "workflow_id"), workflowNameFromPath(current.WorkflowPath))
 	current.WorkflowLabel = firstNonEmpty(stringValue(metadata, "workflow_label"), stringValue(metadata, "preset_name"), current.WorkflowName)
 	current.StepID = firstNonEmpty(workflowStepIDFromOwner(ownerID), stringValue(metadata, "current_step_id"), stringValue(metadata, "workflow_step_id"), stringValue(metadata, "step_id"))
-	current.StepName = firstNonEmpty(stringValue(metadata, "step_title"), stringValue(metadata, "current_step_title"))
+	// step_name (from rich-context push) takes priority over the
+	// legacy step_title key; both are accepted for backward compat.
+	current.StepName = firstNonEmpty(stringValue(metadata, "step_name"), stringValue(metadata, "step_title"), stringValue(metadata, "current_step_title"))
 	current.StepType = firstNonEmpty(stringValue(metadata, "current_step_type"), stringValue(metadata, "workflow_step_type"), stringValue(metadata, "step_type"), stringValue(metadata, "plan_step_type"))
+	current.StepIndex = intValue(metadata["step_index"])
+	current.StepTotal = intValue(metadata["step_total"])
+	current.ParentStepID = stringValue(metadata, "parent_step_id")
+	current.StepAttempt = intValue(metadata["step_attempt"])
+	current.StepExecutionMode = stringValue(metadata, "step_execution_mode")
+	current.StepTransport = stringValue(metadata, "step_transport")
+	current.StepTriggeredBy = stringValue(metadata, "step_triggered_by")
 	current.AgentName = firstNonEmpty(stringValue(metadata, "agent_name"), stringValue(metadata, "orchestrator_agent_name"))
 	current.TmuxSession = firstNonEmpty(
 		stringValue(metadata, "tmux_session"),
@@ -335,6 +351,11 @@ func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]inte
 		return
 	}
 	snapshot.Active = false
+	// Retention is caller-decided: whoever emits the streaming events
+	// attaches terminal_retention_seconds to metadata when the
+	// terminal is transient (workflow step, sub-agent, one-shot CLI
+	// invocation, etc.). The store has no opinion — main_agent and
+	// any other persistent context simply never set this key.
 	retentionSeconds := intValue(metadata["terminal_retention_seconds"])
 	if retentionSeconds > 0 {
 		closesAt := now.Add(time.Duration(retentionSeconds) * time.Second)

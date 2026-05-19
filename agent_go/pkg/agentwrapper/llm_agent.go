@@ -207,6 +207,11 @@ type LLMAgentConfig struct {
 	CursorBridgeToolsMode                  bool
 	OpenCodePersistentInteractiveSession   bool
 	ClaudeCodeTransport                    string
+	// ForceStructuredCodingAgent forces coding-agent CLI providers to use
+	// the structured JSON transport (--print/--exec) for this agent's
+	// LLM calls, overriding the default tmux behaviour. Wired from the
+	// workflow step config AgentConfigs.Transport == "structured".
+	ForceStructuredCodingAgent             bool
 	CodingAgentWorkingDir                  string
 	APIKeys                                *llm.ProviderAPIKeys // API keys for providers
 
@@ -451,6 +456,10 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.CursorBridgeToolsMode {
 		agentOptions = append(agentOptions, mcpagent.WithCursorBridgeToolsMode(true))
 		logger.Info("🔗 Cursor CLI bridge tools mode enabled (--mode ask blocks built-in Write/Shell)")
+	}
+	if config.ForceStructuredCodingAgent {
+		agentOptions = append(agentOptions, mcpagent.WithForceStructuredCodingAgent(true))
+		logger.Info("🔧 Coding-agent CLI: forcing structured (JSON / --print) transport for this agent")
 	}
 	if config.OpenCodePersistentInteractiveSession {
 		agentOptions = append(agentOptions, mcpagent.WithOpenCodePersistentInteractiveSession(true))

@@ -869,9 +869,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	subAgentCtx = context.WithValue(subAgentCtx, virtualtools.BackgroundAgentIDKey, agentID)
 	subAgentCtx = context.WithValue(subAgentCtx, events.ParentExecutionIDKey, agentID)
 
-	// Push context before sub-agent execution (preserve orchestrator context)
+	// Push context before sub-agent execution (preserve orchestrator context).
+	// Use the rich variant so the terminal pane / inspector show step name,
+	// parent step, and "triggered by" instead of just the bare step id.
 	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-		cab.PushContext("execution", stepIndex, genericStep.GetID(), genericStep.GetTitle())
+		cab.PushContextRich(
+			"execution",
+			stepIndex,
+			genericStep.GetID(),
+			genericStep.GetTitle(),
+			orchestrator.RichStepContext{
+				StepName:     genericStep.GetTitle(),
+				StepIndex:    stepIndex + 1, // 1-based for UI
+				ParentStepID: cab.GetCurrentStepID(),
+				TriggeredBy:  "todo_task",
+			},
+		)
 	}
 
 	// Execute using executeSingleStep (reuses standard execution infrastructure)
@@ -1149,9 +1162,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	subAgentCtx = context.WithValue(subAgentCtx, virtualtools.BackgroundAgentIDKey, subAgentNotifID)
 	subAgentCtx = context.WithValue(subAgentCtx, events.ParentExecutionIDKey, subAgentNotifID)
 
-	// Push context before sub-agent execution (preserve orchestrator context)
+	// Push context before sub-agent execution (preserve orchestrator context).
+	// Rich envelope: surface step title, parent step, and triggered-by so
+	// the terminal pane shows the sub-agent in human-readable form.
 	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-		cab.PushContext("execution", stepIndex, route.SubAgentStep.GetID(), route.SubAgentStep.GetTitle())
+		cab.PushContextRich(
+			"execution",
+			stepIndex,
+			route.SubAgentStep.GetID(),
+			route.SubAgentStep.GetTitle(),
+			orchestrator.RichStepContext{
+				StepName:     route.SubAgentStep.GetTitle(),
+				StepIndex:    stepIndex + 1,
+				ParentStepID: cab.GetCurrentStepID(),
+				TriggeredBy:  "todo_task_route",
+			},
+		)
 	}
 
 	executionResult, capturedHistory, err := hcpo.executeRoutedSubAgentStep(

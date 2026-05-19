@@ -36,6 +36,15 @@ type orchestratorContext struct {
 	stepID    string
 	stepType  string
 	agentName string
+	// Rich step context — see ContextAwareEventBridge fields below for semantics.
+	stepName       string
+	stepIndex      int
+	stepTotal      int
+	parentStepID   string
+	attempt        int
+	executionMode  string
+	transport      string
+	triggeredBy    string
 }
 
 // ToolCallEntry represents a captured tool call for logging purposes.
@@ -94,6 +103,20 @@ type ContextAwareEventBridge struct {
 	currentStepID    string // Step ID (e.g., "fetch-data", "process-results")
 	currentStepType  string // Plan step type (e.g., "regular", "todo_task", "routing")
 	currentAgentName string
+
+	// Rich step-context fields — surfaced on every event's metadata so
+	// the terminal pane / inspector / cost ledger can render a useful
+	// header instead of the bare step_id. Set together via
+	// PushContextRich / SetRichStepContext.
+	currentStepName      string // Human-readable step title (from plan.json's "title")
+	currentStepIndex     int    // 1-based position of this step in the plan
+	currentStepTotal     int    // Total number of steps in the plan
+	currentParentStepID  string // ID of the step that triggered this one (nested/sub-agents)
+	currentAttempt       int    // 1-based retry counter for this step
+	currentExecutionMode string // "learn_code" | "code_exec" — the declared execution mode
+	currentTransport     string // "tmux" | "structured" — coding-agent CLI transport for this step
+	currentTriggeredBy   string // What invoked this step: "workflow_executor" | "run_full_workflow" | "execute_step" | "parent_step:X"
+
 	// Batch execution context (for batch progress tracking in frontend)
 	currentGroupName string // Current group name being executed
 	currentGroupIdx  int    // 0-based index of current group
@@ -160,19 +183,108 @@ func (c *ContextAwareEventBridge) SetOrchestratorContext(phase string, step int,
 	c.logger.Info(fmt.Sprintf("🎯 Set orchestrator context: %s (step %d, ID: %s)", phase, step+1, stepID))
 }
 
+// RichStepContext is the bundle of fields the orchestrator can attach
+// to the current step so downstream consumers (terminal pane, inspector,
+// cost ledger) render an informative header instead of just step_id.
+// Pass on PushContextRich; all fields are optional.
+type RichStepContext struct {
+	StepName       string // Human-readable title from plan.json
+	StepIndex      int    // 1-based position in the plan
+	StepTotal      int    // Total steps in the plan
+	ParentStepID   string // Triggering step id (nested workflow / sub-agent)
+	Attempt        int    // 1-based retry counter
+	ExecutionMode  string // "learn_code" | "code_exec"
+	Transport      string // "tmux" | "structured"
+	TriggeredBy    string // "workflow_executor" | "run_full_workflow" | "execute_step" | "parent_step:X"
+}
+
+// SetRichStepContext attaches the richer step envelope to the current
+// context. Safe to call any number of times; later calls overwrite. All
+// fields are optional — empty/zero values are simply not injected into
+// downstream metadata.
+func (c *ContextAwareEventBridge) SetRichStepContext(ctx RichStepContext) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.currentStepName = ctx.StepName
+	c.currentStepIndex = ctx.StepIndex
+	c.currentStepTotal = ctx.StepTotal
+	c.currentParentStepID = ctx.ParentStepID
+	c.currentAttempt = ctx.Attempt
+	c.currentExecutionMode = ctx.ExecutionMode
+	c.currentTransport = ctx.Transport
+	c.currentTriggeredBy = ctx.TriggeredBy
+}
+
+// MergeRichStepContext is like SetRichStepContext but only overwrites
+// fields that are non-zero in ctx. Useful when different layers
+// populate different fields (e.g. the controller knows the execution
+// mode + transport from step config, while PushContext set the step
+// name + parent_step_id earlier).
+func (c *ContextAwareEventBridge) MergeRichStepContext(ctx RichStepContext) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ctx.StepName != "" {
+		c.currentStepName = ctx.StepName
+	}
+	if ctx.StepIndex > 0 {
+		c.currentStepIndex = ctx.StepIndex
+	}
+	if ctx.StepTotal > 0 {
+		c.currentStepTotal = ctx.StepTotal
+	}
+	if ctx.ParentStepID != "" {
+		c.currentParentStepID = ctx.ParentStepID
+	}
+	if ctx.Attempt > 0 {
+		c.currentAttempt = ctx.Attempt
+	}
+	if ctx.ExecutionMode != "" {
+		c.currentExecutionMode = ctx.ExecutionMode
+	}
+	if ctx.Transport != "" {
+		c.currentTransport = ctx.Transport
+	}
+	if ctx.TriggeredBy != "" {
+		c.currentTriggeredBy = ctx.TriggeredBy
+	}
+}
+
 // PushContext saves the current context to the stack and sets a new context
-// Use this before executing a sub-agent to preserve the parent context
+// Use this before executing a sub-agent to preserve the parent context.
+// The new context's rich-step fields (StepName, StepIndex, etc.) are
+// cleared; populate them via SetRichStepContext after pushing, or use
+// PushContextRich to do both at once.
 func (c *ContextAwareEventBridge) PushContext(phase string, step int, stepID string, agentName string) {
+	c.pushContextInternal(phase, step, stepID, agentName, RichStepContext{})
+}
+
+// PushContextRich is PushContext + SetRichStepContext in one call,
+// avoiding a window where the bridge has the new step id without its
+// title/index/parent context.
+func (c *ContextAwareEventBridge) PushContextRich(phase string, step int, stepID string, agentName string, rich RichStepContext) {
+	c.pushContextInternal(phase, step, stepID, agentName, rich)
+}
+
+func (c *ContextAwareEventBridge) pushContextInternal(phase string, step int, stepID string, agentName string, rich RichStepContext) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Save current context to stack
+	// Save current context (including rich fields) onto the stack so
+	// PopContext can restore parent state when a sub-agent returns.
 	c.contextStack = append(c.contextStack, orchestratorContext{
-		phase:     c.currentPhase,
-		step:      c.currentStep,
-		stepID:    c.currentStepID,
-		stepType:  c.currentStepType,
-		agentName: c.currentAgentName,
+		phase:         c.currentPhase,
+		step:          c.currentStep,
+		stepID:        c.currentStepID,
+		stepType:      c.currentStepType,
+		agentName:     c.currentAgentName,
+		stepName:      c.currentStepName,
+		stepIndex:     c.currentStepIndex,
+		stepTotal:     c.currentStepTotal,
+		parentStepID:  c.currentParentStepID,
+		attempt:       c.currentAttempt,
+		executionMode: c.currentExecutionMode,
+		transport:     c.currentTransport,
+		triggeredBy:   c.currentTriggeredBy,
 	})
 
 	// Set new context
@@ -181,6 +293,14 @@ func (c *ContextAwareEventBridge) PushContext(phase string, step int, stepID str
 	c.currentStepID = stepID
 	c.currentStepType = ""
 	c.currentAgentName = agentName
+	c.currentStepName = rich.StepName
+	c.currentStepIndex = rich.StepIndex
+	c.currentStepTotal = rich.StepTotal
+	c.currentParentStepID = rich.ParentStepID
+	c.currentAttempt = rich.Attempt
+	c.currentExecutionMode = rich.ExecutionMode
+	c.currentTransport = rich.Transport
+	c.currentTriggeredBy = rich.TriggeredBy
 
 	c.logger.Info(fmt.Sprintf("📥 Pushed context (stack depth: %d): %s (step %d, ID: %s)", len(c.contextStack), phase, step+1, stepID))
 }
@@ -201,7 +321,15 @@ func (c *ContextAwareEventBridge) PopContext() {
 	prevContext := c.contextStack[lastIdx]
 	c.contextStack = c.contextStack[:lastIdx]
 
-	// Restore previous context
+	// Restore previous context (basic + rich)
+	c.currentStepName = prevContext.stepName
+	c.currentStepIndex = prevContext.stepIndex
+	c.currentStepTotal = prevContext.stepTotal
+	c.currentParentStepID = prevContext.parentStepID
+	c.currentAttempt = prevContext.attempt
+	c.currentExecutionMode = prevContext.executionMode
+	c.currentTransport = prevContext.transport
+	c.currentTriggeredBy = prevContext.triggeredBy
 	c.currentPhase = prevContext.phase
 	c.currentStep = prevContext.step
 	c.currentStepID = prevContext.stepID
@@ -368,6 +496,15 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	currentGroupName := c.currentGroupName
 	currentGroupIdx := c.currentGroupIdx
 	totalGroups := c.totalGroups
+	// Rich step context (populated by SetRichStepContext / PushContextRich)
+	currentStepName := c.currentStepName
+	currentStepIndex := c.currentStepIndex
+	currentStepTotal := c.currentStepTotal
+	currentParentStepID := c.currentParentStepID
+	currentAttempt := c.currentAttempt
+	currentExecutionMode := c.currentExecutionMode
+	currentTransport := c.currentTransport
+	currentTriggeredBy := c.currentTriggeredBy
 	c.mu.RUnlock()
 
 	// Check what context we have
@@ -431,6 +568,18 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 					if currentStepType != "" {
 						newMeta["current_step_type"] = currentStepType
 					}
+					// Auto-close retention for transient terminals. Whenever
+					// the bridge is scoped to a specific step, the terminal
+					// entry represents a one-shot run that should expire
+					// after the user has had time to read it. Main-agent
+					// calls go through the bridge without a step_id, so
+					// they don't get this key and never auto-close.
+					// Tmux adapters that already set their own retention
+					// (longer or shorter) won't be overridden — we only
+					// fill in when the key is absent.
+					if _, ok := newMeta["terminal_retention_seconds"]; !ok {
+						newMeta["terminal_retention_seconds"] = 300
+					}
 				}
 
 				// Add batch context (which group is running)
@@ -446,6 +595,36 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 					newMeta["orchestrator_step"] = currentStep
 					newMeta["orchestrator_step_id"] = currentStepID
 					newMeta["orchestrator_agent_name"] = currentAgentName
+				}
+
+				// Rich step context — only inject keys with non-zero
+				// values so consumers can tell "field set" apart from
+				// "field intentionally blank". Surfaced under both
+				// "step_*" (preferred) and explicit names so existing
+				// readers like terminals/store.go work without changes.
+				if currentStepName != "" {
+					newMeta["step_name"] = currentStepName
+				}
+				if currentStepIndex > 0 {
+					newMeta["step_index"] = currentStepIndex
+				}
+				if currentStepTotal > 0 {
+					newMeta["step_total"] = currentStepTotal
+				}
+				if currentParentStepID != "" {
+					newMeta["parent_step_id"] = currentParentStepID
+				}
+				if currentAttempt > 0 {
+					newMeta["step_attempt"] = currentAttempt
+				}
+				if currentExecutionMode != "" {
+					newMeta["step_execution_mode"] = currentExecutionMode
+				}
+				if currentTransport != "" {
+					newMeta["step_transport"] = currentTransport
+				}
+				if currentTriggeredBy != "" {
+					newMeta["step_triggered_by"] = currentTriggeredBy
 				}
 
 				// Atomically replace the metadata map (all writes done before assignment)

@@ -4482,7 +4482,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"clear_fields": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Field names to CLEAR (remove from step_config.json) so the step inherits preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, coding_agent_tmux_lifecycle, description_reviewed, knowledgebase_access, knowledgebase_contribution, knowledgebase_write_method, learnings_access, learnings_write_method, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
+					"description": "Field names to CLEAR (remove from step_config.json) so the step inherits preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, coding_agent_tmux_lifecycle, transport, description_reviewed, knowledgebase_access, knowledgebase_contribution, knowledgebase_write_method, learnings_access, learnings_write_method, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
 				},
 				"servers": map[string]interface{}{
 					"type":        "array",
@@ -4548,6 +4548,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"enum":        []interface{}{"close_on_completion", "keep_alive"},
 					"description": "Lifecycle for tmux-backed coding providers on this step. Default/omit is close_on_completion: the step/sub-agent gets a bounded terminal that is closed when its turn completes. Use keep_alive only when a step intentionally needs its native coding-CLI session to survive after completion for later live steering or debugging; this can leave more tmux sessions open.",
+				},
+				"transport": map[string]interface{}{
+					"type":        "string",
+					"enum":        []interface{}{"tmux", "structured"},
+					"description": "Transport for coding-agent CLI providers (claude-code, codex-cli, cursor-cli, gemini-cli) on this step.\n\n- \"tmux\" (default): interactive tmux session with a live TUI. Best for steps where you want the user to watch progress live or for long-running iterative work. The terminal pane in the UI shows the running TUI.\n- \"structured\": one-shot --print/--exec JSON invocation per turn. Faster startup (no tmux acquisition delay), no terminal pane to display. Best for steps that just need a single deterministic answer (math/text/format conversions, fast probes).\n\nOmit to inherit the workflow default (tmux). Non-coding-agent providers (anthropic, openai, vertex, ...) ignore this field. Switching transport per step lets you mix fast structured steps with watch-the-screen tmux steps in the same workflow.",
 				},
 				"use_code_execution_mode": map[string]interface{}{
 					"type":        "boolean",
@@ -4781,6 +4786,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						lifecycle = normalized
 					}
 					targetConfig.AgentConfigs.CodingAgentTmuxLifecycle = lifecycle
+				}
+			}
+			if val, ok := args["transport"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					// Accept the raw value here; validation happens
+					// below in the post-assignment errors block (same
+					// pattern as coding_agent_tmux_lifecycle).
+					targetConfig.AgentConfigs.Transport = strings.ToLower(strings.TrimSpace(s))
 				}
 			}
 			if val, ok := args["use_code_execution_mode"]; ok && val != nil {
@@ -5017,6 +5030,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if rawLifecycle := strings.TrimSpace(targetConfig.AgentConfigs.CodingAgentTmuxLifecycle); rawLifecycle != "" {
 				if normalizeCodingAgentTmuxLifecycle(rawLifecycle) == "" {
 					errors = append(errors, fmt.Sprintf("coding_agent_tmux_lifecycle %q is not recognized. Valid values: \"close_on_completion\", \"keep_alive\".", rawLifecycle))
+				}
+			}
+			if rawTransport := strings.TrimSpace(targetConfig.AgentConfigs.Transport); rawTransport != "" {
+				switch strings.ToLower(rawTransport) {
+				case "tmux", "structured":
+					// valid
+				default:
+					errors = append(errors, fmt.Sprintf("transport %q is not recognized. Valid values: \"tmux\", \"structured\".", rawTransport))
 				}
 			}
 

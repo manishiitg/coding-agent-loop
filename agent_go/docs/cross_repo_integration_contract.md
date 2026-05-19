@@ -113,9 +113,37 @@ stream sent to the frontend.
 - `StreamChunkTypeTerminal` → terminal-pane preview (tmux CLIs only)
 - Stream channel closed → `StreamingEndEvent` → SSE `event: stream_end`
 
+#### Production-config routing matrix (suppressEvents=true)
+
+The HTTP server wraps the orchestrator's Agent with
+`WithGenerationStreamingEvents(false)` (`suppressEvents=true`). Under
+that config the routing is NOT uniform — terminal and tool events
+bypass the gate. The full matrix:
+
+| Chunk type | StreamingCallback fires | StreamingChunkEvent | ToolCallStart/EndEvent |
+|---|---|---|---|
+| `Content` | yes | **no** (suppressed) | n/a |
+| `Terminal` | yes | **yes** (bypass) | n/a |
+| `ToolCallStart` | no | no | **yes** (bypass) |
+| `ToolCallEnd` | yes | no | **yes** (bypass) |
+
+The terminal bypass exists so tmux-backed coding-agent panels stay
+populated in production. Removing the bypass (e.g. a refactor that
+puts terminal chunks under the same `if !suppressEvents` as content)
+will blank the terminal pane for every tmux step — and the wrapper
+unit suite catches this.
+
+**Test class for this matrix:**
+- `agent/llm_generation_streaming_test.go::TestStreamingManagerChunkRoutingMatrixProductionConfig` — pins all 4 chunk types under `suppressEvents=true` in one table test.
+- `agent/llm_generation_streaming_test.go::TestStreamingManagerEmitsTerminalChunkEventEvenWhenSuppressEventsTrue` — focused regression for the terminal bypass.
+- `agent/llm_generation_streaming_test.go::TestStreamingManagerSuppressesContentChunksWhenSuppressEventsTrue` — pins the content-suppress half of the gate.
+
 **Risk areas:** chunk channel buffer (256) overflow silently drops; goroutine
 must drain on early return; tool-call chunks accumulate in `sm.CLIToolCalls`
-for multi-turn history.
+for multi-turn history. Any change to the production wrapper's
+`SuppressGenerationStreamingEvents` flag must run the routing matrix
+test above first — it's the cheapest signal that the gate semantics
+shifted.
 
 ### IC-3: Token Usage & Cost
 

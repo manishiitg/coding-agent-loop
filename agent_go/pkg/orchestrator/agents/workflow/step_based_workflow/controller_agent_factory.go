@@ -746,6 +746,47 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		}
 	}
 
+	// Per-step transport override (workflow step config "transport" field):
+	//   "structured" → force structured JSON transport even for tmux-capable CLI providers
+	//   "tmux"       → keep default tmux behavior (no-op; tmux is already the default)
+	//   ""           → inherit default (tmux for CLI providers)
+	config.ForceStructuredCodingAgent = false
+	effectiveTransport := "" // What we'll surface on the bridge — "tmux" | "structured" | ""
+	if stepConfig != nil {
+		switch strings.ToLower(strings.TrimSpace(stepConfig.Transport)) {
+		case "":
+			// default; nothing to do (bridge gets empty transport)
+		case "tmux":
+			effectiveTransport = "tmux"
+		case "structured":
+			if common.IsCLIProvider(actualProvider) {
+				config.ForceStructuredCodingAgent = true
+				effectiveTransport = "structured"
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step transport override: structured JSON for CLI provider '%s'", actualProvider))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step transport=structured ignored for non-CLI provider '%s'", actualProvider))
+			}
+		default:
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown step transport=%q (allowed: 'tmux' | 'structured'); inheriting default", stepConfig.Transport))
+		}
+	}
+
+	// Push the effective transport (and other step-config fields) onto the
+	// bridge so subsequent events for this step carry step_transport,
+	// step_execution_mode, etc. in metadata. The terminal pane and
+	// inspector use these to render an informative header.
+	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok && stepConfig != nil {
+		rich := orchestrator.RichStepContext{
+			ExecutionMode: strings.TrimSpace(stepConfig.DeclaredExecutionMode),
+			Transport:     effectiveTransport,
+		}
+		// Only set if we have anything non-empty; otherwise leave the
+		// existing rich context (from PushContextRich, etc.) intact.
+		if rich.ExecutionMode != "" || rich.Transport != "" {
+			cab.MergeRichStepContext(rich)
+		}
+	}
+
 	// Set EnableContextOffloading if specified
 	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
 		config.EnableContextOffloading = stepConfig.EnableContextOffloading

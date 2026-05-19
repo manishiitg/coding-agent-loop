@@ -216,31 +216,6 @@ export const WorkflowChatTabs: React.FC = () => {
         {/* Auto-scroll Toggle and Close Button - only show when there are workflow tabs */}
         {activeWorkflowTabs.length > 0 && (
           <div className="flex shrink-0 items-center gap-1 border-l border-gray-200 pl-2 dark:border-gray-700">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    toggleTerminalCenterOpen()
-                  }}
-                  className={`flex items-center gap-1 p-1.5 rounded text-xs font-medium transition-colors
-                    ${terminalCenterOpen
-                      ? 'bg-gray-200 text-gray-900 dark:bg-gray-700 dark:text-gray-100'
-                      : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
-                    }
-                    hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100
-                  `}
-                  aria-label={terminalCenterOpen ? 'Hide terminals' : 'Show terminals'}
-                  aria-pressed={terminalCenterOpen}
-                >
-                  <Terminal className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{terminalCenterOpen ? 'Hide terminals' : 'Show terminals'}</p>
-              </TooltipContent>
-            </Tooltip>
-
             <button
               onClick={(e) => {
                 e.stopPropagation()
@@ -277,54 +252,44 @@ export const WorkflowChatTabs: React.FC = () => {
               </span>
             </button>
 
-            {/* Layout Toggle — switch between tree hierarchy and the old flat feed */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (activeTabId) {
-                      setTabViewMode(activeTabId, activeViewMode === 'tree' ? 'flat' : 'tree')
-                    }
-                  }}
-                  className={`flex items-center gap-1 p-1.5 rounded text-xs font-medium transition-colors
-                    ${activeViewMode === 'tree'
-                      ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
-                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
-                    }
-                    hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100
-                  `}
-                >
-                  {activeViewMode === 'tree' ? (
-                    <ListTree className="w-3.5 h-3.5" />
-                  ) : (
-                    <List className="w-3.5 h-3.5" />
-                  )}
-                  <span className="hidden sm:inline">
-                    {activeViewMode === 'tree' ? 'Tree' : 'Flat'}
-                  </span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{activeViewMode === 'tree' ? 'Tree view — group events by workflow and agent' : 'Flat view — show events in chronological order'}</p>
-              </TooltipContent>
-            </Tooltip>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={handleShowWorkflow}
-                  className="flex items-center gap-1 p-1.5 rounded text-xs font-medium text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-900 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
-                  aria-label="Show workflow"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Show workflow</p>
-              </TooltipContent>
-            </Tooltip>
-
+            {/* View mode — 3-way segmented toggle: Tree | Flat | Terminal.
+                Terminal mode replaces the event feed with the terminal pane
+                view; Tree groups events by workflow/agent; Flat is the
+                chronological feed. */}
+            <div className="flex items-center rounded bg-gray-100 dark:bg-gray-800 p-0.5">
+              {([
+                { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by workflow and agent' },
+                { mode: 'flat' as const, Icon: List, label: 'Flat', tip: 'Flat view — show events in chronological order' },
+                { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal', tip: 'Terminal view — show only the terminal panes, no events' },
+              ]).map(({ mode, Icon, label, tip }) => (
+                <Tooltip key={mode}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (activeTabId) {
+                          setTabViewMode(activeTabId, mode)
+                        }
+                      }}
+                      className={`flex items-center gap-1 px-1.5 py-1 rounded text-xs font-medium transition-colors
+                        ${activeViewMode === mode
+                          ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
+                          : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
+                        }
+                      `}
+                      aria-label={label}
+                      aria-pressed={activeViewMode === mode}
+                    >
+                      <Icon className="w-3.5 h-3.5" />
+                      <span className="hidden md:inline">{label}</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{tip}</p>
+                  </TooltipContent>
+                </Tooltip>
+              ))}
+            </div>
           </div>
         )}
       </div>

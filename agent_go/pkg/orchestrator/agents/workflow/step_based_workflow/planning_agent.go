@@ -227,6 +227,14 @@ type AgentConfigs struct {
 	TodoTaskOrchestratorTier     *int            `json:"todo_task_orchestrator_tier,omitempty"`     // Tier for todo task orchestrator agent (1/2/3) in tiered mode
 	DisableParallelToolExecution *bool           `json:"disable_parallel_tool_execution,omitempty"` // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
 	CodingAgentTmuxLifecycle     string          `json:"coding_agent_tmux_lifecycle,omitempty"`     // Tmux lifecycle for CLI coding providers: "close_on_completion" (default for steps) or "keep_alive" (only when a step intentionally needs the native coding session after completion).
+	// Transport selects the CLI transport for coding-agent providers
+	// (claude-code, codex-cli, cursor-cli, gemini-cli, opencode-cli)
+	// for this step:
+	//   ""           — inherit the agent/preset default (tmux interactive)
+	//   "tmux"       — force tmux interactive transport
+	//   "structured" — force structured JSON transport (--print/--exec/stream-json)
+	// Non-coding-agent providers (anthropic, openai, vertex, ...) ignore this.
+	Transport                    string          `json:"transport,omitempty"`
 	DisableTierOptimization      *bool           `json:"disable_tier_optimization,omitempty"`       // If true, execution and conditional agents always use Tier 1 (high reasoning)
 	SuccessfulRuns               *int            `json:"successful_runs,omitempty"`                 // System-managed counter. Written by syncSuccessfulRunsToStepConfig after each successful validation; mirrors the authoritative count in learning metadata. Read by the readiness checklist to gauge optimization progress (3+ = ready). Agents must NOT set this directly.
 	LearnCodeMaxFixIter          *int            `json:"learn_code_max_fix_iterations,omitempty"`   // Max LLM fix iterations when main.py execution fails (default: 5)

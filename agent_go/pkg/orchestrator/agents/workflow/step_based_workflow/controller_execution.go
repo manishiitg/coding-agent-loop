@@ -3050,6 +3050,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			}); ok {
 				stepBridge.SetCurrentStepID(stepID)
 			}
+			// Attach rich step context (name, index, total, parent, attempt,
+			// triggered_by) so the terminal pane's meta row can render
+			// "step 3/7 · attempt 1 · triggered by workflow_executor ·
+			// parent <prev step>". Parent is the previous step in the
+			// sequence — useful for tracing which step's output the
+			// current step is consuming.
+			if cab, ok := bridge.(*orchestrator.ContextAwareEventBridge); ok {
+				rich := orchestrator.RichStepContext{
+					StepName:    step.GetTitle(),
+					StepIndex:   i + 1,
+					StepTotal:   len(breakdownSteps),
+					Attempt:     1,
+					TriggeredBy: "workflow_executor",
+				}
+				if i > 0 && breakdownSteps[i-1] != nil {
+					rich.ParentStepID = breakdownSteps[i-1].GetID()
+				}
+				cab.SetRichStepContext(rich)
+			}
 		}
 
 		// Route execution based on step type using helper functions

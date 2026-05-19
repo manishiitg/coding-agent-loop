@@ -27,11 +27,12 @@ const STREAMING_INACTIVITY_MS = 60000
 
 // Per-mode event counts type — kept for backwards compat with persisted state
 export type PerModeEventCounts = { micro: number }
-export type EventViewMode = 'tree' | 'flat'
+export type EventViewMode = 'tree' | 'flat' | 'terminal'
 type LegacyEventViewMode = EventViewMode | 'detailed' | 'summary'
 
 export function normalizeEventViewMode(viewMode?: LegacyEventViewMode | null): EventViewMode {
   if (viewMode === 'flat' || viewMode === 'summary') return 'flat'
+  if (viewMode === 'terminal') return 'terminal'
   return 'tree'
 }
 

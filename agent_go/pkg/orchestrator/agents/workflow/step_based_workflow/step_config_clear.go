@@ -80,6 +80,8 @@ func clearStepConfigField(sc *StepConfig, name string) bool {
 		ac.GlobalSkillObjective = ""
 	case "coding_agent_tmux_lifecycle":
 		ac.CodingAgentTmuxLifecycle = ""
+	case "transport":
+		ac.Transport = ""
 
 	default:
 		return false
@@ -103,7 +105,8 @@ func isKnownAgentConfigClearField(name string) bool {
 		"knowledgebase_write_method",
 		"learnings_write_method",
 		"review_notes", "declared_execution_mode", "declared_execution_mode_reason",
-		"global_skill_objective", "coding_agent_tmux_lifecycle":
+		"global_skill_objective", "coding_agent_tmux_lifecycle",
+		"transport":
 		return true
 	}
 	return false

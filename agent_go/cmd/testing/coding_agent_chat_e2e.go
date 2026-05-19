@@ -46,6 +46,7 @@ This intentionally does not call the provider adapter directly. It exercises:
 5. /api/sessions/{session_id}/events polling and unified completion extraction
 6. terminal-backed completion detection after a real MCP bridge tool call
 7. /api/terminals pane alias checks using tmux_session metadata
+8. literal @ text handling so social handles are not expanded as @path
 
 Example:
   mcp-agent test coding-agent-chat-e2e \
@@ -102,6 +103,14 @@ Example:
 			return fmt.Errorf("turn 2 native multi-turn recall failed: %w", err)
 		}
 		fmt.Println("PASS turn 2: same chat session retained native coding-agent context")
+
+		atToken := "AT_LITERAL_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+		atHandle := "@fixyo.urflow"
+		atQuery := fmt.Sprintf("Do not use tools. Treat %s as literal text, not a file path. Reply with exactly %s %s and nothing else.", atHandle, atToken, atHandle)
+		if err := client.runAndAssertContains(ctx, sessionID, provider, model, atQuery, []string{atToken, atHandle}); err != nil {
+			return fmt.Errorf("literal @ handle prompt failed: %w", err)
+		}
+		fmt.Println("PASS literal @ text: pasted handles are not expanded as @path")
 
 		if !codingAgentChatE2EFlags.skipCompletionProbe {
 			completionToken := "COMPLETION_E2E_" + strings.ReplaceAll(uuid.NewString(), "-", "")

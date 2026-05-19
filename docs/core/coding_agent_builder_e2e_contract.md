@@ -53,6 +53,7 @@ The builder must prove these user-facing flows end to end:
 | --- | --- |
 | Chat launch | Start a chat with a coding provider, verify provider/model label, cwd, MCP bridge, and first assistant response. |
 | Multi-turn memory | Turn 1 asks the provider to remember a random canary without writing it to disk. Turn 2 asks for it. The second submitted prompt must not contain the canary. |
+| Literal prompt text | Send a real chat turn containing a literal social handle such as `@fixyo.urflow`. The provider must treat it as text, not an `@path`, and return the handle without opening a debug console or hanging. |
 | Live steer | Send a second user message while the agent is running. It must be routed to the same coding-agent session or provider queue, not create a duplicate run. |
 | Cancellation | Stop/cancel must interrupt the coding provider and produce a canceled event, not a false completed response. |
 | Workflow step | Run a code-exec workflow step and verify the coding agent starts in the workflow execution directory and writes the expected output file. |

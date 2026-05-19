@@ -24,7 +24,7 @@ multi-llm-provider-go/docs/cross_repo_integration_contract.md
 | IC-7 | SSE error serialization | `cmd/server/sse_test.go` | 4 tests |
 | IC-8 | Cancellation (subscriber) | `internal/events/event_store_test.go` | 19 subtests |
 | IC-8 | Cancellation (shutdown) | `cmd/server/shutdown_cleanup_test.go` | 2 tests |
-| IC-10 | Coding CLI chat contract: multi-turn, MCP bridge tool completion, live steer, and terminal pane de-dupe | `cmd/testing/coding_agent_chat_e2e.go` | opt-in `coding-agent-chat-e2e` live command |
+| IC-10 | Coding CLI chat contract: multi-turn, literal `@` prompt text, MCP bridge tool completion, live steer, and terminal pane de-dupe | `cmd/testing/coding_agent_chat_e2e.go` | opt-in `coding-agent-chat-e2e` live command |
 | IC-10 | Coding CLI → MCP bridge → `agent_browser` CDP mode | `cmd/testing/agent_browse_e2e.go` | opt-in `agent-browse-e2e` live command |
 | IC-10 | Parallel coding CLIs → shared `agent_browser` CDP lock | `cmd/testing/agent_browse_stress_e2e.go` | opt-in `agent-browse-stress-e2e` live command |
 | IC-10 | Direct mcpbridge-compatible API → shared `agent_browser` CDP lock | `cmd/testing/agent_browse_api_stress_e2e.go` | opt-in `agent-browse-api-stress-e2e` live command |

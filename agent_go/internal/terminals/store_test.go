@@ -388,6 +388,37 @@ func TestStoreKeepsActiveTerminalRunningWhenScreenContainsFailureText(t *testing
 	}
 }
 
+func TestStoreDetectsGeminiDebugConsoleFatalState(t *testing.T) {
+	store := NewStore()
+	screen := `▝▜▄ Gemini CLI v0.42.0
+Debug Console (F12 to close)
+This is an unexpected error. Please file a bug report.
+CRITICAL: Unhandled Promise Rejection!
+Reason: Error: ENAMETOOLONG: name too long, lstat
+'/private/var/folders/xc/gemini-cli-project-session-sub-exec-route-design-plan/fixyo.urflow", TOP LEVEL (REQUIRED)'`
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", screen, 1))
+
+	snapshot, ok := store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.State != "failed" {
+		t.Fatalf("active fatal pane state = %q, want failed", snapshot.State)
+	}
+
+	store.HandleEvent("session-1", terminalEndEvent("exec-1", nil))
+	snapshot, ok = store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot after end")
+	}
+	if snapshot.Active {
+		t.Fatalf("fatal terminal should not remain active")
+	}
+	if snapshot.State != "failed" {
+		t.Fatalf("ended fatal pane state = %q, want failed", snapshot.State)
+	}
+}
+
 func TestStoreKeepsTerminalRunningWhenEndArrivesDuringBusyPane(t *testing.T) {
 	store := NewStore()
 	screen := `╭──────────────────────────────────────────────────────────────────────────╮

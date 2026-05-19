@@ -272,6 +272,9 @@ func isNoisyTerminalLine(line string) bool {
 }
 
 func terminalStateFromContent(content string, active bool) string {
+	if terminalContentLooksFatal(content) {
+		return "failed"
+	}
 	if active {
 		return "running"
 	}
@@ -293,6 +296,23 @@ func terminalStateFromContent(content string, active bool) string {
 	default:
 		return "completed"
 	}
+}
+
+func terminalContentLooksFatal(content string) bool {
+	lower := strings.ToLower(strings.Join(cleanedLines(content), "\n"))
+	if lower == "" {
+		return false
+	}
+	if strings.Contains(lower, "debug console") &&
+		(strings.Contains(lower, "unhandled promise rejection") ||
+			strings.Contains(lower, "this is an unexpected error") ||
+			strings.Contains(lower, "enametoolong")) {
+		return true
+	}
+	if strings.Contains(lower, "enametoolong") && strings.Contains(lower, "lstat") {
+		return true
+	}
+	return false
 }
 
 func terminalContentLooksBusy(content string) bool {

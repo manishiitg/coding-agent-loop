@@ -18,6 +18,7 @@ import { splitStreamingStatusAndText } from '../utils/streamingStatus'
 
 // Active sessions cache TTL (30 seconds - shorter than polling interval to allow force refresh)
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
+const STALE_STREAMING_GRACE_MS = 10000
 
 // Streaming inactivity auto-clear timers (per sessionId)
 // When no new chunk arrives for 3s, streaming text is auto-cleared
@@ -283,6 +284,7 @@ export interface ChatTab {
   name: string  // Display name (e.g., "Chat 1", "Planning", "Execution")
   sessionId: string | null  // Chat session ID if exists
   isStreaming: boolean  // Whether this tab's execution is currently running
+  lastStreamingStartedAt?: number  // Timestamp for the current/last foreground turn
   isCompleted: boolean  // Whether this tab's execution has completed
   hasRunningBgAgents: boolean  // Whether background agents are still running for this session
   isSyntheticTurn: boolean  // Whether current running turn is an auto-notification that should not queue user input
@@ -586,6 +588,55 @@ interface ChatState extends StoreActions {
   resetTabChat: (tabId: string) => void
   resetChatState: () => void
   isAtBottom: (element: HTMLDivElement) => boolean
+}
+
+const reconcileInactiveSessionTabs = (
+  state: ChatState,
+  activeSessions: ActiveSessionInfo[],
+  now: number
+): Partial<ChatState> => {
+  const activeSessionIds = new Set(activeSessions.map(session => session.session_id))
+  let nextChatTabs: Record<string, ChatTab> | null = null
+  let nextTabSessionStatus: Record<string, TabSessionStatus> | null = null
+  let clearedCount = 0
+
+  for (const [tabId, tab] of Object.entries(state.chatTabs)) {
+    if (!tab.sessionId || activeSessionIds.has(tab.sessionId)) continue
+    if (!tab.isStreaming && !tab.hasRunningBgAgents && !tab.canSteer && !tab.isSyntheticTurn) continue
+
+    const streamingAge = tab.lastStreamingStartedAt ? now - tab.lastStreamingStartedAt : Number.POSITIVE_INFINITY
+    if (tab.isStreaming && streamingAge < STALE_STREAMING_GRACE_MS) continue
+
+    if (!nextChatTabs) nextChatTabs = { ...state.chatTabs }
+    nextChatTabs[tabId] = {
+      ...tab,
+      isStreaming: false,
+      lastStreamingStartedAt: undefined,
+      hasRunningBgAgents: false,
+      isSyntheticTurn: false,
+      canSteer: false,
+    }
+
+    if (state.tabSessionStatus[tabId]) {
+      if (!nextTabSessionStatus) nextTabSessionStatus = { ...state.tabSessionStatus }
+      nextTabSessionStatus[tabId] = {
+        status: null,
+        agentMode: null,
+        lastActivity: null,
+      }
+    }
+
+    clearedCount += 1
+  }
+
+  if (clearedCount > 0) {
+    logger.debug('SessionStore', `Cleared stale streaming state for ${clearedCount} tab(s) with no active backend session`)
+  }
+
+  return {
+    ...(nextChatTabs ? { chatTabs: nextChatTabs } : {}),
+    ...(nextTabSessionStatus ? { tabSessionStatus: nextTabSessionStatus } : {}),
+  }
 }
 
 export const useChatStore = create<ChatState>()(
@@ -1586,7 +1637,7 @@ export const useChatStore = create<ChatState>()(
           return {
             chatTabs: {
               ...s.chatTabs,
-              [tabId]: { ...tab, sessionId: newSessionId, isStreaming: false },
+              [tabId]: { ...tab, sessionId: newSessionId, isStreaming: false, lastStreamingStartedAt: undefined },
             },
             tabEvents: newTabEvents,
             tabEventIndices: newTabEventIndices,
@@ -2018,7 +2069,11 @@ export const useChatStore = create<ChatState>()(
         set((state) => ({
           chatTabs: {
             ...state.chatTabs,
-            [tabId]: { ...state.chatTabs[tabId], isStreaming }
+            [tabId]: {
+              ...state.chatTabs[tabId],
+              isStreaming,
+              lastStreamingStartedAt: isStreaming ? Date.now() : undefined,
+            }
           }
         }))
       },
@@ -2035,7 +2090,8 @@ export const useChatStore = create<ChatState>()(
             [tabId]: {
               ...state.chatTabs[tabId],
               isCompleted,
-              isStreaming: newStreaming
+              isStreaming: newStreaming,
+              lastStreamingStartedAt: newStreaming ? state.chatTabs[tabId].lastStreamingStartedAt : undefined,
             }
           }
         }))
@@ -2455,10 +2511,11 @@ export const useChatStore = create<ChatState>()(
           const response = await agentApi.getActiveSessions()
           const activeSessions = response.active_sessions || []
           
-          set({
+          set((currentState) => ({
             activeSessionsCache: activeSessions,
-            activeSessionsCacheTimestamp: now
-          })
+            activeSessionsCacheTimestamp: now,
+            ...reconcileInactiveSessionTabs(currentState, activeSessions, now),
+          }))
           
           return activeSessions
         } catch (error) {

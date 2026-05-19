@@ -42,6 +42,7 @@ import {
 const EMPTY_EVENTS: PollingEvent[] = []
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
 const RESTORED_CONVERSATION_CONTEXT_MARKER = '\n\nPrevious workflow-builder conversation file:'
+const STALE_STREAMING_RECOVERY_GRACE_MS = 10000
 
 function getReadableActiveAgentName(name: string): string {
   const firstLine = name
@@ -2681,6 +2682,36 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
 
   }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, effectiveServers, enabledTools, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, scrollToBottom, getActiveSessions, resetStreamingState, connectSSE, handleSSEMessage, handleSSEStatus])
+
+  // If the active tab is stuck in streaming state, ChatInput queues the user's text
+  // instead of calling /api/query. Force-refresh active sessions so the store can
+  // clear stale streaming state and let the queue flush as the next turn.
+  useEffect(() => {
+    const queuedCount = activeTab?.config?.queuedMessages?.length ?? 0
+    if (!activeTab?.isStreaming || !activeTab.sessionId || queuedCount === 0) return
+
+    const streamingAge = activeTab.lastStreamingStartedAt
+      ? Date.now() - activeTab.lastStreamingStartedAt
+      : Number.POSITIVE_INFINITY
+    const delay = Number.isFinite(streamingAge)
+      ? Math.max(750, STALE_STREAMING_RECOVERY_GRACE_MS - streamingAge + 250)
+      : 750
+
+    const timeout = window.setTimeout(() => {
+      getActiveSessions(true).catch(error => {
+        logger.warn('ChatArea', 'Failed to refresh active sessions for queued-message recovery:', error)
+      })
+    }, delay)
+
+    return () => window.clearTimeout(timeout)
+  }, [
+    activeTab?.tabId,
+    activeTab?.sessionId,
+    activeTab?.isStreaming,
+    activeTab?.lastStreamingStartedAt,
+    activeTab?.config?.queuedMessages?.length,
+    getActiveSessions,
+  ])
 
   // Auto-send queued messages when agent is idle (not streaming)
   const submitQueryWithQueryRef = useRef(submitQueryWithQuery)

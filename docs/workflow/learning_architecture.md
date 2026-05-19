@@ -29,12 +29,15 @@ The main learning destination is the **global skill**:
   - `learnings/_global/scripts/`
   - other skill-structured files
 
+`SKILL.md` should stay lean. Treat it as the index and overview for the workflow runbook, not the place for detailed accumulated guidance. Keep it under roughly 80-100 lines, with links to focused `references/<topic>.md` files. Detailed selectors, auth flows, API quirks, timing/wait rules, file-format notes, retry patterns, and step-specific HOW guidance should live in those reference files.
+
 The learning agent prompt in [`learning_agent.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/learning_agent.go) is explicit:
 
 - accumulate **domain knowledge across all workflow steps**
 - keep it focused on the target system
 - merge findings into one shared skill
 - follow skill structure, not old flat learning-note files
+- keep `SKILL.md` as a short index and put detailed HOW knowledge in reference files
 
 The controller also hardwires global learning mode in [`controller_learning.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_learning.go):
 

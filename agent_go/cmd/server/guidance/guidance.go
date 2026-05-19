@@ -70,7 +70,7 @@ var allKinds = map[string]kindMeta{
 	"improve-knowledge": {Group: "kb", Description: "Improve knowledgebase/notes with targeted cleanup or cross-step consolidation", Modes: []string{"builder", "optimizer"}},
 
 	// Learning maintenance — applies targeted/cross-step cleanup to learnings/_global
-	"improve-runbook": {Group: "learning", Description: "Improve learnings/_global with targeted cleanup or current-plan consolidation", Modes: []string{"builder", "optimizer"}},
+	"improve-learnings": {Group: "learning", Description: "Improve learnings/_global with targeted cleanup or current-plan consolidation", Modes: []string{"builder", "optimizer"}},
 
 	// DB maintenance — applies guarded schema/contract cleanup to db/*.json
 	"improve-data": {Group: "db", Description: "Improve db/*.json contracts, schemas, and report compatibility", Modes: []string{"builder", "optimizer"}},

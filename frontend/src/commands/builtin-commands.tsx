@@ -122,15 +122,15 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'improve-runbook',
-    description: 'Improve reusable runbook guidance with targeted cleanup or consolidation',
+    command: 'improve-learnings',
+    description: 'Improve global learnings with targeted cleanup or current-plan consolidation',
     icon: <BookOpen className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: ['builder', 'optimizer'],
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'improve-runbook')
+      submitGuidedWorkflowCommand(ctx, 'improve-learnings')
     }
   },
   {

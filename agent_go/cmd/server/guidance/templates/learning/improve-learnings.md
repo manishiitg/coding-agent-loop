@@ -6,6 +6,7 @@ BOUNDARIES
 2. Work on `learnings/_global/` only. Do not edit `planning/`, `evaluation/`, `reports/`, `db/`, `knowledgebase/`, or per-step `learnings/{step-id}/main.py` from this command.
 3. If you discover stale per-step scripts, bad `learning_objective`, wrong `learnings_access`, or lock issues, record/recommend them; use `/review-plan`, `/review-code`, `/review-artifact-drift`, or `harden_workflow` for those applied fixes.
 4. Keep WHAT-the-workflow-discovered out of learnings. User-supplied runtime context belongs in `knowledgebase/context/`; workflow-discovered subject-matter facts belong in `knowledgebase/notes/` or `db/*.json`, not `learnings/_global/`.
+5. Enforce a lean index shape: `learnings/_global/SKILL.md` should stay under roughly 80-100 lines and act as an overview plus links to focused files under `learnings/_global/references/`. Detailed selectors, API quirks, auth flows, file-format notes, retry patterns, and step-specific HOW guidance belong in reference files, not in the root `SKILL.md`.
 
 READ FIRST
 
@@ -18,7 +19,7 @@ WHEN TO USE EACH MODE
 
 Use `mode="targeted"` when the operation is known file hygiene:
 
-- make `SKILL.md` a short index
+- make `SKILL.md` a short index with links to focused reference files
 - merge or split specific reference files
 - remove stale selectors/tool patterns after site or API changes
 - compact bloated browser/API/file-format guidance
@@ -37,6 +38,7 @@ If unsure, use `mode="auto"` or omit mode. Broad instructions like "optimize lea
 ACTION
 
 1. Build one concrete instruction. It must mention the objective from `soul.md` or `planning/plan.json`, the user's focus if provided, and any unresolved learning-related findings from `builder/review.md` or `builder/improve.md`.
+   - Always include this invariant in the instruction: keep `learnings/_global/SKILL.md` lean as an index/overview; move detailed HOW-to-run content into `learnings/_global/references/<topic>.md` and link those files from `SKILL.md`.
 2. Call:
 
 `improve_learnings(mode="auto", instruction="<specific learning improvement instruction>", focus="<optional focus>")`

@@ -45,7 +45,7 @@ review-cost
 review-code
 review-artifact-drift
 improve-knowledge
-improve-runbook
+improve-learnings
 improve-data
 define-success
 improve-workflow
@@ -66,7 +66,7 @@ improve-report
 | `/review-speed` | Optimizer | Review latency and safe speedups. |
 | `/review-cost` | Optimizer | Review cost and safe reductions. |
 | `/improve-knowledge` | Builder, Optimizer | Improve knowledgebase notes with targeted cleanup or cross-step consolidation. |
-| `/improve-runbook` | Builder, Optimizer | Improve reusable runbook guidance with targeted cleanup or consolidation. |
+| `/improve-learnings` | Builder, Optimizer | Improve global learnings with targeted cleanup or current-plan consolidation. |
 | `/improve-data` | Builder, Optimizer | Improve durable data contracts, schemas, and report compatibility. |
 | `/define-success` | Optimizer | Write workflow profile and propose starter metrics. |
 | `/improve-workflow` | Optimizer | Read prior improve/review logs, run/eval/metric/log evidence, then choose harden, replan, eval-plan improvement, metric cleanup, or no action. |

@@ -97,7 +97,7 @@ Workflow slash commands are wrappers around the backend `get_workflow_command_gu
 | `/review-artifact-drift` | Check whether artifacts drifted from recent plan changes | Builder, Optimizer | `review-artifact-drift` |
 | `/review-code` | Review saved scripts (`main.py`) against step descriptions to detect drift | Optimizer | `review-code` |
 | `/improve-knowledge` | Improve knowledge notes with targeted cleanup or cross-step consolidation | Builder, Optimizer | `improve-knowledge` |
-| `/improve-runbook` | Improve reusable runbook guidance with targeted cleanup or consolidation | Builder, Optimizer | `improve-runbook` |
+| `/improve-learnings` | Improve global learnings with targeted cleanup or current-plan consolidation | Builder, Optimizer | `improve-learnings` |
 | `/improve-data` | Improve durable data contracts, schemas, and report compatibility | Builder, Optimizer | `improve-data` |
 | `/improve-report` | Validate `reports/report_plan.json` and suggest layout/color improvements | Builder, Optimizer, Reporting | `improve-report` |
 | `/define-success` | One-time setup: write the Workflow Profile to `builder/improve.md` and bootstrap metrics | Optimizer | `define-success` |

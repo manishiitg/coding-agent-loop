@@ -570,7 +570,8 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	}
 
 	// Keep the provider stream channel enabled for CLI tool observability/history
-	// capture, but do not emit generation streaming events into the app event store.
+	// capture and terminal snapshots, but do not emit chat text generation events
+	// into the app event store.
 	options = append(options,
 		mcpagent.WithStreaming(true),
 		mcpagent.WithGenerationStreamingEvents(false),

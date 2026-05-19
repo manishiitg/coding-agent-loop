@@ -569,8 +569,12 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		options = append(options, mcpagent.WithLogger(v2Logger))
 	}
 
-	// Enable streaming for LLM text responses (emits streaming_start, streaming_chunk, streaming_end events)
-	options = append(options, mcpagent.WithStreaming(true))
+	// Keep the provider stream channel enabled for CLI tool observability/history
+	// capture, but do not emit generation streaming events into the app event store.
+	options = append(options,
+		mcpagent.WithStreaming(true),
+		mcpagent.WithGenerationStreamingEvents(false),
+	)
 
 	if config.AgentMode == mcpagent.SimpleAgent {
 		// Create Simple agent
@@ -994,31 +998,6 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		// until the full response is ready.
 		var streamedAny atomic.Bool
 		var streamedChunks atomic.Int64
-		heartbeatStop := make(chan struct{})
-		go func() {
-			ticker := time.NewTicker(8 * time.Second)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-heartbeatStop:
-					return
-				case <-ticker.C:
-					if streamedAny.Load() {
-						continue
-					}
-					label := "Agent"
-					w.EmitTypedEvent(ctx, &events.StreamingChunkEvent{
-						BaseEventData: events.BaseEventData{Timestamp: time.Now()},
-						Content:       fmt.Sprintf("⏳ %s is still working...", label),
-						ChunkIndex:    -1,
-						IsToolCall:    false,
-					})
-				}
-			}
-		}()
 
 		w.mu.Lock()
 		prevCallback := w.agent.StreamingCallback
@@ -1050,7 +1029,6 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 
 		// Restore previous callback on exit
 		defer func() {
-			close(heartbeatStop)
 			w.mu.Lock()
 			w.agent.StreamingCallback = prevCallback
 			w.mu.Unlock()

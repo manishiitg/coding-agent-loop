@@ -2,7 +2,7 @@ import React, { useMemo, useCallback, useRef, useEffect, forwardRef, useState } 
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
-import { useChatStore, waitForChatStoreHydration, normalizeEventViewMode, type ChatTab } from '../../stores/useChatStore'
+import { useChatStore, waitForChatStoreHydration, type ChatTab } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
@@ -535,12 +535,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     ) {
       return false
     }
-    // Terminal mode hands the whole chat area to TerminalCenter,
-    // so the "Previous workflow chats" hint shouldn't compete for
-    // vertical space alongside it.
-    if (normalizeEventViewMode(tab.viewMode) === 'terminal') {
-      return false
-    }
+    // Previous chats are valuable in every view mode when nothing is
+    // running — the user may want to switch to a past session whether
+    // they're looking at Tree, Flat, or Terminal. Terminal mode used
+    // to gate this off, but since tabEvents persist across mode
+    // switches the hasWorkflowChatContent check is enough to hide
+    // the panel during an active session.
     const tabEvents = tab.sessionId ? state.tabEvents[tab.sessionId] : undefined
     return !hasWorkflowChatContent(tabEvents)
   })

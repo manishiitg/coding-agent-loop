@@ -833,20 +833,15 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             compact={compact}
           />
         )}
-        {!isOwnedLogPanelOpen && hasOwnedLogs && (
+        {!isOwnedLogPanelOpen && hasOwnedLogs && toolCount > 0 && (
           <div className="mt-1 ml-1">
             <button
               onClick={() => setIsOwnedLogPanelOpen(true)}
               className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
             >
               <span className="font-medium">
-                + {childCount} log{childCount !== 1 ? 's' : ''}
+                + {toolCount} tool{toolCount !== 1 ? 's' : ''}
               </span>
-              {toolCount > 0 && (
-                <span className="truncate opacity-60">
-                  • {toolCount} tool{toolCount !== 1 ? 's' : ''}
-                </span>
-              )}
             </button>
           </div>
         )}
@@ -1825,13 +1820,13 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             compact={compact}
           />
         )}
-        {!isOwnedLogPanelOpen && childCount > 0 && (
+        {!isOwnedLogPanelOpen && childCount > 0 && (liveStats?.toolCalls ?? 0) > 0 && (
           <div className="mt-1 ml-1">
             <button
               onClick={() => setIsOwnedLogPanelOpen(true)}
               className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
             >
-              + {childCount} log event{childCount !== 1 ? 's' : ''}
+              + {liveStats?.toolCalls} tool{(liveStats?.toolCalls ?? 0) !== 1 ? 's' : ''}
             </button>
           </div>
         )}

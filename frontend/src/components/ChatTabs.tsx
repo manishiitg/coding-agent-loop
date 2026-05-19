@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo } from 'react'
-import { X, Plus, ArrowDown, Terminal } from 'lucide-react'
-import { useChatStore, type ChatTab } from '../stores/useChatStore'
+import { X, Plus, ArrowDown, List, ListTree, Terminal } from 'lucide-react'
+import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useModeStore } from '../stores/useModeStore'
 import { shouldShowEventByMode } from './events/eventModeUtils'
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { logger } from '../utils/logger'
 interface ChatTabsProps {
   // For multi-agent mode: callback when starting a new chat
@@ -25,9 +26,13 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     tabEvents,
     autoScroll: storeAutoScroll,
     setAutoScroll,
-    terminalCenterOpen,
-    toggleTerminalCenterOpen,
+    setTabViewMode,
   } = useChatStore()
+
+  const activeViewMode = useMemo(
+    () => normalizeEventViewMode(activeTabId ? chatTabs[activeTabId]?.viewMode : undefined),
+    [activeTabId, chatTabs]
+  )
 
   const isHiddenOrganizationTab = useCallback((tab: ChatTab) => {
     // Only hide tabs explicitly marked as org assistant via metadata.
@@ -284,20 +289,45 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
       
       {/* Right-side view controls - only show when there are tabs */}
       {modeTabs.length > 0 && (
-        <div className="ml-auto flex items-center border-l border-gray-200 dark:border-gray-700 pl-2">
-          <button
-            onClick={toggleTerminalCenterOpen}
-            className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-              terminalCenterOpen
-                ? 'bg-gray-200 text-gray-900 dark:bg-gray-700 dark:text-gray-100'
-                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
-            }`}
-            title={terminalCenterOpen ? 'Hide terminals' : 'Show terminals'}
-            aria-pressed={terminalCenterOpen}
-          >
-            <Terminal className="h-3.5 w-3.5" />
-          </button>
-          {handleToggleAutoScroll && (
+        <div className="ml-auto flex items-center gap-1 border-l border-gray-200 dark:border-gray-700 pl-2">
+          {/* 3-way view toggle: Tree | Flat | Terminal. Mirrors the
+              workflow-mode toggle so chat sessions can flip to the
+              terminal pane (synthetic + tmux activity for the chat). */}
+          <div className="flex items-center rounded bg-gray-100 dark:bg-gray-800 p-0.5">
+            {([
+              { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by agent' },
+              { mode: 'flat' as const, Icon: List, label: 'Flat', tip: 'Flat view — show events in chronological order' },
+              { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal', tip: 'Terminal view — show only the terminal panes, no events' },
+            ]).map(({ mode, Icon, label, tip }) => (
+              <Tooltip key={mode}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (activeTabId) {
+                        setTabViewMode(activeTabId, mode)
+                      }
+                    }}
+                    className={`flex items-center gap-1 px-1.5 py-1 rounded text-xs font-medium transition-colors
+                      ${activeViewMode === mode
+                        ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
+                        : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
+                      }
+                    `}
+                    aria-label={label}
+                    aria-pressed={activeViewMode === mode}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span className="hidden md:inline">{label}</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{tip}</p>
+                </TooltipContent>
+              </Tooltip>
+            ))}
+          </div>
+          {handleToggleAutoScroll && activeViewMode !== 'terminal' && (
             <button
               onClick={handleToggleAutoScroll}
               className={`

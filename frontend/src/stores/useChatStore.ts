@@ -2240,77 +2240,28 @@ export const useChatStore = create<ChatState>()(
         const tab = state.chatTabs[tabId]
         if (!tab) return
         const nextMode = normalizeEventViewMode(viewMode)
-        const sessionId = tab.sessionId
-        // TEMP debug — trace mode switches
-        console.log('[setTabViewMode]', {
-          tabId,
-          sessionId,
-          fromMode: normalizeEventViewMode(tab.viewMode),
-          toMode: nextMode,
-          currentEventCount: sessionId ? state.tabEvents[sessionId]?.length ?? 0 : 0,
-        })
+        void state
+        void tab
 
-        set((state) => {
-          const baseUpdate = {
-            eventViewModePreference: nextMode,
-            chatTabs: {
-              ...state.chatTabs,
-              [tabId]: {
-                ...state.chatTabs[tabId],
-                viewMode
-              }
+        // We do NOT drop tabEvents on entering Terminal mode. Earlier
+        // attempts to drop caused two cascading issues: (1) optimistic
+        // user messages briefly disappeared on switch-back, and (2)
+        // the workflow's ModeEmptyState and other "no conversation"
+        // gates flipped on and visually covered the terminal pane.
+        // Memory savings come from disconnecting SSE + pausing poll
+        // (see ChatArea useEffects); the events that existed at
+        // terminal-mode entry stay in memory but don't grow.
+
+        set((state) => ({
+          eventViewModePreference: nextMode,
+          chatTabs: {
+            ...state.chatTabs,
+            [tabId]: {
+              ...state.chatTabs[tabId],
+              viewMode
             }
           }
-
-          if (!sessionId) {
-            return baseUpdate
-          }
-
-          if (nextMode === 'terminal') {
-            // Entering Terminal: drop tabEvents + reset the index
-            // cursor so on switch-back we backfill everything from
-            // the server's 1500-event ring. Pin the latest human
-            // message into the stash so a still-pending optimistic
-            // user input isn't lost during the brief blank window.
-            const existing = state.tabEvents[sessionId] || []
-            let lastHuman: PollingEvent | undefined
-            for (let i = existing.length - 1; i >= 0; i--) {
-              const ev = existing[i]
-              if (ev?.type === 'user_message' || ev?.type === 'user_input') {
-                lastHuman = ev
-                break
-              }
-            }
-            const { [sessionId]: _droppedEvents, ...remainingEvents } = state.tabEvents
-            const { [sessionId]: _droppedIndex, ...remainingIndices } = state.tabEventIndices
-            return {
-              ...baseUpdate,
-              tabEvents: remainingEvents,
-              tabEventIndices: remainingIndices,
-              pinnedHumanByTerminalMode: {
-                ...(state.pinnedHumanByTerminalMode || {}),
-                ...(lastHuman ? { [sessionId]: lastHuman } : {}),
-              },
-            }
-          }
-
-          // Leaving Terminal: if we have a pinned human message,
-          // seed tabEvents with it so the user sees their message
-          // immediately while the backfill poll runs.
-          const pinned = (state.pinnedHumanByTerminalMode || {})[sessionId]
-          if (!pinned) {
-            return baseUpdate
-          }
-          const { [sessionId]: _seededPin, ...remainingPins } = state.pinnedHumanByTerminalMode || {}
-          return {
-            ...baseUpdate,
-            tabEvents: {
-              ...state.tabEvents,
-              [sessionId]: state.tabEvents[sessionId]?.length ? state.tabEvents[sessionId] : [pinned],
-            },
-            pinnedHumanByTerminalMode: remainingPins,
-          }
-        })
+        }))
       },
 
       getTabConfig: (tabId: string) => {

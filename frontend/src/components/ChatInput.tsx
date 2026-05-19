@@ -3146,7 +3146,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const jobName = activeTab?.metadata?.scheduledJobName
     const botPlatform = activeTab?.metadata?.botPlatform
     return (
-      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
+      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className="px-4 py-2">
         <div className="flex items-center justify-center gap-2 py-1 text-xs text-muted-foreground">
           <History className="w-3.5 h-3.5" />
           <span>
@@ -3327,7 +3327,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
 
       {/* Input Form */}
-      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
+      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className="px-4 py-2">
         <form onSubmit={handleSubmit} className="space-y-2">
           <div className="space-y-1">
             {/* Queued messages indicator */}

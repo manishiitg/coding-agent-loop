@@ -757,7 +757,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		case "":
 			// default; nothing to do (bridge gets empty transport)
 		case "tmux":
-			effectiveTransport = "tmux"
+			// "tmux" only makes sense for tmux-capable CLI providers.
+			// When the actual provider is an HTTP API (vertex, anthropic,
+			// openai, ...), no tmux pane exists — propagating step_transport=tmux
+			// mislabels the terminal chip ("tmux·vertex") and overrides the
+			// synthetic terminal's own transport ("api"). Ignore in that case.
+			if common.IsCLIProvider(actualProvider) {
+				effectiveTransport = "tmux"
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step transport=tmux ignored for non-CLI provider '%s'", actualProvider))
+			}
 		case "structured":
 			if common.IsCLIProvider(actualProvider) {
 				config.ForceStructuredCodingAgent = true

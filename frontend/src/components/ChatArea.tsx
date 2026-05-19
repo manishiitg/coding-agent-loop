@@ -1838,11 +1838,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     //
     // Read activeSessionIds fresh from the store to avoid stale closure from setInterval capture
     const freshActiveIds = new Set(chatStore.activeSessionsCache.map(s => s.session_id))
-    console.log('[pollEvents] start', {
-      allTabsCount: allTabs.length,
-      allTabsSids: allTabs.map(t => ({ sid: t.sessionId, mode: normalizeEventViewMode(t.viewMode), streaming: t.isStreaming })),
-      activeSessionIdsFromCache: Array.from(freshActiveIds),
-    })
     const tabsToPoll = allTabs.filter(tab => {
       const currentTab = chatStore.getTab(tab.tabId)
       if (!currentTab?.sessionId) {
@@ -2217,20 +2212,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       if (liveMode === 'terminal') continue
       neededSessionIds.add(tab.sessionId)
     }
-    // TEMP debug — trace SSE effect re-runs during mode switches
-    console.log('[sse-effect]', {
+    // TEMP debug — trace SSE effect re-runs during mode switches.
+    console.log('[sse-effect] ' + JSON.stringify({
       viewModeKey,
       currentlyConnected: Object.keys(currentSSE),
       needed: Array.from(neededSessionIds),
       tabsInActiveList: tabsWithActiveSessions.length,
       tabsInActiveListSids: tabsWithActiveSessions.map(t => t.sessionId),
-      // Show the live viewMode for every tab in the active list.
       liveTabModes: tabsWithActiveSessions.map(t => ({
         sid: t.sessionId,
         liveMode: normalizeEventViewMode(liveChatTabs[t.tabId]?.viewMode),
         staleMode: normalizeEventViewMode(t.viewMode),
       })),
-    })
+    }))
 
     // Connect SSE for sessions that don't have a connection yet
     for (const tab of tabsWithActiveSessions) {
@@ -2239,10 +2233,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       if (liveMode === 'terminal') continue
       const sid = tab.sessionId
       if (currentSSE[sid]) {
-        console.log('[sse-effect] skip-connect already-connected', { sid })
+        console.log('[sse-effect] skip-connect already-connected ' + JSON.stringify({ sid }))
         continue
       }
-      console.log('[sse-effect] connecting', { sid, liveMode })
+      console.log('[sse-effect] connecting ' + JSON.stringify({ sid, liveMode }))
 
       connectSSE(
         sid,
@@ -2263,10 +2257,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           t => t.sessionId === sid && t.isStreaming === true && !t.isCompleted
         )
         if (!stillStreaming) {
-          console.log('[sse-effect] disconnecting', { sid, reason: 'not in needed' })
+          console.log('[sse-effect] disconnecting ' + JSON.stringify({ sid, reason: 'not in needed' }))
           disconnectSSE(sid)
         } else {
-          console.log('[sse-effect] skip-disconnect still-streaming', { sid })
+          console.log('[sse-effect] skip-disconnect still-streaming ' + JSON.stringify({ sid }))
         }
       }
     }
@@ -2283,11 +2277,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // doesn't have to wait for the next poll tick.
   const prevActiveViewModeRef = useRef<string>(activeEventViewMode)
   useEffect(() => {
-    console.log('[mode-switch-poll]', {
+    console.log('[mode-switch-poll] ' + JSON.stringify({
       prev: prevActiveViewModeRef.current,
       next: activeEventViewMode,
       willKickPoll: prevActiveViewModeRef.current === 'terminal' && activeEventViewMode !== 'terminal',
-    })
+    }))
     if (prevActiveViewModeRef.current === 'terminal' && activeEventViewMode !== 'terminal') {
       void pollEvents()
     }
@@ -2998,7 +2992,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           around the fixed-height terminal box. */}
       <div ref={chatContentRef} className={`flex-1 ${activeEventViewMode === 'terminal' ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden min-w-0 relative overscroll-y-none ${compact ? 'text-sm' : ''}`} style={{ scrollBehavior: 'auto' }}>
         
-        <div className={`min-w-0 ${activeEventViewMode === 'terminal' ? 'flex h-full flex-col' : 'min-h-full'} ${compact ? 'px-2 pb-2' : 'px-4 pb-4'}`}>
+        <div className={`min-w-0 ${activeEventViewMode === 'terminal' ? 'flex h-full flex-col' : 'min-h-full'} ${activeEventViewMode === 'terminal' ? '' : (compact ? 'px-2 pb-2' : 'px-4 pb-4')}`}>
           {/* Loading indicator for historical events */}
           {isLoadingHistory && (
             <div className={`flex items-center justify-center ${compact ? 'py-4' : 'py-8'}`}>
@@ -3064,8 +3058,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 <p className="text-sm text-gray-500 dark:text-gray-400">Restoring previous session...</p>
               </div>
             )}
-            {/* Empty State - Show when no events and not in historical session */}
-            {displayEvents.length === 0 && !isStreaming && !isRestoringWorkflowSessions && !isChatCompatiblePhase(activeTab?.metadata?.phaseId) && (
+            {/* Empty State - Show when no events and not in historical session.
+                Skipped in Terminal view mode because we drop tabEvents on
+                entry (intentional memory savings) — without this skip, the
+                workflow ModeEmptyState would cover the TerminalCenter pane. */}
+            {displayEvents.length === 0 && !isStreaming && !isRestoringWorkflowSessions && !isChatCompatiblePhase(activeTab?.metadata?.phaseId) && activeEventViewMode !== 'terminal' && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             {/* Phase Chat Help - Show for chat-compatible phases until AI has responded */}
@@ -3087,7 +3084,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               </div>
             )}
 
-            {activeTab?.sessionId && activeEventViewMode === 'terminal' && (hasConversationContent || isStreaming) && (
+            {activeTab?.sessionId && activeEventViewMode === 'terminal' && (
               <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} />
             )}
             {activeTab?.sessionId && activeEventViewMode !== 'terminal' && (
@@ -3113,12 +3110,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 onSelectSession={handleResumePreviousChat}
               />
             )}
-            {/* Empty State - Show when no events and not in historical session */}
-            {!hasConversationContent && !isStreaming && !isRestoringChatSessions && !hasPreviousNormalChats && (
+            {/* Empty State - Show when no events and not in historical session.
+                Skipped in Terminal mode (same reason as workflow branch). */}
+            {!hasConversationContent && !isStreaming && !isRestoringChatSessions && !hasPreviousNormalChats && activeEventViewMode !== 'terminal' && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
 
-            {activeTab?.sessionId && activeEventViewMode === 'terminal' && (hasConversationContent || isStreaming) && (
+            {activeTab?.sessionId && activeEventViewMode === 'terminal' && (
               <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} />
             )}
             {activeTab?.sessionId && activeEventViewMode !== 'terminal' && (

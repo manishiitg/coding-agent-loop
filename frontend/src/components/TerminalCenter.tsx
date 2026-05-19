@@ -404,14 +404,23 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       if (t.step_id) known.add(t.step_id)
     }
     for (const t of list) {
-      const parent = t.parent_step_id && known.has(t.parent_step_id) ? t.parent_step_id : ''
+      // Self-parents (step_id === parent_step_id) and cycles in the
+      // parent chain would otherwise blow the stack at render time.
+      // Treat them as roots so the terminal still surfaces.
+      const isSelfParent = !!t.step_id && t.step_id === t.parent_step_id
+      const parent = !isSelfParent && t.parent_step_id && known.has(t.parent_step_id) ? t.parent_step_id : ''
       const bucket = byParent.get(parent) || []
       bucket.push(t)
       byParent.set(parent, bucket)
     }
     const out: Array<{ terminal: TerminalSnapshot; depth: number }> = []
+    const visited = new Set<string>()
     const walk = (parent: string, depth: number) => {
+      // Defense in depth against cycles + degenerate-deep trees.
+      if (depth > 32) return
       for (const t of byParent.get(parent) || []) {
+        if (t.step_id && visited.has(t.step_id)) continue
+        if (t.step_id) visited.add(t.step_id)
         out.push({ terminal: t, depth })
         if (t.step_id) walk(t.step_id, depth + 1)
       }
@@ -422,18 +431,20 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
 
   const groupedTerminals = useMemo(() => {
     const uniqueTerminals = dedupeTerminalsByPane(terminals)
-    const activeTerminals = sortActiveTerminalsStable(
-      uniqueTerminals.filter(terminal => terminalState(terminal) === 'running'),
-    )
-    const finishedTerminals = sortTerminalsNewestFirst(
-      uniqueTerminals.filter(terminal => terminalState(terminal) !== 'running'),
-    )
+    // Build a single tree from ALL terminals (active + finished).
+    // Splitting them was breaking the parent→child relationship when
+    // a child step finished while its parent was still running — the
+    // child got displaced into the "Finished" group, losing its
+    // visual nesting under the parent. One tree keeps lineage intact;
+    // the colored dot on each rail row already conveys per-row state.
+    const allTerminals = sortActiveTerminalsStable(uniqueTerminals)
+    const activeTerminals = uniqueTerminals.filter(terminal => terminalState(terminal) === 'running')
+    const finishedTerminals = uniqueTerminals.filter(terminal => terminalState(terminal) !== 'running')
     return {
       activeTerminals,
       finishedTerminals,
-      orderedTerminals: [...activeTerminals, ...finishedTerminals],
-      activeTree: buildTree(activeTerminals),
-      finishedTree: buildTree(finishedTerminals),
+      orderedTerminals: allTerminals,
+      tree: buildTree(allTerminals),
     }
   }, [terminals])
 
@@ -573,8 +584,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   )
 
   return (
-    <div className={`flex min-h-0 flex-col border border-neutral-700 bg-[#202020] text-neutral-100 shadow-sm ${compact ? 'my-2' : 'my-3 flex-1 overflow-hidden'}`}>
-      <div className="flex min-h-0 flex-1 flex-col px-2 pb-2 pt-2">
+    <div className={`flex min-h-0 flex-col bg-[#202020] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
+      <div className="flex min-h-0 flex-1 flex-col">
         {error && (
           <div className="rounded border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300">
             {error}
@@ -605,13 +616,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 a long list without losing the selected terminal's
                 content. Hidden below sm breakpoint to save space. */}
             <div className="hidden w-60 shrink-0 flex-col overflow-y-auto border-r border-neutral-800 bg-[#0d0d0d] sm:flex">
-              {groupedTerminals.activeTree.map(({ terminal, depth }) => renderRailItem(terminal, depth))}
-              {groupedTerminals.finishedTerminals.length > 0 && groupedTerminals.activeTerminals.length > 0 && (
-                <div className="border-t border-neutral-800 px-2.5 py-1 text-[10px] uppercase tracking-wide text-neutral-500">
-                  Finished
-                </div>
-              )}
-              {groupedTerminals.finishedTree.map(({ terminal, depth }) => renderRailItem(terminal, depth))}
+              {groupedTerminals.tree.map(({ terminal, depth }) => renderRailItem(terminal, depth))}
             </div>
 
             {/* Right pane — the selected terminal's content. Header

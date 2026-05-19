@@ -568,17 +568,20 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 					if currentStepType != "" {
 						newMeta["current_step_type"] = currentStepType
 					}
-					// Auto-close retention for transient terminals. Whenever
-					// the bridge is scoped to a specific step, the terminal
-					// entry represents a one-shot run that should expire
-					// after the user has had time to read it. Main-agent
-					// calls go through the bridge without a step_id, so
-					// they don't get this key and never auto-close.
-					// Tmux adapters that already set their own retention
-					// (longer or shorter) won't be overridden — we only
-					// fill in when the key is absent.
+					// Auto-close retention for transient terminals. Only
+					// tmux terminals get a finite retention — the underlying
+					// pane is torn down at step end, so its snapshot is the
+					// only record we have and we want to drop it before
+					// memory grows. Synthetic terminals (vertex / anthropic
+					// / openai / structured CLI) are just in-memory text
+					// buffers with no ephemeral resource backing them, so
+					// they stay until the chat session ends.
+					// Adapters that already set their own retention won't
+					// be overridden — we only fill in when the key is absent.
 					if _, ok := newMeta["terminal_retention_seconds"]; !ok {
-						newMeta["terminal_retention_seconds"] = 300
+						if currentTransport == "tmux" {
+							newMeta["terminal_retention_seconds"] = 1800 // 30 min
+						}
 					}
 				}
 

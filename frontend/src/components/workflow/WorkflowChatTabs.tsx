@@ -216,6 +216,7 @@ export const WorkflowChatTabs: React.FC = () => {
         {/* Auto-scroll Toggle and Close Button - only show when there are workflow tabs */}
         {activeWorkflowTabs.length > 0 && (
           <div className="flex shrink-0 items-center gap-1 border-l border-gray-200 pl-2 dark:border-gray-700">
+            {activeViewMode !== 'terminal' && (
             <button
               onClick={(e) => {
                 e.stopPropagation()
@@ -251,6 +252,7 @@ export const WorkflowChatTabs: React.FC = () => {
                 {autoScroll ? 'Auto-scroll' : 'Manual'}
               </span>
             </button>
+            )}
 
             {/* View mode — 3-way segmented toggle: Tree | Flat | Terminal.
                 Terminal mode replaces the event feed with the terminal pane

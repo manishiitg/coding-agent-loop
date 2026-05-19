@@ -401,6 +401,12 @@ interface ChatState extends StoreActions {
   tabEvents: Record<string, PollingEvent[]>  // sessionId -> events
   tabEventIndices: Record<string, number>  // sessionId -> lastEventIndex
   tabHasMoreOlderEvents: Record<string, boolean>  // sessionId -> hasMoreOlderEvents (from initial fetch)
+  // Stash for the latest human message right before entering Terminal
+  // view mode. We drop tabEvents on entry to free memory; this pin
+  // survives the drop so a still-pending optimistic user input isn't
+  // briefly hidden when the user switches back to Tree/Flat (the
+  // backfill poll will overwrite/extend within ~600ms).
+  pinnedHumanByTerminalMode: Record<string, PollingEvent>
   
   // User message state
   currentUserMessage: string
@@ -646,6 +652,7 @@ export const useChatStore = create<ChatState>()(
       // Initial state
       isStreaming: false,
       lastEventIndex: -1,
+      pinnedHumanByTerminalMode: {},
       pollingInterval: null,
       tabEvents: {},
       tabEventIndices: {},
@@ -2232,17 +2239,78 @@ export const useChatStore = create<ChatState>()(
         const state = get()
         const tab = state.chatTabs[tabId]
         if (!tab) return
+        const nextMode = normalizeEventViewMode(viewMode)
+        const sessionId = tab.sessionId
+        // TEMP debug — trace mode switches
+        console.log('[setTabViewMode]', {
+          tabId,
+          sessionId,
+          fromMode: normalizeEventViewMode(tab.viewMode),
+          toMode: nextMode,
+          currentEventCount: sessionId ? state.tabEvents[sessionId]?.length ?? 0 : 0,
+        })
 
-        set((state) => ({
-          eventViewModePreference: normalizeEventViewMode(viewMode),
-          chatTabs: {
-            ...state.chatTabs,
-            [tabId]: {
-              ...state.chatTabs[tabId],
-              viewMode
+        set((state) => {
+          const baseUpdate = {
+            eventViewModePreference: nextMode,
+            chatTabs: {
+              ...state.chatTabs,
+              [tabId]: {
+                ...state.chatTabs[tabId],
+                viewMode
+              }
             }
           }
-        }))
+
+          if (!sessionId) {
+            return baseUpdate
+          }
+
+          if (nextMode === 'terminal') {
+            // Entering Terminal: drop tabEvents + reset the index
+            // cursor so on switch-back we backfill everything from
+            // the server's 1500-event ring. Pin the latest human
+            // message into the stash so a still-pending optimistic
+            // user input isn't lost during the brief blank window.
+            const existing = state.tabEvents[sessionId] || []
+            let lastHuman: PollingEvent | undefined
+            for (let i = existing.length - 1; i >= 0; i--) {
+              const ev = existing[i]
+              if (ev?.type === 'user_message' || ev?.type === 'user_input') {
+                lastHuman = ev
+                break
+              }
+            }
+            const { [sessionId]: _droppedEvents, ...remainingEvents } = state.tabEvents
+            const { [sessionId]: _droppedIndex, ...remainingIndices } = state.tabEventIndices
+            return {
+              ...baseUpdate,
+              tabEvents: remainingEvents,
+              tabEventIndices: remainingIndices,
+              pinnedHumanByTerminalMode: {
+                ...(state.pinnedHumanByTerminalMode || {}),
+                ...(lastHuman ? { [sessionId]: lastHuman } : {}),
+              },
+            }
+          }
+
+          // Leaving Terminal: if we have a pinned human message,
+          // seed tabEvents with it so the user sees their message
+          // immediately while the backfill poll runs.
+          const pinned = (state.pinnedHumanByTerminalMode || {})[sessionId]
+          if (!pinned) {
+            return baseUpdate
+          }
+          const { [sessionId]: _seededPin, ...remainingPins } = state.pinnedHumanByTerminalMode || {}
+          return {
+            ...baseUpdate,
+            tabEvents: {
+              ...state.tabEvents,
+              [sessionId]: state.tabEvents[sessionId]?.length ? state.tabEvents[sessionId] : [pinned],
+            },
+            pinnedHumanByTerminalMode: remainingPins,
+          }
+        })
       },
 
       getTabConfig: (tabId: string) => {

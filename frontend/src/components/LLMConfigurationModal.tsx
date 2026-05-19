@@ -139,9 +139,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
   const llmProviderTabs = useMemo(() => (
     PROVIDER_ORDER.filter(provider => {
       if (HIDDEN_CHAT_PROVIDER_TABS.has(provider)) return false
-      const supported = isProviderSupported(provider)
-      console.log('[LLMModal] provider', provider, 'supported:', supported)
-      if (!supported) return false
+      if (!isProviderSupported(provider)) return false
       if (!hasProviderCapabilityData) return provider !== 'elevenlabs' && provider !== 'deepgram'
       return hasCapability(provider, CHAT_CAPABILITIES)
     })

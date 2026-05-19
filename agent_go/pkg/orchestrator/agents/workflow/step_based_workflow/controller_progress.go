@@ -901,4 +901,93 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitLearnCodeScriptExecutionEvent(
 		Timestamp: time.Now(),
 		Data:      ev,
 	})
+
+	// Also emit a synthetic terminal snapshot so this step shows up
+	// in Terminal view (no LLM call means no WithObservability →
+	// otherwise the step would be invisible there).
+	hcpo.emitLearnCodeTerminalSnapshot(ctx, stepID, stepTitle, scriptPath, scriptContent, output, errMsg, exitCode, success, isSavedScript, fixIteration)
+}
+
+// emitLearnCodeTerminalSnapshot builds a synthetic terminal pane
+// snapshot for a learn-code step run and emits it as a
+// StreamingChunkEvent with kind=terminal. The orchestrator's terminal
+// store picks it up exactly the same way an adapter-emitted terminal
+// chunk would, so the step appears in the Terminal view alongside
+// LLM-driven steps.
+func (hcpo *StepBasedWorkflowOrchestrator) emitLearnCodeTerminalSnapshot(
+	ctx context.Context,
+	stepID, stepTitle, scriptPath, scriptContent, output, errMsg string,
+	exitCode int,
+	success, isSavedScript bool,
+	fixIteration int,
+) {
+	bridge := hcpo.GetContextAwareBridge()
+	if bridge == nil {
+		return
+	}
+	var b strings.Builder
+	source := "saved"
+	if !isSavedScript {
+		source = "fresh"
+	}
+	fmt.Fprintf(&b, "$ python %s (source=%s fix_iter=%d)\n", scriptPath, source, fixIteration)
+	if stepID != "" || stepTitle != "" {
+		fmt.Fprintf(&b, "↳ step %s (learn_code)\n", firstNonEmptyStr(stepID, stepTitle))
+	}
+	if scriptContent != "" {
+		b.WriteString("--- script ---\n")
+		b.WriteString(truncateForTerminal(scriptContent, 4000))
+		b.WriteString("\n--- output ---\n")
+	}
+	if strings.TrimSpace(output) != "" {
+		b.WriteString(truncateForTerminal(output, 8000))
+		if !strings.HasSuffix(output, "\n") {
+			b.WriteByte('\n')
+		}
+	}
+	if strings.TrimSpace(errMsg) != "" {
+		fmt.Fprintf(&b, "[stderr] %s\n", truncateForTerminal(errMsg, 4000))
+	}
+	status := "✓"
+	if !success {
+		status = "✗"
+	}
+	fmt.Fprintf(&b, "[done · %s · exit=%d]\n", status, exitCode)
+
+	chunkEv := &baseevents.StreamingChunkEvent{
+		BaseEventData: baseevents.BaseEventData{
+			Timestamp: time.Now(),
+			Metadata: map[string]interface{}{
+				"kind":      "terminal",
+				"source":    "learn_code",
+				"step_id":   stepID,
+				"replace":   true,
+				"transport": "learn_code",
+			},
+		},
+		Content:    b.String(),
+		ChunkIndex: 0,
+		IsToolCall: false,
+	}
+	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
+		Type:      "streaming_chunk",
+		Timestamp: time.Now(),
+		Data:      chunkEv,
+	})
+}
+
+func firstNonEmptyStr(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func truncateForTerminal(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "\n…[truncated]"
 }

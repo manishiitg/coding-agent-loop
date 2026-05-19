@@ -1838,9 +1838,23 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     //
     // Read activeSessionIds fresh from the store to avoid stale closure from setInterval capture
     const freshActiveIds = new Set(chatStore.activeSessionsCache.map(s => s.session_id))
+    console.log('[pollEvents] start', {
+      allTabsCount: allTabs.length,
+      allTabsSids: allTabs.map(t => ({ sid: t.sessionId, mode: normalizeEventViewMode(t.viewMode), streaming: t.isStreaming })),
+      activeSessionIdsFromCache: Array.from(freshActiveIds),
+    })
     const tabsToPoll = allTabs.filter(tab => {
       const currentTab = chatStore.getTab(tab.tabId)
       if (!currentTab?.sessionId) {
+        return false
+      }
+
+      // Terminal view mode renders only TerminalCenter (which polls
+      // /api/terminals on its own). Skip event polling for that tab
+      // — events would accumulate in memory unread. When the user
+      // switches back to Tree/Flat the next poll cycle catches up.
+      // currentTab from chatStore.getTab is live, no staleness.
+      if (normalizeEventViewMode(currentTab.viewMode) === 'terminal') {
         return false
       }
 
@@ -2088,6 +2102,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     restoreAll()
   }, [getActiveSessions, switchTab, selectedModeCategory])
 
+  // Key that changes whenever any tab's view-mode flips, so the
+  // SSE connect/disconnect effect (which gates on viewMode === 'terminal')
+  // re-runs. tabsWithActiveSessions alone doesn't capture viewMode
+  // changes, so without this key a Terminal→Tree switch would leave
+  // SSE disconnected and Tree mode would show stale events.
+  const viewModeKey = useChatStore(state =>
+    Object.entries(state.chatTabs)
+      .map(([tid, t]) => `${tid}:${normalizeEventViewMode(t.viewMode)}`)
+      .sort()
+      .join('|')
+  )
+
   // Only poll tabs that have their session ID in the backend's active sessions list
   // Backend determines activity based on event activity (10 min timeout)
   // CRITICAL: Also include tabs that are streaming (user just submitted a query)
@@ -2172,18 +2198,51 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   useEffect(() => {
     // Read SSE state fresh from store (not from React state to avoid dep cycle)
     const currentSSE = useChatStore.getState().sseConnections
+    // Also read tabs fresh from the store. The memoized
+    // tabsWithActiveSessions only refreshes on add/remove/session
+    // changes, so tab.viewMode is stale across mode flips. Reading
+    // from the store directly catches the latest viewMode.
+    const liveChatTabs = useChatStore.getState().chatTabs
 
-    // Determine which session IDs need SSE connections
+    // Determine which session IDs need SSE connections.
+    // Skip Terminal-view-mode tabs: TerminalCenter has its own
+    // /api/terminals poll and the events that SSE would deliver are
+    // useless (nothing renders them, they only consume memory).
+    // Re-entering Tree/Flat triggers a reconnect on the next effect
+    // pass and a poll-based backfill from lastEventIndex.
     const neededSessionIds = new Set<string>()
     for (const tab of tabsWithActiveSessions) {
-      if (tab.sessionId) neededSessionIds.add(tab.sessionId)
+      if (!tab.sessionId) continue
+      const liveMode = normalizeEventViewMode(liveChatTabs[tab.tabId]?.viewMode)
+      if (liveMode === 'terminal') continue
+      neededSessionIds.add(tab.sessionId)
     }
+    // TEMP debug — trace SSE effect re-runs during mode switches
+    console.log('[sse-effect]', {
+      viewModeKey,
+      currentlyConnected: Object.keys(currentSSE),
+      needed: Array.from(neededSessionIds),
+      tabsInActiveList: tabsWithActiveSessions.length,
+      tabsInActiveListSids: tabsWithActiveSessions.map(t => t.sessionId),
+      // Show the live viewMode for every tab in the active list.
+      liveTabModes: tabsWithActiveSessions.map(t => ({
+        sid: t.sessionId,
+        liveMode: normalizeEventViewMode(liveChatTabs[t.tabId]?.viewMode),
+        staleMode: normalizeEventViewMode(t.viewMode),
+      })),
+    })
 
     // Connect SSE for sessions that don't have a connection yet
     for (const tab of tabsWithActiveSessions) {
       if (!tab.sessionId) continue
+      const liveMode = normalizeEventViewMode(liveChatTabs[tab.tabId]?.viewMode)
+      if (liveMode === 'terminal') continue
       const sid = tab.sessionId
-      if (currentSSE[sid]) continue // Already connected
+      if (currentSSE[sid]) {
+        console.log('[sse-effect] skip-connect already-connected', { sid })
+        continue
+      }
+      console.log('[sse-effect] connecting', { sid, liveMode })
 
       connectSSE(
         sid,
@@ -2204,7 +2263,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           t => t.sessionId === sid && t.isStreaming === true && !t.isCompleted
         )
         if (!stillStreaming) {
+          console.log('[sse-effect] disconnecting', { sid, reason: 'not in needed' })
           disconnectSSE(sid)
+        } else {
+          console.log('[sse-effect] skip-disconnect still-streaming', { sid })
         }
       }
     }
@@ -2214,7 +2276,23 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       stopPolling()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- sseConnections excluded to prevent infinite loop
-  }, [tabsWithActiveSessions, connectSSE, disconnectSSE, handleSSEMessage, handleSSEStatus, handleSSEFallback, pollingInterval, startPolling, stopPolling, pollEvents])
+  }, [tabsWithActiveSessions, viewModeKey, connectSSE, disconnectSSE, handleSSEMessage, handleSSEStatus, handleSSEFallback, pollingInterval, startPolling, stopPolling, pollEvents])
+
+  // When the active tab's viewMode flips OFF Terminal, kick a single
+  // poll immediately so the backfill from the server's 1500-event ring
+  // doesn't have to wait for the next poll tick.
+  const prevActiveViewModeRef = useRef<string>(activeEventViewMode)
+  useEffect(() => {
+    console.log('[mode-switch-poll]', {
+      prev: prevActiveViewModeRef.current,
+      next: activeEventViewMode,
+      willKickPoll: prevActiveViewModeRef.current === 'terminal' && activeEventViewMode !== 'terminal',
+    })
+    if (prevActiveViewModeRef.current === 'terminal' && activeEventViewMode !== 'terminal') {
+      void pollEvents()
+    }
+    prevActiveViewModeRef.current = activeEventViewMode
+  }, [activeEventViewMode, pollEvents])
 
   // Cleanup polling and SSE on unmount
   useEffect(() => {
@@ -3009,7 +3087,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               </div>
             )}
 
-            {activeTab?.sessionId && activeEventViewMode === 'terminal' && (
+            {activeTab?.sessionId && activeEventViewMode === 'terminal' && (hasConversationContent || isStreaming) && (
               <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} />
             )}
             {activeTab?.sessionId && activeEventViewMode !== 'terminal' && (
@@ -3040,7 +3118,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
 
-            {activeTab?.sessionId && activeEventViewMode === 'terminal' && (
+            {activeTab?.sessionId && activeEventViewMode === 'terminal' && (hasConversationContent || isStreaming) && (
               <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} />
             )}
             {activeTab?.sessionId && activeEventViewMode !== 'terminal' && (

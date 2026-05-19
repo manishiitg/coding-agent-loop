@@ -337,12 +337,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // terminalCenterOpen was the legacy toggle gate (separate sidekick
   // panel); kept here for any callers that still pass the flag but no
   // longer affects rendering — Debug-mode mount is the only gate.
-  // Default to listing all terminals (across workflow-step sessions
-  // and the main chat session), so workflow step panes show up
-  // automatically. The legacy Current/All toggle has been removed
-  // along with the box header; if per-session filtering is wanted
-  // back we'd re-introduce a control here.
-  const [viewAll, setViewAll] = useState(true)
+  // Scope terminals to the current chat session. The workflowEventBridge
+  // adds every workflow-step event under the chat tab's sessionID, so
+  // filtering by currentSessionId surfaces this chat's workflow steps
+  // without leaking terminals from other chat tabs / unrelated workflows.
+  const [viewAll, setViewAll] = useState(false)
   const [terminals, setTerminals] = useState<TerminalSnapshot[]>([])
   const [selectedID, setSelectedID] = useState<string | null>(null)
   const [userSelectedID, setUserSelectedID] = useState<string | null>(null)
@@ -393,6 +392,34 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
   }, [selectedID, userSelectedID])
 
+  // buildTree turns a flat list of terminals into a parent → children
+  // tree using parent_step_id. Roots are terminals with no parent_step_id
+  // (or whose parent isn't in the list — those are surfaced at top level
+  // so we never hide a terminal). Each node carries its depth so the
+  // rail can indent with paddingLeft = base + depth * step.
+  const buildTree = (list: TerminalSnapshot[]): Array<{ terminal: TerminalSnapshot; depth: number }> => {
+    const byParent = new Map<string, TerminalSnapshot[]>()
+    const known = new Set<string>()
+    for (const t of list) {
+      if (t.step_id) known.add(t.step_id)
+    }
+    for (const t of list) {
+      const parent = t.parent_step_id && known.has(t.parent_step_id) ? t.parent_step_id : ''
+      const bucket = byParent.get(parent) || []
+      bucket.push(t)
+      byParent.set(parent, bucket)
+    }
+    const out: Array<{ terminal: TerminalSnapshot; depth: number }> = []
+    const walk = (parent: string, depth: number) => {
+      for (const t of byParent.get(parent) || []) {
+        out.push({ terminal: t, depth })
+        if (t.step_id) walk(t.step_id, depth + 1)
+      }
+    }
+    walk('', 0)
+    return out
+  }
+
   const groupedTerminals = useMemo(() => {
     const uniqueTerminals = dedupeTerminalsByPane(terminals)
     const activeTerminals = sortActiveTerminalsStable(
@@ -405,6 +432,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       activeTerminals,
       finishedTerminals,
       orderedTerminals: [...activeTerminals, ...finishedTerminals],
+      activeTree: buildTree(activeTerminals),
+      finishedTree: buildTree(finishedTerminals),
     }
   }, [terminals])
 
@@ -483,7 +512,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // Rail item — one row in the left rail. Compact vertical layout:
   // dot + step title (top line), transport chip + closing countdown
   // (bottom line). Click → select; hover → highlight.
-  const renderRailItem = (terminal: TerminalSnapshot) => (
+  // depth controls left padding so child terminals nest under their
+  // parent. Tree connectors (└) appear at depth >= 1.
+  const renderRailItem = (terminal: TerminalSnapshot, depth: number = 0) => (
     <div
       key={terminalPaneKey(terminal)}
       role="button"
@@ -499,13 +530,18 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
           setUserSelectedID(terminalPaneKey(terminal))
         }
       }}
-      className={`group block w-full cursor-pointer border-l-2 px-2.5 py-1.5 text-left text-xs transition-colors ${
+      className={`group block w-full cursor-pointer border-l-2 py-1.5 pl-2.5 pr-2.5 text-left text-xs transition-colors ${
         terminalPaneKey(terminal) === selectedTerminalKey
           ? 'border-l-blue-400 bg-neutral-800 text-neutral-100'
           : 'border-l-transparent text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200'
       }`}
     >
       <div className="flex items-center gap-1.5">
+        {depth > 0 && (
+          <span className="shrink-0 select-none whitespace-pre font-mono text-[10px] text-neutral-500" aria-hidden>
+            {Array.from({ length: depth - 1 }, () => '│ ').join('')}└─→
+          </span>
+        )}
         <span
           className={`h-2 w-2 shrink-0 rounded-full ${terminalDotClass(terminal)}`}
           title={terminalStateDescription(terminal)}
@@ -546,7 +582,20 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         )}
 
         {!error && terminals.length === 0 && (
-          <div className="px-1 py-2 text-xs text-neutral-400">No terminal snapshots yet.</div>
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
+            <Terminal className="h-10 w-10 text-neutral-700" strokeWidth={1.25} />
+            <div className="text-sm font-medium text-neutral-300">No terminals yet</div>
+            <div className="max-w-md text-xs leading-relaxed text-neutral-500">
+              Run a workflow step, send a message to the main agent, or kick off
+              a coding-agent task to see its activity stream here. Each call
+              becomes its own pane — the rail on the left lists them all, the
+              right pane shows live output, tool calls, and cost.
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-[11px] text-neutral-600">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
+              <span>Watching for activity…</span>
+            </div>
+          </div>
         )}
 
         {terminals.length > 0 && (
@@ -556,13 +605,13 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 a long list without losing the selected terminal's
                 content. Hidden below sm breakpoint to save space. */}
             <div className="hidden w-60 shrink-0 flex-col overflow-y-auto border-r border-neutral-800 bg-[#0d0d0d] sm:flex">
-              {groupedTerminals.activeTerminals.map(renderRailItem)}
+              {groupedTerminals.activeTree.map(({ terminal, depth }) => renderRailItem(terminal, depth))}
               {groupedTerminals.finishedTerminals.length > 0 && groupedTerminals.activeTerminals.length > 0 && (
                 <div className="border-t border-neutral-800 px-2.5 py-1 text-[10px] uppercase tracking-wide text-neutral-500">
                   Finished
                 </div>
               )}
-              {groupedTerminals.finishedTerminals.map(renderRailItem)}
+              {groupedTerminals.finishedTree.map(({ terminal, depth }) => renderRailItem(terminal, depth))}
             </div>
 
             {/* Right pane — the selected terminal's content. Header

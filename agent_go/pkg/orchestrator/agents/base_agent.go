@@ -313,6 +313,20 @@ func NewBaseAgent(
 			loggerv2.String("agent_name", name))
 	}
 
+	// Enable provider streaming for workflow-step agents so the
+	// synthetic terminal (driven by opts.StreamChan) can emit
+	// terminal pane snapshots for API-provider steps. Without this
+	// the agent runs in non-streaming mode and the StreamChan is
+	// never attached — the terminal pane stays empty for every
+	// non-tmux step. WithGenerationStreamingEvents(false) keeps
+	// per-token chat events out of the workflow event store; the
+	// terminal-chunk carve-out in mcpagent's processChunks still
+	// emits the terminal snapshots regardless.
+	options = append(options,
+		mcpagent.WithStreaming(true),
+		mcpagent.WithGenerationStreamingEvents(false),
+	)
+
 	// Add runtime overrides for workflow-specific MCP server configuration
 	// e.g., setting unique output directories per workflow run
 	if runtimeOverrides != nil {

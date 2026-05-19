@@ -180,12 +180,25 @@ func TestTerminalPaneCrossTransportReal(t *testing.T) {
 				llmtypes.WithStreamingChan(streamChan),
 			}
 			callOpts = append(callOpts, extraOpts...)
-			_, err := adapter.GenerateContent(ctx,
-				[]llmtypes.MessageContent{
-					{Role: llmtypes.ChatMessageTypeHuman, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "Reply with: OK"}}},
-				},
-				callOpts...,
-			)
+			// Multi-turn history: user → asst → tool call → tool result
+			// → user (latest). Exercises the synthetic terminal's
+			// formatConversationLines path, so the pane shows assistant
+			// text, tool calls, and tool results — not just the final
+			// user line. This is the case the old single-message test
+			// failed to catch (real workflow steps run many turns).
+			multiTurn := []llmtypes.MessageContent{
+				{Role: llmtypes.ChatMessageTypeHuman, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "What is 2+2?"}}},
+				{Role: llmtypes.ChatMessageTypeAI, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "Let me check using a calculator tool."}}},
+				{Role: llmtypes.ChatMessageTypeAI, Parts: []llmtypes.ContentPart{llmtypes.ToolCall{
+					ID: "call_1", Type: "function",
+					FunctionCall: &llmtypes.FunctionCall{Name: "calculator", Arguments: `{"expr":"2+2"}`},
+				}}},
+				{Role: llmtypes.ChatMessageTypeTool, Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{
+					ToolCallID: "call_1", Name: "calculator", Content: "4",
+				}}},
+				{Role: llmtypes.ChatMessageTypeHuman, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "Reply with: OK"}}},
+			}
+			_, err := adapter.GenerateContent(ctx, multiTurn, callOpts...)
 			// Adapters own the close of StreamChan (some defer-close
 			// from inside their streaming goroutine). Drain via a safe
 			// close — recover catches the "close of closed channel"
@@ -218,6 +231,30 @@ func TestTerminalPaneCrossTransportReal(t *testing.T) {
 			}
 			if !sawNonEmpty {
 				t.Fatalf("%s/%s emitted %d terminal chunks but all had empty content", tc.class, tc.provider, len(terminalChunks))
+			}
+
+			// Assert the multi-turn conversation rendered into the
+			// pane. The last snapshot should carry markers for user,
+			// assistant, tool call, and tool result lines. Tmux
+			// providers scrape a real pane so they bypass synthetic
+			// rendering — skip the markers for those.
+			if tc.class != "tmux" {
+				lastContent := terminalChunks[len(terminalChunks)-1].Content
+				required := []struct {
+					marker string
+					what   string
+				}{
+					{"> user:", "user message"},
+					{"< asst:", "assistant message"},
+					{"→ tool:", "tool call"},
+					{"✓ result", "tool result"},
+				}
+				for _, r := range required {
+					if !strings.Contains(lastContent, r.marker) {
+						t.Fatalf("%s/%s pane missing %s marker %q in final snapshot:\n%s",
+							tc.class, tc.provider, r.what, r.marker, lastContent)
+					}
+				}
 			}
 
 			t.Logf("✅ %s/%s: %d terminal chunks, last content length=%d",

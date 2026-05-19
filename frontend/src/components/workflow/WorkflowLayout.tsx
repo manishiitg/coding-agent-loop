@@ -2,7 +2,7 @@ import React, { useMemo, useCallback, useRef, useEffect, forwardRef, useState } 
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
-import { useChatStore, waitForChatStoreHydration, type ChatTab } from '../../stores/useChatStore'
+import { useChatStore, waitForChatStoreHydration, normalizeEventViewMode, type ChatTab } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
@@ -533,6 +533,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       tab.isStreaming ||
       tab.config?.restoredConversationPath
     ) {
+      return false
+    }
+    // Terminal mode hands the whole chat area to TerminalCenter,
+    // so the "Previous workflow chats" hint shouldn't compete for
+    // vertical space alongside it.
+    if (normalizeEventViewMode(tab.viewMode) === 'terminal') {
       return false
     }
     const tabEvents = tab.sessionId ? state.tabEvents[tab.sessionId] : undefined

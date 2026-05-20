@@ -218,6 +218,8 @@ export const WorkflowChatTabs: React.FC = () => {
 
             {/* Layout Mode */}
             <div
+              data-tour="event-view-mode"
+              data-testid="tour-event-view-mode"
               className="inline-flex items-center rounded-full border border-gray-200 bg-gray-100 p-0.5 dark:border-gray-700 dark:bg-gray-800"
               role="group"
               aria-label="Event layout mode"

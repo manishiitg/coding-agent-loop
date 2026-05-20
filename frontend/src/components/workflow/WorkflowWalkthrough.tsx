@@ -80,6 +80,11 @@ const STEPS: WalkthroughStep[] = [
     body: 'This area shows the plan graph or report preview, so you can inspect the workflow without leaving chat.',
   },
   {
+    selector: '[data-tour="event-view-mode"]',
+    title: 'Tree vs Terminal',
+    body: 'Switch between Tree view (events grouped by agent — best for navigating what each agent did) and Terminal view (the raw streamed transcript of LLM and CLI calls — best for low-level debugging and seeing live progress).',
+  },
+  {
     selector: '[data-tour="workflow-status"]',
     title: 'Status',
     body: 'This tells you whether the current workflow session is idle, busy, stopped, or waiting. Stop only affects this active session.',

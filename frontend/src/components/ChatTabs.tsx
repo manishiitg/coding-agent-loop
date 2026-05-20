@@ -264,7 +264,11 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
           {/* 3-way view toggle: Tree | Flat | Terminal. Mirrors the
               workflow-mode toggle so chat sessions can flip to the
               terminal pane (synthetic + tmux activity for the chat). */}
-          <div className="flex items-center rounded bg-gray-100 dark:bg-gray-800 p-0.5">
+          <div
+            data-tour="event-view-mode"
+            data-testid="tour-event-view-mode"
+            className="flex items-center rounded bg-gray-100 dark:bg-gray-800 p-0.5"
+          >
             {([
               { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by agent' },
               { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal', tip: 'Terminal view — show only the terminal panes, no events' },

@@ -1359,20 +1359,31 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyPostSetupToAgent(agent agents.Or
 // createExecutionOnlyAgent creates an execution-only agent that receives pre-discovered learning history.
 // stepPath: Step path identifier (e.g., "step-1" for regular steps, "step-3-if-true-0" for branch steps, "step-2-sub-agent-1" for sub-agents)
 // stepIDOverride: Optional explicit step ID to use for learnings / metadata selection (e.g., sub-agent step ID).
+// artifactFolderNameOverride: Optional execution/log folder name. This keeps logical step ID stable while isolating per-call artifacts.
 //
 //	When empty, the step ID will be derived from stepPath.
-func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, stepIDOverride string) (agents.OrchestratorAgent, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, stepIDOverride string, artifactFolderNameOverride string) (agents.OrchestratorAgent, error) {
 	// 1. Resolve stepID first (needed for folder guard setup)
 	stepID := hcpo.resolveStepID(stepPath, stepIDOverride)
+	artifactStepID := stepID
+	artifactStepPath := stepPath
+	if artifactFolderNameOverride = strings.TrimSpace(artifactFolderNameOverride); artifactFolderNameOverride != "" {
+		artifactStepID = ""
+		artifactStepPath = artifactFolderNameOverride
+	}
 
 	// 2. Setup folder guard (extracted method). Empty kbAccess defaults to orchestrator-level UseKnowledgebase.
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
 	kbWriteMethod := resolveKnowledgebaseWriteMethod(stepConfig)
 	learningsAccess := resolveLearningsAccess(stepConfig)
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID, kbAccess, learningsAccess, kbWriteMethod)
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, kbAccess, learningsAccess, kbWriteMethod)
+	stepEnvOutputPathOverride := ""
 	if override, ok := ctx.Value(messageSequenceFolderGuardOverrideKey{}).(*messageSequenceFolderGuardOverride); ok && override != nil {
 		readPaths = append([]string{}, override.ReadPaths...)
 		writePaths = append([]string{}, override.WritePaths...)
+		if len(writePaths) > 0 {
+			stepEnvOutputPathOverride = writePaths[0]
+		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Message sequence folder guard override for execution agent - Read: %v Write: %v", readPaths, writePaths))
 	}
 
@@ -1400,7 +1411,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// NOTE: We no longer call hcpo.SetWorkspacePathForFolderGuard here.
 	// Instead, readPaths/writePaths are set on the per-agent config below (config.FolderGuardReadPaths/WritePaths)
 	// to prevent race conditions when parallel sub-agents share the same orchestrator instance.
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Per-agent folder guard for execution-only agent - Read paths: %v, Write paths: %v (can write to %s and execution/Downloads/)", readPaths, writePaths, stepPath))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Per-agent folder guard for execution-only agent - Read paths: %v, Write paths: %v (can write to %s and execution/Downloads/)", readPaths, writePaths, artifactStepPath))
 
 	// 3. Determine settings (extracted methods)
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
@@ -1473,7 +1484,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// and STEP_EXECUTION_DIR to read sibling step outputs.
 	{
 		executionWorkspacePath := fmt.Sprintf("%s/runs/%s/execution", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
-		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
+		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, artifactStepID, artifactStepPath)
+		if stepEnvOutputPathOverride != "" {
+			stepExecutionPath = stepEnvOutputPathOverride
+		}
 		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionPath)
 		stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
 		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, config.MCPSessionID)

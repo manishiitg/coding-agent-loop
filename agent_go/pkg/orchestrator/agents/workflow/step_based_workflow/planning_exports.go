@@ -1594,6 +1594,7 @@ func RegisterRunFullWorkflowTool(
 				// nil inside controller_todo_task.go and sub-agent tracking is silently skipped.
 				workflowController.SetSubAgentNotifier(session.combinedSubAgentNotifier())
 				workflowController.SetWorkshopExecutionContext(execCtx, session.StepRegistry)
+				workflowController.SetRoutingDecisionNotifier(session.executionNotifier)
 
 				// Propagate session context
 				if cfg.SessionID != "" {

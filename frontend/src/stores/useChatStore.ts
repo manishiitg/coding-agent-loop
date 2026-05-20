@@ -23,12 +23,22 @@ const STALE_STREAMING_GRACE_MS = 10000
 // Streaming inactivity auto-clear timers (per sessionId)
 // When no new chunk arrives for 3s, streaming text is auto-cleared
 const _streamingInactivityTimers: Record<string, ReturnType<typeof setTimeout>> = {}
+const _executionStreamingInactivityTimers: Record<string, ReturnType<typeof setTimeout>> = {}
 const STREAMING_INACTIVITY_MS = 60000
 
 // Per-mode event counts type — kept for backwards compat with persisted state
 export type PerModeEventCounts = { micro: number }
 export type EventViewMode = 'tree' | 'flat' | 'terminal'
 type LegacyEventViewMode = EventViewMode | 'detailed' | 'summary'
+
+export type ExecutionStreamingActivity = {
+  sessionId: string
+  executionId: string
+  text: string
+  status?: string
+  lastChunkIndex: number
+  updatedAt: number
+}
 
 export function normalizeEventViewMode(viewMode?: LegacyEventViewMode | null): EventViewMode {
   if (viewMode === 'flat' || viewMode === 'summary') return 'flat'
@@ -156,7 +166,10 @@ function addTabEventsBatched(sessionId: string, events: PollingEvent[]) {
     const t = e.type
     return t === 'unified_completion' || t === 'conversation_end' || t === 'workflow_end' ||
       t === 'agent_error' || t === 'conversation_error' || t === 'orchestrator_error' ||
+      t === 'orchestrator_agent_error' || t === 'workflow_error' ||
       t === 'request_human_feedback' || t === 'blocking_human_feedback' ||
+      t === 'plan_approval' || t === 'pre_validation_completed' ||
+      t === 'batch_execution_canceled' || t === 'context_cancelled' ||
       t === 'orchestrator_end' || t === 'agent_end' ||
       t === 'user_message' || t === 'conversation_resumed'
   })
@@ -192,10 +205,13 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     'agent_error',
     'conversation_error',
     'orchestrator_error',
+    'orchestrator_agent_error',
+    'workflow_error',
     // Completion/end events - always keep
     'unified_completion',
     'conversation_end',
     'workflow_end',
+    'context_cancelled',
     'orchestrator_end',
     'agent_end',
     // Start events - keep for context
@@ -204,6 +220,7 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     // Human feedback events - critical for workflow
     'request_human_feedback',
     'blocking_human_feedback',
+    'plan_approval',
     // User input - keep for conversation context
     'user_message',
     // Tool events - keep for understanding what happened
@@ -216,13 +233,31 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     'step_progress_updated',
     'phase_started',
     'phase_completed',
+    'pre_validation_completed',
+    'routing_evaluated',
+    'batch_group_start',
+    'batch_group_end',
+    'batch_execution_start',
+    'batch_execution_end',
+    'batch_execution_canceled',
+    'todo_task_route_selected',
+    'todo_task_item_created',
+    'todo_task_item_updated',
+    'todo_task_item_completed',
     'todo_task_status_update',
+    'todo_task_step_completed',
+    'learn_code_script_execution',
     // Delegation structural events - must survive for sub-agent cards
     'delegation_start',
     'delegation_end',
     // Orchestrator agent boundaries - must survive for step collapse/expand
     'orchestrator_agent_start',
-    'orchestrator_agent_end'
+    'orchestrator_agent_end',
+    // Background owners - required by tree and by flat event continuity
+    'background_agent_started',
+    'background_agent_completed',
+    'background_agent_failed',
+    'background_agent_terminated'
   ]
   return importantTypes.includes(event.type)
 }
@@ -471,6 +506,9 @@ interface ChatState extends StoreActions {
   delegationStreamingText: Record<string, string>  // delegationId → accumulated streaming text
   lastDelegationChunkIndex: Record<string, number>  // delegationId → last processed chunk_index (dedup guard)
 
+  // Workflow/background execution streaming text accumulation (per execution)
+  executionStreaming: Record<string, ExecutionStreamingActivity> // executionId → live streaming state
+
   // Actions
   setIsStreaming: (streaming: boolean) => void
   // Computed: Derive isStreaming from polling status
@@ -584,6 +622,11 @@ interface ChatState extends StoreActions {
   // Delegation streaming text actions
   appendDelegationStreamingChunk: (delegationId: string, chunkIndex: number, chunk: string) => void
   clearDelegationStreamingText: (delegationId: string) => void
+
+  // Workflow/background execution streaming text actions
+  appendExecutionStreamingChunk: (sessionId: string, executionId: string, chunkIndex: number, chunk: string) => void
+  clearExecutionStreamingText: (executionId: string) => void
+  clearExecutionStreamingStatus: (executionId: string) => void
 
   // SSE connection management
   sseConnections: Record<string, SSEConnection>  // sessionId -> SSEConnection
@@ -699,6 +742,9 @@ export const useChatStore = create<ChatState>()(
       // Sub-agent streaming text accumulation (per delegation)
       delegationStreamingText: {},
       lastDelegationChunkIndex: {},
+
+      // Workflow/background execution streaming text accumulation (per execution)
+      executionStreaming: {},
 
       // SSE connections (not persisted)
       sseConnections: {},
@@ -1030,6 +1076,16 @@ export const useChatStore = create<ChatState>()(
           delete newLastStreamingChunkIndex[sessionId]
           const newCompletedStreamingText = { ...state.completedStreamingText }
           delete newCompletedStreamingText[sessionId]
+          const newExecutionStreaming = { ...state.executionStreaming }
+          for (const [executionId, activity] of Object.entries(newExecutionStreaming)) {
+            if (activity.sessionId === sessionId) {
+              if (_executionStreamingInactivityTimers[executionId]) {
+                clearTimeout(_executionStreamingInactivityTimers[executionId])
+                delete _executionStreamingInactivityTimers[executionId]
+              }
+              delete newExecutionStreaming[executionId]
+            }
+          }
 
           return {
             tabEvents: newTabEvents,
@@ -1045,7 +1101,8 @@ export const useChatStore = create<ChatState>()(
             lastStreamingChunkIndex: newLastStreamingChunkIndex,
             lastStreamingTerminalChunkIndex: newLastStreamingTerminalChunkIndex,
             lastOwnedStreamingTerminalChunkIndex: newLastOwnedStreamingTerminalChunkIndex,
-            completedStreamingText: newCompletedStreamingText
+            completedStreamingText: newCompletedStreamingText,
+            executionStreaming: newExecutionStreaming
           }
         })
       },
@@ -1535,6 +1592,78 @@ export const useChatStore = create<ChatState>()(
         })
       },
 
+      appendExecutionStreamingChunk: (sessionId: string, executionId: string, chunkIndex: number, chunk: string) => {
+        if (typeof chunk !== 'string' || !chunk || !executionId) return
+
+        if (_executionStreamingInactivityTimers[executionId]) {
+          clearTimeout(_executionStreamingInactivityTimers[executionId])
+        }
+        _executionStreamingInactivityTimers[executionId] = setTimeout(() => {
+          const current = useChatStore.getState().executionStreaming[executionId]
+          if (current?.text || current?.status) {
+            useChatStore.getState().clearExecutionStreamingText(executionId)
+          }
+          delete _executionStreamingInactivityTimers[executionId]
+        }, STREAMING_INACTIVITY_MS)
+
+        set((state) => {
+          const existing = state.executionStreaming[executionId]
+          let lastIndex = existing?.lastChunkIndex ?? -1
+          let currentText = existing?.text || ''
+
+          if (chunkIndex === 0 || chunkIndex === 1) {
+            lastIndex = -1
+            currentText = ''
+          }
+
+          if (chunkIndex >= 0 && chunkIndex <= lastIndex) {
+            return state
+          }
+
+          const isStatusMessage = chunk.includes('⏳') || chunk.includes('⚠️ Gemini')
+          const next: ExecutionStreamingActivity = {
+            sessionId,
+            executionId,
+            text: isStatusMessage ? currentText : currentText + chunk,
+            status: isStatusMessage ? chunk.trim() : undefined,
+            lastChunkIndex: chunkIndex,
+            updatedAt: Date.now(),
+          }
+
+          return {
+            executionStreaming: {
+              ...state.executionStreaming,
+              [executionId]: next,
+            },
+          }
+        })
+      },
+
+      clearExecutionStreamingText: (executionId: string) => {
+        if (_executionStreamingInactivityTimers[executionId]) {
+          clearTimeout(_executionStreamingInactivityTimers[executionId])
+          delete _executionStreamingInactivityTimers[executionId]
+        }
+        set((state) => {
+          const next = { ...state.executionStreaming }
+          delete next[executionId]
+          return { executionStreaming: next }
+        })
+      },
+
+      clearExecutionStreamingStatus: (executionId: string) => {
+        set((state) => {
+          const current = state.executionStreaming[executionId]
+          if (!current?.status) return state
+          return {
+            executionStreaming: {
+              ...state.executionStreaming,
+              [executionId]: { ...current, status: undefined, updatedAt: Date.now() },
+            },
+          }
+        })
+      },
+
       // SSE connection management
       connectSSE: (sessionId, onMessage, onStatus, onError) => {
         const state = get()
@@ -1617,6 +1746,7 @@ export const useChatStore = create<ChatState>()(
           const newLastStreamingTerminalChunkIndex = { ...s.lastStreamingTerminalChunkIndex }
           const newLastOwnedStreamingTerminalChunkIndex = { ...s.lastOwnedStreamingTerminalChunkIndex }
           const newCompletedStreamingText = { ...s.completedStreamingText }
+          const newExecutionStreaming = { ...s.executionStreaming }
           const newSSE = { ...s.sseConnections }
           if (oldSessionId) {
             const oldOwnedPrefix = `${oldSessionId}:`
@@ -1631,6 +1761,15 @@ export const useChatStore = create<ChatState>()(
             delete newLastStreamingChunkIndex[oldSessionId]
             delete newLastStreamingTerminalChunkIndex[oldSessionId]
             delete newCompletedStreamingText[oldSessionId]
+            for (const [executionId, activity] of Object.entries(newExecutionStreaming)) {
+              if (activity.sessionId === oldSessionId) {
+                if (_executionStreamingInactivityTimers[executionId]) {
+                  clearTimeout(_executionStreamingInactivityTimers[executionId])
+                  delete _executionStreamingInactivityTimers[executionId]
+                }
+                delete newExecutionStreaming[executionId]
+              }
+            }
             delete newSSE[oldSessionId]
             for (const key of Object.keys(newOwnedStreamingTerminalText)) {
               if (key.startsWith(oldOwnedPrefix)) delete newOwnedStreamingTerminalText[key]
@@ -1661,6 +1800,7 @@ export const useChatStore = create<ChatState>()(
             lastStreamingTerminalChunkIndex: newLastStreamingTerminalChunkIndex,
             lastOwnedStreamingTerminalChunkIndex: newLastOwnedStreamingTerminalChunkIndex,
             completedStreamingText: newCompletedStreamingText,
+            executionStreaming: newExecutionStreaming,
             sseConnections: newSSE,
           }
         })
@@ -1672,6 +1812,10 @@ export const useChatStore = create<ChatState>()(
 
         // Close all SSE connections
         Object.values(state.sseConnections).forEach((conn) => conn.close())
+        Object.values(_executionStreamingInactivityTimers).forEach((timer) => clearTimeout(timer))
+        Object.keys(_executionStreamingInactivityTimers).forEach((key) => {
+          delete _executionStreamingInactivityTimers[key]
+        })
 
         // Close all tabs and stop sessions
         Object.values(state.chatTabs).forEach(async (tab) => {
@@ -1718,7 +1862,8 @@ export const useChatStore = create<ChatState>()(
           lastOwnedStreamingTerminalChunkIndex: {},
           completedStreamingText: {},
           delegationStreamingText: {},
-          lastDelegationChunkIndex: {}
+          lastDelegationChunkIndex: {},
+          executionStreaming: {}
         })
 
         // Clear the requiresNewChat flag after successful chat reset
@@ -2032,6 +2177,18 @@ export const useChatStore = create<ChatState>()(
           const newCompletedStreamingText = { ...state.completedStreamingText }
           delete newCompletedStreamingText[tab.sessionId]
           updates.completedStreamingText = newCompletedStreamingText
+
+          const newExecutionStreaming = { ...state.executionStreaming }
+          for (const [executionId, activity] of Object.entries(newExecutionStreaming)) {
+            if (activity.sessionId === tab.sessionId) {
+              if (_executionStreamingInactivityTimers[executionId]) {
+                clearTimeout(_executionStreamingInactivityTimers[executionId])
+                delete _executionStreamingInactivityTimers[executionId]
+              }
+              delete newExecutionStreaming[executionId]
+            }
+          }
+          updates.executionStreaming = newExecutionStreaming
 
           const newHasMore = { ...state.tabHasMoreOlderEvents }
           delete newHasMore[tab.sessionId]

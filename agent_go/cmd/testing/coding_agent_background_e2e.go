@@ -22,6 +22,8 @@ var codingAgentBackgroundE2EFlags struct {
 	timeout        time.Duration
 }
 
+const backgroundContractAgentName = "bg-contract-check"
+
 var codingAgentBackgroundE2ECmd = &cobra.Command{
 	Use:   "coding-agent-background-e2e",
 	Short: "Run a real e2e test for coding-agent background delegation state",
@@ -43,9 +45,13 @@ Example:
 		defer cancel()
 
 		client := &codingAgentChatE2EClient{
-			baseURL: strings.TrimRight(codingAgentBackgroundE2EFlags.serverURL, "/"),
-			token:   os.Getenv("MCP_API_TOKEN"),
-			http:    &http.Client{Timeout: 30 * time.Second},
+			baseURL:        strings.TrimRight(codingAgentBackgroundE2EFlags.serverURL, "/"),
+			token:          os.Getenv("MCP_API_TOKEN"),
+			http:           &http.Client{Timeout: 30 * time.Second},
+			agentMode:      "simple",
+			selectedFolder: codingAgentBackgroundE2EFlags.selectedFolder,
+			enabledServers: "api-bridge",
+			timeout:        codingAgentBackgroundE2EFlags.timeout,
 		}
 
 		provider := strings.TrimSpace(codingAgentBackgroundE2EFlags.provider)
@@ -60,16 +66,7 @@ Example:
 		if sessionID == "" {
 			sessionID = fmt.Sprintf("coding-agent-bg-e2e-%s-%d", strings.ReplaceAll(provider, "-", ""), time.Now().UnixNano())
 		}
-		oldChatFlags := codingAgentChatE2EFlags
-		codingAgentChatE2EFlags.serverURL = codingAgentBackgroundE2EFlags.serverURL
-		codingAgentChatE2EFlags.provider = provider
-		codingAgentChatE2EFlags.model = model
-		codingAgentChatE2EFlags.sessionID = sessionID
-		codingAgentChatE2EFlags.selectedFolder = codingAgentBackgroundE2EFlags.selectedFolder
-		codingAgentChatE2EFlags.agentMode = "simple"
-		codingAgentChatE2EFlags.timeout = codingAgentBackgroundE2EFlags.timeout
 		defer func() {
-			codingAgentChatE2EFlags = oldChatFlags
 			stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer stopCancel()
 			_ = client.stopSession(stopCtx, sessionID)
@@ -82,7 +79,7 @@ Example:
 		query := fmt.Sprintf(`This is a background-agent transport contract test.
 
 Use the delegate tool exactly once with:
-- name: bg-contract-check
+- name: %s
 - reasoning_level: low
 - instruction:
   You are a background contract-test agent. Use execute_shell_command exactly once to run this command:
@@ -94,7 +91,7 @@ Use the delegate tool exactly once with:
 After the delegate tool returns an agent_id, your own final response must be exactly:
 STARTED_BG_CONTRACT_CHECK
 
-Do not call any other tools after delegate returns.`, finalToken, finalToken)
+Do not call any other tools after delegate returns.`, backgroundContractAgentName, finalToken, finalToken)
 
 		if _, err := client.startQuery(ctx, sessionID, provider, model, query); err != nil {
 			return fmt.Errorf("background delegation query failed to start: %w", err)
@@ -120,7 +117,7 @@ Do not call any other tools after delegate returns.`, finalToken, finalToken)
 		}
 		fmt.Println("PASS execution tree: background node completed")
 
-		if err := client.waitForNonUserEventContains(ctx, sessionID, []string{finalToken}, time.Minute); err != nil {
+		if err := client.waitForBackgroundCompletionContains(ctx, sessionID, backgroundContractAgentName, finalToken, time.Minute); err != nil {
 			return fmt.Errorf("background completion token was not present in events: %w", err)
 		}
 		fmt.Println("PASS events: background completion token observed")
@@ -145,15 +142,21 @@ func init() {
 }
 
 func (c *codingAgentChatE2EClient) waitForUnifiedCompletionContains(ctx context.Context, sessionID string, required []string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	deadline := e2eDeadline(ctx, timeout)
 	var lastFinal string
 	var lastRaw string
+	since := 0
 	for time.Now().Before(deadline) {
-		resp, raw, err := c.getEvents(ctx, sessionID)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		resp, raw, err := c.getEventsSince(ctx, sessionID, since)
 		if err != nil {
 			return err
 		}
 		lastRaw = raw
+		since = advanceE2ECursor(since, resp.LastProcessedIndex)
 		if extracted := extractUnifiedCompletionFinal(resp.Events); extracted != "" {
 			lastFinal = extracted
 		}
@@ -174,27 +177,37 @@ func (c *codingAgentChatE2EClient) waitForUnifiedCompletionContains(ctx context.
 			return err
 		}
 	}
-	return fmt.Errorf("timed out after %s; final=%q raw=%s", timeout, lastFinal, truncateE2E(lastRaw, 2000))
+	return fmt.Errorf("timed out after %s; final=%q raw=%s", time.Since(start).Round(time.Millisecond), lastFinal, truncateE2E(lastRaw, 2000))
 }
 
-func (c *codingAgentChatE2EClient) waitForNonUserEventContains(ctx context.Context, sessionID string, required []string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+func (c *codingAgentChatE2EClient) waitForBackgroundCompletionContains(ctx context.Context, sessionID, agentName, needle string, timeout time.Duration) error {
+	start := time.Now()
+	deadline := e2eDeadline(ctx, timeout)
 	var lastRaw string
+	since := 0
 	for time.Now().Before(deadline) {
-		resp, raw, err := c.getEvents(ctx, sessionID)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		resp, raw, err := c.getEventsSince(ctx, sessionID, since)
 		if err != nil {
 			return err
 		}
 		lastRaw = raw
-		allPresent := true
-		for _, needle := range required {
-			if !eventsContainNonUserString(resp.Events, needle) {
-				allPresent = false
-				break
+		since = advanceE2ECursor(since, resp.LastProcessedIndex)
+		for _, event := range resp.Events {
+			if fmt.Sprint(event["type"]) != "background_agent_completed" {
+				continue
 			}
-		}
-		if allPresent {
-			return nil
+			if eventPayloadString(event, "name") != agentName {
+				continue
+			}
+			if eventPayloadString(event, "status") != "completed" {
+				return fmt.Errorf("background agent %q completed with status %q; raw=%s", agentName, eventPayloadString(event, "status"), truncateE2E(raw, 1500))
+			}
+			if strings.Contains(eventPayloadString(event, "result"), needle) {
+				return nil
+			}
 		}
 		if resp.SessionStatus == "error" || resp.SessionStatus == "stopped" {
 			return fmt.Errorf("session ended with status %s before observing token; raw=%s", resp.SessionStatus, truncateE2E(lastRaw, 2000))
@@ -203,13 +216,17 @@ func (c *codingAgentChatE2EClient) waitForNonUserEventContains(ctx context.Conte
 			return err
 		}
 	}
-	return fmt.Errorf("timed out after %s; raw=%s", timeout, truncateE2E(lastRaw, 2000))
+	return fmt.Errorf("timed out after %s; raw=%s", time.Since(start).Round(time.Millisecond), truncateE2E(lastRaw, 2000))
 }
 
 func (c *codingAgentChatE2EClient) waitForActiveBackgroundSummary(ctx context.Context, sessionID string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	deadline := e2eDeadline(ctx, timeout)
 	var last string
 	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		sess, raw, err := c.getActiveSessionSummary(ctx, sessionID)
 		if err != nil {
 			return err
@@ -225,13 +242,17 @@ func (c *codingAgentChatE2EClient) waitForActiveBackgroundSummary(ctx context.Co
 			return err
 		}
 	}
-	return fmt.Errorf("timed out after %s; latest active session payload=%s", timeout, truncateE2E(last, 2000))
+	return fmt.Errorf("timed out after %s; latest active session payload=%s", time.Since(start).Round(time.Millisecond), truncateE2E(last, 2000))
 }
 
 func (c *codingAgentChatE2EClient) waitForNoRunningBackground(ctx context.Context, sessionID string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	deadline := e2eDeadline(ctx, timeout)
 	var last string
 	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		sess, raw, err := c.getActiveSessionSummary(ctx, sessionID)
 		if err != nil {
 			return err
@@ -244,7 +265,7 @@ func (c *codingAgentChatE2EClient) waitForNoRunningBackground(ctx context.Contex
 			return err
 		}
 	}
-	return fmt.Errorf("timed out after %s; latest active session payload=%s", timeout, truncateE2E(last, 2000))
+	return fmt.Errorf("timed out after %s; latest active session payload=%s", time.Since(start).Round(time.Millisecond), truncateE2E(last, 2000))
 }
 
 func (c *codingAgentChatE2EClient) getActiveSessionSummary(ctx context.Context, sessionID string) (*codingAgentActiveSessionSummary, string, error) {
@@ -275,27 +296,50 @@ type codingAgentActiveSessionSummary struct {
 }
 
 func (c *codingAgentChatE2EClient) waitForBackgroundNodeStatus(ctx context.Context, sessionID, wantStatus string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	deadline := e2eDeadline(ctx, timeout)
 	var last string
 	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		tree, raw, err := c.getExecutionTree(ctx, sessionID)
 		if err != nil {
 			return err
 		}
 		last = raw
-		if node := findBackgroundContractNode(tree.Root); node != nil {
-			if node.Status == wantStatus {
-				return nil
+		nodes := findBackgroundContractNodes(tree.Root)
+		if len(nodes) > 0 {
+			hasNonTerminal := false
+			for _, node := range nodes {
+				if node.Status == wantStatus {
+					return nil
+				}
+				if node.Status != "failed" && node.Status != "canceled" {
+					hasNonTerminal = true
+				}
 			}
-			if node.Status == "failed" || node.Status == "canceled" {
-				return fmt.Errorf("background node reached %s: error=%q raw=%s", node.Status, node.Error, truncateE2E(raw, 2000))
+			if !hasNonTerminal {
+				node := nodes[0]
+				for _, candidate := range nodes {
+					if candidate.Source == "background_agent_registry" {
+						node = candidate
+						break
+					}
+				}
+				return fmt.Errorf("background node reached terminal state before %q: status=%s error=%q raw=%s", wantStatus, node.Status, node.Error, truncateE2E(raw, 2000))
+			}
+		}
+		if wantStatus == "running" && tree.Summary.HasRunningBackgroundAgents {
+			if node := findBackgroundRegistryNode(tree.Root); node != nil && node.Status == wantStatus {
+				return nil
 			}
 		}
 		if err := sleepContext(ctx, time.Second); err != nil {
 			return err
 		}
 	}
-	return fmt.Errorf("timed out after %s waiting for background status %q; latest tree=%s", timeout, wantStatus, truncateE2E(last, 3000))
+	return fmt.Errorf("timed out after %s waiting for background status %q; latest tree=%s", time.Since(start).Round(time.Millisecond), wantStatus, truncateE2E(last, 3000))
 }
 
 func (c *codingAgentChatE2EClient) getExecutionTree(ctx context.Context, sessionID string) (*codingAgentExecutionTreeResponse, string, error) {
@@ -331,51 +375,33 @@ type codingAgentExecutionTreeNode struct {
 	Children    []*codingAgentExecutionTreeNode `json:"children"`
 }
 
-func findBackgroundContractNode(node *codingAgentExecutionTreeNode) *codingAgentExecutionTreeNode {
+func findBackgroundContractNodes(node *codingAgentExecutionTreeNode) []*codingAgentExecutionTreeNode {
 	if node == nil {
 		return nil
 	}
-	if strings.Contains(strings.ToLower(node.Name), "bg-contract-check") {
+	var matches []*codingAgentExecutionTreeNode
+	if strings.Contains(strings.ToLower(node.Name), backgroundContractAgentName) {
+		matches = append(matches, node)
+	}
+	for _, child := range node.Children {
+		matches = append(matches, findBackgroundContractNodes(child)...)
+	}
+	return matches
+}
+
+func findBackgroundRegistryNode(node *codingAgentExecutionTreeNode) *codingAgentExecutionTreeNode {
+	if node == nil {
+		return nil
+	}
+	if node.Source == "background_agent_registry" && strings.Contains(strings.ToLower(node.Name), backgroundContractAgentName) {
 		return node
 	}
 	for _, child := range node.Children {
-		if found := findBackgroundContractNode(child); found != nil {
+		if found := findBackgroundRegistryNode(child); found != nil {
 			return found
 		}
 	}
 	return nil
-}
-
-func eventsContainNonUserString(events []map[string]interface{}, needle string) bool {
-	for _, event := range events {
-		if fmt.Sprint(event["type"]) == "user_message" {
-			continue
-		}
-		if valueContainsString(event, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func valueContainsString(value interface{}, needle string) bool {
-	switch typed := value.(type) {
-	case string:
-		return strings.Contains(typed, needle)
-	case map[string]interface{}:
-		for _, child := range typed {
-			if valueContainsString(child, needle) {
-				return true
-			}
-		}
-	case []interface{}:
-		for _, child := range typed {
-			if valueContainsString(child, needle) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func truncateE2E(value string, limit int) string {

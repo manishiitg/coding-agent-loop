@@ -519,6 +519,8 @@ type SteerMessageRequest struct {
 	Message string `json:"message"`
 }
 
+const liveCodingAgentSteerTimeout = 15 * time.Second
+
 // HumanFeedbackRequest represents a request to submit human feedback
 type HumanFeedbackRequest struct {
 	UniqueID string `json:"unique_id"`
@@ -1424,11 +1426,15 @@ func runServer(cmd *cobra.Command, args []string) {
 	// turns, so killing tmux before the handlers observe cancellation can race
 	// with capture/poll commands and make shutdown hang.
 	fmt.Println("⏹️ Canceling active agent work...")
+	cancelStart := time.Now()
 	api.cancelActiveWorkForShutdown()
+	fmt.Printf("✅ Active agent work canceled (%s)\n", time.Since(cancelStart).Round(time.Millisecond))
 
 	// Stop background discovery
 	fmt.Println("⏹️ Stopping background tool discovery...")
+	discoveryStart := time.Now()
 	api.stopPeriodicRefresh()
+	fmt.Printf("✅ Background tool discovery stopped (%s)\n", time.Since(discoveryStart).Round(time.Millisecond))
 
 	// Create a deadline for HTTP handlers to observe cancellation and return.
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -1436,29 +1442,85 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Shutdown server before final process cleanup. If a handler is still stuck,
 	// continue cleanup anyway so detached tmux/browser sessions do not survive.
+	fmt.Println("⏳ Waiting for HTTP handlers to stop (15s max)...")
+	httpStart, stopHTTPProgress := beginShutdownProgress("waiting for HTTP handlers")
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("Server graceful shutdown timed out: %v", err)
+		stopHTTPProgress()
+		elapsed := time.Since(httpStart).Round(time.Millisecond)
+		log.Printf("Server graceful shutdown timed out after %s: %v", elapsed, err)
+		fmt.Printf("⚠️ HTTP graceful shutdown timed out after %s: %v\n", elapsed, err)
+	} else {
+		stopHTTPProgress()
+		fmt.Printf("✅ HTTP server stopped (%s)\n", time.Since(httpStart).Round(time.Millisecond))
 	}
 
 	// Close all MCP session connections to prevent orphaned subprocesses
 	fmt.Println("🧹 Closing all MCP sessions...")
+	mcpStart, stopMCPProgress := beginShutdownProgress("closing MCP sessions")
 	mcpagent.CloseAllSessions()
+	stopMCPProgress()
+	fmt.Printf("✅ MCP sessions closed (%s)\n", time.Since(mcpStart).Round(time.Millisecond))
 
 	// Kill all active browser daemons and Chrome processes so they don't linger
 	fmt.Println("🧹 Killing all browser sessions...")
+	browserStart, stopBrowserProgress := beginShutdownProgress("killing browser sessions")
 	browser.KillAllTrackedSessions()
+	stopBrowserProgress()
+	fmt.Printf("✅ Browser session cleanup finished (%s)\n", time.Since(browserStart).Round(time.Millisecond))
+	fmt.Println("🧹 Cleaning coding-agent tmux sessions...")
+	codingStart, stopCodingProgress := beginShutdownProgress("cleaning coding-agent tmux sessions")
 	cleanupCodingAgentInteractiveSessions("shutdown")
+	stopCodingProgress()
+	fmt.Printf("✅ Coding-agent tmux cleanup finished (%s)\n", time.Since(codingStart).Round(time.Millisecond))
 
 	fmt.Println("✅ Server shutdown complete")
+}
+
+func beginShutdownProgress(label string) (time.Time, func()) {
+	start := time.Now()
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				fmt.Printf("⏳ Still %s (%s elapsed)\n", label, time.Since(start).Round(time.Second))
+			}
+		}
+	}()
+	return start, func() {
+		once.Do(func() {
+			close(done)
+		})
+	}
 }
 
 func cleanupCodingAgentInteractiveSessions(phase string) {
 	cleanupProvider := func(name string, cleanup func(context.Context) error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		start, stopProgress := beginShutdownProgress(fmt.Sprintf("cleaning %s", name))
+		fmt.Printf("  • %s cleanup started (5s max)\n", name)
 		if err := cleanup(ctx); err != nil {
-			log.Printf("[%s] %s cleanup failed: %v", name, phase, err)
+			stopProgress()
+			elapsed := time.Since(start).Round(time.Millisecond)
+			log.Printf("[%s] %s cleanup failed after %s: %v", name, phase, elapsed, err)
+			fmt.Printf("  ⚠️ %s cleanup failed after %s: %v\n", name, elapsed, err)
+			return
 		}
+		if ctx.Err() != nil {
+			stopProgress()
+			elapsed := time.Since(start).Round(time.Millisecond)
+			log.Printf("[%s] %s cleanup context ended after %s: %v", name, phase, elapsed, ctx.Err())
+			fmt.Printf("  ⚠️ %s cleanup context ended after %s: %v\n", name, elapsed, ctx.Err())
+			return
+		}
+		stopProgress()
+		fmt.Printf("  ✅ %s cleanup done (%s)\n", name, time.Since(start).Round(time.Millisecond))
 	}
 
 	cleanupProvider("CLAUDE-CODE", cleanupClaudeCodeProviderSessions)
@@ -3628,6 +3690,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var memoryBgDelegate virtualtools.BackgroundDelegateFunc
+		var refreshMultiAgentDelegationTools func() error
 		var workspaceEnv map[string]string // hoisted so secrets can be injected after allChatSecrets is computed
 		log.Printf("[CHAT_TOOLS_DEBUG] isChatMode=%v agentNonNil=%v enableImageGenPtr=%v", isChatMode, llmAgent.GetUnderlyingAgent() != nil, req.EnableImageGeneration)
 
@@ -3944,14 +4007,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					memoryBgDelegate = bgDelegateFunc
 					bgQuerier := &bgAgentQuerierImpl{registry: api.bgAgentRegistry}
 
-					// Register all delegation tools (agent decides autonomously what to use)
-					for _, tool := range delegationTools {
-						if tool.Function == nil {
-							continue
-						}
-						toolName := tool.Function.Name
+					// Register all delegation tools (agent decides autonomously what to use).
+					// Keep this as a closure so we can re-install the wrappers after all
+					// generic custom tools are registered. The HTTP code-exec bridge uses the
+					// session-scoped registry; if a later registry refresh leaves raw delegate
+					// executors there, delegate becomes blocking instead of async.
+					registerDelegationTools := func() error {
+						registered := 0
+						for _, tool := range delegationTools {
+							if tool.Function == nil {
+								continue
+							}
+							toolName := tool.Function.Name
 
-						if executor, exists := delegationExecutors[toolName]; exists {
+							executor, exists := delegationExecutors[toolName]
+							if !exists {
+								continue
+							}
+
 							var params map[string]interface{}
 							if tool.Function.Parameters != nil {
 								paramsBytes, err := json.Marshal(tool.Function.Parameters)
@@ -3964,10 +4037,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								continue
 							}
 
-							// Capture executor for closure
+							// Capture executor for closure.
 							exec := executor
 
-							// Wrap the executor to inject delegation function, workspace client, tier config, and capabilities
+							// Wrap the executor to inject delegation function, workspace client, tier config, and capabilities.
 							wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
 								ctx = context.WithValue(ctx, virtualtools.ExecuteDelegatedTaskKey, virtualtools.ExecuteDelegatedTaskFunc(executeDelegatedTask))
 								ctx = context.WithValue(ctx, virtualtools.WorkspaceClientKey, planWorkspaceClient)
@@ -3984,9 +4057,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								if caps != nil {
 									ctx = context.WithValue(ctx, virtualtools.CapabilitiesContextKey, caps)
 								}
-								// Inject background delegation and agent querier for plan mode
+								// Inject background delegation and agent querier for plan mode.
 								if bgDelegateFunc != nil {
-									ctx = context.WithValue(ctx, virtualtools.BackgroundDelegateKey, bgDelegateFunc)
+									ctx = context.WithValue(ctx, virtualtools.BackgroundDelegateKey, virtualtools.BackgroundDelegateFunc(bgDelegateFunc))
+								} else if toolName == "delegate" {
+									logfWithContext(queryLogCtx, "[DELEGATION TOOLS] delegate wrapper has nil background delegate for session %s", sessionID)
 								}
 								if bgQuerier != nil {
 									ctx = context.WithValue(ctx, virtualtools.BGAgentRegistryKey, bgQuerier)
@@ -4000,16 +4075,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								tool.Function.Description,
 								params,
 								wrappedExecutor,
-								0, // No timeout — delegation tools run indefinitely (controlled by parent context)
+								0, // No timeout — delegation tools run indefinitely (controlled by parent context).
 								delegationCategory,
 							); err != nil {
-								logfWithContext(queryLogCtx, "[DELEGATION TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
-								continue
+								return fmt.Errorf("failed to register %s: %w", toolName, err)
 							}
+							registered++
 							logfWithContext(queryLogCtx, "[DELEGATION TOOLS] Registered delegation tool: %s (category: %s)", toolName, delegationCategory)
 						}
+						logfWithContext(queryLogCtx, "[DELEGATION TOOLS] Successfully registered %d delegation tools for chat mode", registered)
+						return nil
 					}
-					logfWithContext(queryLogCtx, "[DELEGATION TOOLS] Successfully registered %d delegation tools for chat mode", len(delegationTools))
+
+					if err := registerDelegationTools(); err != nil {
+						logfWithContext(queryLogCtx, "[DELEGATION TOOLS ERROR] %v", err)
+						sendError(fmt.Sprintf("Failed to register delegation tools: %v", err), true)
+						return
+					}
+					refreshMultiAgentDelegationTools = registerDelegationTools
 
 					// Register workflow run tools (run_workflow, run_step, stop_workflow_run)
 					wfRunTools := createWorkflowRunTools()
@@ -4425,6 +4508,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if err := underlyingAgent.UpdateCodeExecutionRegistry(); err != nil {
 				log.Printf("[CUSTOM TOOLS] Warning: Failed to update code execution registry: %v", err)
 			}
+			if refreshMultiAgentDelegationTools != nil {
+				if err := refreshMultiAgentDelegationTools(); err != nil {
+					log.Printf("[DELEGATION TOOLS] Warning: Failed to restore async delegation wrappers after registry rebuild: %v", err)
+				} else {
+					log.Printf("[DELEGATION TOOLS] Restored async delegation wrappers after registry rebuild")
+				}
+			}
 
 			log.Printf("[SYSTEM_PROMPT] Final assembled prompt length=%d chars, hasGuidance=%v", len(underlyingAgent.GetSystemPrompt()), req.LLMGuidance != "" || llmGuidance != "")
 
@@ -4594,9 +4684,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[WORKSHOP_MODE] Using frontend override: %s (raw=%s)", mode, req.ExecutionOptions.WorkshopMode)
 				}
 
+				// Use a detached context for workflow-builder setup. /api/query returns
+				// an acknowledgement before the background turn finishes, so r.Context()
+				// is canceled while these short setup reads/session refreshes still run.
+				setupCtx := context.WithoutCancel(r.Context())
+
 				// Build GroupInfo and extra template vars for the interactive-workshop system prompt
 				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
-					groupInfo := buildWorkshopGroupInfo(r.Context(), phaseWorkspacePath, phaseReadFile, phaseRunFolder, phaseEnabledGroupNames)
+					groupInfo := buildWorkshopGroupInfo(setupCtx, phaseWorkspacePath, phaseReadFile, phaseRunFolder, phaseEnabledGroupNames)
 					if groupInfo != "" {
 						phaseTemplateVars["GroupInfo"] = groupInfo
 					}
@@ -4611,12 +4706,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 				}
-
-				// Use a detached context for workspace file reads during setup so that
-				// SSE streaming or other concurrent request activity cannot cancel them.
-				// context.WithoutCancel preserves values (user ID, tracing) but drops the
-				// cancellation signal, which is safe for these short, bounded reads.
-				setupCtx := context.WithoutCancel(r.Context())
 
 				// Read existing plan from workspace (if any)
 				existingPlanJSON := todo_creation_human.ReadPlanFromWorkspace(setupCtx, phaseWorkspacePath, phaseReadFile)
@@ -4853,7 +4942,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 						// Refresh enabled group IDs from current request (toolbar selection may have changed)
 						if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupNames) > 0 {
-							workshopSession.UpdateEnabledGroupNames(r.Context(), req.ExecutionOptions.EnabledGroupNames)
+							workshopSession.UpdateEnabledGroupNames(setupCtx, req.ExecutionOptions.EnabledGroupNames)
 							log.Printf("[WORKFLOW_PHASE] Refreshed enabled group names: %v", req.ExecutionOptions.EnabledGroupNames)
 						}
 
@@ -4930,11 +5019,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					} else {
 						// Build full workshop config matching normal workflow setup
-						workshopCfg, cfgErr := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID, mergedAPIKeys)
+						workshopCfg, cfgErr := api.buildWorkshopConfig(setupCtx, req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID, mergedAPIKeys)
 						if cfgErr != nil {
 							log.Printf("[WORKFLOW_PHASE] Error: Failed to build workshop config for %s: %v — workshop execution tools unavailable", workflowPhaseID, cfgErr)
 						} else {
-							newSession, sessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), workshopCfg)
+							newSession, sessionErr := todo_creation_human.NewWorkshopChatSession(setupCtx, workshopCfg)
 							if sessionErr != nil {
 								log.Printf("[WORKFLOW_PHASE] Warning: Failed to create workshop session for %s: %v — workshop execution tools unavailable", workflowPhaseID, sessionErr)
 							} else {
@@ -4950,11 +5039,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							api:       api,
 							sessionID: sessionID,
 						})
-						// NOTE: Do NOT wire todoSubAgentBgNotifier here. In workshop mode, all subAgentNotifier
-						// calls come from sub-agents within background step executions (execute_step goroutines),
-						// never from the main workshop agent itself. Wiring todoSubAgentBgNotifier causes double
-						// AUTO-NOTIFICATIONs: one for each todo sub-agent AND one for the exec-* completion.
-						// The workshopExecutionBgNotifier below is the single source of auto-notifications.
+						// The sub-agent tracker registers starts for status only and
+						// notifies on completion. That gives the builder progress
+						// updates for long-running orchestrator sub-agents without
+						// synthetic turns at sub-agent start.
 						//
 						// Wire workshop execution notifier so execute_step/run_in_background/harden_workflow
 						// register in bgAgentRegistry (keeps frontend polling alive while background executions run).
@@ -5064,12 +5152,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						evalSession = cached.(*todo_creation_human.WorkshopChatSession)
 						log.Printf("[WORKFLOW_PHASE] Reusing existing eval session in %s %s", workflowPhaseID, sessionID)
 					} else {
-						evalCfg, evalCfgErr := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID, mergedAPIKeys)
+						evalCfg, evalCfgErr := api.buildWorkshopConfig(setupCtx, req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID, mergedAPIKeys)
 						if evalCfgErr != nil {
 							log.Printf("[WORKFLOW_PHASE] Error: Failed to build eval config in %s: %v", workflowPhaseID, evalCfgErr)
 						} else {
 							evalCfg.IsEvaluationMode = true
-							newEvalSession, evalSessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), evalCfg)
+							newEvalSession, evalSessionErr := todo_creation_human.NewWorkshopChatSession(setupCtx, evalCfg)
 							if evalSessionErr != nil {
 								log.Printf("[WORKFLOW_PHASE] Warning: Failed to create eval session in %s: %v", workflowPhaseID, evalSessionErr)
 							} else {
@@ -7105,7 +7193,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionTerminated(execID, name string)
 }
 
 // workflowSubAgentTrackingNotifier tracks inner workshop sub-agents in the backend
-// execution tree without triggering synthetic-turn notifications.
+// execution tree and triggers synthetic-turn notifications only when they finish.
 type workflowSubAgentTrackingNotifier struct {
 	api       *StreamingAPI
 	sessionID string
@@ -7136,9 +7224,23 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentStart(start todo_creation_h
 		cancel:            start.Cancel,
 	}
 	n.api.bgAgentRegistry.Register(n.sessionID, bgAgent)
+
+	// Pre-create the completion channel and loop so a fast sub-agent completion
+	// cannot drop its auto-notification. This is only plumbing; no synthetic
+	// turn is emitted until OnSubAgentComplete calls NotifyCompletion.
+	n.api.bgAgentRegistry.GetNotificationChannel(n.sessionID)
+	n.api.completionLoopStartedMu.Lock()
+	if n.api.completionLoopStarted == nil {
+		n.api.completionLoopStarted = make(map[string]bool)
+	}
+	if !n.api.completionLoopStarted[n.sessionID] {
+		n.api.completionLoopStarted[n.sessionID] = true
+		go n.api.backgroundCompletionLoop(n.sessionID)
+	}
+	n.api.completionLoopStartedMu.Unlock()
 }
 
-func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, _ string, result string, err error) {
+func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, name string, result string, err error) {
 	if n == nil || n.api == nil || strings.TrimSpace(agentID) == "" {
 		return
 	}
@@ -7158,9 +7260,33 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, _ string,
 			return
 		}
 		agent.SetError(err.Error())
+		if agent.GetStatus() == BGAgentCanceled {
+			return
+		}
+		duration := time.Since(agent.CreatedAt)
+		n.api.emitBackgroundAgentEvent(n.sessionID, agentID, "background_agent_completed", map[string]interface{}{
+			"agent_id": agentID,
+			"name":     name,
+			"status":   "failed",
+			"error":    err.Error(),
+			"duration": duration.Truncate(time.Second).String(),
+		})
+		n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, agentID)
 		return
 	}
 	agent.SetResult(result)
+	if agent.GetStatus() == BGAgentCanceled {
+		return
+	}
+	duration := time.Since(agent.CreatedAt)
+	n.api.emitBackgroundAgentEvent(n.sessionID, agentID, "background_agent_completed", map[string]interface{}{
+		"agent_id": agentID,
+		"name":     name,
+		"status":   "completed",
+		"result":   truncateForToolResponse(result, 500),
+		"duration": duration.Truncate(time.Second).String(),
+	})
+	n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, agentID)
 }
 
 // truncateForToolResponse truncates a string for inclusion in tool responses
@@ -8464,7 +8590,7 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 	}
 
 	if runningAgent.GetProvider() == llm.ProviderClaudeCode {
-		steerCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
 		defer cancel()
 		if err := llmproviders.SendClaudeCodeExperimentalInput(steerCtx, sessionID, req.Message); err == nil {
 			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
@@ -8482,7 +8608,7 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if runningAgent.GetProvider() == llm.ProviderCodexCLI {
-		steerCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
 		defer cancel()
 		if err := llmproviders.SendCodexCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
 			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
@@ -8500,7 +8626,7 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if runningAgent.GetProvider() == llm.ProviderGeminiCLI {
-		steerCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
 		defer cancel()
 		if err := llmproviders.SendGeminiCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
 			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
@@ -8518,7 +8644,7 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if runningAgent.GetProvider() == llm.ProviderCursorCLI {
-		steerCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
 		defer cancel()
 		if err := llmproviders.SendCursorCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
 			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
@@ -8536,7 +8662,7 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if runningAgent.GetProvider() == llm.ProviderOpenCodeCLI {
-		steerCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
 		defer cancel()
 		if err := llmproviders.SendOpenCodeCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
 			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))

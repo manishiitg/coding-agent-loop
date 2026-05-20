@@ -597,7 +597,11 @@ function spawnWorkspace(userDataPath) {
       ...process.env, 
       DOCS_DIR: docsDir, 
       DATA_DIR: dataDir,
-      WORKSPACE_ENABLE_GITHUB_SYNC: 'true'
+      WORKSPACE_ENABLE_GITHUB_SYNC: 'true',
+      // workspace-server executes /api/execute shell commands. Mark it native so
+      // the safe shell env preserves the imported login-shell PATH/HOME instead
+      // of using the Docker-style minimal PATH.
+      NATIVE_WORKSPACE: 'true'
     };
 
     if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;

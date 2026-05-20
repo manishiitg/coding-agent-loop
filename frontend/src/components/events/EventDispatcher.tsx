@@ -248,6 +248,38 @@ export function getOwnedTerminalOwnerKeys(event: PollingEvent, payload?: Record<
   return keys
 }
 
+const LiveExecutionStreamingEventCard: React.FC<{ event: PollingEvent; compact?: boolean }> = ({ event, compact }) => {
+  const agentEvent = event.data as Record<string, unknown> | undefined
+  const payload = (agentEvent?.data && typeof agentEvent.data === 'object')
+    ? agentEvent.data as Record<string, unknown>
+    : agentEvent
+  const text = typeof payload?.text === 'string' ? payload.text : ''
+  const status = typeof payload?.status === 'string' ? payload.status : ''
+  if (!text && !status) return null
+
+  return (
+    <div className={`border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 rounded ${compact ? 'p-2' : 'p-3'}`}>
+      <div className="flex items-center gap-1.5 mb-1">
+        <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+        <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-blue-600 dark:text-blue-400 font-medium`}>
+          Generating...
+        </span>
+      </div>
+      {text && (
+        <div className={`${compact ? 'text-[10px]' : 'text-xs'} max-h-60 overflow-y-auto custom-scrollbar overscroll-y-contain`}>
+          <MarkdownRenderer content={text} className={compact ? 'text-[10px]' : 'text-xs'} />
+          <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
+        </div>
+      )}
+      {status && (
+        <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-blue-500 dark:text-blue-400 italic mt-1 opacity-75`}>
+          {status}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export interface DelegationStats {
   toolCalls: number
   inputTokens: number
@@ -309,8 +341,10 @@ interface EventDispatcherProps {
   childrenCount?: number // Total children count (available even when collapsed)
   onToggleNode?: (eventId: string) => void
   ownedLogPanelOpen?: boolean
+  autoExpandedOwnedLogPanel?: boolean
   onToggleOwnedLogPanel?: (open: boolean) => void
   showOwnedTerminal?: boolean
+  tabId?: string
 }
 
 /**
@@ -332,13 +366,16 @@ const SubAgentHierarchy: React.FC<{
   delegationStats?: Map<string, DelegationStats>
   backgroundAgentStats?: Map<string, DelegationStats>
   compact?: boolean
+  tabId?: string
 }> = ({ nodes, onToggleNode, ...props }) => {
   const [showAll, setShowAll] = React.useState(false)
   const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(new Set())
 
-  // Read hideToolCalls from active tab
+  // Read hideToolCalls from the rendering tab. Falling back to the active tab is
+  // only for legacy callers that do not pass tabId.
   const hideToolCalls = useChatStore(state => {
-    const tab = state.activeTabId ? state.chatTabs[state.activeTabId] : undefined
+    const targetTabId = props.tabId || state.activeTabId
+    const tab = targetTabId ? state.chatTabs[targetTabId] : undefined
     return tab?.hideToolCalls ?? true
   })
 
@@ -433,7 +470,7 @@ const SubAgentHierarchy: React.FC<{
               })}
               className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
             >
-              {isExpanded ? `− collapse` : `+ ${item.count} tool call${item.count !== 1 ? 's' : ''}`}
+              {isExpanded ? `− collapse` : `+ ${item.count} tool${item.count !== 1 ? 's' : ''}`}
             </button>
             {isExpanded && item.nodes.map(n => renderNode(n))}
           </div>
@@ -459,7 +496,8 @@ const OwnerSummaryEvents: React.FC<{
   isApproving?: boolean
   delegationStats?: Map<string, DelegationStats>
   backgroundAgentStats?: Map<string, DelegationStats>
-}> = ({ nodes, onToggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, delegationStats, backgroundAgentStats }) => {
+  tabId?: string
+}> = ({ nodes, onToggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, delegationStats, backgroundAgentStats, tabId }) => {
   if (!nodes?.length || !onToggleNode) return null
 
   return (
@@ -474,6 +512,7 @@ const OwnerSummaryEvents: React.FC<{
         delegationStats={delegationStats}
         backgroundAgentStats={backgroundAgentStats}
         compact={true}
+        tabId={tabId}
       />
     </div>
   )
@@ -573,8 +612,10 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   childrenCount,
   onToggleNode,
   ownedLogPanelOpen,
+  autoExpandedOwnedLogPanel,
   onToggleOwnedLogPanel,
-  showOwnedTerminal = true
+  showOwnedTerminal = true,
+  tabId
 }) => {
   // Ref for auto-scrolling sub-agent logs
   const scrollRef = React.useRef<HTMLDivElement>(null)
@@ -601,6 +642,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       isApproving={isApproving}
       delegationStats={delegationStats}
       backgroundAgentStats={backgroundAgentStats}
+      tabId={tabId}
     />
   ) : null
 
@@ -667,6 +709,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
 
   // Type-safe event rendering using discriminated unions
   // Each case uses isEventType for type narrowing, then getEventData for typed access
+  if (event.type === 'live_execution_streaming') {
+    return <CompactWrapper compact={compact}><LiveExecutionStreamingEventCard event={event} compact={compact} /></CompactWrapper>
+  }
 
   // Agent Events
   if (isEventType(event, 'agent_error')) {
@@ -848,12 +893,14 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         {/* Render children (tool calls) when agent has grouped events via correlation_id */}
         {isOwnedLogPanelOpen && childrenNodes && childrenNodes.length > 0 && onToggleNode && (
           <div className="mt-1 ml-1">
-            <button
-              onClick={() => setIsOwnedLogPanelOpen(false)}
-              className="mb-1 px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
-            >
-              <span className="font-medium">− collapse logs</span>
-            </button>
+            {!autoExpandedOwnedLogPanel && (
+              <button
+                onClick={() => setIsOwnedLogPanelOpen(false)}
+                className="mb-1 px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
+              >
+                <span className="font-medium">− collapse tools</span>
+              </button>
+            )}
             <div
               className="overflow-y-auto overflow-x-hidden pl-4 pr-1 py-1 custom-scrollbar break-words overscroll-y-contain"
               style={{ maxHeight: '50vh' }}
@@ -868,6 +915,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
                 delegationStats={delegationStats}
                 backgroundAgentStats={backgroundAgentStats}
                 compact={true}
+                tabId={tabId}
               />
             </div>
           </div>
@@ -1589,26 +1637,28 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
           />
         )}
 
-        {/* Tool calls toggle — show "+ N tool calls" when collapsed, full list when expanded */}
+        {/* Tool toggle — show "+ N tools" when collapsed, full list when expanded */}
         {!isOwnedLogPanelOpen && (childrenCount ?? 0) > 0 && (
           <div className="mt-1 ml-1">
             <button
               onClick={() => setIsOwnedLogPanelOpen(true)}
               className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
             >
-              + {childrenCount} log event{childrenCount !== 1 ? 's' : ''}
+              + {childrenCount} tool{childrenCount !== 1 ? 's' : ''}
             </button>
           </div>
         )}
         {/* Hierarchical Execution Logs - Shown when expanded via hierarchy arrow */}
         {isOwnedLogPanelOpen && childrenNodes && childrenNodes.length > 0 && onToggleNode && (
           <div className="mt-1 ml-1">
-            <button
-              onClick={() => setIsOwnedLogPanelOpen(false)}
-              className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors mb-1"
-            >
-              − collapse
-            </button>
+            {!autoExpandedOwnedLogPanel && (
+              <button
+                onClick={() => setIsOwnedLogPanelOpen(false)}
+                className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors mb-1"
+              >
+                − collapse
+              </button>
+            )}
             <div
               ref={scrollRef}
               className="overflow-y-auto overflow-x-hidden pl-4 pr-1 py-1 custom-scrollbar break-words overscroll-y-contain"
@@ -1624,6 +1674,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
                 delegationStats={delegationStats}
                 backgroundAgentStats={backgroundAgentStats}
                 compact={true}
+                tabId={tabId}
               />
             </div>
           </div>
@@ -1832,12 +1883,14 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         )}
         {isOwnedLogPanelOpen && childrenNodes && childrenNodes.length > 0 && onToggleNode && (
           <div className="mt-1 ml-1">
-            <button
-              onClick={() => setIsOwnedLogPanelOpen(false)}
-              className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors mb-1"
-            >
-              − collapse
-            </button>
+            {!autoExpandedOwnedLogPanel && (
+              <button
+                onClick={() => setIsOwnedLogPanelOpen(false)}
+                className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors mb-1"
+              >
+                − collapse
+              </button>
+            )}
             <div
               className="overflow-y-auto overflow-x-hidden pl-4 pr-1 py-1 custom-scrollbar break-words overscroll-y-contain"
               style={{ maxHeight: '50vh' }}
@@ -1852,6 +1905,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
                 delegationStats={delegationStats}
                 backgroundAgentStats={backgroundAgentStats}
                 compact={true}
+                tabId={tabId}
               />
             </div>
           </div>
@@ -2052,7 +2106,11 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       prevProps.isCollapsed !== nextProps.isCollapsed ||
       prevProps.eventCount !== nextProps.eventCount ||
       prevProps.ownedLogPanelOpen !== nextProps.ownedLogPanelOpen ||
-      prevProps.showOwnedTerminal !== nextProps.showOwnedTerminal) {
+      prevProps.showOwnedTerminal !== nextProps.showOwnedTerminal ||
+      prevProps.tabId !== nextProps.tabId) {
+    return false
+  }
+  if (prevProps.event !== nextProps.event) {
     return false
   }
   // For delegation and background agent events, also compare live stats so they re-render

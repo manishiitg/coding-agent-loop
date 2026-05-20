@@ -24,6 +24,7 @@ Use `mode="targeted"` when the operation is known file hygiene:
 - remove stale selectors/tool patterns after site or API changes
 - compact bloated browser/API/file-format guidance
 - repair links between `SKILL.md` and references
+- remove or replace stale HOW guidance that no longer matches current step descriptions
 
 Use `mode="cross_step"` when improving learnings requires the plan or multiple step declarations:
 
@@ -31,7 +32,7 @@ Use `mode="cross_step"` when improving learnings requires the plan or multiple s
 - repeated lessons appear across multiple step objectives
 - step-specific HOW knowledge should be promoted into shared references
 - declared `learning_objective` values are not reflected in the global skill
-- recent plan changes mean old HOW guidance needs reconciliation against the new objective
+- recent plan or step-description changes mean old HOW guidance needs reconciliation against the new objective
 
 If unsure, use `mode="auto"` or omit mode. Broad instructions like "optimize learnings for this plan" should resolve to current-plan consolidation.
 
@@ -39,6 +40,7 @@ ACTION
 
 1. Build one concrete instruction. It must mention the objective from `soul.md` or `planning/plan.json`, the user's focus if provided, and any unresolved learning-related findings from `builder/review.md` or `builder/improve.md`.
    - Always include this invariant in the instruction: keep `learnings/_global/SKILL.md` lean as an index/overview; move detailed HOW-to-run content into `learnings/_global/references/<topic>.md` and link those files from `SKILL.md`.
+   - Always include this stale-content rule: compare learnings against current `planning/plan.json` step descriptions and `planning/step_config.json` learning objectives; remove or replace HOW guidance that belongs to old step behavior, obsolete selectors/API paths, removed dependencies, or previous descriptions.
 2. Call:
 
 `improve_learnings(mode="auto", instruction="<specific learning improvement instruction>", focus="<optional focus>")`

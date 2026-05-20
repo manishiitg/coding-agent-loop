@@ -63,3 +63,46 @@ func TestExecutionOnlyUserPromptIncludesWorkshopHumanInput(t *testing.T) {
 		}
 	}
 }
+
+func TestExecutionOnlyPromptsTreatSkillAsAdvisory(t *testing.T) {
+	agent := &WorkflowExecutionOnlyAgent{}
+
+	systemPrompt := agent.executionOnlySystemPromptProcessor(map[string]string{
+		"WorkspacePath":         "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution",
+		"WorkflowRoot":          "/app/workspace-docs/Workflow/test",
+		"StepExecutionPath":     "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample",
+		"StepContextOutput":     "output.json",
+		"LearningHistory":       "Use the legacy selector.",
+		"StepNumber":            "step-sample",
+		"KnowledgebasePath":     "/app/workspace-docs/Workflow/test/knowledgebase",
+		"FolderGuardReadPaths":  "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution, /app/workspace-docs/Workflow/test/learnings/_global",
+		"FolderGuardWritePaths": "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample",
+		"IsEvaluationMode":      "false",
+		"IsCodeExecutionMode":   "false",
+		"IsLearnCodeMode":       "false",
+	})
+	systemSnippets := []string{
+		"Treat learnings/skill content as advisory guidance from previous runs",
+		"the current step description, orchestrator instructions, and human input are the source of truth",
+		"Skill content is guidance from previous runs, not a replacement for the current task",
+	}
+	for _, snippet := range systemSnippets {
+		if !strings.Contains(systemPrompt, snippet) {
+			t.Fatalf("expected system prompt to contain %q\n\nPrompt:\n%s", snippet, systemPrompt)
+		}
+	}
+
+	userPrompt := agent.executionOnlyUserMessageProcessor(map[string]string{
+		"StepTitle":           "Fetch report",
+		"StepDescription":     "Use the current report endpoint.",
+		"StepContextOutput":   "output.json",
+		"StepExecutionPath":   "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-fetch",
+		"IsCodeExecutionMode": "false",
+		"IsLearnCodeMode":     "false",
+		"LearningHistory":     "Use the legacy selector.",
+	})
+	if !strings.Contains(userPrompt, "Read **Skill files** as guidance only") ||
+		!strings.Contains(userPrompt, "The current step description is the main source of truth") {
+		t.Fatalf("expected user prompt to treat skill as advisory\n\nPrompt:\n%s", userPrompt)
+	}
+}

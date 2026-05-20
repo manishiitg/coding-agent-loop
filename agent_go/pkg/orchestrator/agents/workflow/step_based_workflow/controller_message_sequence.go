@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
-	orchevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -81,8 +80,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 	if err != nil {
 		return "", nil, err
 	}
-	if opts.Restart && sessionExists {
-		if err := hcpo.archiveMessageSequenceSession(ctx, sessionRelPath); err != nil {
+	if opts.Restart {
+		if sessionExists {
+			if err := hcpo.archiveMessageSequenceSession(ctx, sessionRelPath); err != nil {
+				return "", nil, err
+			}
+		}
+		if err := hcpo.cleanupMessageSequenceRuntime(ctx, stepPath, sequenceStep.GetID(), true); err != nil {
 			return "", nil, err
 		}
 		sessionExists = false
@@ -180,9 +184,51 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceItem(ctx contex
 		}
 		results, err := RunPreValidation(ctx, schema, hcpo.messageSequenceExecutionRelPath(stepPath, step.GetID()), hcpo.BaseOrchestrator)
 		if err != nil {
+			results = &WorkspaceVerificationResult{
+				OverallPass:  false,
+				FilesChecked: []FileCheckResult{},
+				Summary: ValidationSummary{
+					TotalChecks:  0,
+					PassedChecks: 0,
+					FailedChecks: 1,
+					SchemaErrors: 0,
+					Errors: []ValidationError{{
+						File:      "",
+						Path:      "",
+						CheckType: "pre_validation_error",
+						Expected:  "pre-validation to run successfully",
+						Actual:    "error occurred",
+						Message:   fmt.Sprintf("Pre-validation failed to run for message sequence item %q: %v", item.ID, err),
+					}},
+					SchemaWarnings: []ValidationError{},
+				},
+			}
+			hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, results)
 			return "", err
 		}
-		if results == nil || !results.OverallPass {
+		if results == nil {
+			results = &WorkspaceVerificationResult{
+				OverallPass:  false,
+				FilesChecked: []FileCheckResult{},
+				Summary: ValidationSummary{
+					TotalChecks:  0,
+					PassedChecks: 0,
+					FailedChecks: 1,
+					SchemaErrors: 0,
+					Errors: []ValidationError{{
+						File:      "",
+						Path:      "",
+						CheckType: "pre_validation_error",
+						Expected:  "pre-validation to return a result",
+						Actual:    "no result returned",
+						Message:   fmt.Sprintf("Pre-validation returned no result for message sequence item %q", item.ID),
+					}},
+					SchemaWarnings: []ValidationError{},
+				},
+			}
+		}
+		hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, results)
+		if !results.OverallPass {
 			return "", fmt.Errorf("message sequence prevalidation failed for item %q", item.ID)
 		}
 		return "prevalidation passed", nil
@@ -196,14 +242,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceUserMessage(ctx
 	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard(stepPath, step.GetID(), writeAccess)
 	override := &messageSequenceFolderGuardOverride{ReadPaths: readPaths, WritePaths: writePaths}
 	agentCtx := context.WithValue(ctx, messageSequenceFolderGuardOverrideKey{}, override)
-	agentCtx = context.WithValue(agentCtx, orchevents.MessageSequenceItemContextKey, orchevents.MessageSequenceItemContext{
-		StepID:   step.GetID(),
-		ItemID:   item.ID,
-		ItemType: "user_message",
-	})
 
 	agentName := fmt.Sprintf("message-sequence-%s-%s", step.GetID(), item.ID)
-	agent, err := hcpo.createExecutionOnlyAgent(agentCtx, "execution_only", stepPath, agentName, step.AgentConfigs, step.GetID())
+	agent, err := hcpo.createExecutionOnlyAgent(agentCtx, "execution_only", stepPath, agentName, step.AgentConfigs, step.GetID(), "")
 	if err != nil {
 		return "", err
 	}
@@ -322,13 +363,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceCodeRepair(ctx 
 		WritePaths: common.DeduplicateStrings(writePaths),
 	}
 	agentCtx := context.WithValue(ctx, messageSequenceFolderGuardOverrideKey{}, override)
-	agentCtx = context.WithValue(agentCtx, orchevents.MessageSequenceItemContextKey, orchevents.MessageSequenceItemContext{
-		StepID:   step.GetID(),
-		ItemID:   item.ID,
-		ItemType: "code_repair",
-	})
 	agentName := fmt.Sprintf("message-sequence-%s-%s-repair-%d", step.GetID(), item.ID, attempt)
-	agent, err := hcpo.createExecutionOnlyAgent(agentCtx, "execution_only", stepPath, agentName, step.AgentConfigs, step.GetID())
+	agent, err := hcpo.createExecutionOnlyAgent(agentCtx, "execution_only", stepPath, agentName, step.AgentConfigs, step.GetID(), "")
 	if err != nil {
 		return err
 	}
@@ -375,21 +411,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
-	messageSequenceFolderPath := hcpo.messageSequenceExecutionRelPath(stepPath, stepID)
+	stepFolderPath := hcpo.messageSequenceExecutionRelPath(stepPath, stepID)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 
 	readPaths = []string{
 		executionWorkspacePath,
-		messageSequenceFolderPath,
-		stepFolderPath,
 		fmt.Sprintf("%s/soul", baseWorkspacePath),
 		fmt.Sprintf("%s/builder", baseWorkspacePath),
 		getDBPath(baseWorkspacePath),
 		getKnowledgebasePath(baseWorkspacePath),
 		filepath.Join(baseWorkspacePath, LearningsFolderName, GlobalLearningID),
 	}
-	writePaths = []string{stepFolderPath, messageSequenceFolderPath, downloadsPath}
+	writePaths = []string{stepFolderPath, downloadsPath}
 	if itemWriteAccess.DB {
 		writePaths = append(writePaths, getDBPath(baseWorkspacePath))
 	}
@@ -582,14 +615,11 @@ func messageSequenceAbsPath(path string) string {
 	if path == "" || docsRoot == "" {
 		return path
 	}
-	if filepath.IsAbs(path) {
-		return path
-	}
 	return filepath.Join(docsRoot, path)
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceExecutionRelPath(stepPath string, stepID string) string {
-	return filepath.Join(hcpo.GetWorkspacePath(), "runs", hcpo.selectedRunFolder, "execution", "message_sequences", stepPath, stepID)
+	return filepath.Join("runs", hcpo.selectedRunFolder, "execution", "message_sequences", stepPath, stepID)
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceItemRelPath(stepPath string, stepID string, itemID string) string {
@@ -598,6 +628,76 @@ func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceItemRelPath(stepPath s
 
 func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceSessionPath(stepPath string, stepID string) string {
 	return filepath.Join(hcpo.messageSequenceExecutionRelPath(stepPath, stepID), "session.json")
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceStepPath(ctx context.Context, stepPath string) error {
+	if hcpo.selectedRunFolder == "" {
+		return fmt.Errorf("selectedRunFolder not set - cannot cleanup message_sequence execution path")
+	}
+	if strings.TrimSpace(stepPath) == "" {
+		return fmt.Errorf("stepPath not set - cannot cleanup message_sequence execution path")
+	}
+	relPath := filepath.Join("runs", hcpo.selectedRunFolder, "execution", "message_sequences", stepPath)
+	hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaning message_sequence execution path: %s", relPath))
+	if err := hcpo.CleanupDirectory(ctx, relPath, fmt.Sprintf("execution/message_sequences/%s", stepPath)); err != nil {
+		return fmt.Errorf("failed to cleanup message_sequence execution path %s: %w", stepPath, err)
+	}
+	return nil
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceStepPathsForStep(ctx context.Context, stepNumber int) error {
+	if hcpo.selectedRunFolder == "" {
+		return fmt.Errorf("selectedRunFolder not set - cannot cleanup message_sequence execution paths")
+	}
+	root := filepath.Join(hcpo.GetWorkspacePath(), "runs", hcpo.selectedRunFolder, "execution", "message_sequences")
+	stepPaths, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, root)
+	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") || strings.Contains(errStr, "does not exist") {
+			return nil
+		}
+		return err
+	}
+	for _, stepPath := range stepPaths {
+		if !isMessageSequenceStepPathForStep(stepPath, stepNumber) {
+			continue
+		}
+		if err := hcpo.cleanupMessageSequenceStepPath(ctx, stepPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceRuntime(ctx context.Context, stepPath string, stepID string, preserveArchive bool) error {
+	relPath := hcpo.messageSequenceExecutionRelPath(stepPath, stepID)
+	if !preserveArchive {
+		hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaning message_sequence runtime: %s", relPath))
+		if err := hcpo.CleanupDirectory(ctx, relPath, fmt.Sprintf("execution/message_sequences/%s/%s", stepPath, stepID)); err != nil {
+			return fmt.Errorf("failed to cleanup message_sequence runtime %s/%s: %w", stepPath, stepID, err)
+		}
+		return nil
+	}
+
+	entries, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, relPath)
+	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") || strings.Contains(errStr, "does not exist") {
+			return nil
+		}
+		return fmt.Errorf("failed to list message_sequence runtime %s/%s: %w", stepPath, stepID, err)
+	}
+	for _, entry := range entries {
+		if entry == "archive" {
+			continue
+		}
+		entryRelPath := filepath.Join(relPath, entry)
+		hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaning message_sequence runtime entry: %s", entryRelPath))
+		if err := hcpo.CleanupDirectory(ctx, entryRelPath, fmt.Sprintf("execution/message_sequences/%s/%s/%s", stepPath, stepID, entry)); err != nil {
+			return fmt.Errorf("failed to cleanup message_sequence runtime entry %s: %w", entryRelPath, err)
+		}
+	}
+	return nil
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) loadMessageSequenceSession(ctx context.Context, relPath string) (*messageSequenceSession, bool, error) {

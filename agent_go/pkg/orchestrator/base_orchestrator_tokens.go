@@ -103,11 +103,11 @@ func resolvePricingProviderAndModel(provider, modelID string) (string, string) {
 		case "", "auto", "gemini-cli":
 			return "vertex", vertex.ModelGemini31ProPreview
 		case "pro":
-			return "vertex", vertex.ModelGemini25Pro
+			return "vertex", vertex.ModelGemini31ProPreview
 		case "flash":
-			return "vertex", vertex.ModelGemini25Flash
+			return "vertex", vertex.ModelGemini3FlashPreview
 		case "flash-lite":
-			return "vertex", vertex.ModelGemini25FlashLite
+			return "vertex", vertex.ModelGemini31FlashLitePreview
 		default:
 			return "vertex", normalizedModelID
 		}

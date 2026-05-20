@@ -599,6 +599,9 @@ func shouldSkipLearningManifestFile(name string) bool {
 	if name == ".learning_metadata.json" || strings.HasSuffix(name, ".learning_metadata.json") || name == "script_metadata.json" {
 		return true
 	}
+	if strings.HasSuffix(name, ".orig") || strings.HasSuffix(name, ".rej") {
+		return true
+	}
 	if name == "_learning_new.md" {
 		return true
 	}

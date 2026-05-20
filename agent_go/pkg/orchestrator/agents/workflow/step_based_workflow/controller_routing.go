@@ -3,6 +3,7 @@ package step_based_workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,17 @@ import (
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
+
+type routingPickNotification struct {
+	notifier        WorkshopExecutionNotifier
+	execID          string
+	name            string
+	stepID          string
+	stepTitle       string
+	routingQuestion string
+	groupName       string
+	completed       bool
+}
 
 // executeRoutingStep executes a routing step by:
 // 1. (Optional) Executing the step itself if Description is set (execute-then-route mode)
@@ -395,6 +407,103 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitRoutingEvaluatedEvent(ctx context
 	}
 }
 
+func (hcpo *StepBasedWorkflowOrchestrator) startRoutingPickNotification(ctx context.Context, pc *virtualtools.ParentChatContext, routingStep *RoutingPlanStep) *routingPickNotification {
+	notifier := hcpo.routingDecisionNotifier
+	if notifier == nil {
+		notifier = hcpo.workshopExecutionNotifier
+	}
+	if notifier == nil || pc == nil || routingStep == nil {
+		return nil
+	}
+
+	stepID := strings.TrimSpace(routingStep.GetID())
+	if stepID == "" {
+		stepID = "routing"
+	}
+	stepTitle := strings.TrimSpace(routingStep.GetTitle())
+	if stepTitle == "" {
+		stepTitle = stepID
+	}
+
+	parentExecutionID := strings.TrimSpace(pc.AgentID)
+	if parentExecutionID == "" {
+		parentExecutionID = currentWorkshopParentExecutionID(ctx)
+	}
+
+	execID := fmt.Sprintf("routing-pick-%s-%d", routingPickIDPart(stepID), time.Now().UnixNano())
+	name := fmt.Sprintf("routing pick: %s", stepTitle)
+	notifier.OnExecutionStart(WorkshopExecutionStart{
+		ID:                execID,
+		ParentExecutionID: parentExecutionID,
+		Name:              name,
+		Kind:              "workflow_routing_pick",
+	})
+
+	return &routingPickNotification{
+		notifier:        notifier,
+		execID:          execID,
+		name:            name,
+		stepID:          stepID,
+		stepTitle:       stepTitle,
+		routingQuestion: routingStep.RoutingQuestion,
+		groupName:       strings.TrimSpace(pc.GroupName),
+	}
+}
+
+func routingPickIDPart(s string) string {
+	return workflowSafeIDPart(s, "routing")
+}
+
+func (n *routingPickNotification) complete(route RoutingRoute, answer string) {
+	if n == nil || n.completed || n.notifier == nil {
+		return
+	}
+	n.completed = true
+
+	routeName := strings.TrimSpace(route.RouteName)
+	if routeName == "" {
+		routeName = route.RouteID
+	}
+	result := fmt.Sprintf("Routing pick completed for step %q. Selected route %q (%s). Next step: %s.", n.stepTitle, route.RouteID, routeName, route.NextStepID)
+	if answer = strings.TrimSpace(answer); answer != "" {
+		result += fmt.Sprintf("\nAnswer submitted: %s", answer)
+	}
+
+	meta := n.metadata(route.RouteID)
+	n.notifier.OnExecutionComplete(n.execID, n.name, result, meta, nil)
+}
+
+func (n *routingPickNotification) fail(message string, err error) {
+	if n == nil || n.completed || n.notifier == nil {
+		return
+	}
+	n.completed = true
+	if err == nil {
+		err = errors.New(message)
+	}
+	result := strings.TrimSpace(message)
+	if result == "" {
+		result = err.Error()
+	}
+	meta := n.metadata("")
+	n.notifier.OnExecutionComplete(n.execID, n.name, result, meta, err)
+}
+
+func (n *routingPickNotification) metadata(selectedRouteID string) map[string]string {
+	meta := map[string]string{
+		"execution_type":   "routing-pick",
+		"step_id":          n.stepID,
+		"routing_question": n.routingQuestion,
+	}
+	if selectedRouteID != "" {
+		meta["selected_route_id"] = selectedRouteID
+	}
+	if n.groupName != "" {
+		meta["group_name"] = n.groupName
+	}
+	return meta
+}
+
 // evaluateRoutingViaBuilderChat attempts to resolve a routing step by asking
 // the parent builder chat session (set up via run_workflow) to pick a route.
 // Returns (response, true) on success; (nil, false) to fall through to the
@@ -417,6 +526,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) evaluateRoutingViaBuilderChat(
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create routing feedback request: %v (falling back to LLM)", err))
 		return nil, false
 	}
+	notification := hcpo.startRoutingPickNotification(ctx, pc, routingStep)
 
 	var msg strings.Builder
 	msg.WriteString("[WORKFLOW_ROUTING] The workflow you launched has reached a routing step. ")
@@ -456,6 +566,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) evaluateRoutingViaBuilderChat(
 
 	if err := virtualtools.InjectChatMessage(ctx, pc.SessionID, pc.UserID, msg.String()); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to inject routing question into parent chat %s: %v (falling back to LLM)", pc.SessionID, err))
+		if notification != nil {
+			notification.fail("Routing pick could not be sent to the parent builder chat; falling back to LLM routing.", err)
+		}
 		return nil, false
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("📨 Routed routing decision to parent chat %s (request=%s, step=%s)", pc.SessionID, requestID, routingStep.GetID()))
@@ -463,6 +576,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) evaluateRoutingViaBuilderChat(
 	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
 	if err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Timeout/error waiting for routing answer from builder: %v (falling back to LLM)", err))
+		if notification != nil {
+			notification.fail("Routing pick timed out waiting for the parent builder chat; falling back to LLM routing.", err)
+		}
 		return nil, false
 	}
 
@@ -471,22 +587,56 @@ func (hcpo *StepBasedWorkflowOrchestrator) evaluateRoutingViaBuilderChat(
 	trimmed := strings.TrimSpace(response)
 	for _, route := range routingStep.Routes {
 		if strings.EqualFold(route.RouteID, trimmed) || strings.EqualFold(route.RouteName, trimmed) {
+			if notification != nil {
+				notification.complete(route, response)
+			}
 			return &RoutingResponse{
 				SelectedRouteID: route.RouteID,
 				Reasoning:       fmt.Sprintf("Selected by builder chat: %s", response),
 			}, true
 		}
 	}
-	// Accept "option0"/"option1"/"0"/"1" form
-	indexStr := strings.TrimPrefix(trimmed, "option")
-	if idx := parseNonNegativeInt(indexStr); idx >= 0 && idx < len(routingStep.Routes) {
+	// Accept "option0"/"option1" as zero-based compatibility forms.
+	lowerTrimmed := strings.ToLower(trimmed)
+	if strings.HasPrefix(lowerTrimmed, "option") {
+		indexStr := strings.TrimPrefix(lowerTrimmed, "option")
+		if idx := parseNonNegativeInt(indexStr); idx >= 0 && idx < len(routingStep.Routes) {
+			route := routingStep.Routes[idx]
+			if notification != nil {
+				notification.complete(route, response)
+			}
+			return &RoutingResponse{
+				SelectedRouteID: route.RouteID,
+				Reasoning:       fmt.Sprintf("Selected by builder chat (option index %d): %s", idx, route.RouteID),
+			}, true
+		}
+	}
+	// Plain numeric answers refer to the 1-based list shown to the builder.
+	if displayIdx := parseNonNegativeInt(trimmed); displayIdx >= 1 && displayIdx <= len(routingStep.Routes) {
+		idx := displayIdx - 1
 		route := routingStep.Routes[idx]
+		if notification != nil {
+			notification.complete(route, response)
+		}
 		return &RoutingResponse{
 			SelectedRouteID: route.RouteID,
-			Reasoning:       fmt.Sprintf("Selected by builder chat (index %d): %s", idx, route.RouteID),
+			Reasoning:       fmt.Sprintf("Selected by builder chat (display index %d): %s", displayIdx, route.RouteID),
+		}, true
+	}
+	if idx := parseNonNegativeInt(trimmed); idx == 0 && len(routingStep.Routes) > 0 {
+		route := routingStep.Routes[0]
+		if notification != nil {
+			notification.complete(route, response)
+		}
+		return &RoutingResponse{
+			SelectedRouteID: route.RouteID,
+			Reasoning:       fmt.Sprintf("Selected by builder chat (zero-based index %d): %s", idx, route.RouteID),
 		}, true
 	}
 	hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Builder's routing answer %q did not match any route; falling back to LLM", trimmed))
+	if notification != nil {
+		notification.fail(fmt.Sprintf("Routing pick answer %q did not match any available route; falling back to LLM routing.", trimmed), nil)
+	}
 	return nil, false
 }
 

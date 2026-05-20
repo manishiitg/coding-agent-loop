@@ -442,8 +442,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		}
 		fmt.Fprintf(&routesBuilder, "- **%s** (`%s`) — %s", ResolveVariables(route.RouteName, hcpo.variableValues), route.RouteID, routeStepTypeSummary(route.SubAgentStep))
 		if route.SubAgentStep != nil {
-			subStepPath := fmt.Sprintf("%s-sub-%s", stepPath, route.RouteID)
-			subExecRelPath := getExecutionFolderPath(hcpo.getTodoTaskExecutionWorkspacePath(), route.SubAgentStep.GetID(), subStepPath)
+			subStepPath := todoSubAgentArtifactFolderName(stepPath, route.RouteID, "<todo_id>")
+			subExecRelPath := getExecutionFolderPath(hcpo.getTodoTaskExecutionWorkspacePath(), "", subStepPath)
 			subExecAbsPath := filepath.Join(GetPromptDocsRoot(), subExecRelPath)
 			contextOutput := strings.TrimSpace(ResolveVariables(route.SubAgentStep.GetContextOutput().String(), hcpo.variableValues))
 			if contextOutput != "" {
@@ -452,7 +452,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 				fmt.Fprintf(&routesBuilder, " → folder: `%s/`", subExecAbsPath)
 			}
 			if isMessageSequenceStep(route.SubAgentStep) {
-				fmt.Fprintf(&routesBuilder, " | repeated calls resume; `message_sequence_restart=true` starts fresh")
+				fmt.Fprintf(&routesBuilder, " | type: `%s` | repeated calls resume; `message_sequence_restart=true` starts fresh", StepTypeMessageSeq)
 			}
 		}
 	}
@@ -807,17 +807,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	hcpo.GetLogger().Info(fmt.Sprintf("🤖 Executing generic agent for task: %s", taskTitle))
 
 	useCodeExecutionMode := boolPtr(false)
+	todoIDPart := workflowSafeIDPart(response.TodoIDToExecute, "todo")
 
 	// Create a synthetic RegularPlanStep for the generic execution
 	// Use the orchestrator's instructions and success criteria
-	genericStepID := fmt.Sprintf("generic-%s-%s", stepPath, response.TodoIDToExecute)
+	genericStepID := fmt.Sprintf("generic-%s-%s", stepPath, todoIDPart)
 	genericStep := &RegularPlanStep{
 		Type: StepTypeRegular,
 		CommonStepFields: CommonStepFields{
 			ID:            genericStepID,
 			Title:         taskTitle,
 			Description:   response.InstructionsToSubAgent,
-			ContextOutput: FlexibleContextOutput(fmt.Sprintf("%s-result.json", response.TodoIDToExecute)),
+			ContextOutput: FlexibleContextOutput(fmt.Sprintf("%s-result.json", todoIDPart)),
 		},
 		HasLoop: false,
 		// Generic agents do not contribute learnings and skip pre-validation, but
@@ -838,7 +839,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	}
 
 	// Build generic step path
-	genericStepPath := fmt.Sprintf("%s-generic-%s", stepPath, response.TodoIDToExecute)
+	genericStepPath := fmt.Sprintf("%s-generic-%s", stepPath, todoIDPart)
+
+	if err := hcpo.cleanupExecutionArtifactsForStepPath(ctx, genericStepPath, "", false); err != nil {
+		return "", nil, fmt.Errorf("failed to cleanup generic sub-agent output %q: %w", genericStepPath, err)
+	}
 
 	// Build execution context
 	var capturedHistory []llmtypes.MessageContent
@@ -848,11 +853,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		SingleStepTarget:           -1,
 		ResumeBranchStep:           nil,
 		IsEvaluationMode:           false,
+		ArtifactFolderNameOverride: genericStepPath,
 		ConversationHistoryCapture: &capturedHistory,
 	}
 
 	// Notify sub-agent start
-	agentID := fmt.Sprintf("todo-generic-%s-%s", stepPath, response.TodoIDToExecute)
+	agentID := fmt.Sprintf("todo-generic-%s-%s-%d", stepPath, todoIDPart, time.Now().UnixNano())
 	agentName := fmt.Sprintf("%s -> Generic (%s)", parentTodoTitle, taskTitle)
 	subAgentCtx, subAgentCancel := context.WithCancel(ctx)
 	defer subAgentCancel()
@@ -1119,8 +1125,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		return "", nil, fmt.Errorf("route %s exceeds supported todo_task nesting depth: %w", response.SelectedRouteID, err)
 	}
 
-	// Build sub-agent step path
-	subAgentStepPath := fmt.Sprintf("%s-sub-%s", stepPath, route.RouteID)
+	// Build a per-todo artifact path so parallel calls to the same route do not
+	// share execution files, logs, folder guards, or message-sequence sessions.
+	subAgentStepPath := todoSubAgentArtifactFolderName(stepPath, route.RouteID, response.TodoIDToExecute)
+	messageSequenceRestart, _ := ctx.Value(virtualtools.SubAgentMessageSequenceRestartKey).(bool)
+	if !isMessageSequenceStep(stepToExecute) || messageSequenceRestart {
+		if err := hcpo.cleanupExecutionArtifactsForStepPath(ctx, subAgentStepPath, "", false); err != nil {
+			return "", nil, fmt.Errorf("failed to cleanup sub-agent output %q: %w", subAgentStepPath, err)
+		}
+	}
 	// Build orchestration routes for sub-agent (so it knows about other agents)
 	var orchestrationRoutesForSubAgent []OrchestrationRoute
 	for _, r := range step.PredefinedRoutes {
@@ -1141,11 +1154,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		SingleStepTarget:           -1,
 		ResumeBranchStep:           nil,
 		IsEvaluationMode:           false,
+		ArtifactFolderNameOverride: subAgentStepPath,
 		ConversationHistoryCapture: &capturedHistory,
 	}
 
 	// Notify sub-agent start
-	subAgentNotifID := fmt.Sprintf("todo-sub-%s-%s", stepPath, route.RouteID)
+	subAgentNotifID := fmt.Sprintf("todo-sub-%s-%d", subAgentStepPath, time.Now().UnixNano())
 	subAgentNotifName := fmt.Sprintf("%s -> %s (%s)", parentTodoTitle, route.RouteName, response.TodoIDToExecute)
 	subAgentCtx, subAgentCancel := context.WithCancel(ctx)
 	defer subAgentCancel()

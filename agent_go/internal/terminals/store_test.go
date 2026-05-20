@@ -340,6 +340,41 @@ func TestStoreMarksTerminalClosingWithRetention(t *testing.T) {
 	}
 }
 
+func TestStoreMarksInactiveWhenEndEventUsesShorterStepOwner(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:review-plan",
+		"⏺ Review complete\n\n✻ Cogitated for 4m 37s\n❯",
+		12,
+		map[string]interface{}{
+			"tmux_session":    "mlp-claude-code-exp-123",
+			"current_step_id": "review-plan",
+			"execution_kind":  "workflow_step",
+			"scope":           "workflow_step",
+		},
+		time.Now(),
+	))
+	store.HandleEvent("session-1", terminalEndEvent("review-plan", map[string]interface{}{
+		"tmux_session":               "mlp-claude-code-exp-123",
+		"current_step_id":            "review-plan",
+		"terminal_retention_seconds": 300,
+	}))
+
+	snapshot, ok := store.Get("session-1:workflow-step:review-plan")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Active {
+		t.Fatalf("expected terminal to be inactive")
+	}
+	if snapshot.State != "closing" {
+		t.Fatalf("state = %q, want closing", snapshot.State)
+	}
+	if snapshot.RetentionSeconds != 300 {
+		t.Fatalf("retention_seconds = %d, want 300", snapshot.RetentionSeconds)
+	}
+}
+
 func TestStorePrunesExpiredClosingTerminalsOnListAndGet(t *testing.T) {
 	store := NewStore()
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "screen", 1))

@@ -396,6 +396,20 @@ func getArtifactFolderName(stepID string, stepPath string) string {
 	return stepPath
 }
 
+func getExecutionArtifactFolderOverride(execCtx *ExecutionContext) string {
+	if execCtx == nil {
+		return ""
+	}
+	return strings.TrimSpace(execCtx.ArtifactFolderNameOverride)
+}
+
+func getExecutionArtifactIdentity(stepID string, stepPath string, execCtx *ExecutionContext) (string, string) {
+	if override := getExecutionArtifactFolderOverride(execCtx); override != "" {
+		return "", override
+	}
+	return stepID, stepPath
+}
+
 // getExecutionFolderPath returns the execution folder path based on the stable step ID when available.
 // stepPath remains the control-flow identifier and fallback for older callers.
 func getExecutionFolderPath(executionWorkspacePath string, stepID string, stepPath string) string {
@@ -1211,6 +1225,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	// Initialize updated context files as copy of previous context files
 	updatedContextFiles = make([]string, len(previousContextFiles))
 	copy(updatedContextFiles, previousContextFiles)
+	artifactStepID, artifactStepPath := getExecutionArtifactIdentity(step.GetID(), stepPath, execCtx)
 
 	// Emit step_started event (also emits step progress with status="start")
 	// Note: Conditional steps emit their own step_started event in executeConditionalStep before calling executeSingleStep for branch steps
@@ -1228,7 +1243,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		narrowKBAccess := resolveKnowledgebaseAccess(narrowAgentCfg, hcpo.UseKnowledgebase())
 		narrowKBWriteMethod := resolveKnowledgebaseWriteMethod(narrowAgentCfg)
 		narrowLearningsAccess := resolveLearningsAccess(narrowAgentCfg)
-		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), narrowKBAccess, narrowLearningsAccess, narrowKBWriteMethod)
+		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, narrowKBAccess, narrowLearningsAccess, narrowKBWriteMethod)
 		var prevRead, prevWrite []string
 		if prevCfg := common.GetSessionShellConfig(sessionID); prevCfg != nil {
 			prevRead = prevCfg.ReadPaths
@@ -1331,8 +1346,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 		// Always use learnings folder (unified folder for all learning types)
 		learningsPath := fmt.Sprintf("%s/learnings", hcpo.GetWorkspacePath())
-		// Get execution folder path for this step (e.g., "execution/step-8" or "execution/step-3-true-0")
-		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), stepPath)
+		// Get execution folder path for this step. Sub-agent calls may override the
+		// artifact folder while keeping the stable step ID for configs/learnings.
+		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, artifactStepID, artifactStepPath)
 		// Ensure step execution folder exists (create if it was previously deleted)
 		if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
 			// Non-blocking: log warning but continue execution (folder will be created when files are written)
@@ -1349,7 +1365,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 		// Get folder guard paths for template (so agent knows exact paths it can access)
 		learningsAccess := resolveLearningsAccess(agentConfigs)
-		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, learningsAccess, kbWriteMethod)
+		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, kbAccess, learningsAccess, kbWriteMethod)
 
 		// Evaluation steps: db/ read is always allowed, but db/ write is opt-in via DBWrite flag.
 		// Strip db/ from writePaths when the step is an eval step with DBWrite == false.
@@ -1366,7 +1382,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 		// Learn code mode: add code/ subdir to write paths so LLM can write main.py there
 		if isLearnCodeMode {
-			stepExecutionPathForGuard := getExecutionFolderPath(executionWorkspacePath, step.GetID(), stepPath)
+			stepExecutionPathForGuard := getExecutionFolderPath(executionWorkspacePath, artifactStepID, artifactStepPath)
 			folderGuardWritePaths = append(folderGuardWritePaths, stepExecutionPathForGuard+"/code")
 		}
 
@@ -1554,7 +1570,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				hcpo.emitLearnCodeScriptExecutionEvent(ctx, step, stepIndex, stepPath,
 					savedScriptPath, fastResult.Success, fastResult.ExitCode, fastResult.Output, fastResult.Error, 0, true)
 				// Save execution log so debug_step and direct file inspection can see fast-path output
-				hcpo.saveLearnCodeFastPathLog(ctx, stepIndex, step.GetID(), stepPath, savedScriptPath, fastResult)
+				hcpo.saveLearnCodeFastPathLog(ctx, stepIndex, artifactStepID, artifactStepPath, savedScriptPath, fastResult)
 			}
 			if fastResult.RanScript && fastResult.Success {
 				// Saved script executed and validated — skip LLM entirely
@@ -1853,7 +1869,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// Pass stepPath to createExecutionOnlyAgent - it will determine the correct execution folder (supports branch and sub-agent steps)
 					// For learnings / metadata selection, use the concrete step ID so sub-agents align with their own learnings folder.
 					// allSteps is already []PlanStepInterface - no conversion needed
-					executionAgent, err = hcpo.createExecutionOnlyAgent(executionAgentCtx, "execution_only", stepPath, executionAgentName, agentConfigs, step.GetID())
+					executionAgent, err = hcpo.createExecutionOnlyAgent(executionAgentCtx, "execution_only", stepPath, executionAgentName, agentConfigs, step.GetID(), getExecutionArtifactFolderOverride(execCtx))
 					if err != nil {
 						return "", updatedContextFiles, fmt.Errorf("failed to create execution-only agent for step %d: %w", stepIndex+1, err)
 					}
@@ -1884,7 +1900,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						preUserMessage := eoa.executionOnlyUserMessageProcessor(templateVars)
 						preExecLLM := agentConfigModelLabel(executionAgent.GetConfig())
 						fb := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, 0)
-						hcpo.preSavePromptsJSON(stepIndex, step.GetID(), stepPath, "execution_only", preSystemPrompt, preUserMessage, preExecLLM, fb+"-prompts.json")
+						hcpo.preSavePromptsJSON(stepIndex, artifactStepID, artifactStepPath, "execution_only", preSystemPrompt, preUserMessage, preExecLLM, fb+"-prompts.json")
 					}
 
 					// Learn code mode: ensure code/ subdirectory exists (don't clean — LLM's
@@ -1962,7 +1978,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// tool responses from interrupted executions via debug_step or log files.
 					if len(executionConversationHistory) > 0 {
 						hcpo.GetLogger().Info(fmt.Sprintf("[PARTIAL-LOGS] Saving partial execution logs for step %d (%s) — %d conversation entries, error: %v", stepIndex+1, stepPath, len(executionConversationHistory), err))
-						hcpo.saveExecutionConversationLogs(stepIndex, step.GetID(), stepPath, retryAttempt, 0,
+						hcpo.saveExecutionConversationLogs(stepIndex, artifactStepID, artifactStepPath, retryAttempt, 0,
 							fmt.Sprintf("FAILED: %v", err), executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
 					} else {
 						hcpo.GetLogger().Warn(fmt.Sprintf("[PARTIAL-LOGS] No conversation history to save for step %d (%s) — execution failed before any LLM turns", stepIndex+1, stepPath))
@@ -1979,7 +1995,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				mainExecutionSummary = summarizeExecutionResultForNotification(executionResult)
 
 				// Save execution logs (result, conversation history, system prompt)
-				hcpo.saveExecutionConversationLogs(stepIndex, step.GetID(), stepPath, retryAttempt, 0,
+				hcpo.saveExecutionConversationLogs(stepIndex, artifactStepID, artifactStepPath, retryAttempt, 0,
 					executionResult, executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
 
 				// Learn code mode: inner fix loop — run main.py and feed errors back as user messages
@@ -2156,7 +2172,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						// Force Tier 1 (High) for repair agents — they need to fix a failure,
 						// so they should use at least the same tier as the original execution.
 						repairCtx := context.WithValue(ctx, WorkshopTierOverrideKey, int(TierHigh))
-						repairAgent, repairErr := hcpo.createExecutionOnlyAgent(repairCtx, "execution_only", stepPath, repairAgentName, agentConfigs, step.GetID())
+						repairAgent, repairErr := hcpo.createExecutionOnlyAgent(repairCtx, "execution_only", stepPath, repairAgentName, agentConfigs, step.GetID(), getExecutionArtifactFolderOverride(execCtx))
 						if repairErr != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] failed to create repair agent for step %d fix %d: %v", stepIndex+1, fixIter+1, repairErr))
 							break
@@ -2392,7 +2408,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							}
 							learningsTurnMsg := ""
 							if !skipDueToLock {
-								learningsTurnMsg = BuildLearningsContributionTurn(step.GetID(), learnObjective, isLearnCodeMode)
+								learningsTurnMsg = BuildLearningsContributionTurn(step.GetID(), templateVars["StepDescription"], learnObjective, isLearnCodeMode)
 							}
 							if learningsTurnMsg != "" {
 								learningsDirectPerformed = true

@@ -90,6 +90,11 @@ type ExecutionContext struct {
 	IsEvaluationMode  bool                    // Whether we're running evaluation steps
 	StepPathOverride  string                  // If set, overrides the default "step-{N}" path for the target step (used for inner steps in workshop)
 
+	// ArtifactFolderNameOverride writes execution artifacts/logs to this folder
+	// instead of the stable step ID folder. Logical step ID lookup for configs,
+	// learnings, and metadata is unchanged.
+	ArtifactFolderNameOverride string
+
 	// Human input overrides: per-step responses for human_input steps (keyed by step ID).
 	// Propagated from ExecutionOptions.HumanInputs to controller.humanInputOverrides.
 	HumanInputs map[string]string

@@ -76,36 +76,8 @@ type WorkshopExecuteOptions struct {
 // cleanupWorkshopExecutionPath removes a specific workshop execution folder and archives
 // its matching logs folder. This is used for inner-step workshop runs where we need
 // targeted cleanup without touching sibling or parent step artifacts.
-func (hcpo *StepBasedWorkflowOrchestrator) cleanupWorkshopExecutionPath(ctx context.Context, stepPath string) error {
-	if hcpo.selectedRunFolder == "" {
-		return fmt.Errorf("selectedRunFolder not set - cannot cleanup workshop execution path")
-	}
-	if stepPath == "" {
-		return fmt.Errorf("stepPath not set - cannot cleanup workshop execution path")
-	}
-
-	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
-	executionFolderPath := fmt.Sprintf("%s/execution/%s", runWorkspacePath, stepPath)
-	hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP-INNER] Cleaning execution folder: %s", executionFolderPath))
-
-	if err := hcpo.CleanupDirectory(ctx, executionFolderPath, fmt.Sprintf("execution/%s", stepPath)); err != nil {
-		errStr := err.Error()
-		if !strings.Contains(errStr, "not found") && !strings.Contains(errStr, "no such file") {
-			return fmt.Errorf("failed to cleanup execution folder %s: %w", stepPath, err)
-		}
-	} else if err := hcpo.DeleteWorkspaceFile(ctx, executionFolderPath); err != nil {
-		errStr := err.Error()
-		if !strings.Contains(errStr, "not found") && !strings.Contains(errStr, "no such file") && !strings.Contains(errStr, "directory not empty") {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete workshop inner-step folder %s: %v", executionFolderPath, err))
-		}
-	}
-
-	logsFolderPath := fmt.Sprintf("%s/logs/%s", runWorkspacePath, stepPath)
-	if err := hcpo.archiveLogsFolder(ctx, logsFolderPath, stepPath); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive workshop inner-step logs %s: %v", stepPath, err))
-	}
-
-	return nil
+func (hcpo *StepBasedWorkflowOrchestrator) cleanupWorkshopExecutionPath(ctx context.Context, stepPath string, stepID string, includeMessageSequence bool) error {
+	return hcpo.cleanupExecutionArtifactsForStepPath(ctx, stepPath, stepID, includeMessageSequence)
 }
 
 // ExecuteStepForWorkshop executes a single step by its ID for the interactive workshop phase.
@@ -278,7 +250,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		innerStepPath := resolveInnerStepPath(hcpo.approvedPlan.Steps, stepInfo)
 		setup.Context.StepPathOverride = innerStepPath
 		if !isMessageSequenceResume {
-			if err := hcpo.cleanupWorkshopExecutionPath(ctx, innerStepPath); err != nil {
+			cleanMessageSequenceRuntime := isMessageSequence && (opts == nil || !opts.MessageSequenceRestart)
+			if err := hcpo.cleanupWorkshopExecutionPath(ctx, innerStepPath, stepInfo.Step.GetID(), cleanMessageSequenceRuntime); err != nil {
 				return "", fmt.Errorf("failed to cleanup inner workshop step %q: %w", stepID, err)
 			}
 		} else {

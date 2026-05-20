@@ -472,6 +472,15 @@ func ResolveDependencyPathCandidates(
 		if stepIndex >= 0 && stepIndex < len(allSteps) {
 			if todoStep, ok := allSteps[stepIndex].(*TodoTaskPlanStep); ok {
 				parentRoutePrefix := fmt.Sprintf("step-%d-sub-", stepIndex+1)
+				currentTodoIDPart := ""
+				parentStepPath := fmt.Sprintf("step-%d", stepIndex+1)
+				for _, route := range todoStep.PredefinedRoutes {
+					routePrefix := fmt.Sprintf("%s%s-", parentRoutePrefix, workflowSafeIDPart(route.RouteID, "route"))
+					if strings.HasPrefix(currentStepPath, routePrefix) {
+						currentTodoIDPart = strings.TrimPrefix(currentStepPath, routePrefix)
+						break
+					}
+				}
 				for _, route := range todoStep.PredefinedRoutes {
 					if route.SubAgentStep == nil {
 						continue
@@ -479,6 +488,11 @@ func ResolveDependencyPathCandidates(
 					routeOutput := ResolveVariables(route.SubAgentStep.GetContextOutput().String(), variableValues)
 					if !contextOutputMatchesDependency(routeOutput, dep) {
 						continue
+					}
+					if currentTodoIDPart != "" {
+						routeStepPath := todoSubAgentArtifactFolderName(parentStepPath, route.RouteID, currentTodoIDPart)
+						routeExecPath := getExecutionFolderPath(executionWorkspacePath, "", routeStepPath)
+						appendCandidate(buildDepAbsPath(routeExecPath, dep))
 					}
 					routeStepPath := parentRoutePrefix + route.RouteID
 					routeExecPath := getExecutionFolderPath(executionWorkspacePath, route.SubAgentStep.GetID(), routeStepPath)

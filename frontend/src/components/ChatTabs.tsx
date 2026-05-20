@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo } from 'react'
-import { X, Plus, ArrowDown, List, ListTree, Terminal } from 'lucide-react'
+import { Plus, ArrowDown, List, ListTree, Terminal } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -21,7 +21,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     chatTabs,
     activeTabId,
     switchTab,
-    closeTab,
     tabSessionStatus,
     tabEvents,
     autoScroll: storeAutoScroll,
@@ -89,19 +88,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
 
   const handleTabClick = (tabId: string) => {
     switchTab(tabId)
-  }
-
-  const handleTabClose = async (e: React.MouseEvent, tabId: string) => {
-    e.stopPropagation()
-    await closeTab(tabId)
-
-    // If no tabs remain for the current mode, auto-create a new one
-    const remaining = Object.values(useChatStore.getState().chatTabs)
-      .filter(t => t.metadata?.mode === selectedModeCategory && !isHiddenOrganizationTab(t))
-    if (remaining.length === 0 && selectedModeCategory === 'multi-agent') {
-      const tabName = 'Agent Chat 1'
-      await useChatStore.getState().createChatTab(tabName, { mode: selectedModeCategory })
-    }
   }
 
   const handleNewTab = async () => {
@@ -255,21 +241,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
                   {newEventCount > 99 ? '99+' : newEventCount}
                 </span>
               )}
-              
-              
-              {/* Close Button */}
-              <button
-                onClick={(e) => handleTabClose(e, tab.tabId)}
-                data-testid={`close-tab-${tab.tabId}`}
-                className={`
-                  ml-1 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600
-                  ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 hover:opacity-70'}
-                  transition-opacity
-                `}
-                title="Close tab"
-              >
-                <X className="w-3 h-3" />
-              </button>
             </div>
           )
         })}

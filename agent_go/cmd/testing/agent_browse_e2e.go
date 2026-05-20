@@ -118,7 +118,7 @@ Use agent_browser session: %q`, tabLabel, tabLabel, agentBrowseE2EFlags.targetUR
 		if err != nil {
 			return fmt.Errorf("agent_browser turn did not complete: %w", err)
 		}
-		if !rawContainsProvider(raw, provider) {
+		if !eventsProveProvider(events, provider) {
 			return fmt.Errorf("event stream did not prove provider %q was used", provider)
 		}
 		evidence := collectAgentBrowserEvidence(events, agentBrowseE2EFlags.targetURL, tabLabel)

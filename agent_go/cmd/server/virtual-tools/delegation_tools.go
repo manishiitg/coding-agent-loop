@@ -140,6 +140,20 @@ type ExecuteDelegatedTaskFunc func(ctx context.Context, instruction string) (str
 // Used only in plan/multi-agent mode. Returns immediately with an agentID.
 type BackgroundDelegateFunc func(ctx context.Context, name, instruction string) (agentID string, err error)
 
+func getBackgroundDelegate(ctx context.Context) (BackgroundDelegateFunc, bool) {
+	switch fn := ctx.Value(BackgroundDelegateKey).(type) {
+	case BackgroundDelegateFunc:
+		if fn != nil {
+			return fn, true
+		}
+	case func(context.Context, string, string) (string, error):
+		if fn != nil {
+			return BackgroundDelegateFunc(fn), true
+		}
+	}
+	return nil, false
+}
+
 // BGAgentInfo holds a snapshot of a background agent's state (for tool responses)
 // BGAgentHistoryEntry mirrors HistoryEntry from background_agents.go (avoids import cycle)
 type BGAgentHistoryEntry struct {
@@ -372,7 +386,7 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	}
 
 	// In multi-agent mode, reasoning_level is mandatory
-	if _, isPlanMode := ctx.Value(BackgroundDelegateKey).(BackgroundDelegateFunc); isPlanMode && reasoningLevel == "" {
+	if _, isPlanMode := getBackgroundDelegate(ctx); isPlanMode && reasoningLevel == "" {
 		return "", fmt.Errorf("reasoning_level is required in multi-agent mode. Use 'high' for complex tasks, 'medium' for standard implementation, or 'low' for simple tasks")
 	}
 	agentTemplate, _ := args["agent_template"].(string)
@@ -404,7 +418,7 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	}
 
 	// --- ASYNC PATH: Background delegation (plan/multi-agent mode) ---
-	if bgDelegate, ok := ctx.Value(BackgroundDelegateKey).(BackgroundDelegateFunc); ok && bgDelegate != nil {
+	if bgDelegate, ok := getBackgroundDelegate(ctx); ok {
 		if name == "" {
 			name = "Background Task" // Fallback name
 		}
@@ -441,6 +455,7 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 		resultJSON, _ := json.MarshalIndent(result, "", "  ")
 		return string(resultJSON), nil
 	}
+	log.Printf("[DELEGATION] Background delegate unavailable; using synchronous delegation path")
 
 	// --- SYNC PATH: Blocking delegation (spawn mode or no background func) ---
 	// Get the execution function from context

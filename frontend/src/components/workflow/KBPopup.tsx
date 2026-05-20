@@ -228,7 +228,7 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
   return (
     <ModalPortal>
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-2 sm:p-4">
-      <div className="bg-background border border-border rounded-lg shadow-xl w-full max-w-4xl max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] flex flex-col">
+      <div className="bg-background border border-border rounded-lg shadow-xl w-full max-w-6xl xl:max-w-7xl h-[calc(100dvh-1rem)] sm:h-[92vh] flex flex-col">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 p-3 border-b border-border flex-shrink-0 sm:p-4">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -364,14 +364,14 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
                               Topic file missing or empty.
                             </div>
                           ) : isMarkdownFile ? (
-                            <div className="text-sm text-foreground bg-background border border-border/60 rounded p-3 max-h-96 overflow-y-auto">
+                            <div className="text-sm text-foreground bg-background border border-border/60 rounded p-3 max-h-[60vh] overflow-y-auto">
                               <MarkdownRenderer
                                 content={body}
                                 className="max-w-none !text-sm [&_p]:!text-sm [&_li]:!text-sm [&_code]:!text-[12px]"
                               />
                             </div>
                           ) : (
-                            <pre className="whitespace-pre-wrap break-words text-foreground bg-background border border-border/60 rounded p-2 max-h-96 overflow-y-auto">
+                            <pre className="whitespace-pre-wrap break-words text-foreground bg-background border border-border/60 rounded p-2 max-h-[60vh] overflow-y-auto">
                               {body}
                             </pre>
                           )}

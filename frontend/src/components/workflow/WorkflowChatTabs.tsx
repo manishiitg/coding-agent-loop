@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { X, ArrowDown, List, ListTree, Radio, Terminal } from 'lucide-react'
+import { ArrowDown, List, ListTree, Radio, Terminal } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
@@ -15,7 +15,6 @@ interface WorkflowTabItemProps {
   isActive: boolean
   sessionStatus: TabSessionStatus | undefined
   onTabClick: (tabId: string) => void
-  onTabClose: (e: React.MouseEvent, tabId: string) => void
 }
 
 const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
@@ -23,7 +22,6 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   isActive,
   sessionStatus,
   onTabClick,
-  onTabClose,
 }) => {
   const displayName = tab.metadata?.phaseId === 'workflow-builder' && tab.name === 'Workflow Builder'
     ? 'Chat'
@@ -70,19 +68,6 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
 
       {/* Tab Name */}
       <span className="min-w-0 max-w-[14rem] truncate whitespace-nowrap">{displayName}</span>
-
-      {/* Close Button */}
-      <button
-        onClick={(e) => onTabClose(e, tab.tabId)}
-        className={`
-          ml-0.5 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600
-          ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 hover:opacity-70'}
-          transition-opacity
-        `}
-        title="Close tab"
-      >
-        <X className="w-3 h-3" />
-      </button>
     </div>
   )
 })
@@ -102,30 +87,21 @@ export const WorkflowChatTabs: React.FC = () => {
     chatTabs,
     activeTabId,
     switchTab,
-    closeTab,
     tabSessionStatus,
     autoScroll,
     setAutoScroll,
     setTabViewMode,
-    terminalCenterOpen,
-    toggleTerminalCenterOpen,
   } = useChatStore(useShallow(state => ({
     chatTabs: state.chatTabs,
     activeTabId: state.activeTabId,
     switchTab: state.switchTab,
-    closeTab: state.closeTab,
     tabSessionStatus: state.tabSessionStatus,
     autoScroll: state.autoScroll,
     setAutoScroll: state.setAutoScroll,
     setTabViewMode: state.setTabViewMode,
-    terminalCenterOpen: state.terminalCenterOpen,
-    toggleTerminalCenterOpen: state.toggleTerminalCenterOpen,
   })))
 
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
-  const setShowWorkspacePane = useWorkflowStore(state => state.setShowWorkspacePane)
-  const setWorkflowWorkspaceView = useWorkflowStore(state => state.setWorkflowWorkspaceView)
-  const setCanvasViewMode = useWorkflowStore(state => state.setCanvasViewMode)
 
   // Layout mode for the active tab — tree groups related events, flat shows the old feed.
   const activeViewMode = useChatStore(state => {
@@ -168,19 +144,6 @@ export const WorkflowChatTabs: React.FC = () => {
     switchTab(tabId)
   }, [switchTab])
 
-  const handleTabClose = useCallback(async (e: React.MouseEvent, tabId: string) => {
-    e.stopPropagation()
-    await closeTab(tabId)
-  }, [closeTab])
-
-  const handleShowWorkflow = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation()
-    setWorkflowWorkspaceView('flow')
-    setCanvasViewMode('flow')
-    setShowWorkspacePane(true)
-    setShowChatArea(false)
-  }, [setCanvasViewMode, setShowChatArea, setShowWorkspacePane, setWorkflowWorkspaceView])
-
   // Close chat area when all workflow tabs are closed (but not on first render)
   useEffect(() => {
     if (!hasRenderedRef.current) {
@@ -208,12 +171,11 @@ export const WorkflowChatTabs: React.FC = () => {
               isActive={tab.tabId === activeTabId}
               sessionStatus={tabSessionStatus[tab.tabId]}
               onTabClick={handleTabClick}
-              onTabClose={handleTabClose}
             />
           ))}
         </div>
 
-        {/* Auto-scroll Toggle and Close Button - only show when there are workflow tabs */}
+        {/* Auto-scroll and layout controls - only show when there are workflow tabs */}
         {activeWorkflowTabs.length > 0 && (
           <div className="flex shrink-0 items-center gap-1 border-l border-gray-200 pl-2 dark:border-gray-700">
             {activeViewMode !== 'terminal' && (
@@ -254,36 +216,36 @@ export const WorkflowChatTabs: React.FC = () => {
             </button>
             )}
 
-            {/* View mode — 3-way segmented toggle: Tree | Flat | Terminal.
-                Terminal mode replaces the event feed with the terminal pane
-                view; Tree groups events by workflow/agent; Flat is the
-                chronological feed. */}
-            <div className="flex items-center rounded bg-gray-100 dark:bg-gray-800 p-0.5">
+            {/* Layout Mode */}
+            <div
+              className="inline-flex items-center rounded-full border border-gray-200 bg-gray-100 p-0.5 dark:border-gray-700 dark:bg-gray-800"
+              role="group"
+              aria-label="Event layout mode"
+            >
               {([
-                { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by workflow and agent' },
-                { mode: 'flat' as const, Icon: List, label: 'Flat', tip: 'Flat view — show events in chronological order' },
-                { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal', tip: 'Terminal view — show only the terminal panes, no events' },
+                { mode: 'flat' as const, Icon: List, label: 'Flat view', tip: 'Flat view - chronological events' },
+                { mode: 'tree' as const, Icon: ListTree, label: 'Tree view', tip: 'Tree view - group by workflow and agent' },
+                { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal view', tip: 'Terminal view - terminal panes only' },
               ]).map(({ mode, Icon, label, tip }) => (
                 <Tooltip key={mode}>
                   <TooltipTrigger asChild>
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation()
                         if (activeTabId) {
                           setTabViewMode(activeTabId, mode)
                         }
                       }}
-                      className={`flex items-center gap-1 px-1.5 py-1 rounded text-xs font-medium transition-colors
-                        ${activeViewMode === mode
-                          ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
-                          : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
-                        }
-                      `}
                       aria-label={label}
                       aria-pressed={activeViewMode === mode}
+                      className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors ${
+                        activeViewMode === mode
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
+                      }`}
                     >
-                      <Icon className="w-3.5 h-3.5" />
-                      <span className="hidden md:inline">{label}</span>
+                      <Icon className="h-3.5 w-3.5" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>

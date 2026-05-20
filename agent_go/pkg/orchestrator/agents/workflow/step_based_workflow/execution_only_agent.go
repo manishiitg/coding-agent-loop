@@ -69,7 +69,7 @@ Shell commands may use the absolute paths below. Workspace tools that accept a f
 - **soul/soul.md** — workflow north star: objective and success criteria. At step start, read it if present and use it to resolve ambiguity, prioritize tradeoffs, and avoid technically-correct work that misses the workflow goal. Treat it as READ-ONLY during step execution.
 - **db/** — **workflow state and results**. JSON files this step produces/consumes (processed records, cursors, cumulative output). Owned by your step. READ first, upsert by the builder-defined key, write back merged. NEVER overwrite wholesale — that destroys rows from other groups/runs.
 - **knowledgebase/** — durable business/domain context. `+"`knowledgebase/context/context.md`"+` is user-supplied runtime context: rules, preferences, constraints, assumptions, and examples that steps must respect. When this file exists and KB read access is granted, READ it once at step start and apply every relevant item. Per-topic narrative markdown under `+"`"+`notes/`+"`"+` is what the workflow discovered over time, one file per topic (entity-scoped like `+"`"+`company-acme.md`+"`"+` or cross-cutting like `+"`"+`pattern-*`+"`"+`), plus `+"`"+`notes/_index.json`+"`"+` as the registry. When you need discovered KB notes, ALWAYS `+"`"+`cat knowledgebase/notes/_index.json`+"`"+` first to find which topic files exist, then `+"`"+`cat`+"`"+` only the markdown files relevant to your work. NEVER `+"`"+`cat knowledgebase/notes/*.md`+"`"+` — file count grows unboundedly and loading all of them blows context. `+"`knowledgebase/context/`"+` is user content; the optimizer is forbidden from rewriting it so captured context remains stable across improvement passes. {{if eq .KbWriteMethod "direct"}}Writes for this step: handled directly per the step's contract — see the **Knowledgebase contribution** block below. Use shell heredoc (new files) or `+"`"+`diff_patch_workspace_file`+"`"+` (existing files), and keep `+"`"+`_index.json`+"`"+` in sync. **Do NOT write to `+"`"+`knowledgebase/context/`+"`"+`** — that store is user-owned via the `+"`"+`capture_context`+"`"+` tool only.{{else}}Written **only by the post-step KB update agent** (not by you). Do NOT write under `+"`"+`notes/`+"`"+` directly — that breaks the KB update agent's merge discipline. `+"`"+`knowledgebase/context/`+"`"+` is user-owned via `+"`"+`capture_context`+"`"+` and is never written by step agents.{{end}}
-- **learnings/** — **HOW to run the task** (selectors, auth flows, tool patterns). Use it only when relevant learnings are injected under `+"`"+`## Skill`+"`"+` or the folder is listed in Allowed READ.
+- **learnings/** — **HOW to run the task** (selectors, auth flows, tool patterns). Use it only when relevant learnings are injected under `+"`"+`## Skill`+"`"+` or the folder is listed in Allowed READ. Treat learnings/skill content as advisory guidance from previous runs: the current step description, orchestrator instructions, and human input are the source of truth. Use relevant guidance when it helps; ignore stale or conflicting guidance.
 - **builder/** — prior review/improvement context. At step start, read `+"`builder/review.md`"+` and `+"`builder/improve.md`"+` if they exist. Use unresolved findings, prior failed approaches, active/deferred improvement ideas, and resolved markers as context so you do not repeat known mistakes. Treat these logs as READ-ONLY during step execution.
 
 {{if ne .KbAccess "none"}}Knowledgebase access for this step: **{{.KbAccessLabel}}**.{{if eq .KbAccess "read"}} READ-only: you may `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+` the KB files but must not modify them. Selective read recipes:
@@ -100,6 +100,8 @@ cat knowledgebase/notes/company-acme.md
 
 {{if eq .HasLearnings "true"}}
 ## Skill
+
+Skill content is guidance from previous runs, not a replacement for the current task. The current step description, orchestrator instructions, and human input are the source of truth. Use skill guidance when it fits this step; ignore any part that is stale, unrelated, or conflicts with the current description.
 
 {{.LearningHistory}}
 {{end}}
@@ -167,7 +169,8 @@ You MUST incorporate it into this run. It takes priority over the default step d
 {{if .LearnCodePriorContext}}{{.LearnCodePriorContext}}
 {{end}}### Execution Checklist
 1. Review all **Inputs** above. Inlined files are ready to use. For any marked "read via tool", read them first.
-{{if .HasSkill}}2. Read **Skill files** — they contain validated workflows from previous runs.
+{{if .HasSkill}}2. Read **Skill files** as guidance only. The current step description is the main source of truth; use or ignore skill guidance depending on whether it matches this step.
+{{else}}2. Treat the current step description as the main source of truth. If you consult learnings files manually, use them only as advisory guidance and ignore stale or conflicting notes.
 {{end}}3. Execute the task using tool calls. Do NOT stop mid-task with a text message.
 4. **NO FABRICATED DATA**: Every value in the output must come from a real data source (MCP tools, APIs, or input files). Do NOT hardcode or invent output data.
 5. Verify the required outputs are fully produced before finishing.

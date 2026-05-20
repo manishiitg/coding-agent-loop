@@ -8,6 +8,7 @@ import { useChatStore } from '../stores'
 import { agentApi, getApiBaseUrl } from '../services/api'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useAppStore } from '../stores/useAppStore'
+import { useModeStore } from '../stores/useModeStore'
 import type { PollingEvent, SessionExecutionTreeResponse } from '../services/api-types'
 import { useRenderLogger } from '../utils/renderLogger'
 import { normalizeMarkdownContent } from './ui/MarkdownRenderer'
@@ -138,6 +139,22 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
     isApprovingWorkflow: state.isApprovingWorkflow
   })))
 
+  // Subscribe to streaming text for current session
+  const currentStreamingText = useChatStore(state =>
+    sessionId ? state.streamingText[sessionId] || '' : ''
+  )
+  const currentStreamingStatus = useChatStore(state =>
+    sessionId ? state.streamingStatus[sessionId] || '' : ''
+  )
+  const completedStreamingText = useChatStore(state =>
+    sessionId ? state.completedStreamingText[sessionId] || '' : ''
+  )
+  const executionStreamingActivities = useChatStore(useShallow(state => {
+    if (!sessionId) return []
+    return Object.values(state.executionStreaming)
+      .filter(activity => activity.sessionId === sessionId && (activity.text || activity.status))
+  }))
+  const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   // CRITICAL: Always use prop events - never fall back to global events to prevent cross-tab mixing
   // Events should always be passed from ChatArea (which uses tab-specific events)
   const events = React.useMemo(() => {
@@ -149,14 +166,77 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
 
   useRenderLogger('EventDisplay', {
     events: events.length,
+    hasStreamingText: !!currentStreamingText,
+    streamingTextLen: currentStreamingText.length,
     finalResponse: !!finalResponse,
     isCompleted,
     sessionId,
   })
 
+  // Check if events already contain a completion event (to avoid showing duplicate "Thinking" text)
+  const hasCompletionEvent = React.useMemo(
+    () => events.some(e => e.type === 'unified_completion' || e.type === 'llm_generation_end'),
+    [events]
+  )
+
   // Memoize markdown components to avoid re-creating on every render
   const markdownComponents = React.useMemo(() => getMarkdownComponents(compact), [compact])
   const normalizedFinalResponse = React.useMemo(() => normalizeMarkdownContent(finalResponse || ''), [finalResponse])
+  const liveStreamingActivity = currentStreamingText || currentStreamingStatus
+  const streamingActivityCard = liveStreamingActivity ? (
+    <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 shadow-sm min-w-0" data-testid="live-streaming-activity">
+      <CardContent className={`${compact ? 'p-2' : 'p-3'} min-w-0`}>
+        <div className="flex items-center gap-1.5 mb-1">
+          <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+          <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-blue-600 dark:text-blue-400 font-medium`}>
+            Generating...
+          </span>
+        </div>
+        {currentStreamingText && (
+          <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {currentStreamingText}
+            </ReactMarkdown>
+            <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
+          </div>
+        )}
+        {currentStreamingStatus && (
+          <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-blue-500 dark:text-blue-400 italic mt-1 opacity-75`}>
+            {currentStreamingStatus}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  ) : null
+  const executionStreamingActivityCards = executionStreamingActivities.map(activity => (
+    <Card
+      key={activity.executionId}
+      className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 shadow-sm min-w-0"
+      data-testid="live-execution-streaming-activity"
+    >
+      <CardContent className={`${compact ? 'p-2' : 'p-3'} min-w-0`}>
+        <div className="flex items-center gap-1.5 mb-1">
+          <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+          <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-blue-600 dark:text-blue-400 font-medium`}>
+            Generating...
+          </span>
+        </div>
+        {activity.text && (
+          <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {activity.text}
+            </ReactMarkdown>
+            <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
+          </div>
+        )}
+        {activity.status && (
+          <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-blue-500 dark:text-blue-400 italic mt-1 opacity-75`}>
+            {activity.status}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  ))
 
   // Handle workflow approval
   const handleApproveWorkflow = React.useCallback(async (requestId: string) => {
@@ -176,6 +256,9 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
 
   return (
     <div className="space-y-4 min-w-0" data-testid="event-display-container">
+      {/* In tree mode, transient model/tool activity stays visually outside the hierarchy. */}
+      {!flatHierarchy && streamingActivityCard}
+
       {/* Event Display */}
       {events.length > 0 && (
         <div className="space-y-4 min-w-0" data-testid="event-list-container">
@@ -204,6 +287,26 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
         </div>
       )}
 
+      {/* Flat mode preserves the old chronological placement after the event feed. */}
+      {flatHierarchy && streamingActivityCard}
+      {flatHierarchy && executionStreamingActivityCards}
+
+      {/* Completed Streaming Text - preserved intermediate output from generation */}
+      {/* Hide when content is identical to finalResponse or when a unified_completion event already shows the result */}
+      {completedStreamingText && !currentStreamingText && completedStreamingText.trim() !== finalResponse?.trim() && !hasCompletionEvent && (
+        <details className="min-w-0 group" open={selectedModeCategory === 'workflow'}>
+          <summary className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300 select-none`}>
+            Thinking
+          </summary>
+          <div className="mt-1 border-l-2 border-gray-200 dark:border-gray-700 pl-2">
+            <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[9px]' : 'text-[10px]'} opacity-75`}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                {completedStreamingText}
+              </ReactMarkdown>
+            </div>
+          </div>
+        </details>
+      )}
       {/* Final Response Display */}
       {finalResponse && (
         <div className="space-y-4 min-w-0">

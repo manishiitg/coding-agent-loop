@@ -105,6 +105,7 @@ Use this block to drive CROSS-STEP consolidation that a single step's learning a
    - Decide which file(s) to update or create based on the skill structure.
    - Update SKILL.md if you added new reference files.
    - Update any patterns that were refined or corrected by this execution.
+   - Reconcile stale guidance in the files you touch: if an existing note clearly reflects an older step description, obsolete selector/API path, removed dependency, or behavior contradicted by this successful run/current objective, remove or replace it in the same patch. Do not delete unrelated shared guidance only because this step did not use it.
 {{else}}
    - Document what went wrong and any operational HOW knowledge revealed by the failure.
    - Preserve all existing successful patterns.

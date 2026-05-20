@@ -28,7 +28,6 @@ type SubAgentNotifier interface {
 	OnSubAgentComplete(agentID, name, result string, err error)
 }
 
-
 // compositeSubAgentNotifier calls multiple notifiers in sequence.
 type compositeSubAgentNotifier struct {
 	notifiers []SubAgentNotifier
@@ -135,6 +134,7 @@ type StepBasedWorkflowOrchestrator struct {
 	workshopSessionCtx        context.Context
 	workshopStepRegistry      *WorkshopStepRegistry
 	workshopExecutionNotifier WorkshopExecutionNotifier
+	routingDecisionNotifier   WorkshopExecutionNotifier
 }
 
 // SetSubAgentNotifier sets the notifier called on todo task sub-agent start/completion.
@@ -158,6 +158,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetWorkshopExecutionContext(sessionCt
 // so controller-managed background tasks keep the frontend polling/notification state updated.
 func (hcpo *StepBasedWorkflowOrchestrator) SetWorkshopExecutionNotifier(n WorkshopExecutionNotifier) {
 	hcpo.workshopExecutionNotifier = n
+	hcpo.routingDecisionNotifier = n
+}
+
+// SetRoutingDecisionNotifier wires notification tracking only for builder-routed
+// routing decisions. Full workflow runners use this to surface route-pick
+// completions without also auto-notifying for internal learning helpers.
+func (hcpo *StepBasedWorkflowOrchestrator) SetRoutingDecisionNotifier(n WorkshopExecutionNotifier) {
+	hcpo.routingDecisionNotifier = n
 }
 
 // NewStepBasedWorkflowOrchestrator creates a new human-controlled todo planner orchestrator

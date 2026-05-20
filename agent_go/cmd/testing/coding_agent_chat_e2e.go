@@ -65,9 +65,16 @@ Example:
 		defer cancel()
 
 		client := &codingAgentChatE2EClient{
-			baseURL: strings.TrimRight(codingAgentChatE2EFlags.serverURL, "/"),
-			token:   os.Getenv("MCP_API_TOKEN"),
-			http:    &http.Client{Timeout: 30 * time.Second},
+			baseURL:        strings.TrimRight(codingAgentChatE2EFlags.serverURL, "/"),
+			token:          os.Getenv("MCP_API_TOKEN"),
+			http:           &http.Client{Timeout: 30 * time.Second},
+			agentMode:      codingAgentChatE2EFlags.agentMode,
+			selectedFolder: codingAgentChatE2EFlags.selectedFolder,
+			presetQueryID:  codingAgentChatE2EFlags.presetQueryID,
+			phaseID:        codingAgentChatE2EFlags.phaseID,
+			workshopMode:   codingAgentChatE2EFlags.workshopMode,
+			enabledServers: codingAgentChatE2EFlags.enabledServers,
+			timeout:        codingAgentChatE2EFlags.timeout,
 		}
 
 		provider := strings.TrimSpace(codingAgentChatE2EFlags.provider)
@@ -143,6 +150,11 @@ Example:
 				return fmt.Errorf("terminal pane alias check failed during live turn: %w", err)
 			}
 			fmt.Println("PASS live status: terminal stream produced derived status text")
+			beforeSteer, _, err := client.getEvents(ctx, sessionID)
+			if err != nil {
+				return fmt.Errorf("failed to capture event cursor before live steer: %w", err)
+			}
+			beforeSteerIndex := beforeSteer.LastProcessedIndex
 			if err := client.sendSteer(ctx, sessionID, fmt.Sprintf("Live follow-up: include the exact token %s in your final answer.", liveToken)); err != nil {
 				return fmt.Errorf("live steer POST failed: %w", err)
 			}
@@ -152,11 +164,16 @@ Example:
 			if err != nil {
 				return fmt.Errorf("live steer turn did not complete: %w", err)
 			}
-			if !rawContainsProvider(raw, provider) {
+			if ok, err := client.sessionEventsProveProvider(ctx, sessionID, provider); err != nil {
+				return fmt.Errorf("provider proof check failed: %w", err)
+			} else if !ok {
 				return fmt.Errorf("live steer event stream did not prove requested provider %q was used", provider)
 			}
-			if !strings.Contains(final, liveToken) && !strings.Contains(raw, liveToken) {
+			if !strings.Contains(final, liveToken) {
 				return fmt.Errorf("live steer token %q was not processed; final=%q", liveToken, final)
+			}
+			if err := client.assertAssistantCompletionAfter(ctx, sessionID, beforeSteerIndex, liveToken); err != nil {
+				return fmt.Errorf("live steer token was not observed in assistant completion after steer: %w; final=%q raw=%s", err, final, truncateE2E(raw, 1200))
 			}
 			fmt.Println("PASS live steer: in-flight user message was processed by the coding agent")
 		}
@@ -167,7 +184,7 @@ Example:
 }
 
 func init() {
-	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.serverURL, "server-url", "http://localhost:8000", "mcp-agent-builder-go server URL")
+	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.serverURL, "server-url", "http://localhost:18743", "mcp-agent-builder-go server URL")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.provider, "provider", "gemini-cli", "coding CLI provider: gemini-cli, codex-cli, cursor-cli, or claude-code")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.model, "model", "", "model ID; defaults to the provider-specific E2E model")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.sessionID, "session-id", "", "session ID to reuse; generated when omitted")
@@ -183,9 +200,16 @@ func init() {
 }
 
 type codingAgentChatE2EClient struct {
-	baseURL string
-	token   string
-	http    *http.Client
+	baseURL        string
+	token          string
+	http           *http.Client
+	agentMode      string
+	selectedFolder string
+	presetQueryID  string
+	phaseID        string
+	workshopMode   string
+	enabledServers string
+	timeout        time.Duration
 }
 
 func defaultCodingAgentE2EModel(provider string) string {
@@ -198,6 +222,8 @@ func defaultCodingAgentE2EModel(provider string) string {
 		return "cursor-cli"
 	case "claude-code":
 		return "claude-code"
+	case "opencode-cli":
+		return "opencode-cli"
 	default:
 		return ""
 	}
@@ -207,11 +233,13 @@ func (c *codingAgentChatE2EClient) runAndAssertContains(ctx context.Context, ses
 	if _, err := c.startQuery(ctx, sessionID, provider, model, query); err != nil {
 		return err
 	}
-	final, raw, err := c.waitForCompletion(ctx, sessionID)
+	final, _, err := c.waitForCompletion(ctx, sessionID)
 	if err != nil {
 		return err
 	}
-	if !rawContainsProvider(raw, provider) {
+	if ok, err := c.sessionEventsProveProvider(ctx, sessionID, provider); err != nil {
+		return fmt.Errorf("provider proof check failed: %w", err)
+	} else if !ok {
 		return fmt.Errorf("event stream did not prove requested provider %q was used", provider)
 	}
 	for _, needle := range required {
@@ -234,20 +262,20 @@ func (c *codingAgentChatE2EClient) startQuery(ctx context.Context, sessionID, pr
 			},
 			"fallbacks": []interface{}{},
 		},
-		"agent_mode":      codingAgentChatE2EFlags.agentMode,
-		"enabled_servers": splitCSVOrDefault(codingAgentChatE2EFlags.enabledServers, []string{"api-bridge"}),
-		"selected_folder": codingAgentChatE2EFlags.selectedFolder,
+		"agent_mode":      coalesceE2EString(c.agentMode, "simple"),
+		"enabled_servers": splitCSVOrDefault(c.enabledServers, []string{"api-bridge"}),
+		"selected_folder": coalesceE2EString(c.selectedFolder, "_users/default/Chats"),
 		"max_turns":       -1,
 	}
-	if codingAgentChatE2EFlags.presetQueryID != "" {
-		payload["preset_query_id"] = codingAgentChatE2EFlags.presetQueryID
+	if c.presetQueryID != "" {
+		payload["preset_query_id"] = c.presetQueryID
 	}
-	if codingAgentChatE2EFlags.phaseID != "" {
-		payload["phase_id"] = codingAgentChatE2EFlags.phaseID
+	if c.phaseID != "" {
+		payload["phase_id"] = c.phaseID
 	}
-	if codingAgentChatE2EFlags.workshopMode != "" {
+	if c.workshopMode != "" {
 		payload["execution_options"] = map[string]interface{}{
-			"workshop_mode": codingAgentChatE2EFlags.workshopMode,
+			"workshop_mode": c.workshopMode,
 		}
 	}
 
@@ -270,12 +298,18 @@ func (c *codingAgentChatE2EClient) startQuery(ctx context.Context, sessionID, pr
 }
 
 func (c *codingAgentChatE2EClient) waitUntilCanSteer(ctx context.Context, sessionID string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	deadline := e2eDeadline(ctx, timeout)
+	since := 0
 	for time.Now().Before(deadline) {
-		resp, _, err := c.getEvents(ctx, sessionID)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		resp, _, err := c.getEventsSince(ctx, sessionID, since)
 		if err != nil {
 			return err
 		}
+		since = advanceE2ECursor(since, resp.LastProcessedIndex)
 		if resp.CanSteer {
 			return nil
 		}
@@ -286,33 +320,39 @@ func (c *codingAgentChatE2EClient) waitUntilCanSteer(ctx context.Context, sessio
 			return err
 		}
 	}
-	return fmt.Errorf("timed out after %s", timeout)
+	return fmt.Errorf("timed out after %s", time.Since(start).Round(time.Millisecond))
 }
 
 func (c *codingAgentChatE2EClient) waitForCompletion(ctx context.Context, sessionID string) (string, string, error) {
-	var rawBuilder strings.Builder
 	var finalResult string
-	deadline := time.Now().Add(codingAgentChatE2EFlags.timeout)
+	var lastRaw string
+	start := time.Now()
+	deadline := e2eDeadline(ctx, c.timeoutOrDefault())
+	since := 0
 	for time.Now().Before(deadline) {
-		resp, raw, err := c.getEvents(ctx, sessionID)
-		if err != nil {
-			return "", rawBuilder.String(), err
+		if err := ctx.Err(); err != nil {
+			return "", lastRaw, err
 		}
-		rawBuilder.WriteString(raw)
+		resp, raw, err := c.getEventsSince(ctx, sessionID, since)
+		if err != nil {
+			return "", lastRaw, err
+		}
+		lastRaw = raw
+		since = advanceE2ECursor(since, resp.LastProcessedIndex)
 		if extracted := extractUnifiedCompletionFinal(resp.Events); extracted != "" {
 			finalResult = extracted
 		}
 		switch resp.SessionStatus {
 		case "completed":
-			return finalResult, rawBuilder.String(), nil
+			return finalResult, lastRaw, nil
 		case "error", "stopped":
-			return finalResult, rawBuilder.String(), fmt.Errorf("session ended with status %s; final=%q", resp.SessionStatus, finalResult)
+			return finalResult, lastRaw, fmt.Errorf("session ended with status %s; final=%q", resp.SessionStatus, finalResult)
 		}
 		if err := sleepContext(ctx, time.Second); err != nil {
-			return "", rawBuilder.String(), err
+			return "", lastRaw, err
 		}
 	}
-	return finalResult, rawBuilder.String(), fmt.Errorf("timed out waiting for session completion")
+	return finalResult, lastRaw, fmt.Errorf("timed out waiting for session completion after %s", time.Since(start).Round(time.Millisecond))
 }
 
 type codingAgentEventsResponse struct {
@@ -344,7 +384,14 @@ type codingAgentTerminalStatus struct {
 }
 
 func (c *codingAgentChatE2EClient) getEvents(ctx context.Context, sessionID string) (*codingAgentEventsResponse, string, error) {
-	endpoint := fmt.Sprintf("/api/sessions/%s/events?since=0", url.PathEscape(sessionID))
+	return c.getEventsSince(ctx, sessionID, 0)
+}
+
+func (c *codingAgentChatE2EClient) getEventsSince(ctx context.Context, sessionID string, since int) (*codingAgentEventsResponse, string, error) {
+	if since < 0 {
+		since = 0
+	}
+	endpoint := fmt.Sprintf("/api/sessions/%s/events?since=%d", url.PathEscape(sessionID), since)
 	var resp codingAgentEventsResponse
 	raw, err := c.doJSONRaw(ctx, http.MethodGet, endpoint, sessionID, nil, &resp)
 	if err != nil {
@@ -354,9 +401,13 @@ func (c *codingAgentChatE2EClient) getEvents(ctx context.Context, sessionID stri
 }
 
 func (c *codingAgentChatE2EClient) waitForDerivedTerminalStatus(ctx context.Context, sessionID string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	deadline := e2eDeadline(ctx, timeout)
 	for time.Now().Before(deadline) {
-		resp, raw, err := c.getTerminals(ctx, sessionID)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		resp, _, err := c.getTerminals(ctx, sessionID)
 		if err != nil {
 			return err
 		}
@@ -371,14 +422,11 @@ func (c *codingAgentChatE2EClient) waitForDerivedTerminalStatus(ctx context.Cont
 				return nil
 			}
 		}
-		if strings.Contains(raw, `"active":true`) && strings.Contains(raw, `"status"`) {
-			return nil
-		}
 		if err := sleepContext(ctx, 750*time.Millisecond); err != nil {
 			return err
 		}
 	}
-	return fmt.Errorf("timed out after %s", timeout)
+	return fmt.Errorf("timed out after %s", time.Since(start).Round(time.Millisecond))
 }
 
 func (c *codingAgentChatE2EClient) getTerminals(ctx context.Context, sessionID string) (*codingAgentTerminalsResponse, string, error) {
@@ -479,41 +527,98 @@ func extractUnifiedCompletionFinal(events []map[string]interface{}) string {
 		if fmt.Sprint(events[i]["type"]) != "unified_completion" {
 			continue
 		}
-		if value := findStringField(events[i], "final_result"); value != "" {
+		if value := eventPayloadString(events[i], "final_result"); value != "" {
 			return value
 		}
 	}
 	return ""
 }
 
-func findStringField(value interface{}, key string) string {
-	switch typed := value.(type) {
-	case map[string]interface{}:
-		if direct, ok := typed[key].(string); ok && direct != "" {
-			return direct
-		}
-		for _, child := range typed {
-			if found := findStringField(child, key); found != "" {
-				return found
+func (c *codingAgentChatE2EClient) sessionEventsProveProvider(ctx context.Context, sessionID, provider string) (bool, error) {
+	if provider == "" {
+		return true, nil
+	}
+	resp, _, err := c.getEvents(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+	return eventsProveProvider(resp.Events, provider), nil
+}
+
+func eventsProveProvider(events []map[string]interface{}, provider string) bool {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return true
+	}
+	for _, event := range events {
+		switch fmt.Sprint(event["type"]) {
+		case "agent_start", "llm_generation_start", "model_change", "unified_completion":
+			if eventPayloadString(event, "provider") == provider {
+				return true
+			}
+			if metadataMap := eventPayloadMap(event, "metadata"); metadataMap != nil {
+				if fmt.Sprint(metadataMap["provider"]) == provider {
+					return true
+				}
 			}
 		}
-	case []interface{}:
-		for _, child := range typed {
-			if found := findStringField(child, key); found != "" {
-				return found
-			}
+	}
+	return false
+}
+
+func (c *codingAgentChatE2EClient) assertAssistantCompletionAfter(ctx context.Context, sessionID string, since int, needle string) error {
+	resp, raw, err := c.getEventsSince(ctx, sessionID, since)
+	if err != nil {
+		return err
+	}
+	for _, event := range resp.Events {
+		if fmt.Sprint(event["type"]) != "unified_completion" {
+			continue
+		}
+		if strings.Contains(eventPayloadString(event, "final_result"), needle) {
+			return nil
+		}
+	}
+	return fmt.Errorf("no unified_completion after event index %d contained %q; raw=%s", since, needle, truncateE2E(raw, 1500))
+}
+
+func eventPayloadString(event map[string]interface{}, key string) string {
+	if event == nil || key == "" {
+		return ""
+	}
+	for _, payload := range eventPayloadCandidates(event) {
+		if value, ok := payload[key].(string); ok && strings.TrimSpace(value) != "" {
+			return value
 		}
 	}
 	return ""
 }
 
-func rawContainsProvider(raw, provider string) bool {
-	if provider == "" {
-		return true
+func eventPayloadMap(event map[string]interface{}, key string) map[string]interface{} {
+	if event == nil || key == "" {
+		return nil
 	}
-	compactNeedle := fmt.Sprintf(`"provider":"%s"`, provider)
-	spacedNeedle := fmt.Sprintf(`"provider": "%s"`, provider)
-	return strings.Contains(raw, compactNeedle) || strings.Contains(raw, spacedNeedle)
+	for _, payload := range eventPayloadCandidates(event) {
+		if value, ok := payload[key].(map[string]interface{}); ok {
+			return value
+		}
+	}
+	return nil
+}
+
+func eventPayloadCandidates(event map[string]interface{}) []map[string]interface{} {
+	var candidates []map[string]interface{}
+	if event == nil {
+		return candidates
+	}
+	candidates = append(candidates, event)
+	if data, ok := event["data"].(map[string]interface{}); ok {
+		candidates = append(candidates, data)
+		if nested, ok := data["data"].(map[string]interface{}); ok {
+			candidates = append(candidates, nested)
+		}
+	}
+	return candidates
 }
 
 func splitCSVOrDefault(value string, fallback []string) []string {
@@ -528,6 +633,41 @@ func splitCSVOrDefault(value string, fallback []string) []string {
 		return fallback
 	}
 	return out
+}
+
+func coalesceE2EString(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
+}
+
+func (c *codingAgentChatE2EClient) timeoutOrDefault() time.Duration {
+	if c != nil && c.timeout > 0 {
+		return c.timeout
+	}
+	if codingAgentChatE2EFlags.timeout > 0 {
+		return codingAgentChatE2EFlags.timeout
+	}
+	return 6 * time.Minute
+}
+
+func e2eDeadline(ctx context.Context, timeout time.Duration) time.Time {
+	if timeout <= 0 {
+		timeout = 6 * time.Minute
+	}
+	deadline := time.Now().Add(timeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		return ctxDeadline
+	}
+	return deadline
+}
+
+func advanceE2ECursor(current, next int) int {
+	if next > current {
+		return next
+	}
+	return current
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

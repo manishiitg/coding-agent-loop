@@ -49,9 +49,9 @@ func TestEffectiveModelIDFromTokenEventPicksRightKey(t *testing.T) {
 		{
 			name: "gemini_model (structured)",
 			gi: map[string]interface{}{
-				"gemini_model": "gemini-2.5-flash",
+				"gemini_model": "gemini-3-flash-preview",
 			},
-			want: "gemini-2.5-flash",
+			want: "gemini-3-flash-preview",
 		},
 		{
 			name: "cursor_model",
@@ -78,6 +78,28 @@ func TestEffectiveModelIDFromTokenEventPicksRightKey(t *testing.T) {
 			ev := &events.TokenUsageEvent{GenerationInfo: tc.gi}
 			if got := effectiveModelIDFromTokenEvent(ev); got != tc.want {
 				t.Fatalf("effectiveModelIDFromTokenEvent = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolvePricingProviderAndModelUsesGemini3Aliases(t *testing.T) {
+	cases := []struct {
+		model string
+		want  string
+	}{
+		{model: "", want: "gemini-3.1-pro-preview"},
+		{model: "auto", want: "gemini-3.1-pro-preview"},
+		{model: "gemini-cli", want: "gemini-3.1-pro-preview"},
+		{model: "pro", want: "gemini-3.1-pro-preview"},
+		{model: "flash", want: "gemini-3-flash-preview"},
+		{model: "flash-lite", want: "gemini-3.1-flash-lite-preview"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model, func(t *testing.T) {
+			gotProvider, gotModel := resolvePricingProviderAndModel("gemini-cli", tc.model)
+			if gotProvider != "vertex" || gotModel != tc.want {
+				t.Fatalf("resolvePricingProviderAndModel(gemini-cli, %q) = (%q, %q), want (vertex, %q)", tc.model, gotProvider, gotModel, tc.want)
 			}
 		})
 	}

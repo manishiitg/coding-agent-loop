@@ -1,5 +1,6 @@
 import React, { useMemo, useCallback, useRef, useEffect, forwardRef, useState } from 'react'
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
+import { WorkflowToolbar, WorkflowToolbarPopups, type WorkflowToolbarPopup } from './canvas/WorkflowToolbar'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
 import { useChatStore, waitForChatStoreHydration, type ChatTab } from '../../stores/useChatStore'
@@ -23,6 +24,9 @@ import {
   REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
   REPORT_PREVIEW_PREFERENCE_KEY,
 } from './ReportViewer'
+import { usePlanData } from './hooks/usePlanData'
+import { useWorkspaceState } from './hooks/useWorkspaceState'
+import { useWorkflowExecution } from './hooks/useWorkflowExecution'
 
 // Helper component to get observerId and render ChatArea
 // Always renders ChatArea (even without observerId) so it can handle initialization
@@ -398,7 +402,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 }) => {
   const { selectedModeCategory } = useModeStore()
   // Narrow selectors: bare useChatStore() re-renders on every store update (10x/sec with 2 parallel sessions)
-  const currentWorkflowPhase = useChatStore(state => state.currentWorkflowPhase)
   const setCurrentWorkflowPhase = useChatStore(state => state.setCurrentWorkflowPhase)
   const activeSessionId = useChatStore(state => {
     const tab = state.activeTabId ? state.chatTabs[state.activeTabId] : undefined
@@ -406,7 +409,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   })
 
   // Use workflow store for UI state (single source of truth)
-  const activePhase = useWorkflowStore(state => state.activePhase)
   const showChatArea = useWorkflowStore(state => state.showChatArea)
   const showWorkspacePane = useWorkflowStore(state => state.showWorkspacePane)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
@@ -467,6 +469,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const setStepOverride = useWorkflowStore(state => state.setStepOverride)
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
   const variablesManifest = useWorkflowStore(state => state.variablesManifest)
+  const runFolders = useWorkflowStore(state => state.runFolders)
   const { fetchFiles, setExpandedFolders } = useWorkspaceStore()
   // Subscribe to workspace minimized state so we can skip fetches when panel is hidden
   const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
@@ -578,6 +581,44 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [showResumeHint, workspacePath])
 
+  const toolbarPlanData = usePlanData(workspacePath)
+  const {
+    state: toolbarWorkspaceState,
+    loading: isToolbarWorkspaceStateLoading,
+    refresh: refreshToolbarWorkspaceState,
+  } = useWorkspaceState(workspacePath, selectedRunFolder)
+  const { status: workflowExecutionStatus } = useWorkflowExecution()
+  const [activeToolbarPopup, setActiveToolbarPopup] = useState<WorkflowToolbarPopup>(null)
+
+  const toolbarPlan = toolbarPlanData.plan
+  const toolbarVariablesManifest = toolbarWorkspaceState?.variables_manifest || variablesManifest
+  const toolbarRunFolders = useMemo(() => {
+    if (toolbarWorkspaceState?.run_folders) {
+      return toolbarWorkspaceState.run_folders.map(folder => ({ name: folder.name }))
+    }
+    return runFolders
+  }, [toolbarWorkspaceState?.run_folders, runFolders])
+
+  const closeToolbarPopup = useCallback(() => {
+    setActiveToolbarPopup(null)
+  }, [])
+
+  // Close toolbar popups only on concrete workflow switches. During streaming,
+  // the canvas/chat panes can remount, but this layout state stays stable.
+  const prevToolbarPopupWorkspacePathRef = useRef<string | null>(workspacePath ?? null)
+  useEffect(() => {
+    if (!workspacePath) {
+      return
+    }
+    if (
+      prevToolbarPopupWorkspacePathRef.current &&
+      prevToolbarPopupWorkspacePathRef.current !== workspacePath
+    ) {
+      closeToolbarPopup()
+    }
+    prevToolbarPopupWorkspacePathRef.current = workspacePath
+  }, [workspacePath, closeToolbarPopup])
+
   const [reportPreviewPreference, setReportPreviewPreference] = useState<'auto' | 'desktop' | 'tablet' | 'mobile'>(() => {
     try {
       const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
@@ -666,22 +707,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     ? 'flex-1 min-h-0 flex flex-col'
     : !workspacePaneVisible
       ? 'flex-1 min-h-0 flex flex-col'
-      : previewPaneTier === 'mobile'
-        ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_480px] md:grid-rows-[auto_minmax(0,1fr)]'
+    : previewPaneTier === 'mobile'
+        ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_480px]'
         : previewPaneTier === 'tablet'
-          ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]'
+          ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'
           : previewPaneTier === 'laptop'
-            ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]'
-            : 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(320px,0.9fr)_minmax(360px,1.1fr)] md:grid-rows-[auto_minmax(0,1fr)]'
+            ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)]'
+            : 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(320px,0.9fr)_minmax(360px,1.1fr)]'
   const canvasPaneClassName = !showChatArea
     ? 'flex-1 min-h-0 min-w-0 transition-all duration-300'
     : !workspacePaneVisible
     ? 'hidden'
     : previewPaneTier === 'mobile'
-        ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:row-start-2 md:w-[480px] md:flex-none'
+        ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:w-[480px] md:flex-none'
         : previewPaneTier === 'tablet'
-          ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:row-start-2 md:w-full md:flex-none'
-          : 'min-h-0 min-w-0 transition-all duration-300 md:col-start-2 md:row-start-2'
+          ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:w-full md:flex-none'
+          : 'min-h-0 min-w-0 transition-all duration-300 md:col-start-2'
 
   // Load execution_defaults from workflow.json when workspace changes
   useEffect(() => {
@@ -1417,24 +1458,13 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     handleStartPhase(phaseId)
   }, [handleStartPhase, setShowChatArea, activePresetId])
 
-  const handleToggleChatArea = useCallback(() => {
-    const newShow = !showChatArea
-    if (newShow) {
-      // Ensure a workflow tab is active when showing the chat panel
-      // (activeTabId might point to a chat/multi-agent tab from a different mode)
-      const chatStore = useChatStore.getState()
-      const activeTab = chatStore.getActiveTab()
-      if (!activeTab || activeTab.metadata?.mode !== 'workflow') {
-        const workflowTabs = Object.values(chatStore.chatTabs)
-          .filter(t => t.metadata?.mode === 'workflow')
-          .sort((a, b) => b.createdAt - a.createdAt)
-        if (workflowTabs.length > 0) {
-          chatStore.switchTab(workflowTabs[0].tabId)
-        }
-      }
-    }
-    setShowChatArea(newShow)
-  }, [showChatArea, setShowChatArea])
+  const handleToolbarRefresh = useCallback(async () => {
+    await Promise.all([
+      toolbarPlanData.refresh(),
+      refreshToolbarWorkspaceState(),
+      canvasRef.current?.refresh() ?? Promise.resolve(null),
+    ])
+  }, [toolbarPlanData, refreshToolbarWorkspaceState])
 
   // Minimize chat area when drawer opens to reduce renders and stop event processing
   // Open chat area when drawer closes (but not on initial mount)
@@ -1487,28 +1517,42 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       ref={canvasRef}
       workspacePath={workspacePath}
       presetQueryId={activePresetId}
-      currentPhase={activePhase || currentWorkflowPhase}
-      onStartPhase={handleStartPhase}
       onCreatePlan={onCreatePlan || handleCreatePlan}
       showChatArea={showChatArea}
-      toolbarOnly={!workspacePaneVisible && showChatArea}
-      sharedToolbar={showChatArea}
       paneClassName={canvasPaneClassName}
-      onToggleChatArea={handleToggleChatArea}
       className={showChatArea && !workspacePaneVisible ? '!h-auto shrink-0' : 'h-full'}
     />
   )
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
+      <WorkflowToolbar
+        status={workflowExecutionStatus}
+        hasPlan={Boolean(toolbarPlan?.steps?.length)}
+        workspacePath={workspacePath}
+        presetQueryId={activePresetId}
+        variablesManifest={toolbarVariablesManifest}
+        isLoadingWorkspaceState={isToolbarWorkspaceStateLoading}
+        onStartPhase={handleStartPhase}
+        showChatArea={showChatArea}
+        onOpenPopup={setActiveToolbarPopup}
+      />
+      <WorkflowToolbarPopups
+        activePopup={activeToolbarPopup}
+        onClose={closeToolbarPopup}
+        workspacePath={workspacePath}
+        plan={toolbarPlan}
+        runFolders={toolbarRunFolders}
+        variablesManifest={toolbarVariablesManifest}
+        onRefresh={handleToolbarRefresh}
+      />
+
       {/* Main Content */}
       <div className={splitLayoutClassName}>
-        {showChatArea && !workspacePaneVisible && canvasElement}
-
         {showChatArea && (
           <div data-tour="workflow-chat-pane" data-testid="tour-workflow-chat-pane" className={`${chatPaneVisibilityClass} min-h-0 min-w-0 flex-col bg-background transition-all duration-300 ${
             workspacePaneVisible
-              ? `border-b border-border md:col-start-1 md:row-start-2 md:border-b-0 md:border-r ${shouldUseMobileReportPane ? 'flex-1 md:flex-[1.35]' : 'flex-1 basis-1/2'}`
+              ? `border-b border-border md:col-start-1 md:border-b-0 md:border-r ${shouldUseMobileReportPane ? 'flex-1 md:flex-[1.35]' : 'flex-1 basis-1/2'}`
               : 'flex-1'
           }`}>
             <div className="flex-shrink-0">

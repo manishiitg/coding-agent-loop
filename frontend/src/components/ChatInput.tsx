@@ -2387,15 +2387,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }, 0)
     }
 
-    // Queue-aware onSubmit. When the builder is currently streaming a previous
-    // message, slash-command prompts must respect the same queue that regular
-    // text submissions use (lines ~2198 and ~2254). Without this wrap, slash
-    // commands raced the in-flight conversation and submitted immediately —
-    // inconsistent with how Enter-on-text behaves.
+    // Queue-aware onSubmit. Non-coding agents cannot accept another turn while
+    // streaming, so slash-command prompts go through the normal queue. Coding
+    // agent CLIs are different: their live tmux session accepts follow-up input,
+    // so slash commands should be delivered immediately just like regular text.
     const queueAwareOnSubmit = (query: string) => {
       const trimmed = query?.trim()
       if (!trimmed) return
       if (isStreaming) {
+        if (supportsLiveCodingAgentInput && tabSessionId) {
+          void sendLiveCodingAgentMessage(trimmed)
+          return
+        }
         const currentQueued = tabConfig?.queuedMessages || []
         setTabConfig(activeTabId, {
           inputText: '',
@@ -2429,7 +2432,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       workshopMode: effectiveModes.workshopMode,
       workflowPhaseId
     }
-  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, onSubmit, openDialog, openResumeDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
+  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, supportsLiveCodingAgentInput, sendLiveCodingAgentMessage, onSubmit, openDialog, openResumeDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
 
   const getCommandValidationError = useCallback((cmd: CommandDefinition, beforeSlash: string) => {
     if (!cmd.validate) return null

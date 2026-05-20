@@ -49,6 +49,8 @@ var NEVER_SHOW_EVENTS = map[string]bool{
 // NOTE: llm_generation_end is NOT filtered — ChatInput uses it as fallback for the
 // context usage circle (token_usage with conversation_total is not emitted by all providers).
 // The frontend hides it from the event list display via its own HIDDEN_EVENTS.
+// NOTE: agent_error and batch_execution_canceled are NOT filtered — both are
+// user-visible terminal signals for flat and tree event views.
 // step_progress_updated is NOT in this list because it's required for React Flow canvas
 // node highlighting - it must always be sent to frontend for workflow mode to function correctly.
 var HIDDEN_EVENTS = map[string]bool{
@@ -58,8 +60,6 @@ var HIDDEN_EVENTS = map[string]bool{
 	"conversation_turn":         true,
 	"system_prompt":             true,
 	"agent_start":               true,
-	"agent_error":               true,
-	"batch_execution_canceled":  true,
 }
 
 // MaxPollingLimit is the maximum number of events returned in a single polling request
@@ -71,6 +71,51 @@ const MaxPollingLimit = 1000 // Match frontend MAX_EVENTS limit
 // Set to 300 to accommodate parallel multi-agent workflows where hierarchy-defining events
 // (orchestrator_agent_start, delegation_start) may be far back in the event stream
 const InitialEventsLimit = 300
+
+// STRUCTURAL_EVENTS are required to preserve hierarchy and important terminal
+// state even when the initial event window is capped.
+var STRUCTURAL_EVENTS = map[string]bool{
+	"agent_end":                   true,
+	"agent_error":                 true,
+	"background_agent_completed":  true,
+	"background_agent_failed":     true,
+	"background_agent_started":    true,
+	"background_agent_terminated": true,
+	"batch_execution_canceled":    true,
+	"batch_execution_end":         true,
+	"batch_execution_start":       true,
+	"batch_group_end":             true,
+	"batch_group_start":           true,
+	"blocking_human_feedback":     true,
+	"context_cancelled":           true,
+	"conversation_end":            true,
+	"conversation_error":          true,
+	"conversation_resumed":        true,
+	"delegation_end":              true,
+	"delegation_start":            true,
+	"learn_code_script_execution": true,
+	"orchestrator_agent_end":      true,
+	"orchestrator_agent_error":    true,
+	"orchestrator_agent_start":    true,
+	"orchestrator_end":            true,
+	"orchestrator_error":          true,
+	"orchestrator_start":          true,
+	"plan_approval":               true,
+	"pre_validation_completed":    true,
+	"request_human_feedback":      true,
+	"routing_evaluated":           true,
+	"todo_task_item_completed":    true,
+	"todo_task_item_created":      true,
+	"todo_task_item_updated":      true,
+	"todo_task_route_selected":    true,
+	"todo_task_status_update":     true,
+	"todo_task_step_completed":    true,
+	"unified_completion":          true,
+	"user_message":                true,
+	"workflow_end":                true,
+	"workflow_error":              true,
+	"workflow_start":              true,
+}
 
 // ShouldShowEvent checks if an event should be shown in the UI
 func ShouldShowEvent(eventType string) bool {
@@ -90,6 +135,21 @@ func shouldReturnEvent(eventType string, includeStreaming bool) bool {
 		return true
 	}
 	return ShouldShowEvent(eventType)
+}
+
+func preserveInitialStructuralEvents(filteredEvents []Event, limit int) []Event {
+	if limit <= 0 || len(filteredEvents) <= limit {
+		return filteredEvents
+	}
+
+	startPos := len(filteredEvents) - limit
+	result := make([]Event, 0, limit)
+	for i, event := range filteredEvents {
+		if i >= startPos || STRUCTURAL_EVENTS[event.Type] {
+			result = append(result, event)
+		}
+	}
+	return result
 }
 
 // Event represents a generic event that can be stored and retrieved
@@ -795,14 +855,11 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 				lastProcessedIndex = baseIndex + len(events) - 1
 				hasMore = false
 			} else {
-				// sinceIndex=0: Apply initial limit
-				startPos := len(filteredEvents) - InitialEventsLimit
-				if startPos < 0 {
-					startPos = 0
-				}
-				result = filteredEvents[startPos:]
+				// sinceIndex=0: Apply initial limit while keeping older structural
+				// events that are needed to render tree and flat context correctly.
+				result = preserveInitialStructuralEvents(filteredEvents, InitialEventsLimit)
 				lastProcessedIndex = baseIndex + len(events) - 1
-				hasMore = startPos > 0
+				hasMore = len(result) < len(filteredEvents)
 			}
 		} else {
 			nextFilteredPos := filteredCountUpToSinceIndex

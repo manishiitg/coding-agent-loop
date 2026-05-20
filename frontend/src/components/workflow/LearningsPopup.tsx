@@ -129,6 +129,11 @@ const getMarkdownLinkedGlobalPaths = (content: string): Set<string> => {
   return linked
 }
 
+const isPatchArtifactPath = (filepath: string): boolean => {
+  const normalized = normalizeGlobalSkillRelPath(filepath).toLowerCase()
+  return normalized.endsWith('.orig') || normalized.endsWith('.rej')
+}
+
 // Get step title from plan
 function getStepTitle(plan: PlanningResponse | null, stepId: string): string {
   if (stepId === '_global') return 'Workflow Knowledge (Global)'
@@ -333,6 +338,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
           if (!relPath || relPath === 'SKILL.md') continue
           if (relPath.endsWith('.learning_metadata.json')) continue
+          if (isPatchArtifactPath(relPath)) continue
           if (relPath.endsWith('/')) continue
           if (linkedGlobalPaths.has(relPath)) continue
           // Safety: only include files we can place under _global/. If relFromGlobal

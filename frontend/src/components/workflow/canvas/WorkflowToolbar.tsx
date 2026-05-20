@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo, useCallback, useState } from 'react'
+import React, { useEffect, useMemo, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
   Square,
@@ -55,51 +55,154 @@ const isActiveRuntimeSession = (session?: ActiveSessionInfo | null): boolean => 
 interface WorkflowToolbarProps {
   status: WorkflowExecutionStatus
   hasPlan: boolean
-  plan?: PlanningResponse | null  // Plan data for identifying conditional steps and branches
-  currentPhase?: string
   workspacePath?: string | null
   presetQueryId?: string | null  // Used to persist settings per workflow
-  // API data passed as props (avoids store subscription issues)
-  runFolders: RunFolder[]
   variablesManifest: VariablesManifest | null
   isLoadingWorkspaceState?: boolean  // Whether workspace state (iterations, manifest) is loading
   onStartPhase: (phaseId: string, executionOptions?: ExecutionOptions) => void
-  onCreatePlan: () => void
   showChatArea?: boolean
-  onToggleChatArea?: () => void
-  onRefresh?: () => Promise<void>  // Refresh plan and variables
+  onOpenPopup: (popup: WorkflowToolbarPopup) => void
   className?: string
+}
+
+export type WorkflowToolbarPopup =
+  | 'autoImprovement'
+  | 'costs'
+  | 'logs'
+  | 'learnings'
+  | 'kb'
+  | 'database'
+  | 'versions'
+  | 'access'
+  | null
+
+interface WorkflowToolbarPopupsProps {
+  activePopup: WorkflowToolbarPopup
+  onClose: () => void
+  workspacePath?: string | null
+  plan?: PlanningResponse | null
+  runFolders: RunFolder[]
+  variablesManifest: VariablesManifest | null
+  onRefresh?: () => Promise<void>
+}
+
+export const WorkflowToolbarPopups: React.FC<WorkflowToolbarPopupsProps> = ({
+  activePopup,
+  onClose,
+  workspacePath,
+  plan,
+  runFolders,
+  variablesManifest,
+  onRefresh,
+}) => {
+  const fetchFiles = useWorkspaceStore(state => state.fetchFiles)
+  const {
+    selectedRunFolder,
+    selectedGroupIds,
+    currentRunningGroupId,
+  } = useWorkflowStore(useShallow(state => ({
+    selectedRunFolder: state.selectedRunFolder,
+    selectedGroupIds: state.selectedGroupIds,
+    currentRunningGroupId: state.currentRunningGroupId,
+  })))
+
+  const contextRunFolder = useMemo(() => {
+    const resolved = resolveGroupFolderPath({
+      currentRunningGroupId,
+      selectedRunFolder,
+      selectedGroupIds,
+      manifest: variablesManifest
+    })
+    return resolved || selectedRunFolder
+  }, [currentRunningGroupId, selectedRunFolder, selectedGroupIds, variablesManifest])
+
+  const runFoldersNames = useMemo(() => {
+    return (runFolders ?? []).map(rf => rf.name)
+  }, [runFolders])
+
+  return (
+    <>
+      <LearningsPopup
+        isOpen={activePopup === 'learnings'}
+        onClose={onClose}
+        workspacePath={workspacePath || null}
+        plan={plan || null}
+      />
+
+      <KBPopup
+        isOpen={activePopup === 'kb'}
+        onClose={onClose}
+        workspacePath={workspacePath || null}
+      />
+
+      <DatabasePopup
+        isOpen={activePopup === 'database'}
+        onClose={onClose}
+        workspacePath={workspacePath || null}
+      />
+
+      <CostsPopup
+        isOpen={activePopup === 'costs'}
+        onClose={onClose}
+        workspacePath={workspacePath || null}
+        runFolders={runFoldersNames}
+        selectedRunFolder={contextRunFolder}
+      />
+
+      <ExecutionLogsPopup
+        isOpen={activePopup === 'logs'}
+        onClose={onClose}
+        workspacePath={workspacePath || null}
+        runFolder={contextRunFolder}
+        runFolders={runFoldersNames}
+      />
+
+      <AutoImprovementPopup
+        isOpen={activePopup === 'autoImprovement'}
+        onClose={onClose}
+        workspacePath={workspacePath || null}
+        selectedRunFolder={contextRunFolder}
+      />
+
+      <WorkflowVersionsPopup
+        isOpen={activePopup === 'versions'}
+        onClose={onClose}
+        workspacePath={workspacePath || null}
+        onRefresh={async () => {
+          if (onRefresh) await onRefresh()
+          fetchFiles()
+        }}
+      />
+
+      <WorkflowAccessPopup
+        isOpen={activePopup === 'access'}
+        onClose={onClose}
+      />
+    </>
+  )
 }
 
 export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   status,
   hasPlan,
-  plan,
   workspacePath,
   presetQueryId,
-  runFolders,
   variablesManifest,
   isLoadingWorkspaceState = false,
   onStartPhase,
   showChatArea = false,
-  onRefresh,
+  onOpenPopup,
   className = ''
 }) => {
-  // Normalize runFolders to avoid repeated null checks throughout the component
-  const folders = useMemo(() => runFolders ?? [], [runFolders])
   const canWriteWorkflow = useAuthStore(state => hasWorkflowWriteAccess(state.user, state.isMultiUserMode))
   const canManageAccess = useAuthStore(state => state.isMultiUserMode && hasWorkflowOwnerAccess(state.user, state.isMultiUserMode))
 
-  // Workspace store for opening folders
-  const fetchFiles = useWorkspaceStore(state => state.fetchFiles)
-
   // Workflow store - use useShallow to prevent unnecessary re-renders
-  // Note: runFolders, variablesManifest come from props (passed from WorkflowCanvas)
+  // Note: variablesManifest comes from props (passed from WorkflowLayout)
   const {
     selectedRunFolder,
     selectedGroupIds,
     currentRunningGroupId,
-    buildExecutionOptions,
     loadSavedSettings,
     setSelectedGroupIds,
     restoreSelectionFromLocalStorage,
@@ -110,7 +213,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     selectedRunFolder: state.selectedRunFolder,
     selectedGroupIds: state.selectedGroupIds,
     currentRunningGroupId: state.currentRunningGroupId,
-    buildExecutionOptions: state.buildExecutionOptions,
     loadSavedSettings: state.loadSavedSettings,
     setSelectedGroupIds: state.setSelectedGroupIds,
     restoreSelectionFromLocalStorage: state.restoreSelectionFromLocalStorage,
@@ -118,66 +220,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     workflowWorkspaceView: state.workflowWorkspaceView,
     canvasViewMode: state.canvasViewMode,
   })))
-
-  // Reset start point when switching away from plan mode
-  // Calculate the best run folder to use for popups (context-aware)
-  // Priority: currentRunningGroupId > selectedRunFolder (if group path) > first selectedGroupIds
-  const contextRunFolder = useMemo(() => {
-    const resolved = resolveGroupFolderPath({
-      currentRunningGroupId,
-      selectedRunFolder,
-      selectedGroupIds,
-      manifest: variablesManifest
-    })
-    return resolved || selectedRunFolder
-  }, [currentRunningGroupId, selectedRunFolder, selectedGroupIds, variablesManifest])
-  
-  // Memoize runFolders array to prevent unnecessary re-renders in popups
-  const runFoldersNames = useMemo(() => {
-    return folders.map(rf => rf.name)
-  }, [folders])
-  
-  
-  // Learnings popup state
-  const [showLearningsPopup, setShowLearningsPopup] = useState(false)
-  const [showKBPopup, setShowKBPopup] = useState(false)
-  const [showDatabasePopup, setShowDatabasePopup] = useState(false)
-
-  // Execution logs popup state
-  const [showExecutionLogsPopup, setShowExecutionLogsPopup] = useState(false)
-
-  // Costs popup state
-  const [showCostsPopup, setShowCostsPopup] = useState(false)
-
-  const [showAutoImprovementPopup, setShowAutoImprovementPopup] = useState(false)
-
-  // Versions popup state
-  const [showVersionsPopup, setShowVersionsPopup] = useState(false)
-  const [showAccessPopup, setShowAccessPopup] = useState(false)
-
-  const closeAllPopups = useCallback(() => {
-    setShowLearningsPopup(false)
-    setShowKBPopup(false)
-    setShowDatabasePopup(false)
-    setShowExecutionLogsPopup(false)
-    setShowCostsPopup(false)
-    setShowVersionsPopup(false)
-    setShowAutoImprovementPopup(false)
-  }, [])
-  
-  // Close popups only when switching between two concrete workflows.
-  // Preset refreshes can briefly unset workspacePath; treating that as a switch
-  // closes every toolbar popup even though the user is still on the same workflow.
-  const prevWorkspacePathRef = useRef<string | null>(workspacePath ?? null)
-  useEffect(() => {
-    if (!workspacePath) {
-      return
-    }
-    if (prevWorkspacePathRef.current && prevWorkspacePathRef.current !== workspacePath) {
-      closeAllPopups()
-    }
-    prevWorkspacePathRef.current = workspacePath
-  }, [workspacePath, closeAllPopups])
   
   // Main workflow execution phase for the canvas toolbar
   const targetExecutionPhaseId = EXECUTION_PHASE_ID
@@ -489,7 +531,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setShowAutoImprovementPopup(true)}
+                onClick={() => onOpenPopup('autoImprovement')}
                 className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <Beaker className="w-3.5 h-3.5" />
@@ -504,7 +546,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setShowCostsPopup(true)}
+                onClick={() => onOpenPopup('costs')}
                 className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <DollarSign className="w-3.5 h-3.5" />
@@ -519,7 +561,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setShowExecutionLogsPopup(true)}
+                onClick={() => onOpenPopup('logs')}
                 className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <FileText className="w-3.5 h-3.5" />
@@ -534,7 +576,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setShowLearningsPopup(true)}
+                onClick={() => onOpenPopup('learnings')}
                 className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <BookOpen className="w-3.5 h-3.5" />
@@ -549,7 +591,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setShowKBPopup(true)}
+                onClick={() => onOpenPopup('kb')}
                 className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <Database className="w-3.5 h-3.5" />
@@ -564,7 +606,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setShowDatabasePopup(true)}
+                onClick={() => onOpenPopup('database')}
                 className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <Table2 className="w-3.5 h-3.5" />
@@ -579,7 +621,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setShowVersionsPopup(true)}
+                onClick={() => onOpenPopup('versions')}
                 className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <Package className="w-3.5 h-3.5" />
@@ -594,7 +636,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setShowAccessPopup(true)}
+                onClick={() => onOpenPopup('access')}
                 className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
@@ -622,70 +664,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         </TooltipProvider>
       </div>
     </div>
-    {/* Learnings Popup */}
-    <LearningsPopup
-      isOpen={showLearningsPopup}
-      onClose={() => setShowLearningsPopup(false)}
-      workspacePath={workspacePath || null}
-      plan={plan || null}
-    />
-
-    {/* Knowledgebase Popup */}
-    <KBPopup
-      isOpen={showKBPopup}
-      onClose={() => setShowKBPopup(false)}
-      workspacePath={workspacePath || null}
-    />
-
-    {/* Database Popup */}
-    <DatabasePopup
-      isOpen={showDatabasePopup}
-      onClose={() => setShowDatabasePopup(false)}
-      workspacePath={workspacePath || null}
-    />
-
-    {/* Costs Popup */}
-    <CostsPopup
-      isOpen={showCostsPopup}
-      onClose={() => setShowCostsPopup(false)}
-      workspacePath={workspacePath || null}
-      runFolders={runFoldersNames}
-      selectedRunFolder={contextRunFolder}
-    />
-
-    {/* Execution Logs Popup */}
-    <ExecutionLogsPopup
-      isOpen={showExecutionLogsPopup}
-      onClose={() => setShowExecutionLogsPopup(false)}
-      workspacePath={workspacePath || null}
-      runFolder={contextRunFolder}
-      runFolders={runFoldersNames}
-    />
-
-    {/* Auto-improvement framework popup */}
-    <AutoImprovementPopup
-      isOpen={showAutoImprovementPopup}
-      onClose={() => setShowAutoImprovementPopup(false)}
-      workspacePath={workspacePath || null}
-      selectedRunFolder={contextRunFolder}
-    />
-
-    {/* Workflow Versions Popup */}
-    <WorkflowVersionsPopup
-      isOpen={showVersionsPopup}
-      onClose={() => setShowVersionsPopup(false)}
-      workspacePath={workspacePath || null}
-      onRefresh={async () => {
-        if (onRefresh) await onRefresh()
-        fetchFiles()
-      }}
-    />
-
-    {/* Workflow Access Popup (multi-user owners only) */}
-    <WorkflowAccessPopup
-      isOpen={showAccessPopup}
-      onClose={() => setShowAccessPopup(false)}
-    />
     </>
   )
 }

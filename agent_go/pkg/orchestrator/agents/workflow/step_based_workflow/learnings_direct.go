@@ -43,8 +43,9 @@ var learningsGlobalFileMutex sync.Mutex
 //
 // Returns empty when the step shouldn't enter direct-learnings — callers decide
 // via shouldDirectWriteLearnings before invoking this.
-func BuildLearningsContributionTurn(stepID, learningObjective string, isLearnCodeMode bool) string {
+func BuildLearningsContributionTurn(stepID, stepDescription, learningObjective string, isLearnCodeMode bool) string {
 	_ = isLearnCodeMode // retained in the signature in case future behavior diverges by mode; not currently referenced
+	description := strings.TrimSpace(stepDescription)
 	objective := strings.TrimSpace(learningObjective)
 	if stepID == "" || objective == "" {
 		return ""
@@ -55,6 +56,12 @@ func BuildLearningsContributionTurn(stepID, learningObjective string, isLearnCod
 	b.WriteString("Your main-step work is complete and pre-validation passed. Now — in this turn only — you have WRITE access to `learnings/_global/`. Your job for this turn is to capture HOW to run this task well, so future runs don't have to rediscover what you just worked out.\n\n")
 
 	b.WriteString("**Target:** `learnings/_global/SKILL.md` plus linked files under `learnings/_global/references/` — the single global runbook shared across every step of this workflow. You are appending this step's contribution, not owning the folder.\n\n")
+
+	if description != "" {
+		b.WriteString("**Current step description (source of truth for stale-learning cleanup):**\n")
+		b.WriteString(description)
+		b.WriteString("\n\n")
+	}
 
 	b.WriteString("**Frontmatter (top of SKILL.md):** preserve existing frontmatter if the file exists. If you're creating it fresh, use:\n")
 	b.WriteString("```\n")
@@ -71,9 +78,10 @@ func BuildLearningsContributionTurn(stepID, learningObjective string, isLearnCod
 	b.WriteString("2. **Patch surgically, never rewrite.** Use `diff_patch_workspace_file` for existing files. Add your observations to the topic file they belong to (e.g. `references/auth-flow.md`, `references/selectors.md`) rather than dumping them into SKILL.md. If no existing topic fits, create a new `references/<topic>.md` file. **Never rewrite SKILL.md wholesale** — you'd destroy contributions from other steps.\n")
 	b.WriteString("3. **SKILL.md stays lean (under ~80-100 lines).** It is only the index/overview: frontmatter, a brief scope note, and links to focused reference files. Detailed HOW-to-run content from this step run belongs in `references/<topic>.md`, not in SKILL.md itself.\n")
 	b.WriteString("4. **Reference files hold the details.** Store selectors, auth flows, API quirks, timing/wait rules, file-format notes, retry patterns, browser gotchas, and step-specific HOW guidance in topic files under `references/`. If you create a new reference file, add or update a short link in SKILL.md so future agents can discover it.\n")
-	b.WriteString("5. **Merge with existing knowledge, don't duplicate.** If the lesson you'd write overlaps with a pattern another step already captured in an existing references file, extend that file (append a new section, refine an existing one) rather than creating a second place for the same knowledge.\n")
-	b.WriteString("6. **No ephemeral refs.** Do not save session-local browser handles (`@e1`, `e68`, etc.) — they are useless across runs.\n")
-	b.WriteString("7. **No fabrication.** Capture only patterns you actually used in this execution. If you're unsure whether a pattern is reliable, say so explicitly in the note.\n\n")
+	b.WriteString("5. **Reconcile stale guidance.** Compare the existing reference content you touch against the current step description above, current step behavior, and this step's learning objective. If an old note clearly describes a previous step description, obsolete selector/API path, or behavior contradicted by this successful run, remove or replace that stale note in the same patch. Do not delete unrelated shared guidance just because this step didn't use it.\n")
+	b.WriteString("6. **Merge with existing knowledge, don't duplicate.** If the lesson you'd write overlaps with a pattern another step already captured in an existing references file, extend that file (append a new section, refine an existing one) rather than creating a second place for the same knowledge.\n")
+	b.WriteString("7. **No ephemeral refs.** Do not save session-local browser handles (`@e1`, `e68`, etc.) — they are useless across runs.\n")
+	b.WriteString("8. **No fabrication.** Capture only patterns you actually used in this execution. If you're unsure whether a pattern is reliable, say so explicitly in the note.\n\n")
 
 	b.WriteString("**Objective for this step's contribution (the contract):**\n")
 	b.WriteString(objective)

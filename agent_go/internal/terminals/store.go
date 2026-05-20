@@ -15,39 +15,39 @@ import (
 
 // Snapshot is the latest view-only terminal/TUI screen for one coding-agent execution.
 type Snapshot struct {
-	TerminalID       string     `json:"terminal_id"`
-	SessionID        string     `json:"session_id"`
-	OwnerID          string     `json:"owner_id,omitempty"`
-	ExecutionID      string     `json:"execution_id,omitempty"`
-	ExecutionKind    string     `json:"execution_kind,omitempty"`
-	Label            string     `json:"label,omitempty"`
-	Scope            string     `json:"scope,omitempty"`
-	WorkflowPath     string     `json:"workflow_path,omitempty"`
-	WorkflowName     string     `json:"workflow_name,omitempty"`
-	WorkflowLabel    string     `json:"workflow_label,omitempty"`
-	StepID           string     `json:"step_id,omitempty"`
-	StepName         string     `json:"step_name,omitempty"`
-	StepType         string     `json:"step_type,omitempty"`
-	StepIndex        int        `json:"step_index,omitempty"`
-	StepTotal        int        `json:"step_total,omitempty"`
-	ParentStepID     string     `json:"parent_step_id,omitempty"`
-	StepAttempt      int        `json:"step_attempt,omitempty"`
-	StepExecutionMode string    `json:"step_execution_mode,omitempty"` // "learn_code" | "code_exec"
-	StepTransport    string     `json:"step_transport,omitempty"`      // "tmux" | "structured"
-	StepTriggeredBy  string     `json:"step_triggered_by,omitempty"`   // e.g., "workflow_executor", "parent_step:X"
-	AgentName        string     `json:"agent_name,omitempty"`
-	DisplayTitle     string     `json:"display_title,omitempty"`
-	DisplayMeta      string     `json:"display_meta,omitempty"`
-	TmuxSession      string     `json:"tmux_session,omitempty"`
-	Content          string     `json:"content"`
-	ChunkIndex       int        `json:"chunk_index"`
-	Active           bool       `json:"active"`
-	State            string     `json:"state"`
-	ClosesAt         *time.Time `json:"closes_at,omitempty"`
-	RetentionSeconds int        `json:"retention_seconds,omitempty"`
-	Status           Status     `json:"status"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	TerminalID        string     `json:"terminal_id"`
+	SessionID         string     `json:"session_id"`
+	OwnerID           string     `json:"owner_id,omitempty"`
+	ExecutionID       string     `json:"execution_id,omitempty"`
+	ExecutionKind     string     `json:"execution_kind,omitempty"`
+	Label             string     `json:"label,omitempty"`
+	Scope             string     `json:"scope,omitempty"`
+	WorkflowPath      string     `json:"workflow_path,omitempty"`
+	WorkflowName      string     `json:"workflow_name,omitempty"`
+	WorkflowLabel     string     `json:"workflow_label,omitempty"`
+	StepID            string     `json:"step_id,omitempty"`
+	StepName          string     `json:"step_name,omitempty"`
+	StepType          string     `json:"step_type,omitempty"`
+	StepIndex         int        `json:"step_index,omitempty"`
+	StepTotal         int        `json:"step_total,omitempty"`
+	ParentStepID      string     `json:"parent_step_id,omitempty"`
+	StepAttempt       int        `json:"step_attempt,omitempty"`
+	StepExecutionMode string     `json:"step_execution_mode,omitempty"` // "learn_code" | "code_exec"
+	StepTransport     string     `json:"step_transport,omitempty"`      // "tmux" | "structured"
+	StepTriggeredBy   string     `json:"step_triggered_by,omitempty"`   // e.g., "workflow_executor", "parent_step:X"
+	AgentName         string     `json:"agent_name,omitempty"`
+	DisplayTitle      string     `json:"display_title,omitempty"`
+	DisplayMeta       string     `json:"display_meta,omitempty"`
+	TmuxSession       string     `json:"tmux_session,omitempty"`
+	Content           string     `json:"content"`
+	ChunkIndex        int        `json:"chunk_index"`
+	Active            bool       `json:"active"`
+	State             string     `json:"state"`
+	ClosesAt          *time.Time `json:"closes_at,omitempty"`
+	RetentionSeconds  int        `json:"retention_seconds,omitempty"`
+	Status            Status     `json:"status"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 // Status is a conservative, human-readable summary derived from the raw TUI.
@@ -337,7 +337,12 @@ func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]inte
 	defer s.mu.Unlock()
 	snapshot, ok := s.byID[terminalID]
 	if !ok {
-		return
+		var resolvedID string
+		resolvedID, snapshot, ok = s.findInactiveTargetLocked(sessionID, ownerID, metadata)
+		if !ok {
+			return
+		}
+		terminalID = resolvedID
 	}
 	state := terminalStateFromContent(snapshot.Content, false)
 	now := time.Now()
@@ -368,6 +373,63 @@ func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]inte
 	snapshot.State = state
 	snapshot.UpdatedAt = now
 	s.byID[terminalID] = snapshot
+}
+
+func (s *Store) findInactiveTargetLocked(sessionID, ownerID string, metadata map[string]interface{}) (string, Snapshot, bool) {
+	sessionTerminals := s.bySession[sessionID]
+	if len(sessionTerminals) == 0 {
+		return "", Snapshot{}, false
+	}
+
+	tmuxSession := firstNonEmpty(
+		stringValue(metadata, "tmux_session"),
+		stringValue(metadata, "tmux_session_name"),
+		stringValue(metadata, "claude_code_interactive_session"),
+		stringValue(metadata, "codex_interactive_session"),
+		stringValue(metadata, "gemini_interactive_session"),
+		stringValue(metadata, "cursor_interactive_session"),
+	)
+	stepID := firstNonEmpty(
+		workflowStepIDFromOwner(ownerID),
+		stringValue(metadata, "current_step_id"),
+		stringValue(metadata, "workflow_step_id"),
+		stringValue(metadata, "step_id"),
+	)
+
+	if tmuxSession != "" {
+		for terminalID := range sessionTerminals {
+			snapshot, ok := s.byID[terminalID]
+			if ok && snapshot.TmuxSession == tmuxSession {
+				return terminalID, snapshot, true
+			}
+		}
+	}
+
+	for terminalID := range sessionTerminals {
+		snapshot, ok := s.byID[terminalID]
+		if !ok {
+			continue
+		}
+		if ownerMatchesTerminal(ownerID, snapshot) {
+			return terminalID, snapshot, true
+		}
+		if stepID != "" && (snapshot.StepID == stepID || strings.HasSuffix(snapshot.OwnerID, ":"+stepID)) {
+			return terminalID, snapshot, true
+		}
+	}
+
+	return "", Snapshot{}, false
+}
+
+func ownerMatchesTerminal(ownerID string, snapshot Snapshot) bool {
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return false
+	}
+	return snapshot.OwnerID == ownerID ||
+		snapshot.ExecutionID == ownerID ||
+		strings.HasSuffix(snapshot.OwnerID, ":"+ownerID) ||
+		strings.HasSuffix(ownerID, ":"+snapshot.OwnerID)
 }
 
 func terminalChunk(event storeevents.Event) (string, int, map[string]interface{}, bool) {

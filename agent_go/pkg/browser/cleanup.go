@@ -23,12 +23,15 @@ func KillAllTrackedSessions() {
 	tracker.mu.Unlock()
 
 	if len(sessions) == 0 {
+		log.Printf("[BROWSER_CLEANUP] SIGTERM: no tracked browser sessions to kill")
 		return
 	}
 	log.Printf("[BROWSER_CLEANUP] SIGTERM: killing %d tracked browser session(s): %v", len(sessions), sessions)
-	for _, session := range sessions {
+	for i, session := range sessions {
+		log.Printf("[BROWSER_CLEANUP] Killing browser session %d/%d: %s", i+1, len(sessions), session)
 		killSessionRuntime(session)
 		removeSessionFiles(session)
+		log.Printf("[BROWSER_CLEANUP] Finished browser session %d/%d: %s", i+1, len(sessions), session)
 	}
 	tracker.Clear()
 	log.Printf("[BROWSER_CLEANUP] All browser sessions killed")

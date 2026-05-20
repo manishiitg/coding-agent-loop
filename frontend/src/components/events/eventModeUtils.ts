@@ -13,10 +13,7 @@ export const HIDDEN_EVENTS = new Set([
   'comprehensive_cache_event',
   'system_prompt',
   'agent_start',
-  'agent_end',
-  'agent_error',
   'llm_generation_end',
-  'batch_execution_canceled',
 ]);
 
 // Summary mode allowlist — only these event types are shown when viewMode='summary'.

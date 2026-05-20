@@ -267,7 +267,7 @@ Use agent_browser session: %q`, tc.worker, tc.scenario, tc.tabLabel, tc.tabLabel
 		result.err = fmt.Errorf("turn did not complete: %w", err)
 		return result
 	}
-	if !rawContainsProvider(raw, provider) {
+	if !eventsProveProvider(events, provider) {
 		result.err = fmt.Errorf("event stream did not prove provider %q was used", provider)
 		return result
 	}

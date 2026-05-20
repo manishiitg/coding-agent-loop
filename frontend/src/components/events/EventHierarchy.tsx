@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import type { PollingEvent, SessionExecutionTreeResponse } from '../../services/api-types';
 import { EventDispatcher, getOwnedTerminalOwnerKeys, type DelegationStats, type EventNode } from './EventDispatcher';
 import { agentApi } from '../../services/api';
-import { useChatStore } from '../../stores/useChatStore';
+import { useChatStore, type ExecutionStreamingActivity } from '../../stores/useChatStore';
 import { MAX_EVENTS_TO_PROCESS, MAX_CHILD_EVENTS_PER_DELEGATION } from '../../constants/events';
 import { NEVER_DISPLAY_EVENTS, HIDDEN_EVENTS } from './eventModeUtils';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
@@ -12,8 +13,9 @@ import './EventHierarchy.css';
 
 // Event types that get grouped and collapsed together as "tool calls".
 // llm_generation_end naturally occurs between tool call batches — including it
-// prevents many tiny "+ 1 tool call" groups from forming.
+// prevents many tiny "+ 1 tool" groups from forming.
 const TOOL_CALL_TYPES = new Set(['tool_call_start', 'tool_call_end', 'tool_call_error', 'token_usage', 'llm_generation_end']);
+const OWNER_COLLAPSED_TOOL_EVENT_TYPES = new Set(['tool_call_start', 'tool_call_end', 'tool_call_error']);
 
 // Delegation events appear in the flat list between tool_call_start and tool_call_end in workflow/multi-agent mode.
 // Including them in the scan prevents them from breaking consecutive tool call groups.
@@ -32,31 +34,6 @@ const EXECUTION_OWNER_EVENT_TYPES = new Set([
   'orchestrator_agent_start',
 ]);
 
-// User-facing lifecycle/result events should stay visible inside the owning
-// workflow step/agent card. Tool/debug events remain behind the collapsed panel.
-const OWNER_SUMMARY_EVENT_TYPES = new Set([
-  'pre_validation_completed',
-  'batch_group_start',
-  'batch_group_end',
-  'batch_execution_start',
-  'batch_execution_end',
-  'batch_execution_canceled',
-  'todo_task_step_completed',
-  'todo_task_status_update',
-  'orchestrator_agent_end',
-  'orchestrator_agent_error',
-  'background_agent_completed',
-  'background_agent_failed',
-  'background_agent_terminated',
-  'delegation_end',
-  'unified_completion',
-  'conversation_end',
-  'conversation_error',
-  'context_cancelled',
-  'agent_end',
-  'agent_error',
-]);
-
 const OWNER_PRIMARY_COMPLETION_EVENT_TYPES = new Set([
   'orchestrator_agent_end',
   'background_agent_completed',
@@ -72,6 +49,7 @@ const OWNER_PRIMARY_COMPLETION_EVENT_TYPES = new Set([
 
 const INITIAL_EXPANDED_TOOL_CALLS = 24;
 const EXPANDED_TOOL_CALLS_PAGE_SIZE = 24;
+const AUTO_EXPANDED_OWNER_TOOL_EVENT_LIMIT = 2;
 const EVENT_HIERARCHY_DEBUG_STORAGE_KEY = 'debug:event-hierarchy';
 
 function isEventHierarchyDebugEnabled(): boolean {
@@ -121,11 +99,13 @@ function isExecutionOwnerEvent(event: PollingEvent): boolean {
   return !!event.type && EXECUTION_OWNER_EVENT_TYPES.has(event.type);
 }
 
-function isOwnerSummaryEvent(event: PollingEvent): boolean {
-  return !!event.type && OWNER_SUMMARY_EVENT_TYPES.has(event.type);
+// Only tool-detail events remain behind the collapsed panel on an owner card.
+// Non-tool children stay visible inline instead of disappearing into grouped tools.
+function isOwnerCollapsedDetailEvent(event: PollingEvent): boolean {
+  return !!event.type && OWNER_COLLAPSED_TOOL_EVENT_TYPES.has(event.type);
 }
 
-function dedupeOwnerSummaryNodes(nodes: EventNode[]): EventNode[] {
+function dedupeOwnerInlineNodes(nodes: EventNode[]): EventNode[] {
   const hasPrimaryCompletion = nodes.some(node => {
     const type = node.event.type || '';
     return OWNER_PRIMARY_COMPLETION_EVENT_TYPES.has(type);
@@ -179,7 +159,14 @@ function getBackgroundAgentName(event: PollingEvent): string {
   const data = asRecord(event.data);
   const payload = asRecord(data?.data) || data;
   const fields = asRecord(payload?.fields) || payload;
-  return firstStringField([fields, payload, data], ['name']) || '';
+  return firstStringField([fields, payload, data], ['name', 'agent_name']) || '';
+}
+
+function normalizedOwnerName(event: PollingEvent): string {
+  return getBackgroundAgentName(event)
+    .replace(/^(step|background|planner):\s*/i, '')
+    .trim()
+    .toLowerCase();
 }
 
 function isNoisyWorkshopWrapperEvent(event: PollingEvent): boolean {
@@ -297,6 +284,27 @@ function createSyntheticParentExecutionOwnerEvent(
           completed_at: state?.completedAt,
           error: state?.error,
         },
+      },
+    },
+  } as PollingEvent;
+}
+
+function createLiveExecutionStreamingEvent(activity: ExecutionStreamingActivity): PollingEvent {
+  const timestamp = new Date(activity.updatedAt).toISOString();
+  return {
+    id: `live-execution-streaming:${activity.executionId}`,
+    type: 'live_execution_streaming',
+    timestamp,
+    session_id: activity.sessionId,
+    execution_id: activity.executionId,
+    execution_kind: 'live_streaming',
+    data: {
+      type: 'live_execution_streaming',
+      timestamp,
+      data: {
+        execution_id: activity.executionId,
+        text: activity.text,
+        status: activity.status,
       },
     },
   } as PollingEvent;
@@ -458,6 +466,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   // const setTabHideToolCalls = useChatStore(state => state.setTabHideToolCalls) // kept for future "show all / collapse all"
   const sessionId = tab?.sessionId
   const hideToolCalls = tab?.hideToolCalls || false
+  const executionStreamingActivities = useChatStore(useShallow(state => {
+    if (!sessionId) return []
+    return Object.values(state.executionStreaming)
+      .filter(activity => activity.sessionId === sessionId && (activity.text || activity.status))
+  }))
   // Holds the last returned displayEvents array for ref-stability.
   // The displayEvents memo below does heavy work (dedup, filter, sort, smart cap).
   // Even when the output is identical, it produces a new array ref — which cascades:
@@ -564,9 +577,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const STRUCTURAL_TYPES = new Set([
       'delegation_start', 'delegation_end',
       'orchestrator_agent_start', 'orchestrator_agent_end',
+      'orchestrator_agent_error',
+      'background_agent_started', 'background_agent_completed',
+      'background_agent_failed', 'background_agent_terminated',
       'workflow_start', 'workflow_end',
+      'workflow_error',
       'orchestrator_start', 'orchestrator_end',
-      'request_human_feedback', 'blocking_human_feedback',
+      'batch_group_start', 'batch_group_end',
+      'batch_execution_start', 'batch_execution_end', 'batch_execution_canceled',
+      'pre_validation_completed',
+      'routing_evaluated',
+      'todo_task_route_selected', 'todo_task_item_created', 'todo_task_item_updated',
+      'todo_task_item_completed', 'todo_task_step_completed', 'todo_task_status_update',
+      'learn_code_script_execution',
+      'request_human_feedback', 'blocking_human_feedback', 'plan_approval',
       'user_message'
     ]);
 
@@ -945,6 +969,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       }));
     }
 
+    const liveStreamingEvents = executionStreamingActivities.map(createLiveExecutionStreamingEvent);
+    const ownershipSourceEvents = [...realFilteredEvents, ...liveStreamingEvents];
+
     const inferredStateByExecutionId = new Map<string, InferredExecutionState>();
     const markExecutionState = (executionId: string | undefined, state: InferredExecutionState) => {
       if (!executionId || isRootLikeExecutionId(executionId)) return;
@@ -954,7 +981,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       inferredStateByExecutionId.set(executionId, state);
     };
 
-    for (const event of realFilteredEvents) {
+    for (const event of ownershipSourceEvents) {
       const executionId = getExecutionId(event);
       const payload = asRecord(asRecord(event.data)?.data) || asRecord(event.data);
       const error = firstStringField([payload, asRecord(payload?.fields)], ['error', 'message']);
@@ -1023,7 +1050,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       executionOwnerEventById.set(executionId, syntheticEvent);
     });
 
-    for (const event of realFilteredEvents) {
+    for (const event of ownershipSourceEvents) {
       const executionId = getExecutionId(event);
       if (!executionId || isRootLikeExecutionId(executionId) || executionOwnerEventById.has(executionId)) {
         continue;
@@ -1040,7 +1067,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       executionOwnerEventById.set(executionId, syntheticEvent);
     }
 
-    for (const event of realFilteredEvents) {
+    for (const event of ownershipSourceEvents) {
       const parentExecutionId = getEventParentExecutionId(event)?.trim();
       if (!parentExecutionId || isRootLikeExecutionId(parentExecutionId) || executionOwnerEventById.has(parentExecutionId)) {
         continue;
@@ -1057,7 +1084,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     const sourceOrder = new Map<string, number>();
     realFilteredEvents.forEach((event, index) => sourceOrder.set(event.id, index));
-    const filteredEvents = [...realFilteredEvents, ...syntheticOwnerEvents]
+    const filteredEvents = [...realFilteredEvents, ...syntheticOwnerEvents, ...liveStreamingEvents]
       .sort((a, b) => compareEventsChronologically(a, b, sourceOrder));
     const filteredEventIds = new Set(filteredEvents.map(e => e.id));
 
@@ -1220,7 +1247,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     });
 
     return rootEvents.map(event => buildTreeRecursive(event, 0));
-  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, executionTree, flatHierarchy, getAgentSessionKey, getExecutionId, getParentId]);
+  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, executionTree, executionStreamingActivities, flatHierarchy, getAgentSessionKey, getExecutionId, getParentId]);
 
   useEffect(() => {
     if (!isEventHierarchyDebugEnabled()) return;
@@ -1332,7 +1359,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         const nonOwnerChildren = node.children.filter(child => !isExecutionOwnerEvent(child.event));
         if (
           ownerChildren.length === 1 &&
-          getBackgroundAgentName(node.event).trim().toLowerCase() === getBackgroundAgentName(ownerChildren[0].event).trim().toLowerCase()
+          normalizedOwnerName(node.event) !== '' &&
+          normalizedOwnerName(node.event) === normalizedOwnerName(ownerChildren[0].event)
         ) {
           const mergedChild: EventNode = {
             ...ownerChildren[0],
@@ -1340,6 +1368,25 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
             children: [...nonOwnerChildren, ...ownerChildren[0].children],
           };
           flatten(mergedChild, `${key}-dedup-child`, levelOffset);
+          return;
+        }
+      }
+
+      if (node.event.type === 'background_agent_started') {
+        const ownerChildren = node.children.filter(child => isExecutionOwnerEvent(child.event));
+        const nonOwnerChildren = node.children.filter(child => !isExecutionOwnerEvent(child.event));
+        if (
+          ownerChildren.length === 1 &&
+          ownerChildren[0].event.type === 'orchestrator_agent_start' &&
+          normalizedOwnerName(node.event) !== '' &&
+          normalizedOwnerName(node.event) === normalizedOwnerName(ownerChildren[0].event)
+        ) {
+          const mergedChild: EventNode = {
+            ...ownerChildren[0],
+            level: node.level,
+            children: [...nonOwnerChildren, ...ownerChildren[0].children],
+          };
+          flatten(mergedChild, `${key}-background-owner-child`, levelOffset);
           return;
         }
       }
@@ -1455,7 +1502,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
           list.splice(group.startIdx, totalCount, ...replacementItems);
         } else {
-          // Replace entire group with a single "+ N tool calls" sentinel
+          // Replace entire group with a single "+ N tools" sentinel
           const count = totalCount;
           // Find the latest tool_call_start in the group for preview info
           let latestToolName: string | undefined;
@@ -1526,6 +1573,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         const node = list[i].node
         const prevNode = prev[i]?.node
         if (node && prevNode && isExecutionOwnerEvent(node.event) && node.children.length !== prevNode.children.length) {
+          togglesMatch = false
+          break
+        }
+        if (
+          node && prevNode && isExecutionOwnerEvent(node.event) &&
+          node.children.some((child, childIndex) =>
+            child.event.type === 'live_execution_streaming' &&
+            child.event !== prevNode.children[childIndex]?.event
+          )
+        ) {
+          togglesMatch = false
+          break
+        }
+        if (node && prevNode && isExecutionOwnerEvent(node.event) && node.event !== prevNode.event) {
           togglesMatch = false
           break
         }
@@ -1620,9 +1681,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           >
             <span className="flex-shrink-0 font-medium">
               {mode === 'show_more'
-                ? `+ show ${item.revealCount || 0} more tool call${(item.revealCount || 0) !== 1 ? 's' : ''} (${count} hidden)`
+                ? `+ show ${item.revealCount || 0} more tool${(item.revealCount || 0) !== 1 ? 's' : ''} (${count} hidden)`
                 : count > 0
-                  ? `${count} tool call${count !== 1 ? 's' : ''}`
+                  ? `+ ${count} tool${count !== 1 ? 's' : ''}`
                   : `− collapse`}
             </span>
             {mode === 'expand' && count > 0 && (item.latestToolLabel || item.latestToolName) && (
@@ -1651,12 +1712,15 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const ownerNonExecutionChildren = ownsInternalLogPanel
       ? children.filter(child => !isExecutionOwnerEvent(child.event))
       : [];
-    const ownedSummaryChildren = ownsInternalLogPanel
-      ? dedupeOwnerSummaryNodes(ownerNonExecutionChildren.filter(child => isOwnerSummaryEvent(child.event)))
+    const ownedInlineChildren = ownsInternalLogPanel
+      ? dedupeOwnerInlineNodes(ownerNonExecutionChildren.filter(child => !isOwnerCollapsedDetailEvent(child.event)))
       : [];
     const ownedLogChildren = ownsInternalLogPanel
-      ? ownerNonExecutionChildren.filter(child => !isOwnerSummaryEvent(child.event))
+      ? ownerNonExecutionChildren.filter(child => isOwnerCollapsedDetailEvent(child.event))
       : children;
+    const autoExpandOwnedLogPanel = ownsInternalLogPanel
+      && ownedLogChildren.length > 0
+      && ownedLogChildren.length <= AUTO_EXPANDED_OWNER_TOOL_EVENT_LIMIT;
     
     // Only nested rows get tree indentation. Root rows should align with the feed.
     const indentLevel = level;
@@ -1721,21 +1785,23 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
                 compact={compact}
                 delegationStats={delegationStats}
                 backgroundAgentStats={backgroundAgentStats}
-                summaryNodes={ownsInternalLogPanel ? ownedSummaryChildren : undefined}
-                summaryCount={ownsInternalLogPanel ? ownedSummaryChildren.length : undefined}
-                childrenNodes={ownsInternalLogPanel ? (isOwnedLogPanelOpen ? ownedLogChildren : undefined) : (isExpanded ? children : undefined)}
+                summaryNodes={ownsInternalLogPanel ? ownedInlineChildren : undefined}
+                summaryCount={ownsInternalLogPanel ? ownedInlineChildren.length : undefined}
+                childrenNodes={ownsInternalLogPanel ? ((isOwnedLogPanelOpen || autoExpandOwnedLogPanel) ? ownedLogChildren : undefined) : (isExpanded ? children : undefined)}
                 childrenCount={ownsInternalLogPanel ? ownedLogChildren.length : children.length}
                 onToggleNode={toggleNode}
-                ownedLogPanelOpen={isOwnedLogPanelOpen}
+                ownedLogPanelOpen={isOwnedLogPanelOpen || autoExpandOwnedLogPanel}
+                autoExpandedOwnedLogPanel={autoExpandOwnedLogPanel}
                 onToggleOwnedLogPanel={ownsInternalLogPanel ? (open) => toggleOwnedLogPanel(event.id, open) : undefined}
                 showOwnedTerminal={showOwnedTerminal}
+                tabId={resolvedTabId || undefined}
               />
             </div>
           </div>
         </div>
       </div>
     );
-  }, [collapsedSessions, expandedOwnedLogPanels, findEventsBetweenStartEnd, getAgentSessionKey, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, flatHierarchy, delegationStats, backgroundAgentStats, showMoreToolCalls, toggleToolCallGroup]);
+  }, [collapsedSessions, expandedOwnedLogPanels, findEventsBetweenStartEnd, getAgentSessionKey, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, flatHierarchy, delegationStats, backgroundAgentStats, showMoreToolCalls, toggleToolCallGroup, resolvedTabId]);
 
   // Only auto-scroll when new top-level items are added (not when sub-agent events update internals).
   // Sub-agent events change displayEvents but don't add items to flattenedItems.

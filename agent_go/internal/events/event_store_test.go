@@ -1,6 +1,7 @@
 package events
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -110,12 +111,73 @@ func TestGetEventsCanIncludeStreamingForSSEBackfill(t *testing.T) {
 	}
 }
 
+func TestGetEventsInitialFetchPreservesStructuralEventsOutsideLimit(t *testing.T) {
+	store := NewEventStore(InitialEventsLimit + 10)
+	defer store.Stop()
+
+	now := time.Now()
+	sessionID := "session-initial-structural"
+	store.AddEvent(sessionID, Event{
+		ID:        "delegation-start",
+		Type:      "delegation_start",
+		Timestamp: now,
+		SessionID: sessionID,
+		Data: &pkgevents.AgentEvent{
+			Type:      pkgevents.EventType("delegation_start"),
+			Timestamp: now,
+		},
+	})
+
+	for i := 0; i < InitialEventsLimit+5; i++ {
+		eventID := fmt.Sprintf("tool-%03d", i)
+		store.AddEvent(sessionID, Event{
+			ID:        eventID,
+			Type:      string(pkgevents.ToolCallStart),
+			Timestamp: now.Add(time.Duration(i+1) * time.Millisecond),
+			SessionID: sessionID,
+			Data: &pkgevents.AgentEvent{
+				Type:      pkgevents.ToolCallStart,
+				Timestamp: now.Add(time.Duration(i+1) * time.Millisecond),
+			},
+		})
+	}
+
+	result := store.GetEvents(sessionID, GetEventsOptions{SinceIndex: 0})
+	gotIDs := eventIDs(result.Events)
+	if !contains(gotIDs, "delegation-start") {
+		t.Fatalf("initial fetch should preserve old structural parent event, got ids %v", gotIDs)
+	}
+	if contains(gotIDs, "tool-000") {
+		t.Fatalf("initial fetch should still cap old non-structural events, got ids %v", gotIDs)
+	}
+	if !contains(gotIDs, fmt.Sprintf("tool-%03d", InitialEventsLimit+4)) {
+		t.Fatalf("initial fetch should include newest events, got ids %v", gotIDs)
+	}
+	if len(result.Events) != InitialEventsLimit+1 {
+		t.Fatalf("expected capped window plus structural parent, got %d events", len(result.Events))
+	}
+	if result.Events[0].ID != "delegation-start" {
+		t.Fatalf("expected preserved structural event to keep chronological order, first id %q", result.Events[0].ID)
+	}
+	if !result.HasMore {
+		t.Fatal("expected hasMore to remain true when old non-structural events are omitted")
+	}
+}
+
 func eventTypes(events []Event) []string {
 	types := make([]string, 0, len(events))
 	for _, event := range events {
 		types = append(types, event.Type)
 	}
 	return types
+}
+
+func eventIDs(events []Event) []string {
+	ids := make([]string, 0, len(events))
+	for _, event := range events {
+		ids = append(ids, event.ID)
+	}
+	return ids
 }
 
 func contains(values []string, want string) bool {
@@ -489,11 +551,11 @@ func TestSubscribeFiltersHiddenEvents(t *testing.T) {
 
 	store.AddEvent(sessionID, Event{
 		ID:        "evt-hidden",
-		Type:      "agent_error",
+		Type:      "agent_start",
 		Timestamp: time.Now(),
 		SessionID: sessionID,
 		Data: &pkgevents.AgentEvent{
-			Type:      pkgevents.EventType("agent_error"),
+			Type:      pkgevents.EventType("agent_start"),
 			Timestamp: time.Now(),
 		},
 	})
@@ -511,8 +573,8 @@ func TestSubscribeFiltersHiddenEvents(t *testing.T) {
 
 	select {
 	case event := <-sub.Ch:
-		if event.Type == "agent_error" {
-			t.Fatal("subscriber should not receive HIDDEN_EVENTS (agent_error)")
+		if event.Type == "agent_start" {
+			t.Fatal("subscriber should not receive HIDDEN_EVENTS (agent_start)")
 		}
 		if event.Type != "unified_completion" {
 			t.Fatalf("first received event = %q, want unified_completion", event.Type)
@@ -586,7 +648,8 @@ func TestShouldShowEventFiltersCorrectly(t *testing.T) {
 		{"tool_call_start", true},
 		{"tool_call_end", true},
 		{"streaming_end", true},
-		{"agent_error", false},
+		{"agent_error", true},
+		{"batch_execution_canceled", true},
 		{"agent_start", false},
 		{"system_prompt", false},
 		{"conversation_start", false},

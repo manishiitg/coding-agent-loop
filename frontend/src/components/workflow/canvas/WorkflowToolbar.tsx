@@ -393,6 +393,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               <button
                 onClick={() => {
                   const store = useWorkflowStore.getState()
+                  // Clicking the active Plan tab closes the workspace
+                  // pane (toggle behavior). Skip when chat is also off
+                  // so the layout never goes empty.
+                  if (isFlowWorkspace) {
+                    if (!showChatArea) return
+                    store.setShowWorkspacePane(false)
+                    return
+                  }
                   store.setWorkflowWorkspaceView('flow')
                   store.setShowWorkspacePane(true)
                   store.setCanvasViewMode('flow')
@@ -410,6 +418,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               <button
                 onClick={() => {
                   const store = useWorkflowStore.getState()
+                  // Toggle off when Report is already showing.
+                  if (isReportWorkspace) {
+                    if (!showChatArea) return
+                    store.setShowWorkspacePane(false)
+                    return
+                  }
                   store.setWorkflowWorkspaceView('report')
                   store.setShowWorkspacePane(true)
                   store.setCanvasViewMode('report')

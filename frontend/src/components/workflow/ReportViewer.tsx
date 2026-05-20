@@ -524,18 +524,12 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       return
     }
 
-    if (mobilePreview && !isExplicitRefreshForWorkspace) {
-      // In the workflow split view, chat is the primary surface. Loading an
-      // uncached report can parse/render large JSON files on the main thread,
-      // which makes the builder input feel unclickable during workflow switches.
-      setInitialLoadDeferred(true)
-      setPlanSource(null)
-      setSources({})
-      setLoading(false)
-      setError(null)
-      return
-    }
-
+    // Previously the workflow split view deferred initial report load to
+    // avoid parsing/rendering large JSON on the main thread during
+    // workflow switches — the user had to click "Load report" manually.
+    // That created a UX where opening the Report tab still showed an
+    // empty pane. Now we always auto-load on mount; if perf regressions
+    // surface from heavy report data, revisit with a worker-side parse.
     let cancelled = false
     setInitialLoadDeferred(false)
     setLoading(true)

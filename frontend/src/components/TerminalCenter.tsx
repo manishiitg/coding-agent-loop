@@ -612,6 +612,41 @@ function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
   return !terminal.tmux_session
 }
 
+// Error event types that should surface as a banner above the terminal
+// pane. Tree view renders these as their own cards; in Terminal mode
+// they would otherwise be invisible because the rail only shows pane
+// content + synthetic terminal chunks.
+const TERMINAL_ERROR_EVENT_TYPES = new Set<string>([
+  'orchestrator_agent_error',
+  'background_agent_failed',
+  'conversation_error',
+  'workflow_error',
+  'agent_error',
+  'tool_call_error',
+  'llm_generation_error',
+  'context_cancelled',
+  'batch_execution_canceled',
+])
+
+interface TerminalErrorBannerEntry {
+  id: string
+  type: string
+  message: string
+  timestamp?: string
+}
+
+function extractErrorMessage(event: unknown): string {
+  const e = event as { type?: string; data?: unknown }
+  const data = e?.data as { data?: Record<string, unknown>; message?: string; error?: string } | undefined
+  const payload = (data?.data && typeof data.data === 'object') ? data.data : (data as Record<string, unknown> | undefined)
+  if (!payload) return ''
+  for (const key of ['error', 'message', 'detail', 'reason']) {
+    const v = payload[key]
+    if (typeof v === 'string' && v.trim()) return v
+  }
+  return ''
+}
+
 export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId, compact }) => {
   // terminalCenterOpen was the legacy toggle gate (separate sidekick
   // panel); kept here for any callers that still pass the flag but no
@@ -627,10 +662,32 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [userSelectedID, setUserSelectedID] = useState<string | null>(null)
   const [copiedTerminalID, setCopiedTerminalID] = useState<string | null>(null)
   const [dismissedTerminalIDs, setDismissedTerminalIDs] = useState<Set<string>>(() => new Set())
+  const [dismissedErrorIDs, setDismissedErrorIDs] = useState<Set<string>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
   const [debugInput, setDebugInput] = useState('')
   const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
   const [debugPanelOpenForID, setDebugPanelOpenForID] = useState<string | null>(null)
+
+  // Surface error events (llm_generation_error, context_cancelled, etc.)
+  // as a banner above the pane. Tree view renders these as their own
+  // cards; Terminal mode would otherwise hide them entirely since the
+  // rail only carries pane content. Tracks the last few errors for the
+  // current session and stays dismissible.
+  const sessionErrorBanner = useChatStore(state => {
+    if (!currentSessionId) return [] as TerminalErrorBannerEntry[]
+    const events = state.tabEvents[currentSessionId]
+    if (!events || events.length === 0) return [] as TerminalErrorBannerEntry[]
+    const out: TerminalErrorBannerEntry[] = []
+    for (let i = events.length - 1; i >= 0 && out.length < 3; i--) {
+      const evt = events[i] as unknown as { id?: string; type?: string; timestamp?: string }
+      if (!evt?.type || !TERMINAL_ERROR_EVENT_TYPES.has(evt.type)) continue
+      const id = evt.id || `${evt.type}-${i}`
+      if (dismissedErrorIDs.has(id)) continue
+      const message = extractErrorMessage(evt) || evt.type.replace(/_/g, ' ')
+      out.push({ id, type: evt.type, message, timestamp: evt.timestamp })
+    }
+    return out
+  })
   const terminalOutputRef = useRef<HTMLElement | null>(null)
   const terminalAutoScrollRef = useRef(true)
   const selectedTerminalIDRef = useRef<string | null>(null)
@@ -1070,11 +1127,37 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   )
 
   return (
-    <div className={`flex min-h-0 flex-col bg-[#202020] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
-      <div className="flex min-h-0 flex-1 flex-col">
+    <div className={`flex min-h-0 min-w-0 flex-col bg-[#202020] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {error && (
           <div className="rounded border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300">
             {error}
+          </div>
+        )}
+
+        {sessionErrorBanner.length > 0 && (
+          <div className="flex flex-col gap-1 border-b border-red-900/40 bg-red-950/20 px-3 py-2">
+            {sessionErrorBanner.map(entry => (
+              <div key={entry.id} className="flex items-start gap-2 text-xs text-red-300">
+                <span className="mt-0.5 shrink-0 rounded bg-red-900/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-red-200">
+                  {entry.type.replace(/_/g, ' ')}
+                </span>
+                <span className="min-w-0 flex-1 break-words leading-5">{entry.message}</span>
+                <button
+                  type="button"
+                  onClick={() => setDismissedErrorIDs(prev => {
+                    const next = new Set(prev)
+                    next.add(entry.id)
+                    return next
+                  })}
+                  className="shrink-0 rounded p-0.5 text-red-400/60 hover:bg-red-900/40 hover:text-red-200"
+                  title="Dismiss"
+                  aria-label="Dismiss error"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
           </div>
         )}
 
@@ -1096,7 +1179,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         )}
 
         {terminals.length > 0 && (
-          <div className="flex min-h-0 flex-1 gap-0 overflow-hidden border border-neutral-800 bg-[#111]">
+          <div className="flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden border border-neutral-800 bg-[#111]">
             {/* Left rail — vertical list of all terminals. Scrolls
                 independently of the right pane so the user can navigate
                 a long list without losing the selected terminal's

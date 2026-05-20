@@ -415,77 +415,42 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             data-testid="tour-workflow-view-switcher"
             className="inline-flex w-full items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm sm:w-auto"
           >
-            {/* Three toggles bind directly to which panes are visible.
-                Chat is independent (turn on/off freely). Plan and Report
-                are mutually exclusive — they share the workspace pane.
-                Clicking the active workspace tab again closes that pane
-                so the user can collapse it back to chat-only. */}
             <button
               onClick={() => {
                 const store = useWorkflowStore.getState()
-                if (showChatArea) {
-                  // Don't allow hiding chat when no workspace pane is
-                  // showing either — leaves the layout empty.
-                  if (!showWorkspacePane) return
-                  store.setShowChatArea(false)
-                } else {
-                  store.setWorkflowWorkspaceView('builder')
-                  store.setShowChatArea(true)
-                  onStartPhase('workflow-builder')
-                }
+                store.setWorkflowWorkspaceView('builder')
+                store.setShowWorkspacePane(false)
+                store.setShowChatArea(true)
+                onStartPhase('workflow-builder')
               }}
               className={`min-w-0 flex-1 rounded-md px-3 py-1 text-xs font-medium transition-all sm:flex-none ${
-                showChatArea
+                isBuilderModeActive
                   ? 'bg-background text-foreground shadow-sm'
                   : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
               }`}
             >
               Chat
             </button>
-            {hasPlan && (
+            {(hasPlan || workspacePath) && (
               <button
                 onClick={() => {
                   const store = useWorkflowStore.getState()
-                  if (isFlowWorkspace) {
-                    // Clicking active Plan tab closes the workspace pane.
-                    // Don't allow if chat is also off — would leave empty.
-                    if (!showChatArea) return
-                    store.setShowWorkspacePane(false)
-                  } else {
-                    store.setWorkflowWorkspaceView('flow')
-                    store.setShowWorkspacePane(true)
-                    store.setCanvasViewMode('flow')
-                  }
+                  // Default to Plan view when entering Workspace mode for the
+                  // first time; otherwise remember the last sub-view (Plan or
+                  // Report) the user had open. The Plan/Report sub-toggle
+                  // lives inside the workspace pane header (see WorkflowLayout).
+                  const lastView = store.workflowWorkspaceView === 'report' ? 'report' : 'flow'
+                  store.setWorkflowWorkspaceView(lastView)
+                  store.setShowWorkspacePane(true)
+                  store.setCanvasViewMode(lastView)
                 }}
                 className={`min-w-0 flex-1 rounded-md px-3 py-1 text-xs font-medium transition-all sm:flex-none ${
-                  isFlowWorkspace
+                  (isFlowWorkspace || isReportWorkspace)
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
                 }`}
               >
-                Plan
-              </button>
-            )}
-            {workspacePath && (
-              <button
-                onClick={() => {
-                  const store = useWorkflowStore.getState()
-                  if (isReportWorkspace) {
-                    if (!showChatArea) return
-                    store.setShowWorkspacePane(false)
-                  } else {
-                    store.setWorkflowWorkspaceView('report')
-                    store.setShowWorkspacePane(true)
-                    store.setCanvasViewMode('report')
-                  }
-                }}
-                className={`min-w-0 flex-1 rounded-md px-3 py-1 text-xs font-medium transition-all sm:flex-none ${
-                  isReportWorkspace
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                }`}
-              >
-                Report
+                Workspace
               </button>
             )}
           </div>

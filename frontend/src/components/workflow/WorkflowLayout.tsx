@@ -1512,16 +1512,61 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     )
   }
 
+  const hasPlanForToggle = Boolean(toolbarPlan?.steps?.length)
   const canvasElement = (
-    <WorkflowCanvas
-      ref={canvasRef}
-      workspacePath={workspacePath}
-      presetQueryId={activePresetId}
-      onCreatePlan={onCreatePlan || handleCreatePlan}
-      showChatArea={showChatArea}
-      paneClassName={canvasPaneClassName}
-      className={showChatArea && !workspacePaneVisible ? '!h-auto shrink-0' : 'h-full'}
-    />
+    <div className={`${canvasPaneClassName} flex min-h-0 min-w-0 flex-col`}>
+      {/* Workspace sub-tab strip — Plan vs Report. Lives inside the
+          workspace pane (not in the main toolbar) so the active tab
+          visually belongs to the content below. Hidden if neither
+          target is available. */}
+      {(hasPlanForToggle || workspacePath) && (
+        <div className="flex shrink-0 items-center gap-0.5 border-b border-border bg-muted/30 px-2">
+          {hasPlanForToggle && (
+            <button
+              onClick={() => {
+                const store = useWorkflowStore.getState()
+                store.setWorkflowWorkspaceView('flow')
+                store.setCanvasViewMode('flow')
+              }}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                canvasViewMode === 'flow'
+                  ? 'border-b-2 border-blue-500 text-foreground'
+                  : 'border-b-2 border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+              style={{ marginBottom: '-1px' }}
+            >
+              Plan
+            </button>
+          )}
+          {workspacePath && (
+            <button
+              onClick={() => {
+                const store = useWorkflowStore.getState()
+                store.setWorkflowWorkspaceView('report')
+                store.setCanvasViewMode('report')
+              }}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                canvasViewMode === 'report'
+                  ? 'border-b-2 border-blue-500 text-foreground'
+                  : 'border-b-2 border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+              style={{ marginBottom: '-1px' }}
+            >
+              Report
+            </button>
+          )}
+        </div>
+      )}
+      <WorkflowCanvas
+        ref={canvasRef}
+        workspacePath={workspacePath}
+        presetQueryId={activePresetId}
+        onCreatePlan={onCreatePlan || handleCreatePlan}
+        showChatArea={showChatArea}
+        paneClassName="flex-1 min-h-0"
+        className={showChatArea && !workspacePaneVisible ? '!h-auto shrink-0' : 'h-full'}
+      />
+    </div>
   )
 
   return (

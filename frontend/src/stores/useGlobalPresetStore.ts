@@ -164,6 +164,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       
       savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames, browserMode) => {
         const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
+        const existingPreset = id ? get().workflowPresets.find(p => p.id === id) : undefined
+        const globalSecretNamesForBackend = selectedGlobalSecretNames === undefined
+          ? (existingPreset?.selectedGlobalSecretNames === undefined ? [] : existingPreset.selectedGlobalSecretNames)
+          : selectedGlobalSecretNames
 
         // Convert legacy local secret IDs to names for backend persistence.
         // Workflow-scoped secrets are already represented by name.
@@ -188,7 +192,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 selected_tools: toolsForBackend,
                 selected_skills: selectedSkills || [],
                 selected_secrets: secretNamesForBackend,
-                selected_global_secret_names: selectedGlobalSecretNames ?? null,
+                selected_global_secret_names: globalSecretNamesForBackend,
                 browser_mode: browserMode || 'none',
                 use_code_execution_mode: useCodeExecutionMode ?? false,
                 llm_config: llmConfig || undefined,
@@ -204,7 +208,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 selected_tools: toolsForBackend,
                 selected_skills: selectedSkills || [],
                 selected_secrets: secretNamesForBackend,
-                selected_global_secret_names: selectedGlobalSecretNames ?? null,
+                selected_global_secret_names: globalSecretNamesForBackend,
                 browser_mode: browserMode || 'none',
                 use_code_execution_mode: useCodeExecutionMode ?? false,
                 llm_config: llmConfig || undefined,
@@ -221,7 +225,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           if (id) {
             const activeWorkflowId = get().activePresetIds.workflow
             if (id === activeWorkflowId) {
-              useSecretsStore.getState().setSelectedGlobalSecretNames(selectedGlobalSecretNames ?? null)
+              useSecretsStore.getState().setSelectedGlobalSecretNames(globalSecretNamesForBackend)
             }
           }
 

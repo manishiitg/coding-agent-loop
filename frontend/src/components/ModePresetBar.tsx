@@ -437,6 +437,9 @@ export const ModePresetBar: React.FC = () => {
   ) => {
     try {
       const effectiveMode = editingPreset ? editingPreset.agentMode : agentMode
+      const globalSecretNamesForBackend = selectedGlobalSecretNames === undefined
+        ? (editingPreset?.selectedGlobalSecretNames === undefined ? [] : editingPreset.selectedGlobalSecretNames)
+        : selectedGlobalSecretNames
 
       // Workflow mode: save to file-backed manifest (not DB)
       if (effectiveMode === 'workflow' && editingPreset?.selectedFolder?.filepath) {
@@ -449,7 +452,7 @@ export const ModePresetBar: React.FC = () => {
             selected_tools: selectedTools || [],
             selected_skills: selectedSkills || [],
             selected_secrets: selectedSecrets || [],
-            selected_global_secret_names: selectedGlobalSecretNames ?? [],
+            selected_global_secret_names: globalSecretNamesForBackend,
             browser_mode: browserMode || 'none',
             use_code_execution_mode: useCodeExecutionMode || false,
             llm_config: llmConfig || undefined,

@@ -50,7 +50,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
   // Per-preset global secret selection (null = all selected, [] = none, [...] = specific)
-  const [selectedGlobalSecrets, setSelectedGlobalSecrets] = useState<string[] | null>(null);
+  const [selectedGlobalSecrets, setSelectedGlobalSecrets] = useState<string[] | null>([]);
   const [internalAgentMode, setInternalAgentMode] = useState<'simple' | 'workflow'>('simple');
   const [selectedFolder, setSelectedFolder] = useState<PlannerFile | null>(null);
   const [workflowFolderEdited, setWorkflowFolderEdited] = useState(false);
@@ -196,6 +196,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const effectiveTier1LLM = useMemo<AgentLLMConfig | null>(() => tier1LLM || defaultAgentLLM, [tier1LLM, defaultAgentLLM]);
   const effectiveTier2LLM = useMemo<AgentLLMConfig | null>(() => tier2LLM || defaultAgentLLM, [tier2LLM, defaultAgentLLM]);
   const effectiveTier3LLM = useMemo<AgentLLMConfig | null>(() => tier3LLM || defaultAgentLLM, [tier3LLM, defaultAgentLLM]);
+  // Draft create paths can collide with existing workflows, so only load scoped secrets for persisted workflows.
+  const workflowSecretPath = editingPreset ? selectedFolder?.filepath : undefined;
 
   const hasAdvancedWorkflowLLMConfig = useCallback((presetLLM?: PresetLLMConfig | null) => {
     const t1 = presetLLM?.tiered_config?.tier_1;
@@ -280,7 +282,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setSelectedTools([]); // NEW
       setSelectedSkills([]);
       setSelectedSecrets([]);
-      setSelectedGlobalSecrets(null); // null = all global secrets selected by default
+      setSelectedGlobalSecrets([]);
       // Default to workflow mode as chat presets are disabled
       const defaultMode = 'workflow';
       setInternalAgentMode(defaultMode);
@@ -806,7 +808,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     onSecretChange={setSelectedSecrets}
                     selectedGlobalSecrets={selectedGlobalSecrets}
                     onGlobalSecretChange={setSelectedGlobalSecrets}
-                    workflowPath={selectedFolder?.filepath}
+                    workflowPath={workflowSecretPath}
                   />
                 )}
 

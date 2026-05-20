@@ -41,7 +41,7 @@ func (api *StreamingAPI) registerWorkflowCreatorTool(underlyingAgent *mcpagent.A
 			},
 			"workflow_json": map[string]interface{}{
 				"type":                 "object",
-				"description":          "The full workflow.json manifest object. Required fields: schema_version (int, 1), id (string, e.g. 'wf_<folder_name>'), label (string, free-form human-readable name — can contain spaces, capitalization, anything). Should include objective, success_criteria, and a capabilities object with selected_servers/skills/etc picked smartly from the current chat context.",
+				"description":          "The full workflow.json manifest object. Required fields: schema_version (int, 1), id (string, e.g. 'wf_<folder_name>'), label (string, free-form human-readable name — can contain spaces, capitalization, anything). Should include objective, success_criteria, and a capabilities object with selected_servers/skills/etc picked smartly from the current chat context. Set capabilities.selected_global_secret_names to [] unless specific global secrets are required.",
 				"additionalProperties": true,
 			},
 			"plan_json": map[string]interface{}{
@@ -106,6 +106,7 @@ func (api *StreamingAPI) handleWorkflowCreatorTool(ctx context.Context, args map
 	if err := validateWorkflowJSONRequiredFields(workflowMap); err != nil {
 		return "", err
 	}
+	defaultWorkflowCreatorGlobalSecretsToNone(workflowMap)
 
 	// 4. Validate plan.json required fields
 	if err := validatePlanJSONRequiredFields(planMap); err != nil {
@@ -195,6 +196,17 @@ func (api *StreamingAPI) handleWorkflowCreatorTool(ctx context.Context, args map
 		return fmt.Sprintf("%v", result), nil
 	}
 	return string(resultJSON), nil
+}
+
+func defaultWorkflowCreatorGlobalSecretsToNone(workflowMap map[string]interface{}) {
+	caps, _ := workflowMap["capabilities"].(map[string]interface{})
+	if caps == nil {
+		caps = make(map[string]interface{})
+		workflowMap["capabilities"] = caps
+	}
+	if _, exists := caps["selected_global_secret_names"]; !exists || caps["selected_global_secret_names"] == nil {
+		caps["selected_global_secret_names"] = []interface{}{}
+	}
 }
 
 // validateWorkflowJSONRequiredFields checks that workflow.json has the bare minimum

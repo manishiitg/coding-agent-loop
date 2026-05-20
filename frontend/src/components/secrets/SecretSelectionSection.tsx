@@ -7,7 +7,7 @@ import { secretsApi } from '../../api/secrets';
 interface SecretSelectionSectionProps {
   selectedSecrets: string[];
   onSecretChange: (secrets: string[]) => void;
-  selectedGlobalSecrets?: string[] | null; // null = all selected
+  selectedGlobalSecrets?: string[] | null; // null = all selected, [] = none selected
   onGlobalSecretChange?: (names: string[] | null) => void;
   workflowPath?: string;
 }
@@ -17,7 +17,7 @@ const isValidName = (name: string) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
 export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
   selectedSecrets,
   onSecretChange,
-  selectedGlobalSecrets = null,
+  selectedGlobalSecrets = [],
   onGlobalSecretChange,
   workflowPath,
 }) => {

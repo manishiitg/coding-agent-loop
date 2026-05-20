@@ -246,16 +246,18 @@ func validateScheduleGroupNamesForWorkspace(ctx context.Context, workspacePath s
 // NewWorkflowManifest creates a manifest with defaults.
 func NewWorkflowManifest(label string) *WorkflowManifest {
 	now := time.Now().UTC().Format(time.RFC3339)
+	noGlobalSecrets := []string{}
 	return &WorkflowManifest{
 		SchemaVersion: WorkflowManifestSchemaVersion,
 		ID:            "wf_" + uuid.New().String()[:8],
 		Label:         label,
 		Capabilities: WorkflowCapabilities{
-			SelectedServers: []string{},
-			SelectedTools:   []string{},
-			SelectedSkills:  []string{},
-			SelectedSecrets: []string{},
-			BrowserMode:     "none",
+			SelectedServers:           []string{},
+			SelectedTools:             []string{},
+			SelectedSkills:            []string{},
+			SelectedSecrets:           []string{},
+			SelectedGlobalSecretNames: &noGlobalSecrets,
+			BrowserMode:               "none",
 		},
 		ExecutionDefs: WorkflowExecutionDefaults{},
 		Ownership:     WorkflowOwnership{},

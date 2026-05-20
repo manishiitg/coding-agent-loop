@@ -291,6 +291,8 @@ If I gave you a label in my preamble, keep it verbatim as the \`label\` and slug
 ## Step 2 — Pick the capabilities from context
 Analyze this conversation and select ONLY the MCP servers, skills, and LLM tier settings that are actually relevant to the workflow being extracted. **Do not blindly copy every currently-enabled server and skill — pick the ones the steps actually need.** If a server was enabled in chat but never used for this specific work, leave it out.
 
+For secrets, default to no global secrets: set \`workflow_json.capabilities.selected_global_secret_names\` to \`[]\` unless this specific workflow clearly needs named global secrets. Do not use \`null\` as a default because it means all global secrets.
+
 ## Step 3 — Extract the steps
 Re-read the conversation and extract the concrete, repeatable steps the workflow should run. Each step must have:
 - A stable kebab-case \`id\` (e.g. "fetch-data", "analyze-results"), unique within the plan

@@ -182,6 +182,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) checkExistingPlan(ctx context.Context
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to resolve orphan step references in existing plan.json: %v", err))
 		return false, nil, fmt.Errorf("failed to resolve orphan step references in plan.json: %w", err)
 	}
+	// checkExistingPlan was previously a parse-only path: it returned
+	// the plan without invoking the existing validator chain that the
+	// fresh-plan write path (writePlanToFile) and the canonical load
+	// path (loadPlanFromFile) both call. This let duplicate step IDs,
+	// dangling routing.next_step_id, and ambiguous conditional
+	// branch+next_step_id combinations through to LLM execution —
+	// every per-step artifact then collides under the colliding ID
+	// and writes silently clobber prior content. Re-enabling the
+	// validator at this seam catches the violations at plan load.
+	if err := validateLoadedPlanStructure(&planResponse); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Existing plan failed validation: %v", err))
+		return false, nil, fmt.Errorf("existing plan.json failed validation: %w", err)
+	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Found existing plan at %s with %d steps", planPath, len(planResponse.Steps)))
 	return true, &planResponse, nil
@@ -202,6 +215,23 @@ func validateLoadedPlanStep(typedStep PlanStepInterface, stepIndex int) error {
 		return nil
 
 	case *ConditionalPlanStep:
+		// Each branch must specify either nested steps OR a flat
+		// next_step_id, but never both (ambiguous flow) and never
+		// neither (workflow ends with no successor — silent drop).
+		// planning_agent.go:334-335 documents next_step_id as REQUIRED
+		// when the steps array is empty; we enforce it here.
+		if len(step.IfTrueSteps) == 0 && strings.TrimSpace(step.IfTrueNextStepID) == "" {
+			return fmt.Errorf("conditional step %q (index %d): if_true branch is empty AND if_true_next_step_id is unset — set one or the other", step.GetID(), stepIndex)
+		}
+		if len(step.IfFalseSteps) == 0 && strings.TrimSpace(step.IfFalseNextStepID) == "" {
+			return fmt.Errorf("conditional step %q (index %d): if_false branch is empty AND if_false_next_step_id is unset — set one or the other", step.GetID(), stepIndex)
+		}
+		if len(step.IfTrueSteps) > 0 && strings.TrimSpace(step.IfTrueNextStepID) != "" {
+			return fmt.Errorf("conditional step %q (index %d): cannot set BOTH if_true_steps and if_true_next_step_id — they are mutually exclusive (nested branch implies its own successor)", step.GetID(), stepIndex)
+		}
+		if len(step.IfFalseSteps) > 0 && strings.TrimSpace(step.IfFalseNextStepID) != "" {
+			return fmt.Errorf("conditional step %q (index %d): cannot set BOTH if_false_steps and if_false_next_step_id — they are mutually exclusive", step.GetID(), stepIndex)
+		}
 		if len(step.IfTrueSteps) > 0 {
 			for i, branchStep := range step.IfTrueSteps {
 				if err := validateLoadedPlanStep(branchStep, i); err != nil {
@@ -256,7 +286,119 @@ func validateLoadedPlanStructure(plan *PlanningResponse) error {
 			return fmt.Errorf("orphan_steps[%d] (id=%s): %w", i, step.GetID(), err)
 		}
 	}
+	if err := validateNextStepIDReferences(plan); err != nil {
+		return err
+	}
 	return nil
+}
+
+// nextStepIDSentinelEnd is the literal value that any next_step_id may
+// take to mean "end the workflow here" — it is NOT required to match a
+// real step ID in the plan.
+const nextStepIDSentinelEnd = "end"
+
+// collectKnownStepIDs walks the plan tree (main steps, nested branch
+// steps inside conditionals, orphan steps, sub-agent steps inside
+// todo_task predefined routes) and returns the set of every step ID
+// the plan declares. The set is the legal universe for any
+// next_step_id reference; anything outside it (other than the "end"
+// sentinel) is a dangling reference that would surface at runtime
+// only after the LLM had already been billed for the routing
+// decision.
+func collectKnownStepIDs(plan *PlanningResponse) map[string]struct{} {
+	out := make(map[string]struct{})
+	if plan == nil {
+		return out
+	}
+	var walk func(steps []PlanStepInterface)
+	walk = func(steps []PlanStepInterface) {
+		for _, step := range steps {
+			if id := step.GetID(); id != "" {
+				out[id] = struct{}{}
+			}
+			switch s := step.(type) {
+			case *ConditionalPlanStep:
+				walk(s.IfTrueSteps)
+				walk(s.IfFalseSteps)
+			case *TodoTaskPlanStep:
+				for _, route := range s.PredefinedRoutes {
+					if route.SubAgentStep != nil {
+						walk([]PlanStepInterface{route.SubAgentStep})
+					}
+				}
+			}
+		}
+	}
+	walk(plan.Steps)
+	walk(plan.OrphanSteps)
+	return out
+}
+
+// validateNextStepIDReferences enforces that every next_step_id
+// emitted by routing routes and conditional branches references a
+// step that actually exists in the plan (or is the "end" sentinel).
+// Without this, a typo in plan.json silently goes to LLM execution;
+// the routing/conditional LLM call gets billed; the workflow then
+// dies trying to look up the missing successor with a runtime error
+// that is hard to attribute back to the original mistake.
+func validateNextStepIDReferences(plan *PlanningResponse) error {
+	known := collectKnownStepIDs(plan)
+	ref := func(stepID, fieldDesc, nextID string) error {
+		nextID = strings.TrimSpace(nextID)
+		if nextID == "" || nextID == nextStepIDSentinelEnd {
+			return nil
+		}
+		if _, ok := known[nextID]; !ok {
+			return fmt.Errorf("%s in step %q points to next_step_id=%q which is not a known step ID in the plan (use \"end\" to terminate the workflow, or fix the reference)", fieldDesc, stepID, nextID)
+		}
+		return nil
+	}
+	var walk func(steps []PlanStepInterface) error
+	walk = func(steps []PlanStepInterface) error {
+		for _, step := range steps {
+			switch s := step.(type) {
+			case *RoutingPlanStep:
+				for _, route := range s.Routes {
+					if err := ref(s.GetID(), fmt.Sprintf("route %q.next_step_id", route.RouteID), route.NextStepID); err != nil {
+						return err
+					}
+				}
+			case *ConditionalPlanStep:
+				if err := ref(s.GetID(), "if_true_next_step_id", s.IfTrueNextStepID); err != nil {
+					return err
+				}
+				if err := ref(s.GetID(), "if_false_next_step_id", s.IfFalseNextStepID); err != nil {
+					return err
+				}
+				if err := walk(s.IfTrueSteps); err != nil {
+					return err
+				}
+				if err := walk(s.IfFalseSteps); err != nil {
+					return err
+				}
+			case *TodoTaskPlanStep:
+				if err := ref(s.GetID(), "next_step_id", s.NextStepID); err != nil {
+					return err
+				}
+				for _, route := range s.PredefinedRoutes {
+					if route.SubAgentStep != nil {
+						if err := walk([]PlanStepInterface{route.SubAgentStep}); err != nil {
+							return err
+						}
+					}
+				}
+			case *MessageSequencePlanStep:
+				if err := ref(s.GetID(), "next_step_id", s.NextStepID); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := walk(plan.Steps); err != nil {
+		return err
+	}
+	return walk(plan.OrphanSteps)
 }
 
 // populateRuntimeFields populates runtime fields (AgentConfigs, etc.) on plan steps in-place

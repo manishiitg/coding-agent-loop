@@ -11,7 +11,12 @@ export interface EventNode {
   event: PollingEvent;
   children: EventNode[];
   level: number;
-  isExpanded: boolean;
+  // isExpanded was previously baked in here so every expand/collapse
+  // toggle forced a full eventTree rebuild — even though the tree
+  // structure didn't change. Consumers now read expandedNodes.has(...)
+  // directly at the call site; this stays for legacy SubAgentHierarchy
+  // paths that still set it.
+  isExpanded?: boolean;
 }
 
 // Import the type-safe helpers from the new event-types module

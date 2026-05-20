@@ -478,6 +478,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   // By returning the previous ref when output hasn't changed, this entire chain becomes a no-op.
   const displayEventsRef = useRef<PollingEvent[]>([]);
   const flattenedItemsRef = useRef<FlattenedItem[]>([]);
+  // Snapshot of expandedNodes captured alongside the previous flattenedItems
+  // result. Used by the togglesMatch shortcut to detect delegation-card
+  // expand changes that don't change the flat list structure (delegation
+  // children render inside the card, not as flat rows).
+  const prevExpandedNodesRef = useRef<Set<string>>(new Set());
 
   // Merge loaded older events with current events — single-pass filter
   const displayEvents = useMemo(() => {
@@ -1202,7 +1207,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         event,
         children: childNodes,
         level: depth,
-        isExpanded: expandedNodes.has(event.id)
+        // isExpanded is intentionally NOT baked in — consumers read
+        // expandedNodes.has(node.event.id) directly so toggles don't
+        // invalidate the structural tree memo.
       };
     };
 
@@ -1236,7 +1243,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     });
 
     return rootEvents.map(event => buildTreeRecursive(event, 0));
-  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, executionTree, executionStreamingActivities, getAgentSessionKey, getExecutionId, getParentId]);
+  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, executionTree, executionStreamingActivities, getAgentSessionKey, getExecutionId, getParentId]);
 
   useEffect(() => {
     if (!isEventHierarchyDebugEnabled()) return;
@@ -1250,7 +1257,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           depth,
           path: path ? `${path}.${index}` : `${index}`,
           childCount: node.children.length,
-          isExpanded: node.isExpanded,
+          isExpanded: expandedNodes.has(node.event.id),
         });
         walk(node.children, depth + 1, path ? `${path}.${index}` : `${index}`);
       });
@@ -1415,7 +1422,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       }
 
       // Respect the user's explicit expand/collapse state for normal hierarchy nodes.
-      const shouldExpand = node.isExpanded;
+      const shouldExpand = expandedNodes.has(node.event.id);
       if (shouldExpand && node.children.length > 0) {
         node.children.forEach((child, index) => {
           flatten(child, `${key}-child-${index}`, levelOffset);
@@ -1578,7 +1585,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           togglesMatch = false
           break
         }
-        if (node && prevNode && node.event.type === 'delegation_start' && node.isExpanded !== prevNode.isExpanded) {
+        if (node && prevNode && node.event.type === 'delegation_start' &&
+            expandedNodes.has(node.event.id) !== prevExpandedNodesRef.current.has(node.event.id)) {
           togglesMatch = false
           break
         }
@@ -1586,8 +1594,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       if (togglesMatch) return prev;
     }
     flattenedItemsRef.current = list;
+    prevExpandedNodesRef.current = expandedNodes;
     return list;
-  }, [eventTree, hideToolCalls, expandedGroups, expandedGroupVisibleCounts]);
+  }, [eventTree, expandedNodes, hideToolCalls, expandedGroups, expandedGroupVisibleCounts]);
 
   // --- Render tracking (filter by [Render] or [Memo] in console) ---
   useRenderLogger('EventHierarchy', {
@@ -1686,7 +1695,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     const { node, uniqueKey } = item;
     if (!node) return null;
-    const { event, children, isExpanded } = node;
+    const { event, children } = node;
+    // Read expand state from the store directly — buildTreeRecursive no
+    // longer bakes isExpanded into the EventNode so toggles don't
+    // invalidate the structural tree memo.
+    const isExpanded = expandedNodes.has(event.id);
     const level = Math.max(0, node.level + (item.levelOffset ?? 0));
     const hasChildren = children.length > 0;
     const ownsInternalLogPanel = event.type === 'delegation_start' || event.type === 'orchestrator_agent_start' || event.type === 'background_agent_started';
@@ -1804,7 +1817,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         </div>
       </div>
     );
-  }, [collapsedSessions, expandedOwnedLogPanels, findEventsBetweenStartEnd, getAgentSessionKey, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, delegationStats, backgroundAgentStats, showMoreToolCalls, toggleToolCallGroup, resolvedTabId]);
+  }, [collapsedSessions, expandedNodes, expandedOwnedLogPanels, findEventsBetweenStartEnd, getAgentSessionKey, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, delegationStats, backgroundAgentStats, showMoreToolCalls, toggleToolCallGroup, resolvedTabId]);
 
   // Only auto-scroll when new top-level items are added (not when sub-agent events update internals).
   // Sub-agent events change displayEvents but don't add items to flattenedItems.

@@ -431,26 +431,38 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             >
               Chat
             </button>
-            {(hasPlan || workspacePath) && (
+            {hasPlan && (
               <button
                 onClick={() => {
                   const store = useWorkflowStore.getState()
-                  // Default to Plan view when entering Workspace mode for the
-                  // first time; otherwise remember the last sub-view (Plan or
-                  // Report) the user had open. The Plan/Report sub-toggle
-                  // lives inside the workspace pane header (see WorkflowLayout).
-                  const lastView = store.workflowWorkspaceView === 'report' ? 'report' : 'flow'
-                  store.setWorkflowWorkspaceView(lastView)
+                  store.setWorkflowWorkspaceView('flow')
                   store.setShowWorkspacePane(true)
-                  store.setCanvasViewMode(lastView)
+                  store.setCanvasViewMode('flow')
                 }}
                 className={`min-w-0 flex-1 rounded-md px-3 py-1 text-xs font-medium transition-all sm:flex-none ${
-                  (isFlowWorkspace || isReportWorkspace)
+                  isFlowWorkspace
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
                 }`}
               >
-                Workspace
+                Plan
+              </button>
+            )}
+            {workspacePath && (
+              <button
+                onClick={() => {
+                  const store = useWorkflowStore.getState()
+                  store.setWorkflowWorkspaceView('report')
+                  store.setShowWorkspacePane(true)
+                  store.setCanvasViewMode('report')
+                }}
+                className={`min-w-0 flex-1 rounded-md px-3 py-1 text-xs font-medium transition-all sm:flex-none ${
+                  isReportWorkspace
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                }`}
+              >
+                Report
               </button>
             )}
           </div>

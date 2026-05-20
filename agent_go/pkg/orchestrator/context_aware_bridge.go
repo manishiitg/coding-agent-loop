@@ -568,21 +568,14 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 					if currentStepType != "" {
 						newMeta["current_step_type"] = currentStepType
 					}
-					// Auto-close retention for transient terminals. Only
-					// tmux terminals get a finite retention — the underlying
-					// pane is torn down at step end, so its snapshot is the
-					// only record we have and we want to drop it before
-					// memory grows. Synthetic terminals (vertex / anthropic
-					// / openai / structured CLI) are just in-memory text
-					// buffers with no ephemeral resource backing them, so
-					// they stay until the chat session ends.
-					// Adapters that already set their own retention won't
-					// be overridden — we only fill in when the key is absent.
-					if _, ok := newMeta["terminal_retention_seconds"]; !ok {
-						if currentTransport == "tmux" {
-							newMeta["terminal_retention_seconds"] = 1800 // 30 min
-						}
-					}
+					// Read-only snapshots stay in the rail until the user
+					// dismisses them via the X button — no auto-prune. Tmux
+					// terminals: the pane scrape captured at task end is the
+					// final record; tmux itself is killed quickly via
+					// llmtypes.TmuxKillDelay. Synthetic terminals: in-memory
+					// text buffers backed by nothing ephemeral. Either way,
+					// the user controls when a snapshot leaves the rail, so
+					// the bridge no longer injects terminal_retention_seconds.
 				}
 
 				// Add batch context (which group is running)

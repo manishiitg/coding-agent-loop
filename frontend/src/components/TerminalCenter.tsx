@@ -233,7 +233,11 @@ function terminalStateLabel(terminal: TerminalSnapshot): string {
     case 'failed':
       return 'failed'
     case 'closing':
-      return `closes in ${formatCloseCountdown(terminalSecondsUntilClose(terminal))}`
+      // The tmux process is already gone (killed 30s after task end);
+      // what this countdown measures is when the read-only snapshot
+      // expires from the rail. "closes" reads like a live process is
+      // shutting down — say "kept" so the user knows the work is done.
+      return `kept ${formatCloseCountdown(terminalSecondsUntilClose(terminal))}`
     default:
       return terminal.active ? 'active' : 'idle'
   }
@@ -248,7 +252,7 @@ function terminalStateDescription(terminal: TerminalSnapshot): string {
     case 'failed':
       return 'Failed: the coding agent or workflow step ended with an error.'
     case 'closing':
-      return `Closing: the agent finished and this terminal will be removed in ${formatCloseCountdown(terminalSecondsUntilClose(terminal))}.`
+      return `Snapshot: the agent finished and this read-only view will be removed in ${formatCloseCountdown(terminalSecondsUntilClose(terminal))}.`
     default:
       return terminal.active ? 'Active terminal' : 'Inactive terminal snapshot'
   }

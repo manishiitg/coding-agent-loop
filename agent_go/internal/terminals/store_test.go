@@ -565,10 +565,10 @@ func TestStoreDoesNotSelfCompleteMainAgentFromOldPaneStatus(t *testing.T) {
 	}
 }
 
-func TestStoreMarksStaleBoundedTerminalInactiveOnRead(t *testing.T) {
+func TestStoreMarksUnchangedBoundedTerminalCompletedAfterFiveMinutes(t *testing.T) {
 	store := NewStore()
 	terminalID := "session-1:workflow-step:exec-step-old:step-old"
-	oldUpdate := time.Now().Add(-(terminalStaleAfter + time.Minute))
+	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Minute))
 	store.mu.Lock()
 	store.byID[terminalID] = Snapshot{
 		TerminalID:    terminalID,
@@ -591,17 +591,17 @@ func TestStoreMarksStaleBoundedTerminalInactiveOnRead(t *testing.T) {
 		t.Fatalf("expected terminal snapshot")
 	}
 	if snapshot.Active {
-		t.Fatalf("stale bounded terminal should be inactive")
+		t.Fatalf("unchanged bounded terminal should be inactive")
 	}
-	if snapshot.State != "stale" {
-		t.Fatalf("state = %q, want stale", snapshot.State)
+	if snapshot.State != "completed" {
+		t.Fatalf("state = %q, want completed", snapshot.State)
 	}
 	if !snapshot.UpdatedAt.Equal(oldUpdate) {
-		t.Fatalf("stale reconciliation should preserve last update time")
+		t.Fatalf("inactive reconciliation should preserve last update time")
 	}
 }
 
-func TestStoreDoesNotMarkRecentBoundedTerminalStale(t *testing.T) {
+func TestStoreDoesNotMarkRecentBoundedTerminalInactive(t *testing.T) {
 	store := NewStore()
 	terminalID := "session-1:workflow-step:exec-step-recent:step-recent"
 	recentUpdate := time.Now().Add(-time.Minute)
@@ -634,10 +634,10 @@ func TestStoreDoesNotMarkRecentBoundedTerminalStale(t *testing.T) {
 	}
 }
 
-func TestStoreDoesNotMarkMainAgentTerminalStale(t *testing.T) {
+func TestStoreDoesNotMarkMainAgentTerminalInactive(t *testing.T) {
 	store := NewStore()
 	terminalID := "session-1:main:session-1"
-	oldUpdate := time.Now().Add(-(terminalStaleAfter + time.Minute))
+	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Minute))
 	store.mu.Lock()
 	store.byID[terminalID] = Snapshot{
 		TerminalID:    terminalID,
@@ -660,10 +660,45 @@ func TestStoreDoesNotMarkMainAgentTerminalStale(t *testing.T) {
 		t.Fatalf("expected terminal snapshot")
 	}
 	if !snapshot.Active {
-		t.Fatalf("main-agent terminal should not be marked stale by bounded-terminal reconciliation")
+		t.Fatalf("main-agent terminal should not be marked inactive by bounded-terminal reconciliation")
 	}
 	if snapshot.State != "running" {
 		t.Fatalf("state = %q, want running", snapshot.State)
+	}
+}
+
+func TestStoreIdenticalTerminalChunksDoNotRefreshUpdatedAt(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+	store.HandleEvent("session-1", terminalEventAt("streaming_chunk", "exec-1", "same pane", 10, now))
+	store.HandleEvent("session-1", terminalEventAt("streaming_chunk", "exec-1", "same pane", 11, now.Add(time.Minute)))
+
+	snapshot, ok := store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if !snapshot.UpdatedAt.Equal(now) {
+		t.Fatalf("unchanged pane should preserve updated_at = %s, got %s", now, snapshot.UpdatedAt)
+	}
+}
+
+func TestStoreRepeatedIdenticalChunksBecomeCompletedAfterFiveMinutes(t *testing.T) {
+	store := NewStore()
+	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Second))
+	now := time.Now()
+	metadata := map[string]interface{}{"execution_kind": "workflow_step", "scope": "workflow_step"}
+	store.HandleEvent("session-1", terminalEventWithMetadata("exec-1", "same pane", 10, metadata, oldUpdate))
+	store.HandleEvent("session-1", terminalEventWithMetadata("exec-1", "same pane", 40, metadata, now))
+
+	snapshot, ok := store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Active {
+		t.Fatalf("repeated unchanged pane should be inactive after five minutes")
+	}
+	if snapshot.State != "completed" {
+		t.Fatalf("state = %q, want completed", snapshot.State)
 	}
 }
 

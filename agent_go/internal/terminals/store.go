@@ -81,7 +81,7 @@ type Store struct {
 	forcedInactive map[string]time.Time
 }
 
-const terminalStaleAfter = 30 * time.Minute
+const terminalInactiveAfter = 5 * time.Minute
 
 func NewStore() *Store {
 	return &Store{
@@ -334,6 +334,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 		stringValue(metadata, "gemini_interactive_session"),
 		stringValue(metadata, "cursor_interactive_session"),
 	)
+	contentChanged := !exists || current.Content != content
 	current.Content = content
 	current.ChunkIndex = chunkIndex
 	current.Active = true
@@ -345,7 +346,9 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.ClosesAt = nil
 	current.RetentionSeconds = 0
 	current.Status = DeriveStatus(content, metadata)
-	current.UpdatedAt = now
+	if contentChanged || current.UpdatedAt.IsZero() {
+		current.UpdatedAt = now
+	}
 	fillDisplayContext(&current)
 
 	s.removeTmuxAliasesLocked(sessionID, terminalID, current.TmuxSession)
@@ -377,9 +380,9 @@ func (s *Store) reconcileTerminalStateLocked(terminalID string, now time.Time) (
 		s.byID[terminalID] = snapshot
 		return snapshot, true
 	}
-	if snapshot.Active && boundedTerminalCanSelfComplete(snapshot) && terminalLooksStale(snapshot, now) {
+	if snapshot.Active && boundedTerminalCanSelfComplete(snapshot) && terminalLooksInactive(snapshot, now) {
 		snapshot.Active = false
-		snapshot.State = "stale"
+		snapshot.State = "completed"
 		snapshot.ClosesAt = nil
 		snapshot.RetentionSeconds = 0
 		s.byID[terminalID] = snapshot
@@ -387,7 +390,7 @@ func (s *Store) reconcileTerminalStateLocked(terminalID string, now time.Time) (
 	return snapshot, true
 }
 
-func terminalLooksStale(snapshot Snapshot, now time.Time) bool {
+func terminalLooksInactive(snapshot Snapshot, now time.Time) bool {
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -398,7 +401,7 @@ func terminalLooksStale(snapshot Snapshot, now time.Time) bool {
 	if lastUpdate.IsZero() {
 		return false
 	}
-	return now.Sub(lastUpdate) >= terminalStaleAfter
+	return now.Sub(lastUpdate) >= terminalInactiveAfter
 }
 
 func (s *Store) removeTmuxAliasesLocked(sessionID, terminalID, tmuxSession string) {

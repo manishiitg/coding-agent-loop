@@ -247,8 +247,29 @@ if [ "$ONLY_FRONTEND" = true ]; then
     ELECTRON_BIN="${DESKTOP_DIR}/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
     FRONTEND_RUNTIME_CONFIG_PATH="${SCRIPT_DIR}/../frontend/public/runtime-config.js"
 
-    # Fall back to reading ports from the runtime-config.js written by a previous
-    # backend run if AGENT_PORT / WORKSPACE_PORT aren't explicitly set.
+    # Fallback chain for AGENT_PORT / WORKSPACE_PORT (when not explicitly set):
+    #   1. running backend process (most accurate — survives stale config)
+    #   2. runtime-config.js from a previous backend run
+    # The process scan reads --port from the actual go binary's argv, so when
+    # the user starts the backend on a different port than last time, the
+    # frontend won't follow a stale runtime-config.js into a dead port.
+    if [ -z "${AGENT_PORT:-}" ]; then
+        detected_agent_port="$(ps -axo args 2>/dev/null | grep '/main server' | grep -v 'grep' | grep -oE -- '--port[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)"
+        if [ -n "$detected_agent_port" ]; then
+            AGENT_PORT="$detected_agent_port"
+            echo "🔎 Detected AGENT_PORT=$AGENT_PORT from running backend process"
+        fi
+    fi
+    if [ -z "${WORKSPACE_PORT:-}" ]; then
+        detected_workspace_port="$(ps -axo args 2>/dev/null | grep '/workspace server' | grep -v 'grep' | grep -oE -- '--port[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)"
+        if [ -n "$detected_workspace_port" ]; then
+            WORKSPACE_PORT="$detected_workspace_port"
+            echo "🔎 Detected WORKSPACE_PORT=$WORKSPACE_PORT from running workspace process"
+        fi
+    fi
+
+    # Secondary fallback: read ports from runtime-config.js written by a
+    # previous backend run. Used when no live backend process matches above.
     if [ -z "${AGENT_PORT:-}" ] && [ -f "$FRONTEND_RUNTIME_CONFIG_PATH" ]; then
         detected_agent_port="$(grep -oE 'apiBaseUrl:[[:space:]]*"http://[^"]+"' "$FRONTEND_RUNTIME_CONFIG_PATH" | grep -oE '[0-9]+"' | tr -d '"' | head -1)"
         if [ -n "$detected_agent_port" ]; then

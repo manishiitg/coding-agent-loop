@@ -576,17 +576,10 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     }
 
     if (minimize) {
-      // Set ALL tabs of the OLD (current) preset to flat mode — they're going to background
-      const oldPresetId = presetStore.activePresetIds.workflow
-      if (oldPresetId) {
-        Object.values(chatStore.chatTabs).forEach(tab => {
-          if (tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === oldPresetId) {
-            chatStore.setTabViewMode(tab.tabId, 'flat')
-          }
-        })
-      }
-
-      // Set ALL tabs of the NEW preset to tree mode — they're coming to foreground
+      // Flat view was removed; tabs of both old and new preset stay in
+      // their current view mode. The old branch used 'flat' as a
+      // "background tab" indicator but that semantics is gone — there's
+      // no separate minimized layout, just Tree or Terminal.
       Object.values(chatStore.chatTabs).forEach(tab => {
         if (tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === item.preset.id) {
           chatStore.setTabViewMode(tab.tabId, 'tree')

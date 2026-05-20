@@ -126,7 +126,6 @@ export default function ScheduleLiveEventsPopup({ sessionId, jobName, onClose, o
               <EventList
                 events={displayEvents}
                 compact
-                flatHierarchy={false}
               />
               <div ref={eventsEndRef} />
             </>

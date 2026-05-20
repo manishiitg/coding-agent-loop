@@ -490,6 +490,10 @@ export interface TerminalStatus {
   tool_summary?: string
   tool_name?: string
   tool_count?: number
+  input_tokens?: number
+  output_tokens?: number
+  cost_usd?: number
+  duration_ms?: number
 }
 
 export interface ListTerminalsResponse {

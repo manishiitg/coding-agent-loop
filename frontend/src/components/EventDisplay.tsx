@@ -17,7 +17,6 @@ interface EventDisplayProps {
   onFeedbackSubmitted?: () => void
   onSendMessage?: (msg: string) => void
   compact?: boolean
-  flatHierarchy?: boolean
   events?: PollingEvent[]  // Required: events should always be passed from ChatArea (tab-specific)
   executionTree?: SessionExecutionTreeResponse
   sessionId?: string | null  // Session ID for streaming text lookup
@@ -126,7 +125,7 @@ const getMarkdownComponents = (compact: boolean) => ({
 })
 
 // Isolated event display component that can re-render without affecting input
-export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted, onSendMessage, compact = false, flatHierarchy = false, events: propEvents, executionTree, sessionId, tabId }) => {
+export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted, onSendMessage, compact = false, events: propEvents, executionTree, sessionId, tabId }) => {
   // Store subscriptions (only for finalResponse and isCompleted - not events)
   const {
     finalResponse,
@@ -256,8 +255,8 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
 
   return (
     <div className="space-y-4 min-w-0" data-testid="event-display-container">
-      {/* In tree mode, transient model/tool activity stays visually outside the hierarchy. */}
-      {!flatHierarchy && streamingActivityCard}
+      {/* Transient model/tool activity stays visually outside the hierarchy. */}
+      {streamingActivityCard}
 
       {/* Event Display */}
       {events.length > 0 && (
@@ -280,16 +279,12 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
               onSendMessage={onSendMessage}
               isApproving={false}
               compact={compact}
-              flatHierarchy={flatHierarchy}
               tabId={tabId}
             />
           </div>
         </div>
       )}
 
-      {/* Flat mode preserves the old chronological placement after the event feed. */}
-      {flatHierarchy && streamingActivityCard}
-      {flatHierarchy && executionStreamingActivityCards}
 
       {/* Completed Streaming Text - preserved intermediate output from generation */}
       {/* Hide when content is identical to finalResponse or when a unified_completion event already shows the result */}

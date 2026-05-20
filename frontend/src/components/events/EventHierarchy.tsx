@@ -370,7 +370,6 @@ interface EventHierarchyProps {
   onSendMessage?: (msg: string) => void
   isApproving?: boolean  // Loading state for approve button
   compact?: boolean  // Compact mode for smaller font sizes
-  flatHierarchy?: boolean  // If true, removes left padding/indentation for hierarchy levels
   tabId?: string  // Specific tab ID — avoids getActiveTab() so multi-chat panels are independent
 }
 
@@ -396,7 +395,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   onSendMessage,
   isApproving,
   compact = false,
-  flatHierarchy = false,
   tabId: tabIdProp,
 }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
@@ -960,15 +958,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     const realFilteredEvents = displayEvents.filter(event => !eventsToFilter.has(event.id));
 
-    if (flatHierarchy) {
-      return realFilteredEvents.map(event => ({
-        event,
-        children: [],
-        level: 0,
-        isExpanded: expandedNodes.has(event.id),
-      }));
-    }
-
     const liveStreamingEvents = executionStreamingActivities.map(createLiveExecutionStreamingEvent);
     const ownershipSourceEvents = [...realFilteredEvents, ...liveStreamingEvents];
 
@@ -1247,7 +1236,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     });
 
     return rootEvents.map(event => buildTreeRecursive(event, 0));
-  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, executionTree, executionStreamingActivities, flatHierarchy, getAgentSessionKey, getExecutionId, getParentId]);
+  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, executionTree, executionStreamingActivities, getAgentSessionKey, getExecutionId, getParentId]);
 
   useEffect(() => {
     if (!isEventHierarchyDebugEnabled()) return;
@@ -1333,7 +1322,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     console.log('[FIX_LEARN_CODE_UI] hierarchy_state', {
       tabId: tabIdProp ?? null,
-      flatHierarchy,
       learnCodeEvents: learnCodeEvents.map(event => {
         const agentEvent = event.data as Record<string, unknown> | undefined;
         const payload = (agentEvent?.data && typeof agentEvent.data === 'object')
@@ -1348,7 +1336,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         };
       }),
     });
-  }, [displayEvents, eventTree, flatHierarchy, tabIdProp]);
+  }, [displayEvents, eventTree, tabIdProp]);
 
   const flattenedItems = useMemo(() => {
     const list: FlattenedItem[] = [];
@@ -1599,7 +1587,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     }
     flattenedItemsRef.current = list;
     return list;
-  }, [eventTree, hideToolCalls, expandedGroups, expandedGroupVisibleCounts, flatHierarchy]);
+  }, [eventTree, hideToolCalls, expandedGroups, expandedGroupVisibleCounts]);
 
   // --- Render tracking (filter by [Render] or [Memo] in console) ---
   useRenderLogger('EventHierarchy', {
@@ -1724,7 +1712,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     
     // Only nested rows get tree indentation. Root rows should align with the feed.
     const indentLevel = level;
-    const indentSize = flatHierarchy ? 0 : 18;
+    const indentSize = 18;
     const indent = indentLevel * indentSize;
     
     const sessionKey = getAgentSessionKey(event);
@@ -1736,14 +1724,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     return (
       <div key={uniqueKey} className="event-tree-node relative" data-event-type={event.type}>
         {/* Subtle hierarchy connectors. Root rows should not get a dominant rail. */}
-        {!flatHierarchy && level > 0 && Array.from({ length: level }).map((_, i) => (
+        {level > 0 && Array.from({ length: level }).map((_, i) => (
           <div
             key={i}
             className="absolute top-0 bottom-0 border-l border-gray-200/40 dark:border-gray-700/35"
             style={{ left: `${(i + 1) * indentSize - 9}px` }}
           />
         ))}
-        {!flatHierarchy && level > 0 && (
+        {level > 0 && (
           <div
             className="absolute top-5 h-px border-t border-gray-200/50 dark:border-gray-700/45"
             style={{
@@ -1801,7 +1789,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         </div>
       </div>
     );
-  }, [collapsedSessions, expandedOwnedLogPanels, findEventsBetweenStartEnd, getAgentSessionKey, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, flatHierarchy, delegationStats, backgroundAgentStats, showMoreToolCalls, toggleToolCallGroup, resolvedTabId]);
+  }, [collapsedSessions, expandedOwnedLogPanels, findEventsBetweenStartEnd, getAgentSessionKey, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, delegationStats, backgroundAgentStats, showMoreToolCalls, toggleToolCallGroup, resolvedTabId]);
 
   // Only auto-scroll when new top-level items are added (not when sub-agent events update internals).
   // Sub-agent events change displayEvents but don't add items to flattenedItems.

@@ -991,6 +991,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitLearnCodeTerminalSnapshot(
 		Timestamp: time.Now(),
 		Data:      chunkEv,
 	})
+
+	// Follow up with a streaming_end so the terminals store flips the
+	// pane to "completed" and the frontend's close (X) button appears.
+	// Without this the pane stays in the "running" state forever — the
+	// step has no LLM call to drive a natural end-of-stream signal.
+	endEv := &baseevents.StreamingEndEvent{
+		BaseEventData: baseevents.BaseEventData{
+			Timestamp: time.Now(),
+			Metadata: map[string]interface{}{
+				"kind":      "terminal",
+				"source":    "learn_code",
+				"step_id":   stepID,
+				"transport": "learn_code",
+			},
+		},
+	}
+	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
+		Type:      "streaming_end",
+		Timestamp: time.Now(),
+		Data:      endEv,
+	})
 }
 
 func firstNonEmptyStr(values ...string) string {

@@ -28,8 +28,7 @@ const STREAMING_INACTIVITY_MS = 60000
 
 // Per-mode event counts type — kept for backwards compat with persisted state
 export type PerModeEventCounts = { micro: number }
-export type EventViewMode = 'tree' | 'flat' | 'terminal'
-type LegacyEventViewMode = EventViewMode | 'detailed' | 'summary'
+export type EventViewMode = 'tree' | 'terminal'
 
 export type ExecutionStreamingActivity = {
   sessionId: string
@@ -40,10 +39,8 @@ export type ExecutionStreamingActivity = {
   updatedAt: number
 }
 
-export function normalizeEventViewMode(viewMode?: LegacyEventViewMode | null): EventViewMode {
-  if (viewMode === 'flat' || viewMode === 'summary') return 'flat'
-  if (viewMode === 'terminal') return 'terminal'
-  return 'tree'
+export function normalizeEventViewMode(viewMode?: string | null): EventViewMode {
+  return viewMode === 'terminal' ? 'terminal' : 'tree'
 }
 
 type LearnCodeScriptExecutionData = {
@@ -326,9 +323,7 @@ export interface ChatTab {
   isSyntheticTurn: boolean  // Whether current running turn is an auto-notification that should not queue user input
   canSteer: boolean  // Whether the backend currently has a live agent that can accept steer injection
   hideToolCalls: boolean  // Whether to hide tool_call_start/end events in this tab
-  // Event layout mode. Legacy persisted values are normalized on read:
-  // 'detailed' -> 'tree', 'summary' -> 'flat'.
-  viewMode: EventViewMode | 'detailed' | 'summary'
+  viewMode: EventViewMode
   config: ChatTabConfig  // Tab-specific configuration
   createdAt: number  // Timestamp for ordering
   lastAccessedAt?: number  // Timestamp for MRU switchers
@@ -705,7 +700,7 @@ export const useChatStore = create<ChatState>()(
       sessionId: null,
       hasActiveChat: false,
       autoScroll: true,
-      eventViewModePreference: 'flat',
+      eventViewModePreference: 'tree',
       terminalCenterOpen: false,
       finalResponse: '',
       isCompleted: false,

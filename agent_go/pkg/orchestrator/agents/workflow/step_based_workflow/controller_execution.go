@@ -3068,10 +3068,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			}
 			// Attach rich step context (name, index, total, parent, attempt,
 			// triggered_by) so the terminal pane's meta row can render
-			// "step 3/7 · attempt 1 · triggered by workflow_executor ·
-			// parent <prev step>". Parent is the previous step in the
-			// sequence — useful for tracing which step's output the
-			// current step is consuming.
+			// "step 3/7 · attempt 1 · triggered by workflow_executor".
+			// Don't set ParentStepID to the previous step — that's
+			// data-flow semantics ("step 3 consumes step 2's output"),
+			// but the frontend's terminal tree builder uses parent_step_id
+			// for hierarchy and would render sequential steps as an
+			// ever-deepening chain (step1 → step2 → step3 nested under
+			// each other) instead of siblings at the workflow level.
+			// ParentStepID is reserved for true sub-agent / nested
+			// spawning relationships (see controller_todo_task.go,
+			// planning_agent.go), not sequential order.
 			if cab, ok := bridge.(*orchestrator.ContextAwareEventBridge); ok {
 				rich := orchestrator.RichStepContext{
 					StepName:    step.GetTitle(),
@@ -3079,9 +3085,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 					StepTotal:   len(breakdownSteps),
 					Attempt:     1,
 					TriggeredBy: "workflow_executor",
-				}
-				if i > 0 && breakdownSteps[i-1] != nil {
-					rich.ParentStepID = breakdownSteps[i-1].GetID()
 				}
 				cab.SetRichStepContext(rich)
 			}

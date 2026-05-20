@@ -55,6 +55,10 @@ func DeriveStatus(content string, metadata map[string]interface{}) Status {
 		ToolSummary:      toolSummary,
 		ToolName:         toolName,
 		ToolCount:        toolCount,
+		InputTokens:      intValue(metadata["input_tokens"]),
+		OutputTokens:     intValue(metadata["output_tokens"]),
+		CostUSD:          floatValue(metadata["cost_usd_estimated"]),
+		DurationMs:       int64Value(metadata["duration_ms"]),
 	}
 }
 

@@ -3158,7 +3158,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} />
             )}
             {activeTab?.sessionId && activeEventViewMode !== 'terminal' && (
-              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={activeEventViewMode === 'flat'} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
+              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}
           </WorkflowModeHandler>
         ) : (
@@ -3190,7 +3190,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} />
             )}
             {activeTab?.sessionId && activeEventViewMode !== 'terminal' && (
-              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={activeEventViewMode === 'flat'} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
+              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}
           </>
         )}

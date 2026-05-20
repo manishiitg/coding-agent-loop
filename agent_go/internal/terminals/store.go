@@ -52,12 +52,16 @@ type Snapshot struct {
 
 // Status is a conservative, human-readable summary derived from the raw TUI.
 type Status struct {
-	ProviderLabel    string `json:"provider_label,omitempty"`
-	StatusText       string `json:"status_text,omitempty"`
-	AssistantPreview string `json:"assistant_preview,omitempty"`
-	ToolSummary      string `json:"tool_summary,omitempty"`
-	ToolName         string `json:"tool_name,omitempty"`
-	ToolCount        int    `json:"tool_count,omitempty"`
+	ProviderLabel    string  `json:"provider_label,omitempty"`
+	StatusText       string  `json:"status_text,omitempty"`
+	AssistantPreview string  `json:"assistant_preview,omitempty"`
+	ToolSummary      string  `json:"tool_summary,omitempty"`
+	ToolName         string  `json:"tool_name,omitempty"`
+	ToolCount        int     `json:"tool_count,omitempty"`
+	InputTokens      int     `json:"input_tokens,omitempty"`
+	OutputTokens     int     `json:"output_tokens,omitempty"`
+	CostUSD          float64 `json:"cost_usd,omitempty"`
+	DurationMs       int64   `json:"duration_ms,omitempty"`
 }
 
 // Context contains higher-level session data used to enrich terminal labels.
@@ -372,6 +376,24 @@ func (s *Store) markInactive(sessionID, ownerID string, metadata map[string]inte
 	}
 	snapshot.State = state
 	snapshot.UpdatedAt = now
+	// Surface per-call completion meta (tokens, cost, duration) attached
+	// to the streaming_end event. Tmux terminals don't carry these in
+	// their pane content (the synthetic [done · ...] line is suppressed
+	// to avoid clobbering the pane scrape), so the streaming_end is the
+	// only place the structured numbers arrive. Non-tmux transports also
+	// benefit — Status fields beat regex-parsing the trailer.
+	if in := intValue(metadata["input_tokens"]); in > 0 {
+		snapshot.Status.InputTokens = in
+	}
+	if out := intValue(metadata["output_tokens"]); out > 0 {
+		snapshot.Status.OutputTokens = out
+	}
+	if cost := floatValue(metadata["cost_usd_estimated"]); cost > 0 {
+		snapshot.Status.CostUSD = cost
+	}
+	if dur := int64Value(metadata["duration_ms"]); dur > 0 {
+		snapshot.Status.DurationMs = dur
+	}
 	s.byID[terminalID] = snapshot
 }
 
@@ -723,6 +745,42 @@ func stringValue(values map[string]interface{}, key string) string {
 		return strings.TrimSpace(typed.String())
 	default:
 		return strings.TrimSpace(fmt.Sprint(typed))
+	}
+}
+
+func floatValue(value interface{}) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case string:
+		parsed, _ := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func int64Value(value interface{}) int64 {
+	switch typed := value.(type) {
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case float64:
+		return int64(typed)
+	case float32:
+		return int64(typed)
+	case string:
+		parsed, _ := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		return parsed
+	default:
+		return 0
 	}
 }
 

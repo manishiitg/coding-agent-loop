@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo } from 'react'
-import { Plus, ArrowDown, List, ListTree, Terminal } from 'lucide-react'
+import { Plus, ArrowDown, ListTree, Terminal } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -267,7 +267,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
           <div className="flex items-center rounded bg-gray-100 dark:bg-gray-800 p-0.5">
             {([
               { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by agent' },
-              { mode: 'flat' as const, Icon: List, label: 'Flat', tip: 'Flat view — show events in chronological order' },
               { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal', tip: 'Terminal view — show only the terminal panes, no events' },
             ]).map(({ mode, Icon, label, tip }) => (
               <Tooltip key={mode}>

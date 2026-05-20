@@ -127,6 +127,31 @@ function extractDoneStats(content: string): { duration?: string; tokensIn?: stri
   return out
 }
 
+// humanizeMs mirrors the Go-side humanizeDuration: "234ms", "30.7s",
+// "2m 14s", "1h 5m". Used when surfacing duration_ms from terminal.status.
+function humanizeMs(ms: number): string {
+  if (!ms || ms < 0) return ''
+  if (ms < 1000) return `${ms}ms`
+  const sec = ms / 1000
+  if (sec < 60) return `${sec.toFixed(1)}s`
+  const secs = Math.floor(ms / 1000)
+  const mins = Math.floor(secs / 60)
+  const rem = secs % 60
+  if (mins < 60) return `${mins}m ${rem}s`
+  const hours = Math.floor(mins / 60)
+  const remMin = mins % 60
+  return `${hours}h ${remMin}m`
+}
+
+// formatCost matches the Go-side formatUSD scale: cheap calls keep
+// six decimals so a $0.000089 haiku call doesn't render as "$0.0000".
+function formatCost(cost: number): string {
+  if (cost >= 1) return cost.toFixed(2)
+  if (cost >= 0.01) return cost.toFixed(4)
+  if (cost > 0) return cost.toFixed(6)
+  return '0'
+}
+
 function formatTerminalMeta(terminal: TerminalSnapshot): string {
   const chip = formatTransportChip(terminal)
   const parts: string[] = [
@@ -149,9 +174,19 @@ function formatTerminalMeta(terminal: TerminalSnapshot): string {
   if (terminal.step_execution_mode) {
     parts.push(humanizeIdentifier(terminal.step_execution_mode))
   }
-  // Cost / duration / tokens come from the synthetic Done trailer
-  // baked into the pane content. Cheap to parse, no backend wiring.
-  const stats = extractDoneStats(terminal.content)
+  // Cost / duration / tokens — prefer the structured fields on
+  // terminal.status (populated from the streaming_end event's
+  // completion meta for both tmux and non-tmux transports). Fall
+  // back to regex-parsing the synthetic [done · ...] trailer for
+  // older snapshots that haven't been re-emitted yet.
+  const statusStats = terminal.status
+  const durationFromStatus = statusStats?.duration_ms ? humanizeMs(statusStats.duration_ms) : ''
+  const tokensInFromStatus = statusStats?.input_tokens ? statusStats.input_tokens.toString() : ''
+  const tokensOutFromStatus = statusStats?.output_tokens ? statusStats.output_tokens.toString() : ''
+  const costFromStatus = statusStats?.cost_usd ? `$${formatCost(statusStats.cost_usd)}` : ''
+  const stats = (durationFromStatus || tokensInFromStatus || costFromStatus)
+    ? { duration: durationFromStatus, tokensIn: tokensInFromStatus, tokensOut: tokensOutFromStatus, cost: costFromStatus }
+    : extractDoneStats(terminal.content)
   if (stats.duration) parts.push(stats.duration)
   if (stats.tokensIn && stats.tokensOut) parts.push(`${stats.tokensIn}↑ ${stats.tokensOut}↓`)
   if (stats.cost) parts.push(stats.cost)
@@ -333,6 +368,209 @@ function dedupeTerminalsByPane(terminals: TerminalSnapshot[]): TerminalSnapshot[
   return Array.from(byPane.values())
 }
 
+// ---------------------------------------------------------------------------
+// Structured terminal view — parses the synthetic terminal's plain-text
+// buffer into typed rows so we can colorize roles and fold long tool I/O
+// behind a one-line summary. Tmux pane scrapes skip this and keep the
+// raw <pre> rendering: they're literal screen captures and adding any
+// frontend interpretation breaks the "this is exactly what the CLI saw"
+// contract.
+// ---------------------------------------------------------------------------
+
+type TerminalRow =
+  | { kind: 'banner'; text: string }
+  | { kind: 'context'; text: string }
+  | { kind: 'user'; text: string }
+  | { kind: 'asst'; text: string }
+  | { kind: 'tool'; name: string; args: string; result?: string; resultPrefix?: '✓' | '✗' }
+  | { kind: 'attachment'; text: string }
+  | { kind: 'done'; text: string }
+  | { kind: 'error'; text: string }
+  | { kind: 'plain'; text: string }
+
+function classifyTerminalLine(line: string): TerminalRow {
+  if (line.startsWith('$ ')) return { kind: 'banner', text: line.slice(2) }
+  if (line.startsWith('↳ ')) return { kind: 'context', text: line.slice(2) }
+  if (line.startsWith('> user: ')) return { kind: 'user', text: line.slice(8) }
+  if (line.startsWith('< asst: ')) return { kind: 'asst', text: line.slice(8) }
+  if (line.startsWith('  ')) return { kind: 'asst', text: line.slice(2) }
+  if (line.startsWith('[image ')) return { kind: 'attachment', text: line }
+  if (line.startsWith('[document ')) return { kind: 'attachment', text: line }
+  if (line.startsWith('[done')) return { kind: 'done', text: line }
+  if (line.startsWith('[error]')) return { kind: 'error', text: line.slice(7).trim() }
+  // Tool start: "→ tool: name(args)" or "→ name args"
+  if (line.startsWith('→ ')) {
+    const rest = line.slice(2)
+    const toolMatch = rest.match(/^tool:\s*([^(]+)\((.*)\)$/)
+    if (toolMatch) {
+      return { kind: 'tool', name: toolMatch[1].trim(), args: toolMatch[2] }
+    }
+    const spaceIdx = rest.indexOf(' ')
+    if (spaceIdx > 0) {
+      return { kind: 'tool', name: rest.slice(0, spaceIdx), args: rest.slice(spaceIdx + 1) }
+    }
+    return { kind: 'tool', name: rest, args: '' }
+  }
+  return { kind: 'plain', text: line }
+}
+
+// Pair tool starts with their matching result lines. A line beginning
+// "✓ result <name>:" or "✗ result <name>:" or the short "✓ <name> (<dur>) ..."
+// form gets merged into the most recent tool row with the same name.
+function parseTerminalContent(content: string): TerminalRow[] {
+  if (!content) return []
+  const lines = content.split('\n')
+  const rows: TerminalRow[] = []
+  for (const line of lines) {
+    // Tool result variants
+    const fullResult = line.match(/^([✓✗])\s+result\s+([^:]+):\s*(.*)$/)
+    if (fullResult) {
+      const [, prefix, name, body] = fullResult
+      // Find the most recent tool row with this name that has no result yet
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const row = rows[i]
+        if (row.kind === 'tool' && row.name === name.trim() && !row.result) {
+          row.result = body
+          row.resultPrefix = prefix as '✓' | '✗'
+          break
+        }
+      }
+      continue
+    }
+    const shortResult = line.match(/^([✓✗])\s+(\S+)\s+\(([^)]+)\)\s*(.*)$/)
+    if (shortResult) {
+      const [, prefix, name, dur, body] = shortResult
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const row = rows[i]
+        if (row.kind === 'tool' && row.name === name && !row.result) {
+          row.result = body ? `${dur} · ${body}` : dur
+          row.resultPrefix = prefix as '✓' | '✗'
+          break
+        }
+      }
+      continue
+    }
+    const classified = classifyTerminalLine(line)
+    // Coalesce consecutive assistant continuation lines into one row
+    if (classified.kind === 'asst' && rows.length > 0 && rows[rows.length - 1].kind === 'asst') {
+      const prev = rows[rows.length - 1] as { kind: 'asst'; text: string }
+      prev.text = `${prev.text}${prev.text && classified.text ? ' ' : ''}${classified.text}`
+      continue
+    }
+    rows.push(classified)
+  }
+  return rows
+}
+
+interface StructuredTerminalViewProps {
+  content: string
+  scrollRef: React.RefObject<HTMLDivElement | null>
+  onScroll: (e: React.UIEvent<HTMLDivElement>) => void
+}
+
+const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content, scrollRef, onScroll }) => {
+  const rows = useMemo(() => parseTerminalContent(content), [content])
+  // Tool rows are collapsed when their result is "long" (>80 chars); the
+  // user can click the chevron to flip individual rows. We key by row
+  // index — content updates are append-only so indexes stay stable for
+  // existing rows.
+  const [expanded, setExpanded] = useState<Set<number>>(new Set())
+  const toggle = useCallback((idx: number) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(idx)) next.delete(idx)
+      else next.add(idx)
+      return next
+    })
+  }, [])
+  return (
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="flex-1 overflow-auto overscroll-contain p-2.5 font-mono text-[12px] leading-5"
+    >
+      {rows.map((row, idx) => {
+        switch (row.kind) {
+          case 'banner':
+            return (
+              <div key={idx} className="text-cyan-300">
+                <span className="text-neutral-500">$ </span>{row.text}
+              </div>
+            )
+          case 'context':
+            return <div key={idx} className="text-neutral-500">↳ {row.text}</div>
+          case 'user':
+            return (
+              <div key={idx} className="text-blue-300 whitespace-pre-wrap break-words">
+                <span className="text-blue-500">&gt; user: </span>{row.text}
+              </div>
+            )
+          case 'asst':
+            return (
+              <div key={idx} className="text-neutral-100 whitespace-pre-wrap break-words">
+                <span className="text-neutral-500">&lt; asst: </span>{row.text}
+              </div>
+            )
+          case 'tool': {
+            const hasResult = row.result !== undefined
+            const isError = row.resultPrefix === '✗'
+            const longResult = (row.result?.length ?? 0) > 80
+            const isOpen = expanded.has(idx) || (hasResult && !longResult)
+            const statusColor = !hasResult
+              ? 'text-yellow-300'
+              : isError
+                ? 'text-red-400'
+                : 'text-emerald-400'
+            return (
+              <div key={idx}>
+                <button
+                  type="button"
+                  onClick={() => toggle(idx)}
+                  className="w-full text-left hover:bg-white/5 rounded px-0.5 -mx-0.5"
+                >
+                  <span className={statusColor}>
+                    {hasResult ? (isError ? '✗' : '✓') : '→'}
+                  </span>
+                  <span className="text-amber-300 ml-1">{row.name}</span>
+                  {row.args && (
+                    <span className="text-neutral-400 ml-1">
+                      ({row.args.length > 60 && !isOpen ? `${row.args.slice(0, 60)}…` : row.args})
+                    </span>
+                  )}
+                  {hasResult && longResult && (
+                    <span className="text-neutral-600 ml-1">{isOpen ? '▾' : '▸'}</span>
+                  )}
+                </button>
+                {hasResult && isOpen && (
+                  <div className={`ml-4 whitespace-pre-wrap break-words ${isError ? 'text-red-300' : 'text-neutral-300'}`}>
+                    {row.result}
+                  </div>
+                )}
+              </div>
+            )
+          }
+          case 'attachment':
+            return <div key={idx} className="text-neutral-500">{row.text}</div>
+          case 'done':
+            return <div key={idx} className="text-emerald-400 mt-1">{row.text}</div>
+          case 'error':
+            return <div key={idx} className="text-red-400">[error] {row.text}</div>
+          case 'plain':
+            return <div key={idx} className="text-neutral-300 whitespace-pre-wrap break-words">{row.text}</div>
+        }
+      })}
+    </div>
+  )
+}
+
+function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
+  const transport = (terminal.step_transport || '').toLowerCase()
+  if (transport === 'tmux') return false
+  if (transport === 'api' || transport === 'structured' || transport === 'structured_cli' || transport === 'non_tmux') return true
+  // Fall back to tmux_session presence — pane scrapes always have one.
+  return !terminal.tmux_session
+}
+
 export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId, compact }) => {
   // terminalCenterOpen was the legacy toggle gate (separate sidekick
   // panel); kept here for any callers that still pass the flag but no
@@ -348,7 +586,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [copiedTerminalID, setCopiedTerminalID] = useState<string | null>(null)
   const [dismissedTerminalIDs, setDismissedTerminalIDs] = useState<Set<string>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
-  const terminalOutputRef = useRef<HTMLPreElement | null>(null)
+  const terminalOutputRef = useRef<HTMLElement | null>(null)
   const terminalAutoScrollRef = useRef(true)
   const selectedTerminalIDRef = useRef<string | null>(null)
 
@@ -663,9 +901,21 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       )}
                     </div>
                   </div>
-                  <pre ref={terminalOutputRef} onScroll={handleTerminalScroll} className="flex-1 overflow-auto overscroll-contain p-2.5 font-mono text-[12px] leading-5 text-gray-100 whitespace-pre">
-                    {selectedTerminal.content}
-                  </pre>
+                  {isSyntheticTerminal(selectedTerminal) ? (
+                    <StructuredTerminalView
+                      content={selectedTerminal.content}
+                      scrollRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
+                      onScroll={handleTerminalScroll}
+                    />
+                  ) : (
+                    <pre
+                      ref={terminalOutputRef as React.RefObject<HTMLPreElement | null>}
+                      onScroll={handleTerminalScroll}
+                      className="flex-1 overflow-auto overscroll-contain p-2.5 font-mono text-[12px] leading-5 text-gray-100 whitespace-pre"
+                    >
+                      {selectedTerminal.content}
+                    </pre>
+                  )}
                 </>
               ) : (
                 <div className="flex flex-1 items-center justify-center text-xs text-neutral-500">

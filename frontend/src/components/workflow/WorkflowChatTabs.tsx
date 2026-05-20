@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { ArrowDown, List, ListTree, Radio, Terminal } from 'lucide-react'
+import { ArrowDown, ListTree, Radio, Terminal } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
@@ -223,9 +223,8 @@ export const WorkflowChatTabs: React.FC = () => {
               aria-label="Event layout mode"
             >
               {([
-                { mode: 'flat' as const, Icon: List, label: 'Flat view', tip: 'Flat view - chronological events' },
-                { mode: 'tree' as const, Icon: ListTree, label: 'Tree view', tip: 'Tree view - group by workflow and agent' },
-                { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal view', tip: 'Terminal view - terminal panes only' },
+                { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by workflow and agent' },
+                { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal', tip: 'Terminal view — show only the terminal panes, no events' },
               ]).map(({ mode, Icon, label, tip }) => (
                 <Tooltip key={mode}>
                   <TooltipTrigger asChild>

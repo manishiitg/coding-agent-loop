@@ -1211,6 +1211,13 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 		return sessionID, "", fmt.Errorf("session execution failed: %w", runErr)
 	}
 
+	// Stamp the schedule's display name onto the tracked session so the
+	// frontend can label the reconnect tab "<Schedule Name>" instead of
+	// the generic "Workflow" fallback. QueryRequest doesn't carry a
+	// title field, so we update activeSessions directly here after the
+	// session has been tracked by handleQuery.
+	s.stampScheduleNameOnSession(sessionID, sctx)
+
 	// Wait for workflow orchestrator to finish (background goroutines)
 	detectedFolder, waitErr := s.waitForWorkflowComplete(ctx, sessionID, runID, sctx.WorkspacePath)
 	if waitErr != nil {
@@ -1254,6 +1261,11 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		if err := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil); err != nil {
 			return sessionID, runFolder, fmt.Errorf("workshop message %d/%d failed: %w", i+1, len(messages), err)
 		}
+
+		// First message of the workshop sequence — stamp schedule name on
+		// the session for frontend tab labeling. Subsequent calls are
+		// no-ops (helper guards against overwriting an existing Title).
+		s.stampScheduleNameOnSession(sessionID, sctx)
 
 		if err := s.waitForWorkshopIdle(ctx, sessionID); err != nil {
 			return sessionID, runFolder, fmt.Errorf("workshop idle wait failed after message %d: %w", i+1, err)
@@ -1328,12 +1340,36 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 		return sessionID, "", fmt.Errorf("multi-agent session execution failed: %w", runErr)
 	}
 
+	s.stampScheduleNameOnSession(sessionID, sctx)
+
 	// Wait for session to complete (no workflow orchestrator, just wait for agent to finish)
 	if err := s.waitForSessionComplete(ctx, sessionID); err != nil {
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] ⚠️ Multi-agent session wait interrupted for %s: %v", sctx.Schedule.ID, err)
 	}
 
 	return sessionID, "", nil
+}
+
+// stampScheduleNameOnSession updates the tracked session with the
+// schedule's display name + triggered_by=cron so the frontend reconnect
+// path can identify this as a scheduled run and label the tab using the
+// schedule name instead of falling back to the literal "Workflow".
+// Safe to call after startSessionInternal returns — the session is
+// already tracked by then.
+func (s *SchedulerService) stampScheduleNameOnSession(sessionID string, sctx *ScheduleContext) {
+	if sctx == nil || strings.TrimSpace(sctx.Schedule.Name) == "" {
+		return
+	}
+	s.api.activeSessionsMux.Lock()
+	defer s.api.activeSessionsMux.Unlock()
+	if sess, ok := s.api.activeSessions[sessionID]; ok && sess != nil {
+		if sess.Title == "" {
+			sess.Title = sctx.Schedule.Name
+		}
+		if sess.TriggeredBy == "" {
+			sess.TriggeredBy = "cron"
+		}
+	}
 }
 
 // waitForSessionComplete polls until a simple/multi-agent session is no longer busy.

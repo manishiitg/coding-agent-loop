@@ -1039,6 +1039,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           isActive: boolean
           phaseId?: string
           phaseName?: string
+          triggeredBy?: string
+          botPlatform?: string
+          isScheduledRun?: boolean
         }> = []
 
         // Add active sessions that belong to this preset. We read the
@@ -1078,7 +1081,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             query: s.query,
             title: s.title,
             status: s.status,
-            isActive: true
+            isActive: true,
+            // Carry through scheduler/bot identity so the tab labelling
+            // chain below uses "<Schedule Name>" instead of falling to
+            // the literal "Workflow" string. Backend stamps Title +
+            // TriggeredBy='cron' on scheduled sessions via
+            // stampScheduleNameOnSession.
+            triggeredBy: s.triggered_by,
+            botPlatform: s.bot_platform,
+            isScheduledRun: s.triggered_by === 'cron',
           })
         }
 
@@ -1162,14 +1173,43 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           }
 
           const phase = phaseId ? getPhaseById(phaseId) : null
-          const phaseName = session.phaseName || phase?.title || session.title || phaseId || 'Workflow'
+          // Naming priority:
+          //   1. Explicit phase / phaseName from the session record
+          //   2. The session's Title (scheduled runs get the schedule name
+          //      stamped here by stampScheduleNameOnSession on the backend;
+          //      regular workflow runs may have a meaningful title too)
+          //   3. Fallback to "Schedule" / "Bot" when we know the trigger,
+          //      so a scheduled run reconnected on app boot doesn't get
+          //      labelled the literal "Workflow"
+          //   4. Last resort: phaseId / "Workflow Builder" (so the chat
+          //      input gating in WorkflowChatTabs treats it as the
+          //      builder tab and shows the proper "Chat" label)
+          let phaseName: string
+          if (session.phaseName || phase?.title || session.title) {
+            phaseName = session.phaseName || phase?.title || session.title || ''
+          } else if (session.isScheduledRun || session.triggeredBy === 'cron') {
+            phaseName = 'Schedule'
+          } else if (session.botPlatform) {
+            phaseName = session.botPlatform
+          } else {
+            phaseName = phaseId || 'Workflow Builder'
+          }
 
-          // Create tab
+          // Create tab with scheduled-run / bot metadata so downstream
+          // UI (chat-input toggle, view-only banner, badge icons) treats
+          // it as a read-only observer of an external trigger.
+          const isScheduled = session.isScheduledRun || session.triggeredBy === 'cron'
+          const isBot = Boolean(session.botPlatform)
           const tabId = await createChatTab(phaseName, {
             mode: 'workflow',
             phaseId: phaseId || undefined,
             phaseName,
-            presetQueryId: activePresetId
+            presetQueryId: activePresetId,
+            isViewOnly: isScheduled || isBot ? true : undefined,
+            isScheduledRun: isScheduled || undefined,
+            scheduledJobName: isScheduled ? (session.title || phaseName) : undefined,
+            isBotRun: isBot || undefined,
+            botPlatform: isBot ? session.botPlatform : undefined,
           }, session.sessionId)
 
           // Load events from in-memory EventStore (workflow events are NOT stored in DB)

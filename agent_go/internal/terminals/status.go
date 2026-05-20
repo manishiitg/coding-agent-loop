@@ -59,6 +59,7 @@ func DeriveStatus(content string, metadata map[string]interface{}) Status {
 		OutputTokens:     intValue(metadata["output_tokens"]),
 		CostUSD:          floatValue(metadata["cost_usd_estimated"]),
 		DurationMs:       int64Value(metadata["duration_ms"]),
+		RateLimited:      detectRateLimit(content),
 	}
 }
 

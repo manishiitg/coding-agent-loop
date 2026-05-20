@@ -62,6 +62,13 @@ type Status struct {
 	OutputTokens     int     `json:"output_tokens,omitempty"`
 	CostUSD          float64 `json:"cost_usd,omitempty"`
 	DurationMs       int64   `json:"duration_ms,omitempty"`
+	// RateLimited is set when the rendered pane content matches any
+	// known provider rate-limit / quota-exhausted message (see
+	// rate_limit.go). The terminal stays "running" from the store's
+	// perspective because the tmux pane is still alive, but the
+	// frontend can surface a distinct badge so the user knows the
+	// underlying work is blocked, not making progress.
+	RateLimited bool `json:"rate_limited,omitempty"`
 }
 
 // Context contains higher-level session data used to enrich terminal labels.
@@ -297,6 +304,25 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	if exists && chunkIndex < current.ChunkIndex && !isNewTerminalTurn(current, now, chunkIndex) {
 		return
 	}
+	// Rerun: a new turn has arrived for an owner whose previous turn
+	// already completed. Archive the existing entry under a derived
+	// terminalID so the read-only snapshot of the prior run stays in
+	// the rail, then drop through to create a fresh entry at the
+	// canonical terminalID for the new live turn. Skips when the
+	// current entry is empty (no real content yet) — that's just a
+	// pre-stream placeholder, not a finished run worth archiving.
+	if exists && !current.Active && isNewTerminalTurn(current, now, chunkIndex) && strings.TrimSpace(current.Content) != "" {
+		archived := current
+		archived.TerminalID = fmt.Sprintf("%s:turn-%d", terminalID, current.CreatedAt.UnixNano())
+		archived.Active = false
+		s.byID[archived.TerminalID] = archived
+		if s.bySession[sessionID] == nil {
+			s.bySession[sessionID] = make(map[string]struct{})
+		}
+		s.bySession[sessionID][archived.TerminalID] = struct{}{}
+		// Force the canonical ID to be repopulated from scratch below.
+		exists = false
+	}
 	if !exists {
 		current = Snapshot{
 			TerminalID: terminalID,
@@ -314,6 +340,14 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.WorkflowName = firstNonEmpty(stringValue(metadata, "workflow_name"), stringValue(metadata, "workflow_id"), workflowNameFromPath(current.WorkflowPath))
 	current.WorkflowLabel = firstNonEmpty(stringValue(metadata, "workflow_label"), stringValue(metadata, "preset_name"), current.WorkflowName)
 	current.StepID = firstNonEmpty(workflowStepIDFromOwner(ownerID), stringValue(metadata, "current_step_id"), stringValue(metadata, "workflow_step_id"), stringValue(metadata, "step_id"))
+	// Main-agent terminals have no natural step_id, but the rail tree
+	// needs a stable identifier so child terminals (workshop backgrounds
+	// spawned by the main agent via run_full_workflow / run_step / etc.)
+	// can point to it as their parent. Synthesize one per session — the
+	// rail builder uses this value as a parent key, not for display.
+	if current.StepID == "" && current.ExecutionKind == "main_agent" {
+		current.StepID = "main_agent:" + sessionID
+	}
 	// step_name (from rich-context push) takes priority over the
 	// legacy step_title key; both are accepted for backward compat.
 	current.StepName = firstNonEmpty(stringValue(metadata, "step_name"), stringValue(metadata, "step_title"), stringValue(metadata, "current_step_title"))
@@ -321,6 +355,18 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.StepIndex = intValue(metadata["step_index"])
 	current.StepTotal = intValue(metadata["step_total"])
 	current.ParentStepID = stringValue(metadata, "parent_step_id")
+	// Default rooting: a terminal with no parent_step_id and not itself
+	// the main agent gets implicitly parented to the main-agent
+	// terminal of this session. The rail's buildTree only nests when
+	// the parent step_id matches another terminal in the list, so this
+	// is self-correcting: if no main_agent terminal exists for this
+	// session, the synthetic parent_step_id won't resolve and the
+	// terminal just renders at root anyway. Workshop backgrounds
+	// spawned via run_full_workflow / run_step now hang off the main
+	// agent in the rail.
+	if current.ParentStepID == "" && current.ExecutionKind != "main_agent" {
+		current.ParentStepID = "main_agent:" + sessionID
+	}
 	current.StepAttempt = intValue(metadata["step_attempt"])
 	current.StepExecutionMode = stringValue(metadata, "step_execution_mode")
 	current.StepTransport = stringValue(metadata, "step_transport")

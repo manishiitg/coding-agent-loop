@@ -673,13 +673,18 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // cards; Terminal mode would otherwise hide them entirely since the
   // rail only carries pane content. Tracks the last few errors for the
   // current session and stays dismissible.
-  const sessionErrorBanner = useChatStore(state => {
-    if (!currentSessionId) return [] as TerminalErrorBannerEntry[]
-    const events = state.tabEvents[currentSessionId]
-    if (!events || events.length === 0) return [] as TerminalErrorBannerEntry[]
+  //
+  // CAUTION: the zustand selector returns a value compared by reference.
+  // Build the list with useMemo over a narrowly-selected events array
+  // so a re-derived list with the same content doesn't trigger an
+  // infinite render loop (a previous version returned a fresh [] every
+  // call, which Zustand saw as "changed" → re-render → repeat).
+  const sessionEvents = useChatStore(state => (currentSessionId ? state.tabEvents[currentSessionId] : undefined))
+  const sessionErrorBanner = useMemo<TerminalErrorBannerEntry[]>(() => {
+    if (!sessionEvents || sessionEvents.length === 0) return []
     const out: TerminalErrorBannerEntry[] = []
-    for (let i = events.length - 1; i >= 0 && out.length < 3; i--) {
-      const evt = events[i] as unknown as { id?: string; type?: string; timestamp?: string }
+    for (let i = sessionEvents.length - 1; i >= 0 && out.length < 3; i--) {
+      const evt = sessionEvents[i] as unknown as { id?: string; type?: string; timestamp?: string }
       if (!evt?.type || !TERMINAL_ERROR_EVENT_TYPES.has(evt.type)) continue
       const id = evt.id || `${evt.type}-${i}`
       if (dismissedErrorIDs.has(id)) continue
@@ -687,7 +692,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       out.push({ id, type: evt.type, message, timestamp: evt.timestamp })
     }
     return out
-  })
+  }, [sessionEvents, dismissedErrorIDs])
   const terminalOutputRef = useRef<HTMLElement | null>(null)
   const terminalAutoScrollRef = useRef(true)
   const selectedTerminalIDRef = useRef<string | null>(null)

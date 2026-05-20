@@ -1709,6 +1709,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const autoExpandOwnedLogPanel = ownsInternalLogPanel
       && ownedLogChildren.length > 0
       && ownedLogChildren.length <= AUTO_EXPANDED_OWNER_TOOL_EVENT_LIMIT;
+
+    // Refresh-safe tool-count derived from the event tree. The "+N tools"
+    // chip in EventDispatcher falls back to this when liveStats (in-memory
+    // delegation/background-agent stats) is empty after a page reload.
+    const countToolCallStarts = (nodes: EventNode[]): number => {
+      let total = 0;
+      for (const node of nodes) {
+        if (node.event.type === 'tool_call_start') total += 1;
+        if (node.children?.length) total += countToolCallStarts(node.children);
+      }
+      return total;
+    };
+    const toolCallSource = ownsInternalLogPanel ? ownedLogChildren : children;
+    const childrenToolCount = countToolCallStarts(toolCallSource);
     
     // Only nested rows get tree indentation. Root rows should align with the feed.
     const indentLevel = level;
@@ -1777,6 +1791,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
                 summaryCount={ownsInternalLogPanel ? ownedInlineChildren.length : undefined}
                 childrenNodes={ownsInternalLogPanel ? ((isOwnedLogPanelOpen || autoExpandOwnedLogPanel) ? ownedLogChildren : undefined) : (isExpanded ? children : undefined)}
                 childrenCount={ownsInternalLogPanel ? ownedLogChildren.length : children.length}
+                childrenToolCount={childrenToolCount}
                 onToggleNode={toggleNode}
                 ownedLogPanelOpen={isOwnedLogPanelOpen || autoExpandOwnedLogPanel}
                 autoExpandedOwnedLogPanel={autoExpandOwnedLogPanel}

@@ -339,6 +339,7 @@ interface EventDispatcherProps {
   summaryCount?: number
   childrenNodes?: EventNode[]
   childrenCount?: number // Total children count (available even when collapsed)
+  childrenToolCount?: number // Count of tool_call_start events in this owner's subtree (refresh-safe fallback for liveStats.toolCalls)
   onToggleNode?: (eventId: string) => void
   ownedLogPanelOpen?: boolean
   autoExpandedOwnedLogPanel?: boolean
@@ -610,6 +611,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   summaryCount,
   childrenNodes,
   childrenCount,
+  childrenToolCount,
   onToggleNode,
   ownedLogPanelOpen,
   autoExpandedOwnedLogPanel,
@@ -859,7 +861,10 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const data = getEventData(event)
     const liveStats = data.correlation_id ? delegationStats?.get(data.correlation_id) : undefined
     const childCount = childrenCount ?? 0
-    const toolCount = liveStats?.toolCalls ?? 0
+    // liveStats is in-memory only and doesn't survive a page refresh.
+    // Fall back to childrenToolCount (counted from the event tree by
+    // EventHierarchy) so the "+N tools" badge stays accurate after reload.
+    const toolCount = liveStats?.toolCalls ?? childrenToolCount ?? 0
     const hasOwnedLogs = childCount > 0
     return (
       <CompactWrapper compact={compact}>
@@ -1871,13 +1876,16 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             compact={compact}
           />
         )}
-        {!isOwnedLogPanelOpen && childCount > 0 && (liveStats?.toolCalls ?? 0) > 0 && (
+        {!isOwnedLogPanelOpen && childCount > 0 && ((liveStats?.toolCalls ?? childrenToolCount ?? 0) > 0) && (
           <div className="mt-1 ml-1">
             <button
               onClick={() => setIsOwnedLogPanelOpen(true)}
               className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
             >
-              + {liveStats?.toolCalls} tool{(liveStats?.toolCalls ?? 0) !== 1 ? 's' : ''}
+              {(() => {
+                const n = liveStats?.toolCalls ?? childrenToolCount ?? 0
+                return `+ ${n} tool${n !== 1 ? 's' : ''}`
+              })()}
             </button>
           </div>
         )}

@@ -1218,6 +1218,23 @@ function App() {
     await chatStore.createChatTab(tabName, { mode: 'multi-agent' })
   }, [])
 
+  // After Ctrl+1/Ctrl+2 mode switch, restore the most recently-accessed
+  // tab matching the new mode. Without this the activeTabId stays on
+  // whatever was selected before (often a tab in the *other* mode), so
+  // the workflow's chat panel doesn't pick up the running session and
+  // the user has to click the tab manually.
+  const restoreMostRecentTabForMode = useCallback((mode: 'workflow' | 'multi-agent') => {
+    const chatStore = useChatStore.getState()
+    const currentTab = chatStore.activeTabId ? chatStore.chatTabs[chatStore.activeTabId] : null
+    if (currentTab && currentTab.metadata?.mode === mode) return
+    const candidates = Object.values(chatStore.chatTabs).filter(t => t.metadata?.mode === mode)
+    if (candidates.length === 0) return
+    const mostRecent = candidates.reduce((best, t) =>
+      (t.lastAccessedAt ?? t.createdAt ?? 0) > (best.lastAccessedAt ?? best.createdAt ?? 0) ? t : best
+    , candidates[0])
+    chatStore.switchTab(mostRecent.tabId)
+  }, [])
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Ctrl/Cmd + 1 for Workflow mode
@@ -1226,6 +1243,7 @@ function App() {
         const { setModeCategory } = useModeStore.getState()
         setModeCategory('workflow')
         setShowWorkflowsOverview(false)
+        restoreMostRecentTabForMode('workflow')
         return
       }
       // Ctrl/Cmd + 2 for Chat mode
@@ -1234,6 +1252,7 @@ function App() {
         const { setModeCategory } = useModeStore.getState()
         setModeCategory('multi-agent')
         setShowWorkflowsOverview(false)
+        restoreMostRecentTabForMode('multi-agent')
         return
       }
       // Ctrl/Cmd + 3 for Organization view

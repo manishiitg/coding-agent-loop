@@ -67,6 +67,7 @@ function getReadableActiveAgentName(name: string): string {
     .replace(/^\*\*(.*)\*\*$/, '$1')
     .replace(/^(your\s+task|task|objective)\s*:\s*/i, '')
     .replace(/\s*\([^)]*\)\s*$/, '')
+    .replace(/\s*\[[^\]]*\]\s*$/, '')
     .trim()
 
   if (!title) title = 'Execution'

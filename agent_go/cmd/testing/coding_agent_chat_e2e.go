@@ -50,13 +50,13 @@ This intentionally does not call the provider adapter directly. It exercises:
 
 Example:
   mcp-agent test coding-agent-chat-e2e \
-    --server-url http://localhost:8000 \
+    --server-url http://localhost:18743 \
     --provider gemini-cli \
     --model gemini-3.1-flash-lite \
     --selected-folder _users/default/Chats
 
   mcp-agent test coding-agent-chat-e2e \
-    --server-url http://localhost:8000 \
+    --server-url http://localhost:18743 \
     --provider cursor-cli \
     --model cursor-cli \
     --selected-folder _users/default/Chats`,
@@ -440,6 +440,21 @@ func (c *codingAgentChatE2EClient) getTerminals(ctx context.Context, sessionID s
 }
 
 func (c *codingAgentChatE2EClient) assertNoDuplicateTerminalPanes(ctx context.Context, sessionID string) error {
+	const samples = 3
+	for i := 0; i < samples; i++ {
+		if err := c.assertNoDuplicateTerminalPanesOnce(ctx, sessionID); err != nil {
+			return fmt.Errorf("sample %d/%d: %w", i+1, samples, err)
+		}
+		if i < samples-1 {
+			if err := sleepContext(ctx, 250*time.Millisecond); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c *codingAgentChatE2EClient) assertNoDuplicateTerminalPanesOnce(ctx context.Context, sessionID string) error {
 	resp, raw, err := c.getTerminals(ctx, sessionID)
 	if err != nil {
 		return err

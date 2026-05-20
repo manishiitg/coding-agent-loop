@@ -72,6 +72,7 @@ Example:
 			_ = client.stopSession(stopCtx, sessionID)
 		}()
 
+		foregroundToken := "BG_CONTRACT_STARTED_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 		finalToken := "BACKGROUND_CONTRACT_DONE_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 		fmt.Printf("Running coding agent background e2e provider=%s model=%s session=%s\n", provider, model, sessionID)
 		fmt.Printf("Selected folder: %s\n", codingAgentBackgroundE2EFlags.selectedFolder)
@@ -88,16 +89,16 @@ Use the delegate tool exactly once with:
   %s
   Do not start any other agents. Do not ask questions.
 
-After the delegate tool returns an agent_id, your own final response must be exactly:
-STARTED_BG_CONTRACT_CHECK
+After the delegate tool returns an agent_id, your own final response must include this exact token:
+%s
 
-Do not call any other tools after delegate returns.`, backgroundContractAgentName, finalToken, finalToken)
+Do not call any other tools after delegate returns.`, backgroundContractAgentName, finalToken, finalToken, foregroundToken)
 
 		if _, err := client.startQuery(ctx, sessionID, provider, model, query); err != nil {
 			return fmt.Errorf("background delegation query failed to start: %w", err)
 		}
 
-		if err := client.waitForUnifiedCompletionContains(ctx, sessionID, []string{"STARTED_BG_CONTRACT_CHECK"}, 2*time.Minute); err != nil {
+		if err := client.waitForUnifiedCompletionContains(ctx, sessionID, []string{foregroundToken}, 2*time.Minute); err != nil {
 			return fmt.Errorf("foreground turn did not return start acknowledgement: %w", err)
 		}
 		fmt.Println("PASS foreground: main coding agent returned after starting background agent")

@@ -581,6 +581,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // without leaking terminals from other chat tabs / unrelated workflows.
   const [viewAll, setViewAll] = useState(false)
   const [terminals, setTerminals] = useState<TerminalSnapshot[]>([])
+  const [selectedTerminalDetail, setSelectedTerminalDetail] = useState<TerminalSnapshot | null>(null)
   const [selectedID, setSelectedID] = useState<string | null>(null)
   const [userSelectedID, setUserSelectedID] = useState<string | null>(null)
   const [copiedTerminalID, setCopiedTerminalID] = useState<string | null>(null)
@@ -589,6 +590,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const terminalOutputRef = useRef<HTMLElement | null>(null)
   const terminalAutoScrollRef = useRef(true)
   const selectedTerminalIDRef = useRef<string | null>(null)
+  const fetchInFlightRef = useRef(false)
+  const detailRequestSeqRef = useRef(0)
 
   const copyTerminalDebug = useCallback(async (terminal: TerminalSnapshot) => {
     await navigator.clipboard.writeText(terminalDebugText(terminal))
@@ -597,13 +600,17 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   }, [])
 
   const fetchTerminals = useCallback(async () => {
+    if (fetchInFlightRef.current) return
+    fetchInFlightRef.current = true
     try {
-      const response = await agentApi.listTerminals(viewAll ? undefined : currentSessionId)
+      const response = await agentApi.listTerminals(viewAll ? undefined : currentSessionId, 'none')
       const visibleTerminals = (response.terminals || []).filter(terminal => !dismissedTerminalIDs.has(terminal.terminal_id))
       setTerminals(dedupeTerminalsByPane(visibleTerminals))
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load terminals')
+    } finally {
+      fetchInFlightRef.current = false
     }
   }, [currentSessionId, dismissedTerminalIDs, viewAll])
 
@@ -615,6 +622,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       return next
     })
     setTerminals(current => current.filter(item => item.terminal_id !== terminal.terminal_id))
+    setSelectedTerminalDetail(current => current?.terminal_id === terminal.terminal_id ? null : current)
     if (selectedID === terminalPaneKey(terminal)) {
       setSelectedID(null)
     }
@@ -731,7 +739,38 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     [groupedTerminals, selectedID],
   )
   const selectedTerminalKey = selectedTerminal ? terminalPaneKey(selectedTerminal) : null
+  const selectedTerminalView = useMemo(() => {
+    if (!selectedTerminal) return null
+    if (selectedTerminalDetail && terminalPaneKey(selectedTerminalDetail) === selectedTerminalKey) {
+      return { ...selectedTerminal, content: selectedTerminalDetail.content }
+    }
+    return selectedTerminal
+  }, [selectedTerminal, selectedTerminalDetail, selectedTerminalKey])
   const activeCount = groupedTerminals.activeTerminals.length
+
+  useEffect(() => {
+    if (!selectedTerminal) {
+      setSelectedTerminalDetail(null)
+      return
+    }
+    const requestSeq = detailRequestSeqRef.current + 1
+    detailRequestSeqRef.current = requestSeq
+    let cancelled = false
+    agentApi.getTerminal(selectedTerminal.terminal_id)
+      .then(detail => {
+        if (!cancelled && detailRequestSeqRef.current === requestSeq && terminalPaneKey(detail) === selectedTerminalKey) {
+          setSelectedTerminalDetail(detail)
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          console.warn('Failed to load terminal detail', err)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedTerminal?.terminal_id, selectedTerminal?.chunk_index, selectedTerminal?.updated_at, selectedTerminalKey])
 
   const handleTerminalScroll = useCallback(() => {
     const el = terminalOutputRef.current
@@ -741,7 +780,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
 
   useEffect(() => {
     const el = terminalOutputRef.current
-    if (!el || !selectedTerminal?.content) return
+    if (!el || !selectedTerminalView?.content) return
 
     const terminalChanged = selectedTerminalIDRef.current !== selectedTerminalKey
     if (terminalChanged) {
@@ -755,7 +794,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       el.scrollTop = el.scrollHeight
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [selectedTerminalKey, selectedTerminal?.content])
+  }, [selectedTerminalKey, selectedTerminalView?.content])
 
 
   // Rail item — one row in the left rail. Compact vertical layout:
@@ -860,38 +899,38 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
             {/* Right pane — the selected terminal's content. Header
                 bar at top (chip + meta + actions), content below. */}
             <div className="flex min-w-0 flex-1 flex-col">
-              {selectedTerminal ? (
+              {selectedTerminalView ? (
                 <>
                   <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2 text-xs text-gray-400">
                     <span className="min-w-0 flex-1 truncate opacity-80">
-                      {formatTerminalMeta(selectedTerminal)}
+                      {formatTerminalMeta(selectedTerminalView)}
                     </span>
                     <div className="flex shrink-0 items-center gap-2">
-                      {terminalState(selectedTerminal) === 'closing' && (
+                      {terminalState(selectedTerminalView) === 'closing' && (
                         <span
                           className="text-amber-300"
-                          title={terminalStateDescription(selectedTerminal)}
+                          title={terminalStateDescription(selectedTerminalView)}
                         >
-                          {terminalStateLabel(selectedTerminal)}
+                          {terminalStateLabel(selectedTerminalView)}
                         </span>
                       )}
                       <button
                         type="button"
-                        onClick={() => void copyTerminalDebug(selectedTerminal)}
+                        onClick={() => void copyTerminalDebug(selectedTerminalView)}
                         className="inline-flex items-center justify-center rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-100"
                         title="Copy terminal debug IDs"
                         aria-label="Copy terminal debug IDs"
                       >
-                        {copiedTerminalID === selectedTerminal.terminal_id ? (
+                        {copiedTerminalID === selectedTerminalView.terminal_id ? (
                           <Check className="h-3.5 w-3.5 text-emerald-300" />
                         ) : (
                           <Info className="h-3.5 w-3.5" />
                         )}
                       </button>
-                      {canDismissTerminal(selectedTerminal) && (
+                      {canDismissTerminal(selectedTerminalView) && (
                         <button
                           type="button"
-                          onClick={() => void dismissTerminal(selectedTerminal)}
+                          onClick={() => void dismissTerminal(selectedTerminalView)}
                           className="inline-flex items-center justify-center rounded border border-neutral-700 p-1 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
                           title="Remove terminal from UI"
                           aria-label="Remove terminal from UI"
@@ -901,9 +940,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       )}
                     </div>
                   </div>
-                  {isSyntheticTerminal(selectedTerminal) ? (
+                  {isSyntheticTerminal(selectedTerminalView) ? (
                     <StructuredTerminalView
-                      content={selectedTerminal.content}
+                      content={selectedTerminalView.content}
                       scrollRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
                       onScroll={handleTerminalScroll}
                     />
@@ -913,7 +952,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       onScroll={handleTerminalScroll}
                       className="flex-1 overflow-auto overscroll-contain p-2.5 font-mono text-[12px] leading-5 text-gray-100 whitespace-pre"
                     >
-                      {selectedTerminal.content}
+                      {selectedTerminalView.content}
                     </pre>
                   )}
                 </>

@@ -646,8 +646,8 @@ export const agentApi = {
     return agentApi.getSessionEvents(sessionId, 0)
   },
 
-  listTerminals: async (sessionId?: string): Promise<ListTerminalsResponse> => {
-    const params = sessionId ? { session_id: sessionId } : undefined
+  listTerminals: async (sessionId?: string, content: 'none' | 'tail' | 'full' = 'tail'): Promise<ListTerminalsResponse> => {
+    const params = sessionId ? { session_id: sessionId, content } : { content }
     const response = await api.get('/api/terminals', { params })
     return response.data
   },

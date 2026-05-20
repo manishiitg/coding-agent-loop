@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gorilla/mux"
 
 	"mcp-agent-builder-go/agent_go/internal/terminals"
 )
+
+const listTerminalContentMaxBytes = 64 * 1024
 
 type listTerminalsResponse struct {
 	Terminals []terminals.Snapshot `json:"terminals"`
@@ -29,6 +32,7 @@ func (api *StreamingAPI) handleListTerminals(w http.ResponseWriter, r *http.Requ
 	}
 
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	contentMode := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("content")))
 	snapshots := api.terminalStore.List(sessionID)
 	filtered := make([]terminals.Snapshot, 0, len(snapshots))
 	for _, snapshot := range snapshots {
@@ -36,7 +40,7 @@ func (api *StreamingAPI) handleListTerminals(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 		if api.canAccessTerminalSession(r, snapshot.SessionID) {
-			filtered = append(filtered, api.enrichTerminalSnapshot(snapshot))
+			filtered = append(filtered, compactTerminalSnapshotForList(api.enrichTerminalSnapshot(snapshot), contentMode))
 		}
 	}
 
@@ -139,4 +143,33 @@ func (api *StreamingAPI) canAccessTerminalSession(r *http.Request, sessionID str
 		return owner == currentUserID
 	}
 	return currentUserID == GetDefaultUserID()
+}
+
+func compactTerminalSnapshotForList(snapshot terminals.Snapshot, contentMode string) terminals.Snapshot {
+	switch contentMode {
+	case "none", "metadata":
+		snapshot.Content = ""
+	case "full":
+		return snapshot
+	default:
+		snapshot.Content = terminalContentTail(snapshot.Content, listTerminalContentMaxBytes)
+	}
+	return snapshot
+}
+
+func terminalContentTail(content string, maxBytes int) string {
+	if maxBytes <= 0 || len(content) <= maxBytes {
+		return content
+	}
+
+	start := len(content) - maxBytes
+	for start < len(content) && !utf8.RuneStart(content[start]) {
+		start++
+	}
+
+	tail := content[start:]
+	if newline := strings.IndexByte(tail, '\n'); newline >= 0 && newline < 4096 {
+		tail = tail[newline+1:]
+	}
+	return "[terminal output truncated; showing latest output]\n" + tail
 }

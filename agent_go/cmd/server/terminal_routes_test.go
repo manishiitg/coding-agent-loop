@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +65,77 @@ func TestTerminalRoutesCloseAndDismissMismatchedOwnerTerminal(t *testing.T) {
 	removed := terminalRouteList(t, api, sessionID)
 	if len(removed.Terminals) != 0 {
 		t.Fatalf("terminal should be dismissed, got %d", len(removed.Terminals))
+	}
+}
+
+func TestTerminalRoutesListCapsContentButGetKeepsFullContent(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-large"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-gemini-cli-int-test"
+	tailMarker := "latest terminal tail marker"
+	fullContent := strings.Repeat("old terminal output line\n", 5000) + tailMarker
+
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, fullContent, 44))
+
+	listed := terminalRouteList(t, api, sessionID)
+	if len(listed.Terminals) != 1 {
+		t.Fatalf("listed terminal count = %d, want 1", len(listed.Terminals))
+	}
+	listContent := listed.Terminals[0].Content
+	if len(listContent) > listTerminalContentMaxBytes+128 {
+		t.Fatalf("list content len = %d, want capped near %d", len(listContent), listTerminalContentMaxBytes)
+	}
+	if !strings.Contains(listContent, tailMarker) {
+		t.Fatalf("list content should keep latest terminal output tail")
+	}
+	if !strings.Contains(listContent, "truncated") {
+		t.Fatalf("list content should indicate truncation")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID, nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleGetTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var full terminals.Snapshot
+	if err := json.NewDecoder(rec.Body).Decode(&full); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	if full.Content != fullContent {
+		t.Fatalf("get content len = %d, want full len %d", len(full.Content), len(fullContent))
+	}
+}
+
+func TestTerminalRoutesListCanReturnMetadataOnly(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-metadata"
+	tmuxSession := "mlp-claude-code-exp-test"
+
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "large pane content", 7))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals?session_id="+sessionID+"&content=none", nil)
+	rec := httptest.NewRecorder()
+	api.handleListTerminals(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var response listTerminalsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(response.Terminals) != 1 {
+		t.Fatalf("terminal count = %d, want 1", len(response.Terminals))
+	}
+	if response.Terminals[0].Content != "" {
+		t.Fatalf("metadata-only list content = %q, want empty", response.Terminals[0].Content)
+	}
+	if response.Terminals[0].ChunkIndex != 7 {
+		t.Fatalf("chunk index = %d, want metadata preserved", response.Terminals[0].ChunkIndex)
 	}
 }
 

@@ -465,6 +465,12 @@ func buildEdgeCaseOrchestrator(t *testing.T) (*edgeCaseHarness, func(), bool) {
 	if wsRoot == "" {
 		wsRoot = "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs"
 	}
+	// GetPromptDocsRoot (prompt_sections.go:561) reads this env var
+	// to resolve absolute paths the engine passes to subprocesses
+	// (e.g. python3 main.py /app/... for learn_code fast path). Without
+	// this export, the engine defaults to "/app/workspace-docs" — the
+	// Docker container path — and python fails with "no such file".
+	_ = os.Setenv("WORKSPACE_DOCS_PATH", wsRoot)
 
 	relWorkspace := "Workflow/_e2e_edge_" + filepath.Base(t.TempDir())
 	workspaceDisk := filepath.Join(wsRoot, relWorkspace)

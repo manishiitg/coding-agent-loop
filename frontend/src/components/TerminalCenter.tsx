@@ -822,7 +822,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   )
 
   return (
-    <div className={`flex min-h-0 flex-col bg-[#202020] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
+    <div className={`flex min-h-0 min-w-0 flex-col bg-[#202020] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
       <div className="flex min-h-0 flex-1 flex-col">
         {error && (
           <div className="rounded border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300">

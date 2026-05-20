@@ -661,6 +661,34 @@ export const agentApi = {
     await api.delete(`/api/terminals/${encodeURIComponent(terminalId)}`)
   },
 
+  completeTerminal: async (terminalId: string): Promise<TerminalSnapshot> => {
+    const response = await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/complete`)
+    return response.data.terminal
+  },
+
+  failTerminal: async (terminalId: string): Promise<TerminalSnapshot> => {
+    const response = await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/fail`)
+    return response.data.terminal
+  },
+
+  refreshTerminal: async (terminalId: string): Promise<TerminalSnapshot> => {
+    const response = await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/refresh`)
+    return response.data.terminal
+  },
+
+  killTerminal: async (terminalId: string): Promise<TerminalSnapshot> => {
+    const response = await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/kill`)
+    return response.data.terminal
+  },
+
+  sendTerminalInput: async (terminalId: string, text: string, submit: boolean = false): Promise<void> => {
+    await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/input`, { text, submit })
+  },
+
+  sendTerminalKey: async (terminalId: string, key: 'enter' | 'esc'): Promise<void> => {
+    await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/key`, { key })
+  },
+
   // Observer APIs removed - no longer needed
 
   // Stop session/agent execution (preserves conversation history)

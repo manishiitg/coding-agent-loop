@@ -74,17 +74,21 @@ type Context struct {
 
 // Store keeps current terminal screens outside durable event history.
 type Store struct {
-	mu        sync.RWMutex
-	byID      map[string]Snapshot
-	bySession map[string]map[string]struct{}
-	dismissed map[string]struct{}
+	mu             sync.RWMutex
+	byID           map[string]Snapshot
+	bySession      map[string]map[string]struct{}
+	dismissed      map[string]struct{}
+	forcedInactive map[string]time.Time
 }
+
+const terminalStaleAfter = 30 * time.Minute
 
 func NewStore() *Store {
 	return &Store{
-		byID:      make(map[string]Snapshot),
-		bySession: make(map[string]map[string]struct{}),
-		dismissed: make(map[string]struct{}),
+		byID:           make(map[string]Snapshot),
+		bySession:      make(map[string]map[string]struct{}),
+		dismissed:      make(map[string]struct{}),
+		forcedInactive: make(map[string]time.Time),
 	}
 }
 
@@ -117,19 +121,22 @@ func (s *Store) HandleEvent(sessionID string, event storeevents.Event) {
 func (s *Store) List(sessionID string) []Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pruneExpiredLocked(time.Now())
+	now := time.Now()
+	s.pruneExpiredLocked(now)
 
 	var out []Snapshot
 	if strings.TrimSpace(sessionID) != "" {
 		for terminalID := range s.bySession[sessionID] {
-			if snapshot, ok := s.byID[terminalID]; ok {
+			if snapshot, ok := s.reconcileTerminalStateLocked(terminalID, now); ok {
 				out = append(out, snapshot)
 			}
 		}
 	} else {
 		out = make([]Snapshot, 0, len(s.byID))
-		for _, snapshot := range s.byID {
-			out = append(out, snapshot)
+		for terminalID := range s.byID {
+			if snapshot, ok := s.reconcileTerminalStateLocked(terminalID, now); ok {
+				out = append(out, snapshot)
+			}
 		}
 	}
 
@@ -146,9 +153,9 @@ func (s *Store) Get(terminalID string) (Snapshot, bool) {
 	terminalID = strings.TrimSpace(terminalID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pruneExpiredLocked(time.Now())
-	snapshot, ok := s.byID[terminalID]
-	return snapshot, ok
+	now := time.Now()
+	s.pruneExpiredLocked(now)
+	return s.reconcileTerminalStateLocked(terminalID, now)
 }
 
 func (s *Store) RemoveSession(sessionID string) {
@@ -161,6 +168,7 @@ func (s *Store) RemoveSession(sessionID string) {
 	defer s.mu.Unlock()
 	for terminalID := range s.bySession[sessionID] {
 		delete(s.byID, terminalID)
+		delete(s.forcedInactive, terminalID)
 		delete(s.dismissed, terminalID)
 	}
 	delete(s.bySession, sessionID)
@@ -182,6 +190,89 @@ func (s *Store) Dismiss(terminalID string) bool {
 	return true
 }
 
+// MarkCompleted is an operator override for terminal lifecycle bugs. It marks
+// only the view-only terminal snapshot complete; it does not kill tmux or mutate
+// workflow execution state.
+func (s *Store) MarkCompleted(terminalID string) (Snapshot, bool) {
+	return s.markTerminalState(terminalID, "completed")
+}
+
+// MarkFailed is an operator override for terminal lifecycle bugs. It marks
+// only the view-only terminal snapshot failed; it does not mutate workflow
+// execution state.
+func (s *Store) MarkFailed(terminalID string) (Snapshot, bool) {
+	return s.markTerminalState(terminalID, "failed")
+}
+
+func (s *Store) markTerminalState(terminalID, state string) (Snapshot, bool) {
+	terminalID = strings.TrimSpace(terminalID)
+	if s == nil || terminalID == "" {
+		return Snapshot{}, false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return Snapshot{}, false
+	}
+	now := time.Now()
+	snapshot.Active = false
+	snapshot.State = state
+	snapshot.ClosesAt = nil
+	snapshot.RetentionSeconds = 0
+	snapshot.UpdatedAt = now
+	s.byID[terminalID] = snapshot
+	s.forcedInactive[terminalID] = now
+	return snapshot, true
+}
+
+// RefreshContent replaces the terminal pane content from an operator-requested
+// tmux capture. It keeps manual inactive overrides inactive, but otherwise lets
+// the same lifecycle heuristics classify the refreshed pane.
+func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
+	terminalID = strings.TrimSpace(terminalID)
+	if s == nil || terminalID == "" {
+		return Snapshot{}, false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return Snapshot{}, false
+	}
+	now := time.Now()
+	snapshot.Content = content
+	snapshot.ChunkIndex++
+	if snapshot.Status.ProviderLabel != "" {
+		providerLabel := snapshot.Status.ProviderLabel
+		snapshot.Status = DeriveStatus(content, nil)
+		if snapshot.Status.ProviderLabel == "" {
+			snapshot.Status.ProviderLabel = providerLabel
+		}
+	} else {
+		snapshot.Status = DeriveStatus(content, nil)
+	}
+	if _, forced := s.forcedInactive[terminalID]; !forced {
+		if snapshot.Active {
+			snapshot.State = terminalStateFromContent(content, true)
+			if boundedTerminalCanSelfComplete(snapshot) && terminalContentLooksIdle(content) {
+				snapshot.Active = false
+				snapshot.State = terminalStateFromContent(content, false)
+			}
+		} else if snapshot.State == "stale" {
+			snapshot.Active = terminalStateFromContent(content, true) == "running" && !terminalContentLooksIdle(content)
+			snapshot.State = terminalStateFromContent(content, snapshot.Active)
+		} else if terminalStateFromContent(content, false) == "failed" {
+			snapshot.State = "failed"
+		}
+	}
+	snapshot.UpdatedAt = now
+	s.byID[terminalID] = snapshot
+	return snapshot, true
+}
+
 func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metadata map[string]interface{}, content string, chunkIndex int) {
 	ownerID := terminalOwnerID(sessionID, event, metadata)
 	terminalID := terminalIDFor(sessionID, ownerID)
@@ -197,6 +288,12 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	}
 
 	current, exists := s.byID[terminalID]
+	if forcedAt, forced := s.forcedInactive[terminalID]; forced {
+		if !isNewTerminalTurnAfterManualComplete(current, now, chunkIndex, forcedAt) {
+			return
+		}
+		delete(s.forcedInactive, terminalID)
+	}
 	if exists && chunkIndex < current.ChunkIndex && !isNewTerminalTurn(current, now, chunkIndex) {
 		return
 	}
@@ -241,6 +338,10 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.ChunkIndex = chunkIndex
 	current.Active = true
 	current.State = terminalStateFromContent(content, true)
+	if boundedTerminalCanSelfComplete(current) && terminalContentLooksIdle(content) {
+		current.Active = false
+		current.State = terminalStateFromContent(content, false)
+	}
 	current.ClosesAt = nil
 	current.RetentionSeconds = 0
 	current.Status = DeriveStatus(content, metadata)
@@ -253,6 +354,51 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 		s.bySession[sessionID] = make(map[string]struct{})
 	}
 	s.bySession[sessionID][terminalID] = struct{}{}
+}
+
+func boundedTerminalCanSelfComplete(snapshot Snapshot) bool {
+	if snapshot.ExecutionKind == "main_agent" || snapshot.Scope == "main_agent" || strings.HasPrefix(snapshot.OwnerID, "main:") {
+		return false
+	}
+	return snapshot.ExecutionKind != "" || snapshot.Scope == "workflow_step" || strings.HasPrefix(snapshot.OwnerID, "workflow-step:")
+}
+
+func (s *Store) reconcileTerminalStateLocked(terminalID string, now time.Time) (Snapshot, bool) {
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return Snapshot{}, false
+	}
+	if snapshot.Active && boundedTerminalCanSelfComplete(snapshot) && terminalContentLooksIdle(snapshot.Content) {
+		snapshot.Active = false
+		snapshot.State = terminalStateFromContent(snapshot.Content, false)
+		snapshot.ClosesAt = nil
+		snapshot.RetentionSeconds = 0
+		snapshot.UpdatedAt = now
+		s.byID[terminalID] = snapshot
+		return snapshot, true
+	}
+	if snapshot.Active && boundedTerminalCanSelfComplete(snapshot) && terminalLooksStale(snapshot, now) {
+		snapshot.Active = false
+		snapshot.State = "stale"
+		snapshot.ClosesAt = nil
+		snapshot.RetentionSeconds = 0
+		s.byID[terminalID] = snapshot
+	}
+	return snapshot, true
+}
+
+func terminalLooksStale(snapshot Snapshot, now time.Time) bool {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	lastUpdate := snapshot.UpdatedAt
+	if lastUpdate.IsZero() {
+		lastUpdate = snapshot.CreatedAt
+	}
+	if lastUpdate.IsZero() {
+		return false
+	}
+	return now.Sub(lastUpdate) >= terminalStaleAfter
 }
 
 func (s *Store) removeTmuxAliasesLocked(sessionID, terminalID, tmuxSession string) {
@@ -269,6 +415,7 @@ func (s *Store) removeTmuxAliasesLocked(sessionID, terminalID, tmuxSession strin
 			continue
 		}
 		delete(s.byID, existingID)
+		delete(s.forcedInactive, existingID)
 		delete(s.bySession[sessionID], existingID)
 	}
 	if len(s.bySession[sessionID]) == 0 {
@@ -294,6 +441,7 @@ func (s *Store) removeTerminalLocked(terminalID string) {
 		return
 	}
 	delete(s.byID, terminalID)
+	delete(s.forcedInactive, terminalID)
 	if snapshot.SessionID == "" {
 		return
 	}
@@ -314,6 +462,22 @@ func isNewTerminalTurn(current Snapshot, eventTime time.Time, chunkIndex int) bo
 		return false
 	}
 	return eventTime.After(current.UpdatedAt.Add(250 * time.Millisecond))
+}
+
+func isNewTerminalTurnAfterManualComplete(current Snapshot, eventTime time.Time, chunkIndex int, forcedAt time.Time) bool {
+	if chunkIndex > 2 {
+		return false
+	}
+	if eventTime.IsZero() {
+		return false
+	}
+	if !forcedAt.IsZero() && !eventTime.After(forcedAt.Add(250*time.Millisecond)) {
+		return false
+	}
+	if !current.UpdatedAt.IsZero() && !eventTime.After(current.UpdatedAt.Add(250*time.Millisecond)) {
+		return false
+	}
+	return true
 }
 
 // WithContext returns a copy enriched with session-level context. Terminal

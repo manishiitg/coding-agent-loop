@@ -1065,6 +1065,12 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/terminals", api.handleListTerminals).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/terminals/{terminal_id}", api.handleGetTerminal).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/terminals/{terminal_id}", api.handleDismissTerminal).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/terminals/{terminal_id}/complete", api.handleCompleteTerminal).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/terminals/{terminal_id}/fail", api.handleFailTerminal).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/terminals/{terminal_id}/refresh", api.handleRefreshTerminal).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/terminals/{terminal_id}/kill", api.handleKillTerminal).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/terminals/{terminal_id}/input", api.handleSendTerminalInput).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/terminals/{terminal_id}/key", api.handleSendTerminalKey).Methods("POST", "OPTIONS")
 
 	// LLM Guidance API routes
 	apiRouter.HandleFunc("/sessions/{session_id}/llm-guidance", api.handleSetLLMGuidance).Methods("POST", "OPTIONS")

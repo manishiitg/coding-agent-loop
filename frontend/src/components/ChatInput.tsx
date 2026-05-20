@@ -1812,13 +1812,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const trimmed = msg.trim()
     if (!trimmed || !isStreaming || !supportsLiveCodingAgentInput || !tabSessionId) return false
 
+    clearInputState()
     try {
       await agentApi.steerMessage(tabSessionId, msg)
-      clearInputState()
     } catch (err) {
       const status = getHttpErrorStatus(err)
       if (isLiveCodingSessionGoneStatus(status)) {
-        clearInputState()
         queueStreamingMessage(trimmed)
         if (activeTabId) {
           const chatStore = useChatStore.getState()
@@ -1827,9 +1826,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
         addToast('The live coding-agent turn has ended. Sending this as the next turn.', 'info')
       } else if (isLikelyBackendUnavailableError(err)) {
-        addToast('Backend is unavailable. Your message was not sent.', 'error')
+        queueStreamingMessage(trimmed)
+        addToast('Backend is unavailable. Your message is still saved.', 'error')
       } else {
-        clearInputState()
         queueStreamingMessage(trimmed)
         addToast('Failed to send to coding agent — message queued.', 'warning')
       }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Info, Terminal, X } from 'lucide-react'
+import { AlertTriangle, Bug, Check, Copy, CornerDownLeft, Info, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import { agentApi } from '../services/api'
 import type { TerminalSnapshot } from '../services/api-types'
 import { useChatStore } from '../stores/useChatStore'
@@ -232,6 +232,8 @@ function terminalStateLabel(terminal: TerminalSnapshot): string {
       return 'completed'
     case 'failed':
       return 'failed'
+    case 'stale':
+      return 'stale'
     case 'closing':
       // The tmux process is already gone (killed 30s after task end);
       // what this countdown measures is when the read-only snapshot
@@ -251,6 +253,8 @@ function terminalStateDescription(terminal: TerminalSnapshot): string {
       return 'Completed: the coding agent finished; this is the retained terminal snapshot.'
     case 'failed':
       return 'Failed: the coding agent or workflow step ended with an error.'
+    case 'stale':
+      return 'Stale: no terminal updates were received for a long time; this pane may have lost its lifecycle event.'
     case 'closing':
       return `Snapshot: the agent finished and this read-only view will be removed in ${formatCloseCountdown(terminalSecondsUntilClose(terminal))}.`
     default:
@@ -266,6 +270,8 @@ function terminalDotClass(terminal: TerminalSnapshot): string {
       return 'bg-sky-400'
     case 'failed':
       return 'bg-red-400'
+    case 'stale':
+      return 'bg-zinc-400'
     case 'closing':
       return 'bg-amber-400'
     default:
@@ -281,6 +287,8 @@ function terminalStateTextClass(terminal: TerminalSnapshot): string {
       return 'text-sky-300'
     case 'failed':
       return 'text-red-300'
+    case 'stale':
+      return 'text-zinc-300'
     case 'closing':
       return 'text-amber-300'
     default:
@@ -290,7 +298,24 @@ function terminalStateTextClass(terminal: TerminalSnapshot): string {
 
 function canDismissTerminal(terminal: TerminalSnapshot): boolean {
   const state = terminalState(terminal)
-  return state === 'completed' || state === 'closing' || state === 'failed'
+  return state === 'completed' || state === 'closing' || state === 'failed' || state === 'stale'
+}
+
+function canForceCompleteTerminal(terminal: TerminalSnapshot): boolean {
+  const state = terminalState(terminal)
+  return state === 'running' || state === 'stale'
+}
+
+function canSendTerminalDebugInput(terminal: TerminalSnapshot): boolean {
+  return Boolean(terminal.tmux_session)
+}
+
+function hasTerminalDebugActions(terminal: TerminalSnapshot): boolean {
+  return Boolean(terminal.terminal_id)
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 function shortDebugID(value?: string): string {
@@ -327,6 +352,18 @@ function terminalUpdatedTime(terminal: TerminalSnapshot): number {
 function terminalCreatedTime(terminal: TerminalSnapshot): number {
   const value = new Date(terminal.created_at || terminal.updated_at).getTime()
   return Number.isNaN(value) ? 0 : value
+}
+
+function formatUpdatedAge(terminal: TerminalSnapshot): string {
+  const updatedAt = terminalUpdatedTime(terminal)
+  if (!updatedAt) return ''
+  const seconds = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000))
+  if (seconds < 5) return 'updated now'
+  if (seconds < 60) return `updated ${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `updated ${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  return `updated ${hours}h ago`
 }
 
 // isMainAgentTerminal returns true for the persistent chat-session
@@ -591,6 +628,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [copiedTerminalID, setCopiedTerminalID] = useState<string | null>(null)
   const [dismissedTerminalIDs, setDismissedTerminalIDs] = useState<Set<string>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
+  const [debugInput, setDebugInput] = useState('')
+  const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
+  const [debugPanelOpenForID, setDebugPanelOpenForID] = useState<string | null>(null)
   const terminalOutputRef = useRef<HTMLElement | null>(null)
   const terminalAutoScrollRef = useRef(true)
   const selectedTerminalIDRef = useRef<string | null>(null)
@@ -601,6 +641,136 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     await navigator.clipboard.writeText(terminalDebugText(terminal))
     setCopiedTerminalID(terminal.terminal_id)
     window.setTimeout(() => setCopiedTerminalID(current => current === terminal.terminal_id ? null : current), 1500)
+  }, [])
+
+  const applyTerminalSnapshotUpdate = useCallback((updated: TerminalSnapshot) => {
+    setTerminals(current => current.map(item => (
+      item.terminal_id === updated.terminal_id ? { ...item, ...updated } : item
+    )))
+    setSelectedTerminalDetail(current => current?.terminal_id === updated.terminal_id ? { ...current, ...updated } : current)
+  }, [])
+
+  const forceCompleteTerminal = useCallback(async (terminal: TerminalSnapshot) => {
+    if (!canForceCompleteTerminal(terminal)) return
+    const optimistic: TerminalSnapshot = {
+      ...terminal,
+      active: false,
+      state: 'completed',
+      closes_at: undefined,
+      retention_seconds: 0,
+      updated_at: new Date().toISOString(),
+    }
+    applyTerminalSnapshotUpdate(optimistic)
+    setTerminalActionBusy('complete')
+    try {
+      const updated = await agentApi.completeTerminal(terminal.terminal_id)
+      applyTerminalSnapshotUpdate(updated)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to mark terminal complete')
+    } finally {
+      setTerminalActionBusy(current => current === 'complete' ? null : current)
+    }
+  }, [applyTerminalSnapshotUpdate])
+
+  const forceFailTerminal = useCallback(async (terminal: TerminalSnapshot) => {
+    const optimistic: TerminalSnapshot = {
+      ...terminal,
+      active: false,
+      state: 'failed',
+      closes_at: undefined,
+      retention_seconds: 0,
+      updated_at: new Date().toISOString(),
+    }
+    applyTerminalSnapshotUpdate(optimistic)
+    setTerminalActionBusy('fail')
+    try {
+      const updated = await agentApi.failTerminal(terminal.terminal_id)
+      applyTerminalSnapshotUpdate(updated)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to mark terminal failed')
+    } finally {
+      setTerminalActionBusy(current => current === 'fail' ? null : current)
+    }
+  }, [applyTerminalSnapshotUpdate])
+
+  const refreshTerminalSnapshot = useCallback(async (terminal: TerminalSnapshot) => {
+    if (!canSendTerminalDebugInput(terminal)) return
+    setTerminalActionBusy('refresh')
+    try {
+      const updated = await agentApi.refreshTerminal(terminal.terminal_id)
+      applyTerminalSnapshotUpdate(updated)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh terminal')
+    } finally {
+      setTerminalActionBusy(current => current === 'refresh' ? null : current)
+    }
+  }, [applyTerminalSnapshotUpdate])
+
+  const killTerminalSession = useCallback(async (terminal: TerminalSnapshot) => {
+    if (!canSendTerminalDebugInput(terminal)) return
+    const confirmed = window.confirm(`Kill tmux session ${terminal.tmux_session}? This stops the underlying coding agent process.`)
+    if (!confirmed) return
+    setTerminalActionBusy('kill')
+    try {
+      const updated = await agentApi.killTerminal(terminal.terminal_id)
+      applyTerminalSnapshotUpdate(updated)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to kill terminal tmux session')
+    } finally {
+      setTerminalActionBusy(current => current === 'kill' ? null : current)
+    }
+  }, [applyTerminalSnapshotUpdate])
+
+  const copyTerminalPaneText = useCallback(async (terminal: TerminalSnapshot) => {
+    await navigator.clipboard.writeText(terminal.content || '')
+    setCopiedTerminalID(terminal.terminal_id)
+    window.setTimeout(() => setCopiedTerminalID(current => current === terminal.terminal_id ? null : current), 1500)
+  }, [])
+
+  const copyTmuxAttachCommand = useCallback(async (terminal: TerminalSnapshot) => {
+    if (!terminal.tmux_session) return
+    await navigator.clipboard.writeText(`tmux attach -t ${shellQuote(terminal.tmux_session)}`)
+    setCopiedTerminalID(terminal.terminal_id)
+    window.setTimeout(() => setCopiedTerminalID(current => current === terminal.terminal_id ? null : current), 1500)
+  }, [])
+
+  const sendTerminalDebugInput = useCallback(async (terminal: TerminalSnapshot, submit: boolean) => {
+    const text = debugInput
+    if (!canSendTerminalDebugInput(terminal) || text.length === 0) return
+    setTerminalActionBusy(submit ? 'paste-enter' : 'paste')
+    try {
+      await agentApi.sendTerminalInput(terminal.terminal_id, text, submit)
+      setDebugInput('')
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send terminal input')
+    } finally {
+      setTerminalActionBusy(current => current === (submit ? 'paste-enter' : 'paste') ? null : current)
+    }
+  }, [debugInput])
+
+  const sendTerminalDebugKey = useCallback(async (terminal: TerminalSnapshot, key: 'enter' | 'esc') => {
+    if (!canSendTerminalDebugInput(terminal)) return
+    setTerminalActionBusy(key)
+    try {
+      await agentApi.sendTerminalKey(terminal.terminal_id, key)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to send ${key}`)
+    } finally {
+      setTerminalActionBusy(current => current === key ? null : current)
+    }
+  }, [])
+
+  const toggleDebugPanel = useCallback((terminal: TerminalSnapshot) => {
+    const key = terminalPaneKey(terminal)
+    setSelectedID(key)
+    setUserSelectedID(key)
+    setDebugPanelOpenForID(current => current === key ? null : key)
   }, [])
 
   const fetchTerminals = useCallback(async () => {
@@ -633,6 +803,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     if (userSelectedID === terminalPaneKey(terminal)) {
       setUserSelectedID(null)
     }
+    if (debugPanelOpenForID === terminalPaneKey(terminal)) {
+      setDebugPanelOpenForID(null)
+    }
     try {
       await agentApi.dismissTerminal(terminal.terminal_id)
     } catch (err) {
@@ -640,7 +813,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       // the DELETE route yet. A backend restart will make dismissal persistent there too.
       console.warn('Failed to dismiss terminal on backend', err)
     }
-  }, [selectedID, userSelectedID])
+  }, [debugPanelOpenForID, selectedID, userSelectedID])
 
   // buildTree turns a flat list of terminals into a parent → children
   // tree using parent_step_id. Roots are terminals with no parent_step_id
@@ -840,6 +1013,38 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
           aria-label={terminalStateDescription(terminal)}
         />
         <span className="min-w-0 flex-1 truncate font-medium">{formatTerminalTitle(terminal)}</span>
+        <button
+          type="button"
+          onClick={event => {
+            event.stopPropagation()
+            void copyTerminalDebug(terminal)
+          }}
+          className="shrink-0 rounded p-0.5 text-neutral-500 opacity-0 hover:bg-neutral-700 hover:text-neutral-100 group-hover:opacity-100"
+          title="Copy terminal debug IDs"
+          aria-label="Copy terminal debug IDs"
+        >
+          {copiedTerminalID === terminal.terminal_id ? (
+            <Check className="h-3 w-3 text-emerald-300" />
+          ) : (
+            <Info className="h-3 w-3" />
+          )}
+        </button>
+        {hasTerminalDebugActions(terminal) && (
+          <button
+            type="button"
+            onClick={event => {
+              event.stopPropagation()
+              toggleDebugPanel(terminal)
+            }}
+            className={`shrink-0 rounded p-0.5 opacity-0 hover:bg-neutral-700 hover:text-neutral-100 group-hover:opacity-100 ${
+              debugPanelOpenForID === terminalPaneKey(terminal) ? 'text-cyan-300 opacity-100' : 'text-neutral-500'
+            }`}
+            title="Debug terminal actions"
+            aria-label="Debug terminal actions"
+          >
+            <Bug className="h-3 w-3" />
+          </button>
+        )}
         {canDismissTerminal(terminal) && (
           <button
             type="button"
@@ -907,7 +1112,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 <>
                   <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2 text-xs text-gray-400">
                     <span className="min-w-0 flex-1 truncate opacity-80">
-                      {formatTerminalMeta(selectedTerminalView)}
+                      {[formatTerminalMeta(selectedTerminalView), formatUpdatedAge(selectedTerminalView)].filter(Boolean).join(' · ')}
                     </span>
                     <div className="flex shrink-0 items-center gap-2">
                       {terminalState(selectedTerminalView) === 'closing' && (
@@ -931,6 +1136,21 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                           <Info className="h-3.5 w-3.5" />
                         )}
                       </button>
+                      {hasTerminalDebugActions(selectedTerminalView) && (
+                        <button
+                          type="button"
+                          onClick={() => toggleDebugPanel(selectedTerminalView)}
+                          className={`inline-flex items-center justify-center rounded border p-1 hover:bg-neutral-800 hover:text-neutral-100 ${
+                            debugPanelOpenForID === terminalPaneKey(selectedTerminalView)
+                              ? 'border-cyan-700 text-cyan-300'
+                              : 'border-neutral-700 text-neutral-300'
+                          }`}
+                          title="Debug terminal actions"
+                          aria-label="Debug terminal actions"
+                        >
+                          <Bug className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       {canDismissTerminal(selectedTerminalView) && (
                         <button
                           type="button"
@@ -944,6 +1164,133 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       )}
                     </div>
                   </div>
+                  {debugPanelOpenForID === terminalPaneKey(selectedTerminalView) && hasTerminalDebugActions(selectedTerminalView) && (
+                    <div className="flex flex-wrap items-center gap-1.5 border-b border-white/10 bg-neutral-950/70 px-3 py-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => void copyTerminalPaneText(selectedTerminalView)}
+                        disabled={!selectedTerminalView.content}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        title="Copy current pane text"
+                        aria-label="Copy current pane text"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                      {selectedTerminalView.tmux_session && (
+                        <button
+                          type="button"
+                          onClick={() => void copyTmuxAttachCommand(selectedTerminalView)}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
+                          title="Copy tmux attach command"
+                          aria-label="Copy tmux attach command"
+                        >
+                          <Terminal className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {canSendTerminalDebugInput(selectedTerminalView) && (
+                        <button
+                          type="button"
+                          onClick={() => void refreshTerminalSnapshot(selectedTerminalView)}
+                          disabled={terminalActionBusy === 'refresh'}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
+                          title="Capture current tmux pane now"
+                          aria-label="Capture current tmux pane now"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {canForceCompleteTerminal(selectedTerminalView) && (
+                        <button
+                          type="button"
+                          onClick={() => void forceCompleteTerminal(selectedTerminalView)}
+                          disabled={terminalActionBusy === 'complete'}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
+                          title="Mark terminal complete in UI"
+                          aria-label="Mark terminal complete in UI"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void forceFailTerminal(selectedTerminalView)}
+                        disabled={terminalActionBusy === 'fail'}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
+                        title="Mark terminal failed in UI"
+                        aria-label="Mark terminal failed in UI"
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                      </button>
+                      {canSendTerminalDebugInput(selectedTerminalView) && (
+                        <button
+                          type="button"
+                          onClick={() => void killTerminalSession(selectedTerminalView)}
+                          disabled={terminalActionBusy === 'kill'}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-900/70 text-red-300 hover:bg-red-950/40 hover:text-red-100 disabled:cursor-wait disabled:opacity-50"
+                          title="Kill backing tmux session"
+                          aria-label="Kill backing tmux session"
+                        >
+                          <Power className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {canSendTerminalDebugInput(selectedTerminalView) && (
+                        <>
+                          <input
+                            value={debugInput}
+                            onChange={event => setDebugInput(event.target.value)}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter' && !event.shiftKey) {
+                                event.preventDefault()
+                                void sendTerminalDebugInput(selectedTerminalView, true)
+                              }
+                            }}
+                            placeholder="Debug paste to this tmux terminal"
+                            className="min-w-[220px] flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-neutral-100 placeholder:text-neutral-600 focus:border-cyan-600 focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void sendTerminalDebugInput(selectedTerminalView, false)}
+                            disabled={debugInput.length === 0 || terminalActionBusy === 'paste'}
+                            className="inline-flex items-center justify-center rounded border border-neutral-700 p-1.5 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            title="Paste text into tmux"
+                            aria-label="Paste text into tmux"
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void sendTerminalDebugInput(selectedTerminalView, true)}
+                            disabled={debugInput.length === 0 || terminalActionBusy === 'paste-enter'}
+                            className="inline-flex items-center justify-center rounded border border-neutral-700 p-1.5 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            title="Paste text and press Enter"
+                            aria-label="Paste text and press Enter"
+                          >
+                            <CornerDownLeft className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void sendTerminalDebugKey(selectedTerminalView, 'enter')}
+                            disabled={terminalActionBusy === 'enter'}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
+                            title="Press Enter in tmux"
+                            aria-label="Press Enter in tmux"
+                          >
+                            <CornerDownLeft className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void sendTerminalDebugKey(selectedTerminalView, 'esc')}
+                            disabled={terminalActionBusy === 'esc'}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
+                            title="Press Esc in tmux"
+                            aria-label="Press Esc in tmux"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                   {isSyntheticTerminal(selectedTerminalView) ? (
                     <StructuredTerminalView
                       content={selectedTerminalView.content}

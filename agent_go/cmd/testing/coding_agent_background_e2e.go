@@ -123,6 +123,11 @@ Do not call any other tools after delegate returns.`, backgroundContractAgentNam
 		}
 		fmt.Println("PASS events: background completion token observed")
 
+		if err := client.waitForAutoNotificationContains(ctx, sessionID, backgroundContractAgentName, finalToken, 90*time.Second); err != nil {
+			return fmt.Errorf("auto-notification did not carry background result: %w", err)
+		}
+		fmt.Println("PASS auto-notification: synthetic user message carried background result")
+
 		if err := client.waitForNoRunningBackground(ctx, sessionID, 45*time.Second); err != nil {
 			return fmt.Errorf("background running flag did not clear: %w", err)
 		}
@@ -212,6 +217,47 @@ func (c *codingAgentChatE2EClient) waitForBackgroundCompletionContains(ctx conte
 		}
 		if resp.SessionStatus == "error" || resp.SessionStatus == "stopped" {
 			return fmt.Errorf("session ended with status %s before observing token; raw=%s", resp.SessionStatus, truncateE2E(lastRaw, 2000))
+		}
+		if err := sleepContext(ctx, time.Second); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("timed out after %s; raw=%s", time.Since(start).Round(time.Millisecond), truncateE2E(lastRaw, 2000))
+}
+
+func (c *codingAgentChatE2EClient) waitForAutoNotificationContains(ctx context.Context, sessionID, agentName, needle string, timeout time.Duration) error {
+	start := time.Now()
+	deadline := e2eDeadline(ctx, timeout)
+	var lastRaw string
+	since := 0
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		resp, raw, err := c.getEventsSince(ctx, sessionID, since)
+		if err != nil {
+			return err
+		}
+		lastRaw = raw
+		since = advanceE2ECursor(since, resp.LastProcessedIndex)
+		for _, event := range resp.Events {
+			if fmt.Sprint(event["type"]) != "user_message" {
+				continue
+			}
+			content := eventPayloadString(event, "content")
+			if !strings.HasPrefix(strings.TrimSpace(content), "[AUTO-NOTIFICATION]") {
+				continue
+			}
+			if !strings.Contains(content, agentName) {
+				continue
+			}
+			if strings.Contains(content, needle) {
+				return nil
+			}
+			return fmt.Errorf("auto-notification for %q did not include result token %q; content=%q", agentName, needle, truncateE2E(content, 1500))
+		}
+		if resp.SessionStatus == "error" || resp.SessionStatus == "stopped" {
+			return fmt.Errorf("session ended with status %s before observing auto-notification; raw=%s", resp.SessionStatus, truncateE2E(lastRaw, 2000))
 		}
 		if err := sleepContext(ctx, time.Second); err != nil {
 			return err

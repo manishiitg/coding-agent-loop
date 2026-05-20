@@ -282,24 +282,92 @@ func terminalStateFromContent(content string, active bool) string {
 	if active {
 		return "running"
 	}
-	lower := strings.ToLower(strings.Join(cleanedLines(content), "\n"))
-	switch {
-	case strings.Contains(lower, "status: completed"),
-		strings.Contains(lower, "completed successfully"),
-		strings.Contains(lower, "status: complete"):
-		return "completed"
-	case terminalContentLooksBusy(content):
-		return "running"
-	case strings.Contains(lower, "status: failed"),
-		strings.Contains(lower, "pre-validation failed"),
-		strings.Contains(lower, "llm generation error"),
-		strings.Contains(lower, "conversation error"),
-		strings.Contains(lower, "agent error:"),
-		strings.Contains(lower, " error details:"):
-		return "failed"
-	default:
+	if terminalHasExplicitCompletion(content) {
 		return "completed"
 	}
+	if terminalContentLooksBusy(content) {
+		return "running"
+	}
+	if terminalHasExplicitFailure(content) {
+		return "failed"
+	}
+	return "completed"
+}
+
+func terminalContentLooksIdle(content string) bool {
+	if terminalContentLooksBusy(content) {
+		return false
+	}
+	lines := cleanedLines(content)
+	if len(lines) == 0 {
+		return false
+	}
+	start := 0
+	if len(lines) > 40 {
+		start = len(lines) - 40
+	}
+	provider := providerLabel(content, nil)
+	for _, line := range lines[start:] {
+		if isProviderIdlePromptLine(provider, line) {
+			return true
+		}
+	}
+	return false
+}
+
+func isProviderIdlePromptLine(provider, line string) bool {
+	trimmed := strings.TrimSpace(line)
+	lower := strings.ToLower(trimmed)
+	switch provider {
+	case "Codex CLI":
+		return strings.HasPrefix(trimmed, "› ") &&
+			(strings.Contains(lower, "/skills") ||
+				strings.Contains(lower, "type your message") ||
+				strings.Contains(lower, "/model to change"))
+	case "Gemini CLI":
+		return strings.HasPrefix(trimmed, ">") && strings.Contains(lower, "type your message")
+	case "Claude Code":
+		return trimmed == "❯" || strings.HasPrefix(trimmed, "❯ ")
+	default:
+		return false
+	}
+}
+
+func terminalHasExplicitCompletion(content string) bool {
+	for _, lower := range terminalTailLines(content, 40) {
+		if strings.Contains(lower, "status: completed") ||
+			strings.Contains(lower, "completed successfully") ||
+			strings.Contains(lower, "status: complete") {
+			return true
+		}
+	}
+	return false
+}
+
+func terminalHasExplicitFailure(content string) bool {
+	for _, lower := range terminalTailLines(content, 80) {
+		if strings.Contains(lower, "status: failed") ||
+			strings.Contains(lower, "pre-validation failed") ||
+			strings.Contains(lower, "llm generation error") ||
+			strings.Contains(lower, "conversation error") ||
+			strings.Contains(lower, "agent error:") ||
+			strings.Contains(lower, " error details:") {
+			return true
+		}
+	}
+	return false
+}
+
+func terminalTailLines(content string, maxLines int) []string {
+	lines := cleanedLines(content)
+	if maxLines > 0 && len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, strings.ToLower(line))
+	}
+	return out
 }
 
 func terminalContentLooksFatal(content string) bool {

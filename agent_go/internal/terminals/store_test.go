@@ -423,6 +423,250 @@ func TestStoreKeepsActiveTerminalRunningWhenScreenContainsFailureText(t *testing
 	}
 }
 
+func TestStoreMarksBoundedTerminalCompletedFromProviderIdlePromptWithoutEndEvent(t *testing.T) {
+	store := NewStore()
+	screen := `╭─────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                        │
+╰─────────────────────────────────────────────────────────╯
+
+• STATUS: COMPLETED
+
+─ Worked for 7m 13s ──────────────────────────────────────
+
+› Use /skills to list available skills`
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:exec-step-check-reddit-1:step-check-reddit",
+		screen,
+		344,
+		map[string]interface{}{
+			"execution_kind":  "workflow_step",
+			"tmux_session":    "mlp-codex-cli-int-test",
+			"provider":        "codex-cli",
+			"current_step_id": "step-check-reddit",
+		},
+		time.Now(),
+	))
+
+	snapshot, ok := store.Get("session-1:workflow-step:exec-step-check-reddit-1:step-check-reddit")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Active {
+		t.Fatalf("bounded completed pane should not remain active without streaming_end")
+	}
+	if snapshot.State != "completed" {
+		t.Fatalf("state = %q, want completed", snapshot.State)
+	}
+}
+
+func TestStoreDoesNotSelfCompleteBoundedTerminalFromPromptStatusAlone(t *testing.T) {
+	store := NewStore()
+	screen := `• STATUS: COMPLETED
+
+The provider has not yet returned to an idle prompt.`
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:exec-step-check-reddit-1:step-check-reddit",
+		screen,
+		344,
+		map[string]interface{}{
+			"execution_kind":  "workflow_step",
+			"tmux_session":    "mlp-codex-cli-int-test",
+			"provider":        "codex-cli",
+			"current_step_id": "step-check-reddit",
+		},
+		time.Now(),
+	))
+
+	snapshot, ok := store.Get("session-1:workflow-step:exec-step-check-reddit-1:step-check-reddit")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if !snapshot.Active {
+		t.Fatalf("workflow prompt status alone should not close the terminal")
+	}
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
+	}
+}
+
+func TestStoreReconcilesExistingIdleBoundedTerminalOnRead(t *testing.T) {
+	store := NewStore()
+	terminalID := "session-1:workflow-step:exec-step-check-reddit-1:step-check-reddit"
+	screen := `╭─────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                        │
+╰─────────────────────────────────────────────────────────╯
+
+─ Worked for 7m 13s ──────────────────────────────────────
+
+› Use /skills to list available skills`
+	store.mu.Lock()
+	store.byID[terminalID] = Snapshot{
+		TerminalID:    terminalID,
+		SessionID:     "session-1",
+		OwnerID:       "workflow-step:exec-step-check-reddit-1:step-check-reddit",
+		ExecutionID:   "workflow-step:exec-step-check-reddit-1:step-check-reddit",
+		ExecutionKind: "workflow_step",
+		Scope:         "workflow_step",
+		TmuxSession:   "mlp-codex-cli-int-test",
+		Content:       screen,
+		Active:        true,
+		State:         "running",
+		UpdatedAt:     time.Now().Add(-time.Minute),
+	}
+	store.bySession["session-1"] = map[string]struct{}{terminalID: {}}
+	store.mu.Unlock()
+
+	snapshot, ok := store.Get(terminalID)
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Active {
+		t.Fatalf("Get should reconcile existing idle bounded terminal to inactive")
+	}
+	if snapshot.State != "completed" {
+		t.Fatalf("state = %q, want completed", snapshot.State)
+	}
+
+	listed := store.List("session-1")
+	if len(listed) != 1 {
+		t.Fatalf("List returned %d snapshots, want 1", len(listed))
+	}
+	if listed[0].Active || listed[0].State != "completed" {
+		t.Fatalf("List snapshot active/state = %v/%q, want false/completed", listed[0].Active, listed[0].State)
+	}
+}
+
+func TestStoreDoesNotSelfCompleteMainAgentFromOldPaneStatus(t *testing.T) {
+	store := NewStore()
+	screen := `• STATUS: COMPLETED
+
+› new turn is being submitted`
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		screen,
+		12,
+		map[string]interface{}{
+			"execution_kind": "main_agent",
+			"tmux_session":   "mlp-claude-main-test",
+			"provider":       "claude-code",
+		},
+		time.Now(),
+	))
+
+	snapshot, ok := store.Get("session-1:main:session-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if !snapshot.Active {
+		t.Fatalf("main-agent terminal should stay active until its lifecycle end event")
+	}
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
+	}
+}
+
+func TestStoreMarksStaleBoundedTerminalInactiveOnRead(t *testing.T) {
+	store := NewStore()
+	terminalID := "session-1:workflow-step:exec-step-old:step-old"
+	oldUpdate := time.Now().Add(-(terminalStaleAfter + time.Minute))
+	store.mu.Lock()
+	store.byID[terminalID] = Snapshot{
+		TerminalID:    terminalID,
+		SessionID:     "session-1",
+		OwnerID:       "workflow-step:exec-step-old:step-old",
+		ExecutionID:   "workflow-step:exec-step-old:step-old",
+		ExecutionKind: "workflow_step",
+		Scope:         "workflow_step",
+		Content:       "Working...\nNo provider idle prompt was ever observed.",
+		Active:        true,
+		State:         "running",
+		CreatedAt:     oldUpdate,
+		UpdatedAt:     oldUpdate,
+	}
+	store.bySession["session-1"] = map[string]struct{}{terminalID: {}}
+	store.mu.Unlock()
+
+	snapshot, ok := store.Get(terminalID)
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Active {
+		t.Fatalf("stale bounded terminal should be inactive")
+	}
+	if snapshot.State != "stale" {
+		t.Fatalf("state = %q, want stale", snapshot.State)
+	}
+	if !snapshot.UpdatedAt.Equal(oldUpdate) {
+		t.Fatalf("stale reconciliation should preserve last update time")
+	}
+}
+
+func TestStoreDoesNotMarkRecentBoundedTerminalStale(t *testing.T) {
+	store := NewStore()
+	terminalID := "session-1:workflow-step:exec-step-recent:step-recent"
+	recentUpdate := time.Now().Add(-time.Minute)
+	store.mu.Lock()
+	store.byID[terminalID] = Snapshot{
+		TerminalID:    terminalID,
+		SessionID:     "session-1",
+		OwnerID:       "workflow-step:exec-step-recent:step-recent",
+		ExecutionID:   "workflow-step:exec-step-recent:step-recent",
+		ExecutionKind: "workflow_step",
+		Scope:         "workflow_step",
+		Content:       "Working...\nNo provider idle prompt was ever observed.",
+		Active:        true,
+		State:         "running",
+		CreatedAt:     recentUpdate,
+		UpdatedAt:     recentUpdate,
+	}
+	store.bySession["session-1"] = map[string]struct{}{terminalID: {}}
+	store.mu.Unlock()
+
+	snapshot, ok := store.Get(terminalID)
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if !snapshot.Active {
+		t.Fatalf("recent bounded terminal should stay active")
+	}
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
+	}
+}
+
+func TestStoreDoesNotMarkMainAgentTerminalStale(t *testing.T) {
+	store := NewStore()
+	terminalID := "session-1:main:session-1"
+	oldUpdate := time.Now().Add(-(terminalStaleAfter + time.Minute))
+	store.mu.Lock()
+	store.byID[terminalID] = Snapshot{
+		TerminalID:    terminalID,
+		SessionID:     "session-1",
+		OwnerID:       "main:session-1",
+		ExecutionID:   "main:session-1",
+		ExecutionKind: "main_agent",
+		Scope:         "main_agent",
+		Content:       "Ready for the next user turn.",
+		Active:        true,
+		State:         "running",
+		CreatedAt:     oldUpdate,
+		UpdatedAt:     oldUpdate,
+	}
+	store.bySession["session-1"] = map[string]struct{}{terminalID: {}}
+	store.mu.Unlock()
+
+	snapshot, ok := store.Get(terminalID)
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if !snapshot.Active {
+		t.Fatalf("main-agent terminal should not be marked stale by bounded-terminal reconciliation")
+	}
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
+	}
+}
+
 func TestStoreDetectsGeminiDebugConsoleFatalState(t *testing.T) {
 	store := NewStore()
 	screen := `▝▜▄ Gemini CLI v0.42.0
@@ -512,6 +756,122 @@ func TestStoreDismissRemovesTerminalAndSuppressesFutureChunks(t *testing.T) {
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "screen two", 2))
 	if _, ok := store.Get("session-1:exec-1"); ok {
 		t.Fatalf("dismissed terminal should not be recreated by future chunks")
+	}
+}
+
+func TestStoreMarkCompletedOperatorOverride(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "still working", 12))
+
+	snapshot, ok := store.MarkCompleted("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected mark completed to find terminal")
+	}
+	if snapshot.Active {
+		t.Fatalf("manually completed terminal should be inactive")
+	}
+	if snapshot.State != "completed" {
+		t.Fatalf("state = %q, want completed", snapshot.State)
+	}
+	if snapshot.ClosesAt != nil || snapshot.RetentionSeconds != 0 {
+		t.Fatalf("manual completion should clear retention, closes_at=%v retention=%d", snapshot.ClosesAt, snapshot.RetentionSeconds)
+	}
+}
+
+func TestStoreMarkCompletedSuppressesSameTurnChunks(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+	store.HandleEvent("session-1", terminalEventAt("streaming_chunk", "exec-1", "still working", 12, now))
+
+	if _, ok := store.MarkCompleted("session-1:exec-1"); !ok {
+		t.Fatalf("expected mark completed to find terminal")
+	}
+	store.HandleEvent("session-1", terminalEventAt("streaming_chunk", "exec-1", "same turn keeps scraping", 13, now.Add(time.Second)))
+
+	snapshot, ok := store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Active || snapshot.State != "completed" {
+		t.Fatalf("same-turn chunk revived manual completion: active=%v state=%q", snapshot.Active, snapshot.State)
+	}
+	if snapshot.Content != "still working" {
+		t.Fatalf("same-turn chunk should be ignored after manual completion, content=%q", snapshot.Content)
+	}
+}
+
+func TestStoreMarkCompletedAllowsFreshTurn(t *testing.T) {
+	store := NewStore()
+	terminalID := "session-1:exec-1"
+	now := time.Now()
+	store.HandleEvent("session-1", terminalEventAt("streaming_chunk", "exec-1", "old turn", 12, now))
+
+	if _, ok := store.MarkCompleted(terminalID); !ok {
+		t.Fatalf("expected mark completed to find terminal")
+	}
+	store.mu.Lock()
+	past := now.Add(-time.Second)
+	store.forcedInactive[terminalID] = past
+	snapshot := store.byID[terminalID]
+	snapshot.UpdatedAt = past
+	store.byID[terminalID] = snapshot
+	store.mu.Unlock()
+
+	store.HandleEvent("session-1", terminalEventAt("streaming_chunk", "exec-1", "fresh turn", 1, now.Add(time.Second)))
+
+	snapshot, ok := store.Get(terminalID)
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if !snapshot.Active || snapshot.State != "running" {
+		t.Fatalf("fresh turn should revive terminal, active=%v state=%q", snapshot.Active, snapshot.State)
+	}
+	if snapshot.Content != "fresh turn" {
+		t.Fatalf("fresh turn content = %q", snapshot.Content)
+	}
+}
+
+func TestStoreMarkFailedOperatorOverride(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "still working", 12))
+
+	snapshot, ok := store.MarkFailed("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected mark failed to find terminal")
+	}
+	if snapshot.Active {
+		t.Fatalf("manually failed terminal should be inactive")
+	}
+	if snapshot.State != "failed" {
+		t.Fatalf("state = %q, want failed", snapshot.State)
+	}
+
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "same turn keeps scraping", 13))
+	snapshot, ok = store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Active || snapshot.State != "failed" {
+		t.Fatalf("same-turn chunk revived manual failure: active=%v state=%q", snapshot.Active, snapshot.State)
+	}
+}
+
+func TestStoreRefreshContentUpdatesPaneTextWithoutRevivingForcedInactive(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "old content", 12))
+
+	if _, ok := store.MarkCompleted("session-1:exec-1"); !ok {
+		t.Fatalf("expected mark completed to find terminal")
+	}
+	snapshot, ok := store.RefreshContent("session-1:exec-1", "freshly captured pane")
+	if !ok {
+		t.Fatalf("expected refresh to find terminal")
+	}
+	if snapshot.Content != "freshly captured pane" {
+		t.Fatalf("content = %q, want refreshed pane", snapshot.Content)
+	}
+	if snapshot.Active || snapshot.State != "completed" {
+		t.Fatalf("manual completion should stay inactive after refresh, active=%v state=%q", snapshot.Active, snapshot.State)
 	}
 }
 

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -137,6 +138,207 @@ func TestTerminalRoutesListCanReturnMetadataOnly(t *testing.T) {
 	if response.Terminals[0].ChunkIndex != 7 {
 		t.Fatalf("chunk index = %d, want metadata preserved", response.Terminals[0].ChunkIndex)
 	}
+}
+
+func TestTerminalRoutesCompleteTerminalMarksSnapshotCompleted(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-complete"
+	terminalID := sessionID + ":workflow-step:review-plan"
+
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", "mlp-claude-test", "still working", 12))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/complete", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleCompleteTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("complete status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+
+	var response terminalActionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode complete response: %v", err)
+	}
+	if !response.OK {
+		t.Fatalf("response ok = false")
+	}
+	if response.Terminal.Active || response.Terminal.State != "completed" {
+		t.Fatalf("terminal active/state = %v/%q, want false/completed", response.Terminal.Active, response.Terminal.State)
+	}
+}
+
+func TestTerminalRoutesFailTerminalMarksSnapshotFailed(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-fail"
+	terminalID := sessionID + ":workflow-step:review-plan"
+
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", "mlp-claude-test", "still working", 12))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/fail", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleFailTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fail status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+
+	var response terminalActionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode fail response: %v", err)
+	}
+	if response.Terminal.Active || response.Terminal.State != "failed" {
+		t.Fatalf("terminal active/state = %v/%q, want false/failed", response.Terminal.Active, response.Terminal.State)
+	}
+}
+
+func TestTerminalRoutesRefreshTerminalCapturesTmuxPane(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-refresh"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-codex-cli-int-test"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "old pane", 2))
+
+	var gotArgs []string
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		gotArgs = append([]string(nil), args...)
+		return "fresh pane", nil
+	}
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/refresh", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleRefreshTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refresh status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -t "+tmuxSession+" -S -2000" {
+		t.Fatalf("tmux args = %q, want capture-pane", got)
+	}
+	var response terminalActionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode refresh response: %v", err)
+	}
+	if response.Terminal.Content != "fresh pane" {
+		t.Fatalf("terminal content = %q, want refreshed content", response.Terminal.Content)
+	}
+}
+
+func TestTerminalRoutesKillTerminalKillsTmuxAndMarksFailed(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-kill"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-claude-code-exp-test"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "pane", 2))
+
+	var gotArgs []string
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		gotArgs = append([]string(nil), args...)
+		return nil
+	}
+	defer func() { runTerminalTmuxCommand = oldRun }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/kill", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleKillTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("kill status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := strings.Join(gotArgs, " "); got != "kill-session -t "+tmuxSession {
+		t.Fatalf("tmux args = %q, want kill-session", got)
+	}
+	var response terminalActionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode kill response: %v", err)
+	}
+	if response.Terminal.Active || response.Terminal.State != "failed" {
+		t.Fatalf("terminal active/state = %v/%q, want false/failed", response.Terminal.Active, response.Terminal.State)
+	}
+}
+
+func TestTerminalRoutesSendInputUsesTmuxPasteAndOptionalEnter(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-input"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-gemini-cli-int-test"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "pane", 2))
+
+	type call struct {
+		stdin string
+		args  []string
+	}
+	var calls []call
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		calls = append(calls, call{stdin: stdin, args: append([]string(nil), args...)})
+		return nil
+	}
+	defer func() { runTerminalTmuxCommand = oldRun }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/input", strings.NewReader(`{"text":"debug message","submit":true}`))
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleSendTerminalInput(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("send input status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if len(calls) != 3 {
+		t.Fatalf("tmux call count = %d, want 3: %#v", len(calls), calls)
+	}
+	if calls[0].stdin != "debug message" || len(calls[0].args) < 3 || calls[0].args[0] != "load-buffer" {
+		t.Fatalf("first tmux call = %#v, want load-buffer with stdin", calls[0])
+	}
+	if calls[1].args[0] != "paste-buffer" || !containsString(calls[1].args, tmuxSession) {
+		t.Fatalf("second tmux call = %#v, want paste-buffer into session", calls[1])
+	}
+	if got := strings.Join(calls[2].args, " "); got != "send-keys -t "+tmuxSession+" C-m" {
+		t.Fatalf("third tmux call = %q, want enter", got)
+	}
+}
+
+func TestTerminalRoutesSendEscKeyUsesTmuxSendKeys(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-esc"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-claude-code-exp-test"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "pane", 2))
+
+	var gotArgs []string
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		gotArgs = append([]string(nil), args...)
+		return nil
+	}
+	defer func() { runTerminalTmuxCommand = oldRun }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/key", strings.NewReader(`{"key":"esc"}`))
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleSendTerminalKey(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("send key status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := strings.Join(gotArgs, " "); got != "send-keys -t "+tmuxSession+" Escape" {
+		t.Fatalf("tmux args = %q, want escape", got)
+	}
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func terminalRouteList(t *testing.T, api *StreamingAPI, sessionID string) listTerminalsResponse {

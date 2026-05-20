@@ -475,7 +475,7 @@ export interface TerminalSnapshot {
   content: string
   chunk_index: number
   active: boolean
-  state?: 'running' | 'completed' | 'failed' | 'idle' | 'closing' | string
+  state?: 'running' | 'completed' | 'failed' | 'idle' | 'closing' | 'stale' | string
   closes_at?: string
   retention_seconds?: number
   status: TerminalStatus

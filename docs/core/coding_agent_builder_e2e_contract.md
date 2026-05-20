@@ -34,8 +34,10 @@ The builder must prove these user-facing flows end to end:
    Coding agents and `execute_shell_command` must see the same cwd.
 2. Every coding-agent call that uses MCP must receive the correct per-session
    MCP bridge URL/token and must not accidentally use a different session.
-3. Workflow steps, sub-agents, and background agents default to bounded tmux
-   lifecycle. Chat defaults to persistent tmux lifecycle.
+3. Workflow steps, workflow-runtime sub-agents (execution, learning, KB,
+   conditional, todo orchestrator), and background agents default to bounded tmux
+   lifecycle, except Gemini CLI workflow-runtime agents, which must use
+   structured stream-json transport. Chat defaults to persistent tmux lifecycle.
 4. Bounded tmux terminals must remain viewable for the configured retention
    window, expose `closes_at`, then be cleaned up.
 5. Completed terminal snapshots must remain selectable in the UI. Active
@@ -85,6 +87,7 @@ P1 cases block release for any coding-provider or terminal-runtime change:
 | Terminal owner reconciliation | Start/chunk/end event owner IDs may differ. Backend tests must prove terminal state closes by `tmux_session` or step metadata instead of creating or leaving stale active panels. |
 | Cancellation | Client cancel, API stop, and server shutdown must interrupt/close bounded provider sessions and must not reuse poisoned panes. |
 | Workflow step cwd/MCP | A real code-exec step must run in the workflow execution directory and call the session-scoped MCP bridge. |
+| Gemini CLI step transport | Gemini CLI workflow-runtime agents must force structured stream-json transport, even when a step config says `transport: "tmux"`. Gemini CLI chat may still use persistent tmux. |
 | Parallel agents | Parallel todo sub-agents must have unique execution ids, terminals, MCP sessions, and output directories, with no terminal duplication for one tmux pane. |
 
 P2 cases are required before broad rollout or when touching related UI/runtime
@@ -105,7 +108,8 @@ environment supports. At minimum:
 
 - Claude Code tmux transport.
 - Codex CLI tmux transport.
-- Gemini CLI tmux transport.
+- Gemini CLI structured stream-json transport for workflow steps, plus Gemini
+  CLI tmux transport for chat when enabled.
 - Cursor CLI tmux transport when installed.
 - OpenCode structured JSON transport when enabled.
 

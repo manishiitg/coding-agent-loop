@@ -233,6 +233,8 @@ type AgentConfigs struct {
 	//   ""           — inherit the agent/preset default (tmux interactive)
 	//   "tmux"       — force tmux interactive transport
 	//   "structured" — force structured JSON transport (--print/--exec/stream-json)
+	// Gemini CLI workflow steps always use structured stream-json; "tmux" is
+	// ignored there. Gemini CLI chat can still use the persistent tmux TUI.
 	// Non-coding-agent providers (anthropic, openai, vertex, ...) ignore this.
 	Transport                   string `json:"transport,omitempty"`
 	DisableTierOptimization     *bool  `json:"disable_tier_optimization,omitempty"`      // If true, execution and conditional agents always use Tier 1 (high reasoning)

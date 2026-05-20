@@ -45,6 +45,15 @@ func forceWorkflowClaudeCodeInteractiveTransport(config *agents.OrchestratorAgen
 	}
 }
 
+func forceWorkflowGeminiStructuredTransport(config *agents.OrchestratorAgentConfig) bool {
+	if !workflowAgentConfigPrimaryProviderIs(config, mcpllm.ProviderGeminiCLI) {
+		return false
+	}
+	config.ForceStructuredCodingAgent = true
+	config.CodingAgentKeepAlive = false
+	return true
+}
+
 func workflowAgentConfigUsesClaudeCode(config *agents.OrchestratorAgentConfig) bool {
 	if config == nil {
 		return false
@@ -58,6 +67,13 @@ func workflowAgentConfigUsesClaudeCode(config *agents.OrchestratorAgentConfig) b
 		}
 	}
 	return false
+}
+
+func workflowAgentConfigPrimaryProviderIs(config *agents.OrchestratorAgentConfig, provider mcpllm.Provider) bool {
+	if config == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(config.LLMConfig.Primary.Provider), string(provider))
 }
 
 // filterServersByWorkflow intersects stepServers with workflowServers so that the
@@ -750,19 +766,29 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 	//   "structured" → force structured JSON transport even for tmux-capable CLI providers
 	//   "tmux"       → keep default tmux behavior (no-op; tmux is already the default)
 	//   ""           → inherit default (tmux for CLI providers)
+	// Gemini CLI is the exception for workflow steps: it always uses the structured
+	// stream-json path here. Chat can still use the persistent tmux TUI.
 	config.ForceStructuredCodingAgent = false
 	effectiveTransport := "" // What we'll surface on the bridge — "tmux" | "structured" | ""
+	geminiWorkflowStepForcesStructured := forceWorkflowGeminiStructuredTransport(config)
+	if geminiWorkflowStepForcesStructured {
+		effectiveTransport = "structured"
+		hcpo.GetLogger().Info("🔧 Gemini CLI workflow step transport forced to structured stream-json")
+	}
 	if stepConfig != nil {
 		switch strings.ToLower(strings.TrimSpace(stepConfig.Transport)) {
 		case "":
-			// default; nothing to do (bridge gets empty transport)
+			// default; keep the inherited transport (structured for Gemini CLI
+			// workflow steps, otherwise no explicit bridge transport metadata).
 		case "tmux":
 			// "tmux" only makes sense for tmux-capable CLI providers.
 			// When the actual provider is an HTTP API (vertex, anthropic,
 			// openai, ...), no tmux pane exists — propagating step_transport=tmux
 			// mislabels the terminal chip ("tmux·vertex") and overrides the
 			// synthetic terminal's own transport ("api"). Ignore in that case.
-			if common.IsCLIProvider(actualProvider) {
+			if geminiWorkflowStepForcesStructured {
+				hcpo.GetLogger().Info("🔧 Step transport=tmux ignored for Gemini CLI workflow step; using structured stream-json")
+			} else if common.IsCLIProvider(actualProvider) {
 				effectiveTransport = "tmux"
 			} else {
 				hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step transport=tmux ignored for non-CLI provider '%s'", actualProvider))
@@ -784,10 +810,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 	// bridge so subsequent events for this step carry step_transport,
 	// step_execution_mode, etc. in metadata. The terminal pane and
 	// inspector use these to render an informative header.
-	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok && stepConfig != nil {
+	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
 		rich := orchestrator.RichStepContext{
-			ExecutionMode: strings.TrimSpace(stepConfig.DeclaredExecutionMode),
-			Transport:     effectiveTransport,
+			Transport: effectiveTransport,
+		}
+		if stepConfig != nil {
+			rich.ExecutionMode = strings.TrimSpace(stepConfig.DeclaredExecutionMode)
 		}
 		// Only set if we have anything non-empty; otherwise leave the
 		// existing rich context (from PushContextRich, etc.) intact.
@@ -1037,6 +1065,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBUpdateAgent(ctx context.Conte
 	maxTurns := 40
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	forceWorkflowClaudeCodeInteractiveTransport(config)
+	forceWorkflowGeminiStructuredTransport(config)
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.MCPSessionID = subAgentSessionID
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
@@ -1121,6 +1150,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBConsolidateAgent(ctx context.
 	maxTurns := 60
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	forceWorkflowClaudeCodeInteractiveTransport(config)
+	forceWorkflowGeminiStructuredTransport(config)
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.MCPSessionID = subAgentSessionID
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
@@ -1178,6 +1208,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBReorganizeAgent(ctx context.C
 	maxTurns := 60
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	forceWorkflowClaudeCodeInteractiveTransport(config)
+	forceWorkflowGeminiStructuredTransport(config)
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.MCPSessionID = subAgentSessionID
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
@@ -1426,6 +1457,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// 4. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	forceWorkflowClaudeCodeInteractiveTransport(config)
+	forceWorkflowGeminiStructuredTransport(config)
 	hcpo.disableParentAgentTimeout(config, "execution-only agent")
 
 	// Execution-only steps can run in parallel inside a group. If they all reuse the
@@ -1585,6 +1617,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 	// 3. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	forceWorkflowClaudeCodeInteractiveTransport(config)
+	forceWorkflowGeminiStructuredTransport(config)
 
 	// Learning agents always use NoServers (pure LLM analysis agent)
 	// Step-specific server/tool selection is only for execution agents
@@ -1702,6 +1735,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	// Create agent config with custom LLM if needed
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	forceWorkflowClaudeCodeInteractiveTransport(config)
+	forceWorkflowGeminiStructuredTransport(config)
 
 	workflowServersConditional := hcpo.GetSelectedServers()
 	// Use step-specific servers filtered against workflow-level servers (workflow is the hard cap)
@@ -1952,6 +1986,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	// Create agent config with custom LLM if needed
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	forceWorkflowClaudeCodeInteractiveTransport(config)
+	forceWorkflowGeminiStructuredTransport(config)
 	hcpo.disableParentAgentTimeout(config, "todo task orchestrator agent")
 
 	// Give nested todo_task orchestrators their own session-level folder guard just like

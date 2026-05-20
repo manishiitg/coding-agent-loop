@@ -83,6 +83,68 @@ func TestApplyStepConfigToAgentConfigSupportsCodingAgentTmuxKeepAlive(t *testing
 	}
 }
 
+func TestApplyStepConfigToAgentConfigForcesGeminiWorkflowStepsToStructuredTransport(t *testing.T) {
+	tests := []struct {
+		name       string
+		stepConfig *AgentConfigs
+	}{
+		{name: "no step config", stepConfig: nil},
+		{name: "default transport", stepConfig: &AgentConfigs{}},
+		{name: "explicit tmux ignored", stepConfig: &AgentConfigs{Transport: "tmux"}},
+		{name: "explicit structured", stepConfig: &AgentConfigs{Transport: "structured"}},
+		{name: "keep alive ignored", stepConfig: &AgentConfigs{CodingAgentTmuxLifecycle: CodingAgentTmuxLifecycleKeepAlive}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hcpo := newAgentFactoryTestOrchestrator(t)
+			config := agents.NewOrchestratorAgentConfig("step-agent")
+			config.LLMConfig.Primary.Provider = string(mcpllm.ProviderGeminiCLI)
+
+			hcpo.applyStepConfigToAgentConfig(config, tt.stepConfig, false)
+
+			if !config.UseCodeExecutionMode {
+				t.Fatal("expected Gemini CLI workflow step to use code execution mode")
+			}
+			if !config.ForceStructuredCodingAgent {
+				t.Fatal("expected Gemini CLI workflow step to force structured stream-json transport")
+			}
+			if config.CodingAgentKeepAlive {
+				t.Fatal("expected Gemini CLI structured workflow step to ignore tmux keep_alive lifecycle")
+			}
+		})
+	}
+}
+
+func TestApplyStepConfigToAgentConfigKeepsTmuxDefaultForOtherCLIWorkflowSteps(t *testing.T) {
+	tests := []struct {
+		name                string
+		provider            string
+		stepConfig          *AgentConfigs
+		wantForceStructured bool
+	}{
+		{name: "codex default", provider: string(mcpllm.ProviderCodexCLI), stepConfig: nil},
+		{name: "codex explicit tmux", provider: string(mcpllm.ProviderCodexCLI), stepConfig: &AgentConfigs{Transport: "tmux"}},
+		{name: "codex explicit structured", provider: string(mcpllm.ProviderCodexCLI), stepConfig: &AgentConfigs{Transport: "structured"}, wantForceStructured: true},
+		{name: "claude default", provider: string(mcpllm.ProviderClaudeCode), stepConfig: nil},
+		{name: "cursor default", provider: string(mcpllm.ProviderCursorCLI), stepConfig: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hcpo := newAgentFactoryTestOrchestrator(t)
+			config := agents.NewOrchestratorAgentConfig("step-agent")
+			config.LLMConfig.Primary.Provider = tt.provider
+
+			hcpo.applyStepConfigToAgentConfig(config, tt.stepConfig, false)
+
+			if config.ForceStructuredCodingAgent != tt.wantForceStructured {
+				t.Fatalf("ForceStructuredCodingAgent = %v, want %v", config.ForceStructuredCodingAgent, tt.wantForceStructured)
+			}
+		})
+	}
+}
+
 func newAgentFactoryTestOrchestrator(t *testing.T) *StepBasedWorkflowOrchestrator {
 	t.Helper()
 	base, err := orchestrator.NewBaseOrchestrator(
@@ -316,6 +378,31 @@ func TestClaudeCodeTransportHelpers(t *testing.T) {
 	forceWorkflowClaudeCodeInteractiveTransport(chatConfig)
 	if chatConfig.ClaudeCodeTransport != mcpllm.ClaudeCodeTransportExperimental {
 		t.Fatalf("chat ClaudeCodeTransport = %q, want %q", chatConfig.ClaudeCodeTransport, mcpllm.ClaudeCodeTransportExperimental)
+	}
+}
+
+func TestWorkflowGeminiStructuredTransportHelper(t *testing.T) {
+	config := agents.NewOrchestratorAgentConfig("workflow-runtime-agent")
+	config.LLMConfig.Primary.Provider = string(mcpllm.ProviderGeminiCLI)
+	config.CodingAgentKeepAlive = true
+
+	if !forceWorkflowGeminiStructuredTransport(config) {
+		t.Fatal("expected Gemini CLI workflow runtime agent to force structured transport")
+	}
+	if !config.ForceStructuredCodingAgent {
+		t.Fatal("ForceStructuredCodingAgent = false, want true")
+	}
+	if config.CodingAgentKeepAlive {
+		t.Fatal("CodingAgentKeepAlive = true, want false for Gemini structured workflow runtime")
+	}
+
+	codexConfig := agents.NewOrchestratorAgentConfig("workflow-runtime-agent")
+	codexConfig.LLMConfig.Primary.Provider = string(mcpllm.ProviderCodexCLI)
+	if forceWorkflowGeminiStructuredTransport(codexConfig) {
+		t.Fatal("did not expect Codex CLI workflow runtime agent to force Gemini structured transport")
+	}
+	if codexConfig.ForceStructuredCodingAgent {
+		t.Fatal("Codex ForceStructuredCodingAgent = true, want false")
 	}
 }
 

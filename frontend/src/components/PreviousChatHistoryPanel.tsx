@@ -8,6 +8,11 @@ import {
   type ChatHistorySession,
 } from '../services/api-types'
 import { useChatStore } from '../stores/useChatStore'
+import {
+  CHAT_HISTORY_CLEANUP_AGE_OPTIONS,
+  type ChatHistoryCleanupAgeDays,
+  CleanupOldChatsDropdown,
+} from './CleanupOldChatsDropdown'
 
 const PAGE_SIZE = 5
 const FETCH_LIMIT = 100
@@ -249,9 +254,16 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     [activeFilter, visibleSessions]
   )
 
-  const oldVisibleSessionCount = useMemo(
-    () => visibleSessions.filter(session => sessionHasMessages(session) && isSessionOlderThanDays(session, 14)).length,
+  const oldVisibleSessionCounts = useMemo(
+    () => CHAT_HISTORY_CLEANUP_AGE_OPTIONS.reduce((counts, days) => {
+      counts[days] = visibleSessions.filter(session => sessionHasMessages(session) && isSessionOlderThanDays(session, days)).length
+      return counts
+    }, {} as Record<ChatHistoryCleanupAgeDays, number>),
     [visibleSessions]
+  )
+  const hasOldVisibleSessions = useMemo(
+    () => CHAT_HISTORY_CLEANUP_AGE_OPTIONS.some(days => oldVisibleSessionCounts[days] > 0),
+    [oldVisibleSessionCounts]
   )
 
   const displayedSessions = useMemo(
@@ -363,13 +375,18 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     }
   }, [addToast, workspacePath])
 
-  const handleCleanupOldChats = useCallback(async () => {
+  const handleCleanupOldChats = useCallback(async (olderThanDays: ChatHistoryCleanupAgeDays) => {
     const scopeLabel = workspacePath || 'all chats'
-    if (!window.confirm(`Delete all chats older than 14 days from ${scopeLabel}? This cannot be undone.`)) return
+    const oldSessionCount = oldVisibleSessionCounts[olderThanDays] || 0
+    if (oldSessionCount === 0) {
+      addToast(`No chats older than ${olderThanDays} days`, 'info')
+      return
+    }
+    if (!window.confirm(`Delete ${oldSessionCount} chat${oldSessionCount === 1 ? '' : 's'} older than ${olderThanDays} days from ${scopeLabel}? This cannot be undone.`)) return
 
     setIsCleanupLoading(true)
     try {
-      const response = await agentApi.cleanupChatHistorySessions(14, workspacePath)
+      const response = await agentApi.cleanupChatHistorySessions(olderThanDays, workspacePath)
       const deletedCount = response.result?.deleted_count ?? 0
       const refreshed = await agentApi.listChatHistorySessions(FETCH_LIMIT, 0, workspacePath)
       setSessions(mergeSessions([], refreshed.sessions || []))
@@ -378,8 +395,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
       expandedMessagesRef.current = {}
       addToast(
         deletedCount === 0
-          ? 'No chats older than 14 days'
-          : `Deleted ${deletedCount} chat${deletedCount === 1 ? '' : 's'} older than 14 days`,
+          ? `No chats older than ${olderThanDays} days`
+          : `Deleted ${deletedCount} chat${deletedCount === 1 ? '' : 's'} older than ${olderThanDays} days`,
         'success'
       )
     } catch {
@@ -387,7 +404,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     } finally {
       setIsCleanupLoading(false)
     }
-  }, [addToast, workspacePath])
+  }, [addToast, oldVisibleSessionCounts, workspacePath])
 
   const ActionIcon = actionLabel.toLowerCase() === 'attach' ? Paperclip : ArrowUpRight
   const filterItems = [
@@ -437,17 +454,12 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                 )
                 })}
               </div>
-              {oldVisibleSessionCount > 0 && (
-                <button
-                  type="button"
-                  onClick={handleCleanupOldChats}
-                  disabled={isCleanupLoading}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={`Delete ${oldVisibleSessionCount} chat${oldVisibleSessionCount === 1 ? '' : 's'} older than 14 days`}
-                >
-                  {isCleanupLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                  <span>Delete &gt;14d ({oldVisibleSessionCount})</span>
-                </button>
+              {hasOldVisibleSessions && (
+                <CleanupOldChatsDropdown
+                  counts={oldVisibleSessionCounts}
+                  isLoading={isCleanupLoading || isLoading}
+                  onSelect={handleCleanupOldChats}
+                />
               )}
             </div>
           ) : null}

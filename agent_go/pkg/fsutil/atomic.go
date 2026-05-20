@@ -35,6 +35,17 @@ func WorkspaceDocsRoot() string {
 	if p := os.Getenv("WORKSPACE_DOCS_PATH"); p != "" {
 		return p
 	}
+	if cwd, err := os.Getwd(); err == nil {
+		for dir := cwd; ; dir = filepath.Dir(dir) {
+			candidate := filepath.Join(dir, "workspace-docs")
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				return candidate
+			}
+			if parent := filepath.Dir(dir); parent == dir {
+				break
+			}
+		}
+	}
 	abs, _ := filepath.Abs("../workspace-docs")
 	return abs
 }

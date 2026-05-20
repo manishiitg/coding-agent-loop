@@ -848,7 +848,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         )}
 
         {terminals.length > 0 && (
-          <div className="flex min-h-0 flex-1 gap-0 overflow-hidden border border-neutral-800 bg-[#111]">
+          <div className="flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden border border-neutral-800 bg-[#111]">
             {/* Left rail — vertical list of all terminals. Scrolls
                 independently of the right pane so the user can navigate
                 a long list without losing the selected terminal's

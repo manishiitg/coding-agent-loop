@@ -15,6 +15,7 @@ import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
 import { nodeTypes } from '../nodes'
+import { WorkflowToolbar } from './WorkflowToolbar'
 import { VariablesSidebar } from './VariablesSidebar'
 import { StepLegend } from './StepLegend'
 import { BatchProgressHeader } from '../BatchProgressHeader'
@@ -27,6 +28,7 @@ import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type WorkflowNodeData, type StepNodeData, type ConditionalNodeData, type EvaluationStepNodeData } from '../hooks/usePlanToFlow'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
+import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkspaceState } from '../hooks/useWorkspaceState'
 import { useWorkflowStore, type CanvasViewMode } from '../../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -44,6 +46,8 @@ const PNG_EXPORT_SCALE = 1
 const PNG_EXPORT_MAX_SIDE = 16000
 const PNG_EXPORT_MAX_PIXELS = 64_000_000
 
+import type { ExecutionOptions } from '../../../services/api-types'
+
 type WorkflowPreviewMode = 'desktop' | 'tablet' | 'mobile'
 type WorkflowImageExportFormat = 'svg' | 'png' | 'jpeg'
 
@@ -54,30 +58,63 @@ function isHorizontalWorkflowLayout(direction: 'LR' | 'TB'): boolean {
 interface WorkflowCanvasProps {
   workspacePath: string | null
   presetQueryId: string | null
+  currentPhase?: string
+  onStartPhase?: (phaseId: string, executionOptions?: ExecutionOptions) => void
   onCreatePlan?: () => void
   showChatArea?: boolean
-  toolbarOnly?: boolean  // When true, skip React Flow/report rendering for performance
+  onToggleChatArea?: () => void
+  toolbarOnly?: boolean  // When true, only render the toolbar (skip React Flow canvas for performance)
+  sharedToolbar?: boolean
   paneClassName?: string
   className?: string
   viewMode?: CanvasViewMode
-  hideToolbar?: boolean // Deprecated: toolbar is owned by WorkflowLayout, kept for older callers.
+  hideToolbar?: boolean
   readOnly?: boolean
 }
 
 const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(({
   workspacePath,
+  presetQueryId,
+  currentPhase,
+  onStartPhase,
+  onCreatePlan,
   showChatArea = false,
+  onToggleChatArea,
   toolbarOnly = false,
+  sharedToolbar = false,
   paneClassName = '',
   className = '',
+  hideToolbar = false,
 }, ref) => {
+  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   const planData = usePlanData(workspacePath)
   const plan = planData.plan
   const loadPlanRefresh = planData.refresh
+  const { status } = useWorkflowExecution()
+  const {
+    state: workspaceState,
+    loading: isLoadingWorkspaceState,
+    refresh: refreshWorkspaceState,
+  } = useWorkspaceState(workspacePath, selectedRunFolder)
+
+  const variablesManifest = workspaceState?.variables_manifest || null
+  const runFoldersForToolbar = React.useMemo(() => {
+    if (!workspaceState?.run_folders) return []
+    return workspaceState.run_folders.map(f => ({ name: f.name }))
+  }, [workspaceState?.run_folders])
+
+  const handleStartPhase = useCallback((phaseId: string, executionOptions?: ExecutionOptions) => {
+    if (onStartPhase) {
+      onStartPhase(phaseId, executionOptions)
+    }
+  }, [onStartPhase])
 
   const handleRefresh = useCallback(async () => {
-    await loadPlanRefresh()
-  }, [loadPlanRefresh])
+    await Promise.all([
+      loadPlanRefresh(),
+      refreshWorkspaceState(),
+    ])
+  }, [loadPlanRefresh, refreshWorkspaceState])
 
   useImperativeHandle(ref, () => ({
     refresh: async () => {
@@ -91,8 +128,29 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
   }), [handleRefresh, plan])
 
   return (
-    <div className={`flex flex-col h-full ${className}`}>
-      <div data-tour="workflow-canvas-pane" data-testid="tour-workflow-canvas-pane" className={`flex-1 ${paneClassName} min-h-0`}>
+    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'contents' : ''}`}>
+      {!hideToolbar && (
+        <div className={sharedToolbar && showChatArea ? 'col-start-1 row-start-1 md:col-span-2' : ''}>
+          <WorkflowToolbar
+            status={status}
+            hasPlan={Boolean(plan?.steps?.length)}
+            plan={plan || undefined}
+            currentPhase={currentPhase}
+            workspacePath={workspacePath}
+            presetQueryId={presetQueryId}
+            runFolders={runFoldersForToolbar}
+            variablesManifest={variablesManifest}
+            isLoadingWorkspaceState={isLoadingWorkspaceState}
+            onStartPhase={handleStartPhase}
+            onCreatePlan={onCreatePlan || (() => {})}
+            showChatArea={showChatArea}
+            onToggleChatArea={onToggleChatArea}
+            onRefresh={handleRefresh}
+          />
+        </div>
+      )}
+
+      <div data-tour="workflow-canvas-pane" data-testid="tour-workflow-canvas-pane" className={`${sharedToolbar && showChatArea ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
         {toolbarOnly ? null : (
           <div className="h-full min-h-0 relative">
             {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={showChatArea} />}
@@ -930,12 +988,17 @@ export interface WorkflowCanvasRef {
 const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(({
   workspacePath,
   presetQueryId,
+  currentPhase,
+  onStartPhase,
   onCreatePlan,
   showChatArea = false,
+  onToggleChatArea,
   toolbarOnly = false,
+  sharedToolbar = false,
   paneClassName = '',
   className = '',
   viewMode,
+  hideToolbar = false,
   readOnly = false
 }, ref) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
@@ -1152,6 +1215,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [workspaceState, isLoadingWorkspaceState])
 
+  // Transform run folders for WorkflowToolbar (memoized to avoid repeated transformations)
+  const runFoldersForToolbar = React.useMemo(() => {
+    if (!workspaceState?.run_folders) return []
+    return workspaceState.run_folders.map(f => ({ name: f.name }))
+  }, [workspaceState?.run_folders])
+
   useEffect(() => {
     if (!isBuilderWorkspace || !workspaceState?.run_folders?.length) {
       return
@@ -1250,6 +1319,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
     console.log('[WorkflowCanvas] Refresh completed')
   }, [workspacePath, loadPlanRefresh, refreshEvaluationPlan, refreshWorkspaceState, setViewport])
+
+  // Workflow execution
+  const {
+    status
+  } = useWorkflowExecution()
 
   // Current step and status from store (set by ChatArea polling when step_progress_updated events arrive)
   const currentStepId = useWorkflowStore(state => state.currentStepId)
@@ -2342,6 +2416,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     setSelectedFlowNode(null)
   }, [])
 
+  // Handle start phase with execution options (for toolbar)
+  const handleStartPhase = useCallback((phaseId: string, executionOptions?: ExecutionOptions) => {
+    if (onStartPhase) {
+      onStartPhase(phaseId, executionOptions)
+    }
+  }, [onStartPhase])
+
   // Unified loading state - wait for ALL data before showing canvas
   // This ensures consistent state: plan, step_config, run folders, variables, phases, progress
   const isFullyLoaded = !loading && !isLoadingWorkspaceState
@@ -2419,8 +2500,27 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const hasPlan = !!(plan && plan.steps && plan.steps.length > 0)
   if (!hasPlan) {
     return (
-      <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className}`}>
-        <div className={`flex-1 ${paneClassName} flex min-h-0 items-center justify-center`}>
+      <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className} ${sharedToolbar && showChatArea ? 'contents' : ''}`}>
+        {!hideToolbar && (
+          <div className={sharedToolbar && showChatArea ? 'col-start-1 row-start-1 md:col-span-2' : ''}>
+            <WorkflowToolbar
+              status={status}
+              hasPlan={false}
+              currentPhase={currentPhase}
+              workspacePath={workspacePath}
+              presetQueryId={presetQueryId}
+              runFolders={runFoldersForToolbar}
+              variablesManifest={variablesManifest}
+              isLoadingWorkspaceState={isLoadingWorkspaceState}
+              onStartPhase={handleStartPhase}
+              onCreatePlan={onCreatePlan || (() => {})}
+              showChatArea={showChatArea}
+              onToggleChatArea={onToggleChatArea}
+              onRefresh={handleRefresh}
+            />
+          </div>
+        )}
+        <div className={`${sharedToolbar && showChatArea ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} flex min-h-0 items-center justify-center`}>
           <div className="flex flex-col items-center gap-4 text-center">
             <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
               <span className="text-3xl">📋</span>
@@ -2448,8 +2548,29 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }
 
   return (
-    <div className={`flex flex-col h-full ${className}`} ref={reactFlowWrapper}>
-      <div data-tour="workflow-canvas-pane" data-testid="tour-workflow-canvas-pane" className={`flex-1 ${paneClassName} min-h-0`}>
+    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'contents' : ''}`} ref={reactFlowWrapper}>
+      {!hideToolbar && (
+        <div className={sharedToolbar && showChatArea ? 'col-start-1 row-start-1 md:col-span-2' : ''}>
+          <WorkflowToolbar
+            status={status}
+            hasPlan={true}
+            plan={plan || undefined}
+            currentPhase={currentPhase}
+            workspacePath={workspacePath}
+            presetQueryId={presetQueryId}
+            runFolders={runFoldersForToolbar}
+            variablesManifest={variablesManifest}
+            isLoadingWorkspaceState={isLoadingWorkspaceState}
+            onStartPhase={handleStartPhase}
+            onCreatePlan={onCreatePlan || (() => {})}
+            showChatArea={showChatArea}
+            onToggleChatArea={onToggleChatArea}
+            onRefresh={handleRefresh}
+          />
+        </div>
+      )}
+
+      <div data-tour="workflow-canvas-pane" data-testid="tour-workflow-canvas-pane" className={`${sharedToolbar && showChatArea ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
         {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
         {toolbarOnly ? null : effectiveCanvasViewMode === 'report' ? (
           <div className="h-full min-h-0 relative">

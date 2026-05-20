@@ -401,6 +401,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
   // Track session keys the user manually expanded — don't auto-collapse these again
   const userExpandedSessionsRef = useRef<Set<string>>(new Set());
+  // Sessions we've already auto-collapsed once, so re-running the effect
+  // doesn't fight the user clicking expand. Cleared only on session restart.
+  const autoCollapsedSessionsRef = useRef<Set<string>>(new Set());
   // Per-group expand state for tool call groups (keyed by first event ID in group)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedGroupVisibleCounts, setExpandedGroupVisibleCounts] = useState<Record<string, number>>({});
@@ -878,6 +881,53 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     return { delegationStats: dStats, backgroundAgentStats: bgStats, findEventsBetweenStartEnd: sessionEvents }
   }, [displayEvents, getAgentSessionKey, getExecutionId]);
+
+  // Auto-collapse agent sessions that completed cleanly — surfaces the
+  // agent card + "+N tools/events" affordance instead of a wall of inner
+  // event cards. Guardrail: never auto-collapse sessions that emitted an
+  // error or cancellation event (the user wants to see what broke). Also
+  // skip if the user explicitly expanded this session before.
+  useEffect(() => {
+    if (findEventsBetweenStartEnd.size === 0) return;
+    const ERROR_EVENT_TYPES = new Set([
+      'orchestrator_agent_error',
+      'background_agent_failed',
+      'conversation_error',
+      'workflow_error',
+      'agent_error',
+      'tool_call_error',
+      'context_cancelled',
+      'batch_execution_canceled',
+    ]);
+    const eventById = new Map<string, PollingEvent>();
+    displayEvents.forEach(e => eventById.set(e.id, e));
+
+    const newlyCollapsing: string[] = [];
+    findEventsBetweenStartEnd.forEach((eventIds, sessionKey) => {
+      if (autoCollapsedSessionsRef.current.has(sessionKey)) return;
+      if (userExpandedSessionsRef.current.has(sessionKey)) return;
+      if (collapsedSessions.has(sessionKey)) return;
+      // Only collapse once the session has reached its end event.
+      let hasEnd = false;
+      let hasError = false;
+      for (const id of eventIds) {
+        const evt = eventById.get(id);
+        if (!evt) continue;
+        if (evt.type === 'orchestrator_agent_end') hasEnd = true;
+        if (evt.type && ERROR_EVENT_TYPES.has(evt.type)) { hasError = true; break; }
+      }
+      if (!hasEnd || hasError) return;
+      newlyCollapsing.push(sessionKey);
+    });
+
+    if (newlyCollapsing.length === 0) return;
+    newlyCollapsing.forEach(key => autoCollapsedSessionsRef.current.add(key));
+    setCollapsedSessions(prev => {
+      const next = new Set(prev);
+      newlyCollapsing.forEach(key => next.add(key));
+      return next;
+    });
+  }, [findEventsBetweenStartEnd, displayEvents, collapsedSessions]);
 
 
   const toggleNode = useCallback((eventId: string) => {

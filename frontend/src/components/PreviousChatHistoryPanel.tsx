@@ -47,6 +47,14 @@ export function chatHistorySupportsNativeResume(session: ChatHistorySession): bo
   return !!(runtime.external_session_id?.trim() || runtime.project_dir_id?.trim())
 }
 
+export function chatHistoryUsesCliRestore(session: ChatHistorySession): boolean {
+  const runtime = session.runtime
+  if (!runtime || runtime.kind !== 'coding_agent') return false
+
+  const provider = runtime.provider?.trim().toLowerCase()
+  return provider === 'claude-code' || provider === 'gemini-cli' || provider === 'codex-cli'
+}
+
 export function chatHistoryWorkshopModeLabel(session: ChatHistorySession): string | undefined {
   const raw = (session.runtime?.workshop_mode || session.workshop_mode || '').trim().toLowerCase()
   if (!raw) return undefined

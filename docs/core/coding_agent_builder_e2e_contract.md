@@ -52,6 +52,13 @@ The builder must prove these user-facing flows end to end:
    visible terminal view.
 9. Unified completion must not duplicate terminal output, tool panels, or stale
    streaming text.
+10. Provider completion and terminal UI completion are separate contracts.
+    Provider completion is owned by the adapter and must be based on provider
+    idle/stable TUI state plus final-response extraction. Terminal UI fallbacks
+    such as unchanged pane timers or prompt text like `STATUS: COMPLETED` may
+    mark a bounded terminal display inactive, but must not by themselves trigger
+    workflow success, validation, learning, next-step execution, or background
+    completion notifications.
 
 ## Required Builder E2E Matrix
 
@@ -84,6 +91,7 @@ P1 cases block release for any coding-provider or terminal-runtime change:
 | Live steer same session | While the provider is thinking, send a second user message. The message must reach the active provider session/queue and must not remain as frontend-only text. |
 | Idle draft submission | If a provider pane shows a pasted draft, the adapter must submit it reliably and prove the pane transitions to processing or prompt-ready after completion. |
 | Completion detection | A provider returning to an idle prompt must close the active generation, emit a final assistant response when one exists, and mark the terminal inactive/closing. |
+| Final response extraction | With tool panels, old turns, prompt echoes, queued drafts, and retry feedback present in the terminal pane, the returned unified completion must contain only the newest assistant answer. |
 | Terminal owner reconciliation | Start/chunk/end event owner IDs may differ. Backend tests must prove terminal state closes by `tmux_session` or step metadata instead of creating or leaving stale active panels. |
 | Cancellation | Client cancel, API stop, and server shutdown must interrupt/close bounded provider sessions and must not reuse poisoned panes. |
 | Workflow step cwd/MCP | A real code-exec step must run in the workflow execution directory and call the session-scoped MCP bridge. |

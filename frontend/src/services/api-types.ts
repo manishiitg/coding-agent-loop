@@ -494,6 +494,11 @@ export interface TerminalStatus {
   output_tokens?: number
   cost_usd?: number
   duration_ms?: number
+  pre_validation_status?: 'passed' | 'failed' | string
+  pre_validation_summary?: string
+  pre_validation_passed_checks?: number
+  pre_validation_failed_checks?: number
+  pre_validation_total_checks?: number
 }
 
 export interface ListTerminalsResponse {

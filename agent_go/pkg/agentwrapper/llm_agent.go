@@ -209,11 +209,11 @@ type LLMAgentConfig struct {
 	ClaudeCodeTransport                    string
 	// ForceStructuredCodingAgent forces coding-agent CLI providers to use
 	// the structured JSON transport (--print/--exec) for this agent's
-	// LLM calls, overriding the default tmux behaviour. Wired from the
+	// LLM calls, overriding the default tmux behavior. Wired from the
 	// workflow step config AgentConfigs.Transport == "structured".
-	ForceStructuredCodingAgent             bool
-	CodingAgentWorkingDir                  string
-	APIKeys                                *llm.ProviderAPIKeys // API keys for providers
+	ForceStructuredCodingAgent bool
+	CodingAgentWorkingDir      string
+	APIKeys                    *llm.ProviderAPIKeys // API keys for providers
 
 	// Context summarization configuration
 	EnableContextSummarization     bool    // Enable context summarization feature

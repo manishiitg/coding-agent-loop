@@ -283,14 +283,14 @@ func terminalStateFromContent(content string, active bool) string {
 	if active {
 		return "running"
 	}
-	if terminalHasExplicitCompletion(content) {
-		return "completed"
-	}
 	if terminalContentLooksBusy(content) {
 		return "running"
 	}
 	if terminalHasExplicitFailure(content) {
 		return "failed"
+	}
+	if terminalHasExplicitCompletion(content) || terminalHasPromptCompletionFallback(content) {
+		return "completed"
 	}
 	return "completed"
 }
@@ -308,19 +308,23 @@ func terminalContentLooksIdle(content string) bool {
 		start = len(lines) - 40
 	}
 	provider := providerLabel(content, nil)
+	hasCompletionContext := terminalHasExplicitCompletion(content) || terminalHasPromptCompletionFallback(content)
 	for _, line := range lines[start:] {
-		if isProviderIdlePromptLine(provider, line) {
+		if isProviderIdlePromptLine(provider, line, hasCompletionContext) {
 			return true
 		}
 	}
 	return false
 }
 
-func isProviderIdlePromptLine(provider, line string) bool {
+func isProviderIdlePromptLine(provider, line string, hasExplicitCompletion bool) bool {
 	trimmed := strings.TrimSpace(line)
 	lower := strings.ToLower(trimmed)
 	switch provider {
 	case "Codex CLI":
+		if hasExplicitCompletion && strings.HasPrefix(trimmed, "›") {
+			return true
+		}
 		return strings.HasPrefix(trimmed, "› ") &&
 			(strings.Contains(lower, "/skills") ||
 				strings.Contains(lower, "type your message") ||
@@ -336,13 +340,33 @@ func isProviderIdlePromptLine(provider, line string) bool {
 
 func terminalHasExplicitCompletion(content string) bool {
 	for _, lower := range terminalTailLines(content, 40) {
+		if strings.Contains(lower, "completed successfully") ||
+			isTerminalWorkedForLine(lower) {
+			return true
+		}
+	}
+	return false
+}
+
+func terminalHasPromptCompletionFallback(content string) bool {
+	for _, lower := range terminalTailLines(content, 40) {
 		if strings.Contains(lower, "status: completed") ||
-			strings.Contains(lower, "completed successfully") ||
 			strings.Contains(lower, "status: complete") {
 			return true
 		}
 	}
 	return false
+}
+
+func isTerminalWorkedForLine(lower string) bool {
+	lower = strings.TrimSpace(lower)
+	if !strings.Contains(lower, "worked for ") {
+		return false
+	}
+	return strings.HasPrefix(lower, "─") ||
+		strings.HasPrefix(lower, "━") ||
+		strings.HasPrefix(lower, "-") ||
+		strings.HasPrefix(lower, "worked for ")
 }
 
 func terminalHasExplicitFailure(content string) bool {

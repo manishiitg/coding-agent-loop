@@ -1,7 +1,9 @@
 package terminals
 
 import (
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,16 +54,21 @@ type Snapshot struct {
 
 // Status is a conservative, human-readable summary derived from the raw TUI.
 type Status struct {
-	ProviderLabel    string  `json:"provider_label,omitempty"`
-	StatusText       string  `json:"status_text,omitempty"`
-	AssistantPreview string  `json:"assistant_preview,omitempty"`
-	ToolSummary      string  `json:"tool_summary,omitempty"`
-	ToolName         string  `json:"tool_name,omitempty"`
-	ToolCount        int     `json:"tool_count,omitempty"`
-	InputTokens      int     `json:"input_tokens,omitempty"`
-	OutputTokens     int     `json:"output_tokens,omitempty"`
-	CostUSD          float64 `json:"cost_usd,omitempty"`
-	DurationMs       int64   `json:"duration_ms,omitempty"`
+	ProviderLabel             string  `json:"provider_label,omitempty"`
+	StatusText                string  `json:"status_text,omitempty"`
+	AssistantPreview          string  `json:"assistant_preview,omitempty"`
+	ToolSummary               string  `json:"tool_summary,omitempty"`
+	ToolName                  string  `json:"tool_name,omitempty"`
+	ToolCount                 int     `json:"tool_count,omitempty"`
+	InputTokens               int     `json:"input_tokens,omitempty"`
+	OutputTokens              int     `json:"output_tokens,omitempty"`
+	CostUSD                   float64 `json:"cost_usd,omitempty"`
+	DurationMs                int64   `json:"duration_ms,omitempty"`
+	PreValidationStatus       string  `json:"pre_validation_status,omitempty"`
+	PreValidationSummary      string  `json:"pre_validation_summary,omitempty"`
+	PreValidationPassedChecks int     `json:"pre_validation_passed_checks,omitempty"`
+	PreValidationFailedChecks int     `json:"pre_validation_failed_checks,omitempty"`
+	PreValidationTotalChecks  int     `json:"pre_validation_total_checks,omitempty"`
 	// RateLimited is set when the rendered pane content matches any
 	// known provider rate-limit / quota-exhausted message (see
 	// rate_limit.go). The terminal stays "running" from the store's
@@ -86,9 +93,30 @@ type Store struct {
 	bySession      map[string]map[string]struct{}
 	dismissed      map[string]struct{}
 	forcedInactive map[string]time.Time
+	toolLines      map[string]*terminalToolLines
 }
 
 const terminalInactiveAfter = 5 * time.Minute
+const terminalPromptCompletionInactiveAfter = 2 * time.Minute
+const terminalToolTextMaxRunes = 2400
+
+var (
+	regexpMCPToken    = regexp.MustCompile(`(?i)(MCP_API_TOKEN=)[^\s"']+`)
+	regexpBearerToken = regexp.MustCompile(`(?i)(Authorization:\s*Bearer\s+)[^\s"']+`)
+	regexpSecretEnv   = regexp.MustCompile(`(?m)(SECRET_[A-Z0-9_]+=)[^\s"']+`)
+)
+
+type terminalToolLines struct {
+	order []string
+	items map[string]*terminalToolLine
+}
+
+type terminalToolLine struct {
+	name         string
+	args         string
+	result       string
+	resultPrefix string
+}
 
 func NewStore() *Store {
 	return &Store{
@@ -96,6 +124,7 @@ func NewStore() *Store {
 		bySession:      make(map[string]map[string]struct{}),
 		dismissed:      make(map[string]struct{}),
 		forcedInactive: make(map[string]time.Time),
+		toolLines:      make(map[string]*terminalToolLines),
 	}
 }
 
@@ -122,6 +151,14 @@ func (s *Store) HandleEvent(sessionID string, event storeevents.Event) {
 			return
 		}
 		s.markInactive(sessionID, terminalOwnerID(sessionID, event, metadata), metadata)
+	case string(agentevents.ToolCallStart), string(agentevents.ToolCallEnd), string(agentevents.ToolCallError):
+		metadata := metadataForEvent(event)
+		if !isStructuredWorkflowTerminalMetadata(metadata) {
+			return
+		}
+		s.upsertToolLine(sessionID, event, metadata)
+	case "pre_validation_completed":
+		s.updatePreValidationStatus(sessionID, event)
 	}
 }
 
@@ -177,6 +214,7 @@ func (s *Store) RemoveSession(sessionID string) {
 		delete(s.byID, terminalID)
 		delete(s.forcedInactive, terminalID)
 		delete(s.dismissed, terminalID)
+		delete(s.toolLines, terminalID)
 	}
 	delete(s.bySession, sessionID)
 }
@@ -252,6 +290,7 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 	now := time.Now()
 	snapshot.Content = content
 	snapshot.ChunkIndex++
+	previousStatus := snapshot.Status
 	if snapshot.Status.ProviderLabel != "" {
 		providerLabel := snapshot.Status.ProviderLabel
 		snapshot.Status = DeriveStatus(content, nil)
@@ -261,6 +300,7 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 	} else {
 		snapshot.Status = DeriveStatus(content, nil)
 	}
+	preservePreValidationStatus(&snapshot.Status, previousStatus)
 	if _, forced := s.forcedInactive[terminalID]; !forced {
 		if snapshot.Active {
 			snapshot.State = terminalStateFromContent(content, true)
@@ -380,6 +420,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 		stringValue(metadata, "gemini_interactive_session"),
 		stringValue(metadata, "cursor_interactive_session"),
 	)
+	content = s.contentWithToolLinesLocked(terminalID, content)
 	contentChanged := !exists || current.Content != content
 	current.Content = content
 	current.ChunkIndex = chunkIndex
@@ -391,7 +432,9 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	}
 	current.ClosesAt = nil
 	current.RetentionSeconds = 0
+	previousStatus := current.Status
 	current.Status = DeriveStatus(content, metadata)
+	preservePreValidationStatus(&current.Status, previousStatus)
 	if contentChanged || current.UpdatedAt.IsZero() {
 		current.UpdatedAt = now
 	}
@@ -412,6 +455,150 @@ func boundedTerminalCanSelfComplete(snapshot Snapshot) bool {
 	return snapshot.ExecutionKind != "" || snapshot.Scope == "workflow_step" || strings.HasPrefix(snapshot.OwnerID, "workflow-step:")
 }
 
+func (s *Store) upsertToolLine(sessionID string, event storeevents.Event, metadata map[string]interface{}) {
+	if event.Data == nil || event.Data.Data == nil {
+		return
+	}
+	ownerID := terminalOwnerID(sessionID, event, metadata)
+	terminalID := terminalIDFor(sessionID, ownerID)
+	if terminalID == "" {
+		return
+	}
+	now := event.Timestamp
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	var toolCallID, toolName, args, result, resultPrefix string
+	switch data := event.Data.Data.(type) {
+	case *agentevents.ToolCallStartEvent:
+		toolCallID = data.ToolCallID
+		toolName = data.ToolName
+		args = data.ToolParams.Arguments
+	case *agentevents.ToolCallEndEvent:
+		toolCallID = data.ToolCallID
+		toolName = data.ToolName
+		result = data.Result
+		resultPrefix = "✓"
+	case *agentevents.ToolCallErrorEvent:
+		toolCallID = data.ToolCallID
+		toolName = data.ToolName
+		result = data.Error
+		resultPrefix = "✗"
+	default:
+		return
+	}
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		toolName = "tool"
+	}
+	toolCallID = strings.TrimSpace(toolCallID)
+	if toolCallID == "" {
+		toolCallID = fmt.Sprintf("%s:%d", toolName, now.UnixNano())
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.dismissed[terminalID]; ok {
+		return
+	}
+	lines := s.toolLines[terminalID]
+	if lines == nil {
+		lines = &terminalToolLines{items: make(map[string]*terminalToolLine)}
+		s.toolLines[terminalID] = lines
+	}
+	item := lines.items[toolCallID]
+	if item == nil {
+		item = &terminalToolLine{}
+		lines.items[toolCallID] = item
+		lines.order = append(lines.order, toolCallID)
+	}
+	item.name = firstNonEmpty(toolName, item.name)
+	if args != "" {
+		item.args = redactTerminalToolText(args)
+	}
+	if result != "" {
+		item.result = redactTerminalToolText(result)
+		item.resultPrefix = resultPrefix
+	}
+
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return
+	}
+	snapshot.Content = s.contentWithToolLinesLocked(terminalID, snapshot.Content)
+	snapshot.Status = DeriveStatus(snapshot.Content, metadata)
+	snapshot.UpdatedAt = now
+	s.byID[terminalID] = snapshot
+}
+
+func (s *Store) contentWithToolLinesLocked(terminalID, content string) string {
+	lines := s.toolLines[terminalID]
+	if lines == nil || len(lines.order) == 0 {
+		return content
+	}
+
+	base, doneFooter := splitTerminalDoneFooter(stripTerminalToolLines(content))
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(base, "\n"))
+	b.WriteString("\n")
+	for _, id := range lines.order {
+		item := lines.items[id]
+		if item == nil {
+			continue
+		}
+		name := firstNonEmpty(item.name, "tool")
+		fmt.Fprintf(&b, "→ tool: %s(%s)\n", name, truncateTerminalToolText(item.args))
+		if item.result != "" {
+			prefix := firstNonEmpty(item.resultPrefix, "✓")
+			fmt.Fprintf(&b, "%s result %s: %s\n", prefix, name, truncateTerminalToolText(item.result))
+		}
+	}
+	if doneFooter != "" {
+		b.WriteString(strings.TrimLeft(doneFooter, "\n"))
+	}
+	return b.String()
+}
+
+func splitTerminalDoneFooter(content string) (string, string) {
+	trimmed := strings.TrimRight(content, "\n")
+	if strings.HasPrefix(trimmed, "[done") {
+		return "", trimmed + "\n"
+	}
+	if idx := strings.LastIndex(trimmed, "\n[done"); idx >= 0 {
+		return trimmed[:idx], trimmed[idx+1:] + "\n"
+	}
+	return content, ""
+}
+
+func stripTerminalToolLines(content string) string {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, "→ tool: ") || strings.HasPrefix(line, "✓ result ") || strings.HasPrefix(line, "✗ result ") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func redactTerminalToolText(value string) string {
+	value = regexpMCPToken.ReplaceAllString(value, "$1[redacted]")
+	value = regexpBearerToken.ReplaceAllString(value, "$1[redacted]")
+	value = regexpSecretEnv.ReplaceAllString(value, "$1[redacted]")
+	return value
+}
+
+func truncateTerminalToolText(value string) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= terminalToolTextMaxRunes {
+		return value
+	}
+	return string(runes[:terminalToolTextMaxRunes]) + "... [truncated]"
+}
+
 func (s *Store) reconcileTerminalStateLocked(terminalID string, now time.Time) (Snapshot, bool) {
 	snapshot, ok := s.byID[terminalID]
 	if !ok {
@@ -426,6 +613,17 @@ func (s *Store) reconcileTerminalStateLocked(terminalID string, now time.Time) (
 		s.byID[terminalID] = snapshot
 		return snapshot, true
 	}
+	if snapshot.Active &&
+		boundedTerminalCanSelfComplete(snapshot) &&
+		terminalHasPromptCompletionFallback(snapshot.Content) &&
+		terminalLooksInactiveAfter(snapshot, now, terminalPromptCompletionInactiveAfter) {
+		snapshot.Active = false
+		snapshot.State = "completed"
+		snapshot.ClosesAt = nil
+		snapshot.RetentionSeconds = 0
+		s.byID[terminalID] = snapshot
+		return snapshot, true
+	}
 	if snapshot.Active && boundedTerminalCanSelfComplete(snapshot) && terminalLooksInactive(snapshot, now) {
 		snapshot.Active = false
 		snapshot.State = "completed"
@@ -437,6 +635,10 @@ func (s *Store) reconcileTerminalStateLocked(terminalID string, now time.Time) (
 }
 
 func terminalLooksInactive(snapshot Snapshot, now time.Time) bool {
+	return terminalLooksInactiveAfter(snapshot, now, terminalInactiveAfter)
+}
+
+func terminalLooksInactiveAfter(snapshot Snapshot, now time.Time, threshold time.Duration) bool {
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -447,7 +649,7 @@ func terminalLooksInactive(snapshot Snapshot, now time.Time) bool {
 	if lastUpdate.IsZero() {
 		return false
 	}
-	return now.Sub(lastUpdate) >= terminalInactiveAfter
+	return now.Sub(lastUpdate) >= threshold
 }
 
 func (s *Store) removeTmuxAliasesLocked(sessionID, terminalID, tmuxSession string) {
@@ -495,6 +697,7 @@ func (s *Store) removeTerminalLocked(terminalID string) {
 		return
 	}
 	delete(s.bySession[snapshot.SessionID], terminalID)
+	delete(s.toolLines, terminalID)
 	if len(s.bySession[snapshot.SessionID]) == 0 {
 		delete(s.bySession, snapshot.SessionID)
 	}
@@ -656,6 +859,206 @@ func (s *Store) findInactiveTargetLocked(sessionID, ownerID string, metadata map
 	return "", Snapshot{}, false
 }
 
+type preValidationStatusUpdate struct {
+	stepID       string
+	stepPath     string
+	stepTitle    string
+	status       string
+	summary      string
+	passedChecks int
+	failedChecks int
+	totalChecks  int
+}
+
+func (s *Store) updatePreValidationStatus(sessionID string, event storeevents.Event) {
+	update, ok := preValidationStatusFromEvent(event)
+	if !ok {
+		return
+	}
+	metadata := metadataForEvent(event)
+	if update.stepID != "" && stringValue(metadata, "step_id") == "" {
+		metadata["step_id"] = update.stepID
+	}
+	if update.stepPath != "" && stringValue(metadata, "step_path") == "" {
+		metadata["step_path"] = update.stepPath
+	}
+	if update.stepTitle != "" && stringValue(metadata, "step_title") == "" {
+		metadata["step_title"] = update.stepTitle
+	}
+	ownerID := terminalOwnerID(sessionID, event, metadata)
+	now := event.Timestamp
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	terminalID, snapshot, ok := s.findPreValidationTargetLocked(sessionID, ownerID, update, metadata)
+	if !ok {
+		return
+	}
+	snapshot.Status.PreValidationStatus = update.status
+	snapshot.Status.PreValidationSummary = update.summary
+	snapshot.Status.PreValidationPassedChecks = update.passedChecks
+	snapshot.Status.PreValidationFailedChecks = update.failedChecks
+	snapshot.Status.PreValidationTotalChecks = update.totalChecks
+	if strings.TrimSpace(snapshot.Status.StatusText) == "" {
+		snapshot.Status.StatusText = update.summary
+	}
+	snapshot.UpdatedAt = now
+	fillDisplayContext(&snapshot)
+	s.byID[terminalID] = snapshot
+}
+
+func (s *Store) findPreValidationTargetLocked(sessionID, ownerID string, update preValidationStatusUpdate, metadata map[string]interface{}) (string, Snapshot, bool) {
+	if terminalID, snapshot, ok := s.findInactiveTargetLocked(sessionID, ownerID, metadata); ok {
+		return terminalID, snapshot, true
+	}
+
+	sessionTerminals := s.bySession[sessionID]
+	var bestID string
+	var best Snapshot
+	for terminalID := range sessionTerminals {
+		snapshot, ok := s.byID[terminalID]
+		if !ok || !snapshotMatchesPreValidation(snapshot, update) {
+			continue
+		}
+		if bestID == "" || betterPreValidationTarget(snapshot, best) {
+			bestID = terminalID
+			best = snapshot
+		}
+	}
+	if bestID == "" {
+		return "", Snapshot{}, false
+	}
+	return bestID, best, true
+}
+
+func snapshotMatchesPreValidation(snapshot Snapshot, update preValidationStatusUpdate) bool {
+	if update.stepID != "" {
+		if snapshot.StepID == update.stepID ||
+			strings.HasSuffix(snapshot.OwnerID, ":"+update.stepID) ||
+			strings.Contains(snapshot.OwnerID, ":"+update.stepID+":") ||
+			strings.Contains(snapshot.ExecutionID, ":"+update.stepID+":") ||
+			strings.HasSuffix(snapshot.ExecutionID, ":"+update.stepID) {
+			return true
+		}
+	}
+	if update.stepPath != "" {
+		if snapshot.StepID == update.stepPath ||
+			strings.Contains(snapshot.OwnerID, update.stepPath) ||
+			strings.Contains(snapshot.ExecutionID, update.stepPath) {
+			return true
+		}
+	}
+	if update.stepTitle != "" {
+		return strings.EqualFold(snapshot.StepName, update.stepTitle) || strings.EqualFold(snapshot.Label, update.stepTitle)
+	}
+	return false
+}
+
+func betterPreValidationTarget(candidate, current Snapshot) bool {
+	if candidate.Active != current.Active {
+		return candidate.Active
+	}
+	candidateArchived := strings.Contains(candidate.TerminalID, ":turn-")
+	currentArchived := strings.Contains(current.TerminalID, ":turn-")
+	if candidateArchived != currentArchived {
+		return !candidateArchived
+	}
+	candidateUpdated := candidate.UpdatedAt
+	if candidateUpdated.IsZero() {
+		candidateUpdated = candidate.CreatedAt
+	}
+	currentUpdated := current.UpdatedAt
+	if currentUpdated.IsZero() {
+		currentUpdated = current.CreatedAt
+	}
+	return candidateUpdated.After(currentUpdated)
+}
+
+func preValidationStatusFromEvent(event storeevents.Event) (preValidationStatusUpdate, bool) {
+	data, ok := eventDataMap(event)
+	if !ok {
+		return preValidationStatusUpdate{}, false
+	}
+	overallPass, hasOverallPass := boolValue(data["overall_pass"])
+	passedChecks := intValue(data["passed_checks"])
+	failedChecks := intValue(data["failed_checks"])
+	totalChecks := intValue(data["total_checks"])
+	if !hasOverallPass && totalChecks == 0 && passedChecks == 0 && failedChecks == 0 {
+		return preValidationStatusUpdate{}, false
+	}
+	if failedChecks == 0 && totalChecks > 0 && passedChecks <= totalChecks {
+		failedChecks = totalChecks - passedChecks
+	}
+
+	status := "failed"
+	if overallPass {
+		status = "passed"
+	}
+	summaryStatus := status
+	if status == "passed" {
+		summaryStatus = "passed"
+	}
+	summary := fmt.Sprintf("Pre-validation %s", summaryStatus)
+	if totalChecks > 0 {
+		summary = fmt.Sprintf("Pre-validation %s: %d/%d checks", summaryStatus, passedChecks, totalChecks)
+	}
+	if status == "failed" {
+		if errors := stringSliceValue(data["errors"]); len(errors) > 0 {
+			summary = fmt.Sprintf("%s - %s", summary, errors[0])
+		}
+	}
+
+	return preValidationStatusUpdate{
+		stepID:       firstNonEmpty(stringValue(data, "step_id"), stringValue(data, "current_step_id"), stringValue(data, "workflow_step_id")),
+		stepPath:     stringValue(data, "step_path"),
+		stepTitle:    stringValue(data, "step_title"),
+		status:       status,
+		summary:      summary,
+		passedChecks: passedChecks,
+		failedChecks: failedChecks,
+		totalChecks:  totalChecks,
+	}, true
+}
+
+func eventDataMap(event storeevents.Event) (map[string]interface{}, bool) {
+	if event.Data == nil || event.Data.Data == nil {
+		return nil, false
+	}
+	switch data := event.Data.Data.(type) {
+	case *agentevents.GenericEventData:
+		if data == nil || len(data.Data) == 0 {
+			return nil, false
+		}
+		return data.Data, true
+	}
+	encoded, err := json.Marshal(event.Data.Data)
+	if err != nil {
+		return nil, false
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(encoded, &decoded); err != nil || len(decoded) == 0 {
+		return nil, false
+	}
+	return decoded, true
+}
+
+func preservePreValidationStatus(status *Status, previous Status) {
+	if status == nil || previous.PreValidationStatus == "" {
+		return
+	}
+	status.PreValidationStatus = previous.PreValidationStatus
+	status.PreValidationSummary = previous.PreValidationSummary
+	status.PreValidationPassedChecks = previous.PreValidationPassedChecks
+	status.PreValidationFailedChecks = previous.PreValidationFailedChecks
+	status.PreValidationTotalChecks = previous.PreValidationTotalChecks
+	if strings.TrimSpace(status.StatusText) == "" && strings.HasPrefix(previous.StatusText, "Pre-validation ") {
+		status.StatusText = previous.StatusText
+	}
+}
+
 func ownerMatchesTerminal(ownerID string, snapshot Snapshot) bool {
 	ownerID = strings.TrimSpace(ownerID)
 	if ownerID == "" {
@@ -705,6 +1108,14 @@ func metadataForEvent(event storeevents.Event) map[string]interface{} {
 		if nested, ok := data.Data["metadata"].(map[string]interface{}); ok {
 			metadata = mergeMetadata(metadata, nested)
 		}
+	default:
+		if withBase, ok := event.Data.Data.(interface {
+			GetBaseEventData() *agentevents.BaseEventData
+		}); ok {
+			if base := withBase.GetBaseEventData(); base != nil {
+				metadata = mergeMetadata(metadata, base.Metadata)
+			}
+		}
 	}
 	return metadata
 }
@@ -727,6 +1138,18 @@ func isTerminalMetadata(metadata map[string]interface{}) bool {
 		stringValue(metadata, "mode"),
 	))
 	return kind == "terminal" || kind == "tmux" || kind == "tui"
+}
+
+func isStructuredWorkflowTerminalMetadata(metadata map[string]interface{}) bool {
+	if strings.ToLower(strings.TrimSpace(stringValue(metadata, "step_transport"))) != "structured" {
+		return false
+	}
+	return firstNonEmpty(
+		stringValue(metadata, "execution_owner_id"),
+		stringValue(metadata, "current_step_id"),
+		stringValue(metadata, "workflow_step_id"),
+		stringValue(metadata, "step_id"),
+	) != ""
 }
 
 func terminalOwnerID(sessionID string, event storeevents.Event, metadata map[string]interface{}) string {
@@ -977,6 +1400,57 @@ func floatValue(value interface{}) float64 {
 	default:
 		return 0
 	}
+}
+
+func boolValue(value interface{}) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		trimmed := strings.TrimSpace(strings.ToLower(typed))
+		if trimmed == "" {
+			return false, false
+		}
+		switch trimmed {
+		case "true", "1", "yes", "y", "passed", "pass":
+			return true, true
+		case "false", "0", "no", "n", "failed", "fail":
+			return false, true
+		default:
+			return false, false
+		}
+	case int:
+		return typed != 0, true
+	case int64:
+		return typed != 0, true
+	case float64:
+		return typed != 0, true
+	case float32:
+		return typed != 0, true
+	default:
+		return false, false
+	}
+}
+
+func stringSliceValue(value interface{}) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text := strings.TrimSpace(fmt.Sprint(item))
+			if text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	case string:
+		if trimmed := strings.TrimSpace(typed); trimmed != "" {
+			return []string{trimmed}
+		}
+	}
+	return nil
 }
 
 func int64Value(value interface{}) int64 {

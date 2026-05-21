@@ -1,6 +1,7 @@
 package terminals
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -83,6 +84,62 @@ func TestStoreTracksTerminalChunksByOwner(t *testing.T) {
 	}
 }
 
+func TestStoreAttachesPreValidationStatusToStepTerminal(t *testing.T) {
+	store := NewStore()
+	ownerID := "workflow-step:workflow-full-123:route-pick-topic"
+	now := time.Now()
+
+	store.HandleEvent("session-1", terminalEventWithMetadataAt("streaming_chunk", ownerID, "route topic is running", 1, map[string]interface{}{
+		"step_id":       "route-pick-topic",
+		"step_title":    "Pick Trending Topic",
+		"workflow_path": "Workflow/instagram",
+	}, now))
+	store.HandleEvent("session-1", storeevents.Event{
+		Type:        "pre_validation_completed",
+		Timestamp:   now.Add(time.Second),
+		SessionID:   "session-1",
+		ExecutionID: ownerID,
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.EventType("pre_validation_completed"),
+			Data: &agentevents.GenericEventData{
+				Data: map[string]interface{}{
+					"step_id":       "route-pick-topic",
+					"step_path":     "step-1-sub-route-pick-topic",
+					"step_title":    "Pick Trending Topic",
+					"overall_pass":  true,
+					"passed_checks": 7,
+					"failed_checks": 0,
+					"total_checks":  7,
+				},
+			},
+		},
+	})
+
+	snapshot, ok := store.Get("session-1:" + ownerID)
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Status.PreValidationStatus != "passed" {
+		t.Fatalf("pre-validation status = %q, want passed", snapshot.Status.PreValidationStatus)
+	}
+	if snapshot.Status.PreValidationSummary != "Pre-validation passed: 7/7 checks" {
+		t.Fatalf("pre-validation summary = %q", snapshot.Status.PreValidationSummary)
+	}
+
+	store.HandleEvent("session-1", terminalEventWithMetadataAt("streaming_chunk", ownerID, "route topic finished", 2, map[string]interface{}{
+		"step_id":       "route-pick-topic",
+		"step_title":    "Pick Trending Topic",
+		"workflow_path": "Workflow/instagram",
+	}, now.Add(2*time.Second)))
+	snapshot, ok = store.Get("session-1:" + ownerID)
+	if !ok {
+		t.Fatalf("expected terminal snapshot after refresh")
+	}
+	if snapshot.Status.PreValidationSummary != "Pre-validation passed: 7/7 checks" {
+		t.Fatalf("pre-validation summary should survive terminal refresh, got %q", snapshot.Status.PreValidationSummary)
+	}
+}
+
 func TestStoreCollapsesSnapshotsForSameTmuxSession(t *testing.T) {
 	store := NewStore()
 	now := time.Now()
@@ -157,6 +214,58 @@ func TestStorePrefersWorkflowStepOwnerOverStaleCurrentStepMetadata(t *testing.T)
 	}
 	if snapshot.DisplayTitle != "Instagram -> step-create-reel" {
 		t.Fatalf("display title = %q", snapshot.DisplayTitle)
+	}
+}
+
+func TestStoreMergesStructuredWorkflowToolCallsIntoTerminalContent(t *testing.T) {
+	store := NewStore()
+	ownerID := "workflow-step:workflow-full-1:check-cdp"
+	metadata := map[string]interface{}{
+		"execution_owner_id": ownerID,
+		"step_transport":     "structured",
+		"current_step_id":    "check-cdp",
+		"execution_kind":     "workflow_step",
+		"scope":              "workflow_step",
+		"workflow_path":      "Workflow/upwork",
+	}
+
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		ownerID,
+		"$ gemini --output-format stream-json model=auto msgs=2\n> user: prompt",
+		1,
+		metadata,
+		time.Now(),
+	))
+	store.HandleEvent("session-1", toolStartEvent(ownerID, "call-1", "mcp_api-bridge_execute_shell_command", `{"command":"env | grep MCP_API_TOKEN"}`, metadata))
+	store.HandleEvent("session-1", toolEndEvent(ownerID, "call-1", "mcp_api-bridge_execute_shell_command", `{"stdout":"MCP_API_TOKEN=secret-token\nok"}`, metadata))
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		ownerID,
+		"$ gemini --output-format stream-json model=auto msgs=2\n> user: prompt\n[done · 1s · 10 in · 2 out]",
+		2,
+		metadata,
+		time.Now().Add(time.Second),
+	))
+
+	snapshot, ok := store.Get("session-1:" + ownerID)
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if !strings.Contains(snapshot.Content, "→ tool: mcp_api-bridge_execute_shell_command") {
+		t.Fatalf("expected tool start line in content:\n%s", snapshot.Content)
+	}
+	if !strings.Contains(snapshot.Content, "✓ result mcp_api-bridge_execute_shell_command") {
+		t.Fatalf("expected tool result line in content:\n%s", snapshot.Content)
+	}
+	if strings.Contains(snapshot.Content, "secret-token") {
+		t.Fatalf("expected MCP token to be redacted:\n%s", snapshot.Content)
+	}
+	if !strings.Contains(snapshot.Content, "MCP_API_TOKEN=[redacted]") {
+		t.Fatalf("expected redacted token marker:\n%s", snapshot.Content)
+	}
+	toolIdx := strings.Index(snapshot.Content, "→ tool:")
+	doneIdx := strings.Index(snapshot.Content, "[done")
+	if toolIdx < 0 || doneIdx < 0 || toolIdx > doneIdx {
+		t.Fatalf("tool rows should appear before done footer:\n%s", snapshot.Content)
 	}
 }
 
@@ -459,7 +568,81 @@ func TestStoreMarksBoundedTerminalCompletedFromProviderIdlePromptWithoutEndEvent
 	}
 }
 
-func TestStoreDoesNotSelfCompleteBoundedTerminalFromPromptStatusAlone(t *testing.T) {
+func TestStoreMarksCodexWorkflowTerminalCompletedWithDraftPromptAfterCompletion(t *testing.T) {
+	store := NewStore()
+	screen := `╭─────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                        │
+╰─────────────────────────────────────────────────────────╯
+
+• STATUS: COMPLETED
+
+─ Worked for 10m 10s ─────────────────────────────────────
+
+› Write tests for @filename
+
+  gpt-5.4 xhigh · ~/ai-work/workspace-docs/Workflow/substack`
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:exec-step-check-x-1:step-check-x",
+		screen,
+		492,
+		map[string]interface{}{
+			"execution_kind":  "workflow_step",
+			"tmux_session":    "mlp-codex-cli-int-test",
+			"provider":        "codex-cli",
+			"current_step_id": "step-check-x",
+		},
+		time.Now(),
+	))
+
+	snapshot, ok := store.Get("session-1:workflow-step:exec-step-check-x-1:step-check-x")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Active {
+		t.Fatalf("completed Codex workflow pane with ready draft prompt should not remain active")
+	}
+	if snapshot.State != "completed" {
+		t.Fatalf("state = %q, want completed", snapshot.State)
+	}
+}
+
+func TestStoreMarksCodexWorkflowTerminalCompletedFromWorkedForMarker(t *testing.T) {
+	store := NewStore()
+	screen := `╭─────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                        │
+╰─────────────────────────────────────────────────────────╯
+
+─ Worked for 9m 23s ──────────────────────────────────────
+
+› Write tests for @filename
+
+  gpt-5.4 xhigh · ~/ai-work/workspace-docs/Workflow/substack`
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:exec-step-check-x-1:step-check-x",
+		screen,
+		492,
+		map[string]interface{}{
+			"execution_kind":  "workflow_step",
+			"tmux_session":    "mlp-codex-cli-int-test",
+			"provider":        "codex-cli",
+			"current_step_id": "step-check-x",
+		},
+		time.Now(),
+	))
+
+	snapshot, ok := store.Get("session-1:workflow-step:exec-step-check-x-1:step-check-x")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Active {
+		t.Fatalf("Codex workflow pane with worked-for marker and ready prompt should not remain active")
+	}
+	if snapshot.State != "completed" {
+		t.Fatalf("state = %q, want completed", snapshot.State)
+	}
+}
+
+func TestStoreDoesNotImmediatelySelfCompleteBoundedTerminalFromPromptStatusAlone(t *testing.T) {
 	store := NewStore()
 	screen := `• STATUS: COMPLETED
 
@@ -482,10 +665,78 @@ The provider has not yet returned to an idle prompt.`
 		t.Fatalf("expected terminal snapshot")
 	}
 	if !snapshot.Active {
-		t.Fatalf("workflow prompt status alone should not close the terminal")
+		t.Fatalf("fresh workflow prompt status alone should not close the terminal")
 	}
 	if snapshot.State != "running" {
 		t.Fatalf("state = %q, want running", snapshot.State)
+	}
+}
+
+func TestStoreSelfCompletesBoundedTerminalFromStalePromptStatus(t *testing.T) {
+	store := NewStore()
+	terminalID := "session-1:workflow-step:exec-step-check-reddit-1:step-check-reddit"
+	oldUpdate := time.Now().Add(-(terminalPromptCompletionInactiveAfter + time.Second))
+	store.mu.Lock()
+	store.byID[terminalID] = Snapshot{
+		TerminalID:    terminalID,
+		SessionID:     "session-1",
+		OwnerID:       "workflow-step:exec-step-check-reddit-1:step-check-reddit",
+		ExecutionID:   "workflow-step:exec-step-check-reddit-1:step-check-reddit",
+		ExecutionKind: "workflow_step",
+		Scope:         "workflow_step",
+		TmuxSession:   "mlp-codex-cli-int-test",
+		Content:       "• STATUS: COMPLETED\n\nThe provider did not show a recognizable idle prompt.",
+		Active:        true,
+		State:         "running",
+		CreatedAt:     oldUpdate,
+		UpdatedAt:     oldUpdate,
+	}
+	store.bySession["session-1"] = map[string]struct{}{terminalID: {}}
+	store.mu.Unlock()
+
+	snapshot, ok := store.Get(terminalID)
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Active {
+		t.Fatalf("stale workflow prompt status should close bounded terminal")
+	}
+	if snapshot.State != "completed" {
+		t.Fatalf("state = %q, want completed", snapshot.State)
+	}
+}
+
+func TestStoreUsesPromptStatusOnlyAsIdlePromptFallback(t *testing.T) {
+	store := NewStore()
+	screen := `╭─────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                        │
+╰─────────────────────────────────────────────────────────╯
+
+• STATUS: COMPLETED
+
+› Use /skills to list available skills`
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:exec-step-check-reddit-1:step-check-reddit",
+		screen,
+		344,
+		map[string]interface{}{
+			"execution_kind":  "workflow_step",
+			"tmux_session":    "mlp-codex-cli-int-test",
+			"provider":        "codex-cli",
+			"current_step_id": "step-check-reddit",
+		},
+		time.Now(),
+	))
+
+	snapshot, ok := store.Get("session-1:workflow-step:exec-step-check-reddit-1:step-check-reddit")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Active {
+		t.Fatalf("prompt status may close only after provider idle prompt is visible")
+	}
+	if snapshot.State != "completed" {
+		t.Fatalf("state = %q, want completed", snapshot.State)
 	}
 }
 
@@ -762,7 +1013,7 @@ workspace (/directory)                         sandbox                  /model
 	}
 }
 
-func TestStoreCompletedStatusWinsOverPreviousFailureText(t *testing.T) {
+func TestStorePromptStatusDoesNotOverridePreviousFailureText(t *testing.T) {
 	store := NewStore()
 	screen := "PRE-VALIDATION FAILED on retry 1\nRecovered and wrote cdp_status.json\nSTATUS: COMPLETED"
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", screen, 1))
@@ -772,8 +1023,8 @@ func TestStoreCompletedStatusWinsOverPreviousFailureText(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	if snapshot.State != "completed" {
-		t.Fatalf("state = %q, want completed", snapshot.State)
+	if snapshot.State != "failed" {
+		t.Fatalf("state = %q, want failed", snapshot.State)
 	}
 }
 
@@ -980,6 +1231,42 @@ func terminalEndEvent(executionID string, metadata map[string]interface{}) store
 				BaseEventData: agentevents.BaseEventData{
 					Metadata: metadata,
 				},
+			},
+		},
+	}
+}
+
+func toolStartEvent(executionID, toolCallID, toolName, args string, metadata map[string]interface{}) storeevents.Event {
+	return storeevents.Event{
+		Type:        string(agentevents.ToolCallStart),
+		SessionID:   "session-1",
+		ExecutionID: executionID,
+		Timestamp:   time.Now(),
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.ToolCallStart,
+			Data: &agentevents.ToolCallStartEvent{
+				BaseEventData: agentevents.BaseEventData{Metadata: metadata},
+				ToolCallID:    toolCallID,
+				ToolName:      toolName,
+				ToolParams:    agentevents.ToolParams{Arguments: args},
+			},
+		},
+	}
+}
+
+func toolEndEvent(executionID, toolCallID, toolName, result string, metadata map[string]interface{}) storeevents.Event {
+	return storeevents.Event{
+		Type:        string(agentevents.ToolCallEnd),
+		SessionID:   "session-1",
+		ExecutionID: executionID,
+		Timestamp:   time.Now(),
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.ToolCallEnd,
+			Data: &agentevents.ToolCallEndEvent{
+				BaseEventData: agentevents.BaseEventData{Metadata: metadata},
+				ToolCallID:    toolCallID,
+				ToolName:      toolName,
+				Result:        result,
 			},
 		},
 	}

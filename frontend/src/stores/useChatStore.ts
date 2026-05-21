@@ -14,7 +14,7 @@ import { MAX_EVENTS_TO_PROCESS, CLEANUP_THRESHOLD } from '../constants/events'
 import { logger } from '../utils/logger'
 import { compareEventsChronologically, compareEventsReverseChronologically } from '../utils/eventOrdering'
 import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
-import { splitStreamingStatusAndText } from '../utils/streamingStatus'
+import { looksLikeTerminalScreenText, splitStreamingStatusAndText } from '../utils/streamingStatus'
 
 // Active sessions cache TTL (30 seconds - shorter than polling interval to allow force refresh)
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
@@ -250,7 +250,7 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     // Orchestrator agent boundaries - must survive for step collapse/expand
     'orchestrator_agent_start',
     'orchestrator_agent_end',
-    // Background owners - required by tree and by flat event continuity
+    // Background owners - required by tree event continuity
     'background_agent_started',
     'background_agent_completed',
     'background_agent_failed',
@@ -302,7 +302,7 @@ export interface ChatTabConfig {
   restoredConversationTitle?: string  // Display title for pending resumed conversation
   restoredConversationWorkshopModeLabel?: string  // Builder/Optimizer/Run label for pending resumed workflow conversation
   restoredConversationRuntimeLabel?: string  // Provider/model display for pending resumed conversation
-  restoredConversationNativeResume?: boolean  // Whether the backend should native-resume instead of attaching as file context
+  restoredConversationNativeResume?: boolean  // Whether restore should use the CLI path instead of visible file-context fallback
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   pastedAttachments?: PastedAttachment[]  // Long pastes captured as attachment chips, prepended on send
   isQueueProcessing?: boolean  // Lock to prevent multiple ChatArea instances from double-processing the queue
@@ -431,11 +431,9 @@ interface ChatState extends StoreActions {
   tabEvents: Record<string, PollingEvent[]>  // sessionId -> events
   tabEventIndices: Record<string, number>  // sessionId -> lastEventIndex
   tabHasMoreOlderEvents: Record<string, boolean>  // sessionId -> hasMoreOlderEvents (from initial fetch)
-  // Stash for the latest human message right before entering Terminal
-  // view mode. We drop tabEvents on entry to free memory; this pin
-  // survives the drop so a still-pending optimistic user input isn't
-  // briefly hidden when the user switches back to Tree/Flat (the
-  // backfill poll will overwrite/extend within ~600ms).
+  // Stash for the latest human message around Terminal view mode. This
+  // remains as a fallback for optimistic input while Tree catches up from
+  // poll-based backfill.
   pinnedHumanByTerminalMode: Record<string, PollingEvent>
   
   // User message state
@@ -1333,11 +1331,14 @@ export const useChatStore = create<ChatState>()(
           // Mixed chunks are split so raw markers like "api-bridge - execute_shell_command (MCP)"
           // cannot leak into the visible assistant markdown.
           const { statusText, text } = splitStreamingStatusAndText(chunk)
-          if (statusText && !text) {
+          const isTerminalScreenText = looksLikeTerminalScreenText(text || chunk)
+          const safeText = isTerminalScreenText ? '' : text
+          const effectiveStatusText = statusText || (isTerminalScreenText ? 'Agent is working' : null)
+          if (effectiveStatusText && !safeText) {
             return {
               streamingStatus: {
                 ...state.streamingStatus,
-                [sessionId]: statusText
+                [sessionId]: effectiveStatusText
               },
               lastStreamingChunkIndex: {
                 ...state.lastStreamingChunkIndex,
@@ -1349,17 +1350,22 @@ export const useChatStore = create<ChatState>()(
 
           // Clear status once real content arrives
           const newStreamingStatus = { ...state.streamingStatus }
-          if (statusText) {
-            newStreamingStatus[sessionId] = statusText
+          if (effectiveStatusText) {
+            newStreamingStatus[sessionId] = effectiveStatusText
           } else {
             delete newStreamingStatus[sessionId]
           }
 
+          const nextStreamingText = { ...state.streamingText }
+          const nextText = currentText + safeText
+          if (nextText) {
+            nextStreamingText[sessionId] = nextText
+          } else {
+            delete nextStreamingText[sessionId]
+          }
+
           return {
-            streamingText: {
-              ...state.streamingText,
-              [sessionId]: currentText + text
-            },
+            streamingText: nextStreamingText,
             streamingStatus: newStreamingStatus,
             lastStreamingChunkIndex: {
               ...state.lastStreamingChunkIndex,
@@ -1615,12 +1621,15 @@ export const useChatStore = create<ChatState>()(
             return state
           }
 
-          const isStatusMessage = chunk.includes('⏳') || chunk.includes('⚠️ Gemini')
+          const { statusText, text } = splitStreamingStatusAndText(chunk)
+          const isTerminalScreenText = looksLikeTerminalScreenText(text || chunk)
+          const safeText = isTerminalScreenText ? '' : text
+          const effectiveStatusText = statusText || (isTerminalScreenText ? 'Agent is working' : undefined)
           const next: ExecutionStreamingActivity = {
             sessionId,
             executionId,
-            text: isStatusMessage ? currentText : currentText + chunk,
-            status: isStatusMessage ? chunk.trim() : undefined,
+            text: currentText + safeText,
+            status: effectiveStatusText,
             lastChunkIndex: chunkIndex,
             updatedAt: Date.now(),
           }

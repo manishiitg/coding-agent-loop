@@ -35,10 +35,10 @@ var NEVER_SHOW_EVENTS = map[string]bool{
 	// Subscribers still receive these in real-time (see AddEvent override).
 	"streaming_start": true,
 	"streaming_chunk": true,
-	// NOTE: streaming_end is NOT excluded — it's a critical lifecycle signal that the frontend
-	// needs to clear the streaming card. Since SSE can miss it (race condition, reconnect),
-	// it must be recoverable via polling backfill. It's only 1 event per LLM call.
-	// "streaming_end": true,
+	// streaming_end is also lifecycle-only. SSE subscribers and explicit SSE backfill
+	// still receive it via IncludeStreaming, but normal event polling should not keep
+	// a completed "Thinking" artifact alive in tree/flat event views.
+	"streaming_end": true,
 }
 
 // HIDDEN_EVENTS contains additional event types hidden from UI display
@@ -87,7 +87,7 @@ var STRUCTURAL_EVENTS = map[string]bool{
 	"batch_group_end":             true,
 	"batch_group_start":           true,
 	"blocking_human_feedback":     true,
-	"context_cancelled":           true,
+	"context_cancelled":           true, //nolint:misspell // Event schema uses the British spelling.
 	"conversation_end":            true,
 	"conversation_error":          true,
 	"conversation_resumed":        true,
@@ -762,7 +762,7 @@ type GetEventsOptions struct {
 	SinceIndex       int  // For forward polling: get events after this index
 	Limit            int  // For pagination: maximum number of events to return (0 = no limit)
 	Offset           int  // For pagination: skip this many events (used for backward pagination)
-	IncludeStreaming bool // Include streaming_start/chunk for SSE reconnect backfill only
+	IncludeStreaming bool // Include streaming_start/chunk/end for SSE reconnect backfill only
 }
 
 // GetEventsResult contains the result of GetEvents call

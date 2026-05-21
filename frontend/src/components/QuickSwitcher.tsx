@@ -509,8 +509,6 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     requestChatScrollToBottom()
   }, [])
 
-  // Switch to a workflow or chat tab. When `minimize` is true (workflow only),
-  // the old workflow's tabs are set to flat layout.
   const handleSelect = useCallback(async (item: QuickSwitcherItem, minimize = false) => {
     if (item.type === 'active') {
       const chatStore = useChatStore.getState()
@@ -576,10 +574,6 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     }
 
     if (minimize) {
-      // Flat view was removed; tabs of both old and new preset stay in
-      // their current view mode. The old branch used 'flat' as a
-      // "background tab" indicator but that semantics is gone — there's
-      // no separate minimized layout, just Tree or Terminal.
       Object.values(chatStore.chatTabs).forEach(tab => {
         if (tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === item.preset.id) {
           chatStore.setTabViewMode(tab.tabId, 'tree')
@@ -651,8 +645,6 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     } else if (e.key === 'Enter') {
       e.preventDefault()
       if (filteredItems.length > 0 && selectedIndex >= 0 && selectedIndex < filteredItems.length) {
-        // Shift+Enter: switch AND put the old workflow in flat mode.
-        // Plain Enter: switch normally.
         void handleSelect(filteredItems[selectedIndex], e.shiftKey)
       }
     } else if (e.key === 'Escape') {

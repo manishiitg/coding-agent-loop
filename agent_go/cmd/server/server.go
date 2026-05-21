@@ -5433,12 +5433,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 			restoredNativeCodingResume := false
 			restoredConversationPath := strings.TrimSpace(req.RestoredConversationPath)
-			if restoredRuntime, ok, err := ReadChatHistoryRuntimeFromPath(currentUserID, restoredConversationPath); err != nil {
+			var restoredRuntime *ChatHistoryAgentRuntime
+			if runtime, ok, err := ReadChatHistoryRuntimeFromPath(currentUserID, restoredConversationPath); err != nil {
 				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime from %s: %v", restoredConversationPath, err)
 			} else if ok {
+				restoredRuntime = runtime
 				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
 			}
 			api.restoreCodingAgentRuntime(sessionID, underlyingAgent)
+			if !restoredNativeCodingResume && restoredConversationPath == "" {
+				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromCurrentConversation(sessionID, currentUserID, finalProvider, newWorkshopMode, workflowPhaseFolder, underlyingAgent)
+			}
 			if restoredNativeCodingResume {
 				cleanedChatQuery := cleanChatHistoryQuery(chatQuery)
 				if cleanedChatQuery != chatQuery {
@@ -5446,10 +5451,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Using native coding-agent resume; stripped restored conversation attach context from prompt")
 				}
 			} else if restoredConversationPath != "" {
-				nextChatQuery := appendRestoredConversationContext(chatQuery, restoredConversationPath)
-				if nextChatQuery != chatQuery {
-					chatQuery = nextChatQuery
-					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Native resume unavailable; attached restored conversation file as fallback context")
+				if shouldAttachRestoredConversationFallback(restoredRuntime, finalProvider, newWorkshopMode) {
+					nextChatQuery := appendRestoredConversationContext(chatQuery, restoredConversationPath)
+					if nextChatQuery != chatQuery {
+						chatQuery = nextChatQuery
+						logfWithContext(queryLogCtx, "[CHAT_HISTORY] Native resume unavailable; attached restored conversation file as fallback context")
+					}
+				} else {
+					cleanedChatQuery := cleanChatHistoryQuery(chatQuery)
+					if cleanedChatQuery != chatQuery {
+						chatQuery = cleanedChatQuery
+					}
+					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Restoring coding-agent chat via CLI provider %q; skipped restored conversation file fallback", finalProvider)
 				}
 			}
 		}
@@ -6142,6 +6155,12 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 				log.Printf("[GEMINI CLI] Saved project dir ID %s for session %s", dirID, sessionID)
 			}
 		case "codex-cli":
+			if sid := strings.TrimSpace(underlyingAgent.CodexSessionID); sid != "" {
+				runtime.ExternalSessionID = sid
+				runtime.ResumeSupported = true
+				runtime.ResumeFlag = "resume"
+				log.Printf("[CODEX CLI] Saved thread ID %s for session %s", sid, sessionID)
+			}
 			if dirID := strings.TrimSpace(underlyingAgent.CodexProjectDirID); dirID != "" {
 				runtime.ProjectDirID = dirID
 			}
@@ -6172,6 +6191,41 @@ func (api *StreamingAPI) restoreCodingAgentRuntime(sessionID string, underlyingA
 		underlyingAgent.GeminiProjectDirID = gDirID
 		workspace.SetSessionGeminiProjectDirID(sessionID, gDirID)
 		log.Printf("[GEMINI CLI] Restored project dir ID %s for session %s", gDirID, sessionID)
+	}
+}
+
+func (api *StreamingAPI) seedCodingAgentRuntimeFromCurrentConversation(sessionID, userID, currentProvider, currentWorkshopMode, workspacePath string, underlyingAgent *mcpagent.Agent) bool {
+	if api == nil || underlyingAgent == nil || codingAgentHasNativeResume(currentProvider, underlyingAgent) {
+		return false
+	}
+	runtime, ok, err := ReadChatHistoryRuntimeForSession(userID, sessionID, workspacePath)
+	if err != nil {
+		log.Printf("[CHAT_HISTORY] Failed to read current conversation runtime for session %s: %v", sessionID, err)
+		return false
+	}
+	if !ok || runtime == nil {
+		return false
+	}
+	seeded := api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, currentProvider, currentWorkshopMode, runtime, underlyingAgent)
+	if seeded {
+		log.Printf("[CHAT_HISTORY] Restored native coding-agent runtime from current conversation for session %s", sessionID)
+	}
+	return seeded
+}
+
+func codingAgentHasNativeResume(provider string, underlyingAgent *mcpagent.Agent) bool {
+	if underlyingAgent == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "claude-code":
+		return strings.TrimSpace(underlyingAgent.ClaudeCodeSessionID) != ""
+	case "gemini-cli":
+		return strings.TrimSpace(underlyingAgent.GeminiSessionID) != "" || strings.TrimSpace(underlyingAgent.GeminiProjectDirID) != ""
+	case "codex-cli":
+		return strings.TrimSpace(underlyingAgent.CodexSessionID) != "" || strings.TrimSpace(underlyingAgent.CodexProjectDirID) != ""
+	default:
+		return false
 	}
 }
 
@@ -6231,6 +6285,15 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 			underlyingAgent.GeminiProjectDirID = projectDirID
 			workspace.SetSessionGeminiProjectDirID(sessionID, projectDirID)
 			log.Printf("[GEMINI CLI] Restored project dir ID %s from chat history for session %s", projectDirID, sessionID)
+		}
+		return externalSessionID != "" || projectDirID != ""
+	case "codex-cli":
+		if externalSessionID != "" {
+			underlyingAgent.CodexSessionID = externalSessionID
+			log.Printf("[CODEX CLI] Restored native thread %s from chat history for session %s", externalSessionID, sessionID)
+		}
+		if projectDirID != "" {
+			underlyingAgent.CodexProjectDirID = projectDirID
 		}
 		return externalSessionID != "" || projectDirID != ""
 	}
@@ -7474,9 +7537,15 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 
 // emitBackgroundAgentEvent emits a background agent event to the event store
 func (api *StreamingAPI) emitBackgroundAgentEvent(sessionID, agentID, eventType string, data map[string]interface{}) {
+	if api == nil || api.eventStore == nil {
+		return
+	}
+	if data == nil {
+		data = make(map[string]interface{})
+	}
 	now := time.Now()
 	data["timestamp"] = now.Format(time.RFC3339)
-	if _, exists := data["parent_execution_id"]; !exists && api != nil && api.bgAgentRegistry != nil && agentID != "" {
+	if _, exists := data["parent_execution_id"]; !exists && api.bgAgentRegistry != nil && agentID != "" {
 		if agent := api.bgAgentRegistry.Get(sessionID, agentID); agent != nil {
 			if parentID := strings.TrimSpace(agent.GetSnapshot().ParentExecutionID); parentID != "" {
 				data["parent_execution_id"] = parentID
@@ -7578,9 +7647,30 @@ func (api *StreamingAPI) isSyntheticTurn(sessionID string) bool {
 
 // queuePendingCompletion adds a completed agent ID to the pending queue
 func (api *StreamingAPI) queuePendingCompletion(sessionID, agentID string) {
+	api.queuePendingCompletions(sessionID, []string{agentID})
+}
+
+func (api *StreamingAPI) queuePendingCompletions(sessionID string, agentIDs []string) {
 	api.pendingMu.Lock()
 	defer api.pendingMu.Unlock()
-	api.pendingCompletions[sessionID] = append(api.pendingCompletions[sessionID], agentID)
+	if len(agentIDs) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(api.pendingCompletions[sessionID])+len(agentIDs))
+	for _, existing := range api.pendingCompletions[sessionID] {
+		seen[existing] = struct{}{}
+	}
+	for _, agentID := range agentIDs {
+		agentID = strings.TrimSpace(agentID)
+		if agentID == "" {
+			continue
+		}
+		if _, ok := seen[agentID]; ok {
+			continue
+		}
+		api.pendingCompletions[sessionID] = append(api.pendingCompletions[sessionID], agentID)
+		seen[agentID] = struct{}{}
+	}
 }
 
 // drainPendingCompletions returns and clears all pending completion agent IDs
@@ -7590,6 +7680,75 @@ func (api *StreamingAPI) drainPendingCompletions(sessionID string) []string {
 	pending := api.pendingCompletions[sessionID]
 	delete(api.pendingCompletions, sessionID)
 	return pending
+}
+
+func (api *StreamingAPI) schedulePendingCompletionRetry(sessionID string) {
+	time.AfterFunc(5*time.Second, func() {
+		if api.isSessionStoppedOrInactive(sessionID) {
+			return
+		}
+		if api.isSessionBusy(sessionID) {
+			api.schedulePendingCompletionRetry(sessionID)
+			return
+		}
+		pending := api.drainPendingCompletions(sessionID)
+		if len(pending) == 0 {
+			return
+		}
+		api.processBatchedBackgroundAgentCompletions(sessionID, pending)
+	})
+}
+
+func (api *StreamingAPI) delayBackgroundCompletionsForHumanPromptDraft(sessionID string, agentIDs []string) bool {
+	draft, ok := api.activeClaudePromptDraft(sessionID)
+	if !ok {
+		return false
+	}
+	api.queuePendingCompletions(sessionID, agentIDs)
+	api.schedulePendingCompletionRetry(sessionID)
+	log.Printf("[BG AGENT] Delaying synthetic turn for session %s because Claude Code has an unsubmitted prompt draft: %.120q", sessionID, draft)
+	return true
+}
+
+func (api *StreamingAPI) activeClaudePromptDraft(sessionID string) (string, bool) {
+	if api == nil || api.terminalStore == nil {
+		return "", false
+	}
+	for _, snapshot := range api.terminalStore.List(sessionID) {
+		if snapshot.TmuxSession == "" || !strings.Contains(snapshot.TmuxSession, "claude-code") {
+			continue
+		}
+		if draft, ok := claudePromptDraftFromTerminalContent(snapshot.Content); ok {
+			return draft, true
+		}
+	}
+	return "", false
+}
+
+func claudePromptDraftFromTerminalContent(content string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(strings.ReplaceAll(lines[i], "\u00a0", " "))
+		if trimmed == "❯" {
+			return "", false
+		}
+		if !strings.HasPrefix(trimmed, "❯") {
+			continue
+		}
+		draft := strings.TrimSpace(strings.TrimPrefix(trimmed, "❯"))
+		if draft == "" || isClaudePromptSuggestion(draft) {
+			return "", false
+		}
+		return draft, true
+	}
+	return "", false
+}
+
+func isClaudePromptSuggestion(draft string) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(draft), " "))
+	return strings.HasPrefix(normalized, "type your message") ||
+		(strings.HasPrefix(normalized, "try ") && strings.Contains(normalized, "\"")) ||
+		normalized == "show me what it found"
 }
 
 // backgroundCompletionLoop listens for background agent completions and triggers synthetic turns
@@ -7633,6 +7792,9 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 	// Single completion: use the normal individual path (simpler message).
 	if len(agentIDs) == 1 {
 		api.processBackgroundAgentCompletion(sessionID, agentIDs[0])
+		return
+	}
+	if api.delayBackgroundCompletionsForHumanPromptDraft(sessionID, agentIDs) {
 		return
 	}
 
@@ -7778,6 +7940,15 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		return
 	}
 
+	snap := agent.GetSnapshot()
+	if snap.Status == BGAgentCanceled {
+		log.Printf("[BG AGENT] Agent %s for session %s was canceled, suppressing synthetic turn", agentID, sessionID)
+		return
+	}
+	if api.delayBackgroundCompletionsForHumanPromptDraft(sessionID, []string{agentID}) {
+		return
+	}
+
 	// Prevent duplicate processing
 	agent.mu.Lock()
 	if agent.notified {
@@ -7787,11 +7958,7 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	agent.notified = true
 	agent.mu.Unlock()
 
-	snap := agent.GetSnapshot()
-	if snap.Status == BGAgentCanceled {
-		log.Printf("[BG AGENT] Agent %s for session %s was canceled, suppressing synthetic turn", agentID, sessionID)
-		return
-	}
+	snap = agent.GetSnapshot()
 
 	var resultText string
 	if snap.Status == BGAgentCompleted {

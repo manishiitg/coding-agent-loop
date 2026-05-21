@@ -16,7 +16,7 @@ import { WorkflowExplanation } from './WorkflowExplanation'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore, useGlobalPresetStore } from '../stores'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { ModeEmptyState } from './ModeEmptyState'
-import { PreviousChatHistoryPanel, chatHistoryConversationPath, chatHistoryRuntimeLabel, chatHistorySessionTitle, chatHistorySupportsNativeResume, chatHistoryWorkshopModeLabel } from './PreviousChatHistoryPanel'
+import { PreviousChatHistoryPanel, chatHistoryConversationPath, chatHistoryRuntimeLabel, chatHistorySessionTitle, chatHistorySupportsNativeResume, chatHistoryUsesCliRestore, chatHistoryWorkshopModeLabel } from './PreviousChatHistoryPanel'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { normalizeEventViewMode, type ChatTab } from '../stores/useChatStore'
@@ -959,14 +959,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     const path = chatHistoryConversationPath(session)
     const title = chatHistorySessionTitle(session)
+    const useCliRestore = chatHistoryUsesCliRestore(session)
     const useNativeResume = chatHistorySupportsNativeResume(session)
     const latestStore = useChatStore.getState()
     const existingContext = latestStore.getTabConfig(targetTabId)?.fileContext || []
-    const nextFileContext = useNativeResume
-      ? existingContext.filter(item => item.path !== path)
-      : existingContext.some(item => item.path === path)
+    const shouldAttachFileFallback = !useCliRestore && !useNativeResume
+    const nextFileContext = shouldAttachFileFallback
+      ? existingContext.some(item => item.path === path)
         ? existingContext
         : [...existingContext, { name: title, path, type: 'file' as const }]
+      : existingContext.filter(item => item.path !== path)
 
     latestStore.setTabConfig(targetTabId, {
       fileContext: nextFileContext,
@@ -975,7 +977,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       restoredConversationTitle: title,
       restoredConversationWorkshopModeLabel: chatHistoryWorkshopModeLabel(session),
       restoredConversationRuntimeLabel: chatHistoryRuntimeLabel(session),
-      restoredConversationNativeResume: useNativeResume,
+      restoredConversationNativeResume: useCliRestore || useNativeResume,
     })
     switchTab(targetTabId)
   }, [addToast, switchTab])
@@ -1918,7 +1920,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Terminal view mode renders only TerminalCenter (which polls
       // /api/terminals on its own). Skip event polling for that tab
       // — events would accumulate in memory unread. When the user
-      // switches back to Tree/Flat the next poll cycle catches up.
+      // switches back to Tree the next poll cycle catches up.
       // currentTab from chatStore.getTab is live, no staleness.
       if (normalizeEventViewMode(currentTab.viewMode) === 'terminal') {
         return false
@@ -2274,7 +2276,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Skip Terminal-view-mode tabs: TerminalCenter has its own
     // /api/terminals poll and the events that SSE would deliver are
     // useless (nothing renders them, they only consume memory).
-    // Re-entering Tree/Flat triggers a reconnect on the next effect
+    // Re-entering Tree triggers a reconnect on the next effect
     // pass and a poll-based backfill from lastEventIndex.
     const neededSessionIds = new Set<string>()
     for (const tab of tabsWithActiveSessions) {
@@ -3130,9 +3132,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               </div>
             )}
             {/* Empty State - Show when no events and not in historical session.
-                Skipped in Terminal view mode because we drop tabEvents on
-                entry (intentional memory savings) — without this skip, the
-                workflow ModeEmptyState would cover the TerminalCenter pane. */}
+                Skipped in Terminal view mode so the workflow ModeEmptyState
+                does not cover the TerminalCenter pane. */}
             {displayEvents.length === 0 && !isStreaming && !isRestoringWorkflowSessions && !isChatCompatiblePhase(activeTab?.metadata?.phaseId) && activeEventViewMode !== 'terminal' && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}

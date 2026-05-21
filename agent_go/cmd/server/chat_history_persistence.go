@@ -707,6 +707,29 @@ func appendRestoredConversationContext(query, path string) string {
 	return query + "\n\nPrevious conversation file: " + path + "\nThis file is JSON with a top-level conversation_history array. User messages have Role \"human\" or \"user\" and text in Parts[].Text; assistant replies have Role \"ai\" or \"assistant\". Scan conversation_history from the end for recent user/assistant Text parts."
 }
 
+func shouldAttachRestoredConversationFallback(runtime *ChatHistoryAgentRuntime, currentProvider, currentWorkshopMode string) bool {
+	if runtime == nil {
+		return true
+	}
+	if !strings.EqualFold(strings.TrimSpace(runtime.Kind), "coding_agent") {
+		return true
+	}
+
+	runtimeProvider := strings.ToLower(strings.TrimSpace(runtime.Provider))
+	provider := strings.ToLower(strings.TrimSpace(currentProvider))
+	if runtimeProvider == "" || (provider != "" && runtimeProvider != provider) {
+		return true
+	}
+
+	runtimeMode := normalizeChatHistoryWorkshopMode(runtime.WorkshopMode)
+	mode := normalizeChatHistoryWorkshopMode(currentWorkshopMode)
+	if runtimeMode != "" && mode != "" && runtimeMode != mode {
+		return true
+	}
+
+	return false
+}
+
 // cleanChatHistoryForPersistence removes hidden prompt context that the frontend
 // appends for model-only use. Persisting that context causes chained /resume
 // selections to point at older conversations instead of the visible user turn.
@@ -817,20 +840,43 @@ func ReadChatHistoryRuntimeFromPath(userID, conversationPath string) (*ChatHisto
 		data = []byte(workspaceData)
 	}
 
+	runtime, err := chatHistoryRuntimeFromJSON(data)
+	if err != nil {
+		return nil, true, err
+	}
+	return runtime, true, nil
+}
+
+func ReadChatHistoryRuntimeForSession(userID, sessionID, workspacePath string) (*ChatHistoryAgentRuntime, bool, error) {
+	data, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
+	if err != nil {
+		if strings.Contains(err.Error(), "conversation not found") {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	runtime, err := chatHistoryRuntimeFromJSON(data)
+	if err != nil {
+		return nil, true, err
+	}
+	return runtime, true, nil
+}
+
+func chatHistoryRuntimeFromJSON(data []byte) (*ChatHistoryAgentRuntime, error) {
 	var raw struct {
 		Runtime *ChatHistoryAgentRuntime `json:"runtime,omitempty"`
 		Mode    string                   `json:"workshop_mode,omitempty"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, true, err
+		return nil, err
 	}
 	if raw.Runtime == nil {
-		return nil, true, nil
+		return nil, nil
 	}
 	if raw.Runtime.WorkshopMode == "" {
 		raw.Runtime.WorkshopMode = normalizeChatHistoryWorkshopMode(raw.Mode)
 	}
-	return raw.Runtime, true, nil
+	return raw.Runtime, nil
 }
 
 func normalizeRestoredChatHistoryConversationPath(userID, conversationPath string) (string, bool) {

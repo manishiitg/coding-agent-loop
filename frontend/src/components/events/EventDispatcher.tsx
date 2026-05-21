@@ -135,6 +135,7 @@ import { useChatStore } from '../../stores/useChatStore'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { CircularProgress } from '../ui/CircularProgress'
 import { TooltipProvider } from '../ui/tooltip'
+import { formatLiveStreamingPreview } from '../../utils/streamingStatus'
 
 // Sub-agent live streaming text display (subscribes to delegation streaming store independently)
 const DelegationStreamingCard: React.FC<{ delegationId: string }> = ({ delegationId }) => {
@@ -261,26 +262,21 @@ const LiveExecutionStreamingEventCard: React.FC<{ event: PollingEvent; compact?:
   const text = typeof payload?.text === 'string' ? payload.text : ''
   const status = typeof payload?.status === 'string' ? payload.status : ''
   if (!text && !status) return null
+  const preview = formatLiveStreamingPreview(status || text)
 
   return (
-    <div className={`border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 rounded ${compact ? 'p-2' : 'p-3'}`}>
-      <div className="flex items-center gap-1.5 mb-1">
-        <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+    <div className={`border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 rounded ${compact ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500 animate-pulse" />
         <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-blue-600 dark:text-blue-400 font-medium`}>
           Generating...
         </span>
+        {preview && (
+          <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} min-w-0 truncate text-blue-500 dark:text-blue-400 opacity-80`}>
+            {preview}
+          </span>
+        )}
       </div>
-      {text && (
-        <div className={`${compact ? 'text-[10px]' : 'text-xs'} max-h-60 overflow-y-auto custom-scrollbar overscroll-y-contain`}>
-          <MarkdownRenderer content={text} className={compact ? 'text-[10px]' : 'text-xs'} />
-          <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
-        </div>
-      )}
-      {status && (
-        <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-blue-500 dark:text-blue-400 italic mt-1 opacity-75`}>
-          {status}
-        </div>
-      )}
     </div>
   )
 }

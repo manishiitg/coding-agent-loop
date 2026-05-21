@@ -82,6 +82,48 @@ export function splitStreamingStatusAndText(chunk: string): { statusText: string
   return { statusText, text }
 }
 
+const TERMINAL_SCREEN_MARKERS = [
+  'shift+tab to accept edits',
+  'type your message or @path/to/file',
+  'authenticated with gemini-api-key',
+  'thinking... (esc to cancel',
+  'workspace (/directory) sandbox',
+  '? for shortcuts',
+]
+
+const stripAnsiControlCodes = (value: string): string =>
+  value.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+
+export function looksLikeTerminalScreenText(value: string): boolean {
+  if (!value) return false
+  const normalized = stripAnsiControlCodes(value).toLowerCase()
+  let markerCount = 0
+
+  for (const marker of TERMINAL_SCREEN_MARKERS) {
+    if (normalized.includes(marker)) markerCount += 1
+  }
+
+  return markerCount >= 2 || normalized.includes('shift+tab to accept edits')
+}
+
+export function formatLiveStreamingPreview(value: string, maxLength = 140): string {
+  if (!value) return ''
+  if (looksLikeTerminalScreenText(value)) return ''
+
+  const cleaned = stripAnsiControlCodes(value)
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !getStreamingStatusText(line))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!cleaned) return ''
+  if (cleaned.length <= maxLength) return cleaned
+  return `${cleaned.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`
+}
+
 export function sanitizeStreamingDisplayText(value: string): string {
   if (!value) return ''
   return value

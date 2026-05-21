@@ -103,7 +103,6 @@ export const WorkflowChatTabs: React.FC = () => {
 
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
 
-  // Layout mode for the active tab — tree groups related events, flat shows the old feed.
   const activeViewMode = useChatStore(state => {
     const tab = activeTabId ? state.chatTabs[activeTabId] : null
     return normalizeEventViewMode(tab?.viewMode)

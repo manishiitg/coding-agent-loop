@@ -221,7 +221,7 @@ import { useModeStore } from '../stores/useModeStore'
 import { agentApi, getApiBaseUrl } from '../services/api'
 import { skillsApi } from '../api/skills'
 import type { Skill } from '../types/skills'
-import { chatHistorySupportsNativeResume } from './PreviousChatHistoryPanel'
+import { chatHistorySupportsNativeResume, chatHistoryUsesCliRestore } from './PreviousChatHistoryPanel'
 
 // MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown.
 const DEDICATED_MCP_SERVERS = new Set(['playwright'])
@@ -1504,7 +1504,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const restoredResumeUsesNative = useMemo(() => {
     if (typeof tabConfig?.restoredConversationNativeResume === 'boolean') return tabConfig.restoredConversationNativeResume
-    return restoredResumeSession ? chatHistorySupportsNativeResume(restoredResumeSession) : false
+    return restoredResumeSession
+      ? chatHistoryUsesCliRestore(restoredResumeSession) || chatHistorySupportsNativeResume(restoredResumeSession)
+      : false
   }, [restoredResumeSession, tabConfig?.restoredConversationNativeResume])
 
   const clearRestoredConversation = useCallback(() => {
@@ -2762,11 +2764,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!session) return
 
     const path = resumeChatConversationPath(session)
+    const useCliRestore = chatHistoryUsesCliRestore(session)
     const useNativeResume = chatHistorySupportsNativeResume(session)
     const existingContext = useChatStore.getState().getTabConfig(activeTabId)?.fileContext || chatFileContext
-    const nextFileContext = useNativeResume
-      ? existingContext.filter((item: { path: string }) => item.path !== path)
-      : existingContext.some((item: { path: string }) => item.path === path)
+    const shouldAttachFileFallback = !useCliRestore && !useNativeResume
+    const nextFileContext = shouldAttachFileFallback
+      ? existingContext.some((item: { path: string }) => item.path === path)
         ? existingContext
         : [
             ...existingContext,
@@ -2776,6 +2779,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               type: 'file' as const,
             },
           ]
+      : existingContext.filter((item: { path: string }) => item.path !== path)
 
     setTabConfig(activeTabId, {
       fileContext: nextFileContext,
@@ -2784,7 +2788,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       restoredConversationTitle: resumeChatTitle(session),
       restoredConversationWorkshopModeLabel: resumeChatWorkshopModeLabel(session),
       restoredConversationRuntimeLabel: resumeChatRuntimeLabel(session),
-      restoredConversationNativeResume: useNativeResume,
+      restoredConversationNativeResume: useCliRestore || useNativeResume,
     })
     setShowResumeDialog(false)
     setTimeout(() => textareaRef.current?.focus(), 0)

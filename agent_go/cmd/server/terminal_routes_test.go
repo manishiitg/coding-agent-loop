@@ -140,6 +140,102 @@ func TestTerminalRoutesListCanReturnMetadataOnly(t *testing.T) {
 	}
 }
 
+func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-structured"
+	ownerID := "workflow-step:workflow-full-1:check-cdp"
+	metadata := map[string]interface{}{
+		"kind":               "terminal",
+		"execution_owner_id": ownerID,
+		"execution_kind":     "workflow_step",
+		"scope":              "workflow_step",
+		"workflow_path":      "Workflow/upwork",
+		"workflow_name":      "upwork",
+		"current_step_id":    "check-cdp",
+		"step_name":          "Check CDP connection",
+		"step_index":         1,
+		"step_total":         28,
+		"step_transport":     "structured",
+		"provider":           "gemini-cli",
+	}
+
+	store.HandleEvent(sessionID, terminalRouteStructuredChunkEvent(
+		sessionID,
+		ownerID,
+		"$ gemini --output-format stream-json model=auto msgs=2\n> user: Verify CDP",
+		1,
+		metadata,
+	))
+	store.HandleEvent(sessionID, terminalRouteToolStartEvent(
+		sessionID,
+		ownerID,
+		"call-1",
+		"mcp_api-bridge_execute_shell_command",
+		`{"command":"env | grep MCP_API_TOKEN"}`,
+		metadata,
+	))
+	store.HandleEvent(sessionID, terminalRouteToolEndEvent(
+		sessionID,
+		ownerID,
+		"call-1",
+		"mcp_api-bridge_execute_shell_command",
+		`{"stdout":"MCP_API_TOKEN=secret-token\nCDP status check successful. Version: Chrome/148.0.7778.169"}`,
+		metadata,
+	))
+	store.HandleEvent(sessionID, terminalRouteStructuredChunkEvent(
+		sessionID,
+		ownerID,
+		"$ gemini --output-format stream-json model=auto msgs=2\n> user: Verify CDP\n[done · 29.9s · 83242 in · 1240 out]",
+		2,
+		metadata,
+	))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals?session_id="+sessionID+"&content=full", nil)
+	rec := httptest.NewRecorder()
+	api.handleListTerminals(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var response listTerminalsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(response.Terminals) != 1 {
+		t.Fatalf("terminal count = %d, want 1", len(response.Terminals))
+	}
+	terminal := response.Terminals[0]
+	if terminal.TerminalID != sessionID+":"+ownerID {
+		t.Fatalf("terminal id = %q, want %q", terminal.TerminalID, sessionID+":"+ownerID)
+	}
+	if terminal.StepTransport != "structured" {
+		t.Fatalf("step transport = %q, want structured", terminal.StepTransport)
+	}
+	if terminal.Status.ProviderLabel != "Gemini CLI" {
+		t.Fatalf("provider label = %q, want Gemini CLI", terminal.Status.ProviderLabel)
+	}
+	if !strings.Contains(terminal.Content, "$ gemini --output-format stream-json") {
+		t.Fatalf("terminal content missing Gemini command:\n%s", terminal.Content)
+	}
+	if !strings.Contains(terminal.Content, "→ tool: mcp_api-bridge_execute_shell_command") {
+		t.Fatalf("terminal content missing tool start row:\n%s", terminal.Content)
+	}
+	if !strings.Contains(terminal.Content, "✓ result mcp_api-bridge_execute_shell_command") {
+		t.Fatalf("terminal content missing tool result row:\n%s", terminal.Content)
+	}
+	if strings.Contains(terminal.Content, "secret-token") {
+		t.Fatalf("terminal content leaked MCP token:\n%s", terminal.Content)
+	}
+	if !strings.Contains(terminal.Content, "MCP_API_TOKEN=[redacted]") {
+		t.Fatalf("terminal content missing redacted token marker:\n%s", terminal.Content)
+	}
+	toolIdx := strings.Index(terminal.Content, "→ tool:")
+	doneIdx := strings.Index(terminal.Content, "[done")
+	if toolIdx < 0 || doneIdx < 0 || toolIdx > doneIdx {
+		t.Fatalf("tool rows should appear before done footer:\n%s", terminal.Content)
+	}
+}
+
 func TestTerminalRoutesCompleteTerminalMarksSnapshotCompleted(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}
@@ -165,6 +261,37 @@ func TestTerminalRoutesCompleteTerminalMarksSnapshotCompleted(t *testing.T) {
 	}
 	if response.Terminal.Active || response.Terminal.State != "completed" {
 		t.Fatalf("terminal active/state = %v/%q, want false/completed", response.Terminal.Active, response.Terminal.State)
+	}
+}
+
+func TestTerminalRoutesCompleteTerminalSignalsProviderWaitLoop(t *testing.T) {
+	terminalStore := terminals.NewStore()
+	sessionID := "session-terminal-complete-force"
+	ownerID := "workflow-step:exec-review:review-plan"
+	terminalID := sessionID + ":" + ownerID
+	tmuxSession := "mlp-claude-test"
+	api := &StreamingAPI{terminalStore: terminalStore}
+
+	var forcedSession string
+	oldForceComplete := forceCompleteCodingAgentTmuxSession
+	forceCompleteCodingAgentTmuxSession = func(sessionName string) bool {
+		forcedSession = sessionName
+		return true
+	}
+	defer func() { forceCompleteCodingAgentTmuxSession = oldForceComplete }()
+
+	terminalStore.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, ownerID, tmuxSession, "final answer\n❯", 12))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/complete", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleCompleteTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("complete status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+
+	if forcedSession != tmuxSession {
+		t.Fatalf("force-complete tmux session = %q, want %q", forcedSession, tmuxSession)
 	}
 }
 
@@ -403,4 +530,70 @@ func terminalRouteEndEvent(sessionID, executionID, tmuxSession string, retention
 			},
 		},
 	}
+}
+
+func terminalRouteStructuredChunkEvent(sessionID, executionID, content string, chunkIndex int, metadata map[string]interface{}) storeevents.Event {
+	return storeevents.Event{
+		Type:          "streaming_chunk",
+		Timestamp:     time.Now(),
+		SessionID:     sessionID,
+		ExecutionID:   executionID,
+		ExecutionKind: "workflow_step",
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.StreamingChunk,
+			Data: &agentevents.StreamingChunkEvent{
+				BaseEventData: agentevents.BaseEventData{
+					Metadata: cloneTerminalRouteMetadata(metadata),
+				},
+				Content:    content,
+				ChunkIndex: chunkIndex,
+			},
+		},
+	}
+}
+
+func terminalRouteToolStartEvent(sessionID, executionID, toolCallID, toolName, args string, metadata map[string]interface{}) storeevents.Event {
+	return storeevents.Event{
+		Type:          string(agentevents.ToolCallStart),
+		Timestamp:     time.Now(),
+		SessionID:     sessionID,
+		ExecutionID:   executionID,
+		ExecutionKind: "workflow_step",
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.ToolCallStart,
+			Data: &agentevents.ToolCallStartEvent{
+				BaseEventData: agentevents.BaseEventData{Metadata: cloneTerminalRouteMetadata(metadata)},
+				ToolCallID:    toolCallID,
+				ToolName:      toolName,
+				ToolParams:    agentevents.ToolParams{Arguments: args},
+			},
+		},
+	}
+}
+
+func terminalRouteToolEndEvent(sessionID, executionID, toolCallID, toolName, result string, metadata map[string]interface{}) storeevents.Event {
+	return storeevents.Event{
+		Type:          string(agentevents.ToolCallEnd),
+		Timestamp:     time.Now(),
+		SessionID:     sessionID,
+		ExecutionID:   executionID,
+		ExecutionKind: "workflow_step",
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.ToolCallEnd,
+			Data: &agentevents.ToolCallEndEvent{
+				BaseEventData: agentevents.BaseEventData{Metadata: cloneTerminalRouteMetadata(metadata)},
+				ToolCallID:    toolCallID,
+				ToolName:      toolName,
+				Result:        result,
+			},
+		},
+	}
+}
+
+func cloneTerminalRouteMetadata(metadata map[string]interface{}) map[string]interface{} {
+	cloned := make(map[string]interface{}, len(metadata))
+	for key, value := range metadata {
+		cloned[key] = value
+	}
+	return cloned
 }

@@ -2,8 +2,10 @@ package step_based_workflow
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	mcpllm "github.com/manishiitg/mcpagent/llm"
@@ -142,6 +144,49 @@ func TestApplyStepConfigToAgentConfigKeepsTmuxDefaultForOtherCLIWorkflowSteps(t 
 				t.Fatalf("ForceStructuredCodingAgent = %v, want %v", config.ForceStructuredCodingAgent, tt.wantForceStructured)
 			}
 		})
+	}
+}
+
+func TestWorkflowTransportResolverAppliesDedicatedModes(t *testing.T) {
+	tests := []struct {
+		name                string
+		provider            string
+		stepConfig          *AgentConfigs
+		wantTransport       string
+		wantForceStructured bool
+	}{
+		{name: "gemini defaults structured", provider: string(mcpllm.ProviderGeminiCLI), wantTransport: "structured", wantForceStructured: true},
+		{name: "gemini ignores tmux", provider: string(mcpllm.ProviderGeminiCLI), stepConfig: &AgentConfigs{Transport: "tmux"}, wantTransport: "structured", wantForceStructured: true},
+		{name: "codex defaults tmux", provider: string(mcpllm.ProviderCodexCLI), wantTransport: "tmux"},
+		{name: "codex explicit structured", provider: string(mcpllm.ProviderCodexCLI), stepConfig: &AgentConfigs{Transport: "structured"}, wantTransport: "structured", wantForceStructured: true},
+		{name: "api ignores tmux", provider: "anthropic", stepConfig: &AgentConfigs{Transport: "tmux"}, wantTransport: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hcpo := newAgentFactoryTestOrchestrator(t)
+			config := agents.NewOrchestratorAgentConfig("step-agent")
+			config.LLMConfig.Primary.Provider = tt.provider
+
+			got := hcpo.applyWorkflowTransportToAgentConfig(config, tt.stepConfig, "test agent")
+
+			if got != tt.wantTransport {
+				t.Fatalf("transport = %q, want %q", got, tt.wantTransport)
+			}
+			if config.ForceStructuredCodingAgent != tt.wantForceStructured {
+				t.Fatalf("ForceStructuredCodingAgent = %v, want %v", config.ForceStructuredCodingAgent, tt.wantForceStructured)
+			}
+		})
+	}
+}
+
+func TestWorkflowGeminiStructuredTransportOnlyAppliedThroughResolver(t *testing.T) {
+	source, err := os.ReadFile("controller_agent_factory.go")
+	if err != nil {
+		t.Fatalf("read controller_agent_factory.go: %v", err)
+	}
+	if count := strings.Count(string(source), "forceWorkflowGeminiStructuredTransport(config)"); count != 1 {
+		t.Fatalf("forceWorkflowGeminiStructuredTransport(config) direct call count = %d, want 1 inside resolver", count)
 	}
 }
 

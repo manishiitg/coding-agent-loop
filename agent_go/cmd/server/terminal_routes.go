@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gorilla/mux"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 
 	"mcp-agent-builder-go/agent_go/internal/terminals"
 )
@@ -46,6 +47,8 @@ var runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (st
 	}
 	return string(output), nil
 }
+
+var forceCompleteCodingAgentTmuxSession = llmproviders.ForceCompleteCodingAgentTmuxSession
 
 type listTerminalsResponse struct {
 	Terminals []terminals.Snapshot `json:"terminals"`
@@ -155,7 +158,10 @@ func (api *StreamingAPI) handleDismissTerminal(w http.ResponseWriter, r *http.Re
 	_ = json.NewEncoder(w).Encode(map[string]bool{"dismissed": true})
 }
 
-// handleCompleteTerminal marks one view-only terminal snapshot complete.
+// handleCompleteTerminal marks one terminal snapshot complete and, when the
+// backing provider wait loop is still active, asks it to return through the
+// normal execution path. The workflow controller then runs validation,
+// learning/KB hooks, progress updates, and auto-notification itself.
 // POST /api/terminals/{terminal_id}/complete
 func (api *StreamingAPI) handleCompleteTerminal(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -163,14 +169,17 @@ func (api *StreamingAPI) handleCompleteTerminal(w http.ResponseWriter, r *http.R
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	terminalID, ok := api.requireAccessibleTerminalID(w, r)
+	before, ok := api.requireAccessibleTerminal(w, r)
 	if !ok {
 		return
 	}
-	snapshot, ok := api.terminalStore.MarkCompleted(terminalID)
+	snapshot, ok := api.terminalStore.MarkCompleted(before.TerminalID)
 	if !ok {
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
+	}
+	if before.Active && strings.TrimSpace(before.TmuxSession) != "" {
+		forceCompleteCodingAgentTmuxSession(before.TmuxSession)
 	}
 	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
 }
@@ -183,11 +192,11 @@ func (api *StreamingAPI) handleFailTerminal(w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	terminalID, ok := api.requireAccessibleTerminalID(w, r)
+	before, ok := api.requireAccessibleTerminal(w, r)
 	if !ok {
 		return
 	}
-	snapshot, ok := api.terminalStore.MarkFailed(terminalID)
+	snapshot, ok := api.terminalStore.MarkFailed(before.TerminalID)
 	if !ok {
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
@@ -332,14 +341,6 @@ func (api *StreamingAPI) handleSendTerminalKey(w http.ResponseWriter, r *http.Re
 		return
 	}
 	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
-}
-
-func (api *StreamingAPI) requireAccessibleTerminalID(w http.ResponseWriter, r *http.Request) (string, bool) {
-	snapshot, ok := api.requireAccessibleTerminal(w, r)
-	if !ok {
-		return "", false
-	}
-	return snapshot.TerminalID, true
 }
 
 func (api *StreamingAPI) requireAccessibleTerminal(w http.ResponseWriter, r *http.Request) (terminals.Snapshot, bool) {

@@ -17,6 +17,7 @@ import {
   chatHistoryRuntimeLabel,
   chatHistorySessionTitle,
   chatHistorySupportsNativeResume,
+  chatHistoryUsesCliRestore,
   chatHistoryWorkshopModeLabel,
 } from '../PreviousChatHistoryPanel'
 import {
@@ -141,11 +142,12 @@ const WorkflowPreviousChatsPanel: React.FC<{
     }
 
     const path = chatHistoryConversationPath(session)
+    const useCliRestore = chatHistoryUsesCliRestore(session)
     const useNativeResume = chatHistorySupportsNativeResume(session)
     const existingContext = useChatStore.getState().getTabConfig(targetTabId)?.fileContext || []
-    const nextFileContext = useNativeResume
-      ? existingContext.filter(item => item.path !== path)
-      : existingContext.some(item => item.path === path)
+    const shouldAttachFileFallback = !useCliRestore && !useNativeResume
+    const nextFileContext = shouldAttachFileFallback
+      ? existingContext.some(item => item.path === path)
         ? existingContext
         : [
             ...existingContext,
@@ -155,6 +157,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
               type: 'file' as const,
             },
           ]
+      : existingContext.filter(item => item.path !== path)
 
     setTabConfig(targetTabId, {
       fileContext: nextFileContext,
@@ -163,7 +166,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
       restoredConversationTitle: chatHistorySessionTitle(session),
       restoredConversationWorkshopModeLabel: chatHistoryWorkshopModeLabel(session),
       restoredConversationRuntimeLabel: chatHistoryRuntimeLabel(session),
-      restoredConversationNativeResume: useNativeResume,
+      restoredConversationNativeResume: useCliRestore || useNativeResume,
     })
   }, [activeTabId, addToast, setTabConfig])
 
@@ -537,7 +540,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
     // Previous chats are valuable in every view mode when nothing is
     // running — the user may want to switch to a past session whether
-    // they're looking at Tree, Flat, or Terminal. Terminal mode used
+    // they're looking at Tree or Terminal. Terminal mode used
     // to gate this off, but since tabEvents persist across mode
     // switches the hasWorkflowChatContent check is enough to hide
     // the panel during an active session.
@@ -1546,7 +1549,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         {showChatArea && !workspacePaneVisible && canvasElement}
 
         {showChatArea && (
-          <div data-tour="workflow-chat-pane" data-testid="tour-workflow-chat-pane" className={`${chatPaneVisibilityClass} min-h-0 min-w-0 flex-col bg-background transition-all duration-300 ${
+          <div data-tour="workflow-chat-pane" data-testid="tour-workflow-chat-pane" className={`${chatPaneVisibilityClass} min-h-0 min-w-0 overflow-hidden flex-col bg-background transition-all duration-300 ${
             workspacePaneVisible
               ? `border-b border-border md:col-start-1 md:row-start-2 md:border-b-0 md:border-r ${shouldUseMobileReportPane ? 'flex-1 md:flex-[1.35]' : 'flex-1 basis-1/2'}`
               : 'flex-1'
@@ -1563,13 +1566,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             )}
 
             {showResumeHint && workspacePath && (
-              <WorkflowPreviousChatsPanel
-                workspacePath={workspacePath}
-                onHasChatsChange={setHasPreviousWorkflowChats}
-              />
+              <div className="max-h-[min(42vh,360px)] shrink-0 overflow-y-auto">
+                <WorkflowPreviousChatsPanel
+                  workspacePath={workspacePath}
+                  onHasChatsChange={setHasPreviousWorkflowChats}
+                />
+              </div>
             )}
 
-            <div className="min-h-[320px] flex-1">
+            <div className="min-h-0 flex-1 overflow-hidden">
               <ChatAreaWithObserverId
                 ref={chatAreaCallbackRef}
                 onNewChat={onNewChat}

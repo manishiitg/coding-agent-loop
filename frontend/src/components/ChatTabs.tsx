@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo } from 'react'
-import { Plus, ArrowDown, ListTree, Terminal } from 'lucide-react'
+import { Plus, ArrowDown, ListTree, Terminal, X } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -21,6 +21,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     chatTabs,
     activeTabId,
     switchTab,
+    closeTab,
     tabSessionStatus,
     tabEvents,
     autoScroll: storeAutoScroll,
@@ -89,6 +90,11 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
   const handleTabClick = (tabId: string) => {
     switchTab(tabId)
   }
+
+  const handleCloseTab = useCallback((event: React.MouseEvent, tabId: string) => {
+    event.stopPropagation()
+    void closeTab(tabId)
+  }, [closeTab])
 
   const handleNewTab = async () => {
     logger.debug('ChatTabs', 'handleNewTab called, mode:', selectedModeCategory)
@@ -222,7 +228,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
               tabIndex={0}
               data-testid={`chat-tab-${tab.tabId}`}
               className={`
-                flex items-center gap-2 px-3 py-1.5 rounded-t-md text-sm font-medium transition-colors cursor-pointer outline-none
+                group flex items-center gap-2 px-3 py-1.5 rounded-t-md text-sm font-medium transition-colors cursor-pointer outline-none
                 ${isActive
                   ? `bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b-2 ${activeBorderClass}`
                   : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
@@ -241,6 +247,21 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
                   {newEventCount > 99 ? '99+' : newEventCount}
                 </span>
               )}
+
+              <button
+                type="button"
+                onClick={(event) => handleCloseTab(event, tab.tabId)}
+                onKeyDown={(event) => event.stopPropagation()}
+                className={`
+                  flex h-4 w-4 shrink-0 items-center justify-center rounded text-gray-400 transition-colors
+                  hover:bg-gray-200 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-200
+                  ${isActive ? 'opacity-80' : 'opacity-60 group-hover:opacity-90 focus:opacity-100'}
+                `}
+                title="Close chat"
+                aria-label={`Close ${tab.name}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
             </div>
           )
         })}
@@ -261,13 +282,12 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
       {/* Right-side view controls - only show when there are tabs */}
       {modeTabs.length > 0 && (
         <div className="ml-auto flex items-center gap-1 border-l border-gray-200 dark:border-gray-700 pl-2">
-          {/* 3-way view toggle: Tree | Flat | Terminal. Mirrors the
-              workflow-mode toggle so chat sessions can flip to the
-              terminal pane (synthetic + tmux activity for the chat). */}
           <div
             data-tour="event-view-mode"
             data-testid="tour-event-view-mode"
-            className="flex items-center rounded bg-gray-100 dark:bg-gray-800 p-0.5"
+            className="inline-flex items-center rounded-full border border-gray-200 bg-gray-100 p-0.5 dark:border-gray-700 dark:bg-gray-800"
+            role="group"
+            aria-label="Event layout mode"
           >
             {([
               { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by agent' },
@@ -276,23 +296,22 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
               <Tooltip key={mode}>
                 <TooltipTrigger asChild>
                   <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation()
                       if (activeTabId) {
                         setTabViewMode(activeTabId, mode)
                       }
                     }}
-                    className={`flex items-center gap-1 px-1.5 py-1 rounded text-xs font-medium transition-colors
-                      ${activeViewMode === mode
-                        ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
-                        : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
-                      }
-                    `}
+                    className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors ${
+                      activeViewMode === mode
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
+                    }`}
                     aria-label={label}
                     aria-pressed={activeViewMode === mode}
                   >
-                    <Icon className="w-3.5 h-3.5" />
-                    <span className="hidden md:inline">{label}</span>
+                    <Icon className="h-3.5 w-3.5" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>

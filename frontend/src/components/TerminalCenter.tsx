@@ -1,13 +1,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Bug, Check, Copy, CornerDownLeft, Info, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
+import { AlertTriangle, Bug, Check, Copy, CornerDownLeft, GitBranch, Info, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import { agentApi } from '../services/api'
-import type { TerminalSnapshot } from '../services/api-types'
+import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useChatStore } from '../stores/useChatStore'
 
 interface TerminalCenterProps {
   currentSessionId?: string
   compact?: boolean
 }
+
+interface RoutingRouteSummary {
+  route_id?: string
+  route_name?: string
+  condition?: string
+  next_step_id?: string
+}
+
+interface RoutingDecision {
+  id: string
+  stepId?: string
+  stepTitle?: string
+  selectedRouteId: string
+  selectedRouteName?: string
+  nextStepId?: string
+  routeCount: number
+  reasoning?: string
+  timestamp?: string
+}
+
+type TerminalRailItem =
+  | { kind: 'terminal'; terminal: TerminalSnapshot; depth: number }
+  | { kind: 'route'; decision: RoutingDecision; depth: number }
 
 function isOpaqueID(value?: string): boolean {
   if (!value) return false
@@ -24,6 +47,77 @@ function humanizeIdentifier(value?: string): string {
     .trim()
   if (!cleaned) return ''
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  return value as Record<string, unknown>
+}
+
+function stringField(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function routingPayload(event: PollingEvent): Record<string, unknown> | undefined {
+  const data = asRecord(event.data)
+  const nested = asRecord(data?.data)
+  return nested || data
+}
+
+function routingRoutes(value: unknown): RoutingRouteSummary[] {
+  if (!Array.isArray(value)) return []
+  const routes: RoutingRouteSummary[] = []
+  for (const item of value) {
+    const route = asRecord(item)
+    if (!route) continue
+    routes.push({
+      route_id: stringField(route.route_id) || undefined,
+      route_name: stringField(route.route_name) || undefined,
+      condition: stringField(route.condition) || undefined,
+      next_step_id: stringField(route.next_step_id) || undefined,
+    })
+  }
+  return routes
+}
+
+function routingDecisionFromEvent(event: PollingEvent): RoutingDecision | null {
+  if (event.type !== 'routing_evaluated') return null
+  const payload = routingPayload(event)
+  if (!payload) return null
+  const response = asRecord(payload.routing_response)
+  const selectedRouteId = stringField(response?.selected_route_id)
+  if (!selectedRouteId) return null
+  const routes = routingRoutes(payload.routes)
+  const selectedRoute = routes.find(route => route.route_id === selectedRouteId)
+  const stepId = stringField(payload.step_id)
+  return {
+    id: event.id || `${stepId || 'routing'}:${selectedRouteId}:${event.timestamp || ''}`,
+    stepId: stepId || undefined,
+    stepTitle: stringField(payload.step_title) || undefined,
+    selectedRouteId,
+    selectedRouteName: selectedRoute?.route_name,
+    nextStepId: selectedRoute?.next_step_id,
+    routeCount: routes.length,
+    reasoning: stringField(response?.reasoning) || undefined,
+    timestamp: event.timestamp,
+  }
+}
+
+function routeDecisionLabel(decision: RoutingDecision): string {
+  return decision.selectedRouteName || humanizeIdentifier(decision.selectedRouteId) || decision.selectedRouteId
+}
+
+function routeDecisionTitle(decision: RoutingDecision): string {
+  const label = routeDecisionLabel(decision)
+  return `Routing: ${label}${decision.nextStepId ? ` -> ${decision.nextStepId}` : ''}`
+}
+
+function sameEventIDs(a: PollingEvent[], b: PollingEvent[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i]?.id !== b[i]?.id) return false
+  }
+  return true
 }
 
 function workflowNameFromPath(path?: string): string {
@@ -73,14 +167,24 @@ function terminalTaskLabel(terminal: TerminalSnapshot): string {
   if (kind === 'workflow_step' || kind === 'step' || kind === 'execution_only') {
     return terminal.step_id || terminal.step_name || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
   }
-  return terminal.step_name || terminal.agent_name || terminal.step_id || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
+  return terminal.step_name || terminal.agent_name || visibleStepID(terminal) || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
 }
 
 function formatTerminalTitle(terminal: TerminalSnapshot): string {
   // Title is just the step_id (the most useful identifier). Everything
   // else — parent, chip, workflow name, kind — moves to the meta row
   // so the title stays minimal and scannable in dense lists.
-  return terminal.step_id || terminal.step_name || formatTerminalKindLabel(terminal) || terminal.display_title || 'Terminal'
+  if (isMainAgentTerminal(terminal)) {
+    return terminal.agent_name || terminal.step_name || 'Main agent'
+  }
+  return visibleStepID(terminal) || terminal.step_name || formatTerminalKindLabel(terminal) || terminal.display_title || 'Terminal'
+}
+
+function visibleStepID(terminal: TerminalSnapshot): string {
+  const value = terminal.step_id || ''
+  if (!value) return ''
+  if (isMainAgentTerminal(terminal) && value.startsWith('main_agent:')) return ''
+  return value
 }
 
 // formatTransportChip returns "transport·provider" (e.g. "api·anthropic",
@@ -95,8 +199,9 @@ function formatTransportChip(terminal: TerminalSnapshot): string {
   // Normalize backend strings to the short chip form.
   if (transport === 'structured_cli' || transport === 'structured') transport = 'structured'
   if (transport === 'non_tmux') transport = 'api'
-  const provider = terminal.status?.provider_label?.toLowerCase() || ''
-  return provider ? `${transport}·${provider}` : transport
+  const provider = terminal.status?.provider_label || ''
+  const transportLabel = humanizeIdentifier(transport)
+  return provider ? `${provider} · ${transportLabel}` : transportLabel
 }
 
 // extractDoneStats parses the synthetic terminal's "[done · 1240ms · 412 in
@@ -155,6 +260,7 @@ function formatCost(cost: number): string {
 function formatTerminalMeta(terminal: TerminalSnapshot): string {
   const chip = formatTransportChip(terminal)
   const parts: string[] = [
+    isArchivedTurnTerminal(terminal) ? 'Previous turn' : '',
     chip,
     terminal.step_type ? humanizeIdentifier(terminal.step_type) : '',
     terminal.scope ? humanizeIdentifier(terminal.scope) : '',
@@ -196,6 +302,21 @@ function formatTerminalMeta(terminal: TerminalSnapshot): string {
   }
   if (terminal.display_meta) parts.push(terminal.display_meta)
   return [...new Set(parts.filter(Boolean))].join(' · ')
+}
+
+function terminalPreValidationSummary(terminal: TerminalSnapshot): string {
+  return terminal.status?.pre_validation_summary || ''
+}
+
+function terminalPreValidationClass(terminal: TerminalSnapshot): string {
+  switch ((terminal.status?.pre_validation_status || '').toLowerCase()) {
+    case 'passed':
+      return 'text-emerald-300'
+    case 'failed':
+      return 'text-red-300'
+    default:
+      return 'text-neutral-400'
+  }
 }
 
 function terminalClosesAt(terminal: TerminalSnapshot): Date | null {
@@ -375,16 +496,29 @@ function isMainAgentTerminal(terminal: TerminalSnapshot): boolean {
   return kind === 'main_agent' || kind === 'main' || kind === 'chat'
 }
 
+function isArchivedTurnTerminal(terminal: TerminalSnapshot): boolean {
+  return terminal.terminal_id.includes(':turn-')
+}
+
 function sortTerminalsNewestFirst(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
   return [...terminals].sort((a, b) => {
-    const mainDelta = (isMainAgentTerminal(b) ? 1 : 0) - (isMainAgentTerminal(a) ? 1 : 0)
+    const mainDelta = (isMainAgentTerminal(b) && !isArchivedTurnTerminal(b) ? 1 : 0) - (isMainAgentTerminal(a) && !isArchivedTurnTerminal(a) ? 1 : 0)
     if (mainDelta !== 0) return mainDelta
+    const archivedDelta = (isArchivedTurnTerminal(a) ? 1 : 0) - (isArchivedTurnTerminal(b) ? 1 : 0)
+    if (archivedDelta !== 0) return archivedDelta
     return terminalUpdatedTime(b) - terminalUpdatedTime(a)
   })
 }
 
-function sortActiveTerminalsStable(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
+function sortTerminalsForRail(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
   return [...terminals].sort((a, b) => {
+    // Rail order must not depend on state or updated_at. A pane moving
+    // from running -> completed, or receiving a fresh tmux scrape,
+    // should only change its dot/content, not jump around the list.
+    const currentMainDelta = (isMainAgentTerminal(b) && !isArchivedTurnTerminal(b) ? 1 : 0) - (isMainAgentTerminal(a) && !isArchivedTurnTerminal(a) ? 1 : 0)
+    if (currentMainDelta !== 0) return currentMainDelta
+    const archivedDelta = (isArchivedTurnTerminal(a) ? 1 : 0) - (isArchivedTurnTerminal(b) ? 1 : 0)
+    if (archivedDelta !== 0) return archivedDelta
     const mainDelta = (isMainAgentTerminal(b) ? 1 : 0) - (isMainAgentTerminal(a) ? 1 : 0)
     if (mainDelta !== 0) return mainDelta
     const createdDelta = terminalCreatedTime(a) - terminalCreatedTime(b)
@@ -428,6 +562,19 @@ type TerminalRow =
   | { kind: 'done'; text: string }
   | { kind: 'error'; text: string }
   | { kind: 'plain'; text: string }
+
+const TERMINAL_USER_PREVIEW_CHARS = 180
+
+function compactTerminalPreview(value: string, maxChars: number = TERMINAL_USER_PREVIEW_CHARS): string {
+  const compact = value.replace(/\s+/g, ' ').trim()
+  const chars = Array.from(compact)
+  if (chars.length <= maxChars) return compact
+  return `${chars.slice(0, maxChars).join('')}...`
+}
+
+function shouldCollapseUserMessage(value: string): boolean {
+  return value.includes('\n') || Array.from(value.trim()).length > TERMINAL_USER_PREVIEW_CHARS
+}
 
 function classifyTerminalLine(line: string): TerminalRow {
   if (line.startsWith('$ ')) return { kind: 'banner', text: line.slice(2) }
@@ -511,10 +658,9 @@ interface StructuredTerminalViewProps {
 
 const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content, scrollRef, onScroll }) => {
   const rows = useMemo(() => parseTerminalContent(content), [content])
-  // Tool rows are collapsed when their result is "long" (>80 chars); the
-  // user can click the chevron to flip individual rows. We key by row
-  // index — content updates are append-only so indexes stay stable for
-  // existing rows.
+  // Long user prompts and tool rows collapse behind one-line summaries.
+  // We key by row index; content updates are append-only so indexes stay
+  // stable for existing rows.
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const toggle = useCallback((idx: number) => {
     setExpanded(prev => {
@@ -541,11 +687,36 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
           case 'context':
             return <div key={idx} className="text-neutral-500">↳ {row.text}</div>
           case 'user':
-            return (
-              <div key={idx} className="text-blue-300 whitespace-pre-wrap break-words">
-                <span className="text-blue-500">&gt; user: </span>{row.text}
-              </div>
-            )
+            {
+              const longUserMessage = shouldCollapseUserMessage(row.text)
+              const isOpen = expanded.has(idx) || !longUserMessage
+              const preview = compactTerminalPreview(row.text)
+              if (!longUserMessage) {
+                return (
+                  <div key={idx} className="text-blue-300 whitespace-pre-wrap break-words">
+                    <span className="text-blue-500">&gt; user: </span>{row.text}
+                  </div>
+                )
+              }
+              return (
+                <div key={idx}>
+                  <button
+                    type="button"
+                    onClick={() => toggle(idx)}
+                    className="w-full rounded px-0.5 -mx-0.5 text-left text-blue-300 hover:bg-white/5"
+                  >
+                    <span className="text-blue-500">&gt; user: </span>
+                    <span>{preview}</span>
+                    <span className="ml-1 text-neutral-600">{isOpen ? '▾' : '▸'}</span>
+                  </button>
+                  {isOpen && (
+                    <pre className="ml-4 mt-0.5 whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-blue-100">
+                      {row.text}
+                    </pre>
+                  )}
+                </div>
+              )
+            }
           case 'asst':
             return (
               <div key={idx} className="text-neutral-100 whitespace-pre-wrap break-words">
@@ -667,7 +838,31 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [debugInput, setDebugInput] = useState('')
   const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
   const [debugPanelOpenForID, setDebugPanelOpenForID] = useState<string | null>(null)
+  const [terminalRoutingEvents, setTerminalRoutingEvents] = useState<PollingEvent[]>([])
 
+  const sessionEvents = useChatStore(state => (
+    currentSessionId ? state.tabEvents[currentSessionId] : undefined
+  ))
+  const routingDecisions = useMemo(() => {
+    const byID = new Map<string, RoutingDecision>()
+    for (const event of [...(sessionEvents || []), ...terminalRoutingEvents]) {
+      const decision = routingDecisionFromEvent(event)
+      if (decision) byID.set(decision.id, decision)
+    }
+    return Array.from(byID.values()).sort((a, b) => {
+      const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
+      const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
+      return aTime - bTime
+    })
+  }, [sessionEvents, terminalRoutingEvents])
+  const routingDecisionByNextStepID = useMemo(() => {
+    const byStep = new Map<string, RoutingDecision>()
+    for (const decision of routingDecisions) {
+      if (!decision.nextStepId || decision.nextStepId === 'end') continue
+      byStep.set(decision.nextStepId, decision)
+    }
+    return byStep
+  }, [routingDecisions])
   // Surface error events (llm_generation_error, context_cancelled, etc.)
   // as a banner above the pane. Tree view renders these as their own
   // cards; Terminal mode would otherwise hide them entirely since the
@@ -679,7 +874,6 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // so a re-derived list with the same content doesn't trigger an
   // infinite render loop (a previous version returned a fresh [] every
   // call, which Zustand saw as "changed" → re-render → repeat).
-  const sessionEvents = useChatStore(state => (currentSessionId ? state.tabEvents[currentSessionId] : undefined))
   const sessionErrorBanner = useMemo<TerminalErrorBannerEntry[]>(() => {
     if (!sessionEvents || sessionEvents.length === 0) return []
     const out: TerminalErrorBannerEntry[] = []
@@ -698,6 +892,34 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const selectedTerminalIDRef = useRef<string | null>(null)
   const fetchInFlightRef = useRef(false)
   const detailRequestSeqRef = useRef(0)
+
+  useEffect(() => {
+    if (!currentSessionId) {
+      setTerminalRoutingEvents([])
+      return
+    }
+
+    let cancelled = false
+    const fetchRoutingEvents = async () => {
+      try {
+        const response = await agentApi.getRecentSessionEvents(currentSessionId)
+        if (cancelled) return
+        const routeEvents = (response.events || []).filter(event => event.type === 'routing_evaluated')
+        setTerminalRoutingEvents(current => sameEventIDs(current, routeEvents) ? current : routeEvents)
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('Failed to load terminal routing events', err)
+        }
+      }
+    }
+
+    void fetchRoutingEvents()
+    const interval = window.setInterval(fetchRoutingEvents, 2500)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [currentSessionId])
 
   const copyTerminalDebug = useCallback(async (terminal: TerminalSnapshot) => {
     await navigator.clipboard.writeText(terminalDebugText(terminal))
@@ -882,7 +1104,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // (or whose parent isn't in the list — those are surfaced at top level
   // so we never hide a terminal). Each node carries its depth so the
   // rail can indent with paddingLeft = base + depth * step.
-  const buildTree = (list: TerminalSnapshot[]): Array<{ terminal: TerminalSnapshot; depth: number }> => {
+  const buildTree = (
+    list: TerminalSnapshot[],
+    routeByNextStepID: Map<string, RoutingDecision>,
+    routeDecisions: RoutingDecision[],
+  ): TerminalRailItem[] => {
     const byParent = new Map<string, TerminalSnapshot[]>()
     const known = new Set<string>()
     for (const t of list) {
@@ -898,19 +1124,31 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       bucket.push(t)
       byParent.set(parent, bucket)
     }
-    const out: Array<{ terminal: TerminalSnapshot; depth: number }> = []
+    const out: TerminalRailItem[] = []
     const visited = new Set<string>()
+    const renderedRoutes = new Set<string>()
     const walk = (parent: string, depth: number) => {
       // Defense in depth against cycles + degenerate-deep trees.
       if (depth > 32) return
       for (const t of byParent.get(parent) || []) {
         if (t.step_id && visited.has(t.step_id)) continue
         if (t.step_id) visited.add(t.step_id)
-        out.push({ terminal: t, depth })
-        if (t.step_id) walk(t.step_id, depth + 1)
+        const routeDecision = t.step_id ? routeByNextStepID.get(t.step_id) : undefined
+        const terminalDepth = routeDecision ? depth + 1 : depth
+        if (routeDecision && !renderedRoutes.has(routeDecision.id)) {
+          out.push({ kind: 'route', decision: routeDecision, depth })
+          renderedRoutes.add(routeDecision.id)
+        }
+        out.push({ kind: 'terminal', terminal: t, depth: terminalDepth })
+        if (t.step_id) walk(t.step_id, terminalDepth + 1)
       }
     }
     walk('', 0)
+    for (const decision of routeDecisions) {
+      if (!renderedRoutes.has(decision.id)) {
+        out.push({ kind: 'route', decision, depth: 0 })
+      }
+    }
     return out
   }
 
@@ -922,16 +1160,18 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     // child got displaced into the "Finished" group, losing its
     // visual nesting under the parent. One tree keeps lineage intact;
     // the colored dot on each rail row already conveys per-row state.
-    const allTerminals = sortActiveTerminalsStable(uniqueTerminals)
+    const allTerminals = sortTerminalsForRail(uniqueTerminals)
     const activeTerminals = uniqueTerminals.filter(terminal => terminalState(terminal) === 'running')
     const finishedTerminals = uniqueTerminals.filter(terminal => terminalState(terminal) !== 'running')
+    const currentTerminals = sortTerminalsNewestFirst(uniqueTerminals.filter(terminal => !isArchivedTurnTerminal(terminal)))
     return {
       activeTerminals,
       finishedTerminals,
+      currentTerminals,
       orderedTerminals: allTerminals,
-      tree: buildTree(allTerminals),
+      tree: buildTree(allTerminals, routingDecisionByNextStepID, routingDecisions),
     }
-  }, [terminals])
+  }, [terminals, routingDecisionByNextStepID, routingDecisions])
 
   useEffect(() => {
     // Component is now only mounted when Debug view is active (it's
@@ -952,6 +1192,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     const selected = groupedTerminals.orderedTerminals.find(terminal => terminalPaneKey(terminal) === selectedID)
     const userSelected = groupedTerminals.orderedTerminals.find(terminal => terminalPaneKey(terminal) === userSelectedID)
     const latestActive = groupedTerminals.activeTerminals[0]
+    const preferredTerminal = latestActive || groupedTerminals.currentTerminals[0] || groupedTerminals.orderedTerminals[0]
 
     if (userSelected) {
       const userSelectedKey = terminalPaneKey(userSelected)
@@ -965,8 +1206,19 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       setUserSelectedID(null)
     }
 
+    if (
+      selected &&
+      preferredTerminal &&
+      isArchivedTurnTerminal(selected) &&
+      !isArchivedTurnTerminal(preferredTerminal) &&
+      terminalPaneKey(selected) !== terminalPaneKey(preferredTerminal)
+    ) {
+      setSelectedID(terminalPaneKey(preferredTerminal))
+      return
+    }
+
     if (!selectedID || !selected) {
-      setSelectedID(terminalPaneKey(latestActive || groupedTerminals.orderedTerminals[0]))
+      setSelectedID(terminalPaneKey(preferredTerminal))
     }
   }, [groupedTerminals, selectedID, userSelectedID])
 
@@ -985,7 +1237,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
     return selectedTerminal
   }, [selectedTerminal, selectedTerminalDetail, selectedTerminalKey])
-  const activeCount = groupedTerminals.activeTerminals.length
+  const selectedRouteDecision = selectedTerminalView?.step_id
+    ? routingDecisionByNextStepID.get(selectedTerminalView.step_id)
+    : undefined
 
   useEffect(() => {
     if (!selectedTerminal) {
@@ -1041,6 +1295,36 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // (bottom line). Click → select; hover → highlight.
   // depth controls left padding so child terminals nest under their
   // parent. Tree connectors (└) appear at depth >= 1.
+  const renderRouteRailItem = (decision: RoutingDecision, depth: number = 0) => (
+    <div
+      key={`route-${decision.id}`}
+      className="block w-full border-l-2 border-l-teal-500/70 bg-teal-950/20 py-1.5 pl-2.5 pr-2.5 text-left text-xs text-teal-100"
+      title={routeDecisionTitle(decision)}
+    >
+      <div className="flex items-center gap-1.5">
+        {depth > 0 && (
+          <span className="shrink-0 select-none whitespace-pre font-mono text-[10px] text-neutral-500" aria-hidden>
+            {Array.from({ length: depth - 1 }, () => '│ ').join('')}└─→
+          </span>
+        )}
+        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-teal-500/20 text-teal-300">
+          <GitBranch className="h-3 w-3" />
+        </span>
+        <span className="min-w-0 flex-1 truncate font-semibold">
+          Routing: {routeDecisionLabel(decision)}
+        </span>
+      </div>
+      <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-teal-300/75">
+        <span className="min-w-0 truncate">
+          {decision.nextStepId ? `next ${decision.nextStepId}` : decision.stepTitle || decision.stepId || 'route selected'}
+        </span>
+        {decision.routeCount > 1 && (
+          <span className="shrink-0">· {decision.routeCount} routes</span>
+        )}
+      </div>
+    </div>
+  )
+
   const renderRailItem = (terminal: TerminalSnapshot, depth: number = 0) => (
     <div
       key={terminalPaneKey(terminal)}
@@ -1075,6 +1359,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
           aria-label={terminalStateDescription(terminal)}
         />
         <span className="min-w-0 flex-1 truncate font-medium">{formatTerminalTitle(terminal)}</span>
+        {isArchivedTurnTerminal(terminal) && (
+          <span className="shrink-0 rounded border border-neutral-700 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-neutral-500">
+            previous
+          </span>
+        )}
         <button
           type="button"
           onClick={event => {
@@ -1128,6 +1417,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
           <span className="shrink-0 text-amber-300">· {terminalStateLabel(terminal)}</span>
         )}
       </div>
+      {terminalPreValidationSummary(terminal) && (
+        <div className={`mt-0.5 truncate text-[10px] ${terminalPreValidationClass(terminal)}`}>
+          {terminalPreValidationSummary(terminal)}
+        </div>
+      )}
     </div>
   )
 
@@ -1166,7 +1460,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
           </div>
         )}
 
-        {!error && terminals.length === 0 && (
+        {!error && terminals.length === 0 && routingDecisions.length === 0 && (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
             <Terminal className="h-10 w-10 text-neutral-700" strokeWidth={1.25} />
             <div className="text-sm font-medium text-neutral-300">No terminals yet</div>
@@ -1183,14 +1477,18 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
           </div>
         )}
 
-        {terminals.length > 0 && (
+        {groupedTerminals.orderedTerminals.length > 0 && (
           <div className="flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden border border-neutral-800 bg-[#111]">
             {/* Left rail — vertical list of all terminals. Scrolls
                 independently of the right pane so the user can navigate
                 a long list without losing the selected terminal's
                 content. Hidden below sm breakpoint to save space. */}
             <div className="hidden w-60 shrink-0 flex-col overflow-y-auto border-r border-neutral-800 bg-[#0d0d0d] sm:flex">
-              {groupedTerminals.tree.map(({ terminal, depth }) => renderRailItem(terminal, depth))}
+              {groupedTerminals.tree.map(item => (
+                item.kind === 'route'
+                  ? renderRouteRailItem(item.decision, item.depth)
+                  : renderRailItem(item.terminal, item.depth)
+              ))}
             </div>
 
             {/* Right pane — the selected terminal's content. Header
@@ -1199,9 +1497,20 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               {selectedTerminalView ? (
                 <>
                   <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2 text-xs text-gray-400">
-                    <span className="min-w-0 flex-1 truncate opacity-80">
-                      {[formatTerminalMeta(selectedTerminalView), formatUpdatedAge(selectedTerminalView)].filter(Boolean).join(' · ')}
-                    </span>
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      {selectedRouteDecision && (
+                        <span
+                          className="inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded border border-teal-700/60 bg-teal-950/40 px-1.5 py-0.5 text-[10px] font-medium text-teal-200"
+                          title={routeDecisionTitle(selectedRouteDecision)}
+                        >
+                          <GitBranch className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{routeDecisionLabel(selectedRouteDecision)}</span>
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1 truncate opacity-80">
+                        {[formatTerminalMeta(selectedTerminalView), formatUpdatedAge(selectedTerminalView)].filter(Boolean).join(' · ')}
+                      </span>
+                    </div>
                     <div className="flex shrink-0 items-center gap-2">
                       {terminalState(selectedTerminalView) === 'closing' && (
                         <span
@@ -1252,6 +1561,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       )}
                     </div>
                   </div>
+                  {terminalPreValidationSummary(selectedTerminalView) && (
+                    <div className={`border-b border-white/10 bg-neutral-950/40 px-3 py-1.5 text-xs ${terminalPreValidationClass(selectedTerminalView)}`}>
+                      {terminalPreValidationSummary(selectedTerminalView)}
+                    </div>
+                  )}
                   {debugPanelOpenForID === terminalPaneKey(selectedTerminalView) && hasTerminalDebugActions(selectedTerminalView) && (
                     <div className="flex flex-wrap items-center gap-1.5 border-b border-white/10 bg-neutral-950/70 px-3 py-2 text-xs">
                       <button
@@ -1347,21 +1661,17 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                           </button>
                           <button
                             type="button"
-                            onClick={() => void sendTerminalDebugInput(selectedTerminalView, true)}
-                            disabled={debugInput.length === 0 || terminalActionBusy === 'paste-enter'}
+                            onClick={() => {
+                              if (debugInput.length > 0) {
+                                void sendTerminalDebugInput(selectedTerminalView, true)
+                              } else {
+                                void sendTerminalDebugKey(selectedTerminalView, 'enter')
+                              }
+                            }}
+                            disabled={debugInput.length > 0 ? terminalActionBusy === 'paste-enter' : terminalActionBusy === 'enter'}
                             className="inline-flex items-center justify-center rounded border border-neutral-700 p-1.5 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
-                            title="Paste text and press Enter"
-                            aria-label="Paste text and press Enter"
-                          >
-                            <CornerDownLeft className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void sendTerminalDebugKey(selectedTerminalView, 'enter')}
-                            disabled={terminalActionBusy === 'enter'}
-                            className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
-                            title="Press Enter in tmux"
-                            aria-label="Press Enter in tmux"
+                            title={debugInput.length > 0 ? 'Paste text and press Enter' : 'Press Enter in tmux'}
+                            aria-label={debugInput.length > 0 ? 'Paste text and press Enter' : 'Press Enter in tmux'}
                           >
                             <CornerDownLeft className="h-3.5 w-3.5" />
                           </button>

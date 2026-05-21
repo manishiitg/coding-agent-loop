@@ -137,6 +137,63 @@ func TestBuildSessionExecutionTreeFinalizesEventDerivedNodesForCompletedSession(
 	}
 }
 
+func TestBuildSessionExecutionTreeIgnoresStreamingLifecycleEvents(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	now := time.Now()
+	sessionID := "session-1"
+	store.AddEvent(sessionID, internalevents.Event{
+		ID:        "streaming-end",
+		Type:      "streaming_end",
+		Timestamp: now,
+		SessionID: sessionID,
+		Data: &pkgevents.AgentEvent{
+			Type:      pkgevents.EventType("streaming_end"),
+			Timestamp: now,
+			Data: &pkgevents.GenericEventData{
+				Data: map[string]interface{}{"step_id": "streaming-noise"},
+			},
+		},
+	})
+
+	api := &StreamingAPI{
+		eventStore:      store,
+		bgAgentRegistry: NewBackgroundAgentRegistry(),
+	}
+
+	tree := api.buildSessionExecutionTree(&ActiveSessionInfo{
+		SessionID:    sessionID,
+		AgentMode:    "workflow_phase",
+		Status:       "running",
+		CreatedAt:    now.Add(-time.Second),
+		LastActivity: now,
+		Query:        "run workflow",
+	})
+	if tree == nil {
+		t.Fatal("expected execution tree")
+	}
+
+	var step *SessionExecutionTreeNode
+	var walk func(*SessionExecutionTreeNode)
+	walk = func(node *SessionExecutionTreeNode) {
+		if node == nil || step != nil {
+			return
+		}
+		if node.ExecutionID == "workflow-step:streaming-noise" {
+			step = node
+			return
+		}
+		for _, child := range node.Children {
+			walk(child)
+		}
+	}
+	walk(tree.Root)
+	if step != nil {
+		t.Fatalf("streaming lifecycle event should not create execution-tree node: %#v", step)
+	}
+}
+
 func TestSynthesizeSessionInfoFromEvents(t *testing.T) {
 	now := time.Now()
 	sessionID := "session-1"

@@ -101,8 +101,8 @@ func TestGetEventsCanIncludeStreamingForSSEBackfill(t *testing.T) {
 	if got := eventTypes(defaultResult.Events); contains(got, "streaming_start") || contains(got, "streaming_chunk") {
 		t.Fatalf("default polling should hide streaming start/chunk, got %v", got)
 	}
-	if got := eventTypes(defaultResult.Events); !contains(got, "streaming_end") {
-		t.Fatalf("default polling should keep streaming_end recoverable, got %v", got)
+	if got := eventTypes(defaultResult.Events); contains(got, "streaming_end") {
+		t.Fatalf("default polling should hide streaming_end lifecycle noise, got %v", got)
 	}
 
 	backfillResult := store.GetEvents(sessionID, GetEventsOptions{SinceIndex: -1, IncludeStreaming: true})
@@ -647,7 +647,7 @@ func TestShouldShowEventFiltersCorrectly(t *testing.T) {
 		{"unified_completion", true},
 		{"tool_call_start", true},
 		{"tool_call_end", true},
-		{"streaming_end", true},
+		{"streaming_end", false},
 		{"agent_error", true},
 		{"batch_execution_canceled", true},
 		{"agent_start", false},

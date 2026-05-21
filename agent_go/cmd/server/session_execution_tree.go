@@ -312,6 +312,9 @@ func (api *StreamingAPI) addEventDerivedExecutionNodes(sessionID, rootID, sessio
 	var lastMainEventAt *time.Time
 	correlationStartNodes := map[string]string{}
 	for _, event := range api.eventStore.GetAllEventsRaw(sessionID) {
+		if event.Type == "streaming_start" || event.Type == "streaming_chunk" || event.Type == "streaming_end" {
+			continue
+		}
 		executionID := strings.TrimSpace(event.ExecutionID)
 		if executionID == "" || executionID == rootID {
 			continue

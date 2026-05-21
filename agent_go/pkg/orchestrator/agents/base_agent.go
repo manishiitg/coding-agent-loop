@@ -398,7 +398,14 @@ func (ba *BaseAgent) Execute(ctx context.Context, userMessage string, conversati
 		// scoped folder guard instead of falling back to the parent workflow guard.
 		orchestratorCtx = context.WithValue(orchestratorCtx, common.ChatSessionIDKey, ba.mcpSessionID)
 	}
-	answer, updatedConversationHistory, err := ba.agent.AskWithHistory(orchestratorCtx, messages)
+	var answer string
+	var updatedConversationHistory []llmtypes.MessageContent
+	var err error
+	if handle := ba.agent.CurrentAgentSessionHandle(); handle != nil && !handle.Provider.Empty() {
+		answer, updatedConversationHistory, _, err = ba.agent.ContinueAgentSessionWithHistory(orchestratorCtx, handle, messages)
+	} else {
+		answer, updatedConversationHistory, err = ba.agent.AskWithHistory(orchestratorCtx, messages)
+	}
 
 	executionTime := time.Since(startTime)
 

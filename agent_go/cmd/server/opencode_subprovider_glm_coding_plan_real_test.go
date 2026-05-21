@@ -13,51 +13,45 @@ import (
 	opencodecliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
 )
 
-// TestOpenCodeSubProviderGLMCodingPlanCatalog is the unit-level
-// counterpart to the live test below: it proves the new
-// opencode-cli-glm-coding-plan tile is wired into the builder's
-// sub-provider catalog without needing a real CLI invocation. The
-// existing TestProviderRuntimeRoutesSubProvidersToOpenCode in
-// opencode_subproviders_test.go intentionally lists tiles by hand;
-// this test adds the new tile and asserts its shape (env var,
-// default model, runtime routing) so a future rename or removal
-// breaks the test loudly.
-func TestOpenCodeSubProviderGLMCodingPlanCatalog(t *testing.T) {
-	sp, ok := opencodecliadapter.FindOpenCodeSubProvider("opencode-cli-glm-coding-plan")
+// TestOpenCodeSubProviderGLMCatalog is the unit-level counterpart to the live
+// test below: it proves the GLM tile is wired into the builder's sub-provider
+// catalog without needing a real CLI invocation.
+func TestOpenCodeSubProviderGLMCatalog(t *testing.T) {
+	sp, ok := opencodecliadapter.FindOpenCodeSubProvider("opencode-cli-glm")
 	if !ok {
-		t.Fatal("opencode-cli-glm-coding-plan not found in catalog; was the tile removed from opencodecli_subproviders.go?")
+		t.Fatal("opencode-cli-glm not found in catalog; was the tile removed from opencodecli_subproviders.go?")
 	}
-	if sp.OpenCodeProviderID != "zai-coding-plan" {
-		t.Fatalf("OpenCodeProviderID = %q, want zai-coding-plan", sp.OpenCodeProviderID)
+	if sp.OpenCodeProviderID != "zhipuai" {
+		t.Fatalf("OpenCodeProviderID = %q, want zhipuai", sp.OpenCodeProviderID)
 	}
 	if sp.APIKeyEnvVar != "ZHIPU_API_KEY" {
 		t.Fatalf("APIKeyEnvVar = %q, want ZHIPU_API_KEY (opencode reads this single env var for all zai/zhipuai tiles)", sp.APIKeyEnvVar)
 	}
-	if sp.DefaultModelID != "glm-4.7" {
-		t.Fatalf("DefaultModelID = %q, want glm-4.7", sp.DefaultModelID)
+	if sp.DefaultModelID != "glm-4.6" {
+		t.Fatalf("DefaultModelID = %q, want glm-4.6", sp.DefaultModelID)
 	}
-	// Validate every catalog-declared model is one the live opencode
-	// zai-coding-plan tile accepts (verified by hand against opencode
-	// v1.15.4: glm-4.5-air, glm-4.7, glm-5-turbo).
 	allowed := map[string]struct{}{
-		"glm-4.5-air": {},
-		"glm-4.7":     {},
-		"glm-5-turbo": {},
+		"glm-5":         {},
+		"glm-5.1":       {},
+		"glm-4.7":       {},
+		"glm-4.6":       {},
+		"glm-4.5":       {},
+		"glm-4.5-flash": {},
 	}
 	for _, m := range sp.Models {
 		if _, ok := allowed[m.ID]; !ok {
-			t.Errorf("model %q is not in the live zai-coding-plan tile's allowed set", m.ID)
+			t.Errorf("model %q is not in the live zai tile's allowed set", m.ID)
 		}
 	}
 
 	// Provider runtime routes it to opencode binary.
-	if got := providerRuntime("opencode-cli-glm-coding-plan"); got != "opencode" {
+	if got := providerRuntime("opencode-cli-glm"); got != "opencode" {
 		t.Fatalf("providerRuntime = %q, want opencode", got)
 	}
 
 	// validateOpenCodeSubProvider rejects empty key for this paid tile.
 	t.Setenv("ZHIPU_API_KEY", "")
-	resp := validateOpenCodeSubProvider("opencode-cli-glm-coding-plan", structValidationReq("opencode-cli-glm-coding-plan", ""))
+	resp := validateOpenCodeSubProvider("opencode-cli-glm", structValidationReq("opencode-cli-glm", ""))
 	if resp.Valid {
 		t.Fatalf("expected validation to fail without ZHIPU_API_KEY; got %+v", resp)
 	}
@@ -68,9 +62,9 @@ func TestOpenCodeSubProviderGLMCodingPlanCatalog(t *testing.T) {
 
 // TestOpenCodeSubProviderGLMCodingPlanLiveDispatch is the live e2e
 // for the new tile: prove that a request scoped to
-// opencode-cli-glm-coding-plan with a real ZHIPU_API_KEY flows
+// opencode-cli-glm with a real ZHIPU_API_KEY flows
 // through the builder's sub-provider plumbing → adapter → opencode
-// binary → real Z.AI coding-plan endpoint → returns content.
+// binary → real Z.AI endpoint → returns content.
 //
 // This exists because the inspector + cost e2e tests above also hit
 // this tile, but they assert different things (inspector events,
@@ -79,7 +73,7 @@ func TestOpenCodeSubProviderGLMCodingPlanCatalog(t *testing.T) {
 //
 // Gated on RUN_OPENCODE_CLI_REAL_E2E=1 + ZHIPU_API_KEY + opencode
 // binary in PATH.
-func TestOpenCodeSubProviderGLMCodingPlanLiveDispatch(t *testing.T) {
+func TestOpenCodeSubProviderGLMLiveDispatch(t *testing.T) {
 	if os.Getenv("RUN_OPENCODE_CLI_REAL_E2E") == "" {
 		t.Skip("set RUN_OPENCODE_CLI_REAL_E2E=1 to run this live sub-provider dispatch test")
 	}
@@ -96,8 +90,8 @@ func TestOpenCodeSubProviderGLMCodingPlanLiveDispatch(t *testing.T) {
 
 	// Sanity-check the builder's validator accepts the key for this tile.
 	t.Setenv("ZHIPU_API_KEY", apiKey)
-	resp := validateOpenCodeSubProvider("opencode-cli-glm-coding-plan", llm.APIKeyValidationRequest{
-		Provider: "opencode-cli-glm-coding-plan",
+	resp := validateOpenCodeSubProvider("opencode-cli-glm", llm.APIKeyValidationRequest{
+		Provider: "opencode-cli-glm",
 		APIKey:   apiKey,
 	})
 	// Note: validateOpenCodeSubProvider falls through to validateOpenCodeCLI
@@ -118,9 +112,9 @@ func TestOpenCodeSubProviderGLMCodingPlanLiveDispatch(t *testing.T) {
 	}
 
 	// Build the adapter the way the dispatcher does for a scoped call.
-	sp, ok := opencodecliadapter.FindOpenCodeSubProvider("opencode-cli-glm-coding-plan")
+	sp, ok := opencodecliadapter.FindOpenCodeSubProvider("opencode-cli-glm")
 	if !ok {
-		t.Fatal("opencode-cli-glm-coding-plan not in catalog")
+		t.Fatal("opencode-cli-glm not in catalog")
 	}
 	adapter := opencodecliadapter.NewOpenCodeCLIAdapterForSubProvider("", sp.DefaultModelID, sp, apiKey, &e2eMockLogger{})
 
@@ -148,7 +142,7 @@ func TestOpenCodeSubProviderGLMCodingPlanLiveDispatch(t *testing.T) {
 		t.Errorf("GenerationInfo.provider = %q, want opencode-cli", got)
 	}
 
-	t.Logf("✅ opencode-cli-glm-coding-plan live dispatch: model=%q content=%q", sp.DefaultModelID, content)
+	t.Logf("✅ opencode-cli-glm live dispatch: model=%q content=%q", sp.DefaultModelID, content)
 }
 
 // maskKeys redacts values so a t.Logf doesn't dump real credentials.

@@ -1106,8 +1106,17 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 			defer unregisterHTTPToolHook()
 		}
 
-		// Execute the request with the agent
-		response, updatedMessages, err := w.agent.AskWithHistory(ctx, messages)
+		// Execute the request with the agent. When a provider-native handle is
+		// available, route through mcpagent's continuation API while preserving
+		// the wrapper's full history for UI and persistence.
+		var response string
+		var updatedMessages []llmtypes.MessageContent
+		var err error
+		if handle := w.agent.CurrentAgentSessionHandle(); handle != nil && !handle.Provider.Empty() {
+			response, updatedMessages, _, err = w.agent.ContinueAgentSessionWithHistory(ctx, handle, messages)
+		} else {
+			response, updatedMessages, err = w.agent.AskWithHistory(ctx, messages)
+		}
 
 		// Fetch completed tool calls recorded at the HTTP execution level.
 		// These are written by executor/handlers.go when a tool finishes — independent of

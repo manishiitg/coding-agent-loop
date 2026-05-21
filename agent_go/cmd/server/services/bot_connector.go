@@ -263,6 +263,7 @@ type activeBotSession struct {
 	Status            string
 	Platform          string
 	ThreadID          ThreadID
+	RouteKey          string
 	Metadata          *chathistory.BotMetadata // platform/user info for the conversation
 	cancel            context.CancelFunc
 	eventFilter       *BotEventFilter
@@ -574,7 +575,7 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 		return
 	}
 
-	if m.handleBotControlWithoutSession(msg, threadID) {
+	if m.handleBotControlWithoutSession(msg, threadID, supportsThreads) {
 		return
 	}
 
@@ -719,17 +720,41 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	oldSessionID := active.SessionID
 	oldUserID := active.UserID
 	oldThreadID := active.ThreadID
+	oldRouteKey := active.RouteKey
 	active.mu.Unlock()
 
-	if isSessionStatusCommand(msg.Text) {
+	requireControlPrefix := !supportsThreads
+	if isSessionStatusCommand(msg.Text, requireControlPrefix) {
 		if connector := m.GetConnector(active.Platform); connector != nil {
 			connector.SendThreadMessage(context.Background(), active.ThreadID, m.formatBotStatusReply(oldUserID, status, awaiting, blockingEventType, sendFullDetails))
 		}
 		return
 	}
-	if mode, ok := parseBotDetailModeCommand(msg.Text); ok {
+	if mode, ok := parseBotDetailModeCommand(msg.Text, requireControlPrefix); ok {
 		m.setActiveBotDetailMode(active, mode == "full")
 		return
+	}
+	if !supportsThreads && isSessionEndCommand(msg.Text, requireControlPrefix) {
+		log.Printf("[BOT_MANAGER] Session end command received for %s", active.SessionID)
+		m.cancelSession(active, "Session ended by user.")
+		return
+	}
+
+	// @switch / @off on thread-less platforms changes the effective workflow
+	// route for the next normal message. Treat that as a hard conversation
+	// boundary: continuing the same session would mix workflow files, workshop
+	// mode, and native coding-agent resume state across unrelated routes.
+	if !supportsThreads && !awaiting && !isSessionEndCommand(msg.Text, requireControlPrefix) {
+		incomingRouteKey := botRouteKey(msg.PresetWorkflow)
+		if incomingRouteKey != oldRouteKey {
+			log.Printf("[BOT_MANAGER] Thread-less route changed for session %s (%q → %q) — starting fresh conversation",
+				oldSessionID, oldRouteKey, incomingRouteKey)
+			if status == chathistory.BotSessionStatusRunning || status == chathistory.BotSessionStatusAwaitingPlanApproval {
+				m.cancelSession(active, "")
+			}
+			go m.startNewSessionDirect(msg, oldThreadID)
+			return
+		}
 	}
 
 	// Thread-less platforms (WhatsApp, Telegram) use a 1-hour inactivity
@@ -739,7 +764,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	// we mint a fresh sessionID and prepend a few lines of the prior
 	// conversation as context, so the agent has some memory of "last
 	// time" without inheriting the whole history.
-	if !supportsThreads && !awaiting && !isSessionEndCommand(msg.Text) {
+	if !supportsThreads && !awaiting && !isSessionEndCommand(msg.Text, requireControlPrefix) {
 		idle := time.Since(lastActivity)
 		if idle > threadlessSessionIdleLimit {
 			history := m.loadRecentChatTurns(context.Background(), oldUserID, oldSessionID, staleContextTurns)
@@ -766,7 +791,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		}
 
 		// For thread-less platforms, check for explicit session end commands
-		if !supportsThreads && isSessionEndCommand(msg.Text) {
+		if !supportsThreads && isSessionEndCommand(msg.Text, requireControlPrefix) {
 			log.Printf("[BOT_MANAGER] Session end command received for %s", active.SessionID)
 			m.cancelSession(active, "Session ended by user.")
 			return
@@ -827,13 +852,20 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 			go m.startNewSessionDirect(msg, threadID, active.SessionID)
 			return
 		}
-		go m.startNewSessionDirect(msg, threadID)
+		go m.startNewSessionDirect(msg, threadID, "", oldSessionID)
 	}
 }
 
-func (m *BotConversationManager) handleBotControlWithoutSession(msg BotIncomingMessage, threadID ThreadID) bool {
-	if !isSessionStatusCommand(msg.Text) {
-		if _, ok := parseBotDetailModeCommand(msg.Text); !ok {
+func (m *BotConversationManager) handleBotControlWithoutSession(msg BotIncomingMessage, threadID ThreadID, supportsThreads bool) bool {
+	requireControlPrefix := !supportsThreads
+	if isSessionEndCommand(msg.Text, requireControlPrefix) {
+		if connector := m.GetConnector(msg.Platform); connector != nil {
+			connector.SendThreadMessage(context.Background(), threadID, "No active bot session in this thread.")
+		}
+		return true
+	}
+	if !isSessionStatusCommand(msg.Text, requireControlPrefix) {
+		if _, ok := parseBotDetailModeCommand(msg.Text, requireControlPrefix); !ok {
 			return false
 		}
 	}
@@ -842,8 +874,8 @@ func (m *BotConversationManager) handleBotControlWithoutSession(msg BotIncomingM
 		return true
 	}
 	reply := "No active bot session in this thread."
-	if _, ok := parseBotDetailModeCommand(msg.Text); ok {
-		reply = "No active bot session in this thread. Start a workflow run first, then use `full` or `concise` to change message detail for that run."
+	if _, ok := parseBotDetailModeCommand(msg.Text, requireControlPrefix); ok {
+		reply = "No active bot session in this thread. Start a workflow run first, then use `@full` or `@concise` to change message detail for that run."
 	}
 	connector.SendThreadMessage(context.Background(), threadID, reply)
 	return true
@@ -929,7 +961,7 @@ func (m *BotConversationManager) queueThreadlessMessage(active *activeBotSession
 		active.mu.Unlock()
 		log.Printf("[BOT_MANAGER] Thread-less queue full for session %s; dropping message: %s", sessionID, botTruncate(msg.Text, 80))
 		connector.SendThreadMessage(context.Background(), threadID,
-			fmt.Sprintf("Builder is still processing your previous message. I already have %d message(s) queued; reply 'done' to end this run before sending more.", queueLen))
+			fmt.Sprintf("Builder is still processing your previous message. I already have %d message(s) queued; send `@done` to end this run before sending more.", queueLen))
 		return
 	}
 	active.queuedMessages = append(active.queuedMessages, msg)
@@ -1110,23 +1142,34 @@ func (m *BotConversationManager) clearBlockingState(active *activeBotSession) {
 	}
 }
 
-// isSessionEndCommand checks if a message is an explicit session end command
-func isSessionEndCommand(text string) bool {
-	normalized := botNormalizeText(text)
+// isSessionEndCommand checks if a message is an explicit session end command.
+// Thread-less channels require an @ prefix so ordinary words like "done" or
+// "stop" are delivered to the agent instead of being swallowed as controls.
+func isSessionEndCommand(text string, requirePrefix bool) bool {
+	normalized, ok := botControlText(text, requirePrefix)
+	if !ok {
+		return false
+	}
 	switch normalized {
-	case "done", "end", "stop", "reset", "new session", "quit", "exit":
+	case "done", "end", "reset", "new", "new session", "newsession", "quit", "exit":
 		return true
 	}
 	return false
 }
 
-func isSessionStatusCommand(text string) bool {
-	normalized := botNormalizeText(strings.TrimPrefix(strings.TrimSpace(text), "@"))
+func isSessionStatusCommand(text string, requirePrefix bool) bool {
+	normalized, ok := botControlText(text, requirePrefix)
+	if !ok {
+		return false
+	}
 	return normalized == "status"
 }
 
-func parseBotDetailModeCommand(text string) (string, bool) {
-	normalized := botNormalizeText(strings.TrimPrefix(strings.TrimSpace(text), "@"))
+func parseBotDetailModeCommand(text string, requirePrefix bool) (string, bool) {
+	normalized, ok := botControlText(text, requirePrefix)
+	if !ok {
+		return "", false
+	}
 	switch normalized {
 	case "full", "verbose", "details", "details on", "full details", "full on", "big", "big messages":
 		return "full", true
@@ -1137,12 +1180,21 @@ func parseBotDetailModeCommand(text string) (string, bool) {
 	}
 }
 
+func botControlText(text string, requirePrefix bool) (string, bool) {
+	trimmed := strings.TrimSpace(text)
+	if requirePrefix && !strings.HasPrefix(trimmed, "@") {
+		return "", false
+	}
+	trimmed = strings.TrimPrefix(trimmed, "@")
+	return botNormalizeText(trimmed), true
+}
+
 func (m *BotConversationManager) formatBotStatusReply(userID, status string, awaiting bool, blockingEventType string, sendFullDetails bool) string {
 	detail := "concise"
 	if sendFullDetails {
 		detail = "full"
 	}
-	suffix := fmt.Sprintf("\nDetail mode: %s. Use `full` or `concise` to switch.", detail)
+	suffix := fmt.Sprintf("\nDetail mode: %s. Use `@full` or `@concise` to switch.", detail)
 	if m.runningWorkflows != nil {
 		if workflows := m.runningWorkflows(userID); len(workflows) > 0 {
 			return formatRunningWorkflowsStatus(workflows) + suffix
@@ -1296,6 +1348,10 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 
 	// 3. No active session (or completed/failed) → start new session immediately
 	log.Printf("[BOT_MANAGER] HandleMessageSync: starting new session for thread %s", threadID.Key())
+	restoredConversationSessionID := ""
+	if exists && (status == chathistory.BotSessionStatusCompleted || status == chathistory.BotSessionStatusFailed) {
+		restoredConversationSessionID = sessionID
+	}
 
 	// Resolve workspace user ID for per-user secrets
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
@@ -1306,6 +1362,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
 	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform)
+	addRestoredConversationSessionID(queryReq, restoredConversationSessionID)
 	sendFullDetails := botFullDetailsFromRequest(queryReq)
 
 	// Track as active session — bot sessions are in-memory only.
@@ -1318,6 +1375,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		ThreadID:        threadID,
 		Metadata:        botMeta,
 		sendFullDetails: sendFullDetails,
+		RouteKey:        botRouteKey(msg.PresetWorkflow),
 	}
 	m.sessions[threadID.Key()] = activeTask
 	m.mu.Unlock()
@@ -1334,12 +1392,11 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 }
 
 // startNewSessionDirect creates a unified bot chat session and starts it
-// immediately (async path, used by Slack / @mention flows). Pass a non-
-// empty resumeSessionID to reuse an existing chat session — on thread-less
-// platforms (WhatsApp, Telegram) this is how conversation history carries
-// over between messages, since the platform exposes no history API.
-// handleQuery loads chat_history/<sessionID>/conversation.json when given
-// an existing ID, so the agent sees prior turns automatically.
+// immediately (async path, used by Slack / @mention flows). The first optional
+// resumeSessionID reuses an existing chat session; thread-less platforms
+// (WhatsApp, Telegram) use this to carry conversation history between messages.
+// The second optional resumeSessionID starts a fresh chat session but restores
+// native coding-agent runtime from the previous persisted session.
 func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, threadID ThreadID, resumeSessionID ...string) {
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
 
@@ -1348,11 +1405,16 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		sessionID = resumeSessionID[0]
 		log.Printf("[BOT_MANAGER] Reusing session %s for thread %s (history preserved)", sessionID, threadID.Key())
 	}
+	restoredConversationSessionID := ""
+	if len(resumeSessionID) > 1 {
+		restoredConversationSessionID = strings.TrimSpace(resumeSessionID[1])
+	}
 	botMeta := botMetaFromMsg(msg, threadID)
 
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
 	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform)
+	addRestoredConversationSessionID(queryReq, restoredConversationSessionID)
 	sendFullDetails := botFullDetailsFromRequest(queryReq)
 
 	// Track active session — bot sessions are in-memory only.
@@ -1368,6 +1430,7 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		ackMessageTS:    msg.MessageTS,
 		LastActivity:    time.Now(),
 		sendFullDetails: sendFullDetails,
+		RouteKey:        botRouteKey(msg.PresetWorkflow),
 	}
 	m.sessions[threadID.Key()] = active
 	m.mu.Unlock()
@@ -1825,6 +1888,9 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 // resolveChannelWorkflow looks up the ChannelRoute for a given Slack channel ID.
 // Returns nil if no routing is configured for the channel.
 func (m *BotConversationManager) resolveChannelWorkflow(channelID string) *ChannelRoute {
+	if m.chatStore == nil {
+		return nil
+	}
 	botCfg, err := m.chatStore.GetBotConnectorConfig(context.Background(), "slack")
 	if err != nil || botCfg == nil {
 		return nil
@@ -1990,6 +2056,26 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 		botTruncate(query, 60), defaultSkills)
 
 	return req
+}
+
+func addRestoredConversationSessionID(req map[string]interface{}, sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if req == nil || sessionID == "" {
+		return
+	}
+	req["restored_conversation_session_id"] = sessionID
+}
+
+func botRouteKey(route *ChannelRoute) string {
+	if route == nil {
+		return ""
+	}
+	parts := []string{
+		strings.ToLower(strings.TrimSpace(route.WorkflowID)),
+		strings.ToLower(strings.TrimSpace(route.WorkspacePath)),
+		strings.ToLower(strings.TrimSpace(route.WorkshopMode)),
+	}
+	return strings.Join(parts, "|")
 }
 
 // isMultiUserThread checks if a thread has multiple distinct human users.

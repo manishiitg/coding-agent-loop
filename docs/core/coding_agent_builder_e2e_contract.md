@@ -66,6 +66,7 @@ The builder must prove these user-facing flows end to end:
 | --- | --- |
 | Chat launch | Start a chat with a coding provider, verify provider/model label, cwd, MCP bridge, and first assistant response. |
 | Multi-turn memory | Turn 1 asks the provider to remember a random canary without writing it to disk. Turn 2 asks for it. The second submitted prompt must not contain the canary. |
+| Tmux-loss continuation | For tmux providers with native resume, turn 1 captures a canary, the test kills the latest tmux session, and the next chat turn must recover via provider-native continuation and return the canary. Run with `coding-agent-chat-e2e --run-tmux-loss-resume`. |
 | Literal prompt text | Send a real chat turn containing a literal social handle such as `@fixyo.urflow`. The provider must treat it as text, not an `@path`, and return the handle without opening a debug console or hanging. |
 | Stale prompt draft | Create or simulate an idle coding-agent TUI with an untracked draft already visible, then send a different backend chat turn. The backend/provider adapter must submit only the new turn and must not treat provider suggestion placeholders as user text. |
 | Live steer | Send a second user message while the agent is running. It must be routed to the same coding-agent session or provider queue, not create a duplicate run. |

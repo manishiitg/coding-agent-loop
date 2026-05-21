@@ -59,9 +59,11 @@ func TestAppendRestoredConversationContextAddsFallbackAndCleans(t *testing.T) {
 
 func TestShouldAttachRestoredConversationFallbackSkipsMatchingCodingAgent(t *testing.T) {
 	runtime := &ChatHistoryAgentRuntime{
-		Kind:         "coding_agent",
-		Provider:     "codex-cli",
-		WorkshopMode: "optimizer",
+		Kind:              "coding_agent",
+		Provider:          "codex-cli",
+		ExternalSessionID: "codex-thread-1",
+		ResumeSupported:   true,
+		WorkshopMode:      "optimizer",
 	}
 
 	if shouldAttachRestoredConversationFallback(runtime, "codex-cli", "optimizer") {
@@ -90,9 +92,11 @@ func TestShouldAttachRestoredConversationFallbackKeepsFallbackForNonCodingOrMism
 		{
 			name: "provider mismatch",
 			runtime: &ChatHistoryAgentRuntime{
-				Kind:         "coding_agent",
-				Provider:     "codex-cli",
-				WorkshopMode: "optimizer",
+				Kind:              "coding_agent",
+				Provider:          "codex-cli",
+				ExternalSessionID: "codex-thread-1",
+				ResumeSupported:   true,
+				WorkshopMode:      "optimizer",
 			},
 			currentProvider: "claude-code",
 			currentMode:     "optimizer",
@@ -100,9 +104,21 @@ func TestShouldAttachRestoredConversationFallbackKeepsFallbackForNonCodingOrMism
 		{
 			name: "mode mismatch",
 			runtime: &ChatHistoryAgentRuntime{
+				Kind:              "coding_agent",
+				Provider:          "codex-cli",
+				ExternalSessionID: "codex-thread-1",
+				ResumeSupported:   true,
+				WorkshopMode:      "builder",
+			},
+			currentProvider: "codex-cli",
+			currentMode:     "optimizer",
+		},
+		{
+			name: "coding agent missing native resume support",
+			runtime: &ChatHistoryAgentRuntime{
 				Kind:         "coding_agent",
 				Provider:     "codex-cli",
-				WorkshopMode: "builder",
+				WorkshopMode: "optimizer",
 			},
 			currentProvider: "codex-cli",
 			currentMode:     "optimizer",
@@ -497,11 +513,7 @@ func TestParseLocalChatHistorySessionSkipsLowSignalTitle(t *testing.T) {
 }
 
 func TestCaptureChatHistoryAgentRuntimeStoresCLIResumeID(t *testing.T) {
-	api := &StreamingAPI{
-		claudeCodeSessionIDs: make(map[string]string),
-		geminiSessionIDs:     make(map[string]string),
-		geminiProjectDirIDs:  make(map[string]string),
-	}
+	api := &StreamingAPI{}
 
 	runtime := api.captureChatHistoryAgentRuntime("session-1", "claude-code", "claude-code", "Workflow/example", &mcpagent.Agent{
 		ClaudeCodeSessionID: "claude-session-1",
@@ -516,9 +528,6 @@ func TestCaptureChatHistoryAgentRuntimeStoresCLIResumeID(t *testing.T) {
 	if runtime.ExternalSessionID != "claude-session-1" || !runtime.ResumeSupported || runtime.ResumeFlag != "--resume" {
 		t.Fatalf("unexpected resume metadata: %#v", runtime)
 	}
-	if got := api.claudeCodeSessionIDs["session-1"]; got != "claude-session-1" {
-		t.Fatalf("expected resume ID stored in memory, got %q", got)
-	}
 }
 
 func TestCaptureChatHistoryAgentRuntimeStoresGeminiSessionAndProjectDir(t *testing.T) {
@@ -526,11 +535,7 @@ func TestCaptureChatHistoryAgentRuntimeStoresGeminiSessionAndProjectDir(t *testi
 	workspace.ClearSessionShellConfig(sessionID)
 	t.Cleanup(func() { workspace.ClearSessionShellConfig(sessionID) })
 
-	api := &StreamingAPI{
-		claudeCodeSessionIDs: make(map[string]string),
-		geminiSessionIDs:     make(map[string]string),
-		geminiProjectDirIDs:  make(map[string]string),
-	}
+	api := &StreamingAPI{}
 
 	runtime := api.captureChatHistoryAgentRuntime(sessionID, "gemini-cli", "auto", "_users/default/Chats", &mcpagent.Agent{
 		GeminiSessionID:       "gemini-native-session-1",
@@ -550,23 +555,13 @@ func TestCaptureChatHistoryAgentRuntimeStoresGeminiSessionAndProjectDir(t *testi
 	if runtime.ProjectDirID != "session-gemini-chat-session" {
 		t.Fatalf("runtime project dir ID = %q, want stable helper project dir", runtime.ProjectDirID)
 	}
-	if got := api.geminiSessionIDs[sessionID]; got != "gemini-native-session-1" {
-		t.Fatalf("stored Gemini session ID = %q", got)
-	}
-	if got := api.geminiProjectDirIDs[sessionID]; got != "session-gemini-chat-session" {
-		t.Fatalf("stored Gemini project dir ID = %q", got)
-	}
 	if cfg := workspace.GetSessionShellConfig(sessionID); cfg == nil || cfg.GeminiProjectDirID != "session-gemini-chat-session" {
 		t.Fatalf("workspace shell Gemini project dir config = %#v", cfg)
 	}
 }
 
 func TestCaptureChatHistoryAgentRuntimeStoresCodexThreadID(t *testing.T) {
-	api := &StreamingAPI{
-		claudeCodeSessionIDs: make(map[string]string),
-		geminiSessionIDs:     make(map[string]string),
-		geminiProjectDirIDs:  make(map[string]string),
-	}
+	api := &StreamingAPI{}
 
 	runtime := api.captureChatHistoryAgentRuntime("codex-session", "codex-cli", "gpt-5.4", "Workflow/example", &mcpagent.Agent{
 		CodexSessionID:    "codex-thread-1",
@@ -587,19 +582,54 @@ func TestCaptureChatHistoryAgentRuntimeStoresCodexThreadID(t *testing.T) {
 	}
 }
 
-func TestRestoreCodingAgentRuntimeRestoresGeminiProjectDirForNextTurn(t *testing.T) {
+func TestCaptureChatHistoryAgentRuntimePersistsAgentSessionHandle(t *testing.T) {
+	api := &StreamingAPI{}
+
+	agent := &mcpagent.Agent{
+		SessionID: "chat-session-1",
+		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
+			Provider:        "codex-cli",
+			Transport:       llmtypes.CodingProviderTransportTmux,
+			NativeSessionID: "codex-thread-typed",
+			TmuxSession:     "tmux-codex-1",
+			WorkingDir:      "/workspace",
+			ProjectDirID:    "Workflow/example",
+			Model:           "gpt-5.4",
+			Status:          llmtypes.CodingProviderSessionStatusIdle,
+		},
+	}
+
+	runtime := api.captureChatHistoryAgentRuntime("chat-session-1", "codex-cli", "gpt-5.4", "Workflow/example", agent)
+
+	if runtime == nil || runtime.AgentSessionHandle == nil {
+		t.Fatalf("expected persisted agent session handle, got %#v", runtime)
+	}
+	if runtime.AgentSessionHandle.Provider.NativeSessionID != "codex-thread-typed" {
+		t.Fatalf("runtime handle = %#v", runtime.AgentSessionHandle)
+	}
+	if runtime.ExternalSessionID != "codex-thread-typed" || runtime.ProjectDirID != "Workflow/example" {
+		t.Fatalf("legacy fields not mirrored from handle: %#v", runtime)
+	}
+}
+
+func TestSeedCodingAgentRuntimeRestoresGeminiProjectDirForNextTurn(t *testing.T) {
 	sessionID := "gemini-restore-session"
 	workspace.ClearSessionShellConfig(sessionID)
 	t.Cleanup(func() { workspace.ClearSessionShellConfig(sessionID) })
 
-	api := &StreamingAPI{
-		claudeCodeSessionIDs: make(map[string]string),
-		geminiSessionIDs:     map[string]string{sessionID: "gemini-native-session-2"},
-		geminiProjectDirIDs:  map[string]string{sessionID: "session-gemini-restore-session"},
+	api := &StreamingAPI{}
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:              "coding_agent",
+		Provider:          "gemini-cli",
+		ExternalSessionID: "gemini-native-session-2",
+		ProjectDirID:      "session-gemini-restore-session",
+		ResumeSupported:   true,
 	}
 	nextTurnAgent := &mcpagent.Agent{}
 
-	api.restoreCodingAgentRuntime(sessionID, nextTurnAgent)
+	if !api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, "gemini-cli", "", runtime, nextTurnAgent) {
+		t.Fatal("expected Gemini runtime to seed native resume state")
+	}
 
 	if nextTurnAgent.GeminiSessionID != "gemini-native-session-2" {
 		t.Fatalf("restored Gemini session ID = %q", nextTurnAgent.GeminiSessionID)
@@ -683,13 +713,41 @@ func TestReadChatHistoryRuntimeForSessionReadsWorkflowScopedRuntime(t *testing.T
 	}
 }
 
-func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresClaude(t *testing.T) {
-	api := &StreamingAPI{
-		claudeCodeSessionIDs: make(map[string]string),
-		geminiSessionIDs:     make(map[string]string),
-		geminiProjectDirIDs:  make(map[string]string),
+func TestFindChatHistoryConversationPathForSessionReadsWorkflowScopedPath(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	convDir := filepath.Join(root, "Workflow", "rtslatency", "builder", "conversation", "2026-05-20")
+	if err := os.MkdirAll(convDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	agent := &mcpagent.Agent{}
+	convPath := filepath.Join(convDir, "session-chat-1-conversation.json")
+	if err := os.WriteFile(convPath, []byte(`{
+  "session_id": "chat-1",
+  "conversation_history": [
+    {"Role": "human", "Parts": [{"Text": "continue"}]}
+  ],
+  "updated_at": "2026-05-20T10:00:00Z"
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := FindChatHistoryConversationPathForSession("default", "chat-1", "Workflow/rtslatency")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected conversation path")
+	}
+	want := "Workflow/rtslatency/builder/conversation/2026-05-20/session-chat-1-conversation.json"
+	if got != want {
+		t.Fatalf("conversation path = %q, want %q", got, want)
+	}
+}
+
+func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresClaude(t *testing.T) {
+	api := &StreamingAPI{}
+	agent := &mcpagent.Agent{SessionID: "new-ui-session"}
 	runtime := &ChatHistoryAgentRuntime{
 		Kind:              "coding_agent",
 		Provider:          "claude-code",
@@ -703,9 +761,6 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresClaude(t *testing
 
 	if agent.ClaudeCodeSessionID != "claude-native-restored" {
 		t.Fatalf("agent ClaudeCodeSessionID = %q", agent.ClaudeCodeSessionID)
-	}
-	if got := api.claudeCodeSessionIDs["new-ui-session"]; got != "claude-native-restored" {
-		t.Fatalf("stored Claude session ID = %q", got)
 	}
 }
 
@@ -732,11 +787,7 @@ func TestSeedCodingAgentRuntimeFromCurrentConversationRestoresClaude(t *testing.
 		t.Fatal(err)
 	}
 
-	api := &StreamingAPI{
-		claudeCodeSessionIDs: make(map[string]string),
-		geminiSessionIDs:     make(map[string]string),
-		geminiProjectDirIDs:  make(map[string]string),
-	}
+	api := &StreamingAPI{}
 	agent := &mcpagent.Agent{}
 
 	if !api.seedCodingAgentRuntimeFromCurrentConversation("existing-chat", "default", "claude-code", "builder", "Workflow/rtslatency", agent) {
@@ -745,17 +796,10 @@ func TestSeedCodingAgentRuntimeFromCurrentConversationRestoresClaude(t *testing.
 	if agent.ClaudeCodeSessionID != "claude-native-existing" {
 		t.Fatalf("agent ClaudeCodeSessionID = %q", agent.ClaudeCodeSessionID)
 	}
-	if got := api.claudeCodeSessionIDs["existing-chat"]; got != "claude-native-existing" {
-		t.Fatalf("stored Claude session ID = %q", got)
-	}
 }
 
 func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresCodex(t *testing.T) {
-	api := &StreamingAPI{
-		claudeCodeSessionIDs: make(map[string]string),
-		geminiSessionIDs:     make(map[string]string),
-		geminiProjectDirIDs:  make(map[string]string),
-	}
+	api := &StreamingAPI{}
 	agent := &mcpagent.Agent{}
 	runtime := &ChatHistoryAgentRuntime{
 		Kind:              "coding_agent",
@@ -777,12 +821,42 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresCodex(t *testing.
 	}
 }
 
-func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsProviderMismatch(t *testing.T) {
-	api := &StreamingAPI{
-		claudeCodeSessionIDs: make(map[string]string),
-		geminiSessionIDs:     make(map[string]string),
-		geminiProjectDirIDs:  make(map[string]string),
+func TestSeedCodingAgentRuntimeFromRestoredConversationAppliesAgentSessionHandle(t *testing.T) {
+	api := &StreamingAPI{}
+	agent := &mcpagent.Agent{}
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:     "coding_agent",
+		Provider: "codex-cli",
+		AgentSessionHandle: &mcpagent.AgentSessionHandle{
+			SessionID: "old-chat-session",
+			Provider: llmtypes.CodingProviderSessionHandle{
+				Provider:        "codex-cli",
+				Transport:       llmtypes.CodingProviderTransportStructured,
+				NativeSessionID: "codex-thread-from-handle",
+				WorkingDir:      "/workspace",
+				ProjectDirID:    "Workflow/example",
+				Model:           "gpt-5.4",
+				Status:          llmtypes.CodingProviderSessionStatusIdle,
+			},
+		},
 	}
+
+	if !api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "codex-cli", "", runtime, agent) {
+		t.Fatal("expected typed handle to seed native resume state")
+	}
+	if agent.SessionID != "new-ui-session" {
+		t.Fatalf("agent SessionID = %q, want current UI session owner", agent.SessionID)
+	}
+	if agent.CodexSessionID != "codex-thread-from-handle" {
+		t.Fatalf("agent CodexSessionID = %q", agent.CodexSessionID)
+	}
+	if agent.CodingAgentWorkingDir != "/workspace" {
+		t.Fatalf("agent CodingAgentWorkingDir = %q", agent.CodingAgentWorkingDir)
+	}
+}
+
+func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsProviderMismatch(t *testing.T) {
+	api := &StreamingAPI{}
 	agent := &mcpagent.Agent{}
 	runtime := &ChatHistoryAgentRuntime{
 		Kind:              "coding_agent",
@@ -797,17 +871,10 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsProviderMismatch(t
 	if agent.ClaudeCodeSessionID != "" {
 		t.Fatalf("agent ClaudeCodeSessionID = %q", agent.ClaudeCodeSessionID)
 	}
-	if got := api.claudeCodeSessionIDs["new-ui-session"]; got != "" {
-		t.Fatalf("stored Claude session ID = %q", got)
-	}
 }
 
 func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsWorkshopModeMismatch(t *testing.T) {
-	api := &StreamingAPI{
-		claudeCodeSessionIDs: make(map[string]string),
-		geminiSessionIDs:     make(map[string]string),
-		geminiProjectDirIDs:  make(map[string]string),
-	}
+	api := &StreamingAPI{}
 	agent := &mcpagent.Agent{}
 	runtime := &ChatHistoryAgentRuntime{
 		Kind:              "coding_agent",

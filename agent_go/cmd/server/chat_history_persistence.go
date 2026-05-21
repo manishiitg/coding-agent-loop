@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	internalevents "mcp-agent-builder-go/agent_go/internal/events"
 	"mcp-agent-builder-go/agent_go/pkg/fsutil"
@@ -36,16 +37,17 @@ type ChatHistorySession struct {
 // ChatHistoryAgentRuntime records enough information to reopen a previous chat
 // with its original runtime when that runtime supports native resume.
 type ChatHistoryAgentRuntime struct {
-	Kind              string `json:"kind,omitempty"`
-	Provider          string `json:"provider,omitempty"`
-	ModelID           string `json:"model_id,omitempty"`
-	ExternalSessionID string `json:"external_session_id,omitempty"`
-	ResumeSupported   bool   `json:"resume_supported"`
-	ResumeFlag        string `json:"resume_flag,omitempty"`
-	ProjectDirID      string `json:"project_dir_id,omitempty"`
-	WorkspacePath     string `json:"workspace_path,omitempty"`
-	WorkshopMode      string `json:"workshop_mode,omitempty"`
-	CapturedAt        string `json:"captured_at,omitempty"`
+	Kind               string                       `json:"kind,omitempty"`
+	Provider           string                       `json:"provider,omitempty"`
+	ModelID            string                       `json:"model_id,omitempty"`
+	ExternalSessionID  string                       `json:"external_session_id,omitempty"`
+	ResumeSupported    bool                         `json:"resume_supported"`
+	ResumeFlag         string                       `json:"resume_flag,omitempty"`
+	ProjectDirID       string                       `json:"project_dir_id,omitempty"`
+	WorkspacePath      string                       `json:"workspace_path,omitempty"`
+	WorkshopMode       string                       `json:"workshop_mode,omitempty"`
+	CapturedAt         string                       `json:"captured_at,omitempty"`
+	AgentSessionHandle *mcpagent.AgentSessionHandle `json:"agent_session_handle,omitempty"`
 }
 
 type ChatHistoryPreviewMessage struct {
@@ -714,6 +716,9 @@ func shouldAttachRestoredConversationFallback(runtime *ChatHistoryAgentRuntime, 
 	if !strings.EqualFold(strings.TrimSpace(runtime.Kind), "coding_agent") {
 		return true
 	}
+	if !runtime.ResumeSupported || (strings.TrimSpace(runtime.ExternalSessionID) == "" && strings.TrimSpace(runtime.ProjectDirID) == "") {
+		return true
+	}
 
 	runtimeProvider := strings.ToLower(strings.TrimSpace(runtime.Provider))
 	provider := strings.ToLower(strings.TrimSpace(currentProvider))
@@ -728,6 +733,23 @@ func shouldAttachRestoredConversationFallback(runtime *ChatHistoryAgentRuntime, 
 	}
 
 	return false
+}
+
+func FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath string) (string, bool, error) {
+	sessionID = sanitizeChatHistorySessionID(sessionID)
+	if sessionID == "" {
+		return "", false, nil
+	}
+	sessions, err := ListChatHistorySessions(userID, maxChatHistoryFallbackScan, 0, workspacePath)
+	if err != nil {
+		return "", false, err
+	}
+	for _, session := range sessions {
+		if session.SessionID == sessionID && strings.TrimSpace(session.ConversationPath) != "" {
+			return session.ConversationPath, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // cleanChatHistoryForPersistence removes hidden prompt context that the frontend

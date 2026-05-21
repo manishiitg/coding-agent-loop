@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ var codingAgentChatE2EFlags struct {
 	timeout             time.Duration
 	skipLiveSteer       bool
 	skipCompletionProbe bool
+	runTmuxLossResume   bool
 }
 
 var codingAgentChatE2ECmd = &cobra.Command{
@@ -110,6 +112,22 @@ Example:
 			return fmt.Errorf("turn 2 native multi-turn recall failed: %w", err)
 		}
 		fmt.Println("PASS turn 2: same chat session retained native coding-agent context")
+
+		if codingAgentChatE2EFlags.runTmuxLossResume {
+			if !providerSupportsTmuxLossResumeE2E(provider) {
+				return fmt.Errorf("--run-tmux-loss-resume is only certified for claude-code and codex-cli, got %q", provider)
+			}
+			killedTmux, err := client.killLatestTerminalTmux(ctx, sessionID)
+			if err != nil {
+				return fmt.Errorf("failed to kill latest tmux terminal before resume check: %w", err)
+			}
+			fmt.Printf("Killed tmux session %s to force provider-native continuation recovery\n", killedTmux)
+			resumeQuery := "The tmux pane for this coding-agent session was externally killed. Continue the same native provider session. What exact token did I ask you to take note of earlier? Do not use tools. Reply with exactly that token and nothing else."
+			if err := client.runAndAssertContains(ctx, sessionID, provider, model, resumeQuery, []string{noteToken}); err != nil {
+				return fmt.Errorf("tmux-loss native resume failed: %w", err)
+			}
+			fmt.Println("PASS tmux-loss resume: app-level chat recovered through provider-native continuation")
+		}
 
 		atToken := "AT_LITERAL_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 		atHandle := "@fixyo.urflow"
@@ -197,6 +215,7 @@ func init() {
 	codingAgentChatE2ECmd.Flags().DurationVar(&codingAgentChatE2EFlags.timeout, "timeout", 6*time.Minute, "overall test timeout")
 	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.skipLiveSteer, "skip-live-steer", false, "skip the in-flight /steer regression test")
 	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.skipCompletionProbe, "skip-completion-probe", false, "skip the tool-backed completion detection regression test")
+	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.runTmuxLossResume, "run-tmux-loss-resume", false, "kill the latest tmux pane after turn 2 and require provider-native continuation recovery; certified for claude-code and codex-cli")
 }
 
 type codingAgentChatE2EClient struct {
@@ -372,8 +391,10 @@ type codingAgentTerminalSnapshot struct {
 	SessionID   string                    `json:"session_id"`
 	TmuxSession string                    `json:"tmux_session"`
 	Active      bool                      `json:"active"`
+	State       string                    `json:"state"`
 	Content     string                    `json:"content"`
 	Status      codingAgentTerminalStatus `json:"status"`
+	UpdatedAt   time.Time                 `json:"updated_at"`
 }
 
 type codingAgentTerminalStatus struct {
@@ -437,6 +458,42 @@ func (c *codingAgentChatE2EClient) getTerminals(ctx context.Context, sessionID s
 		return nil, raw, err
 	}
 	return &resp, raw, nil
+}
+
+func providerSupportsTmuxLossResumeE2E(provider string) bool {
+	switch strings.TrimSpace(provider) {
+	case "claude-code", "codex-cli":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *codingAgentChatE2EClient) killLatestTerminalTmux(ctx context.Context, sessionID string) (string, error) {
+	resp, raw, err := c.getTerminals(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	var selected codingAgentTerminalSnapshot
+	for _, terminal := range resp.Terminals {
+		if strings.TrimSpace(terminal.TmuxSession) == "" {
+			continue
+		}
+		if selected.TmuxSession == "" || (terminal.Active && !selected.Active) || (terminal.Active == selected.Active && terminal.UpdatedAt.After(selected.UpdatedAt)) {
+			selected = terminal
+		}
+	}
+	if strings.TrimSpace(selected.TmuxSession) == "" {
+		return "", fmt.Errorf("no tmux-backed terminal found; raw=%s", truncateE2E(raw, 2000))
+	}
+
+	killCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(killCtx, "tmux", "kill-session", "-t", selected.TmuxSession).CombinedOutput()
+	if err != nil {
+		return selected.TmuxSession, fmt.Errorf("tmux kill-session -t %s: %w output=%s", selected.TmuxSession, err, string(output))
+	}
+	return selected.TmuxSession, nil
 }
 
 func (c *codingAgentChatE2EClient) assertNoDuplicateTerminalPanes(ctx context.Context, sessionID string) error {

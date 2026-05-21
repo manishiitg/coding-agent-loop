@@ -272,19 +272,10 @@ type StreamingAPI struct {
 	runningAgents    map[string]*mcpagent.Agent
 	runningAgentsMux sync.RWMutex
 
-	// Claude Code CLI session IDs for --resume (our sessionID -> CLI session_id)
-	claudeCodeSessionIDs map[string]string
-
-	// Gemini CLI session IDs for --resume (our sessionID -> CLI session_id)
-	geminiSessionIDs map[string]string
-
-	// Gemini CLI project directory IDs for per-invocation isolation (our sessionID -> dir ID)
-	geminiProjectDirIDs map[string]string
-
 	// Last-seen WorkshopMode per session — used to detect mode toggles between
-	// turns. When the mode changes, the saved CLI session IDs above are dropped
-	// (so the new system prompt + tool list actually take effect on the next
-	// CLI invocation) and the conversation history is replaced with a
+	// turns. When the mode changes, native coding-agent resume is skipped for
+	// that turn (so the new system prompt + tool list actually take effect on
+	// the next CLI invocation) and the conversation history is replaced with a
 	// synthetic recap so the new agent sees just enough context to continue.
 	lastWorkshopModeBySession map[string]string
 
@@ -392,6 +383,9 @@ type QueryRequest struct {
 	// Conversation JSON selected from /resume or previous chats. Used to seed
 	// native coding-agent resume state from its saved runtime metadata.
 	RestoredConversationPath string `json:"restored_conversation_path,omitempty"`
+	// Previous persisted chat session to resume from when callers do not know
+	// the conversation JSON path (for example Slack/WhatsApp bot channels).
+	RestoredConversationSessionID string `json:"restored_conversation_session_id,omitempty"`
 
 	// Workflow phase chat: phase ID for running a phase as a conversational chat session
 	// When agent_mode is "workflow_phase", this specifies which phase to run (e.g., "planning", "plan-improvement")
@@ -780,9 +774,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		sessionAgents:             make(map[string]*agent.LLMAgentWrapper),
 		runningAgents:             make(map[string]*mcpagent.Agent),
 		completionLoopStarted:     make(map[string]bool),
-		claudeCodeSessionIDs:      make(map[string]string),
-		geminiSessionIDs:          make(map[string]string),
-		geminiProjectDirIDs:       make(map[string]string),
 		lastWorkshopModeBySession: make(map[string]string),
 		stoppedSessions:           make(map[string]bool),
 	}
@@ -5325,11 +5316,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if hadPrev && prevMode != "" && prevMode != newWorkshopMode {
 				modeChangedThisTurn = true
 				modeChangePrevMode = prevMode
-				log.Printf("[WORKSHOP_MODE] Mode changed %q -> %q for session %s; dropping CLI session and replaying conversation file pointer", prevMode, newWorkshopMode, sessionID)
-				// Drop CLI session IDs so the next call starts fresh with the new prompt.
-				delete(api.claudeCodeSessionIDs, sessionID)
-				delete(api.geminiSessionIDs, sessionID)
-				delete(api.geminiProjectDirIDs, sessionID)
+				log.Printf("[WORKSHOP_MODE] Mode changed %q -> %q for session %s; starting a fresh native coding-agent session and replaying conversation file pointer", prevMode, newWorkshopMode, sessionID)
 				// Snapshot existing history before replacing — the on-disk persisted
 				// record reuses this so the user sees a complete conversation log.
 				if existing, ok := api.conversationHistory[sessionID]; ok && len(existing) > 0 {
@@ -5433,6 +5420,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 			restoredNativeCodingResume := false
 			restoredConversationPath := strings.TrimSpace(req.RestoredConversationPath)
+			restoredConversationSessionID := strings.TrimSpace(req.RestoredConversationSessionID)
+			restoredConversationPathForFallback := restoredConversationPath
 			var restoredRuntime *ChatHistoryAgentRuntime
 			if runtime, ok, err := ReadChatHistoryRuntimeFromPath(currentUserID, restoredConversationPath); err != nil {
 				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime from %s: %v", restoredConversationPath, err)
@@ -5440,8 +5429,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				restoredRuntime = runtime
 				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
 			}
-			api.restoreCodingAgentRuntime(sessionID, underlyingAgent)
-			if !restoredNativeCodingResume && restoredConversationPath == "" {
+			if !restoredNativeCodingResume && restoredConversationPath == "" && restoredConversationSessionID != "" {
+				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, restoredConversationSessionID, workflowPhaseFolder); err != nil {
+					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime for session %s: %v", restoredConversationSessionID, err)
+				} else if ok {
+					restoredRuntime = runtime
+					restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
+				}
+				if restoredConversationPathForFallback == "" {
+					if path, ok, err := FindChatHistoryConversationPathForSession(currentUserID, restoredConversationSessionID, workflowPhaseFolder); err != nil {
+						logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to find restored conversation path for session %s: %v", restoredConversationSessionID, err)
+					} else if ok {
+						restoredConversationPathForFallback = path
+					}
+				}
+			}
+			if !restoredNativeCodingResume && !modeChangedThisTurn && restoredConversationPath == "" && restoredConversationSessionID == "" {
 				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromCurrentConversation(sessionID, currentUserID, finalProvider, newWorkshopMode, workflowPhaseFolder, underlyingAgent)
 			}
 			if restoredNativeCodingResume {
@@ -5450,9 +5453,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					chatQuery = cleanedChatQuery
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Using native coding-agent resume; stripped restored conversation attach context from prompt")
 				}
-			} else if restoredConversationPath != "" {
+			} else if restoredConversationPathForFallback != "" {
 				if shouldAttachRestoredConversationFallback(restoredRuntime, finalProvider, newWorkshopMode) {
-					nextChatQuery := appendRestoredConversationContext(chatQuery, restoredConversationPath)
+					nextChatQuery := appendRestoredConversationContext(chatQuery, restoredConversationPathForFallback)
 					if nextChatQuery != chatQuery {
 						chatQuery = nextChatQuery
 						logfWithContext(queryLogCtx, "[CHAT_HISTORY] Native resume unavailable; attached restored conversation file as fallback context")
@@ -6000,9 +6003,6 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 		delete(api.conversationHistory, sessionID)
 		log.Printf("[SESSION DEBUG] Cleared conversation history for session %s", sessionID)
 	}
-	delete(api.claudeCodeSessionIDs, sessionID)
-	delete(api.geminiSessionIDs, sessionID)
-	delete(api.geminiProjectDirIDs, sessionID)
 	delete(api.lastWorkshopModeBySession, sessionID)
 	api.conversationMux.Unlock()
 
@@ -6119,12 +6119,22 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	}
 
 	if underlyingAgent != nil {
+		if handle := underlyingAgent.CurrentAgentSessionHandle(); handle != nil && !handle.Empty() {
+			runtime.AgentSessionHandle = handle
+			if handle.Provider.NativeSessionID != "" {
+				runtime.ExternalSessionID = handle.Provider.NativeSessionID
+				runtime.ResumeSupported = true
+			}
+			if handle.Provider.ProjectDirID != "" {
+				runtime.ProjectDirID = handle.Provider.ProjectDirID
+			}
+			if handle.Provider.Provider != "" && runtime.Provider == "" {
+				runtime.Provider = strings.ToLower(strings.TrimSpace(handle.Provider.Provider))
+			}
+		}
 		switch provider {
 		case "claude-code":
 			if sid := strings.TrimSpace(underlyingAgent.ClaudeCodeSessionID); sid != "" {
-				api.conversationMux.Lock()
-				api.claudeCodeSessionIDs[sessionID] = sid
-				api.conversationMux.Unlock()
 				runtime.ExternalSessionID = sid
 				runtime.ResumeSupported = true
 				runtime.ResumeFlag = "--resume"
@@ -6133,16 +6143,6 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 		case "gemini-cli":
 			sid := strings.TrimSpace(underlyingAgent.GeminiSessionID)
 			dirID := strings.TrimSpace(underlyingAgent.GeminiProjectDirID)
-			if sid != "" || dirID != "" {
-				api.conversationMux.Lock()
-				if sid != "" {
-					api.geminiSessionIDs[sessionID] = sid
-				}
-				if dirID != "" {
-					api.geminiProjectDirIDs[sessionID] = dirID
-				}
-				api.conversationMux.Unlock()
-			}
 			if sid != "" {
 				runtime.ExternalSessionID = sid
 				runtime.ResumeSupported = true
@@ -6168,30 +6168,6 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	}
 
 	return runtime
-}
-
-func (api *StreamingAPI) restoreCodingAgentRuntime(sessionID string, underlyingAgent *mcpagent.Agent) {
-	if api == nil || underlyingAgent == nil {
-		return
-	}
-
-	api.conversationMux.RLock()
-	ccSID := strings.TrimSpace(api.claudeCodeSessionIDs[sessionID])
-	gSID := strings.TrimSpace(api.geminiSessionIDs[sessionID])
-	gDirID := strings.TrimSpace(api.geminiProjectDirIDs[sessionID])
-	api.conversationMux.RUnlock()
-
-	if ccSID != "" {
-		underlyingAgent.ClaudeCodeSessionID = ccSID
-	}
-	if gSID != "" {
-		underlyingAgent.GeminiSessionID = gSID
-	}
-	if gDirID != "" {
-		underlyingAgent.GeminiProjectDirID = gDirID
-		workspace.SetSessionGeminiProjectDirID(sessionID, gDirID)
-		log.Printf("[GEMINI CLI] Restored project dir ID %s for session %s", gDirID, sessionID)
-	}
 }
 
 func (api *StreamingAPI) seedCodingAgentRuntimeFromCurrentConversation(sessionID, userID, currentProvider, currentWorkshopMode, workspacePath string, underlyingAgent *mcpagent.Agent) bool {
@@ -6233,10 +6209,14 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 	if api == nil || underlyingAgent == nil || runtime == nil {
 		return false
 	}
-	if runtime.Kind != "coding_agent" || !runtime.ResumeSupported {
+	hasAgentSessionHandle := runtime.AgentSessionHandle != nil && !runtime.AgentSessionHandle.Empty()
+	if runtime.Kind != "coding_agent" || (!runtime.ResumeSupported && !hasAgentSessionHandle) {
 		return false
 	}
 	provider := strings.ToLower(strings.TrimSpace(runtime.Provider))
+	if provider == "" && hasAgentSessionHandle {
+		provider = strings.ToLower(strings.TrimSpace(runtime.AgentSessionHandle.Provider.Provider))
+	}
 	currentProvider = strings.ToLower(strings.TrimSpace(currentProvider))
 	if provider == "" || (currentProvider != "" && provider != currentProvider) {
 		return false
@@ -6249,20 +6229,26 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 	}
 	externalSessionID := strings.TrimSpace(runtime.ExternalSessionID)
 	projectDirID := strings.TrimSpace(runtime.ProjectDirID)
+	if hasAgentSessionHandle {
+		currentOwnerSessionID := strings.TrimSpace(underlyingAgent.SessionID)
+		underlyingAgent.ApplyAgentSessionHandle(runtime.AgentSessionHandle)
+		// The persisted handle may come from an older chat session. Restoring it
+		// should recover provider-native state, not move the current request's
+		// live-input/terminal owner to an archived UI session.
+		if currentOwnerSessionID != "" {
+			underlyingAgent.SessionID = currentOwnerSessionID
+		} else if strings.TrimSpace(sessionID) != "" {
+			underlyingAgent.SessionID = strings.TrimSpace(sessionID)
+		}
+		if externalSessionID == "" {
+			externalSessionID = strings.TrimSpace(runtime.AgentSessionHandle.Provider.NativeSessionID)
+		}
+		if projectDirID == "" {
+			projectDirID = strings.TrimSpace(runtime.AgentSessionHandle.Provider.ProjectDirID)
+		}
+	}
 	if externalSessionID == "" && projectDirID == "" {
 		return false
-	}
-
-	api.conversationMux.Lock()
-	defer api.conversationMux.Unlock()
-	if api.claudeCodeSessionIDs == nil {
-		api.claudeCodeSessionIDs = make(map[string]string)
-	}
-	if api.geminiSessionIDs == nil {
-		api.geminiSessionIDs = make(map[string]string)
-	}
-	if api.geminiProjectDirIDs == nil {
-		api.geminiProjectDirIDs = make(map[string]string)
 	}
 
 	switch provider {
@@ -6270,18 +6256,15 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 		if externalSessionID == "" {
 			return false
 		}
-		api.claudeCodeSessionIDs[sessionID] = externalSessionID
 		underlyingAgent.ClaudeCodeSessionID = externalSessionID
 		log.Printf("[CLAUDE CODE] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
 		return true
 	case "gemini-cli":
 		if externalSessionID != "" {
-			api.geminiSessionIDs[sessionID] = externalSessionID
 			underlyingAgent.GeminiSessionID = externalSessionID
 			log.Printf("[GEMINI CLI] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
 		}
 		if projectDirID != "" {
-			api.geminiProjectDirIDs[sessionID] = projectDirID
 			underlyingAgent.GeminiProjectDirID = projectDirID
 			workspace.SetSessionGeminiProjectDirID(sessionID, projectDirID)
 			log.Printf("[GEMINI CLI] Restored project dir ID %s from chat history for session %s", projectDirID, sessionID)

@@ -632,6 +632,36 @@ function getBackgroundExecutionKindLabel(kind?: string): string | undefined {
   return titleCaseIdentifier(normalized)
 }
 
+function getExecutionTransportLabel(fields?: Record<string, unknown>): string | undefined {
+  const rawTransport = typeof fields?.step_transport === 'string'
+    ? fields.step_transport
+    : typeof fields?.transport === 'string'
+      ? fields.transport
+      : ''
+  const rawProvider = typeof fields?.provider === 'string'
+    ? fields.provider
+    : typeof fields?.model_provider === 'string'
+      ? fields.model_provider
+      : ''
+
+  let transport = rawTransport.trim().toLowerCase()
+  if (transport === 'structured_cli' || transport === 'structured') transport = 'structured'
+  if (transport === 'non_tmux') transport = 'api'
+  if (!transport && rawProvider && !rawProvider.toLowerCase().includes('cli')) transport = 'api'
+  if (!transport) return undefined
+
+  const transportLabel = transport === 'tmux'
+    ? 'tmux'
+    : transport === 'structured'
+      ? 'structured CLI'
+      : transport === 'api'
+        ? 'API'
+        : titleCaseIdentifier(transport)
+
+  const provider = rawProvider.trim()
+  return provider ? `${provider} · ${transportLabel}` : transportLabel
+}
+
 function splitExecutionDisplayPath(displayName: string): { parentPath?: string; title: string } {
   const parts = displayName.split(/\s+>\s+/).map(part => part.trim()).filter(Boolean)
   if (parts.length <= 1) return { title: displayName }
@@ -1874,21 +1904,22 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   // Background Agent Started Event
   if (event.type === 'background_agent_started') {
     const data = event.data as {
-      data?: { agent_id?: string; name?: string; instruction?: string; status?: string; kind?: string; fields?: { agent_id?: string; name?: string; instruction?: string; status?: string; kind?: string } }
+      data?: { agent_id?: string; name?: string; instruction?: string; status?: string; kind?: string; fields?: Record<string, unknown> }
       agent_id?: string
       name?: string
       instruction?: string
       status?: string
       kind?: string
     }
-    const fields = data?.data?.fields || data?.data || data
-    const agentId = fields?.agent_id || ''
-    const rawName = fields?.name || ''
+    const fields = (data?.data?.fields || data?.data || data) as Record<string, unknown>
+    const agentId = typeof fields?.agent_id === 'string' ? fields.agent_id : ''
+    const rawName = typeof fields?.name === 'string' ? fields.name : ''
     const displayName = getBackgroundExecutionDisplayName(rawName)
     const displayPath = splitExecutionDisplayPath(displayName)
-    const status = inferOwnerStatusFromSummaryNodes(summaryNodes) || fields?.status || 'running'
-    const kind = fields?.kind
+    const status = inferOwnerStatusFromSummaryNodes(summaryNodes) || (typeof fields?.status === 'string' ? fields.status : 'running')
+    const kind = typeof fields?.kind === 'string' ? fields.kind : undefined
     const kindLabel = getBackgroundExecutionKindLabel(kind)
+    const transportLabel = getExecutionTransportLabel(fields as Record<string, unknown>)
     const isRunning = status === 'running' || status === 'active' || status === 'in_progress'
 
     // Look up live stats via background agent ID → delegation stats mapping
@@ -1913,6 +1944,11 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
                 {displayPath.parentPath && (
                   <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} min-w-0 truncate text-blue-500/65 dark:text-blue-400/65`}>
                     inside {displayPath.parentPath}
+                  </span>
+                )}
+                {transportLabel && (
+                  <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} shrink-0 rounded border border-cyan-700/35 px-1.5 py-0.5 leading-none text-cyan-500/80 dark:text-cyan-300/80`}>
+                    {transportLabel}
                   </span>
                 )}
               </div>

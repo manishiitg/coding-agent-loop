@@ -160,7 +160,7 @@ function extractAutoNotificationExecutionId(event: PollingEvent): string | undef
   const content = firstStringField([payload, data], ['content', 'message']);
   if (!content?.startsWith('[AUTO-NOTIFICATION]')) return undefined;
 
-  const match = content.match(/\(ID:\s*([^)]+)\)/);
+  const match = content.match(/\((?:ID:\s*|id=)([^)]+)\)/i);
   const executionId = match?.[1]?.trim();
   return executionId || undefined;
 }
@@ -333,6 +333,7 @@ function createSyntheticExecutionOwnerEvent(
   const status = state?.status || node.status;
   const completedAt = state?.completedAt || node.completed_at;
   const error = state?.error || node.error;
+  const metadata = node.metadata || {};
   return {
     id: `synthetic-execution-owner:${node.execution_id}`,
     type: 'background_agent_started',
@@ -353,6 +354,8 @@ function createSyntheticExecutionOwnerEvent(
         source: node.source,
         completed_at: completedAt,
         error,
+        metadata,
+        ...metadata,
         fields: {
           agent_id: node.execution_id,
           name: node.name || node.kind,
@@ -361,6 +364,8 @@ function createSyntheticExecutionOwnerEvent(
           source: node.source,
           completed_at: completedAt,
           error,
+          metadata,
+          ...metadata,
         },
       },
     },
@@ -1198,6 +1203,163 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       executionOwnerEventById.set(parentExecutionId, syntheticParent);
     }
 
+    const rawExecutionRootNodes = (executionTree?.root?.children || []).filter(shouldMaterializeExecutionNode);
+    if (rawExecutionRootNodes.length > 0) {
+      const ownerEventIds = new Set(Array.from(executionOwnerEventById.values()).map(event => event.id));
+      const attachedEventIds = new Set<string>();
+      const eventsByExecutionId = new Map<string, PollingEvent[]>();
+      const executionAliasById = new Map<string, string>();
+      const virtualExecutionChildrenByParentId = new Map<string, SessionExecutionTreeResponse['root'][]>();
+      const reparentedExecutionIds = new Set<string>();
+
+      const normalizeExecutionMatchName = (value: string): string => value
+        .replace(/^workflow\s+step\s*->\s*/i, '')
+        .replace(/^step-\d+-execution-/i, '')
+        .replace(/[-_]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+
+      const getWorkflowStepNameFromEvent = (event: PollingEvent): string | undefined => {
+        const data = asRecord(event.data);
+        const payload = asRecord(data?.data) || data;
+        const metadata = asRecord(payload?.metadata);
+        return firstStringField(
+          [payload, metadata, data],
+          ['orchestrator_agent_name', 'current_step_id', 'orchestrator_step_id', 'step_id', 'workflow_step_id'],
+        );
+      };
+
+      const getExecutionDisplayParentName = (value: string): string | undefined => {
+        const parts = value.split(/\s+->\s+/).map(part => part.trim()).filter(Boolean);
+        return parts.length > 1 ? parts[0] : undefined;
+      };
+
+      const allExecutionNodes = Array.from(executionNodeById.values()).filter(shouldMaterializeExecutionNode);
+      for (const orphan of rawExecutionRootNodes) {
+        if (orphan.kind !== 'workflow_sub_agent') continue;
+
+        const displayParentName = getExecutionDisplayParentName(orphan.name || '');
+        if (!displayParentName) continue;
+        const normalizedParentName = normalizeExecutionMatchName(displayParentName);
+        if (!normalizedParentName) continue;
+
+        const orphanStartedAt = Date.parse(orphan.started_at || '');
+        const candidates = allExecutionNodes
+          .filter(candidate => candidate.execution_id !== orphan.execution_id)
+          .filter(candidate => normalizeExecutionMatchName(candidate.name || '') === normalizedParentName)
+          .filter(candidate => {
+            const candidateStartedAt = Date.parse(candidate.started_at || '');
+            return Number.isNaN(orphanStartedAt) ||
+              Number.isNaN(candidateStartedAt) ||
+              candidateStartedAt <= orphanStartedAt + 1000;
+          })
+          .sort((a, b) => {
+            const aStartedAt = Date.parse(a.started_at || '');
+            const bStartedAt = Date.parse(b.started_at || '');
+            if (Number.isNaN(aStartedAt) || Number.isNaN(bStartedAt)) return 0;
+            return bStartedAt - aStartedAt;
+          });
+
+        const parent = candidates[0];
+        if (!parent) continue;
+
+        const children = virtualExecutionChildrenByParentId.get(parent.execution_id) || [];
+        children.push(orphan);
+        virtualExecutionChildrenByParentId.set(parent.execution_id, children);
+        reparentedExecutionIds.add(orphan.execution_id);
+      }
+
+      const getExecutionChildren = (node: SessionExecutionTreeResponse['root']): SessionExecutionTreeResponse['root'][] => [
+        ...(node.children || []).filter(child => !reparentedExecutionIds.has(child.execution_id)),
+        ...(virtualExecutionChildrenByParentId.get(node.execution_id) || []),
+      ];
+
+      const collectExecutionAliases = (node: SessionExecutionTreeResponse['root']) => {
+        const children = getExecutionChildren(node);
+        const workshopStepChildren = children.filter(child =>
+          child.source === 'background_agent_registry' &&
+          child.kind === 'workshop_background' &&
+          normalizeExecutionMatchName(child.name || '') !== ''
+        );
+
+        for (const child of children) {
+          if (child.source !== 'event_stream' || child.kind !== 'workflow_step') continue;
+          const stepEventName = realFilteredEvents
+            .filter(event => getExecutionId(event) === child.execution_id)
+            .map(getWorkflowStepNameFromEvent)
+            .find(Boolean);
+          if (!stepEventName) continue;
+
+          const normalizedStepEventName = normalizeExecutionMatchName(stepEventName);
+          const matchingWorkshopStep = workshopStepChildren.find(candidate =>
+            normalizeExecutionMatchName(candidate.name || '') === normalizedStepEventName
+          );
+          if (matchingWorkshopStep) {
+            executionAliasById.set(child.execution_id, matchingWorkshopStep.execution_id);
+          }
+        }
+
+        children.forEach(collectExecutionAliases);
+      };
+      collectExecutionAliases(executionTree!.root);
+      const executionRootNodes = rawExecutionRootNodes.filter(node => !reparentedExecutionIds.has(node.execution_id));
+
+      for (const event of realFilteredEvents) {
+        if (ownerEventIds.has(event.id) || isExecutionOwnerEvent(event)) continue;
+
+        const rawExecutionId = getExecutionId(event);
+        const executionId = rawExecutionId ? (executionAliasById.get(rawExecutionId) || rawExecutionId) : undefined;
+        if (!executionId || isRootLikeExecutionId(executionId) || !executionNodeById.has(executionId)) {
+          continue;
+        }
+
+        const eventsForExecution = eventsByExecutionId.get(executionId) || [];
+        eventsForExecution.push(event);
+        eventsByExecutionId.set(executionId, eventsForExecution);
+        attachedEventIds.add(event.id);
+      }
+
+      const buildAttachedEventNode = (event: PollingEvent, depth: number): EventNode => ({
+        event,
+        children: [],
+        level: depth,
+      });
+
+      const buildExecutionNode = (node: SessionExecutionTreeResponse['root'], depth: number): EventNode => {
+        const ownerEvent = executionOwnerEventById.get(node.execution_id)
+          || createSyntheticExecutionOwnerEvent(node, inferredStateByExecutionId.get(node.execution_id));
+
+        const childExecutionNodes = getExecutionChildren(node)
+          .filter(shouldMaterializeExecutionNode)
+          .filter(child => !executionAliasById.has(child.execution_id))
+          .map(child => buildExecutionNode(child, depth + 1));
+
+        const attachedEventNodes = (eventsByExecutionId.get(node.execution_id) || [])
+          .filter(event => event.id !== ownerEvent.id)
+          .map(event => buildAttachedEventNode(event, depth + 1));
+
+        return {
+          event: ownerEvent,
+          children: [...childExecutionNodes, ...attachedEventNodes],
+          level: depth,
+        };
+      };
+
+      const executionRoots = executionRootNodes.map(node => buildExecutionNode(node, 0));
+      const fallbackRootEvents = realFilteredEvents.filter(event => {
+        if (attachedEventIds.has(event.id)) return false;
+        if (ownerEventIds.has(event.id) || isExecutionOwnerEvent(event)) return false;
+        const executionId = getExecutionId(event);
+        return !executionId || isRootLikeExecutionId(executionId) || !executionNodeById.has(executionId);
+      });
+
+      return [
+        ...executionRoots,
+        ...fallbackRootEvents.map(event => buildAttachedEventNode(event, 0)),
+      ];
+    }
+
     const sourceOrder = new Map<string, number>();
     realFilteredEvents.forEach((event, index) => sourceOrder.set(event.id, index));
     const filteredEvents = [...realFilteredEvents, ...syntheticOwnerEvents]
@@ -1587,45 +1749,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         });
       }
     };
-    let completedRootRun: Array<{ node: EventNode; index: number }> = [];
-    const flushCompletedRootRun = () => {
-      if (completedRootRun.length === 0) return;
-      const firstIndex = completedRootRun[0].index;
-      const groupKey = `root-completed-executions-${firstIndex}`;
-      if (expandedCompletedExecutionGroups.has(groupKey)) {
-        list.push({
-          uniqueKey: `${groupKey}-collapse`,
-          isCompletedExecutionToggle: true,
-          completedExecutionToggleMode: 'collapse',
-          hiddenCount: completedRootRun.length,
-          groupKey,
-          completedExecutionLevel: 0,
-        });
-        completedRootRun.forEach(({ node, index }) => {
-          flatten(node, `${node.event.id}-root-${index}`);
-        });
-      } else {
-        list.push({
-          uniqueKey: `${groupKey}-expand`,
-          isCompletedExecutionToggle: true,
-          completedExecutionToggleMode: 'expand',
-          hiddenCount: completedRootRun.length,
-          groupKey,
-          completedExecutionLevel: 0,
-        });
-      }
-      completedRootRun = [];
-    };
-
     eventTree.forEach((node, index) => {
-      if (isExecutionOwnerEvent(node.event) && isCompletedExecutionOwnerNode(node)) {
-        completedRootRun.push({ node, index });
-        return;
-      }
-      flushCompletedRootRun();
       flatten(node, `${node.event.id}-root-${index}`);
     });
-    flushCompletedRootRun();
 
     // Tool call grouping — operates on the flat list so only main-agent events are affected.
     // Sub-agent events were excluded above (flattening stops at delegation_start).

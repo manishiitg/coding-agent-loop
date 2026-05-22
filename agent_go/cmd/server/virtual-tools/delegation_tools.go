@@ -781,7 +781,7 @@ When the user asks "what did the workflow extract / produce / know?", each workf
 | "What state has the workflow accumulated across runs?" | ` + "`Workflow/<name>/db/*.json`" + ` (structured rows, upsert-by-key across runs) |
 | "What facts does the workflow know about <entity / company / topic>?" | ` + "`Workflow/<name>/knowledgebase/graph.json`" + ` (entities + relationships). ` + "`knowledgebase/index.json`" + ` has counts/types only. |
 | "What's the workflow's narrative on <topic>?" (summaries, patterns, explanations) | ` + "`Workflow/<name>/knowledgebase/notes/`" + `. Start with ` + "`_index.json`" + ` to discover available topics, then ` + "`cat notes/<id>.md`" + `. Never glob ` + "`notes/*.md`" + ` — the folder can be large. |
-| "How does the workflow do X?" (HOW-to-run notes) | ` + "`Workflow/<name>/learnings/_global/SKILL.md`" + ` (kept by the learning agent) |
+| "How does the workflow do X?" (HOW-to-run notes) | ` + "`Workflow/<name>/learnings/_global/SKILL.md`" + ` (written by each step agent during its post-completion turn when learnings_access=read-write) |
 | "Why does the workflow do X?" (objective / success criteria / rationale) | ` + "`Workflow/<name>/soul/soul.md`" + ` (author-written "why" — objective, success criteria, key decisions & constraints) |
 
 **Schema hints** (so you can write correct ` + "`jq`" + ` queries without sniffing first):

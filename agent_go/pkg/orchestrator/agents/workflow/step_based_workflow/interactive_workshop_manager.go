@@ -2005,7 +2005,7 @@ Learning writes and KB access/writes are **opt-in** for every step. Global learn
 
 **For each step, ask yourself three questions:**
 
-1. **Should this step build up SKILL.md?** — Every step by default READS `+"`"+`learnings/_global/SKILL.md`+"`"+` into its prompt (learnings_access defaults to `+"`\"read\"`"+`). The question is whether it should also WRITE. Only if the step has HOW-to-run knowledge worth capturing across runs: selectors, timings, auth/login flows, tool-call patterns, API quirks, format pitfalls. If yes, set `+"`learnings_access: \"read-write\"`"+` AND `+"`"+`learning_objective`+"`"+` to a concrete instruction naming exactly what SKILL.md should capture. Then set `+"`learnings_write_method: \"direct\"`"+` so the step agent writes SKILL.md in its dedicated post-completion turn. Choose `+"`\"agent\"`"+` only when the user explicitly asks for a separate post-step learning agent/reviewer. Do not choose agent merely because the trace is long, messy, or analytical. For plumbing steps (send email, generate PDF, upload to S3), leave access at `+"`\"read\"`"+`. For fully invisible steps, set `+"`learnings_access: \"none\"`"+`.
+1. **Should this step build up SKILL.md?** — Every step by default READS `+"`"+`learnings/_global/SKILL.md`+"`"+` into its prompt (learnings_access defaults to `+"`\"read\"`"+`). The question is whether it should also WRITE. Only if the step has HOW-to-run knowledge worth capturing across runs: selectors, timings, auth/login flows, tool-call patterns, API quirks, format pitfalls. If yes, set `+"`learnings_access: \"read-write\"`"+` AND `+"`"+`learning_objective`+"`"+` to a concrete instruction naming exactly what SKILL.md should capture. The step agent then writes SKILL.md itself during a dedicated post-completion turn using shell + `+"`diff_patch_workspace_file`"+`; no separate learning agent runs. (`+"`learnings_write_method`"+` is no longer needed — omit it from new plans.) For plumbing steps (send email, generate PDF, upload to S3), leave access at `+"`\"read\"`"+`. For fully invisible steps, set `+"`learnings_access: \"none\"`"+`.
 2. **Should this step read user-provided business context?** — If the step must respect durable user-supplied context from `+"`knowledgebase/context/context.md`"+`, set `+"`"+`knowledgebase_access`+"`"+` to `+"`"+`read`+"`"+` or `+"`"+`read-write`+"`"+` AND update the step description to name the relevant context section/path, e.g. *"Before deciding, read and apply `+"`knowledgebase/context/context.md`"+` section `+"`ICP Filters`"+`."* Do not copy the whole context file into the description; describe the dependency and wire read access instead. A step with KB read access but no description-level context mention is under-specified.
 3. **Should this step contribute to knowledgebase/notes/?** — Only if the step produces durable narrative knowledge about the workflow's subject matter (observations, decisions, patterns, cross-run findings). If yes, set `+"`"+`knowledgebase_access`+"`"+` to `+"`"+`write`+"`"+` or `+"`"+`read-write`+"`"+` AND set `+"`"+`knowledgebase_contribution`+"`"+` to a concrete instruction naming the topic(s) and what to record. Then set `+"`knowledgebase_write_method: \"direct\"`"+` so the step agent writes notes/ inline and self-reviews once after completion. Choose `+"`\"agent\"`"+` only when the user explicitly asks for a separate post-step KB writer/reviewer. Do not choose agent merely because the output is long, messy, or analytical. Access without a contribution is a validation error.
 4. **Should this step write to `+"`"+`db/`+"`"+` or `+"`db/assets/`"+`?** — Only if the step produces rows or durable assets the workflow will persist across runs/groups or bind to the Report UI. If yes, **before you set the step's description or code**, ensure `+"`"+`db/README.md`+"`"+` has an entry for the target file declaring primary_key, merge_rule, writers, and shape. For assets, store files under `+"`db/assets/`"+` and write metadata/reference rows in `+"`db/*.json`"+`. Reference that schema in the step description so the step agent reads the same contract you wrote. Skip db/ for pure forward-pipe data — use `+"`"+`context_output`+"`"+` instead. KB ≠ db: facts about the subject go through `+"`"+`knowledgebase_contribution`+"`"+`, not `+"`"+`db/`+"`"+`.
@@ -4537,8 +4537,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"learnings_write_method": map[string]interface{}{
 					"type":        "string",
-					"enum":        []string{"agent", "direct"},
-					"description": "How SKILL.md writes happen when learnings_access is 'read-write'. Set 'direct' explicitly for new learning-writing steps: the step agent writes learnings/_global/SKILL.md itself via a dedicated post-completion turn; the folder guard widens only for that turn. Choose 'agent' only when the user explicitly asks for a separate post-step learning agent/reviewer. Do not choose agent merely because the trace is long, messy, or analytical. If omitted, runtime fallback may be agent, so do not omit this field when enabling learning writes. Direct mode's guidance is NOT in the step's main system prompt — the agent sees it only in the dedicated turn. Concurrency across parallel sub-agents is serialized by an in-process mutex.",
+					"enum":        []string{"direct"},
+					"description": "Optional and effectively ignored. SKILL.md writes always happen through the step agent's own dedicated post-completion turn (shell + diff_patch_workspace_file, folder guard widens only for that turn). Omit this field from new plans; if set, only 'direct' is accepted. Concurrency across parallel sub-agents is serialized by an in-process mutex.",
 				},
 				"disable_parallel_tool_execution": map[string]interface{}{
 					"type":        "boolean",
@@ -5069,19 +5069,18 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			// 9. Validate learnings write-method enum + direct-mode pairing.
-			// Mirror of the KB rules above. Direct-mode learnings fires a dedicated
-			// post-completion turn; it needs read-write access and a learning_objective
-			// to act as the turn's contract.
+			// SKILL.md writes always happen through the step agent's own
+			// post-completion turn (resolveLearningsWriteMethod is hardcoded to
+			// direct). The legacy "agent" value still parses cleanly — it is
+			// silently coerced to direct so old plan.json files keep loading.
+			// The access + objective gates below are the actual write contract.
 			learningsWriteMethodRaw := strings.TrimSpace(targetConfig.AgentConfigs.LearningsWriteMethod)
 			if learningsWriteMethodRaw != "" && learningsWriteMethodRaw != LearnWriteMethodAgent && learningsWriteMethodRaw != LearnWriteMethodDirect {
-				errors = append(errors, fmt.Sprintf("learnings_write_method %q is not recognized. Valid values: \"agent\", \"direct\".", learningsWriteMethodRaw))
+				errors = append(errors, fmt.Sprintf("learnings_write_method %q is not recognized. Omit the field or set it to \"direct\".", learningsWriteMethodRaw))
 			}
-			if learningsWriteMethodRaw == LearnWriteMethodDirect {
-				if effectiveAccess != LearningsAccessReadWrite {
-					errors = append(errors, fmt.Sprintf("learnings_write_method=\"direct\" requires learnings_access=\"read-write\". Current effective access: %q.", effectiveAccess))
-				}
+			if effectiveAccess == LearningsAccessReadWrite {
 				if !hasObjective {
-					errors = append(errors, "learnings_write_method=\"direct\" requires a non-empty learning_objective. The objective is injected into the step's dedicated learnings turn as the contribution contract; without it the turn has nothing to instruct.")
+					errors = append(errors, "learnings_access=\"read-write\" requires a non-empty learning_objective. The objective is injected into the step's dedicated learnings turn as the SKILL.md contribution contract; without it the turn has nothing to instruct.")
 				}
 			}
 

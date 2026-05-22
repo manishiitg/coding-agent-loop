@@ -370,21 +370,27 @@ const SubAgentHierarchy: React.FC<{
   compact?: boolean
   tabId?: string
 }> = ({ nodes, onToggleNode, ...props }) => {
-  const [showAll, setShowAll] = React.useState(false)
   const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(new Set())
+  const activeTabId = useChatStore(state => state.activeTabId)
+  const resolvedTabId = props.tabId || activeTabId
+  const setTabViewMode = useChatStore(state => state.setTabViewMode)
 
   // Read hideToolCalls from the rendering tab. Falling back to the active tab is
   // only for legacy callers that do not pass tabId.
   const hideToolCalls = useChatStore(state => {
-    const targetTabId = props.tabId || state.activeTabId
+    const targetTabId = resolvedTabId || state.activeTabId
     const tab = targetTabId ? state.chatTabs[targetTabId] : undefined
     return tab?.hideToolCalls ?? true
   })
 
   // Cap to most recent children to prevent unbounded DOM growth
-  const isCapped = !showAll && nodes.length > MAX_SUBAGENT_CHILDREN
+  const isCapped = nodes.length > MAX_SUBAGENT_CHILDREN
   const visibleNodes = isCapped ? nodes.slice(-MAX_SUBAGENT_CHILDREN) : nodes
   const hiddenCount = nodes.length - visibleNodes.length
+  const switchToTerminalView = React.useCallback(() => {
+    if (!resolvedTabId) return
+    setTabViewMode(resolvedTabId, 'terminal')
+  }, [resolvedTabId, setTabViewMode])
 
   // Build grouped render list when hideToolCalls is on
   type RenderItem = { type: 'node'; node: EventNode } | { type: 'group'; groupKey: string; count: number; nodes: EventNode[] }
@@ -450,10 +456,12 @@ const SubAgentHierarchy: React.FC<{
     <div className="space-y-2">
       {isCapped && (
         <button
-          onClick={() => setShowAll(true)}
-          className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 px-2 py-1"
+          type="button"
+          onClick={switchToTerminalView}
+          disabled={!resolvedTabId}
+          className="px-2 py-1 text-xs text-muted-foreground/70 hover:text-muted-foreground disabled:cursor-default disabled:hover:text-muted-foreground/70"
         >
-          Show {hiddenCount} older events...
+          {hiddenCount} older event{hiddenCount !== 1 ? 's' : ''} hidden · View full trace in Terminal
         </button>
       )}
       {renderItems.map((item) => {

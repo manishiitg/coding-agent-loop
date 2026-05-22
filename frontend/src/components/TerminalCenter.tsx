@@ -628,6 +628,7 @@ type TerminalRow =
   | { kind: 'plain'; text: string }
 
 const TERMINAL_USER_PREVIEW_CHARS = 180
+const TERMINAL_TOOL_ARGS_PREVIEW_CHARS = 240
 
 function compactTerminalPreview(value: string, maxChars: number = TERMINAL_USER_PREVIEW_CHARS): string {
   const compact = value.replace(/\s+/g, ' ').trim()
@@ -809,8 +810,8 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
                   </span>
                   <span className="text-amber-300 ml-1">{row.name}</span>
                   {row.args && (
-                    <span className="text-neutral-400 ml-1">
-                      ({row.args.length > 60 && !isOpen ? `${row.args.slice(0, 60)}…` : row.args})
+                    <span className="text-neutral-400 ml-1" title={row.args}>
+                      ({!isOpen ? compactTerminalPreview(row.args, TERMINAL_TOOL_ARGS_PREVIEW_CHARS) : row.args})
                     </span>
                   )}
                   {hasResult && longResult && (

@@ -1375,11 +1375,28 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       }
 
       const nextTerminals = dedupeTerminalsByPane(visibleTerminals)
+      // TEMP DEBUG — diagnose multi-turn staleness. Logs every poll's
+      // shape so we can see whether new turns add archived entries, the
+      // live entry's chunk_index advances, and content actually changes.
+      // Strip once the staleness bug is closed.
+      console.log('[term-poll] ' + JSON.stringify({
+        session: currentSessionId || 'all',
+        count: nextTerminals.length,
+        entries: nextTerminals.slice(0, 5).map(t => ({
+          id: t.terminal_id,
+          archived: t.terminal_id.includes(':turn-'),
+          chunk: t.chunk_index,
+          state: t.state,
+          contentLen: (t.content || '').length,
+          contentTail: (t.content || '').slice(-80),
+        })),
+      }))
       setTerminals(current => {
         const currentMatchesScope = viewAll || !currentSessionId || current.every(terminal => terminal.session_id === currentSessionId)
         if (!viewAll && currentSessionId && nextTerminals.length === 0 && current.length > 0 && currentMatchesScope) {
           emptyResponseCountRef.current += 1
           if (emptyResponseCountRef.current <= EMPTY_TERMINAL_RESPONSE_GRACE_POLLS) {
+            console.log('[term-poll] kept current (grace period for empty response)')
             return current
           }
         }

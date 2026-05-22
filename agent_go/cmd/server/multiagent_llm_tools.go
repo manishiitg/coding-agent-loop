@@ -381,7 +381,7 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 	case string(llm.ProviderOpenCodeCLI):
 		return true, "OpenCode CLI provider auth or OPENCODE_API_KEY/workspace provider auth"
 	case "opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
-		"opencode-cli-minimax", "opencode-cli-glm":
+		"opencode-cli-minimax", "opencode-cli-glm", "opencode-cli-openrouter":
 		// Sub-provider auth is sourced from per-sub-provider env vars or
 		// the workspace-encrypted sub-key map. The manifest endpoint
 		// already inspects MergedOpenCodeSubProviderKeys to populate the

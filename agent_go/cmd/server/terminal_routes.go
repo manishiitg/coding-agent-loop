@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -18,6 +19,9 @@ import (
 
 const listTerminalContentMaxBytes = 64 * 1024
 const terminalTmuxActionTimeout = 5 * time.Second
+const terminalDefaultRefreshLines = 2000
+const terminalDefaultDetailHistoryLines = 10000
+const terminalMaxCaptureLines = 20000
 
 var runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
 	cmd := exec.CommandContext(ctx, "tmux", args...)
@@ -124,6 +128,17 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
 	}
+	if wantsDeepTerminalContent(r) && strings.TrimSpace(snapshot.TmuxSession) != "" {
+		lines := terminalCaptureLinesFromRequest(r, terminalDefaultDetailHistoryLines)
+		ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
+		content, err := captureTerminalPaneLines(ctx, snapshot.TmuxSession, lines)
+		cancel()
+		if err == nil {
+			if refreshed, ok := api.terminalStore.RefreshContent(snapshot.TerminalID, content); ok {
+				snapshot = refreshed
+			}
+		}
+	}
 
 	_ = json.NewEncoder(w).Encode(api.enrichTerminalSnapshot(snapshot))
 }
@@ -223,7 +238,8 @@ func (api *StreamingAPI) handleRefreshTerminal(w http.ResponseWriter, r *http.Re
 
 	ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
 	defer cancel()
-	content, err := captureTerminalPane(ctx, snapshot.TmuxSession)
+	lines := terminalCaptureLinesFromRequest(r, terminalDefaultRefreshLines)
+	content, err := captureTerminalPaneLines(ctx, snapshot.TmuxSession, lines)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -377,15 +393,46 @@ func pasteTerminalText(ctx context.Context, tmuxSession, text string) error {
 }
 
 func captureTerminalPane(ctx context.Context, tmuxSession string) (string, error) {
+	return captureTerminalPaneLines(ctx, tmuxSession, terminalDefaultRefreshLines)
+}
+
+func captureTerminalPaneLines(ctx context.Context, tmuxSession string, lines int) (string, error) {
 	tmuxSession = strings.TrimSpace(tmuxSession)
 	if tmuxSession == "" {
 		return "", fmt.Errorf("tmux session is required")
 	}
-	content, err := runTerminalTmuxOutputCommand(ctx, "capture-pane", "-p", "-t", tmuxSession, "-S", "-2000")
+	if lines <= 0 {
+		lines = terminalDefaultRefreshLines
+	}
+	if lines > terminalMaxCaptureLines {
+		lines = terminalMaxCaptureLines
+	}
+	content, err := runTerminalTmuxOutputCommand(ctx, "capture-pane", "-p", "-t", tmuxSession, "-S", fmt.Sprintf("-%d", lines))
 	if err != nil {
 		return "", fmt.Errorf("failed to capture terminal pane: %w", err)
 	}
 	return content, nil
+}
+
+func wantsDeepTerminalContent(r *http.Request) bool {
+	contentMode := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("content")))
+	refresh := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("refresh")))
+	return contentMode == "deep" || contentMode == "tmux" || refresh == "true" || refresh == "1"
+}
+
+func terminalCaptureLinesFromRequest(r *http.Request, fallback int) int {
+	raw := strings.TrimSpace(r.URL.Query().Get("lines"))
+	if raw == "" {
+		return fallback
+	}
+	lines, err := strconv.Atoi(raw)
+	if err != nil || lines <= 0 {
+		return fallback
+	}
+	if lines > terminalMaxCaptureLines {
+		return terminalMaxCaptureLines
+	}
+	return lines
 }
 
 func sendTerminalKey(ctx context.Context, tmuxSession, key string) error {

@@ -638,13 +638,16 @@ const reconcileInactiveSessionTabs = (
   activeSessions: ActiveSessionInfo[],
   now: number
 ): Partial<ChatState> => {
-  const activeSessionIds = new Set(activeSessions.map(session => session.session_id))
+  const activeSessionById = new Map(activeSessions.map(session => [session.session_id, session]))
   let nextChatTabs: Record<string, ChatTab> | null = null
   let nextTabSessionStatus: Record<string, TabSessionStatus> | null = null
   let clearedCount = 0
 
   for (const [tabId, tab] of Object.entries(state.chatTabs)) {
-    if (!tab.sessionId || activeSessionIds.has(tab.sessionId)) continue
+    if (!tab.sessionId) continue
+    const activeSession = activeSessionById.get(tab.sessionId)
+    const activeStatus = activeSession?.status?.toLowerCase()
+    if (activeStatus === 'running' || activeStatus === 'paused') continue
     if (!tab.isStreaming && !tab.hasRunningBgAgents && !tab.canSteer && !tab.isSyntheticTurn) continue
 
     const streamingAge = tab.lastStreamingStartedAt ? now - tab.lastStreamingStartedAt : Number.POSITIVE_INFINITY

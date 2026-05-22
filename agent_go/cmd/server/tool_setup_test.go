@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
@@ -173,6 +174,84 @@ func TestChatModeFolderGuardBlockedWrite(t *testing.T) {
 				t.Fatalf("expected error containing %q, got: %v", tc.wantError, err)
 			}
 		})
+	}
+}
+
+func TestWorkflowPhaseFolderGuardDoesNotAllowChatsByDefault(t *testing.T) {
+	const workflowRoot = "Workflow/rtslatency"
+
+	noop := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		return "OK", nil
+	}
+	shellCalled := false
+	shellExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		shellCalled = true
+		if _, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok {
+			t.Fatalf("workflow phase guard should not inject the chat-mode write context key")
+		}
+		writePaths, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string)
+		if !ok || len(writePaths) == 0 {
+			t.Fatalf("workflow phase guard did not inject workflow write paths")
+		}
+		for _, folder := range writePaths {
+			if isChatsWriteFolder(folder) {
+				t.Fatalf("workflow phase guard should filter Chats write paths, got %v", writePaths)
+			}
+		}
+		return "OK", nil
+	}
+
+	wrapped := wrapExecutorsWithWorkflowPhaseFolderGuard(
+		map[string]func(ctx context.Context, args map[string]interface{}) (string, error){
+			"diff_patch_workspace_file": noop,
+			"execute_shell_command":     shellExecutor,
+		},
+		workflowRoot,
+		nil,
+		[]string{workflowRoot + "/planning/"},
+		workflowRoot+"/",
+		"_users/default/Chats/",
+		"_users/default/memories/",
+		"_users/default/chat_history/",
+	)
+
+	executor := wrapped["diff_patch_workspace_file"]
+	if _, err := executor(context.Background(), map[string]interface{}{"filepath": workflowRoot + "/knowledgebase/notes/architecture-map.md"}); err != nil {
+		t.Fatalf("workflow write should be allowed, got: %v", err)
+	}
+
+	_, err := executor(context.Background(), map[string]interface{}{"filepath": "_users/default/Chats/rts-architecture-latency-map.md"})
+	if err == nil {
+		t.Fatal("expected Chats write to be denied in workflow phase guard")
+	}
+	if !strings.Contains(err.Error(), "allowed write folders") {
+		t.Fatalf("expected allowed write folders error, got: %v", err)
+	}
+
+	_, err = wrapped["execute_shell_command"](context.Background(), map[string]interface{}{"command": "true"})
+	if err != nil {
+		t.Fatalf("workflow shell command should be allowed, got: %v", err)
+	}
+	if !shellCalled {
+		t.Fatal("expected shell executor to be called")
+	}
+}
+
+func TestWorkflowPhaseToolDescriptionDoesNotSayChatsOnly(t *testing.T) {
+	desc := enhanceToolDescriptionForWorkflowPhase("diff_patch_workspace_file", "Patch files.", "Workflow/rtslatency")
+
+	for _, want := range []string{
+		"DIRECTORY ACCESS RESTRICTIONS (WORKFLOW BUILDER)",
+		"Workflow/rtslatency/",
+		"Do NOT write workflow artifacts",
+	} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("workflow phase description missing %q:\n%s", want, desc)
+		}
+	}
+
+	if strings.Contains(desc, "ONLY write/modify files") {
+		t.Fatalf("workflow phase description should not contain chat-only write wording:\n%s", desc)
 	}
 }
 

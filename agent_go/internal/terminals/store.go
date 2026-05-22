@@ -96,8 +96,8 @@ type Store struct {
 	toolLines      map[string]*terminalToolLines
 }
 
-const terminalInactiveAfter = 5 * time.Minute
-const terminalPromptCompletionInactiveAfter = 2 * time.Minute
+const terminalInactiveAfter = 2 * time.Minute
+const terminalPromptCompletionInactiveAfter = time.Minute
 const terminalToolTextMaxRunes = 2400
 
 var (
@@ -288,8 +288,11 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 		return Snapshot{}, false
 	}
 	now := time.Now()
+	contentChanged := snapshot.Content != content
 	snapshot.Content = content
-	snapshot.ChunkIndex++
+	if contentChanged {
+		snapshot.ChunkIndex++
+	}
 	previousStatus := snapshot.Status
 	if snapshot.Status.ProviderLabel != "" {
 		providerLabel := snapshot.Status.ProviderLabel
@@ -315,7 +318,9 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 			snapshot.State = "failed"
 		}
 	}
-	snapshot.UpdatedAt = now
+	if contentChanged || snapshot.UpdatedAt.IsZero() {
+		snapshot.UpdatedAt = now
+	}
 	s.byID[terminalID] = snapshot
 	return snapshot, true
 }
@@ -449,10 +454,10 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 }
 
 func boundedTerminalCanSelfComplete(snapshot Snapshot) bool {
-	if snapshot.ExecutionKind == "main_agent" || snapshot.Scope == "main_agent" || strings.HasPrefix(snapshot.OwnerID, "main:") {
-		return false
-	}
-	return snapshot.ExecutionKind != "" || snapshot.Scope == "workflow_step" || strings.HasPrefix(snapshot.OwnerID, "workflow-step:")
+	return snapshot.ExecutionKind != "" ||
+		snapshot.Scope != "" ||
+		strings.HasPrefix(snapshot.OwnerID, "main:") ||
+		strings.HasPrefix(snapshot.OwnerID, "workflow-step:")
 }
 
 func (s *Store) upsertToolLine(sessionID string, event storeevents.Event, metadata map[string]interface{}) {

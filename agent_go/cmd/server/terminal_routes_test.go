@@ -355,6 +355,41 @@ func TestTerminalRoutesRefreshTerminalCapturesTmuxPane(t *testing.T) {
 	}
 }
 
+func TestTerminalRoutesGetTerminalCanDeepRefreshSelectedPane(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-deep"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-codex-cli-int-deep"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "stored pane", 2))
+
+	var gotArgs []string
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		gotArgs = append([]string(nil), args...)
+		return "deep pane", nil
+	}
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=deep&lines=12000", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleGetTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -t "+tmuxSession+" -S -12000" {
+		t.Fatalf("tmux args = %q, want deep capture", got)
+	}
+	var response terminals.Snapshot
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode deep response: %v", err)
+	}
+	if response.Content != "deep pane" {
+		t.Fatalf("terminal content = %q, want deep content", response.Content)
+	}
+}
+
 func TestTerminalRoutesKillTerminalKillsTmuxAndMarksFailed(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}

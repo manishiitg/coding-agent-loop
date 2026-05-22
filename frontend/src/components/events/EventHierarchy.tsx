@@ -1,9 +1,8 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { useShallow } from 'zustand/react/shallow';
 import type { PollingEvent, SessionExecutionTreeResponse } from '../../services/api-types';
 import { EventDispatcher, getOwnedTerminalOwnerKeys, type DelegationStats, type EventNode } from './EventDispatcher';
 import { agentApi } from '../../services/api';
-import { useChatStore, type ExecutionStreamingActivity } from '../../stores/useChatStore';
+import { useChatStore } from '../../stores/useChatStore';
 import { MAX_EVENTS_TO_PROCESS, MAX_CHILD_EVENTS_PER_DELEGATION } from '../../constants/events';
 import { NEVER_DISPLAY_EVENTS, HIDDEN_EVENTS } from './eventModeUtils';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
@@ -47,8 +46,7 @@ const OWNER_PRIMARY_COMPLETION_EVENT_TYPES = new Set([
   'agent_end',
 ]);
 
-const INITIAL_EXPANDED_TOOL_CALLS = 24;
-const EXPANDED_TOOL_CALLS_PAGE_SIZE = 24;
+const TREE_TOOL_CALL_PREVIEW_LIMIT = 5;
 const AUTO_EXPANDED_OWNER_TOOL_EVENT_LIMIT = 2;
 const EVENT_HIERARCHY_DEBUG_STORAGE_KEY = 'debug:event-hierarchy';
 
@@ -289,27 +287,6 @@ function createSyntheticParentExecutionOwnerEvent(
   } as PollingEvent;
 }
 
-function createLiveExecutionStreamingEvent(activity: ExecutionStreamingActivity): PollingEvent {
-  const timestamp = new Date(activity.updatedAt).toISOString();
-  return {
-    id: `live-execution-streaming:${activity.executionId}`,
-    type: 'live_execution_streaming',
-    timestamp,
-    session_id: activity.sessionId,
-    execution_id: activity.executionId,
-    execution_kind: 'live_streaming',
-    data: {
-      type: 'live_execution_streaming',
-      timestamp,
-      data: {
-        execution_id: activity.executionId,
-        text: activity.text,
-        status: activity.status,
-      },
-    },
-  } as PollingEvent;
-}
-
 function createSyntheticExecutionOwnerEvent(
   node: SessionExecutionTreeResponse['root'],
   state?: InferredExecutionState,
@@ -361,6 +338,27 @@ function buildToolSummary(payload?: Record<string, unknown>): { toolName?: strin
   return { toolName, toolLabel: compactToolName };
 }
 
+function selectToolGroupPreviewItems(items: FlattenedItem[], startIdx: number, endIdx: number): FlattenedItem[] {
+  const selected = new Map<number, FlattenedItem>();
+  for (let idx = startIdx; idx <= endIdx; idx++) {
+    const item = items[idx];
+    if (item.node?.event.type === 'tool_call_error') {
+      selected.set(idx, item);
+    }
+  }
+
+  for (let idx = endIdx; idx >= startIdx && selected.size < TREE_TOOL_CALL_PREVIEW_LIMIT; idx--) {
+    const item = items[idx];
+    if (item.node && TOOL_CALL_TYPES.has(item.node.event.type || '')) {
+      selected.set(idx, item);
+    }
+  }
+
+  return Array.from(selected.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([, item]) => item);
+}
+
 interface EventHierarchyProps {
   events: PollingEvent[];
   executionTree?: SessionExecutionTreeResponse;
@@ -378,9 +376,8 @@ interface FlattenedItem {
   uniqueKey: string;
   levelOffset?: number;
   isToolCallToggle?: boolean;
-  toolCallToggleMode?: 'expand' | 'collapse' | 'show_more';
+  toolCallToggleMode?: 'expand' | 'collapse' | 'terminal_hint';
   hiddenCount?: number;   // Per-group count for the "+" label
-  revealCount?: number;
   groupKey?: string;      // Group key for per-group expand/collapse
   latestToolName?: string;  // Latest tool_call_start tool name in collapsed group
   latestToolLabel?: string;
@@ -406,7 +403,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   const autoCollapsedSessionsRef = useRef<Set<string>>(new Set());
   // Per-group expand state for tool call groups (keyed by first event ID in group)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [expandedGroupVisibleCounts, setExpandedGroupVisibleCounts] = useState<Record<string, number>>({});
   const [expandedOwnedLogPanels, setExpandedOwnedLogPanels] = useState<Set<string>>(new Set());
   const [loadedOlderEvents, setLoadedOlderEvents] = useState<PollingEvent[]>([]);
   const [paginationOffset, setPaginationOffset] = useState<number>(0);
@@ -464,14 +460,10 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   const activeTabId = useChatStore(state => state.activeTabId)
   const resolvedTabId = tabIdProp || activeTabId
   const tab = useChatStore(state => resolvedTabId ? state.chatTabs[resolvedTabId] : undefined)
+  const setTabViewMode = useChatStore(state => state.setTabViewMode)
   // const setTabHideToolCalls = useChatStore(state => state.setTabHideToolCalls) // kept for future "show all / collapse all"
   const sessionId = tab?.sessionId
   const hideToolCalls = tab?.hideToolCalls || false
-  const executionStreamingActivities = useChatStore(useShallow(state => {
-    if (!sessionId) return []
-    return Object.values(state.executionStreaming)
-      .filter(activity => activity.sessionId === sessionId && (activity.text || activity.status))
-  }))
   // Holds the last returned displayEvents array for ref-stability.
   // The displayEvents memo below does heavy work (dedup, filter, sort, smart cap).
   // Even when the output is identical, it produces a new array ref — which cascades:
@@ -957,34 +949,16 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   const toggleToolCallGroup = useCallback((groupKey: string) => {
     setExpandedGroups(prev => {
       const next = new Set(prev);
-      const isExpanding = !next.has(groupKey);
-      if (isExpanding) next.add(groupKey);
+      if (!next.has(groupKey)) next.add(groupKey);
       else next.delete(groupKey);
-
-      setExpandedGroupVisibleCounts(prevCounts => {
-        if (isExpanding) {
-          if (prevCounts[groupKey] !== undefined) return prevCounts;
-          return {
-            ...prevCounts,
-            [groupKey]: INITIAL_EXPANDED_TOOL_CALLS,
-          };
-        }
-
-        if (prevCounts[groupKey] === undefined) return prevCounts;
-        const { [groupKey]: _removed, ...rest } = prevCounts;
-        return rest;
-      });
-
       return next;
     });
   }, []);
 
-  const showMoreToolCalls = useCallback((groupKey: string) => {
-    setExpandedGroupVisibleCounts(prev => ({
-      ...prev,
-      [groupKey]: (prev[groupKey] ?? INITIAL_EXPANDED_TOOL_CALLS) + EXPANDED_TOOL_CALLS_PAGE_SIZE,
-    }));
-  }, []);
+  const switchToTerminalView = useCallback(() => {
+    if (!resolvedTabId) return;
+    setTabViewMode(resolvedTabId, 'terminal');
+  }, [resolvedTabId, setTabViewMode]);
 
   const toggleOwnedLogPanel = useCallback((eventId: string, open: boolean) => {
     setExpandedOwnedLogPanels(prev => {
@@ -1013,8 +987,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     const realFilteredEvents = displayEvents.filter(event => !eventsToFilter.has(event.id));
 
-    const liveStreamingEvents = executionStreamingActivities.map(createLiveExecutionStreamingEvent);
-    const ownershipSourceEvents = [...realFilteredEvents, ...liveStreamingEvents];
+    const ownershipSourceEvents = realFilteredEvents;
 
     const inferredStateByExecutionId = new Map<string, InferredExecutionState>();
     const markExecutionState = (executionId: string | undefined, state: InferredExecutionState) => {
@@ -1128,7 +1101,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     const sourceOrder = new Map<string, number>();
     realFilteredEvents.forEach((event, index) => sourceOrder.set(event.id, index));
-    const filteredEvents = [...realFilteredEvents, ...syntheticOwnerEvents, ...liveStreamingEvents]
+    const filteredEvents = [...realFilteredEvents, ...syntheticOwnerEvents]
       .sort((a, b) => compareEventsChronologically(a, b, sourceOrder));
     const filteredEventIds = new Set(filteredEvents.map(e => e.id));
 
@@ -1293,7 +1266,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     });
 
     return rootEvents.map(event => buildTreeRecursive(event, 0));
-  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, executionTree, executionStreamingActivities, getAgentSessionKey, getExecutionId, getParentId]);
+  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, executionTree, getAgentSessionKey, getExecutionId, getParentId]);
 
   useEffect(() => {
     if (!isEventHierarchyDebugEnabled()) return;
@@ -1517,27 +1490,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         const group = groups[g];
         const totalCount = group.endIdx - group.startIdx + 1;
         if (expandedGroups.has(group.groupKey)) {
-          const visibleCount = Math.min(
-            expandedGroupVisibleCounts[group.groupKey] ?? INITIAL_EXPANDED_TOOL_CALLS,
-            totalCount,
-          );
-          const hiddenCount = totalCount - visibleCount;
-          const visibleStartIdx = Math.max(group.startIdx, group.endIdx - visibleCount + 1);
-          const visibleItems = list.slice(visibleStartIdx, group.endIdx + 1);
+          const visibleItems = selectToolGroupPreviewItems(list, group.startIdx, group.endIdx);
+          const hiddenCount = Math.max(0, totalCount - visibleItems.length);
           const replacementItems: FlattenedItem[] = [];
 
+          replacementItems.push(...visibleItems);
           if (hiddenCount > 0) {
             replacementItems.push({
-              uniqueKey: `tool-call-show-more-${group.groupKey}-${hiddenCount}`,
+              uniqueKey: `tool-call-terminal-hint-${group.groupKey}-${hiddenCount}`,
               isToolCallToggle: true,
-              toolCallToggleMode: 'show_more',
+              toolCallToggleMode: 'terminal_hint',
               hiddenCount,
-              revealCount: Math.min(EXPANDED_TOOL_CALLS_PAGE_SIZE, hiddenCount),
               groupKey: group.groupKey,
             });
           }
-
-          replacementItems.push(...visibleItems);
           replacementItems.push({
             uniqueKey: `tool-call-collapse-${group.groupKey}`,
             isToolCallToggle: true,
@@ -1604,10 +1570,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           togglesMatch = false
           break
         }
-        if (list[i].isToolCallToggle && list[i].revealCount !== prev[i]?.revealCount) {
-          togglesMatch = false
-          break
-        }
         if (list[i].isToolCallToggle && list[i].toolCallToggleMode !== prev[i]?.toolCallToggleMode) {
           togglesMatch = false
           break
@@ -1646,7 +1608,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     flattenedItemsRef.current = list;
     prevExpandedNodesRef.current = expandedNodes;
     return list;
-  }, [eventTree, expandedNodes, hideToolCalls, expandedGroups, expandedGroupVisibleCounts]);
+  }, [eventTree, expandedNodes, hideToolCalls, expandedGroups]);
 
   // --- Render tracking (filter by [Render] or [Memo] in console) ---
   useRenderLogger('EventHierarchy', {
@@ -1713,25 +1675,38 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       const count = item.hiddenCount || 0;
       const key = item.groupKey;
       const mode = item.toolCallToggleMode || 'expand';
+      if (mode === 'terminal_hint') {
+        return (
+          <div className="flex items-center py-0.5 pl-5 min-w-0">
+            <button
+              type="button"
+              onClick={switchToTerminalView}
+              disabled={!resolvedTabId}
+              className="flex min-w-0 max-w-full items-center gap-1.5 rounded px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 transition-colors hover:bg-muted/30 hover:text-muted-foreground disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-muted-foreground/60"
+            >
+              <span className="shrink-0">
+                {count} older tool event{count !== 1 ? 's' : ''} hidden
+              </span>
+              <span className="truncate opacity-70">
+                · View full trace in Terminal
+              </span>
+            </button>
+          </div>
+        );
+      }
       return (
         <div className="flex items-center py-0.5 pl-5 min-w-0">
           <button
             onClick={() => {
               if (!key) return;
-              if (mode === 'show_more') {
-                showMoreToolCalls(key);
-                return;
-              }
               toggleToolCallGroup(key);
             }}
             className="flex items-center gap-1.5 min-w-0 max-w-full px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
           >
             <span className="flex-shrink-0 font-medium">
-              {mode === 'show_more'
-                ? `+ show ${item.revealCount || 0} more tool${(item.revealCount || 0) !== 1 ? 's' : ''} (${count} hidden)`
-                : count > 0
-                  ? `+ ${count} tool${count !== 1 ? 's' : ''}`
-                  : `− collapse`}
+              {count > 0
+                ? `+ ${count} tool${count !== 1 ? 's' : ''}`
+                : `− collapse`}
             </span>
             {mode === 'expand' && count > 0 && (item.latestToolLabel || item.latestToolName) && (
               <span className="truncate opacity-60">
@@ -1867,7 +1842,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         </div>
       </div>
     );
-  }, [collapsedSessions, expandedNodes, expandedOwnedLogPanels, findEventsBetweenStartEnd, getAgentSessionKey, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, delegationStats, backgroundAgentStats, showMoreToolCalls, toggleToolCallGroup, resolvedTabId]);
+  }, [collapsedSessions, expandedNodes, expandedOwnedLogPanels, findEventsBetweenStartEnd, getAgentSessionKey, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, delegationStats, backgroundAgentStats, switchToTerminalView, toggleToolCallGroup, resolvedTabId]);
 
   // Only auto-scroll when new top-level items are added (not when sub-agent events update internals).
   // Sub-agent events change displayEvents but don't add items to flattenedItems.

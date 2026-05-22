@@ -64,6 +64,44 @@ const isLikelyBackendUnavailableError = (err: unknown) => {
     || message.includes('failed to fetch')
 }
 
+type LiveMessageDeliveryStatus = 'sending' | 'sent_to_cli' | 'queued_for_injection' | 'queued_locally' | 'failed'
+
+interface LiveMessageDelivery {
+  status: LiveMessageDeliveryStatus
+  message: string
+  provider?: string
+  detail?: string
+}
+
+const formatSteerProviderLabel = (provider?: string | null) => {
+  const normalized = (provider || '').trim().toLowerCase()
+  switch (normalized) {
+    case 'gemini-cli':
+    case 'gemini_cli':
+      return 'Gemini CLI'
+    case 'claude-code':
+    case 'claude_code':
+      return 'Claude Code'
+    case 'codex-cli':
+    case 'codex_cli':
+      return 'Codex CLI'
+    case 'cursor-cli':
+    case 'cursor_cli':
+      return 'Cursor CLI'
+    case 'opencode-cli':
+    case 'opencode_cli':
+      return 'OpenCode CLI'
+    default:
+      return provider ? provider.replace(/[-_]/g, ' ') : 'live agent'
+  }
+}
+
+const liveDeliveryPreview = (message: string) => {
+  const normalized = message.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= 90) return normalized
+  return `${normalized.slice(0, 87)}...`
+}
+
 function WorkshopModeToggle() {
   const canWriteWorkflow = useAuthStore(state => hasWorkflowWriteAccess(state.user, state.isMultiUserMode))
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -1138,6 +1176,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // State for steer message loading
   const [steeringIndex, setSteeringIndex] = useState<number | null>(null)
+  const [liveMessageDelivery, setLiveMessageDelivery] = useState<LiveMessageDelivery | null>(null)
+  const liveMessageDeliveryTimerRef = useRef<number | null>(null)
+
+  const scheduleLiveMessageDeliveryClear = useCallback(() => {
+    if (liveMessageDeliveryTimerRef.current !== null) {
+      window.clearTimeout(liveMessageDeliveryTimerRef.current)
+    }
+    liveMessageDeliveryTimerRef.current = window.setTimeout(() => {
+      setLiveMessageDelivery(null)
+      liveMessageDeliveryTimerRef.current = null
+    }, 6000)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (liveMessageDeliveryTimerRef.current !== null) {
+        window.clearTimeout(liveMessageDeliveryTimerRef.current)
+      }
+    }
+  }, [])
 
   const removeQueuedMessageAtIndex = useCallback((index: number) => {
     if (!activeTabId) return
@@ -1153,6 +1211,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       inputText: '',
       queuedMessages: [...currentQueued, trimmed]
     })
+    window.setTimeout(() => {
+      const chatStore = useChatStore.getState()
+      const tab = chatStore.chatTabs[activeTabId]
+      if (!tab?.isStreaming) return
+      chatStore.getActiveSessions(true).catch(error => {
+        console.warn('[ChatInput] Failed to refresh active sessions after queueing message', error)
+      })
+    }, 0)
   }, [activeTabId, setTabConfig])
 
   const handleSteerQueuedMessage = useCallback(async (index: number, msg: string) => {
@@ -1160,7 +1226,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     setSteeringIndex(index)
     try {
-      await agentApi.steerMessage(tabSessionId, msg)
+      const response = await agentApi.steerMessage(tabSessionId, msg)
+      setLiveMessageDelivery({
+        status: response.delivery_status || 'queued_for_injection',
+        message: msg,
+        provider: response.provider || effectiveProviderForSteer || undefined,
+      })
+      scheduleLiveMessageDeliveryClear()
       removeQueuedMessageAtIndex(index)
     } catch (err) {
       const status = getHttpErrorStatus(err)
@@ -1170,16 +1242,36 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           chatStore.setTabCanSteer(activeTabId, false)
           chatStore.setTabStreaming(activeTabId, false)
         }
+        setLiveMessageDelivery({
+          status: 'queued_locally',
+          message: msg,
+          provider: effectiveProviderForSteer || undefined,
+        })
+        scheduleLiveMessageDeliveryClear()
         addToast('The live agent turn has ended. The queued message will send as the next turn.', 'info')
       } else if (isLikelyBackendUnavailableError(err)) {
+        setLiveMessageDelivery({
+          status: 'failed',
+          message: msg,
+          provider: effectiveProviderForSteer || undefined,
+          detail: 'Backend unavailable',
+        })
+        scheduleLiveMessageDeliveryClear()
         addToast('Backend is unavailable. The queued message is still saved.', 'error')
       } else {
+        setLiveMessageDelivery({
+          status: 'failed',
+          message: msg,
+          provider: effectiveProviderForSteer || undefined,
+          detail: err instanceof Error ? err.message : 'Unknown error',
+        })
+        scheduleLiveMessageDeliveryClear()
         addToast('Failed to steer message: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error')
       }
     } finally {
       setSteeringIndex(null)
     }
-  }, [activeTabId, addToast, canShowSteer, removeQueuedMessageAtIndex, tabSessionId])
+  }, [activeTabId, addToast, canShowSteer, effectiveProviderForSteer, removeQueuedMessageAtIndex, scheduleLiveMessageDeliveryClear, tabSessionId])
 
   const queuedDisplayItems = useMemo(() => {
     const items: Array<
@@ -1812,15 +1904,32 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const sendLiveCodingAgentMessage = useCallback(async (msg: string): Promise<boolean> => {
     const trimmed = msg.trim()
-    if (!trimmed || !isStreaming || !supportsLiveCodingAgentInput || !tabSessionId) return false
+    if (!trimmed || !isStreaming || !supportsLiveCodingAgentInput || !canSteer || !tabSessionId) return false
 
     clearInputState()
+    setLiveMessageDelivery({
+      status: 'sending',
+      message: trimmed,
+      provider: effectiveProviderForSteer || undefined,
+    })
     try {
-      await agentApi.steerMessage(tabSessionId, msg)
+      const response = await agentApi.steerMessage(tabSessionId, msg)
+      setLiveMessageDelivery({
+        status: response.delivery_status || 'sent_to_cli',
+        message: trimmed,
+        provider: response.provider || effectiveProviderForSteer || undefined,
+      })
+      scheduleLiveMessageDeliveryClear()
     } catch (err) {
       const status = getHttpErrorStatus(err)
       if (isLiveCodingSessionGoneStatus(status)) {
         queueStreamingMessage(trimmed)
+        setLiveMessageDelivery({
+          status: 'queued_locally',
+          message: trimmed,
+          provider: effectiveProviderForSteer || undefined,
+        })
+        scheduleLiveMessageDeliveryClear()
         if (activeTabId) {
           const chatStore = useChatStore.getState()
           chatStore.setTabCanSteer(activeTabId, false)
@@ -1829,14 +1938,28 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         addToast('The live coding-agent turn has ended. Sending this as the next turn.', 'info')
       } else if (isLikelyBackendUnavailableError(err)) {
         queueStreamingMessage(trimmed)
+        setLiveMessageDelivery({
+          status: 'failed',
+          message: trimmed,
+          provider: effectiveProviderForSteer || undefined,
+          detail: 'Backend unavailable',
+        })
+        scheduleLiveMessageDeliveryClear()
         addToast('Backend is unavailable. Your message is still saved.', 'error')
       } else {
         queueStreamingMessage(trimmed)
+        setLiveMessageDelivery({
+          status: 'failed',
+          message: trimmed,
+          provider: effectiveProviderForSteer || undefined,
+          detail: err instanceof Error ? err.message : 'Unknown error',
+        })
+        scheduleLiveMessageDeliveryClear()
         addToast('Failed to send to coding agent — message queued.', 'warning')
       }
     }
     return true
-  }, [activeTabId, addToast, clearInputState, isStreaming, queueStreamingMessage, supportsLiveCodingAgentInput, tabSessionId])
+  }, [activeTabId, addToast, canSteer, clearInputState, effectiveProviderForSteer, isStreaming, queueStreamingMessage, scheduleLiveMessageDeliveryClear, supportsLiveCodingAgentInput, tabSessionId])
 
   const ensureMultiAgentTabReady = useCallback(async (): Promise<boolean> => {
     if (!isMultiAgentMode || showWorkflowsOverview) return false
@@ -2396,7 +2519,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const trimmed = query?.trim()
       if (!trimmed) return
       if (isStreaming) {
-        if (supportsLiveCodingAgentInput && tabSessionId) {
+        if (supportsLiveCodingAgentInput && canSteer && tabSessionId) {
           void sendLiveCodingAgentMessage(trimmed)
           return
         }
@@ -2433,7 +2556,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       workshopMode: effectiveModes.workshopMode,
       workflowPhaseId
     }
-  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, supportsLiveCodingAgentInput, sendLiveCodingAgentMessage, onSubmit, openDialog, openResumeDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
+  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentMessage, onSubmit, openDialog, openResumeDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
 
   const getCommandValidationError = useCallback((cmd: CommandDefinition, beforeSlash: string) => {
     if (!cmd.validate) return null
@@ -2529,7 +2652,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         clearInputState()
         onSubmit(queryToSubmit)
       } else if (canSubmit && isStreaming) {
-        if (supportsLiveCodingAgentInput && tabSessionId) {
+        if (supportsLiveCodingAgentInput && canSteer && tabSessionId) {
           void sendLiveCodingAgentMessage(queryToSubmit)
         } else {
           clearInputState()
@@ -2557,7 +2680,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, supportsLiveCodingAgentInput, sendLiveCodingAgentMessage, queueStreamingMessage, getSubmitBlockReason, addToast])
+  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentMessage, queueStreamingMessage, getSubmitBlockReason, addToast])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -2582,7 +2705,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       clearInputState()
       onSubmit(queryToSubmit)
     } else if (canSubmit && isStreaming) {
-      if (supportsLiveCodingAgentInput && tabSessionId) {
+      if (supportsLiveCodingAgentInput && canSteer && tabSessionId) {
         void sendLiveCodingAgentMessage(queryToSubmit)
       } else {
         clearInputState()
@@ -2594,7 +2717,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         addToast(submitBlockReason, 'info')
       }
     }
-  }, [queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, clearInputState, canSubmitImmediately, onSubmit, canSubmit, supportsLiveCodingAgentInput, sendLiveCodingAgentMessage, queueStreamingMessage, getSubmitBlockReason, addToast])
+  }, [queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, clearInputState, canSubmitImmediately, onSubmit, canSubmit, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentMessage, queueStreamingMessage, getSubmitBlockReason, addToast])
 
   // Command selection handler - executes commands directly
   const handleCommandSelect = useCallback((command: string) => {
@@ -3145,6 +3268,24 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return `Ask anything... (${baseHints})`
   }, [isViewOnly, isMultiAgentMode, isWorkflowPhaseChat, workflowPhaseId, tabSessionId, canBootstrapMultiAgentTab, canBootstrapWorkflowPhaseTab])
 
+  const liveDeliveryProviderLabel = formatSteerProviderLabel(liveMessageDelivery?.provider || effectiveProviderForSteer)
+  const liveDeliveryText = liveMessageDelivery
+    ? liveMessageDelivery.status === 'sending'
+      ? `Sending to ${liveDeliveryProviderLabel}...`
+      : liveMessageDelivery.status === 'sent_to_cli'
+        ? `Sent to ${liveDeliveryProviderLabel}`
+        : liveMessageDelivery.status === 'queued_for_injection'
+          ? 'Queued for next model turn'
+          : liveMessageDelivery.status === 'queued_locally'
+            ? 'Saved to queue'
+            : 'Could not submit live input'
+    : ''
+  const liveDeliveryClass = liveMessageDelivery?.status === 'failed'
+    ? 'text-amber-600 dark:text-amber-300'
+    : liveMessageDelivery?.status === 'sending'
+      ? 'text-blue-600 dark:text-blue-300'
+      : 'text-emerald-600 dark:text-emerald-300'
+
   // For view-only (restored) tabs, show a minimal indicator instead of the full input form
   if (isViewOnly) {
     const isScheduledRun = activeTab?.metadata?.isScheduledRun
@@ -3336,6 +3477,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className="px-4 py-2">
         <form onSubmit={handleSubmit} className="space-y-2">
           <div className="space-y-1">
+            {liveMessageDelivery && (
+              <div className={`flex min-w-0 items-center gap-1.5 text-[11px] ${liveDeliveryClass}`}>
+                {liveMessageDelivery.status === 'sending' ? (
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                ) : (
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+                )}
+                <span className="shrink-0 font-medium">{liveDeliveryText}</span>
+                <span className="min-w-0 truncate opacity-75">
+                  {liveDeliveryPreview(liveMessageDelivery.message)}
+                </span>
+                {liveMessageDelivery.detail && (
+                  <span className="shrink-0 opacity-75">({liveMessageDelivery.detail})</span>
+                )}
+              </div>
+            )}
             {/* Queued messages indicator */}
             {queuedMessages.length > 0 && (
               <div className="space-y-1">

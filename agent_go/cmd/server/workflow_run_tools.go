@@ -413,6 +413,22 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 		},
 	}
 	registry.Register(sessionID, bgAgent)
+	registry.GetNotificationChannel(sessionID)
+	api.completionLoopStartedMu.Lock()
+	if api.completionLoopStarted == nil {
+		api.completionLoopStarted = make(map[string]bool)
+	}
+	if !api.completionLoopStarted[sessionID] {
+		api.completionLoopStarted[sessionID] = true
+		go api.backgroundCompletionLoop(sessionID)
+	}
+	api.completionLoopStartedMu.Unlock()
+	api.emitBackgroundAgentEvent(sessionID, agentID, "background_agent_started", map[string]interface{}{
+		"agent_id": agentID,
+		"name":     agentName,
+		"step_id":  stepID,
+	})
+	api.notifyBackgroundAgentStarted(sessionID, agentID)
 
 	// Run the workflow in background
 	go func() {

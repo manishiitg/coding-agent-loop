@@ -265,6 +265,43 @@ func enhanceToolDescriptionForChatMode(toolName, originalDescription, chatsFolde
 	return originalDescription + accessInfo.String()
 }
 
+// enhanceToolDescriptionForWorkflowPhase augments workspace tool descriptions for
+// workflow-builder/run/optimizer sessions. Workflow phase is not normal chat output:
+// durable artifacts belong under the active workflow folder, not _users/.../Chats.
+func enhanceToolDescriptionForWorkflowPhase(toolName, originalDescription, workflowFolder string) string {
+	specialTools := map[string]bool{
+		"sync_workspace_to_github":    true,
+		"get_workspace_github_status": true,
+	}
+	if specialTools[toolName] {
+		return originalDescription
+	}
+
+	workflowFolder = filepath.Clean(strings.TrimSpace(workflowFolder))
+	if workflowFolder == "" || workflowFolder == "." {
+		workflowFolder = "the active Workflow/<name> folder"
+	} else if !strings.HasSuffix(workflowFolder, "/") {
+		workflowFolder += "/"
+	}
+
+	writeTools := map[string]bool{
+		"diff_patch_workspace_file": true,
+		"execute_shell_command":     true,
+	}
+
+	var accessInfo strings.Builder
+	accessInfo.WriteString("\n\n📁 **DIRECTORY ACCESS RESTRICTIONS (WORKFLOW BUILDER):**")
+
+	if writeTools[toolName] {
+		accessInfo.WriteString(fmt.Sprintf("\n\n⚠️ **IMPORTANT:** Write workflow artifacts under `%s`. Raw writes under `%splanning/` are blocked; use workflow/builder tools for plan/config changes.", workflowFolder, workflowFolder))
+		accessInfo.WriteString("\nUse `Downloads/` only for scratch downloads/browser artifacts and `config/` only for session configuration. Do NOT write workflow artifacts to `_users/<user>/Chats/`; Chats is for normal chat sessions, not workflow state.")
+	} else {
+		accessInfo.WriteString(fmt.Sprintf("\n\nYou have READ access to workspace folders and workflow WRITE access under `%s` except the raw-write-blocked `planning/` subtree.", workflowFolder))
+	}
+
+	return originalDescription + accessInfo.String()
+}
+
 // enhanceToolDescriptionForMultiAgentMode augments workspace tool descriptions for multi-agent plan mode.
 // chatsFolder is the full per-user path (e.g. "_users/default/Chats").
 func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription, chatsFolder string) string {
@@ -294,27 +331,119 @@ func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription, chat
 	return originalDescription + accessInfo.String()
 }
 
+type folderGuardContextMode int
+
+const (
+	folderGuardContextChat folderGuardContextMode = iota
+	folderGuardContextWorkflow
+)
+
+func cleanFolderGuardFolders(folders []string) []string {
+	seen := make(map[string]bool, len(folders))
+	cleanedFolders := make([]string, 0, len(folders))
+	for _, folder := range folders {
+		folder = strings.TrimSpace(folder)
+		if folder == "" {
+			continue
+		}
+		cleaned := filepath.Clean(folder)
+		if cleaned == "" || cleaned == "." {
+			continue
+		}
+		key := strings.ToLower(filepath.ToSlash(cleaned))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		cleanedFolders = append(cleanedFolders, cleaned)
+	}
+	return cleanedFolders
+}
+
+func isChatsWriteFolder(folder string) bool {
+	cleaned := strings.ToLower(filepath.ToSlash(filepath.Clean(strings.TrimSpace(folder))))
+	if cleaned == "" || cleaned == "." {
+		return false
+	}
+	if cleaned == "chats" || strings.HasPrefix(cleaned, "chats/") {
+		return true
+	}
+
+	parts := strings.Split(cleaned, "/")
+	for i := 0; i+2 < len(parts); i++ {
+		if parts[i] == "_users" && parts[i+2] == "chats" {
+			return true
+		}
+	}
+	return false
+}
+
+func chatModeWriteFolders(additionalWriteFolders ...string) []string {
+	allowedWriteFolders := []string{"Downloads/"}
+	allowedWriteFolders = append(allowedWriteFolders, additionalWriteFolders...)
+	return cleanFolderGuardFolders(allowedWriteFolders)
+}
+
+func workflowPhaseWriteFolders(workflowFolder string, additionalWriteFolders ...string) []string {
+	allowedWriteFolders := []string{"Downloads/", "config/"}
+	workflowFolder = strings.TrimSpace(workflowFolder)
+	if workflowFolder != "" {
+		allowedWriteFolders = append(allowedWriteFolders, workflowFolder)
+	}
+	for _, folder := range additionalWriteFolders {
+		if isChatsWriteFolder(folder) {
+			continue
+		}
+		allowedWriteFolders = append(allowedWriteFolders, folder)
+	}
+	return cleanFolderGuardFolders(allowedWriteFolders)
+}
+
 // wrapExecutorsWithChatModeFolderGuard wraps workspace tool executors to restrict chat mode writes.
 // The default writable folder is Downloads/ only — the per-user Chats folder is supplied by callers
 // via additionalWriteFolders so each session writes only to its own _users/<id>/Chats/ subtree.
 // Pass additionalWriteFolders to allow extra folders (e.g. "_users/<id>/Chats/", "skills/custom/").
-// Pass blockedWriteFolders to deny writes to specific paths within otherwise-allowed prefixes —
-// used by the chat-agent #workflow path to grant `Workflow/<name>/` as a broad write prefix
-// while still denying `Workflow/<name>/planning/` (planning files must go through typed
-// plan-mod tools, never raw writes). Reads remain allowed on blockedWriteFolders — agents
-// still need to inspect plan.json / step_config.json.
-// This creates a wrapper that:
-// 1. ALLOWS read access to all folders (skills/, Workflow/, Downloads/, etc.)
-// 2. ONLY ALLOWS write access to Downloads/ + any additionalWriteFolders the caller passed
-// 3. DENIES writes to any blockedWriteFolders prefix even when it's under an allowed write prefix
-// 4. Restricts shell writes to allowed folders
+// Pass blockedWriteFolders to deny writes to specific paths within otherwise-allowed prefixes.
+// Reads remain allowed on blockedWriteFolders.
 func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), readOnlyFolders []string, blockedWriteFolders []string, additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+	return wrapExecutorsWithFolderGuard(
+		executors,
+		"CHAT MODE FOLDER GUARD",
+		"CHAT FOLDER GUARD WRAPPER",
+		"chat mode",
+		folderGuardContextChat,
+		readOnlyFolders,
+		blockedWriteFolders,
+		chatModeWriteFolders(additionalWriteFolders...),
+	)
+}
+
+// wrapExecutorsWithWorkflowPhaseFolderGuard wraps workspace tool executors for workflow-builder
+// phases. Workflow-builder writes are independent from normal Chats storage: durable workflow
+// artifacts go under the active Workflow/<name> folder, while _users/<id>/Chats remains read-only.
+func wrapExecutorsWithWorkflowPhaseFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), workflowFolder string, readOnlyFolders []string, blockedWriteFolders []string, additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+	return wrapExecutorsWithFolderGuard(
+		executors,
+		"WORKFLOW PHASE FOLDER GUARD",
+		"WORKFLOW FOLDER GUARD WRAPPER",
+		"workflow builder",
+		folderGuardContextWorkflow,
+		readOnlyFolders,
+		blockedWriteFolders,
+		workflowPhaseWriteFolders(workflowFolder, additionalWriteFolders...),
+	)
+}
+
+// wrapExecutorsWithFolderGuard is the shared low-level path check. Mode-specific
+// wrappers above own the policy: which roots are writable and which context key
+// is injected for shell execution.
+func wrapExecutorsWithFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), logPrefix string, wrapperLogPrefix string, workflowAccessDenyMode string, contextMode folderGuardContextMode, readOnlyFolders []string, blockedWriteFolders []string, allowedWriteFolders []string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	// No protected folders — all users share the same filesystem
 	protectedFolders := []string{}
 
 	// blockedWritePrefixes denies writes (tool path params + shell write patterns) even when
-	// the path is under an allowed write prefix. Used by chat-agent #workflow to block raw
-	// writes to Workflow/<name>/planning/ while keeping the rest of the workflow writable.
+	// the path is under an allowed write prefix. Workflow-builder uses this to block raw writes
+	// to Workflow/<name>/planning/ while keeping the rest of the workflow writable.
 	blockedWritePrefixes := make([]string, 0, len(blockedWriteFolders))
 	for _, f := range blockedWriteFolders {
 		cleaned := filepath.Clean(f)
@@ -322,11 +451,7 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 			blockedWritePrefixes = append(blockedWritePrefixes, cleaned)
 		}
 	}
-
-	// Default writable: Downloads/ only. The per-user Chats folder must come from the caller
-	// via additionalWriteFolders — this prevents accidental writes to the legacy global Chats/.
-	allowedWriteFolders := []string{"Downloads/"}
-	allowedWriteFolders = append(allowedWriteFolders, additionalWriteFolders...)
+	allowedWriteFolders = cleanFolderGuardFolders(allowedWriteFolders)
 
 	// For shell sandboxing, pass all allowed write folders
 	shellAllowedFolders := make([]string, len(allowedWriteFolders))
@@ -411,7 +536,7 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 					if pathStr, ok := paramValue.(string); ok && pathStr != "" {
 						cleanedPath := filepath.Clean(pathStr)
 						if isPathProtected(cleanedPath) {
-							log.Printf("[CHAT MODE FOLDER GUARD] Blocked access to protected folder '%s' for tool %s", pathStr, toolNameCopy)
+							log.Printf("[%s] Blocked access to protected folder '%s' for tool %s", logPrefix, pathStr, toolNameCopy)
 							return "", fmt.Errorf("access denied: '%s' is a protected system folder", pathStr)
 						}
 					}
@@ -432,7 +557,7 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 								strings.Contains(cmdLower, " "+folderLower) ||
 								strings.Contains(cmdLower, "/"+folderLower) ||
 								strings.HasSuffix(cmdLower, folderLower) {
-								log.Printf("[CHAT MODE FOLDER GUARD] Blocked shell command referencing protected folder %s: %s", folder, cmdStr)
+								log.Printf("[%s] Blocked shell command referencing protected folder %s: %s", logPrefix, folder, cmdStr)
 								return "", fmt.Errorf("access denied: shell commands cannot reference '%s/' folder (protected system folder)", folder)
 							}
 						}
@@ -445,24 +570,26 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 								strings.Contains(cmdLower, " "+workflowLower) ||
 								strings.Contains(cmdLower, "/"+workflowLower) ||
 								strings.HasSuffix(cmdLower, workflowLower) {
-								log.Printf("[CHAT MODE FOLDER GUARD] Blocked shell command referencing Workflow/: %s", cmdStr)
-								return "", fmt.Errorf("access denied: shell commands cannot reference 'Workflow/' folder in chat mode")
+								log.Printf("[%s] Blocked shell command referencing Workflow/: %s", logPrefix, cmdStr)
+								return "", fmt.Errorf("access denied: shell commands cannot reference 'Workflow/' folder in %s", workflowAccessDenyMode)
 							}
 						}
 					}
 				}
 				// Inject allowed write folders for kernel-level sandboxing
-				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolders)
-				// Set chat-mode read paths: shared resources + the per-user folders the caller already
-				// passed in shellAllowedFolders (typically _users/<id>/Chats/ and _users/<id>/memories/).
-				// The legacy global "Chats/" is NOT in defaults — per-user paths come from shellAllowedFolders.
-				chatReadFolders := []string{"Downloads/", "skills/", "subagents/", "Workflow/", "config/"}
-				chatReadFolders = append(chatReadFolders, shellAllowedFolders...)
-				chatReadFolders = append(chatReadFolders, readOnlyFolders...)
-				ctx = context.WithValue(ctx, common.FolderGuardReadPathsKey, chatReadFolders)
-				// Default working directory for chat mode — workspace root
+				if contextMode == folderGuardContextWorkflow {
+					ctx = context.WithValue(ctx, common.FolderGuardWritePathsKey, shellAllowedFolders)
+				} else {
+					ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolders)
+				}
+				readFolders := []string{"Downloads/", "skills/", "subagents/", "Workflow/", "config/"}
+				readFolders = append(readFolders, shellAllowedFolders...)
+				readFolders = append(readFolders, readOnlyFolders...)
+				readFolders = cleanFolderGuardFolders(readFolders)
+				ctx = context.WithValue(ctx, common.FolderGuardReadPathsKey, readFolders)
+				// Default working directory for guarded shell modes — workspace root
 				ctx = context.WithValue(ctx, common.DefaultWorkingDirKey, "")
-				fmt.Printf("[CHAT FOLDER GUARD WRAPPER] Injected FolderGuardAllowedWriteFolderKey=%v ReadPaths=%v for %s\n", shellAllowedFolders, chatReadFolders, toolNameCopy)
+				fmt.Printf("[%s] Injected write paths=%v read paths=%v for %s\n", wrapperLogPrefix, shellAllowedFolders, readFolders, toolNameCopy)
 			}
 
 			// For WRITE tools (diff_patch_workspace_file primarily), check blocked-write
@@ -476,12 +603,12 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 							cleanedPath := filepath.Clean(pathStr)
 
 							if isPathBlockedWrite(cleanedPath) {
-								log.Printf("[CHAT MODE FOLDER GUARD] Blocked WRITE to '%s' (cleaned: '%s') for tool %s — path is under a blocked-write prefix (%v)", pathStr, cleanedPath, toolNameCopy, blockedWritePrefixes)
+								log.Printf("[%s] Blocked WRITE to '%s' (cleaned: '%s') for tool %s — path is under a blocked-write prefix (%v)", logPrefix, pathStr, cleanedPath, toolNameCopy, blockedWritePrefixes)
 								return "", fmt.Errorf("access denied: '%s' is under a blocked-write prefix (%v) — this folder is read-only even though its parent is writable", pathStr, blockedWritePrefixes)
 							}
 
 							if !isPathAllowed(cleanedPath) {
-								log.Printf("[CHAT MODE FOLDER GUARD] Blocked WRITE to '%s' (cleaned: '%s') for tool %s - allowed folders: %v", pathStr, cleanedPath, toolNameCopy, allowedWriteFolders)
+								log.Printf("[%s] Blocked WRITE to '%s' (cleaned: '%s') for tool %s - allowed folders: %v", logPrefix, pathStr, cleanedPath, toolNameCopy, allowedWriteFolders)
 								return "", fmt.Errorf("access denied: cannot write to '%s' (allowed write folders: %v)", pathStr, allowedWriteFolders)
 							}
 						}
@@ -496,7 +623,7 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 		wrappedExecutors[toolNameCopy] = wrappedExecutor
 	}
 
-	log.Printf("[CHAT MODE FOLDER GUARD] Wrapped %d executors - protected folders: %v, allowed write folders: %v", len(wrappedExecutors), protectedFolders, allowedWriteFolders)
+	log.Printf("[%s] Wrapped %d executors - protected folders: %v, allowed write folders: %v", logPrefix, len(wrappedExecutors), protectedFolders, allowedWriteFolders)
 	return wrappedExecutors
 }
 

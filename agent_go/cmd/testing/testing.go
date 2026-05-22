@@ -97,6 +97,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(agentBrowseStressE2ECmd)
 	TestingCmd.AddCommand(agentBrowseAPIStressE2ECmd)
 	TestingCmd.AddCommand(codingAgentBackgroundE2ECmd)
+	TestingCmd.AddCommand(workflowAutoNotificationE2ECmd)
 	TestingCmd.AddCommand(zaiTestCmd)
 	TestingCmd.AddCommand(kimiTestCmd)
 }

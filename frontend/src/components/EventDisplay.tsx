@@ -190,7 +190,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
     !currentStreamingText &&
     completedStreamingText.trim() !== finalResponse?.trim() &&
     !hasCompletionEvent
-  const streamingActivityCard = liveStreamingActivity ? (
+  const streamingActivityCard = eventViewMode !== 'tree' && liveStreamingActivity ? (
     <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 shadow-sm min-w-0" data-testid="live-streaming-activity">
       <CardContent className={`${compact ? 'px-2 py-1.5' : 'px-3 py-2'} min-w-0`}>
         <div className="flex min-w-0 items-center gap-2">

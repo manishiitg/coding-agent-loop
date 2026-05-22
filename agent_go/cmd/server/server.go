@@ -256,6 +256,13 @@ type StreamingAPI struct {
 	pendingCompletions map[string][]string
 	pendingMu          sync.RWMutex
 
+	// Pending start notifications — background agent IDs that started while
+	// the main session was busy. These are synthetic user messages just like
+	// completion notifications, so they must be serialized with completions.
+	pendingStartNotifications map[string][]string
+	pendingStartMu            sync.RWMutex
+	autoNotificationMu        sync.Mutex
+
 	// Last query request per session — used to construct synthetic turns
 	lastQueryRequests       map[string]QueryRequest
 	lastQueryMu             sync.RWMutex
@@ -511,6 +518,14 @@ type LLMGuidanceResponse struct {
 // SteerMessageRequest represents a request to inject a user message mid-execution
 type SteerMessageRequest struct {
 	Message string `json:"message"`
+}
+
+type SteerMessageResponse struct {
+	Success        bool   `json:"success"`
+	Message        string `json:"message,omitempty"`
+	DeliveryStatus string `json:"delivery_status,omitempty"`
+	Provider       string `json:"provider,omitempty"`
+	MessageID      string `json:"message_id,omitempty"`
 }
 
 const liveCodingAgentSteerTimeout = 15 * time.Second
@@ -769,6 +784,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		bgAgentRegistry:           NewBackgroundAgentRegistry(),
 		sessionBusy:               make(map[string]bool),
 		pendingCompletions:        make(map[string][]string),
+		pendingStartNotifications: make(map[string][]string),
 		lastQueryRequests:         make(map[string]QueryRequest),
 		sessionWorkspaceFolders:   make(map[string]string),
 		sessionAgents:             make(map[string]*agent.LLMAgentWrapper),
@@ -3263,11 +3279,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				api.setSyntheticTurn(sessionID, false)
 				api.setSessionBusy(sessionID, false)
-				// Drain pending completions after turn ends (batched to avoid concurrent StreamWithEvents)
-				pending := api.drainPendingCompletions(sessionID)
-				if len(pending) > 0 {
-					go api.processBatchedBackgroundAgentCompletions(sessionID, pending)
-				}
+				// Drain pending auto-notifications after turn ends (batched to avoid concurrent StreamWithEvents).
+				api.drainPendingAutoNotificationsAfterTurn(sessionID)
 			}()
 		}
 
@@ -3789,9 +3802,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[WORKFLOW_PHASE FOLDER GUARD] Write access: %s/ (whole workflow) with blocked-write prefix: %s", workflowPhaseFolder, blockedPlanning)
 			}
 
-			// Apply folder guard to restrict writes based on mode
-			// Multi-agent (plan) mode: primary write folder is Chats/
-			// Chat mode: writes go to Chats/
+			// Apply folder guard to restrict writes based on mode.
+			// Non-workflow plan/chat sessions write to the per-user Chats folder.
+			// Workflow phase writes to the active workflow folder (plus config,
+			// Downloads, memory, and chat_history) and keeps Chats read-only so
+			// builder artifacts cannot drift into normal chat storage.
 			if !isWorkflowPhase {
 				// Per-user memory and chat folders replace the legacy global "memories/" and "Chats/" write paths.
 				perUserMemWrite := perUserMemoryFolder + "/"
@@ -3815,18 +3830,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				perUserMemWrite := perUserMemoryFolder + "/"
 				perUserChatsWrite := perUserChatsFolder + "/"
 				perUserChatHistory := strings.TrimSuffix(perUserChatsFolder, "Chats") + "chat_history/"
-				extraFolders := append([]string{"config/"}, resolvedGrants.WriteFolders...)
+				extraFolders := append([]string{}, resolvedGrants.WriteFolders...)
 				extraFolders = append(extraFolders, fileContextWriteFolders...)
 				extraFolders = append(extraFolders, perUserMemWrite)
-				extraFolders = append(extraFolders, perUserChatsWrite)
 				extraFolders = append(extraFolders, perUserChatHistory)
-				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, fileContextBlockedWriteFolders, extraFolders...)
+				workspaceExecutors = wrapExecutorsWithWorkflowPhaseFolderGuard(workspaceExecutors, workflowPhaseFolder, workflowReadOnlyFolders, fileContextBlockedWriteFolders, extraFolders...)
 				workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
 				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", perUserMemWrite}, extraFolders...)
 				readPaths = append(readPaths, workflowReadOnlyFolders...)
+				writePaths := workflowPhaseWriteFolders(workflowPhaseFolder, extraFolders...)
 				workspace.SetSessionFolderGuard(sessionID,
 					readPaths,
-					append([]string{perUserChatsWrite, "Downloads/", "config/", perUserMemWrite, perUserChatHistory}, extraFolders...),
+					writePaths,
 				)
 				// Blocked-write paths flow through to the isolator's
 				// FolderGuardConfig.BlockedWritePaths and are enforced at kernel-sandbox
@@ -3837,7 +3852,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if len(fileContextBlockedWriteFolders) > 0 {
 					workspace.SetSessionFolderGuardBlockedWritePaths(sessionID, fileContextBlockedWriteFolders)
 				}
-				log.Printf("[CHAT MODE FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, read-only: %v, blocked-write: %v)", perUserChatsWrite, perUserMemWrite, workflowReadOnlyFolders, fileContextBlockedWriteFolders)
+				log.Printf("[WORKFLOW PHASE FOLDER GUARD] Applied workflow folder restriction (workflow writes: %v, chats read-only: %s, mem: %s, read-only: %v, blocked-write: %v)", writePaths, perUserChatsWrite, perUserMemWrite, workflowReadOnlyFolders, fileContextBlockedWriteFolders)
 			}
 
 			// Apply skill folder guard if filesystem skills are selected (read-only access to selected skills only).
@@ -3846,7 +3861,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[SKILL FOLDER GUARD] Applied skill folder restriction - only selected skills accessible: %v", filesystemSkills)
 			}
 
-			log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for chat mode", len(workspaceTools))
+			workspaceToolModeLabel := "chat mode"
+			if isWorkflowPhase {
+				workspaceToolModeLabel = "workflow builder"
+			}
+			log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for %s", len(workspaceTools), workspaceToolModeLabel)
 
 			underlyingAgent := llmAgent.GetUnderlyingAgent()
 			for _, tool := range workspaceTools {
@@ -3861,7 +3880,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if !isWorkflowPhase {
 						enhancedDescription = enhanceToolDescriptionForMultiAgentMode(toolName, tool.Function.Description, perUserChatsFolder)
 					} else {
-						enhancedDescription = enhanceToolDescriptionForChatMode(toolName, tool.Function.Description, perUserChatsFolder)
+						enhancedDescription = enhanceToolDescriptionForWorkflowPhase(toolName, tool.Function.Description, workflowPhaseFolder)
 					}
 
 					// Convert Parameters to map[string]interface{}
@@ -3909,7 +3928,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s (category: %s)", toolName, toolCategory)
 				}
 			}
-			log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for chat mode", len(workspaceTools))
+			log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for %s", len(workspaceTools), workspaceToolModeLabel)
 
 			// Register browser tool if browser access is enabled
 			if enableBrowserAccess {
@@ -3925,8 +3944,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				} else {
 					browserExtraFolders := append([]string{}, resolvedGrants.WriteFolders...)
 					browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
-					browserExtraFolders = append(browserExtraFolders, perUserChatsFolder+"/")
-					browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, fileContextBlockedWriteFolders, browserExtraFolders...)
+					browserExecutors = wrapExecutorsWithWorkflowPhaseFolderGuard(browserExecutors, workflowPhaseFolder, workflowReadOnlyFolders, fileContextBlockedWriteFolders, browserExtraFolders...)
 				}
 				log.Printf("[BROWSER TOOLS] Applied folder guard to browser tools")
 
@@ -3961,7 +3979,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[BROWSER TOOLS] Registered browser tool: %s (category: %s)", toolName, browserCategory)
 					}
 				}
-				log.Printf("[BROWSER TOOLS] Successfully registered %d browser tools for chat mode", len(browserTools))
+				log.Printf("[BROWSER TOOLS] Successfully registered %d browser tools for %s", len(browserTools), workspaceToolModeLabel)
 			}
 
 			// Register delegation tool for multi-agent chat (all non-workflow-phase simple sessions).
@@ -5400,6 +5418,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		allChatSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 		if len(allChatSecrets) > 0 && !isWorkflowPhase {
 			// Inject secret values as environment variables for shell execution (SECRET_ prefix)
+			if workspaceEnv == nil {
+				workspaceEnv = make(map[string]string, len(allChatSecrets))
+			}
 			for _, s := range allChatSecrets {
 				workspaceEnv["SECRET_"+s.Name] = s.Value
 			}
@@ -7161,6 +7182,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 		"agent_id": start.ID,
 		"name":     start.Name,
 	})
+	n.api.notifyBackgroundAgentStarted(n.sessionID, start.ID)
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result string, meta map[string]string, err error) {
@@ -7290,6 +7312,13 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentStart(start todo_creation_h
 		go n.api.backgroundCompletionLoop(n.sessionID)
 	}
 	n.api.completionLoopStartedMu.Unlock()
+
+	n.api.emitBackgroundAgentEvent(n.sessionID, start.ID, "background_agent_started", map[string]interface{}{
+		"agent_id":            start.ID,
+		"name":                start.Name,
+		"parent_execution_id": start.ParentExecutionID,
+	})
+	n.api.notifyBackgroundAgentStarted(n.sessionID, start.ID)
 }
 
 func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, name string, result string, err error) {
@@ -7422,6 +7451,7 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 		"name":        name,
 		"instruction": truncateForToolResponse(instruction, 200),
 	})
+	api.notifyBackgroundAgentStarted(sessionID, agentID)
 
 	// Start the background completion loop for this session if not already running
 	api.completionLoopStartedMu.Lock()
@@ -7539,6 +7569,10 @@ func (api *StreamingAPI) emitBackgroundAgentEvent(sessionID, agentID, eventType 
 	eventID := fmt.Sprintf("%s_%s_%s", sessionID, eventType, agentID)
 	if agentID == "" {
 		eventID = fmt.Sprintf("%s_%s_%d", sessionID, eventType, now.UnixNano())
+	} else if eventType == "synthetic_turn_ready" {
+		if status, ok := data["status"].(string); ok && strings.TrimSpace(status) != "" {
+			eventID = fmt.Sprintf("%s_%s_%s_%s", sessionID, eventType, strings.TrimSpace(status), agentID)
+		}
 	}
 
 	event := events.Event{
@@ -7628,6 +7662,117 @@ func (api *StreamingAPI) isSyntheticTurn(sessionID string) bool {
 	return false
 }
 
+func (api *StreamingAPI) notifyBackgroundAgentStarted(sessionID, agentID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	agentID = strings.TrimSpace(agentID)
+	if sessionID == "" || agentID == "" || api == nil {
+		return
+	}
+	if api.isSessionStoppedOrInactive(sessionID) {
+		return
+	}
+
+	api.autoNotificationMu.Lock()
+	defer api.autoNotificationMu.Unlock()
+	if api.isSessionBusy(sessionID) {
+		api.queuePendingStartNotification(sessionID, agentID)
+		api.schedulePendingStartNotificationRetry(sessionID)
+		log.Printf("[BG AGENT] Session %s busy, queued start notification for agent %s", sessionID, agentID)
+		return
+	}
+	api.processBatchedBackgroundAgentStartsLocked(sessionID, []string{agentID})
+}
+
+func (api *StreamingAPI) queuePendingStartNotification(sessionID, agentID string) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return
+	}
+	api.pendingStartMu.Lock()
+	defer api.pendingStartMu.Unlock()
+	if api.pendingStartNotifications == nil {
+		api.pendingStartNotifications = make(map[string][]string)
+	}
+	for _, existing := range api.pendingStartNotifications[sessionID] {
+		if existing == agentID {
+			return
+		}
+	}
+	api.pendingStartNotifications[sessionID] = append(api.pendingStartNotifications[sessionID], agentID)
+}
+
+func (api *StreamingAPI) queuePendingStartNotifications(sessionID string, agentIDs []string) {
+	for _, agentID := range agentIDs {
+		api.queuePendingStartNotification(sessionID, agentID)
+	}
+}
+
+func (api *StreamingAPI) drainPendingStartNotifications(sessionID string) []string {
+	api.pendingStartMu.Lock()
+	defer api.pendingStartMu.Unlock()
+	pending := api.pendingStartNotifications[sessionID]
+	delete(api.pendingStartNotifications, sessionID)
+	return pending
+}
+
+func (api *StreamingAPI) filterUnsentStartNotifications(sessionID string, agentIDs []string) []string {
+	if len(agentIDs) == 0 || api.bgAgentRegistry == nil {
+		return nil
+	}
+	filtered := make([]string, 0, len(agentIDs))
+	seen := make(map[string]struct{}, len(agentIDs))
+	for _, agentID := range agentIDs {
+		agentID = strings.TrimSpace(agentID)
+		if agentID == "" {
+			continue
+		}
+		if _, ok := seen[agentID]; ok {
+			continue
+		}
+		seen[agentID] = struct{}{}
+		agent := api.bgAgentRegistry.Get(sessionID, agentID)
+		if agent == nil {
+			continue
+		}
+		agent.mu.RLock()
+		alreadySent := agent.startNotified
+		agent.mu.RUnlock()
+		if !alreadySent {
+			filtered = append(filtered, agentID)
+		}
+	}
+	return filtered
+}
+
+func (api *StreamingAPI) schedulePendingStartNotificationRetry(sessionID string) {
+	time.AfterFunc(5*time.Second, func() {
+		if api.isSessionStoppedOrInactive(sessionID) {
+			return
+		}
+		if api.isSessionBusy(sessionID) {
+			api.schedulePendingStartNotificationRetry(sessionID)
+			return
+		}
+		pending := api.filterUnsentStartNotifications(sessionID, api.drainPendingStartNotifications(sessionID))
+		if len(pending) == 0 {
+			return
+		}
+		api.processBatchedBackgroundAgentStarts(sessionID, pending)
+	})
+}
+
+func (api *StreamingAPI) drainPendingAutoNotificationsAfterTurn(sessionID string) {
+	pendingStarts := api.filterUnsentStartNotifications(sessionID, api.drainPendingStartNotifications(sessionID))
+	if len(pendingStarts) > 0 {
+		go api.processBatchedBackgroundAgentStarts(sessionID, pendingStarts)
+		return
+	}
+	pendingCompletions := api.drainPendingCompletions(sessionID)
+	if len(pendingCompletions) > 0 {
+		go api.processBatchedBackgroundAgentCompletions(sessionID, pendingCompletions)
+	}
+}
+
 // queuePendingCompletion adds a completed agent ID to the pending queue
 func (api *StreamingAPI) queuePendingCompletion(sessionID, agentID string) {
 	api.queuePendingCompletions(sessionID, []string{agentID})
@@ -7682,58 +7827,6 @@ func (api *StreamingAPI) schedulePendingCompletionRetry(sessionID string) {
 	})
 }
 
-func (api *StreamingAPI) delayBackgroundCompletionsForHumanPromptDraft(sessionID string, agentIDs []string) bool {
-	draft, ok := api.activeClaudePromptDraft(sessionID)
-	if !ok {
-		return false
-	}
-	api.queuePendingCompletions(sessionID, agentIDs)
-	api.schedulePendingCompletionRetry(sessionID)
-	log.Printf("[BG AGENT] Delaying synthetic turn for session %s because Claude Code has an unsubmitted prompt draft: %.120q", sessionID, draft)
-	return true
-}
-
-func (api *StreamingAPI) activeClaudePromptDraft(sessionID string) (string, bool) {
-	if api == nil || api.terminalStore == nil {
-		return "", false
-	}
-	for _, snapshot := range api.terminalStore.List(sessionID) {
-		if snapshot.TmuxSession == "" || !strings.Contains(snapshot.TmuxSession, "claude-code") {
-			continue
-		}
-		if draft, ok := claudePromptDraftFromTerminalContent(snapshot.Content); ok {
-			return draft, true
-		}
-	}
-	return "", false
-}
-
-func claudePromptDraftFromTerminalContent(content string) (string, bool) {
-	lines := strings.Split(content, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		trimmed := strings.TrimSpace(strings.ReplaceAll(lines[i], "\u00a0", " "))
-		if trimmed == "❯" {
-			return "", false
-		}
-		if !strings.HasPrefix(trimmed, "❯") {
-			continue
-		}
-		draft := strings.TrimSpace(strings.TrimPrefix(trimmed, "❯"))
-		if draft == "" || isClaudePromptSuggestion(draft) {
-			return "", false
-		}
-		return draft, true
-	}
-	return "", false
-}
-
-func isClaudePromptSuggestion(draft string) bool {
-	normalized := strings.ToLower(strings.Join(strings.Fields(draft), " "))
-	return strings.HasPrefix(normalized, "type your message") ||
-		(strings.HasPrefix(normalized, "try ") && strings.Contains(normalized, "\"")) ||
-		normalized == "show me what it found"
-}
-
 // backgroundCompletionLoop listens for background agent completions and triggers synthetic turns
 func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 	ch := api.bgAgentRegistry.GetNotificationChannel(sessionID)
@@ -7760,6 +7853,122 @@ func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 	}
 }
 
+func (api *StreamingAPI) processBatchedBackgroundAgentStarts(sessionID string, agentIDs []string) {
+	api.autoNotificationMu.Lock()
+	defer api.autoNotificationMu.Unlock()
+	if api.isSessionStoppedOrInactive(sessionID) {
+		return
+	}
+	if api.isSessionBusy(sessionID) {
+		api.queuePendingStartNotifications(sessionID, agentIDs)
+		api.schedulePendingStartNotificationRetry(sessionID)
+		return
+	}
+	api.processBatchedBackgroundAgentStartsLocked(sessionID, agentIDs)
+}
+
+func (api *StreamingAPI) processBatchedBackgroundAgentStartsLocked(sessionID string, agentIDs []string) {
+	if len(agentIDs) == 0 || api.bgAgentRegistry == nil {
+		return
+	}
+
+	var parts []string
+	var emittedIDs []string
+	for _, agentID := range agentIDs {
+		agentID = strings.TrimSpace(agentID)
+		if agentID == "" {
+			continue
+		}
+		agent := api.bgAgentRegistry.Get(sessionID, agentID)
+		if agent == nil {
+			continue
+		}
+		if !agent.MarkStartNotified() {
+			continue
+		}
+		snap := agent.GetSnapshot()
+		if snap.Status == BGAgentCanceled {
+			continue
+		}
+		parts = append(parts, backgroundAgentStartNotificationPart(snap))
+		emittedIDs = append(emittedIDs, agentID)
+	}
+	if len(parts) == 0 {
+		return
+	}
+
+	syntheticMsg := buildBackgroundAgentStartSyntheticMessage(sessionID, parts)
+	if strings.HasPrefix(sessionID, "bot-") {
+		syntheticMsg += "\n\n---\nReply with ONE short status line (target <=150 characters) that says the background work started. Do not ask the user a follow-up question."
+	}
+
+	for _, agentID := range emittedIDs {
+		api.emitBackgroundAgentEvent(sessionID, agentID, "synthetic_turn_ready", map[string]interface{}{
+			"message":  "Background work started. The main agent will be notified.",
+			"agent_id": agentID,
+			"status":   "started",
+		})
+	}
+	api.executeSyntheticTurn(sessionID, syntheticMsg)
+}
+
+func backgroundAgentStartNotificationPart(snap BackgroundAgentSnapshot) string {
+	label := backgroundAgentStartLabel(snap)
+	contextInfo := backgroundAgentStartContext(snap)
+	return fmt.Sprintf("- %s '%s' (ID: %s)%s started.", label, snap.Name, snap.ID, contextInfo)
+}
+
+func buildBackgroundAgentStartSyntheticMessage(_ string, parts []string) string {
+	if len(parts) == 1 {
+		return fmt.Sprintf("[AUTO-NOTIFICATION]\n%s\n\nContinue tracking this work. Do not wait for it to finish unless the user explicitly asks; completion will arrive as a separate AUTO-NOTIFICATION.", strings.TrimPrefix(parts[0], "- "))
+	}
+	return fmt.Sprintf("[AUTO-NOTIFICATION]\nBackground activity started:\n%s\n\nContinue tracking this work. Do not wait for it to finish unless the user explicitly asks; completion will arrive as a separate AUTO-NOTIFICATION.", strings.Join(parts, "\n"))
+}
+
+func backgroundAgentStartLabel(snap BackgroundAgentSnapshot) string {
+	kind := strings.TrimSpace(snap.Kind)
+	if snap.Metadata != nil {
+		if stepID := strings.TrimSpace(snap.Metadata["step_id"]); stepID != "" {
+			return "Workflow step"
+		}
+		if typ := strings.TrimSpace(snap.Metadata["type"]); typ == "workflow_run" {
+			return "Workflow run"
+		}
+	}
+	switch {
+	case strings.Contains(kind, "sub_agent"):
+		return "Workflow sub-agent"
+	case strings.Contains(kind, "delegation"):
+		return "Background sub-agent"
+	case strings.Contains(kind, "workflow"):
+		return "Workflow run"
+	case strings.Contains(kind, "route"):
+		return "Routing task"
+	default:
+		return "Background agent"
+	}
+}
+
+func backgroundAgentStartContext(snap BackgroundAgentSnapshot) string {
+	if snap.Metadata == nil {
+		return ""
+	}
+	var fields []string
+	if workflowPath := strings.TrimSpace(snap.Metadata["workflow_path"]); workflowPath != "" {
+		fields = append(fields, "workflow="+workflowPath)
+	}
+	if groupName := strings.TrimSpace(snap.Metadata["group_name"]); groupName != "" {
+		fields = append(fields, "group="+groupName)
+	}
+	if stepID := strings.TrimSpace(snap.Metadata["step_id"]); stepID != "" {
+		fields = append(fields, "step="+stepID)
+	}
+	if len(fields) == 0 {
+		return ""
+	}
+	return " [" + strings.Join(fields, ", ") + "]"
+}
+
 // processBatchedBackgroundAgentCompletions builds a single [AUTO-NOTIFICATION] message for one or more
 // completed agents and fires ONE synthetic turn. Subsequent drained completions are chained via
 // the synthetic turn's own defer, avoiding concurrent StreamWithEvents calls.
@@ -7775,9 +7984,6 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 	// Single completion: use the normal individual path (simpler message).
 	if len(agentIDs) == 1 {
 		api.processBackgroundAgentCompletion(sessionID, agentIDs[0])
-		return
-	}
-	if api.delayBackgroundCompletionsForHumanPromptDraft(sessionID, agentIDs) {
 		return
 	}
 
@@ -7926,9 +8132,6 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	snap := agent.GetSnapshot()
 	if snap.Status == BGAgentCanceled {
 		log.Printf("[BG AGENT] Agent %s for session %s was canceled, suppressing synthetic turn", agentID, sessionID)
-		return
-	}
-	if api.delayBackgroundCompletionsForHumanPromptDraft(sessionID, []string{agentID}) {
 		return
 	}
 
@@ -8110,12 +8313,9 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 				return
 			}
 
-			// Drain queued completions only for still-active sessions (batched to avoid
-			// concurrent StreamWithEvents calls).
-			pending := api.drainPendingCompletions(sessionID)
-			if len(pending) > 0 {
-				go api.processBatchedBackgroundAgentCompletions(sessionID, pending)
-			}
+			// Drain queued auto-notifications only for still-active sessions (batched
+			// to avoid concurrent StreamWithEvents calls).
+			api.drainPendingAutoNotificationsAfterTurn(sessionID)
 		}()
 
 		// Stream the synthetic message through the stored agent
@@ -8749,12 +8949,17 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
 		defer cancel()
 		if err := llmproviders.SendClaudeCodeExperimentalInput(steerCtx, sessionID, req.Message); err == nil {
-			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
+			messageID := newSteerMessageID()
+			provider := string(runningAgent.GetProvider())
+			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, "sent_to_cli")
 			log.Printf("[STEER] Sent live message to Claude Code session %s: %.80s", sessionID, req.Message)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": true,
-				"message": "Steer message sent to coding agent",
+			json.NewEncoder(w).Encode(SteerMessageResponse{
+				Success:        true,
+				Message:        "Steer message sent to coding agent",
+				DeliveryStatus: "sent_to_cli",
+				Provider:       provider,
+				MessageID:      messageID,
 			})
 			return
 		} else {
@@ -8767,12 +8972,17 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
 		defer cancel()
 		if err := llmproviders.SendCodexCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
-			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
+			messageID := newSteerMessageID()
+			provider := string(runningAgent.GetProvider())
+			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, "sent_to_cli")
 			log.Printf("[STEER] Sent live message to Codex CLI session %s: %.80s", sessionID, req.Message)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": true,
-				"message": "Steer message sent to coding agent",
+			json.NewEncoder(w).Encode(SteerMessageResponse{
+				Success:        true,
+				Message:        "Steer message sent to coding agent",
+				DeliveryStatus: "sent_to_cli",
+				Provider:       provider,
+				MessageID:      messageID,
 			})
 			return
 		} else {
@@ -8785,12 +8995,17 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
 		defer cancel()
 		if err := llmproviders.SendGeminiCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
-			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
+			messageID := newSteerMessageID()
+			provider := string(runningAgent.GetProvider())
+			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, "sent_to_cli")
 			log.Printf("[STEER] Sent live message to Gemini CLI session %s: %.80s", sessionID, req.Message)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": true,
-				"message": "Steer message sent to coding agent",
+			json.NewEncoder(w).Encode(SteerMessageResponse{
+				Success:        true,
+				Message:        "Steer message sent to coding agent",
+				DeliveryStatus: "sent_to_cli",
+				Provider:       provider,
+				MessageID:      messageID,
 			})
 			return
 		} else {
@@ -8803,12 +9018,17 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
 		defer cancel()
 		if err := llmproviders.SendCursorCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
-			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
+			messageID := newSteerMessageID()
+			provider := string(runningAgent.GetProvider())
+			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, "sent_to_cli")
 			log.Printf("[STEER] Sent live message to Cursor CLI session %s: %.80s", sessionID, req.Message)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": true,
-				"message": "Steer message sent to coding agent",
+			json.NewEncoder(w).Encode(SteerMessageResponse{
+				Success:        true,
+				Message:        "Steer message sent to coding agent",
+				DeliveryStatus: "sent_to_cli",
+				Provider:       provider,
+				MessageID:      messageID,
 			})
 			return
 		} else {
@@ -8821,12 +9041,17 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
 		defer cancel()
 		if err := llmproviders.SendOpenCodeCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
-			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, string(runningAgent.GetProvider()))
+			messageID := newSteerMessageID()
+			provider := string(runningAgent.GetProvider())
+			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, "sent_to_cli")
 			log.Printf("[STEER] Sent live message to OpenCode CLI session %s: %.80s", sessionID, req.Message)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": true,
-				"message": "Steer message sent to coding agent",
+			json.NewEncoder(w).Encode(SteerMessageResponse{
+				Success:        true,
+				Message:        "Steer message sent to coding agent",
+				DeliveryStatus: "sent_to_cli",
+				Provider:       provider,
+				MessageID:      messageID,
 			})
 			return
 		} else {
@@ -8843,16 +9068,25 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 
 	// Inject the steer message into the agent's pending queue
 	runningAgent.AddSteerMessage(req.Message)
+	messageID := newSteerMessageID()
+	provider := string(runningAgent.GetProvider())
 	log.Printf("[STEER] Queued steer message for session %s: %.80s", sessionID, req.Message)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"message": "Steer message queued for injection",
+	json.NewEncoder(w).Encode(SteerMessageResponse{
+		Success:        true,
+		Message:        "Steer message queued for injection",
+		DeliveryStatus: "queued_for_injection",
+		Provider:       provider,
+		MessageID:      messageID,
 	})
 }
 
-func (api *StreamingAPI) recordLiveCodingAgentUserMessage(sessionID, message, provider string) {
+func newSteerMessageID() string {
+	return fmt.Sprintf("steer-message-%d", time.Now().UnixNano())
+}
+
+func (api *StreamingAPI) recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, deliveryStatus string) {
 	message = strings.TrimSpace(message)
 	if sessionID == "" || message == "" || api == nil || api.eventStore == nil {
 		return
@@ -8860,15 +9094,17 @@ func (api *StreamingAPI) recordLiveCodingAgentUserMessage(sessionID, message, pr
 
 	eventData := unifiedevents.NewUserMessageEvent(0, message, "user")
 	eventData.Metadata = map[string]interface{}{
-		"source":   "coding_agent_live_input",
-		"provider": provider,
+		"source":          "coding_agent_live_input",
+		"provider":        provider,
+		"message_id":      messageID,
+		"delivery_status": deliveryStatus,
 	}
 	agentEvent := unifiedevents.NewAgentEvent(eventData)
 	agentEvent.SessionID = sessionID
 	agentEvent.Component = "coding_agent_live_input"
 
 	event := events.Event{
-		ID:        fmt.Sprintf("coding-agent-user-message-%d", time.Now().UnixNano()),
+		ID:        messageID,
 		Type:      string(unifiedevents.UserMessageEventType),
 		Timestamp: time.Now(),
 		Data:      agentEvent,

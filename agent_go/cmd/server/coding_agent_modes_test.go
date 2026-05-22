@@ -173,7 +173,7 @@ func TestRecordLiveCodingAgentUserMessageCapturesVisibleEvent(t *testing.T) {
 			sub := store.Subscribe(sessionID)
 			defer store.Unsubscribe(sessionID, sub)
 
-			api.recordLiveCodingAgentUserMessage(sessionID, "show exact sequence item", string(tt.provider))
+			api.recordLiveCodingAgentUserMessage(sessionID, "show exact sequence item", string(tt.provider), "test-message-id", "sent_to_cli")
 
 			var delivered internalevents.Event
 			select {
@@ -258,5 +258,11 @@ func assertLiveCodingUserMessageEvent(t *testing.T, event internalevents.Event, 
 	}
 	if msg.Metadata["provider"] != provider {
 		t.Fatalf("metadata provider = %#v, want %q", msg.Metadata["provider"], provider)
+	}
+	if msg.Metadata["message_id"] != "test-message-id" {
+		t.Fatalf("metadata message_id = %#v, want test-message-id", msg.Metadata["message_id"])
+	}
+	if msg.Metadata["delivery_status"] != "sent_to_cli" {
+		t.Fatalf("metadata delivery_status = %#v, want sent_to_cli", msg.Metadata["delivery_status"])
 	}
 }

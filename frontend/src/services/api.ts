@@ -652,8 +652,14 @@ export const agentApi = {
     return response.data
   },
 
-  getTerminal: async (terminalId: string): Promise<TerminalSnapshot> => {
-    const response = await api.get(`/api/terminals/${encodeURIComponent(terminalId)}`)
+  getTerminal: async (
+    terminalId: string,
+    options?: { content?: 'stored' | 'deep' | 'tmux'; lines?: number },
+  ): Promise<TerminalSnapshot> => {
+    const params: Record<string, string | number> = {}
+    if (options?.content && options.content !== 'stored') params.content = options.content
+    if (options?.lines) params.lines = options.lines
+    const response = await api.get(`/api/terminals/${encodeURIComponent(terminalId)}`, { params })
     return response.data
   },
 
@@ -671,8 +677,10 @@ export const agentApi = {
     return response.data.terminal
   },
 
-  refreshTerminal: async (terminalId: string): Promise<TerminalSnapshot> => {
-    const response = await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/refresh`)
+  refreshTerminal: async (terminalId: string, options?: { lines?: number }): Promise<TerminalSnapshot> => {
+    const params: Record<string, number> = {}
+    if (options?.lines) params.lines = options.lines
+    const response = await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/refresh`, undefined, { params })
     return response.data.terminal
   },
 
@@ -880,7 +888,13 @@ export const agentApi = {
   },
 
   // Steer message - inject user message into running agent mid-execution
-  steerMessage: async (sessionId: string, message: string): Promise<{ success: boolean; message?: string }> => {
+  steerMessage: async (sessionId: string, message: string): Promise<{
+    success: boolean
+    message?: string
+    delivery_status?: 'sent_to_cli' | 'queued_for_injection'
+    provider?: string
+    message_id?: string
+  }> => {
     const response = await api.post(`/api/sessions/${sessionId}/steer`, { message }, {
       headers: { 'X-Session-ID': sessionId }
     })

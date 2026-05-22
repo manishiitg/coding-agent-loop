@@ -56,10 +56,24 @@ type BackgroundAgent struct {
 	Metadata          map[string]string     `json:"metadata,omitempty"` // arbitrary key-value pairs (e.g. workshop_mode, lock_code)
 	cancel            context.CancelFunc
 	mu                sync.RWMutex
+	startNotified     bool
 	notified          bool
 	getHistory        HistoryFunc      // returns last N conversation entries from the running sub-agent
 	toolCalls         []ToolCallRecord // tracked tool calls with timing
 	activeToolCall    map[string]int   // toolCallID → index in toolCalls (for matching start/end)
+}
+
+// MarkStartNotified records that the main agent has been notified about this
+// background agent starting. It returns false when the start notification was
+// already sent or queued and consumed.
+func (a *BackgroundAgent) MarkStartNotified() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.startNotified {
+		return false
+	}
+	a.startNotified = true
+	return true
 }
 
 // SetResult updates the agent result and status atomically

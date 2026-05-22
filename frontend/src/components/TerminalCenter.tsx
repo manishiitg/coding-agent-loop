@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Bug, Check, Copy, CornerDownLeft, GitBranch, Info, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
+import { AlertTriangle, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, Info, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useChatStore } from '../stores/useChatStore'
@@ -8,6 +8,10 @@ interface TerminalCenterProps {
   currentSessionId?: string
   compact?: boolean
 }
+
+const SELECTED_TERMINAL_HISTORY_LINES = 10000
+const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
+const INACTIVE_FALLBACK_SECONDS = 120
 
 interface RoutingRouteSummary {
   route_id?: string
@@ -257,11 +261,35 @@ function formatCost(cost: number): string {
   return '0'
 }
 
+function formatTerminalModelLabel(terminal: TerminalSnapshot): string {
+  const lines = (terminal.content || '')
+    .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+    .split(/\r?\n/)
+    .slice(0, 30)
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+
+  for (const line of lines) {
+    const explicit = line.match(/\bmodel:\s*([^·|]+?)(?:\s+\/model\b|\s*[·|]|$)/i)
+    if (explicit?.[1]) return explicit[1].trim()
+
+    const assignment = line.match(/\bmodel=([^\s·|]+)/i)
+    if (assignment?.[1]) return assignment[1].trim()
+
+    const claude = line.match(/\bClaude Code\s+v[\w.-]+.*?\s([A-Za-z]+(?:\s+\d+(?:\.\d+)?){1,2}(?:\s+with\s+[^·|]+)?)(?:\s+·\s+Claude Max|\s*[·|]|$)/i)
+    if (claude?.[1]) return claude[1].trim()
+  }
+
+  return ''
+}
+
 function formatTerminalMeta(terminal: TerminalSnapshot): string {
   const chip = formatTransportChip(terminal)
+  const modelLabel = formatTerminalModelLabel(terminal)
   const parts: string[] = [
     isArchivedTurnTerminal(terminal) ? 'Previous turn' : '',
     chip,
+    modelLabel,
     terminal.step_type ? humanizeIdentifier(terminal.step_type) : '',
     terminal.scope ? humanizeIdentifier(terminal.scope) : '',
   ]
@@ -302,6 +330,10 @@ function formatTerminalMeta(terminal: TerminalSnapshot): string {
   }
   if (terminal.display_meta) parts.push(terminal.display_meta)
   return [...new Set(parts.filter(Boolean))].join(' · ')
+}
+
+function formatSelectedTerminalMeta(terminal: TerminalSnapshot): string {
+  return [formatTerminalMeta(terminal), formatUpdatedAge(terminal)].filter(Boolean).join(' · ')
 }
 
 function terminalPreValidationSummary(terminal: TerminalSnapshot): string {
@@ -485,6 +517,38 @@ function formatUpdatedAge(terminal: TerminalSnapshot): string {
   if (minutes < 60) return `updated ${minutes}m ago`
   const hours = Math.floor(minutes / 60)
   return `updated ${hours}h ago`
+}
+
+function formatFallbackSeconds(seconds: number): string {
+  if (seconds <= 0) return 'now'
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const rem = seconds % 60
+  return rem ? `${minutes}m ${rem}s` : `${minutes}m`
+}
+
+function hasPromptCompletionFallbackText(content?: string): boolean {
+  if (!content) return false
+  return /status:\s*complete(d)?/i.test(content)
+}
+
+function terminalFallbackInfo(terminal: TerminalSnapshot): { label: string; title: string } | null {
+  if (!terminal.active || terminalState(terminal) !== 'running') return null
+  const updatedAt = terminalUpdatedTime(terminal)
+  if (!updatedAt) return null
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000))
+  const hasPromptFallback = hasPromptCompletionFallbackText(terminal.content)
+  const threshold = hasPromptFallback ? PROMPT_COMPLETION_FALLBACK_SECONDS : INACTIVE_FALLBACK_SECONDS
+  const remaining = Math.max(0, threshold - ageSeconds)
+  if (remaining > 30) return null
+  const rule = hasPromptFallback ? 'completion fallback' : 'idle fallback'
+  const label = remaining > 0
+    ? `${rule} in ${formatFallbackSeconds(remaining)}`
+    : `${rule} due`
+  const title = hasPromptFallback
+    ? `Backend will mark this terminal completed if the STATUS: COMPLETED fallback remains unchanged for ${formatFallbackSeconds(PROMPT_COMPLETION_FALLBACK_SECONDS)}.`
+    : `Backend will mark this terminal completed if the screen has no changes for ${formatFallbackSeconds(INACTIVE_FALLBACK_SECONDS)}.`
+  return { label, title }
 }
 
 // isMainAgentTerminal returns true for the persistent chat-session
@@ -674,7 +738,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
     <div
       ref={scrollRef}
       onScroll={onScroll}
-      className="flex-1 overflow-auto overscroll-contain p-2.5 font-mono text-[12px] leading-5"
+      className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-2.5 font-mono text-[12px] leading-5"
     >
       {rows.map((row, idx) => {
         switch (row.kind) {
@@ -983,7 +1047,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     if (!canSendTerminalDebugInput(terminal)) return
     setTerminalActionBusy('refresh')
     try {
-      const updated = await agentApi.refreshTerminal(terminal.terminal_id)
+      const updated = await agentApi.refreshTerminal(terminal.terminal_id, { lines: SELECTED_TERMINAL_HISTORY_LINES })
       applyTerminalSnapshotUpdate(updated)
       setError(null)
     } catch (err) {
@@ -1249,7 +1313,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     const requestSeq = detailRequestSeqRef.current + 1
     detailRequestSeqRef.current = requestSeq
     let cancelled = false
-    agentApi.getTerminal(selectedTerminal.terminal_id)
+    const detailOptions = selectedTerminal.tmux_session
+      ? { content: 'deep' as const, lines: SELECTED_TERMINAL_HISTORY_LINES }
+      : undefined
+    agentApi.getTerminal(selectedTerminal.terminal_id, detailOptions)
       .then(detail => {
         if (!cancelled && detailRequestSeqRef.current === requestSeq && terminalPaneKey(detail) === selectedTerminalKey) {
           setSelectedTerminalDetail(detail)
@@ -1364,38 +1431,6 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
             previous
           </span>
         )}
-        <button
-          type="button"
-          onClick={event => {
-            event.stopPropagation()
-            void copyTerminalDebug(terminal)
-          }}
-          className="shrink-0 rounded p-0.5 text-neutral-500 opacity-0 hover:bg-neutral-700 hover:text-neutral-100 group-hover:opacity-100"
-          title="Copy terminal debug IDs"
-          aria-label="Copy terminal debug IDs"
-        >
-          {copiedTerminalID === terminal.terminal_id ? (
-            <Check className="h-3 w-3 text-emerald-300" />
-          ) : (
-            <Info className="h-3 w-3" />
-          )}
-        </button>
-        {hasTerminalDebugActions(terminal) && (
-          <button
-            type="button"
-            onClick={event => {
-              event.stopPropagation()
-              toggleDebugPanel(terminal)
-            }}
-            className={`shrink-0 rounded p-0.5 opacity-0 hover:bg-neutral-700 hover:text-neutral-100 group-hover:opacity-100 ${
-              debugPanelOpenForID === terminalPaneKey(terminal) ? 'text-cyan-300 opacity-100' : 'text-neutral-500'
-            }`}
-            title="Debug terminal actions"
-            aria-label="Debug terminal actions"
-          >
-            <Bug className="h-3 w-3" />
-          </button>
-        )}
         {canDismissTerminal(terminal) && (
           <button
             type="button"
@@ -1415,6 +1450,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         <span className="min-w-0 truncate">{formatTransportChip(terminal)}</span>
         {terminalState(terminal) === 'closing' && (
           <span className="shrink-0 text-amber-300">· {terminalStateLabel(terminal)}</span>
+        )}
+        {terminalFallbackInfo(terminal) && (
+          <span className="shrink-0 text-amber-300" title={terminalFallbackInfo(terminal)?.title}>
+            · {terminalFallbackInfo(terminal)?.label}
+          </span>
         )}
       </div>
       {terminalPreValidationSummary(terminal) && (
@@ -1483,7 +1523,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 independently of the right pane so the user can navigate
                 a long list without losing the selected terminal's
                 content. Hidden below sm breakpoint to save space. */}
-            <div className="hidden w-60 shrink-0 flex-col overflow-y-auto border-r border-neutral-800 bg-[#0d0d0d] sm:flex">
+            <div className="hidden w-48 shrink-0 flex-col overflow-y-auto overflow-x-hidden border-r border-neutral-800 bg-[#0d0d0d] sm:flex">
               {groupedTerminals.tree.map(item => (
                 item.kind === 'route'
                   ? renderRouteRailItem(item.decision, item.depth)
@@ -1508,7 +1548,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                         </span>
                       )}
                       <span className="min-w-0 flex-1 truncate opacity-80">
-                        {[formatTerminalMeta(selectedTerminalView), formatUpdatedAge(selectedTerminalView)].filter(Boolean).join(' · ')}
+                        {formatSelectedTerminalMeta(selectedTerminalView)}
                       </span>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -1518,6 +1558,14 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                           title={terminalStateDescription(selectedTerminalView)}
                         >
                           {terminalStateLabel(selectedTerminalView)}
+                        </span>
+                      )}
+                      {terminalFallbackInfo(selectedTerminalView) && (
+                        <span
+                          className="rounded border border-amber-800/70 bg-amber-950/30 px-1.5 py-0.5 text-[10px] font-medium text-amber-200"
+                          title={terminalFallbackInfo(selectedTerminalView)?.title}
+                        >
+                          {terminalFallbackInfo(selectedTerminalView)?.label}
                         </span>
                       )}
                       <button
@@ -1595,8 +1643,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                           onClick={() => void refreshTerminalSnapshot(selectedTerminalView)}
                           disabled={terminalActionBusy === 'refresh'}
                           className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
-                          title="Capture current tmux pane now"
-                          aria-label="Capture current tmux pane now"
+                          title="Capture deeper tmux history now"
+                          aria-label="Capture deeper tmux history now"
                         >
                           <RefreshCw className="h-3.5 w-3.5" />
                         </button>
@@ -1680,11 +1728,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                             onClick={() => void sendTerminalDebugKey(selectedTerminalView, 'esc')}
                             disabled={terminalActionBusy === 'esc'}
                             className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
-                            title="Press Esc in tmux"
-                            aria-label="Press Esc in tmux"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
+                          title="Press Esc in tmux"
+                          aria-label="Press Esc in tmux"
+                        >
+                          <CornerUpLeft className="h-3.5 w-3.5" />
+                        </button>
                         </>
                       )}
                     </div>
@@ -1699,7 +1747,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                     <pre
                       ref={terminalOutputRef as React.RefObject<HTMLPreElement | null>}
                       onScroll={handleTerminalScroll}
-                      className="flex-1 overflow-auto overscroll-contain p-2.5 font-mono text-[12px] leading-5 text-gray-100 whitespace-pre"
+                      className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-2.5 font-mono text-[12px] leading-5 whitespace-pre-wrap break-words text-gray-100"
                     >
                       {selectedTerminalView.content}
                     </pre>

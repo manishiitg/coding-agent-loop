@@ -1696,6 +1696,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const selectedRouteDecision = selectedTerminalView?.step_id
     ? routingDecisionByNextStepID.get(selectedTerminalView.step_id)
     : undefined
+  const railSpinner = useSpinnerFrame(groupedTerminals.activeTerminals.length > 0)
 
   useEffect(() => {
     if (!selectedTerminal) {
@@ -1810,6 +1811,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const renderRailItem = (terminal: TerminalSnapshot, depth: number = 0) => (
     (() => {
       const preValidationChip = terminalPreValidationChip(terminal)
+      const state = terminalState(terminal)
+      const isRunning = state === 'running'
       return (
         <div
           key={terminalPaneKey(terminal)}
@@ -1860,6 +1863,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
             )}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[10px] opacity-70">
+            {isRunning && (
+              <span className="shrink-0 font-mono text-cyan-300/90" title="Terminal is running">
+                {railSpinner}
+              </span>
+            )}
             <span className="min-w-0 truncate">{formatTransportChip(terminal)}</span>
             {preValidationChip && (
               <span
@@ -1878,7 +1886,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 <History className="h-2.5 w-2.5" />
               </span>
             )}
-            {terminalState(terminal) === 'closing' && (
+            {state === 'closing' && (
               <span className="shrink-0 text-amber-300">· {terminalStateLabel(terminal)}</span>
             )}
             {terminalFallbackInfo(terminal) && (

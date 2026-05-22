@@ -393,10 +393,10 @@ func terminalStateFromContent(content string, active bool) string {
 	if terminalContentLooksBusy(content) {
 		return "running"
 	}
-	if terminalHasExplicitFailure(content) {
+	switch terminalLatestExplicitOutcome(content) {
+	case "failed":
 		return "failed"
-	}
-	if terminalHasExplicitCompletion(content) || terminalHasPromptCompletionFallback(content) {
+	case "completed":
 		return "completed"
 	}
 	return "completed"
@@ -494,8 +494,7 @@ func isProviderIdlePromptLine(provider, line string, hasExplicitCompletion bool)
 
 func terminalHasExplicitCompletion(content string) bool {
 	for _, lower := range terminalTailLines(content, 40) {
-		if strings.Contains(lower, "completed successfully") ||
-			isTerminalWorkedForLine(lower) {
+		if terminalLineIsCompletion(lower) {
 			return true
 		}
 	}
@@ -504,12 +503,35 @@ func terminalHasExplicitCompletion(content string) bool {
 
 func terminalHasPromptCompletionFallback(content string) bool {
 	for _, lower := range terminalTailLines(content, 40) {
-		if strings.Contains(lower, "status: completed") ||
-			strings.Contains(lower, "status: complete") {
+		if terminalLineIsPromptCompletion(lower) {
 			return true
 		}
 	}
 	return false
+}
+
+func terminalLatestExplicitOutcome(content string) string {
+	outcome := ""
+	for _, lower := range terminalTailLines(content, 80) {
+		if terminalLineIsFailure(lower) {
+			outcome = "failed"
+			continue
+		}
+		if terminalLineIsCompletion(lower) || terminalLineIsPromptCompletion(lower) {
+			outcome = "completed"
+		}
+	}
+	return outcome
+}
+
+func terminalLineIsCompletion(lower string) bool {
+	return strings.Contains(lower, "completed successfully") ||
+		isTerminalWorkedForLine(lower)
+}
+
+func terminalLineIsPromptCompletion(lower string) bool {
+	return strings.Contains(lower, "status: completed") ||
+		strings.Contains(lower, "status: complete")
 }
 
 func isTerminalWorkedForLine(lower string) bool {
@@ -525,16 +547,20 @@ func isTerminalWorkedForLine(lower string) bool {
 
 func terminalHasExplicitFailure(content string) bool {
 	for _, lower := range terminalTailLines(content, 80) {
-		if strings.Contains(lower, "status: failed") ||
-			strings.Contains(lower, "pre-validation failed") ||
-			strings.Contains(lower, "llm generation error") ||
-			strings.Contains(lower, "conversation error") ||
-			strings.Contains(lower, "agent error:") ||
-			strings.Contains(lower, " error details:") {
+		if terminalLineIsFailure(lower) {
 			return true
 		}
 	}
 	return false
+}
+
+func terminalLineIsFailure(lower string) bool {
+	return strings.Contains(lower, "status: failed") ||
+		strings.Contains(lower, "pre-validation failed") ||
+		strings.Contains(lower, "llm generation error") ||
+		strings.Contains(lower, "conversation error") ||
+		strings.Contains(lower, "agent error:") ||
+		strings.Contains(lower, " error details:")
 }
 
 func terminalTailLines(content string, maxLines int) []string {

@@ -1065,9 +1065,24 @@ workspace (/directory)                         sandbox                  /model
 	}
 }
 
-func TestStorePromptStatusDoesNotOverridePreviousFailureText(t *testing.T) {
+func TestStoreLaterCompletionOverridesRecoveredFailureText(t *testing.T) {
 	store := NewStore()
 	screen := "PRE-VALIDATION FAILED on retry 1\nRecovered and wrote cdp_status.json\nSTATUS: COMPLETED"
+	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", screen, 1))
+	store.HandleEvent("session-1", terminalEndEvent("exec-1", nil))
+
+	snapshot, ok := store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.State != "completed" {
+		t.Fatalf("state = %q, want completed", snapshot.State)
+	}
+}
+
+func TestStoreLaterFailureOverridesEarlierCompletionText(t *testing.T) {
+	store := NewStore()
+	screen := "STATUS: COMPLETED\nStarted post-validation\nPRE-VALIDATION FAILED on retry 2"
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", screen, 1))
 	store.HandleEvent("session-1", terminalEndEvent("exec-1", nil))
 

@@ -1554,15 +1554,17 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const selectedTerminalKey = selectedTerminal ? terminalPaneKey(selectedTerminal) : null
   const selectedTerminalView = useMemo(() => {
     if (!selectedTerminal) return null
-    // Prefer the detail fetch only when it's fresher than the polled
-    // snapshot — otherwise the polled content (now fetched with
-    // content='tail') always wins, so the synthetic terminal stays
-    // current as streaming_chunk events flow.
-    if (
-      selectedTerminalDetail &&
-      terminalPaneKey(selectedTerminalDetail) === selectedTerminalKey &&
-      selectedTerminalDetail.chunk_index >= selectedTerminal.chunk_index
-    ) {
+    // Synthetic terminals (gemini-cli structured, opencode-cli, API
+    // providers) always read from the polled snapshot — the rail poll
+    // now fetches content='tail' so its content field is current on
+    // every 600ms tick. The secondary detail fetch existed to grab
+    // deep tmux history; for synthetics it just races against the
+    // poll and freezes the view on whatever chunk_index it was
+    // when the fetch first landed.
+    if (isSyntheticTerminal(selectedTerminal)) {
+      return selectedTerminal
+    }
+    if (selectedTerminalDetail && terminalPaneKey(selectedTerminalDetail) === selectedTerminalKey) {
       return { ...selectedTerminal, content: selectedTerminalDetail.content }
     }
     return selectedTerminal

@@ -1282,10 +1282,14 @@ func RegisterRunFullEvaluationTool(
 // workflowProgressBridge wraps an existing event bridge and intercepts step completion
 // events to send progress notifications to the main workshop agent via bgAgentRegistry.
 type workflowProgressBridge struct {
-	inner    mcpagent.AgentEventListener
-	session  *WorkshopChatSession
-	logger   loggerv2.Logger
-	parentID string // parent execution ID for correlation
+	inner      mcpagent.AgentEventListener
+	session    *WorkshopChatSession
+	logger     loggerv2.Logger
+	parentID   string // parent execution ID for correlation
+	iteration  string
+	groupName  string
+	progressMu sync.Mutex
+	progressID map[string]string
 }
 
 func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseevents.AgentEvent) error {
@@ -1296,26 +1300,37 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 		}
 	}
 
-	// Intercept step completion events to send progress notifications
-	if event.Type == orchestrator_events.OrchestratorAgentEnd {
+	// Intercept step start/end events so the server-side bgAgentRegistry can
+	// notify the main workflow-builder agent while a full workflow runs.
+	switch event.Type {
+	case orchestrator_events.OrchestratorAgentStart:
+		if startEvent, ok := event.Data.(*orchestrator_events.OrchestratorAgentStartEvent); ok && workflowProgressTracksAgentType(startEvent.AgentType) {
+			execID := b.workflowProgressExecIDForStart(startEvent.AgentType, startEvent.AgentName, startEvent.StepIndex)
+			if b.session != nil && b.session.executionNotifier != nil {
+				b.session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: b.parentID,
+					Name:              workflowProgressDisplayName(startEvent.AgentName),
+				})
+			}
+		}
+	case orchestrator_events.OrchestratorAgentEnd:
 		if endEvent, ok := event.Data.(*orchestrator_events.OrchestratorAgentEndEvent); ok {
-			// Only track execution agent completions (not learning, validation, etc.).
-			// The original orchestrator_agent_end event is already forwarded above;
-			// do not also emit a synthetic unified completion for the same step.
 			agentType := endEvent.AgentType
-			if agentType == "todo_planner_execution" || agentType == "conditional" || agentType == "todo_task_orchestrator" {
+			if workflowProgressTracksAgentType(agentType) {
 				stepName := endEvent.AgentName
 				status := "completed"
 				result := endEvent.Result
+				var execErr error
 				if !endEvent.Success {
 					status = "failed"
 					if endEvent.Error != "" {
 						result = endEvent.Error
 					}
+					execErr = fmt.Errorf("%s", result)
 				}
 
-				// Register a progress notification in bgAgentRegistry
-				progressID := fmt.Sprintf("%s-step-%d-%d", b.parentID, endEvent.StepIndex, time.Now().UnixNano())
+				progressID, alreadyStarted := b.workflowProgressExecIDForEnd(agentType, stepName, endEvent.StepIndex)
 				progressExec := &WorkshopStepExecution{
 					ID:     progressID,
 					StepID: fmt.Sprintf("workflow-step-%s", stepName),
@@ -1324,9 +1339,32 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 				}
 				if !endEvent.Success {
 					progressExec.Status = WorkshopStepFailed
-					progressExec.Err = fmt.Errorf("%s", result)
+					progressExec.Err = execErr
 				}
 				b.session.StepRegistry.Register(progressExec)
+
+				if b.session != nil && b.session.executionNotifier != nil {
+					meta := map[string]string{
+						"execution_type": "workflow-step",
+						"step_name":      stepName,
+						"agent_type":     agentType,
+						"step_index":     fmt.Sprintf("%d", endEvent.StepIndex),
+					}
+					if b.iteration != "" {
+						meta["iteration"] = b.iteration
+					}
+					if b.groupName != "" {
+						meta["group_name"] = b.groupName
+					}
+					if !alreadyStarted {
+						b.session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+							ID:                progressID,
+							ParentExecutionID: b.parentID,
+							Name:              workflowProgressDisplayName(stepName),
+						})
+					}
+					b.session.executionNotifier.OnExecutionComplete(progressID, workflowProgressDisplayName(stepName), result, meta, execErr)
+				}
 
 				if b.logger != nil {
 					b.logger.Info(fmt.Sprintf("📊 [WORKFLOW_PROGRESS] Step %d '%s' %s", endEvent.StepIndex, stepName, status))
@@ -1336,6 +1374,63 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 	}
 
 	return nil
+}
+
+func workflowProgressTracksAgentType(agentType string) bool {
+	switch agentType {
+	case "todo_planner_execution", "conditional", "todo_task_orchestrator":
+		return true
+	default:
+		return false
+	}
+}
+
+func workflowProgressDisplayName(agentName string) string {
+	agentName = strings.TrimSpace(agentName)
+	if agentName == "" {
+		return "Workflow step"
+	}
+	return "Workflow step -> " + agentName
+}
+
+func workflowProgressKey(agentType, agentName string, stepIndex int) string {
+	return fmt.Sprintf("%s:%d:%s", strings.TrimSpace(agentType), stepIndex, strings.TrimSpace(agentName))
+}
+
+func (b *workflowProgressBridge) workflowProgressExecIDForStart(agentType, agentName string, stepIndex int) string {
+	if b == nil {
+		return fmt.Sprintf("workflow-step-%d-%d", stepIndex, time.Now().UnixNano())
+	}
+	key := workflowProgressKey(agentType, agentName, stepIndex)
+	b.progressMu.Lock()
+	defer b.progressMu.Unlock()
+	if b.progressID == nil {
+		b.progressID = make(map[string]string)
+	}
+	if id := b.progressID[key]; id != "" {
+		return id
+	}
+	id := fmt.Sprintf("%s-step-%d-%d", b.parentID, stepIndex, time.Now().UnixNano())
+	b.progressID[key] = id
+	return id
+}
+
+func (b *workflowProgressBridge) workflowProgressExecIDForEnd(agentType, agentName string, stepIndex int) (string, bool) {
+	if b == nil {
+		return fmt.Sprintf("workflow-step-%d-%d", stepIndex, time.Now().UnixNano()), false
+	}
+	key := workflowProgressKey(agentType, agentName, stepIndex)
+	b.progressMu.Lock()
+	defer b.progressMu.Unlock()
+	if b.progressID == nil {
+		b.progressID = make(map[string]string)
+	}
+	if id := b.progressID[key]; id != "" {
+		return id, true
+	}
+	id := fmt.Sprintf("%s-step-%d-%d", b.parentID, stepIndex, time.Now().UnixNano())
+	b.progressID[key] = id
+	return id, false
 }
 
 func (b *workflowProgressBridge) Name() string {
@@ -1564,10 +1659,14 @@ func RegisterRunFullWorkflowTool(
 
 				// Wrap event bridge with progress listener to send per-step notifications
 				progressBridge := &workflowProgressBridge{
-					inner:    cfg.EventBridge,
-					session:  session,
-					logger:   logger,
-					parentID: execID,
+					inner:     cfg.EventBridge,
+					session:   session,
+					logger:    logger,
+					parentID:  execID,
+					iteration: iteration,
+				}
+				if len(enabledGroupNames) > 0 {
+					progressBridge.groupName = enabledGroupNames[0]
 				}
 
 				workflowController, err := NewStepBasedWorkflowOrchestrator(

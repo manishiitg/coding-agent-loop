@@ -7199,7 +7199,24 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 		"agent_id": start.ID,
 		"name":     start.Name,
 	})
-	n.api.notifyBackgroundAgentStarted(n.sessionID, start.ID)
+	// Skip the chat [AUTO-NOTIFICATION] START for internal post-step phases.
+	if !isInternalPostStepExecutionID(start.ID) {
+		n.api.notifyBackgroundAgentStarted(n.sessionID, start.ID)
+	}
+}
+
+// isInternalPostStepExecutionID reports whether an execution ID belongs to a
+// post-step phase that always runs *after* a step completion which already
+// fired its own START + COMPLETION notifications. Emitting a second "started"
+// chat turn for these phases is pure noise, so OnExecutionStart suppresses it.
+// The COMPLETION notification still fires (OnExecutionComplete is unchanged)
+// so the operator knows when the post-step work finishes.
+//
+// ID prefixes are assigned at the launcher:
+//   - "learn-…"     → controller_learning.go startTrackedSuccessLearningPhase
+//   - "kb-update-…" → controller_kb_update.go maybeEnqueueKBUpdate
+func isInternalPostStepExecutionID(id string) bool {
+	return strings.HasPrefix(id, "learn-") || strings.HasPrefix(id, "kb-update-")
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result string, meta map[string]string, err error) {

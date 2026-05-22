@@ -179,6 +179,32 @@ func TestWorkflowStartAutoNotificationPayloadAndDrain(t *testing.T) {
 	}
 }
 
+// Pin which execution IDs are treated as internal post-step phases. Adding a
+// new phase that should skip the chat START notification means updating
+// isInternalPostStepExecutionID and adding its prefix here.
+func TestIsInternalPostStepExecutionID(t *testing.T) {
+	for _, id := range []string{
+		"learn-prepare-test-fixtures-12345",
+		"kb-update-prepare-test-fixtures-67890",
+	} {
+		if !isInternalPostStepExecutionID(id) {
+			t.Fatalf("expected %q to be classified as an internal post-step phase", id)
+		}
+	}
+	for _, id := range []string{
+		"exec-prepare-test-fixtures-1779452802932282000",
+		"flow-0001",
+		"todo-sub-step-route",
+		"learning-not-prefixed", // missing "-" sentinel
+		"kb-update", // bare keyword
+		"",
+	} {
+		if isInternalPostStepExecutionID(id) {
+			t.Fatalf("expected %q to be classified as a user-facing execution (not internal phase)", id)
+		}
+	}
+}
+
 // Pin the imperative "do not call tools" trailer on the start auto-notification.
 // Some agents (notably cursor-cli) interpret a softer "continue tracking …" as
 // permission to run a status-check tool, burning 30-60s of turn time before

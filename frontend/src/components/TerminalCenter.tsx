@@ -958,11 +958,11 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
   const isStreaming = !!terminal?.active && (terminal.state === 'running' || terminal.state === 'idle' || terminal.state === undefined)
   const spinner = useSpinnerFrame(isStreaming)
   return (
-    <div className="min-h-0 min-w-0 flex-1 flex flex-col overflow-hidden">
+    <div className="min-h-0 min-w-0 flex-1 flex flex-col overflow-hidden bg-[#0b0d0c]">
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-2.5 font-mono text-[12px] leading-5"
+        className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-2.5 font-mono text-[12px] leading-5 selection:bg-cyan-500/25"
       >
         {rows.map((row, idx) => {
           // Subtle divider between turns: a new banner (other than the first
@@ -972,7 +972,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
             case 'banner':
               return (
                 <div key={idx}>
-                  {showDivider && <div className="my-2 border-t border-dashed border-neutral-800/70" />}
+                  {showDivider && <div className="my-2 border-t border-dashed border-neutral-700/60" />}
                   <div className="text-cyan-300/90">
                     <span className="text-neutral-500">$ </span>{row.text}
                   </div>
@@ -986,27 +986,27 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
                 const isOpen = expanded.has(idx) || !longUserMessage
                 const preview = compactTerminalPreview(row.text)
                 return (
-                  <div key={idx} className="my-1 rounded border border-blue-900/60 bg-blue-950/30 px-2 py-1">
+                  <div key={idx} className="my-1 rounded border border-cyan-900/55 bg-cyan-950/15 px-2 py-1">
                     {longUserMessage ? (
                       <>
                         <button
                           type="button"
                           onClick={() => toggle(idx)}
-                          className="w-full text-left text-blue-200 hover:bg-blue-950/40 rounded px-0.5 -mx-0.5"
+                          className="w-full rounded px-0.5 -mx-0.5 text-left text-cyan-100 hover:bg-cyan-950/30"
                         >
-                          <span className="text-blue-400">&gt;</span>
+                          <span className="text-cyan-300">&gt;</span>
                           <span className="ml-1">{preview}</span>
-                          <span className="ml-1 text-blue-500/70">{isOpen ? '▾' : '▸'}</span>
+                          <span className="ml-1 text-cyan-500/70">{isOpen ? '▾' : '▸'}</span>
                         </button>
                         {isOpen && (
-                          <pre className="mt-1 ml-3 whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-blue-100">
+                          <pre className="mt-1 ml-3 whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-cyan-50">
                             {row.text}
                           </pre>
                         )}
                       </>
                     ) : (
-                      <div className="text-blue-100 whitespace-pre-wrap break-words">
-                        <span className="text-blue-400">&gt;</span> {row.text}
+                      <div className="text-cyan-50 whitespace-pre-wrap break-words">
+                        <span className="text-cyan-300">&gt;</span> {row.text}
                       </div>
                     )}
                   </div>
@@ -1014,7 +1014,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
               }
             case 'asst':
               return (
-                <div key={idx} className="my-1.5 pl-3 border-l border-neutral-800/80 text-[12.5px] leading-6">
+                <div key={idx} className="my-1.5 border-l border-neutral-700/70 pl-3 text-[12.5px] leading-6">
                   <TerminalAssistantMarkdown text={row.text} />
                 </div>
               )
@@ -1033,12 +1033,12 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
                   <button
                     type="button"
                     onClick={() => toggle(idx)}
-                    className="w-full text-left hover:bg-white/5 rounded px-0.5 -mx-0.5"
+                    className="w-full rounded px-0.5 -mx-0.5 text-left hover:bg-white/5"
                   >
                     <span className={statusColor}>
                       {hasResult ? (isError ? '✗' : '⏺') : '→'}
                     </span>
-                    <span className="text-amber-300 ml-1">{row.name}</span>
+                    <span className="text-amber-200 ml-1">{row.name}</span>
                     {row.args && (
                       <span className="text-neutral-400 ml-1" title={row.args}>
                         ({!isOpen ? compactTerminalPreview(row.args, TERMINAL_TOOL_ARGS_PREVIEW_CHARS) : row.args})
@@ -1088,7 +1088,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
           dur,
         ].filter(Boolean)
         return (
-          <div className="border-t border-neutral-800 px-3 py-1 text-[11px] font-mono text-neutral-500 flex items-center gap-2">
+          <div className="flex items-center gap-2 border-t border-neutral-700/70 bg-[#101211] px-3 py-1 font-mono text-[11px] text-neutral-500">
             <span className={isStreaming ? 'text-cyan-300/80' : 'text-neutral-600'}>{isStreaming ? spinner : '·'}</span>
             <span className="truncate">{segments.join('  ·  ')}</span>
           </div>
@@ -1764,7 +1764,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const renderRouteRailItem = (decision: RoutingDecision, depth: number = 0) => (
     <div
       key={`route-${decision.id}`}
-      className="group block w-full border-l-2 border-l-teal-500/70 bg-teal-950/20 py-1.5 pl-2.5 pr-2.5 text-left text-xs text-teal-100"
+      className="group block w-full border-l-2 border-l-cyan-400/70 bg-cyan-950/15 py-1.5 pl-2.5 pr-2.5 text-left text-xs text-cyan-100"
       title={routeDecisionTitle(decision)}
     >
       <div className="flex items-center gap-1.5">
@@ -1773,7 +1773,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
             {Array.from({ length: depth - 1 }, () => '│ ').join('')}└─→
           </span>
         )}
-        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-teal-500/20 text-teal-300">
+        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-cyan-400/15 text-cyan-300">
           <GitBranch className="h-3 w-3" />
         </span>
         <span className="min-w-0 flex-1 truncate font-semibold">
@@ -1789,14 +1789,14 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               return next
             })
           }}
-          className="shrink-0 rounded p-0.5 text-teal-300/50 opacity-0 hover:bg-teal-900/60 hover:text-teal-100 group-hover:opacity-100 focus:opacity-100"
+          className="shrink-0 rounded p-0.5 text-cyan-300/50 opacity-0 hover:bg-cyan-900/45 hover:text-cyan-100 group-hover:opacity-100 focus:opacity-100"
           title="Remove routing marker from UI"
           aria-label="Remove routing marker from UI"
         >
           <X className="h-3 w-3" />
         </button>
       </div>
-      <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-teal-300/75">
+      <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-cyan-300/75">
         <span className="min-w-0 truncate">
           {decision.nextStepId ? `next ${decision.nextStepId}` : decision.stepTitle || decision.stepId || 'route selected'}
         </span>
@@ -1828,8 +1828,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
           }}
           className={`group block w-full cursor-pointer border-l-2 py-1.5 pl-2.5 pr-2.5 text-left text-xs transition-colors ${
             terminalPaneKey(terminal) === selectedTerminalKey
-              ? 'border-l-blue-400 bg-neutral-800 text-neutral-100'
-              : 'border-l-transparent text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200'
+              ? 'border-l-emerald-300 bg-[#222826] text-neutral-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
+              : 'border-l-transparent text-neutral-400 hover:bg-[#1b1f1d] hover:text-neutral-200'
           }`}
         >
           <div className="flex items-center gap-1.5">
@@ -1851,7 +1851,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                   event.stopPropagation()
                   void dismissTerminal(terminal)
                 }}
-                className="shrink-0 rounded p-0.5 text-neutral-500 opacity-0 hover:bg-neutral-700 hover:text-neutral-100 group-hover:opacity-100"
+                className="shrink-0 rounded p-0.5 text-neutral-500 opacity-0 hover:bg-neutral-700/80 hover:text-neutral-100 group-hover:opacity-100"
                 title="Remove terminal from UI"
                 aria-label="Remove terminal from UI"
               >
@@ -1871,7 +1871,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
             )}
             {isArchivedTurnTerminal(terminal) && (
               <span
-                className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-neutral-700 text-neutral-500"
+                className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-neutral-700/80 text-neutral-500"
                 title="Previous turn"
                 aria-label="Previous turn"
               >
@@ -1893,26 +1893,26 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   )
 
   return (
-    <div className={`flex min-h-0 min-w-0 flex-col bg-[#202020] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
+    <div className={`flex min-h-0 min-w-0 flex-col bg-[#191a18] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {!hasConversationActivity ? (
           <div className="flex flex-1" />
         ) : (
           <>
         {error && (
-          <div className="rounded border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+          <div className="rounded border border-red-800/50 bg-red-950/20 px-3 py-2 text-xs text-red-200">
             {error}
           </div>
         )}
 
         {sessionErrorBanner.length > 0 && (
-          <div className="flex flex-col gap-1 border-b border-red-900/40 bg-red-950/20 px-3 py-2">
+          <div className="flex flex-col gap-1 border-b border-red-900/35 bg-red-950/15 px-3 py-2">
             {sessionErrorBanner.map(entry => {
               const isOpen = expandedErrorIDs.has(entry.id)
               return (
               <div key={entry.id} className="text-xs text-red-300">
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className="shrink-0 rounded bg-red-900/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-red-200">
+                  <span className="shrink-0 rounded bg-red-900/35 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-red-200">
                     {entry.type.replace(/_/g, ' ')}
                   </span>
                   <span className="min-w-0 flex-1 truncate leading-5" title={entry.message}>
@@ -1921,7 +1921,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                   <button
                     type="button"
                     onClick={() => toggleTerminalError(entry.id)}
-                    className="shrink-0 rounded border border-red-800/70 px-2 py-0.5 text-[10px] font-medium text-red-200 hover:bg-red-900/40"
+                    className="shrink-0 rounded border border-red-800/60 px-2 py-0.5 text-[10px] font-medium text-red-200 hover:bg-red-900/35"
                     aria-expanded={isOpen}
                   >
                     {isOpen ? 'Close' : 'Open'}
@@ -1929,7 +1929,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                   <button
                     type="button"
                     onClick={() => dismissTerminalError(entry.id)}
-                    className="shrink-0 rounded p-0.5 text-red-400/60 hover:bg-red-900/40 hover:text-red-200"
+                    className="shrink-0 rounded p-0.5 text-red-400/60 hover:bg-red-900/35 hover:text-red-200"
                     title="Dismiss"
                     aria-label="Dismiss error"
                   >
@@ -1937,7 +1937,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                   </button>
                 </div>
                 {isOpen && (
-                  <div className="mt-1 max-h-32 overflow-y-auto rounded border border-red-900/50 bg-red-950/40 p-2 font-mono text-[11px] leading-4 text-red-200">
+                  <div className="mt-1 max-h-32 overflow-y-auto rounded border border-red-900/45 bg-red-950/25 p-2 font-mono text-[11px] leading-4 text-red-200">
                     {entry.message}
                   </div>
                 )}
@@ -1965,12 +1965,12 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         )}
 
         {groupedTerminals.orderedTerminals.length > 0 && (
-          <div className="flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden border border-neutral-800 bg-[#111]">
+          <div className="flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden border border-neutral-700/70 bg-[#101211]">
             {/* Left rail — vertical list of all terminals. Scrolls
                 independently of the right pane so the user can navigate
                 a long list without losing the selected terminal's
                 content. Hidden below sm breakpoint to save space. */}
-            <div className="hidden w-48 shrink-0 flex-col overflow-y-auto overflow-x-hidden border-r border-neutral-800 bg-[#0d0d0d] sm:flex">
+            <div className="hidden w-48 shrink-0 flex-col overflow-y-auto overflow-x-hidden border-r border-neutral-700/70 bg-[#141615] sm:flex">
               {groupedTerminals.tree.map(item => (
                 item.kind === 'route'
                   ? renderRouteRailItem(item.decision, item.depth)
@@ -1983,11 +1983,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               {selectedTerminalView ? (
                 <>
-                  <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2 text-xs text-gray-400">
+                  <div className="flex items-center justify-between gap-3 border-b border-neutral-700/70 bg-[#171a18] px-3 py-2 text-xs text-neutral-400">
                     <div className="flex min-w-0 flex-1 items-center gap-2">
                       {selectedRouteDecision && (
                         <span
-                          className="inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded border border-teal-700/60 bg-teal-950/40 px-1.5 py-0.5 text-[10px] font-medium text-teal-200"
+                          className="inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded border border-cyan-700/60 bg-cyan-950/25 px-1.5 py-0.5 text-[10px] font-medium text-cyan-200"
                           title={routeDecisionTitle(selectedRouteDecision)}
                         >
                           <GitBranch className="h-3 w-3 shrink-0" />
@@ -2018,7 +2018,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       <button
                         type="button"
                         onClick={() => void copyTerminalDebug(selectedTerminalView)}
-                        className="inline-flex items-center justify-center rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-100"
+                        className="inline-flex items-center justify-center rounded p-1 text-neutral-500 hover:bg-neutral-800/80 hover:text-neutral-100"
                         title="Copy terminal debug IDs"
                         aria-label="Copy terminal debug IDs"
                       >
@@ -2032,10 +2032,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                         <button
                           type="button"
                           onClick={() => toggleDebugPanel(selectedTerminalView)}
-                          className={`inline-flex items-center justify-center rounded border p-1 hover:bg-neutral-800 hover:text-neutral-100 ${
+                          className={`inline-flex items-center justify-center rounded border p-1 hover:bg-neutral-800/80 hover:text-neutral-100 ${
                             debugPanelOpenForID === terminalPaneKey(selectedTerminalView)
-                              ? 'border-cyan-700 text-cyan-300'
-                              : 'border-neutral-700 text-neutral-300'
+                              ? 'border-cyan-700/80 text-cyan-300'
+                              : 'border-neutral-700/90 text-neutral-300'
                           }`}
                           title="Debug terminal actions"
                           aria-label="Debug terminal actions"
@@ -2047,7 +2047,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                         <button
                           type="button"
                           onClick={() => void dismissTerminal(selectedTerminalView)}
-                          className="inline-flex items-center justify-center rounded border border-neutral-700 p-1 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
+                          className="inline-flex items-center justify-center rounded border border-neutral-700/90 p-1 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100"
                           title="Remove terminal from UI"
                           aria-label="Remove terminal from UI"
                         >
@@ -2057,17 +2057,17 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                     </div>
                   </div>
                   {terminalPreValidationSummary(selectedTerminalView) && (
-                    <div className={`border-b border-white/10 bg-neutral-950/40 px-3 py-1.5 text-xs ${terminalPreValidationClass(selectedTerminalView)}`}>
+                    <div className={`border-b border-neutral-700/70 bg-[#151716] px-3 py-1.5 text-xs ${terminalPreValidationClass(selectedTerminalView)}`}>
                       {terminalPreValidationSummary(selectedTerminalView)}
                     </div>
                   )}
                   {debugPanelOpenForID === terminalPaneKey(selectedTerminalView) && hasTerminalDebugActions(selectedTerminalView) && (
-                    <div className="flex flex-wrap items-center gap-1.5 border-b border-white/10 bg-neutral-950/70 px-3 py-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-1.5 border-b border-neutral-700/70 bg-[#151716] px-3 py-2 text-xs">
                       <button
                         type="button"
                         onClick={() => void copyTerminalPaneText(selectedTerminalView)}
                         disabled={!selectedTerminalView.content}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700/90 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
                         title="Copy current pane text"
                         aria-label="Copy current pane text"
                       >
@@ -2077,7 +2077,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                         <button
                           type="button"
                           onClick={() => void copyTmuxAttachCommand(selectedTerminalView)}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700/90 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100"
                           title="Copy tmux attach command"
                           aria-label="Copy tmux attach command"
                         >
@@ -2089,7 +2089,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                           type="button"
                           onClick={() => void refreshTerminalSnapshot(selectedTerminalView)}
                           disabled={terminalActionBusy === 'refresh'}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700/90 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
                           title="Capture deeper tmux history now"
                           aria-label="Capture deeper tmux history now"
                         >
@@ -2101,7 +2101,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                           type="button"
                           onClick={() => void forceCompleteTerminal(selectedTerminalView)}
                           disabled={terminalActionBusy === 'complete'}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700/90 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
                           title="Mark terminal complete in UI"
                           aria-label="Mark terminal complete in UI"
                         >
@@ -2112,7 +2112,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                         type="button"
                         onClick={() => void forceFailTerminal(selectedTerminalView)}
                         disabled={terminalActionBusy === 'fail'}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700/90 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
                         title="Mark terminal failed in UI"
                         aria-label="Mark terminal failed in UI"
                       >
@@ -2123,7 +2123,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                           type="button"
                           onClick={() => void killTerminalSession(selectedTerminalView)}
                           disabled={terminalActionBusy === 'kill'}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-900/70 text-red-300 hover:bg-red-950/40 hover:text-red-100 disabled:cursor-wait disabled:opacity-50"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-900/65 text-red-300 hover:bg-red-950/35 hover:text-red-100 disabled:cursor-wait disabled:opacity-50"
                           title="Kill backing tmux session"
                           aria-label="Kill backing tmux session"
                         >
@@ -2142,13 +2142,13 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                               }
                             }}
                             placeholder="Debug paste to this tmux terminal"
-                            className="min-w-[220px] flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-neutral-100 placeholder:text-neutral-600 focus:border-cyan-600 focus:outline-none"
+                            className="min-w-[220px] flex-1 rounded border border-neutral-700/90 bg-[#101211] px-2 py-1.5 text-neutral-100 placeholder:text-neutral-600 focus:border-cyan-500/80 focus:outline-none"
                           />
                           <button
                             type="button"
                             onClick={() => void sendTerminalDebugInput(selectedTerminalView, false)}
                             disabled={debugInput.length === 0 || terminalActionBusy === 'paste'}
-                            className="inline-flex items-center justify-center rounded border border-neutral-700 p-1.5 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="inline-flex items-center justify-center rounded border border-neutral-700/90 p-1.5 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
                             title="Paste text into tmux"
                             aria-label="Paste text into tmux"
                           >
@@ -2164,7 +2164,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                               }
                             }}
                             disabled={debugInput.length > 0 ? terminalActionBusy === 'paste-enter' : terminalActionBusy === 'enter'}
-                            className="inline-flex items-center justify-center rounded border border-neutral-700 p-1.5 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="inline-flex items-center justify-center rounded border border-neutral-700/90 p-1.5 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
                             title={debugInput.length > 0 ? 'Paste text and press Enter' : 'Press Enter in tmux'}
                             aria-label={debugInput.length > 0 ? 'Paste text and press Enter' : 'Press Enter in tmux'}
                           >
@@ -2174,7 +2174,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                             type="button"
                             onClick={() => void sendTerminalDebugKey(selectedTerminalView, 'esc')}
                             disabled={terminalActionBusy === 'esc'}
-                            className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700/90 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
                           title="Press Esc in tmux"
                           aria-label="Press Esc in tmux"
                         >
@@ -2195,7 +2195,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                     <pre
                       ref={terminalOutputRef as React.RefObject<HTMLPreElement | null>}
                       onScroll={handleTerminalScroll}
-                      className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-2.5 font-mono text-[12px] leading-5 whitespace-pre-wrap break-words text-gray-100"
+                      className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-[#0b0d0c] p-2.5 font-mono text-[12px] leading-5 whitespace-pre-wrap break-words text-neutral-100 selection:bg-cyan-500/25"
                     >
                       {selectedTerminalDisplayContent}
                     </pre>

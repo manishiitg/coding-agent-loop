@@ -528,6 +528,22 @@ type SteerMessageResponse struct {
 	MessageID      string `json:"message_id,omitempty"`
 }
 
+// ControlKeyRequest carries a tmux control key (e.g. "Escape") to inject into
+// a running coding-agent session.
+type ControlKeyRequest struct {
+	Key string `json:"key"`
+}
+
+// ControlKeyResponse mirrors the steer response shape for ergonomic frontend
+// consumption — same delivery/provider fields the live-input UX already
+// renders.
+type ControlKeyResponse struct {
+	Success  bool   `json:"success"`
+	Message  string `json:"message,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	Key      string `json:"key,omitempty"`
+}
+
 const liveCodingAgentSteerTimeout = 15 * time.Second
 
 // HumanFeedbackRequest represents a request to submit human feedback
@@ -1084,6 +1100,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Steer message API route - inject user message mid-execution
 	apiRouter.HandleFunc("/sessions/{session_id}/steer", api.handleSteerMessage).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/sessions/{session_id}/control", api.handleControlKey).Methods("POST", "OPTIONS")
 
 	// Context Summarization API routes
 	apiRouter.HandleFunc("/sessions/{session_id}/summarize", api.handleSummarizeConversation).Methods("POST", "OPTIONS")
@@ -8987,6 +9004,78 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 
 func newSteerMessageID() string {
 	return fmt.Sprintf("steer-message-%d", time.Now().UnixNano())
+}
+
+// handleControlKey injects a tmux control key (e.g. "Escape") into a running
+// coding-agent session. Used by the chat UI to route ESC keystrokes to the
+// foreground CLI pane instead of cancelling the agent's Go context.
+func (api *StreamingAPI) handleControlKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	vars := mux.Vars(r)
+	sessionID := vars["session_id"]
+	if sessionID == "" {
+		http.Error(w, "Session ID is required", http.StatusBadRequest)
+		return
+	}
+
+	var req ControlKeyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+	key := strings.TrimSpace(req.Key)
+	if key == "" {
+		http.Error(w, "Key is required", http.StatusBadRequest)
+		return
+	}
+	if !llm.IsAllowedCodingAgentControlKey(key) {
+		http.Error(w, fmt.Sprintf("Key %q is not allowed", key), http.StatusBadRequest)
+		return
+	}
+
+	api.runningAgentsMux.RLock()
+	runningAgent, exists := api.runningAgents[sessionID]
+	api.runningAgentsMux.RUnlock()
+
+	if !exists || runningAgent == nil {
+		http.Error(w, "No running agent for this session", http.StatusNotFound)
+		return
+	}
+
+	if err := r.Context().Err(); err != nil {
+		log.Printf("[CONTROL] Request canceled before delivery for session %s: %v", sessionID, err)
+		return
+	}
+
+	ctlCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
+	defer cancel()
+	result, err := runningAgent.DeliverControlKey(ctlCtx, mcpagent.ControlKeyDeliveryRequest{
+		SessionID: sessionID,
+		Key:       key,
+	})
+	if err != nil {
+		log.Printf("[CONTROL] Control key %q unavailable for provider %s session %s: %v", key, runningAgent.GetProvider(), sessionID, err)
+		http.Error(w, fmt.Sprintf("Control key unavailable: %v", err), http.StatusConflict)
+		return
+	}
+
+	provider := string(result.Provider)
+	if provider == "" {
+		provider = string(runningAgent.GetProvider())
+	}
+	log.Printf("[CONTROL] Delivered control key %q to provider %s session %s", key, provider, sessionID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ControlKeyResponse{
+		Success:  true,
+		Message:  "Control key delivered",
+		Provider: provider,
+		Key:      key,
+	})
 }
 
 func (api *StreamingAPI) recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, deliveryStatus string) {

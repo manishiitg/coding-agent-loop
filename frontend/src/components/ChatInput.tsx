@@ -1965,6 +1965,32 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return true
   }, [activeTabId, addToast, canSteer, clearInputState, effectiveProviderForSteer, isStreaming, queueStreamingMessage, scheduleLiveMessageDeliveryClear, supportsLiveCodingAgentInput, tabSessionId])
 
+  // Route ESC to the tmux pane when a live coding-agent CLI is running.
+  // Returns true if the key was delivered to the CLI; false (or thrown) means
+  // the caller should fall back to onStopStreaming() to cancel the agent
+  // context the old way.
+  const escSentinelRef = useRef(false)
+  const sendLiveCodingAgentControlKey = useCallback(async (key: string): Promise<boolean> => {
+    if (!isStreaming || !supportsLiveCodingAgentInput || !canSteer || !tabSessionId) return false
+    if (escSentinelRef.current) return true // debounce rapid double-presses
+    escSentinelRef.current = true
+    setTimeout(() => { escSentinelRef.current = false }, 250)
+    try {
+      await agentApi.sendControlKey(tabSessionId, key)
+      addToast(`Sent ${key} to ${effectiveProviderForSteer || 'CLI'} — Stop button ends the session`, 'info')
+      return true
+    } catch (err) {
+      const status = getHttpErrorStatus(err)
+      if (isLiveCodingSessionGoneStatus(status)) {
+        if (activeTabId) {
+          const chatStore = useChatStore.getState()
+          chatStore.setTabCanSteer(activeTabId, false)
+        }
+      }
+      return false
+    }
+  }, [activeTabId, addToast, canSteer, effectiveProviderForSteer, isStreaming, supportsLiveCodingAgentInput, tabSessionId])
+
   const ensureMultiAgentTabReady = useCallback(async (): Promise<boolean> => {
     if (!isMultiAgentMode || showWorkflowsOverview) return false
 
@@ -2630,10 +2656,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
 
-    // Handle Escape key to stop streaming (when no dialogs are open)
+    // Handle Escape key when streaming. For tmux-transport CLI providers
+    // (claude-code, gemini-cli, codex-cli, cursor-cli) ESC is forwarded into
+    // the CLI's own tmux pane so the CLI interrupts its current turn but the
+    // session stays alive — matching the native CLI UX. For non-tmux
+    // transports (opencode-cli structured, API providers) it falls back to
+    // cancelling the agent context as before. The toolbar Stop button is the
+    // unconditional escape hatch.
     if (e.key === 'Escape' && isStreaming) {
       e.preventDefault()
-      onStopStreaming()
+      if (supportsLiveCodingAgentInput && canSteer && tabSessionId) {
+        void sendLiveCodingAgentControlKey('Escape').then((delivered) => {
+          if (!delivered) onStopStreaming()
+        })
+      } else {
+        onStopStreaming()
+      }
       return
     }
 
@@ -2684,7 +2722,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentMessage, queueStreamingMessage, getSubmitBlockReason, addToast])
+  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentMessage, sendLiveCodingAgentControlKey, queueStreamingMessage, getSubmitBlockReason, addToast])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()

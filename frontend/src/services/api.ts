@@ -901,6 +901,22 @@ export const agentApi = {
     return response.data
   },
 
+  // Send a tmux control key (e.g. "Escape") to a running coding-agent session.
+  // Only valid when the provider transport supports live input (claude-code,
+  // gemini-cli, codex-cli, cursor-cli). Used to route ESC keystrokes to the
+  // foreground CLI pane instead of cancelling the agent context.
+  sendControlKey: async (sessionId: string, key: string): Promise<{
+    success: boolean
+    message?: string
+    provider?: string
+    key?: string
+  }> => {
+    const response = await api.post(`/api/sessions/${sessionId}/control`, { key }, {
+      headers: { 'X-Session-ID': sessionId }
+    })
+    return response.data
+  },
+
   // Context Summarization Management
   // Summarize conversation history for a session
   summarizeConversation: async (sessionId: string, request?: SummarizeConversationRequest): Promise<SummarizeConversationResponse> => {

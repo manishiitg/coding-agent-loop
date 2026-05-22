@@ -135,3 +135,56 @@ func TestWorkflowProgressBridgeNotifiesCompletionWithoutStart(t *testing.T) {
 		t.Fatal("expected failure error")
 	}
 }
+
+func TestWorkflowProgressBridgeNotifiesExecutionPhaseCompletionBeforeEvaluation(t *testing.T) {
+	notifier := &recordingExecutionNotifier{}
+	session := &WorkshopChatSession{
+		StepRegistry:      NewWorkshopStepRegistry(),
+		executionNotifier: notifier,
+	}
+	bridge := &workflowProgressBridge{
+		session:   session,
+		parentID:  "workflow-full-123",
+		iteration: "iteration-0",
+	}
+
+	end := &baseevents.AgentEvent{
+		Type:      orchestrator_events.BatchGroupEnd,
+		Timestamp: time.Now(),
+		Data: &orchestrator_events.BatchGroupEndEvent{
+			GroupName:      "job-search",
+			GroupIndex:     0,
+			TotalGroups:    1,
+			Success:        true,
+			Duration:       90 * time.Second,
+			CompletedSteps: 4,
+			TotalSteps:     4,
+			RunFolder:      "iteration-0/job-search",
+		},
+	}
+	if err := bridge.HandleEvent(context.Background(), end); err != nil {
+		t.Fatalf("batch group end HandleEvent failed: %v", err)
+	}
+
+	if len(notifier.starts) != 1 {
+		t.Fatalf("expected one synthesized execution-phase start, got %d", len(notifier.starts))
+	}
+	if len(notifier.completes) != 1 {
+		t.Fatalf("expected one execution-phase completion, got %d", len(notifier.completes))
+	}
+	if got := notifier.completes[0].meta["execution_type"]; got != "workflow-execution-phase" {
+		t.Fatalf("execution_type = %q, want workflow-execution-phase", got)
+	}
+	if got := notifier.completes[0].meta["next_phase"]; got != "auto-evaluation" {
+		t.Fatalf("next_phase = %q, want auto-evaluation", got)
+	}
+	if got := notifier.completes[0].meta["group_name"]; got != "job-search" {
+		t.Fatalf("group_name = %q, want job-search", got)
+	}
+	if notifier.completes[0].err != nil {
+		t.Fatalf("unexpected completion error: %v", notifier.completes[0].err)
+	}
+	if exec := session.StepRegistry.Get(notifier.completes[0].id); exec == nil {
+		t.Fatal("expected execution-phase progress execution to be registered")
+	}
+}

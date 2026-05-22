@@ -395,12 +395,7 @@ func modelNameForProviderModel(provider, modelID string) string {
 }
 
 func discoveryCandidateKind(provider string) string {
-	switch provider {
-	case "codex-cli", "cursor-cli", "opencode-cli", "claude-code", "gemini-cli":
-		return "local_cli"
-	default:
-		return "api"
-	}
+	return providerKind(provider)
 }
 
 func discoveryModelOptions(provider string) []string {

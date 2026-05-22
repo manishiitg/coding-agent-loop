@@ -14,6 +14,8 @@ import (
 	llm "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/utils"
+
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 // providerManifestEntry is the per-provider metadata returned by the manifest endpoint.
@@ -204,12 +206,10 @@ func providerModelSelectionMode(provider string) string {
 }
 
 func providerKind(provider string) string {
-	switch provider {
-	case "codex-cli", "cursor-cli", "opencode-cli", "claude-code", "gemini-cli":
+	if common.IsCLIProvider(provider) {
 		return "local_cli"
-	default:
-		return "api"
 	}
+	return "api"
 }
 
 // handleGetProviderManifest returns the full provider manifest for the frontend.

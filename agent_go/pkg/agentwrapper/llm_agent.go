@@ -44,12 +44,7 @@ func providerUsesNativeContextManagement(provider llm.Provider) bool {
 }
 
 func providerNeedsPlainTextHistory(provider llm.Provider) bool {
-	switch strings.ToLower(strings.TrimSpace(string(provider))) {
-	case "claude-code", "gemini-cli", "codex-cli", "cursor-cli":
-		return true
-	default:
-		return false
-	}
+	return common.IsCLIProvider(string(provider))
 }
 
 func sanitizeHistoryForPlainTextProvider(messages []llmtypes.MessageContent) []llmtypes.MessageContent {

@@ -1371,9 +1371,73 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 				}
 			}
 		}
+	case orchestrator_events.BatchGroupEnd:
+		if groupEnd, ok := event.Data.(*orchestrator_events.BatchGroupEndEvent); ok {
+			b.notifyWorkflowExecutionPhaseComplete(groupEnd)
+		}
 	}
 
 	return nil
+}
+
+func (b *workflowProgressBridge) notifyWorkflowExecutionPhaseComplete(groupEnd *orchestrator_events.BatchGroupEndEvent) {
+	if b == nil || b.session == nil || b.session.executionNotifier == nil || groupEnd == nil {
+		return
+	}
+	status := "completed"
+	result := fmt.Sprintf("Workflow execution phase completed for group %q. Completed %d/%d steps in %s. Auto-evaluation may start next if enabled.", groupEnd.GroupName, groupEnd.CompletedSteps, groupEnd.TotalSteps, groupEnd.Duration.Round(time.Second))
+	var execErr error
+	if !groupEnd.Success {
+		status = "failed"
+		result = strings.TrimSpace(groupEnd.Error)
+		if result == "" {
+			result = fmt.Sprintf("Workflow execution phase failed for group %q.", groupEnd.GroupName)
+		}
+		execErr = fmt.Errorf("%s", result)
+	}
+
+	execID := fmt.Sprintf("%s-execution-phase-%d-%d", b.parentID, groupEnd.GroupIndex, time.Now().UnixNano())
+	name := "Workflow execution phase"
+	if strings.TrimSpace(groupEnd.GroupName) != "" {
+		name = fmt.Sprintf("Workflow execution phase -> %s", groupEnd.GroupName)
+	}
+	meta := map[string]string{
+		"execution_type":  "workflow-execution-phase",
+		"group_name":      groupEnd.GroupName,
+		"group_index":     fmt.Sprintf("%d", groupEnd.GroupIndex),
+		"total_groups":    fmt.Sprintf("%d", groupEnd.TotalGroups),
+		"run_folder":      groupEnd.RunFolder,
+		"completed_steps": fmt.Sprintf("%d", groupEnd.CompletedSteps),
+		"total_steps":     fmt.Sprintf("%d", groupEnd.TotalSteps),
+		"status":          status,
+	}
+	if groupEnd.Success {
+		meta["next_phase"] = "auto-evaluation"
+	}
+	if b.iteration != "" {
+		meta["iteration"] = b.iteration
+	}
+
+	if b.session.StepRegistry != nil {
+		progressExec := &WorkshopStepExecution{
+			ID:     execID,
+			StepID: fmt.Sprintf("workflow-execution-phase-%s", groupEnd.GroupName),
+			Status: WorkshopStepDone,
+			Result: result,
+		}
+		if !groupEnd.Success {
+			progressExec.Status = WorkshopStepFailed
+			progressExec.Err = execErr
+		}
+		b.session.StepRegistry.Register(progressExec)
+	}
+
+	b.session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+		ID:                execID,
+		ParentExecutionID: b.parentID,
+		Name:              name,
+	})
+	b.session.executionNotifier.OnExecutionComplete(execID, name, result, meta, execErr)
 }
 
 func workflowProgressTracksAgentType(agentType string) bool {

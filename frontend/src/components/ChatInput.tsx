@@ -918,12 +918,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     workflowPhasePreset?.llmConfig?.phase_llm?.provider,
     workflowPhasePreset?.llmConfig?.provider,
   ])
+  // All CLI agent runtimes (use tmux or structured transport)
   const isCLIProvider = useMemo(
     () => effectiveProviderForSteer === 'claude-code' || effectiveProviderForSteer === 'gemini-cli' || effectiveProviderForSteer === 'codex-cli' || effectiveProviderForSteer === 'cursor-cli' || effectiveProviderForSteer === 'opencode-cli',
     [effectiveProviderForSteer]
   )
+  // Only tmux-based CLI providers support live keyboard input during a running turn.
+  // opencode-cli uses structured (--print) transport, so SupportsLiveInput=false in the
+  // backend contract — exclude it here to match.
   const supportsLiveCodingAgentInput = useMemo(
-    () => effectiveProviderForSteer === 'claude-code' || effectiveProviderForSteer === 'gemini-cli' || effectiveProviderForSteer === 'codex-cli' || effectiveProviderForSteer === 'cursor-cli' || effectiveProviderForSteer === 'opencode-cli',
+    () => effectiveProviderForSteer === 'claude-code' || effectiveProviderForSteer === 'gemini-cli' || effectiveProviderForSteer === 'codex-cli' || effectiveProviderForSteer === 'cursor-cli',
     [effectiveProviderForSteer]
   )
   const canShowSteer = useMemo(() => canSteer && !isCLIProvider, [canSteer, isCLIProvider])

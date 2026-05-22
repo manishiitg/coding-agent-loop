@@ -1409,3 +1409,373 @@ func TestDeriveStatusKeepsCodexConservative(t *testing.T) {
 		t.Fatalf("tool summary = %q", status.ToolSummary)
 	}
 }
+
+// Live-pane fixtures captured from a real Cursor Agent tmux session
+// (mlp-cursor-cli-int-…). Used by the cursor completion-detection tests below.
+
+const cursorIdlePaneFixture = `  Cursor Agent
+  v2026.05.20-2b5dd59
+  Use /mcp to connect Cursor to your tools and data sources.
+
+
+  User: which workflows are there
+
+
+  Here are the workflows: alpha, beta, gamma.
+
+
+  → Add a follow-up
+
+
+  Ask (shift+tab to cycle)
+  Composer 2.5 · 15.8%                                                                                                                                Auto-run
+  ~/ai-work/mcp-agent-builder-go/workspace-docs/_users/default/Chats · main`
+
+const cursorBusyPaneFixture = `  Cursor Agent
+  v2026.05.20-2b5dd59
+  Use /mcp to connect Cursor to your tools and data sources.
+
+
+  User: which workflows are there
+
+
+ ⠰⠰ Composing  1.87k tokens
+    Tip: Use /mcp to connect Cursor to your tools and data sources.
+
+
+  → Add a follow-up                                                                                                                             ctrl+c to stop
+
+
+  Ask (shift+tab to cycle)
+  Composer 2.5 · 15.3%                                                                                                                                Auto-run
+  ~/ai-work/mcp-agent-builder-go/workspace-docs/_users/default/Chats · main`
+
+func TestProviderLabelDetectsCursor(t *testing.T) {
+	// Metadata path.
+	if got := providerLabel("", map[string]interface{}{"provider": "cursor-cli"}); got != "Cursor CLI" {
+		t.Fatalf("metadata provider=cursor-cli → %q, want %q", got, "Cursor CLI")
+	}
+	// Content fallback path (no metadata).
+	if got := providerLabel(cursorIdlePaneFixture, nil); got != "Cursor CLI" {
+		t.Fatalf("content fallback → %q, want %q", got, "Cursor CLI")
+	}
+}
+
+// Reproduces the root cause of terminal 669ff3d0…: when Cursor returns to its
+// input prompt, the busy detector must not fire and the idle detector MUST
+// fire — otherwise completion only happens via the 2-minute stability timeout.
+func TestCursorIdlePaneIsDetectedAsIdleNotBusy(t *testing.T) {
+	if terminalContentLooksBusy(cursorIdlePaneFixture) {
+		t.Fatalf("idle cursor pane should not look busy")
+	}
+	if !terminalContentLooksIdle(cursorIdlePaneFixture) {
+		t.Fatalf("idle cursor pane should be detected as idle (was: not idle)")
+	}
+}
+
+// Reproduces the opposite half: while Cursor is still composing, the pane
+// must look busy so we don't prematurely mark the terminal completed.
+func TestCursorBusyPaneIsDetectedAsBusy(t *testing.T) {
+	if !terminalContentLooksBusy(cursorBusyPaneFixture) {
+		t.Fatalf("busy cursor pane (Composing + ctrl+c to stop) should look busy")
+	}
+	if terminalContentLooksIdle(cursorBusyPaneFixture) {
+		t.Fatalf("busy cursor pane should not be detected as idle")
+	}
+}
+
+func TestDeriveStatusLabelsCursor(t *testing.T) {
+	status := DeriveStatus(cursorBusyPaneFixture, map[string]interface{}{"provider": "cursor-cli"})
+	if status.ProviderLabel != "Cursor CLI" {
+		t.Fatalf("provider = %q", status.ProviderLabel)
+	}
+	if status.StatusText != "Cursor CLI is working" {
+		t.Fatalf("status text = %q (want fallback %q)", status.StatusText, "Cursor CLI is working")
+	}
+}
+
+// Cursor's workspace-trust modal: pane LOOKS settled (no spinner, "Ask
+// (shift+tab to cycle)" is visible) but the agent is actually blocked. Must
+// NOT be marked idle — otherwise the 2-min timeout would wrongly mark the
+// terminal completed while the operator is being asked to accept the modal.
+func TestCursorTrustPromptIsNotIdle(t *testing.T) {
+	pane := `  Cursor Agent
+  v2026.05.20-2b5dd59
+
+  ⚠ Workspace Trust Required
+  This will also enable the MCP servers configured for this workspace.
+  Do you trust the contents of this directory?
+  /tmp/workspace
+  [a] Trust this workspace
+  [w] Trust this workspace, but don't enable all MCP servers
+  [q] Quit
+
+
+  → Plan, search, build anything
+
+
+  Ask (shift+tab to cycle)`
+
+	if terminalContentLooksIdle(pane) {
+		t.Fatalf("trust prompt must not be treated as idle (would let timeout mark terminal completed)")
+	}
+	if !terminalContentHasBlockingModal(pane) {
+		t.Fatalf("trust prompt must register as a blocking modal")
+	}
+}
+
+// A Claude/Gemini pane that happens to mention "cursor agent" in prose must
+// NOT be misclassified as Cursor — otherwise downstream Cursor-specific filters
+// would corrupt the preview and idle detection for the wrong provider.
+func TestProviderLabelIgnoresCasualCursorMentions(t *testing.T) {
+	pane := `╭─── Claude Code v2.1.143 ───╮
+⏺ To debug this you can open in the Cursor agent — paste the file path.
+❯`
+	if got := providerLabel(pane, nil); got != "Claude Code" {
+		t.Fatalf("pane should stay classified as Claude Code, got %q", got)
+	}
+}
+
+// Prose containing a Cursor-shaped token ("Use /etc/foo", "User: something",
+// "→ Step 1") must NOT be filtered as chrome from a Claude/Gemini preview.
+// This locks in the tightening fix that removed the overly-broad noisy
+// prefixes introduced earlier.
+func TestNoisyTerminalLineKeepsLegitimateProse(t *testing.T) {
+	keep := []string{
+		"Use /etc/hosts to override DNS for that domain.",
+		"User: enter your username and press return.",
+		"→ Step 1: install dependencies",
+		"Composer Smith wrote the original score.",
+		"The Cursor agent lets you edit code interactively.", // single mention, not header
+	}
+	for _, line := range keep {
+		if isNoisyTerminalLine(line) {
+			t.Fatalf("legitimate prose %q was incorrectly flagged as noisy", line)
+		}
+	}
+}
+
+// Pin Cursor's actual chrome lines as noisy. These are the lines markerPreview
+// must stop at when collecting an "Assistant:" block.
+func TestNoisyTerminalLineFiltersCursorChrome(t *testing.T) {
+	chrome := []string{
+		"→ Add a follow-up",
+		"Ask (shift+tab to cycle)",
+		"Composer 2.5 · 15.8%",
+		"Composer 2 Fast · 5.5%",
+		"Use /mcp to connect Cursor to your tools and data sources.",
+		"Cursor Agent v2026.05.20-2b5dd59",
+	}
+	for _, line := range chrome {
+		if !isNoisyTerminalLine(line) {
+			t.Fatalf("cursor chrome line %q must be treated as noisy", line)
+		}
+	}
+}
+
+// Multi-turn pane: when several "Assistant:" blocks are on screen, the live
+// preview should surface the LATEST one (matches Claude/Gemini markerPreview
+// behaviour).
+func TestDeriveStatusCursorPreviewPicksLatestAssistantTurn(t *testing.T) {
+	screen := `  Cursor Agent
+
+  User: first question
+
+  Assistant: First answer that is now stale.
+
+  User: second question
+
+  Assistant: Second and current answer.
+
+
+  → Add a follow-up
+
+
+  Ask (shift+tab to cycle)
+  Composer 2.5 · 12.0%`
+
+	status := DeriveStatus(screen, map[string]interface{}{"provider": "cursor-cli"})
+	if !strings.Contains(status.AssistantPreview, "Second and current answer.") {
+		t.Fatalf("preview should pick the latest Assistant: block, got %q", status.AssistantPreview)
+	}
+	if strings.Contains(status.AssistantPreview, "First answer") {
+		t.Fatalf("preview leaked a stale Assistant: block, got %q", status.AssistantPreview)
+	}
+}
+
+// Live capture from a Cursor v2026-05-20 pane that drops the "Assistant:"
+// label entirely. assistantPreview must fall back to a section-aware scan and
+// still surface the response prose (not the echoed "hi" prompt, not the
+// "Cursor Agent" header, not the input-box chrome).
+func TestDeriveStatusCursorPreviewWorksWithoutAssistantLabel(t *testing.T) {
+	screen := `  Cursor Agent
+  v2026.05.20-2b5dd59
+  Use /config to customize Cursor settings and behavior.
+
+
+  hi
+
+
+  Hi — how can I help today?
+
+  I can answer questions about your workspace (workflows, agents, banking/finance automations, code, architecture, and so on). I'm in Ask mode, so I'll
+  explain and explore read-only; if you want me to change files or run things, switch to Agent mode.
+
+  What would you like to look at?
+
+
+
+
+  → Add a follow-up
+
+
+  Ask (shift+tab to cycle)
+  Composer 2.5 · 14.4%                                                                                                                                Auto-run
+  ~/ai-work/mcp-agent-builder-go/workspace-docs/_users/default/Chats · main`
+
+	status := DeriveStatus(screen, map[string]interface{}{"provider": "cursor-cli"})
+	if status.ProviderLabel != "Cursor CLI" {
+		t.Fatalf("provider = %q", status.ProviderLabel)
+	}
+	preview := status.AssistantPreview
+	// Trailing "?" is stripped by the shared cleanPreviewLine cleaner (legacy
+	// Gemini-chrome rule). Assert on the question-mark-free form.
+	if !strings.Contains(preview, "Hi — how can I help today") {
+		t.Fatalf("preview missing response opening, got %q", preview)
+	}
+	if !strings.Contains(preview, "What would you like to look at") {
+		t.Fatalf("preview should reach the closing question, got %q", preview)
+	}
+	forbidden := []string{
+		"hi\n", // echoed user prompt should not survive (line is "hi")
+		"Cursor Agent",
+		"v2026.05",
+		"Use /config",
+		"Add a follow-up",
+		"shift+tab",
+		"Composer 2.5",
+	}
+	for _, bad := range forbidden {
+		if strings.Contains(preview, bad) {
+			t.Fatalf("preview leaked chrome/prompt %q, got %q", bad, preview)
+		}
+	}
+}
+
+// Multi-turn pane on the new no-label format: preview must pick only the
+// latest response block, not earlier turns or echoed user prompts.
+func TestCursorMarkerlessPreviewPicksLatestTurnInMultiTurnPane(t *testing.T) {
+	screen := `  Cursor Agent
+  v2026.05.20-2b5dd59
+
+
+  what is two plus two
+
+
+  Four.
+
+
+  what is three plus three
+
+
+  Six.
+
+
+  → Add a follow-up
+
+
+  Ask (shift+tab to cycle)
+  Composer 2.5 · 12.0%`
+
+	preview := cursorMarkerlessPreview(screen)
+	if preview != "Six." {
+		t.Fatalf("preview should be only the latest response %q, got %q", "Six.", preview)
+	}
+}
+
+// Busy pane on the new no-label format: no preview should be surfaced — the
+// only candidate text is the echoed user prompt, which would mislead.
+func TestCursorMarkerlessPreviewReturnsEmptyWhenBusy(t *testing.T) {
+	screen := `  Cursor Agent
+
+  show me the failing tests
+
+ ⠰⠰ Composing  1.20k tokens
+
+  → Add a follow-up                                              ctrl+c to stop
+
+  Ask (shift+tab to cycle)
+  Composer 2.5 · 12.0%`
+
+	if got := cursorMarkerlessPreview(screen); got != "" {
+		t.Fatalf("busy pane preview should be empty, got %q", got)
+	}
+}
+
+// A short response should still extract cleanly even though its length is
+// similar to the echoed prompt. The 2-blank-line gap is the discriminator.
+func TestCursorMarkerlessPreviewKeepsShortResponse(t *testing.T) {
+	screen := `  Cursor Agent
+  v2026.05.20-2b5dd59
+
+
+  what is two plus two
+
+
+  Four.
+
+
+  → Add a follow-up
+
+
+  Ask (shift+tab to cycle)
+  Composer 2.5 · 11.0%`
+
+	preview := cursorMarkerlessPreview(screen)
+	if preview != "Four." {
+		t.Fatalf("preview = %q, want %q", preview, "Four.")
+	}
+}
+
+// TestDeriveStatusExtractsCursorAssistantPreview verifies the live preview
+// surfaces Cursor's assistant reply (used by the workspace status UI while a
+// turn is mid-flight), and that it does NOT include the input-box chrome.
+func TestDeriveStatusExtractsCursorAssistantPreview(t *testing.T) {
+	screen := `  Cursor Agent
+  v2026.05.20-2b5dd59
+
+  User: list the workflows
+
+  Assistant: There are 33 workflows in this workspace.
+  The largest groups are banking ops and CityMall.
+
+
+  → Add a follow-up
+
+
+  Ask (shift+tab to cycle)
+  Composer 2.5 · 12.0%
+  ~/ai-work · main`
+
+	status := DeriveStatus(screen, map[string]interface{}{"provider": "cursor-cli"})
+	if status.ProviderLabel != "Cursor CLI" {
+		t.Fatalf("provider = %q", status.ProviderLabel)
+	}
+	preview := status.AssistantPreview
+	want := "There are 33 workflows in this workspace."
+	if !strings.Contains(preview, want) {
+		t.Fatalf("preview missing %q, got %q", want, preview)
+	}
+	forbidden := []string{
+		"Add a follow-up",
+		"shift+tab",
+		"Composer 2.5",
+		"User:",
+		"Cursor Agent",
+	}
+	for _, bad := range forbidden {
+		if strings.Contains(preview, bad) {
+			t.Fatalf("preview should not contain %q, got %q", bad, preview)
+		}
+	}
+}

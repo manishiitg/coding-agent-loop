@@ -52,7 +52,7 @@ export function chatHistoryUsesCliRestore(session: ChatHistorySession): boolean 
   if (!runtime || runtime.kind !== 'coding_agent') return false
 
   const provider = runtime.provider?.trim().toLowerCase()
-  return provider === 'claude-code' || provider === 'gemini-cli' || provider === 'codex-cli'
+  return provider === 'claude-code' || provider === 'gemini-cli' || provider === 'codex-cli' || provider === 'cursor-cli'
 }
 
 export function chatHistoryWorkshopModeLabel(session: ChatHistorySession): string | undefined {

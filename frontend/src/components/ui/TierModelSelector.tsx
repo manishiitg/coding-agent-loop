@@ -18,7 +18,7 @@ const formatContext = (ctx: number) => {
 
 function tierDescription(model: ModelMetadata): string | null {
   const id = model.model_id.toLowerCase()
-  if (id === 'claude-code' || id === 'codex-cli' || id === 'gemini-cli') {
+  if (id === 'claude-code' || id === 'codex-cli' || id === 'gemini-cli' || id === 'cursor-cli') {
     return 'Default — uses the CLI\'s own model routing'
   }
   if (id === 'auto') {

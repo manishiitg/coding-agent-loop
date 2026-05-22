@@ -16,6 +16,10 @@ var (
 	whitespacePattern     = regexp.MustCompile(`\s+`)
 	leadingMarkerPattern  = regexp.MustCompile(`^[\s│┃║╎╏>›❯]+`)
 	trailingStatusPattern = regexp.MustCompile(`\s*(?:\?|for shortcuts|Shift\+Tab.*|esc to interrupt.*)$`)
+	// cursorComposerStatusLine matches Cursor's bottom status line precisely,
+	// e.g. "Composer 2.5 · 15.8%" or "Composer 2 Fast · 5.5%". Anchored so
+	// arbitrary prose starting with the word "Composer" is not stripped.
+	cursorComposerStatusLine = regexp.MustCompile(`(?i)^composer\s+\S+(?:\s+\S+)?\s+·\s+\d+(?:\.\d+)?%`)
 )
 
 const (
@@ -72,6 +76,8 @@ func providerLabel(content string, metadata map[string]interface{}) string {
 			return "Gemini CLI"
 		case "codex-cli", "codexcli":
 			return "Codex CLI"
+		case "cursor-cli", "cursorcli":
+			return "Cursor CLI"
 		default:
 			return provider
 		}
@@ -85,9 +91,20 @@ func providerLabel(content string, metadata map[string]interface{}) string {
 		return "Gemini CLI"
 	case strings.Contains(lower, "openai codex") || strings.Contains(lower, ">_ openai codex"):
 		return "Codex CLI"
+	case isCursorPaneHeader(lower):
+		return "Cursor CLI"
 	default:
 		return ""
 	}
+}
+
+// isCursorPaneHeader looks for the combination of Cursor's app banner AND its
+// version stamp on the same pane — both must be present to claim ownership.
+// Either string alone (e.g. a Claude response mentioning "open in cursor agent")
+// is not enough to misclassify the pane.
+func isCursorPaneHeader(lower string) bool {
+	return strings.Contains(lower, "cursor agent") &&
+		(strings.Contains(lower, "v20") || strings.Contains(lower, "composer "))
 }
 
 func assistantPreview(content, provider string) string {
@@ -96,9 +113,87 @@ func assistantPreview(content, provider string) string {
 		return markerPreview(content, "⏺")
 	case "Gemini CLI":
 		return markerPreview(content, "✦")
+	case "Cursor CLI":
+		// Older Cursor builds prefix each assistant turn with a literal
+		// "Assistant:" header. Newer builds (CLI v2026-05-20 +) drop the label
+		// and emit bare prose. Try the marker first, then fall back to a
+		// section-aware scan that finds the last response block above the
+		// "→ Add a follow-up" boundary.
+		if preview := markerPreview(content, "Assistant:"); preview != "" {
+			return preview
+		}
+		return cursorMarkerlessPreview(content)
 	default:
 		return ""
 	}
+}
+
+// cursorMarkerlessPreview extracts the last block of response prose from a
+// Cursor pane that omits the "Assistant:" label (CLI v2026-05-20 +). Cursor
+// separates the echoed user prompt from the assistant response with two or
+// more blank lines, while paragraphs within the response are separated by
+// only one blank line — so we walk backwards from the input-box boundary
+// ("→ Add a follow-up") and stop at the first 2-blank gap.
+func cursorMarkerlessPreview(content string) string {
+	// While the pane is busy, the only candidate text between the spinner and
+	// the input box is the echoed user prompt — surfacing that as the preview
+	// would be misleading. Let DeriveStatus fall back to "Cursor CLI is working".
+	if terminalContentLooksBusy(content) {
+		return ""
+	}
+	// Preserve blank lines (cleanedLines drops them) — they are the only
+	// signal that separates the echoed user prompt from the response block.
+	stripped := ansiEscapePattern.ReplaceAllString(content, "")
+	rawLines := strings.Split(stripped, "\n")
+	lines := make([]string, len(rawLines))
+	for i, raw := range rawLines {
+		lines[i] = strings.TrimSpace(strings.Trim(strings.TrimSpace(raw), "│┃║╎╏"))
+	}
+	// Find the input-box boundary scanning from the bottom up.
+	boundary := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(lines[i], "→ ") {
+			boundary = i
+			break
+		}
+	}
+	if boundary < 0 {
+		boundary = len(lines)
+	}
+	collected := make([]string, 0, maxAssistantPreviewLines)
+	consecutiveBlanks := 0
+	started := false
+	for i := boundary - 1; i >= 0 && len(collected) < maxAssistantPreviewLines; i-- {
+		line := lines[i]
+		if line == "" {
+			if !started {
+				// Skip the visual gap between the response and the input box.
+				continue
+			}
+			consecutiveBlanks++
+			if consecutiveBlanks >= 2 {
+				// Two blanks separate the echoed user prompt from the response —
+				// stop here so the prompt is not included in the preview.
+				break
+			}
+			continue
+		}
+		if isNoisyTerminalLine(line) {
+			if started {
+				// Hit chrome above the response — stop.
+				break
+			}
+			continue
+		}
+		started = true
+		consecutiveBlanks = 0
+		collected = append(collected, line)
+	}
+	// Reverse so the order matches the on-screen reading order.
+	for left, right := 0, len(collected)-1; left < right; left, right = left+1, right-1 {
+		collected[left], collected[right] = collected[right], collected[left]
+	}
+	return cleanPreviewBlock(collected)
 }
 
 func markerPreview(content, marker string) string {
@@ -246,6 +341,7 @@ func isNoisyTerminalLine(line string) bool {
 		"claude code v",
 		"gemini cli v",
 		"openai codex",
+		"cursor agent v",
 		"tips for getting started",
 		"what's new",
 		"authenticated with",
@@ -259,6 +355,7 @@ func isNoisyTerminalLine(line string) bool {
 	}
 	noisyContains := []string{
 		"ctrl+o",
+		"ctrl+c to stop",
 		"esc to interrupt",
 		"for shortcuts",
 		"tokens",
@@ -267,11 +364,21 @@ func isNoisyTerminalLine(line string) bool {
 		"still thinking",
 		"type your message",
 		"mcp server",
+		"shift+tab to cycle",
+		// Cursor's input-box placeholder. The literal phrase only appears in
+		// Cursor's TUI; safe to treat as chrome rather than prose.
+		"→ add a follow-up",
+		"use /mcp to connect cursor",
 	}
 	for _, needle := range noisyContains {
 		if strings.Contains(lower, needle) {
 			return true
 		}
+	}
+	// Cursor's "Composer 2.5 · 15.8%" mode line — matched precisely so we
+	// never strip arbitrary prose that happens to begin with "Composer".
+	if cursorComposerStatusLine.MatchString(line) {
+		return true
 	}
 	return false
 }
@@ -299,6 +406,13 @@ func terminalContentLooksIdle(content string) bool {
 	if terminalContentLooksBusy(content) {
 		return false
 	}
+	// A pane showing a trust/auth/approval modal is not idle even though the
+	// underlying CLI is "waiting": it requires explicit operator input. Treating
+	// it as idle would let the terminal time-out into "completed" while the
+	// agent is actually blocked on the modal.
+	if terminalContentHasBlockingModal(content) {
+		return false
+	}
 	lines := cleanedLines(content)
 	if len(lines) == 0 {
 		return false
@@ -313,6 +427,30 @@ func terminalContentLooksIdle(content string) bool {
 		if isProviderIdlePromptLine(provider, line, hasCompletionContext) {
 			return true
 		}
+	}
+	return false
+}
+
+// terminalContentHasBlockingModal detects in-pane prompts that require operator
+// input before the agent can continue: workspace-trust, web-search approval,
+// auth/login, and the generic Cursor "[a] / [w] / [q]" key-binding menu.
+func terminalContentHasBlockingModal(content string) bool {
+	lower := strings.ToLower(content)
+	if strings.Contains(lower, "workspace trust required") ||
+		strings.Contains(lower, "do you trust the contents") {
+		return true
+	}
+	if strings.Contains(lower, "approve this web search") ||
+		strings.Contains(lower, "allow web search") {
+		return true
+	}
+	if strings.Contains(lower, "[a] trust this workspace") ||
+		strings.Contains(lower, "[w] trust this workspace") {
+		return true
+	}
+	if strings.Contains(lower, "press enter to continue") &&
+		strings.Contains(lower, "sign in") {
+		return true
 	}
 	return false
 }
@@ -333,6 +471,22 @@ func isProviderIdlePromptLine(provider, line string, hasExplicitCompletion bool)
 		return strings.HasPrefix(trimmed, ">") && strings.Contains(lower, "type your message")
 	case "Claude Code":
 		return trimmed == "❯" || strings.HasPrefix(trimmed, "❯ ")
+	case "Cursor CLI":
+		// Cursor's input box always renders "→ Add a follow-up" as a placeholder.
+		// It is present in both busy and idle states, so this matcher relies on
+		// terminalContentLooksBusy short-circuiting first (see terminalContentLooksIdle).
+		// "ask (shift+tab to cycle)" and the "Composer 2.x · NN%" mode line are
+		// equally reliable structural markers of the cursor TUI being settled.
+		if strings.HasPrefix(trimmed, "→ ") && strings.Contains(lower, "add a follow-up") {
+			return true
+		}
+		if strings.Contains(lower, "ask (shift+tab") {
+			return true
+		}
+		if strings.HasPrefix(lower, "composer ") && strings.Contains(trimmed, "%") {
+			return true
+		}
+		return false
 	default:
 		return false
 	}
@@ -438,6 +592,17 @@ func isTerminalBusyLine(line string) bool {
 	if strings.Contains(lower, "agent is still working") {
 		return true
 	}
+	// Cursor uses "ctrl+c to stop" instead of "esc to interrupt", and emits
+	// "Composing" as its primary active verb (often paired with a braille spinner).
+	if strings.Contains(lower, "ctrl+c to stop") {
+		return true
+	}
+	if strings.Contains(lower, "composing") &&
+		(strings.Contains(lower, "tokens") ||
+			strings.Contains(lower, "thinking") ||
+			isCursorBrailleSpinnerLine(trimmed)) {
+		return true
+	}
 	if strings.Contains(lower, "esc to cancel") || strings.Contains(lower, "esc to interrupt") {
 		return strings.Contains(lower, "thinking") ||
 			strings.Contains(lower, "working") ||
@@ -456,6 +621,19 @@ func isTerminalBusyLine(line string) bool {
 		return strings.Contains(lower, "tokens") ||
 			strings.Contains(lower, "thought") ||
 			strings.Contains(lower, "thinking")
+	}
+	return false
+}
+
+// isCursorBrailleSpinnerLine reports whether a line begins with one of the
+// braille glyphs Cursor cycles through as its "Composing" spinner (e.g. ⠰⠰,
+// ⠠⠦, ⠉⠉). The full unicode braille range is U+2800–U+28FF.
+func isCursorBrailleSpinnerLine(trimmed string) bool {
+	for _, r := range trimmed {
+		if r == ' ' || r == '\t' {
+			continue
+		}
+		return r >= '⠀' && r <= '⣿'
 	}
 	return false
 }

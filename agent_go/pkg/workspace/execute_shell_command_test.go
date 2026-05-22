@@ -220,7 +220,7 @@ func TestExecuteShellCommand_BlocksRawChromeCDPAccess(t *testing.T) {
 	}
 }
 
-func TestBlockAbsoluteHostPaths_DeniesAbsoluteWorkspacePathOutsideGuard(t *testing.T) {
+func TestBlockAbsoluteHostPaths_AllowsAbsoluteWorkspacePathOutsideGuardForSandboxEnforcement(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
 
 	guard := &FolderGuardConfig{
@@ -233,11 +233,29 @@ func TestBlockAbsoluteHostPaths_DeniesAbsoluteWorkspacePathOutsideGuard(t *testi
 		`cat '/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Workflow/testing/workflow.json'`,
 		guard,
 	)
-	if err == nil {
-		t.Fatal("expected forbidden absolute workflow-root path to be rejected")
+	if err != nil {
+		t.Fatalf("expected absolute workspace-docs path to pass through to sandbox enforcement, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "outside this step's allowed folders") {
-		t.Fatalf("expected folder guard error, got: %v", err)
+}
+
+func TestBlockAbsoluteHostPaths_DeniesAbsoluteHostPathOutsideWorkspaceDocs(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+
+	guard := &FolderGuardConfig{
+		Enabled:    true,
+		ReadPaths:  []string{"Workflow/testing/runs/iteration-0/test-group/execution"},
+		WritePaths: []string{"Workflow/testing/runs/iteration-0/test-group/execution/math-solver"},
+	}
+
+	err := blockAbsoluteHostPaths(
+		`cat '/Users/mipl/.ssh/id_rsa'`,
+		guard,
+	)
+	if err == nil {
+		t.Fatal("expected absolute host path outside workspace-docs to be rejected")
+	}
+	if !strings.Contains(err.Error(), "absolute host path") {
+		t.Fatalf("expected absolute host path error, got: %v", err)
 	}
 }
 

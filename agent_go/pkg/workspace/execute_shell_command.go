@@ -678,16 +678,17 @@ func rewriteGeminiRelativePaths(command, projectDirID string) string {
 }
 
 // blockAbsoluteHostPaths rejects commands containing absolute paths that
-// reference the host filesystem outside the workspace, and also rejects
-// absolute workspace-docs paths that fall outside the current folder guard.
+// reference the host filesystem outside the workspace.
 //
 // In Docker, VirtioFS auto-mounts /Users/ into containers — an LLM-generated
 // command like "cat /Users/foo/secret.txt" would bypass workspace isolation.
 // This function blocks /Users/, /home/, /root/ to prevent that.
 //
-// On desktop Mac the workspace root itself is also under /Users/, so we allow
-// absolute paths only when they stay under workspace-docs AND under the active
-// folder guard. Everything else is rejected before the shell request is sent.
+// On desktop Mac the workspace root itself is also under /Users/, so absolute
+// paths under workspace-docs must be allowed through. The workspace API
+// receives the same FolderGuardConfig and enforces read/write restrictions in
+// the sandbox layer; doing a second path-level rejection here turns expected
+// sandbox denials into provider-level tool-call errors that agents cannot catch.
 func blockAbsoluteHostPaths(command string, guard *FolderGuardConfig) error {
 	if !strings.Contains(command, "/") || guard == nil {
 		return nil
@@ -705,16 +706,7 @@ func blockAbsoluteHostPaths(command string, guard *FolderGuardConfig) error {
 	}
 
 	for _, candidate := range candidates {
-		if relPath, ok := normalizeAbsoluteWorkspacePath(candidate); ok {
-			unionGuard := &FolderGuardConfig{
-				Enabled:      true,
-				ReadPaths:    deduplicateStrings(append(append([]string{}, guard.ReadPaths...), guard.WritePaths...)),
-				BlockedPaths: guard.BlockedPaths,
-			}
-			if err := validatePathAgainstGuard(unionGuard, relPath, false); err != nil {
-				allowed := deduplicateStrings(append(append([]string{}, guard.ReadPaths...), guard.WritePaths...))
-				return fmt.Errorf("access denied: absolute workspace path %q is outside this step's allowed folders. Allowed: %s. Underlying check: %w", candidate, strings.Join(allowed, ", "), err)
-			}
+		if _, ok := normalizeAbsoluteWorkspacePath(candidate); ok {
 			continue
 		}
 

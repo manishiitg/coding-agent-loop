@@ -12,10 +12,13 @@ interface TerminalCenterProps {
   hasConversationActivity?: boolean
 }
 
-const SELECTED_TERMINAL_HISTORY_LINES = 10000
+const TERMINAL_REFRESH_HISTORY_LINES = 10000
+const TERMINAL_DETAIL_CACHE_LIMIT = 40
+const MAX_PRIOR_ARCHIVED_TURNS_TO_INLINE = 3
 const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
 const INACTIVE_FALLBACK_SECONDS = 120
 const EMPTY_TERMINAL_RESPONSE_GRACE_POLLS = 10
+const TERMINAL_POLL_INTERVAL_MS = 1500
 
 interface RoutingRouteSummary {
   route_id?: string
@@ -130,14 +133,6 @@ function routeDecisionDedupeKey(decision: RoutingDecision): string {
 
 function routingDecisionTime(decision: RoutingDecision): number {
   return decision.timestamp ? new Date(decision.timestamp).getTime() || 0 : 0
-}
-
-function sameEventIDs(a: PollingEvent[], b: PollingEvent[]): boolean {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i]?.id !== b[i]?.id) return false
-  }
-  return true
 }
 
 function workflowNameFromPath(path?: string): string {
@@ -637,7 +632,7 @@ function findPriorArchivedTurns(current: TerminalSnapshot, allTerminals: Termina
   if (!sessionID || isArchivedTurnTerminal(current) || !isSyntheticTerminal(current)) {
     return []
   }
-  return allTerminals
+  const matchingTurns = allTerminals
     .filter(t =>
       t.terminal_id !== current.terminal_id &&
       (t.session_id || '').trim() === sessionID &&
@@ -645,6 +640,7 @@ function findPriorArchivedTurns(current: TerminalSnapshot, allTerminals: Termina
       isSyntheticTerminal(t),
     )
     .sort((a, b) => turnIndexFromTerminalID(a.terminal_id) - turnIndexFromTerminalID(b.terminal_id))
+  return matchingTurns.slice(-MAX_PRIOR_ARCHIVED_TURNS_TO_INLINE)
 }
 
 // aggregatePriorTurnContent stitches archived :turn- snapshot bodies (read
@@ -697,6 +693,10 @@ function sortTerminalsForRail(terminals: TerminalSnapshot[]): TerminalSnapshot[]
 
 function terminalPaneKey(terminal: TerminalSnapshot): string {
   return terminal.terminal_id
+}
+
+function terminalDetailCacheKey(terminal: TerminalSnapshot): string {
+  return `${terminal.terminal_id}:${terminal.chunk_index}:${terminal.updated_at || terminal.created_at || ''}`
 }
 
 function dedupeTerminalsByID(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
@@ -1129,6 +1129,14 @@ interface TerminalErrorBannerEntry {
   timestamp?: string
 }
 
+const TERMINAL_ERROR_MESSAGE_LIMIT = 220
+
+function compactTerminalErrorMessage(message: string): string {
+  const singleLine = message.replace(/\s+/g, ' ').trim()
+  if (singleLine.length <= TERMINAL_ERROR_MESSAGE_LIMIT) return singleLine
+  return `${singleLine.slice(0, TERMINAL_ERROR_MESSAGE_LIMIT)}...`
+}
+
 function extractErrorMessage(event: unknown): string {
   const e = event as { type?: string; data?: unknown }
   const data = e?.data as { data?: Record<string, unknown>; message?: string; error?: string } | undefined
@@ -1183,18 +1191,18 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // refetching on every render. Archived turns are immutable once written,
   // so the cache is correct without invalidation.
   const [archivedTurnContents, setArchivedTurnContents] = useState<Record<string, string>>({})
-  const [selectedTerminalDetail, setSelectedTerminalDetail] = useState<TerminalSnapshot | null>(null)
+  const [terminalDetailCache, setTerminalDetailCache] = useState<Record<string, TerminalSnapshot>>({})
   const [selectedID, setSelectedID] = useState<string | null>(null)
   const [userSelectedID, setUserSelectedID] = useState<string | null>(null)
   const [copiedTerminalID, setCopiedTerminalID] = useState<string | null>(null)
   const [dismissedTerminalIDs, setDismissedTerminalIDs] = useState<Set<string>>(() => new Set())
   const [dismissedRouteIDs, setDismissedRouteIDs] = useState<Set<string>>(() => new Set())
   const [dismissedErrorIDs, setDismissedErrorIDs] = useState<Set<string>>(() => readDismissedTerminalErrorIDs(currentSessionId))
+  const [expandedErrorIDs, setExpandedErrorIDs] = useState<Set<string>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
   const [debugInput, setDebugInput] = useState('')
   const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
   const [debugPanelOpenForID, setDebugPanelOpenForID] = useState<string | null>(null)
-  const [terminalRoutingEvents, setTerminalRoutingEvents] = useState<PollingEvent[]>([])
 
   const sessionEvents = useChatStore(state => (
     currentSessionId ? state.tabEvents[currentSessionId] : undefined
@@ -1212,9 +1220,21 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     })
   }, [currentSessionId])
 
+  const toggleTerminalError = useCallback((errorID: string) => {
+    setExpandedErrorIDs(prev => {
+      const next = new Set(prev)
+      if (next.has(errorID)) {
+        next.delete(errorID)
+      } else {
+        next.add(errorID)
+      }
+      return next
+    })
+  }, [])
+
   const routingDecisions = useMemo(() => {
     const byKey = new Map<string, RoutingDecision>()
-    for (const event of [...(sessionEvents || []), ...terminalRoutingEvents]) {
+    for (const event of sessionEvents || []) {
       const decision = routingDecisionFromEvent(event)
       if (decision && dismissedRouteIDs.has(decision.id)) continue
       if (!decision) continue
@@ -1225,7 +1245,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       }
     }
     return Array.from(byKey.values()).sort((a, b) => routingDecisionTime(a) - routingDecisionTime(b))
-  }, [sessionEvents, terminalRoutingEvents, dismissedRouteIDs])
+  }, [sessionEvents, dismissedRouteIDs])
   const routingDecisionByNextStepID = useMemo(() => {
     const byStep = new Map<string, RoutingDecision>()
     for (const decision of routingDecisions) {
@@ -1271,34 +1291,6 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     terminalsRef.current = terminals
   }, [terminals])
 
-  useEffect(() => {
-    if (!currentSessionId) {
-      setTerminalRoutingEvents([])
-      return
-    }
-
-    let cancelled = false
-    const fetchRoutingEvents = async () => {
-      try {
-        const response = await agentApi.getRecentSessionEvents(currentSessionId)
-        if (cancelled) return
-        const routeEvents = (response.events || []).filter(event => event.type === 'routing_evaluated')
-        setTerminalRoutingEvents(current => sameEventIDs(current, routeEvents) ? current : routeEvents)
-      } catch (err) {
-        if (!cancelled) {
-          console.warn('Failed to load terminal routing events', err)
-        }
-      }
-    }
-
-    void fetchRoutingEvents()
-    const interval = window.setInterval(fetchRoutingEvents, 2500)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [currentSessionId])
-
   const copyTerminalDebug = useCallback(async (terminal: TerminalSnapshot) => {
     await navigator.clipboard.writeText(terminalDebugText(terminal))
     setCopiedTerminalID(terminal.terminal_id)
@@ -1309,7 +1301,14 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     setTerminals(current => current.map(item => (
       item.terminal_id === updated.terminal_id ? { ...item, ...updated } : item
     )))
-    setSelectedTerminalDetail(current => current?.terminal_id === updated.terminal_id ? { ...current, ...updated } : current)
+    setTerminalDetailCache(current => {
+      const key = terminalDetailCacheKey(updated)
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([, detail]) => detail.terminal_id !== updated.terminal_id),
+      ) as Record<string, TerminalSnapshot>
+      next[key] = updated
+      return next
+    })
   }, [])
 
   const forceCompleteTerminal = useCallback(async (terminal: TerminalSnapshot) => {
@@ -1361,7 +1360,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     if (!canSendTerminalDebugInput(terminal)) return
     setTerminalActionBusy('refresh')
     try {
-      const updated = await agentApi.refreshTerminal(terminal.terminal_id, { lines: SELECTED_TERMINAL_HISTORY_LINES })
+      const updated = await agentApi.refreshTerminal(terminal.terminal_id, { lines: TERMINAL_REFRESH_HISTORY_LINES })
       applyTerminalSnapshotUpdate(updated)
       setError(null)
     } catch (err) {
@@ -1488,7 +1487,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       return next
     })
     setTerminals(current => current.filter(item => item.terminal_id !== terminal.terminal_id))
-    setSelectedTerminalDetail(current => current?.terminal_id === terminal.terminal_id ? null : current)
+    setTerminalDetailCache(current => (
+      Object.fromEntries(
+        Object.entries(current).filter(([, detail]) => detail.terminal_id !== terminal.terminal_id),
+      ) as Record<string, TerminalSnapshot>
+    ))
     if (selectedID === terminalPaneKey(terminal)) {
       setSelectedID(null)
     }
@@ -1589,7 +1592,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     // terminalCenterOpen flag gated a standalone toggle that no
     // longer exists.
     void fetchTerminals()
-    const interval = window.setInterval(fetchTerminals, 600)
+    const interval = window.setInterval(fetchTerminals, TERMINAL_POLL_INTERVAL_MS)
     return () => window.clearInterval(interval)
   }, [fetchTerminals])
 
@@ -1639,13 +1642,15 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     [groupedTerminals, selectedID],
   )
   const selectedTerminalKey = selectedTerminal ? terminalPaneKey(selectedTerminal) : null
+  const selectedTerminalDetailCacheKey = selectedTerminal ? terminalDetailCacheKey(selectedTerminal) : null
   const selectedTerminalView = useMemo(() => {
     if (!selectedTerminal) return null
-    if (selectedTerminalDetail && terminalPaneKey(selectedTerminalDetail) === selectedTerminalKey) {
-      return { ...selectedTerminal, content: selectedTerminalDetail.content }
+    const cachedDetail = selectedTerminalDetailCacheKey ? terminalDetailCache[selectedTerminalDetailCacheKey] : undefined
+    if (cachedDetail && terminalPaneKey(cachedDetail) === selectedTerminalKey) {
+      return { ...selectedTerminal, ...cachedDetail }
     }
     return selectedTerminal
-  }, [selectedTerminal, selectedTerminalDetail, selectedTerminalKey])
+  }, [selectedTerminal, selectedTerminalDetailCacheKey, selectedTerminalKey, terminalDetailCache])
   const priorArchivedTurns = useMemo(
     () => (selectedTerminalView ? findPriorArchivedTurns(selectedTerminalView, terminals) : []),
     [selectedTerminalView, terminals],
@@ -1694,19 +1699,25 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
 
   useEffect(() => {
     if (!selectedTerminal) {
-      setSelectedTerminalDetail(null)
       return
     }
+    const detailCacheKey = terminalDetailCacheKey(selectedTerminal)
+    if (terminalDetailCache[detailCacheKey]) return
     const requestSeq = detailRequestSeqRef.current + 1
     detailRequestSeqRef.current = requestSeq
     let cancelled = false
-    const detailOptions = selectedTerminal.tmux_session
-      ? { content: 'deep' as const, lines: SELECTED_TERMINAL_HISTORY_LINES }
-      : undefined
-    agentApi.getTerminal(selectedTerminal.terminal_id, detailOptions)
+    agentApi.getTerminal(selectedTerminal.terminal_id)
       .then(detail => {
         if (!cancelled && detailRequestSeqRef.current === requestSeq && terminalPaneKey(detail) === selectedTerminalKey) {
-          setSelectedTerminalDetail(detail)
+          setTerminalDetailCache(current => {
+            const next: Record<string, TerminalSnapshot> = {
+              ...current,
+              [terminalDetailCacheKey(detail)]: detail,
+            }
+            const entries = Object.entries(next)
+            if (entries.length <= TERMINAL_DETAIL_CACHE_LIMIT) return next
+            return Object.fromEntries(entries.slice(entries.length - TERMINAL_DETAIL_CACHE_LIMIT)) as Record<string, TerminalSnapshot>
+          })
         }
       })
       .catch(err => {
@@ -1717,7 +1728,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     return () => {
       cancelled = true
     }
-  }, [selectedTerminal?.terminal_id, selectedTerminal?.chunk_index, selectedTerminal?.updated_at, selectedTerminalKey])
+  }, [selectedTerminal?.terminal_id, selectedTerminal?.chunk_index, selectedTerminal?.updated_at, selectedTerminalKey, terminalDetailCache])
 
   const handleTerminalScroll = useCallback(() => {
     const el = terminalOutputRef.current
@@ -1896,23 +1907,43 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
 
         {sessionErrorBanner.length > 0 && (
           <div className="flex flex-col gap-1 border-b border-red-900/40 bg-red-950/20 px-3 py-2">
-            {sessionErrorBanner.map(entry => (
-              <div key={entry.id} className="flex items-start gap-2 text-xs text-red-300">
-                <span className="mt-0.5 shrink-0 rounded bg-red-900/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-red-200">
-                  {entry.type.replace(/_/g, ' ')}
-                </span>
-                <span className="min-w-0 flex-1 break-words leading-5">{entry.message}</span>
-                <button
-                  type="button"
-                  onClick={() => dismissTerminalError(entry.id)}
-                  className="shrink-0 rounded p-0.5 text-red-400/60 hover:bg-red-900/40 hover:text-red-200"
-                  title="Dismiss"
-                  aria-label="Dismiss error"
-                >
-                  <X className="h-3 w-3" />
-                </button>
+            {sessionErrorBanner.map(entry => {
+              const isOpen = expandedErrorIDs.has(entry.id)
+              return (
+              <div key={entry.id} className="text-xs text-red-300">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="shrink-0 rounded bg-red-900/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-red-200">
+                    {entry.type.replace(/_/g, ' ')}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate leading-5" title={entry.message}>
+                    {compactTerminalErrorMessage(entry.message)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => toggleTerminalError(entry.id)}
+                    className="shrink-0 rounded border border-red-800/70 px-2 py-0.5 text-[10px] font-medium text-red-200 hover:bg-red-900/40"
+                    aria-expanded={isOpen}
+                  >
+                    {isOpen ? 'Close' : 'Open'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => dismissTerminalError(entry.id)}
+                    className="shrink-0 rounded p-0.5 text-red-400/60 hover:bg-red-900/40 hover:text-red-200"
+                    title="Dismiss"
+                    aria-label="Dismiss error"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+                {isOpen && (
+                  <div className="mt-1 max-h-32 overflow-y-auto rounded border border-red-900/50 bg-red-950/40 p-2 font-mono text-[11px] leading-4 text-red-200">
+                    {entry.message}
+                  </div>
+                )}
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
 

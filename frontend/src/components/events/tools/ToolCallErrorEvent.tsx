@@ -2,14 +2,25 @@ import React from 'react'
 import type { ToolCallErrorEvent } from '../../../generated/events'
 import { formatDuration } from '../../../utils/duration'
 import { useExpandable } from '../useExpandable'
-import { Plus, Minus } from 'lucide-react'
 
 interface ToolCallErrorEventDisplayProps {
   event: ToolCallErrorEvent
 }
 
+const ERROR_PREVIEW_LIMIT = 160
+
+function compactError(error?: string): string | null {
+  if (!error) return null
+  const singleLine = error.replace(/\s+/g, ' ').trim()
+  if (!singleLine) return null
+  return singleLine.length > ERROR_PREVIEW_LIMIT
+    ? `${singleLine.slice(0, ERROR_PREVIEW_LIMIT)}...`
+    : singleLine
+}
+
 export const ToolCallErrorEventDisplay: React.FC<ToolCallErrorEventDisplayProps> = ({ event }) => {
   const { isExpanded, toggle } = useExpandable(false)
+  const errorPreview = compactError(event.error)
 
   return (
     <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded p-2">
@@ -35,6 +46,11 @@ export const ToolCallErrorEventDisplay: React.FC<ToolCallErrorEventDisplayProps>
               </span>
             )}
           </div>
+          {!isExpanded && errorPreview && (
+            <div className="mt-1 text-xs text-red-700 dark:text-red-300 truncate">
+              {errorPreview}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -45,10 +61,10 @@ export const ToolCallErrorEventDisplay: React.FC<ToolCallErrorEventDisplayProps>
           )}
           <button
             onClick={toggle}
-            className="p-0.5 hover:bg-red-200 dark:hover:bg-red-800 rounded text-red-700 dark:text-red-300 transition-colors"
+            className="rounded border border-red-200 px-2 py-0.5 text-[10px] font-medium text-red-700 transition-colors hover:bg-red-200 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-800"
             title={isExpanded ? "Collapse error details (Alt+Click for all)" : "Expand error details (Alt+Click for all)"}
           >
-            {isExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            {isExpanded ? 'Close' : 'Open'}
           </button>
         </div>
       </div>
@@ -63,7 +79,7 @@ export const ToolCallErrorEventDisplay: React.FC<ToolCallErrorEventDisplayProps>
           
           {/* Error details */}
           {event.error && (
-            <div className="mt-1 p-2 bg-white dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded text-xs text-red-800 dark:text-red-200 font-mono whitespace-pre-wrap break-words">
+            <div className="mt-1 p-2 bg-white dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded text-xs text-red-800 dark:text-red-200 font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
               {event.error}
             </div>
           )}

@@ -165,11 +165,12 @@ type BlockingHumanFeedbackEvent struct {
 	Context       string   `json:"context"`        // Additional context (e.g., validation results)
 	SessionID     string   `json:"session_id"`
 	WorkflowID    string   `json:"workflow_id"`
-	RequestID     string   `json:"request_id"`          // Unique ID for this feedback request
-	YesNoOnly     bool     `json:"yes_no_only"`         // If true, show only Approve/Reject buttons (no textarea)
-	YesLabel      string   `json:"yes_label,omitempty"` // Custom label for Approve button (default: "Approve")
-	NoLabel       string   `json:"no_label,omitempty"`  // Custom label for Reject button (default: "Reject")
-	Options       []string `json:"options,omitempty"`   // Array of option labels for multiple choice (renders as buttons)
+	RequestID     string   `json:"request_id"`                    // Unique ID for this feedback request
+	YesNoOnly     bool     `json:"yes_no_only"`                   // If true, show only Approve/Reject buttons (no textarea)
+	YesLabel      string   `json:"yes_label,omitempty"`           // Custom label for Approve button (default: "Approve")
+	NoLabel       string   `json:"no_label,omitempty"`            // Custom label for Reject button (default: "Reject")
+	Options       []string `json:"options,omitempty"`             // Array of option labels for multiple choice (renders as buttons)
+	RoutedToParentChat bool `json:"routed_to_parent_chat,omitempty"` // True when question was forwarded to the builder chat session
 }
 
 func (e *BlockingHumanFeedbackEvent) GetEventType() events.EventType {

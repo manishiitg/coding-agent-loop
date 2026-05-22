@@ -19,6 +19,7 @@ export interface BlockingHumanFeedbackEvent {
   yes_label?: string
   no_label?: string
   options?: string[] // Array of option labels for multiple choice
+  routed_to_parent_chat?: boolean // True when the question was forwarded to the builder chat session
 }
 
 interface BlockingHumanFeedbackDisplayProps {
@@ -40,6 +41,22 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   onFeedbackSubmitted,
   isApproving = false
 }) => {
+  // When the question was forwarded to the builder chat, show an informational
+  // status card instead of the interactive approval widget.
+  if (event.data.routed_to_parent_chat) {
+    return (
+      <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 p-3">
+        <div className="text-xs font-medium text-amber-700 dark:text-amber-300 mb-1">Waiting for human input</div>
+        {event.data.question && (
+          <div className="text-sm text-amber-900 dark:text-amber-100 whitespace-pre-wrap">{event.data.question}</div>
+        )}
+        <div className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
+          Answer this in the builder chat to continue the workflow.
+        </div>
+      </div>
+    )
+  }
+
   const cachedValue = event.data.request_id ? getSubmittedFeedback(event.data.request_id) : undefined
   const [feedback, setFeedback] = useState<string>('')
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)

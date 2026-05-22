@@ -614,6 +614,9 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "routed_to_parent_chat": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,

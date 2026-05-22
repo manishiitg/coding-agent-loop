@@ -1696,6 +1696,7 @@ export interface BlockingHumanFeedbackEvent {
   yes_label?: string;
   no_label?: string;
   options?: string[];
+  routed_to_parent_chat?: boolean;
 }
 export interface HumanVerificationResponseEvent {
   timestamp?: string;

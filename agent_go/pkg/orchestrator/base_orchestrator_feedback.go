@@ -94,45 +94,35 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 
 	// If this workflow was invoked from a builder chat session, route the
 	// question into that chat instead of emitting the blocking popup UI.
-	if bo.routeFeedbackToParentChat(ctx, sessionID, requestID, question, "text", nil, "Approve & Continue", "Reject") {
-		// Skip popup event emission — the builder will resolve this via
-		// submit_human_answer.
-	} else {
-		// Emit human feedback request event
-		// Note: YesNoOnly is false to allow text feedback in frontend (textarea + "Approve & Continue" button)
-		// But we'll still send buttons to Slack for convenience
-		feedbackEvent := &events.BlockingHumanFeedbackEvent{
-			BaseEventData: baseevents.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Question:      question,
-			AllowFeedback: true, // Allow text feedback in frontend
-			Context:       context,
-			SessionID:     sessionID,
-			WorkflowID:    workflowID,
-			RequestID:     requestID,
-			YesNoOnly:     false,                // false = frontend shows textarea + "Approve & Continue" button
-			YesLabel:      "Approve & Continue", // Button label for frontend and Slack
-			NoLabel:       "Reject",             // Default reject label
-		}
+	routedToParent := bo.routeFeedbackToParentChat(ctx, sessionID, requestID, question, "text", nil, "Approve & Continue", "Reject")
 
-		// Emit the event using the public method
-		agentEvent := &baseevents.AgentEvent{
-			Type:      events.BlockingHumanFeedback,
-			Timestamp: time.Now(),
-			Data:      feedbackEvent,
-		}
+	feedbackEvent := &events.BlockingHumanFeedbackEvent{
+		BaseEventData:      baseevents.BaseEventData{Timestamp: time.Now()},
+		Question:           question,
+		AllowFeedback:      true,
+		Context:            context,
+		SessionID:          sessionID,
+		WorkflowID:         workflowID,
+		RequestID:          requestID,
+		YesNoOnly:          false,
+		YesLabel:           "Approve & Continue",
+		NoLabel:            "Reject",
+		RoutedToParentChat: routedToParent,
+	}
 
-		// Use the context-aware bridge to emit the event
-		bridge := bo.GetContextAwareBridge()
-		if bridge == nil {
-			bo.GetLogger().Error("❌ Context-aware bridge is nil, cannot emit blocking human feedback event", fmt.Errorf("context-aware bridge is nil"))
-			return false, "", fmt.Errorf("context-aware bridge is nil")
-		}
-		if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
-			bo.GetLogger().Error(fmt.Sprintf("❌ Failed to emit human feedback event: %v", err), err)
-			return false, "", fmt.Errorf("failed to emit event: %w", err)
-		}
+	// Use the context-aware bridge to emit the event
+	bridge := bo.GetContextAwareBridge()
+	if bridge == nil {
+		bo.GetLogger().Error("❌ Context-aware bridge is nil, cannot emit blocking human feedback event", fmt.Errorf("context-aware bridge is nil"))
+		return false, "", fmt.Errorf("context-aware bridge is nil")
+	}
+	if err := bridge.HandleEvent(ctx, &baseevents.AgentEvent{
+		Type:      events.BlockingHumanFeedback,
+		Timestamp: time.Now(),
+		Data:      feedbackEvent,
+	}); err != nil {
+		bo.GetLogger().Error(fmt.Sprintf("❌ Failed to emit human feedback event: %v", err), err)
+		return false, "", fmt.Errorf("failed to emit event: %w", err)
 	}
 
 	// Removed verbose logging
@@ -186,35 +176,28 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 	}
 
 	// Route to parent chat if this workflow was invoked from a builder session.
-	if bo.routeFeedbackToParentChat(ctx, sessionID, requestID, question, "yesno", nil, yesLabel, noLabel) {
-		// Skip popup event emission.
-	} else {
-		// Emit human feedback request event with yes/no only mode
-		feedbackEvent := &events.BlockingHumanFeedbackEvent{
-			BaseEventData: baseevents.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Question:      question,
-			AllowFeedback: false, // No textarea in yes/no mode
-			YesNoOnly:     true,  // Enable yes/no only mode
-			YesLabel:      yesLabel,
-			NoLabel:       noLabel,
-			Context:       context,
-			SessionID:     sessionID,
-			WorkflowID:    workflowID,
-			RequestID:     requestID,
-		}
+	routedToParentYN := bo.routeFeedbackToParentChat(ctx, sessionID, requestID, question, "yesno", nil, yesLabel, noLabel)
 
-		// Emit the event
-		agentEvent := &baseevents.AgentEvent{
-			Type:      events.BlockingHumanFeedback,
-			Timestamp: time.Now(),
-			Data:      feedbackEvent,
-		}
+	feedbackEventYN := &events.BlockingHumanFeedbackEvent{
+		BaseEventData:      baseevents.BaseEventData{Timestamp: time.Now()},
+		Question:           question,
+		AllowFeedback:      false,
+		YesNoOnly:          true,
+		YesLabel:           yesLabel,
+		NoLabel:            noLabel,
+		Context:            context,
+		SessionID:          sessionID,
+		WorkflowID:         workflowID,
+		RequestID:          requestID,
+		RoutedToParentChat: routedToParentYN,
+	}
 
-		if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
-			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit yes/no feedback event: %v", err))
-		}
+	if err := bo.GetContextAwareBridge().HandleEvent(ctx, &baseevents.AgentEvent{
+		Type:      events.BlockingHumanFeedback,
+		Timestamp: time.Now(),
+		Data:      feedbackEventYN,
+	}); err != nil {
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit yes/no feedback event: %v", err))
 	}
 
 	// Removed verbose logging
@@ -265,33 +248,26 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 	}
 
 	// Route to parent chat if this workflow was invoked from a builder session.
-	if bo.routeFeedbackToParentChat(ctx, sessionID, requestID, question, "multiple_choice", options, "", "") {
-		// Skip popup event emission.
-	} else {
-		// Emit human feedback request event with multiple-choice mode
-		feedbackEvent := &events.BlockingHumanFeedbackEvent{
-			BaseEventData: baseevents.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Question:      question,
-			AllowFeedback: false, // No textarea in multiple-choice mode
-			Options:       options,
-			Context:       context,
-			SessionID:     sessionID,
-			WorkflowID:    workflowID,
-			RequestID:     requestID,
-		}
+	routedToParentMC := bo.routeFeedbackToParentChat(ctx, sessionID, requestID, question, "multiple_choice", options, "", "")
 
-		// Emit the event
-		agentEvent := &baseevents.AgentEvent{
-			Type:      events.BlockingHumanFeedback,
-			Timestamp: time.Now(),
-			Data:      feedbackEvent,
-		}
+	feedbackEventMC := &events.BlockingHumanFeedbackEvent{
+		BaseEventData:      baseevents.BaseEventData{Timestamp: time.Now()},
+		Question:           question,
+		AllowFeedback:      false,
+		Options:            options,
+		Context:            context,
+		SessionID:          sessionID,
+		WorkflowID:         workflowID,
+		RequestID:          requestID,
+		RoutedToParentChat: routedToParentMC,
+	}
 
-		if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
-			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit multiple-choice feedback event: %v", err))
-		}
+	if err := bo.GetContextAwareBridge().HandleEvent(ctx, &baseevents.AgentEvent{
+		Type:      events.BlockingHumanFeedback,
+		Timestamp: time.Now(),
+		Data:      feedbackEventMC,
+	}); err != nil {
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit multiple-choice feedback event: %v", err))
 	}
 
 	// Removed verbose logging

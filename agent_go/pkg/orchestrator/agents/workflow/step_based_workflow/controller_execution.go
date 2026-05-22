@@ -2473,8 +2473,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 										hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-learnings completed for step %d (history=%d turns)", stepIndex+1, len(executionConversationHistory)))
 										hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusCompleted, "", executionAgent)
 
-										// Direct-mode learnings skip the post-step learning agent, so
-										// metadata + auto-lock bookkeeping must happen here.
+										// Direct-mode learnings are the only runtime write path, so
+										// metadata + auto-lock bookkeeping happens here.
 										directLearningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, stepCfgForLearn)
 										hasNewLearning, directLearningReasoning, directLearningConfidence := inferHasNewLearningFromResult(learnResult)
 										directLearningLLM := executionLLM

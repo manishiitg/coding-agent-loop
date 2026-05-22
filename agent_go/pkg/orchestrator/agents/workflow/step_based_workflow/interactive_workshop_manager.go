@@ -1889,7 +1889,7 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 
 **learnings/_global/SKILL.md — HOW to run the task**
 - Execution know-how: selectors, API quirks, timing, auth flows, tool patterns, pitfalls the agent hit before.
-- Written by: normally the step agent in its direct post-completion learning turn; a separate learning agent only when the user explicitly asked for agent mode; or by you via diff_patch_workspace_file for manual fixes.
+- Written by: the step agent in its direct post-completion learning turn, or by you via diff_patch_workspace_file for manual fixes.
 - Read as: text injected into every step's system prompt under '## Skill'.
 - Shape: SKILL.md + references/ + scripts/ (Anthropic skill-creator format).
 - Examples: "OTP field appears ~3s after PAN submit — poll, don't sleep", "HDFC balance is inside .account-summary", "gmail.search_messages returns max 50 — paginate".
@@ -2463,11 +2463,11 @@ After a step runs successfully, always check: could a stale/fake output file pas
 
 ### 2. Learning Configuration
 
-The learning system has **three dimensions** per step: `+"`learnings_access`"+` controls read/write scope; `+"`learnings_write_method`"+` picks WHO writes when access permits; `+"`lock_learnings`"+` freezes writes.
+The learning system has **two active dimensions** per step: `+"`learnings_access`"+` controls read/write scope, and `+"`lock_learnings`"+` freezes writes. `+"`learnings_write_method`"+` is retained only for old plan.json compatibility; new plans should omit it.
 
 - **Default access is `+"`\"read\"`"+`** (inferred when `+"`learnings_access`"+` is unset). Every step — including simple plumbing — sees `+"`_global/SKILL.md`"+` in its prompt for cross-step context. Do NOT set `+"`learnings_access: \"none\"`"+` on plumbing steps just because they don't contribute; they still benefit from reading.
 - **Opt into writing** by setting `+"`learnings_access: \"read-write\"`"+` AND a non-empty `+"`learning_objective`"+`. Required for steps that produce durable HOW-knowledge (selectors, timings, auth flows, tool-call patterns). The validator enforces the pairing.
-- **Pick who writes** via `+"`learnings_write_method`"+`: set `+"`\"direct\"`"+` explicitly for new write-capable steps. Direct fires a dedicated post-completion user-message turn where the step agent itself writes `+"`_global/SKILL.md`"+` (folder guard widens only for that turn — main execution cannot write learnings). Use `+"`\"agent\"`"+` only when the user explicitly asks for a separate post-step learning agent/reviewer. Do not choose agent merely because the trace is long, messy, or analytical. If omitted, the runtime fallback may be `+"`\"agent\"`"+`, so do not omit it when enabling learning writes. Direct mode's guidance is NOT in the step's main system prompt — the agent sees it only in the dedicated turn. Parallel sub-agents writing direct are serialized by an in-process mutex.
+- **Writes are direct-only**: when `+"`learnings_access=\"read-write\"`"+` and `+"`learning_objective`"+` are set, the step agent itself writes `+"`_global/SKILL.md`"+` in a dedicated post-completion user-message turn. Folder guard widens only for that turn; main execution cannot write learnings. This turn is part of step finalization, so it completes before the workflow advances to the next step. Direct-mode guidance is NOT in the step's main system prompt — the agent sees it only in the dedicated turn. Parallel direct-learning turns are serialized by an in-process mutex.
 - **Use `+"`\"none\"`"+` sparingly** — only when the global skill content would actively mislead the step (rare) or when the step is so divorced from the target system that reading the skill just burns tokens.
 - **Auto-lock fires automatically** once learnings converge, but the exact rule depends on write method: `+"`agent`"+` mode auto-locks after 3 successful runs against the same step-description hash; `+"`direct`"+` mode is stricter and additionally requires the direct learnings turn to report no materially new learning in 2 consecutive runs. Don't pre-emptively set `+"`lock_learnings: true`"+` — the system does it for you.
 - **Auto-unlock fires automatically** when an auto-locked step's description changes. The old frozen learnings are invalidated and the counter restarts. Manual locks (set by a human without an `+"`auto_locked_at`"+` metadata record) are preserved across description edits.
@@ -3444,7 +3444,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
 		"execute_step",
-		"Start a workflow step in the background, including a normal plan step, nested route step, or plan-local orphan utility step. Returns an execution_id immediately. You will be automatically notified when it completes. Learnings follow the step's persistent config (`learnings_access`, `learnings_write_method`, `lock_learnings`). Success learnings run in background (next step starts immediately), failure learnings run sequentially (needed for retry). Optimizer mode only: set fast_path_only=true to run ONLY the saved learnings/{step-id}/main.py script with no LLM fallback when testing learn_code patches.",
+		"Start a workflow step in the background, including a normal plan step, nested route step, or plan-local orphan utility step. Returns an execution_id immediately. You will be automatically notified when it completes. Learnings follow the step's persistent config (`learnings_access`, `learning_objective`, `lock_learnings`). When learning writes are enabled, SKILL.md updates run as the step agent's direct post-completion continuation before the step is fully finalized. Optimizer mode only: set fast_path_only=true to run ONLY the saved learnings/{step-id}/main.py script with no LLM fallback when testing learn_code patches.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3806,7 +3806,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if groupName != "" {
 				groupInfo = fmt.Sprintf(", group=%q", groupName)
 			}
-			learningInfo := "Post-step learning follows the step's persistent config (`learnings_access`, `learnings_write_method`, `lock_learnings`). Success learnings run in background; failure learnings run sequentially when applicable."
+			learningInfo := "Post-step learning follows the step's persistent config (`learnings_access`, `learning_objective`, `lock_learnings`). When writes are enabled, SKILL.md updates run as the step agent's direct post-completion continuation before the step is fully finalized."
 			if isLearnCodeStep {
 				learningInfo = "Code exec scripted mode: this step does not use a separate post-step SKILL learning phase. The saved Python script is the learning artifact, and the run may create/update that script directly."
 			}
@@ -4496,11 +4496,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"learning_objective": map[string]interface{}{
 					"type":        "string",
-					"description": "Extraction instruction for the post-step learning agent — describe what patterns/selectors/recipes SKILL.md should capture from successful runs, e.g. 'Capture Playwright selectors that worked for the ICICI login form; pattern of the OTP-input field appearing ~3s after PAN submit'. Required when learnings_access=\"read-write\" (the validator rejects write access with an empty objective). No longer acts as the learning gate on its own — learnings_access controls whether the step reads/writes global skill.",
+					"description": "Extraction instruction for the step agent's direct post-completion learning turn — describe what patterns/selectors/recipes SKILL.md should capture from successful runs, e.g. 'Capture Playwright selectors that worked for the ICICI login form; pattern of the OTP-input field appearing ~3s after PAN submit'. Required when learnings_access=\"read-write\" (the validator rejects write access with an empty objective). No longer acts as the learning gate on its own — learnings_access controls whether the step reads/writes global skill.",
 				},
 				"lock_learnings": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Freeze SKILL.md writes for this step. Existing SKILL.md still flows into execution prompts. AUTO-SET when learnings converge: in agent mode, after 3 successful runs against the same step-description hash; in direct mode, after the same threshold plus 2 consecutive no-new-learning outcomes from the direct learnings turn. AUTO-CLEARED when the description changes (for auto-locked steps only — manual locks are preserved). Set this manually only when you hand-edited SKILL.md and want your edits preserved across description changes. Does NOT affect saved main.py — use lock_code for that.",
+					"description": "Freeze SKILL.md writes for this step. Existing SKILL.md still flows into execution prompts. AUTO-SET when learnings converge after 3 successful runs against the same step-description hash plus 2 consecutive no-new-learning outcomes from the direct learnings turn. AUTO-CLEARED when the description changes (for auto-locked steps only — manual locks are preserved). Set this manually only when you hand-edited SKILL.md and want your edits preserved across description changes. Does NOT affect saved main.py — use lock_code for that.",
 				},
 				"lock_code": map[string]interface{}{
 					"type":        "boolean",
@@ -4524,7 +4524,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"learnings_access": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"read", "read-write", "none"},
-					"description": "Access mode for this step against learnings/_global/ (SKILL.md + references/). Defaults to 'read' — every step sees the workflow's accumulated how-to knowledge in its prompt. 'read-write' — step also contributes: requires a non-empty learning_objective and a writer (learnings_write_method: direct = normal path where the step agent writes via a dedicated post-completion turn, agent = separate post-step learning agent only when the user explicitly asks). 'none' — step neither reads global skill nor contributes. Omit to keep the default.",
+					"description": "Access mode for this step against learnings/_global/ (SKILL.md + references/). Defaults to 'read' — every step sees the workflow's accumulated how-to knowledge in its prompt. 'read-write' — step also contributes and requires a non-empty learning_objective; the step agent writes via a dedicated post-completion turn. 'none' — step neither reads global skill nor contributes. Omit to keep the default.",
 				},
 				"knowledgebase_contribution": map[string]interface{}{
 					"type":        "string",
@@ -4993,7 +4993,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// 6. Validate learning config consistency.
 			// Learnings access ↔ objective consistency. Mirror of the KB access ↔
 			// contribution rule below: write-capable access is meaningless without an
-			// extraction instruction for the post-step learning agent.
+			// extraction instruction for the direct post-completion learning turn.
 			learningsAccessRaw := strings.TrimSpace(targetConfig.AgentConfigs.LearningsAccess)
 			if learningsAccessRaw != "" {
 				validLearningsModes := map[string]bool{
@@ -5006,7 +5006,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			hasObjective := strings.TrimSpace(targetConfig.AgentConfigs.LearningObjective) != ""
 			effectiveAccess := resolveLearningsAccess(targetConfig.AgentConfigs)
 			if effectiveAccess == LearningsAccessReadWrite && !hasObjective {
-				errors = append(errors, "learnings_access=\"read-write\" requires a non-empty learning_objective. The post-step learning agent needs an extraction instruction; set learning_objective or drop access to \"read\"/\"none\".")
+				errors = append(errors, "learnings_access=\"read-write\" requires a non-empty learning_objective. The direct learnings turn needs an extraction instruction; set learning_objective or drop access to \"read\"/\"none\".")
 			}
 			isLocked := targetConfig.AgentConfigs.LockLearnings != nil && *targetConfig.AgentConfigs.LockLearnings
 			if !hasObjective {
@@ -9212,10 +9212,10 @@ This is a **read-only review**:
 7. **Do not drift into full redesign**: You may suggest a concrete correction, but the primary task is to review and explain what is wrong with the current decision.
 8. **Check portability and secrecy**: Flag plan-visible secrets, user-specific values, absolute paths, run-folder-specific values, and brittle environment assumptions.
 9. **Check persistent-store discipline**: Stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`knowledgebase/context/`"+` (user-supplied runtime business context), `+"`"+`knowledgebase/notes/`+"`"+` (workflow-discovered durable narrative observations), `+"`"+`db/*.json`+"`"+` (structured durable tables/results for cross-run state and Report UI widgets), and `+"`db/assets/`"+` (durable media/file assets referenced by db rows or reports). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing user-owned context in notes, writing report data only to run folders, embedding assets in JSON, or failing to declare `+"`"+`knowledgebase_contribution`+"`"+` / `+"`"+`db/README.md`+"`"+` contracts when steps produce persistent facts.
-10. **Check learning discipline**: A step should write learnings only when it has reusable HOW-to-run knowledge worth capturing across runs, and it must have a concrete `+"`"+`learning_objective`+"`"+`. Prefer `+"`"+`learnings_write_method=\"direct\"`+"`"+`; `+"`"+`agent`+"`"+` is only for explicit user request. Browser-based steps should not be promoted to `+"`"+`learn_code`+"`"+`. `+"`"+`learn_code`+"`"+` should appear only after explicit user request, highly deterministic behavior, 10+ scenario-covering successful runs, and no recent harden/replan pass still changing the behavior.
+10. **Check learning discipline**: A step should write learnings only when it has reusable HOW-to-run knowledge worth capturing across runs, and it must have a concrete `+"`"+`learning_objective`+"`"+`. `+"`"+`learnings_write_method`+"`"+` is compatibility-only; do not add it to new plans. Browser-based steps should not be promoted to `+"`"+`learn_code`+"`"+`. `+"`"+`learn_code`+"`"+` should appear only after explicit user request, highly deterministic behavior, 10+ scenario-covering successful runs, and no recent harden/replan pass still changing the behavior.
 11. **Check KB discipline**: KB writes require a useful `+"`"+`knowledgebase_contribution`+"`"+`, correct read/write access, and preferably `+"`"+`knowledgebase_write_method=\"direct\"`+"`"+`. `+"`knowledgebase/context/`"+` should contain user-supplied runtime context; `+"`knowledgebase/notes/`"+` should contain workflow-discovered durable narrative observations, not execution recipes, raw rows, or volatile run state. If `+"`"+`knowledgebase/notes/_index.json`+"`"+` exists, it must point to coherent topic notes.
 12. **Check db discipline**: `+"`"+`db/*.json`+"`"+` should look like a small database surface, not loose dumps: documented in `+"`"+`db/README.md`+"`"+`, stable JSON shape, primary key, merge/upsert rule, writer ownership, group separation, compatible report consumers, and correct references to durable assets under `+"`db/assets/`"+`.
-13. **Check lock consistency**: Three locks freeze workflow state — `+"`"+`lock_learnings`+"`"+` (per-step: freezes SKILL.md + skips learning agent), `+"`"+`lock_code`+"`"+` (per-step, learn_code only: freezes `+"`"+`learnings/{step-id}/main.py`+"`"+` against fix-loop rewrites), `+"`"+`lock_knowledgebase`+"`"+` (workflow-level: freezes post-step KB update agent). Flag inconsistency like `+"`"+`lock_code=true`+"`"+` without the learn_code evidence gate or `+"`"+`lock_learnings=true`+"`"+` with stale/mismatched learning metadata. If a step description has meaningfully changed since the last review, recommend clearing `+"`"+`description_reviewed`+"`"+` and re-reviewing before keeping the locks.
+13. **Check lock consistency**: Three locks freeze workflow state — `+"`"+`lock_learnings`+"`"+` (per-step: freezes SKILL.md writes), `+"`"+`lock_code`+"`"+` (per-step, learn_code only: freezes `+"`"+`learnings/{step-id}/main.py`+"`"+` against fix-loop rewrites), `+"`"+`lock_knowledgebase`+"`"+` (workflow-level: freezes post-step KB update agent). Flag inconsistency like `+"`"+`lock_code=true`+"`"+` without the learn_code evidence gate or `+"`"+`lock_learnings=true`+"`"+` with stale/mismatched learning metadata. If a step description has meaningfully changed since the last review, recommend clearing `+"`"+`description_reviewed`+"`"+` and re-reviewing before keeping the locks.
 
 ## STEP BOUNDARY STANDARD
 
@@ -9786,7 +9786,7 @@ Your job is to compare each step's **current description** with its **saved main
 4. **Anti-patterns** — hardcoded paths, hardcoded credentials, missing env var usage, non-portable code
 5. **Fabricated data** — script writes output data without actually fetching/computing it from real sources (MCP tools, APIs, input files)
 6. **MCP tool usage** — incorrect server/tool names in call_mcp(), missing API discovery, guessed parameter names instead of using get_api_spec
-7. **Persistent-store confusion** — script writes to the wrong store. Stores: `+"`"+`learnings/`+"`"+` (HOW to run, agent-managed), `+"`knowledgebase/context/`"+` (user-supplied runtime context, never step-written), `+"`"+`knowledgebase/notes/`+"`"+` (workflow-discovered durable narrative observations — written by the post-step KB update agent in agent mode, or by step agents in direct-write mode), `+"`"+`db/*.json`+"`"+` (structured durable tables/results — step-owned; upsert-by-key, never overwrite), and `+"`db/assets/`"+` (durable media/file assets referenced by db rows/reports). Flag scripts that write directly under `+"`"+`knowledgebase/notes/`+"`"+` outside of direct-write mode, write under `+"`knowledgebase/context/`"+`, stash durable cross-run state in per-step output files when it belongs in `+"`"+`db/`+"`"+`, embed large assets in JSON instead of `+"`db/assets/`"+`, or do wholesale rewrites of `+"`"+`db/`+"`"+` files instead of upsert-by-key.
+7. **Persistent-store confusion** — script writes to the wrong store. Stores: `+"`"+`learnings/`+"`"+` (HOW to run, updated by direct step-learning turns), `+"`knowledgebase/context/`"+` (user-supplied runtime context, never step-written), `+"`"+`knowledgebase/notes/`+"`"+` (workflow-discovered durable narrative observations — written by the post-step KB update agent in agent mode, or by step agents in direct-write mode), `+"`"+`db/*.json`+"`"+` (structured durable tables/results — step-owned; upsert-by-key, never overwrite), and `+"`db/assets/`"+` (durable media/file assets referenced by db rows/reports). Flag scripts that write directly under `+"`"+`knowledgebase/notes/`+"`"+` outside of direct-write mode, write under `+"`knowledgebase/context/`"+`, stash durable cross-run state in per-step output files when it belongs in `+"`"+`db/`+"`"+`, embed large assets in JSON instead of `+"`db/assets/`"+`, or do wholesale rewrites of `+"`"+`db/`+"`"+` files instead of upsert-by-key.
 
 This is a **read-only review** — do not modify any files.
 
@@ -10137,7 +10137,7 @@ Run this sweep on every harden pass. For a single-group harden, use that group's
    - Browser/UI-heavy steps should generally stay `+"`code_exec`"+`. If a browser step is `+"`learn_code`"+`, keep it only with explicit user intent and 10+ scenario-covering successful runs proving durable selectors/state-driven waits; otherwise convert to `+"`code_exec`"+` and remove stale script artifacts.
    - `+"`learn_code`"+` steps should have `+"`script_metadata.json`"+` evidence with 10+ successful runs across the relevant scenarios/groups before `+"`lock_code=true`"+`.
 2. **Learning state**
-   - Steps with `+"`learnings_access=\"read-write\"`"+` need a concrete `+"`learning_objective`"+` and normally `+"`learnings_write_method=\"direct\"`"+`.
+   - Steps with `+"`learnings_access=\"read-write\"`"+` need a concrete `+"`learning_objective`"+`. `+"`learnings_write_method`"+` is compatibility-only and should be omitted from new plans.
    - For `+"`lock_learnings=true`"+`, read `+"`learnings/{step-id}/.learning_metadata.json`"+`. Check `+"`description_hash_runs >= 3`"+`; for direct learning, also require repeated no-new-learning outcomes. If metadata is missing, auto-unlocked, or contradicts step_config, unlock or correct config with review_notes.
    - For `+"`learn_code`"+` steps, avoid duplicate global learning writes unless there is HOW knowledge outside the script.
 3. **Knowledgebase**

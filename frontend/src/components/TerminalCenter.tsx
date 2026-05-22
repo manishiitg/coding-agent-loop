@@ -1351,7 +1351,15 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
 
     try {
-      const response = await agentApi.listTerminals(viewAll ? undefined : currentSessionId, 'none')
+      // content='tail' so the rail entries carry their actual content
+      // in the poll response. Previously this was 'none' (metadata only)
+      // and the synthetic-terminal view relied on a secondary getTerminal
+      // fetch that only refired when chunk_index/updated_at deps changed
+      // — which left the displayed content frozen on the first body the
+      // detail fetch returned, even as new streaming_chunk events kept
+      // arriving and incrementing the snapshot on the backend. With
+      // 'tail' the rail data IS the source of truth on every 600ms tick.
+      const response = await agentApi.listTerminals(viewAll ? undefined : currentSessionId, 'tail')
       let visibleTerminals = (response.terminals || []).filter(terminal => !dismissedTerminalIDs.has(terminal.terminal_id))
 
       if (!viewAll && currentSessionId && visibleTerminals.length === 0 && terminalsRef.current.length > 0) {
@@ -1546,7 +1554,15 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const selectedTerminalKey = selectedTerminal ? terminalPaneKey(selectedTerminal) : null
   const selectedTerminalView = useMemo(() => {
     if (!selectedTerminal) return null
-    if (selectedTerminalDetail && terminalPaneKey(selectedTerminalDetail) === selectedTerminalKey) {
+    // Prefer the detail fetch only when it's fresher than the polled
+    // snapshot — otherwise the polled content (now fetched with
+    // content='tail') always wins, so the synthetic terminal stays
+    // current as streaming_chunk events flow.
+    if (
+      selectedTerminalDetail &&
+      terminalPaneKey(selectedTerminalDetail) === selectedTerminalKey &&
+      selectedTerminalDetail.chunk_index >= selectedTerminal.chunk_index
+    ) {
       return { ...selectedTerminal, content: selectedTerminalDetail.content }
     }
     return selectedTerminal

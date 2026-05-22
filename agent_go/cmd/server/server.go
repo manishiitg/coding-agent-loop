@@ -7936,10 +7936,17 @@ func backgroundAgentStartNotificationPart(snap BackgroundAgentSnapshot) string {
 }
 
 func buildBackgroundAgentStartSyntheticMessage(_ string, parts []string) string {
+	// The trailer below is appended to every "background started" notification.
+	// We tell the agent very explicitly NOT to call any tools because some
+	// agents (notably cursor-cli) will otherwise spend 30-60s running
+	// query_step / status-check tools to "verify" what the message already
+	// states, which (a) wastes a turn, and (b) sometimes races the completion
+	// notification, making the start ack look like a completion summary.
+	const trailer = "Acknowledge in one short sentence and continue tracking. Do NOT call any tools — the status above is already current; completion will arrive as a separate AUTO-NOTIFICATION."
 	if len(parts) == 1 {
-		return fmt.Sprintf("[AUTO-NOTIFICATION]\n%s\n\nContinue tracking this work. Do not wait for it to finish unless the user explicitly asks; completion will arrive as a separate AUTO-NOTIFICATION.", strings.TrimPrefix(parts[0], "- "))
+		return fmt.Sprintf("[AUTO-NOTIFICATION]\n%s\n\n%s", strings.TrimPrefix(parts[0], "- "), trailer)
 	}
-	return fmt.Sprintf("[AUTO-NOTIFICATION]\nBackground activity started:\n%s\n\nContinue tracking this work. Do not wait for it to finish unless the user explicitly asks; completion will arrive as a separate AUTO-NOTIFICATION.", strings.Join(parts, "\n"))
+	return fmt.Sprintf("[AUTO-NOTIFICATION]\nBackground activity started:\n%s\n\n%s", strings.Join(parts, "\n"), trailer)
 }
 
 func backgroundAgentStartLabel(snap BackgroundAgentSnapshot) string {

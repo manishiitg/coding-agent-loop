@@ -178,3 +178,38 @@ func TestWorkflowStartAutoNotificationPayloadAndDrain(t *testing.T) {
 		t.Fatal("expected start notification to be marked notified after drain")
 	}
 }
+
+// Pin the imperative "do not call tools" trailer on the start auto-notification.
+// Some agents (notably cursor-cli) interpret a softer "continue tracking …" as
+// permission to run a status-check tool, burning 30-60s of turn time before
+// the completion notification arrives. The trailer must keep them from doing that.
+func TestWorkflowStartAutoNotificationTrailerForbidsToolCalls(t *testing.T) {
+	singleAgent := buildBackgroundAgentStartSyntheticMessage("session-x", []string{
+		"- Workflow step 'do thing' (ID: id-1) [workflow=Workflow/x group=g step=s] started.",
+	})
+	multiAgent := buildBackgroundAgentStartSyntheticMessage("session-x", []string{
+		"- Workflow step 'do thing one' (ID: id-1) started.",
+		"- Workflow step 'do thing two' (ID: id-2) started.",
+	})
+
+	for _, tt := range []struct {
+		name string
+		msg  string
+	}{
+		{"single-part start notification", singleAgent},
+		{"multi-part start notification", multiAgent},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, want := range []string{
+				"[AUTO-NOTIFICATION]",
+				"Acknowledge in one short sentence",
+				"Do NOT call any tools",
+				"completion will arrive as a separate AUTO-NOTIFICATION",
+			} {
+				if !strings.Contains(tt.msg, want) {
+					t.Fatalf("start trailer missing required directive %q, got:\n%s", want, tt.msg)
+				}
+			}
+		})
+	}
+}

@@ -5,7 +5,6 @@ import { agentApi, resetSessionId, getSessionId } from '../services/api'
 import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage, ExecutionOptions, ChatHistorySession } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
 import { ChatInput } from './ChatInput'
-import type { ActiveAgentInfo } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { TerminalCenter } from './TerminalCenter'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef, signalPlanModified } from './workflow'
@@ -54,25 +53,6 @@ function isStreamingEventType(type: unknown): type is string {
   return typeof type === 'string' && STREAMING_EVENT_TYPES.has(type)
 }
 
-function getReadableActiveAgentName(name: string): string {
-  const firstLine = name
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .find(Boolean)
-
-  if (!firstLine) return 'Execution'
-
-  let title = firstLine
-    .replace(/^#+\s*/, '')
-    .replace(/^\*\*(.*)\*\*$/, '$1')
-    .replace(/^(your\s+task|task|objective)\s*:\s*/i, '')
-    .replace(/\s*\([^)]*\)\s*$/, '')
-    .replace(/\s*\[[^\]]*\]\s*$/, '')
-    .trim()
-
-  if (!title) title = 'Execution'
-  return title
-}
 const AUTO_NOTIFICATION_MAX_AGE_MS = 5 * 60 * 1000
 
 function getEventTimestampMs(event: PollingEvent): number | null {
@@ -820,75 +800,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   }, [displayEvents])
 
   const { data: sessionExecutionTree } = useSessionExecutionTree(activeSessionId, !!activeSessionId)
-  const activeAgents = useMemo<ActiveAgentInfo[]>(() => {
-    const root = sessionExecutionTree?.root
-    if (!root) {
-      return []
-    }
-
-    type VisibleExecutionNode = {
-      id: string
-      name: string
-      type: 'agent' | 'delegation'
-      children: VisibleExecutionNode[]
-    }
-
-    const collectVisibleNodes = (node: typeof root): VisibleExecutionNode[] => {
-      const children = node.children || []
-      const result: VisibleExecutionNode[] = []
-
-      for (const child of children) {
-        const descendants = collectVisibleNodes(child)
-        const isVisible =
-          child.status === 'running' &&
-          child.kind !== 'session' &&
-          child.kind !== 'main_agent' &&
-          child.kind !== 'synthetic_turn'
-
-        if (isVisible) {
-          result.push({
-            id: child.execution_id,
-            name: getReadableActiveAgentName(child.name || child.kind || 'Execution'),
-            type: child.kind === 'delegation' ? 'delegation' : 'agent',
-            children: descendants,
-          })
-          continue
-        }
-
-        result.push(...descendants)
-      }
-
-      return result
-    }
-
-    const items: ActiveAgentInfo[] = []
-    const flattenVisibleNodes = (
-      nodes: VisibleExecutionNode[],
-      depth: number,
-      ancestorHasNext: boolean[],
-    ) => {
-      nodes.forEach((node, index) => {
-        const hasNextSibling = index < nodes.length - 1
-        const treePrefix =
-          depth === 0
-            ? ''
-            : `${ancestorHasNext.map(hasNext => (hasNext ? '│ ' : '  ')).join('')}${hasNextSibling ? '├ ' : '└ '}`
-
-        items.push({
-          id: node.id,
-          name: node.name,
-          type: node.type,
-          depth,
-          treePrefix,
-        })
-
-        flattenVisibleNodes(node.children, depth + 1, [...ancestorHasNext, hasNextSibling])
-      })
-    }
-
-    flattenVisibleNodes(collectVisibleNodes(root), 0, [])
-    return items
-  }, [sessionExecutionTree])
 
   // --- Render tracking (filter by [Render] in console) ---
   useRenderLogger('ChatArea', {
@@ -3153,7 +3064,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         <ChatInput
           onSubmit={submitQueryWithQuery}
           onStopStreaming={stopStreaming}
-          activeAgents={activeAgents}
         />
       )}
       

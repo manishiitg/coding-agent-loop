@@ -55,11 +55,6 @@ const STEPS: WalkthroughStep[] = [
     body: 'Enable headless browser, Chrome CDP, or Playwright when the agent needs to inspect or operate web pages.',
   },
   {
-    selector: '[data-tour="chat-active-agents"]',
-    title: 'Active agents',
-    body: 'When background work is running, this shows how many agents are active and lets you inspect the running agent tree.',
-  },
-  {
     selector: '[data-tour="chat-send-controls"]',
     title: 'Send and attachments',
     body: 'Upload files with the paperclip. Send starts a turn; while a turn is running, new messages are queued or can be steered into the active agent.',

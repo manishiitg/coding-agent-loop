@@ -371,29 +371,14 @@ const getResumeSessionKind = (session: ChatHistorySession): ResumeSessionKind =>
   return 'chat'
 }
 
-export interface ActiveAgentInfo {
-  id: string
-  name: string
-  type: 'agent' | 'delegation'
-  depth: number
-  treePrefix: string
-}
-
 interface ChatInputProps {
   // Handlers (callbacks only)
   onSubmit: (query: string) => void
   onStopStreaming: () => void
-  activeAgents?: ActiveAgentInfo[]
 }
 
 function isAutoNotificationMessage(msg: string): boolean {
   return msg.startsWith(AUTO_NOTIFICATION_PREFIX)
-}
-
-function compactActiveAgentName(name: string, maxLength = 96): string {
-  const normalized = name.replace(/\s+/g, ' ').trim()
-  if (normalized.length <= maxLength) return normalized
-  return `${normalized.slice(0, maxLength - 3)}...`
 }
 
 function summarizeAutoNotification(msg: string): {
@@ -617,8 +602,7 @@ const QueuedAutoNotificationGroup: React.FC<{
 // Completely isolated input component that doesn't re-render when events change
 const ChatInputComponent: React.FC<ChatInputProps> = ({
   onSubmit,
-  onStopStreaming,
-  activeAgents = []
+  onStopStreaming
 }) => {
   // Store subscriptions
   const {
@@ -759,13 +743,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [cdpChecking, setCdpChecking] = useState(false)
   const [showCdpPopup, setShowCdpPopup] = useState(false)
   const [showReasoningPopup, setShowReasoningPopup] = useState(false)
-  const [showActiveAgentsPanel, setShowActiveAgentsPanel] = useState(false)
   const [isUploadingFiles, setIsUploadingFiles] = useState(false)
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
-  // Auto-close panel when no agents are running
-  useEffect(() => {
-    if (activeAgents.length === 0) setShowActiveAgentsPanel(false)
-  }, [activeAgents.length])
   // Playwright MCP availability: check if 'playwright' server exists in toolList
   const toolList = useMCPStore(state => state.toolList)
   const playwrightServerStatus = useMemo(() => {
@@ -3867,65 +3846,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               {/* Show old buttons */}
               {(
                 <div className="flex items-center gap-2">
-                  {/* Active agents indicator — left of context circle */}
-                  {activeAgents.length > 0 && (
-                    <div className="relative">
-                      <button
-                        type="button"
-                        data-tour="chat-active-agents"
-                        data-testid="tour-chat-active-agents"
-                        onClick={() => setShowActiveAgentsPanel(prev => !prev)}
-                        className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
-                      >
-                        <Loader2 className="w-3 h-3 animate-spin text-blue-500 dark:text-blue-400 flex-shrink-0" />
-                        <span className="text-[11px] text-blue-600 dark:text-blue-400 font-medium">
-                          {activeAgents.length}
-                        </span>
-                      </button>
-                      {showActiveAgentsPanel && (
-                        <>
-                          <div className="fixed inset-0 z-40" onClick={() => setShowActiveAgentsPanel(false)} />
-                          <div className="absolute bottom-full right-0 mb-2 z-50 w-80 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-                            <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-                              <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
-                                {activeAgents.length === 1 ? '1 agent running' : `${activeAgents.length} agents running`}
-                              </span>
-                              <button type="button" onClick={() => setShowActiveAgentsPanel(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                            <div className="max-h-48 overflow-y-auto">
-                              {activeAgents.map((a) => {
-                                const displayName = compactActiveAgentName(a.name)
-                                return (
-                                  <div
-                                    key={a.id}
-                                    className="flex items-center gap-1.5 py-1.5 pr-3 border-b last:border-b-0 border-gray-100 dark:border-gray-700/50"
-                                    style={{ paddingLeft: `${10 + a.depth * 18}px` }}
-                                    title={a.name}
-                                  >
-                                    {a.treePrefix && (
-                                      <span className="shrink-0 font-mono text-[10px] leading-none text-gray-400 dark:text-gray-500">
-                                        {a.treePrefix}
-                                      </span>
-                                    )}
-                                    <Loader2 className="w-3 h-3 animate-spin text-blue-500 dark:text-blue-400 flex-shrink-0" />
-                                    <div className="min-w-0 flex-1 flex items-center gap-2">
-                                      <span className="text-xs text-gray-700 dark:text-gray-300 truncate">{displayName}</span>
-                                      <span className="shrink-0 rounded-full border border-gray-200 dark:border-gray-600 px-1.5 py-0.5 text-[10px] leading-none text-gray-500 dark:text-gray-400">
-                                        {a.type === 'delegation' ? 'sub-agent' : a.depth === 0 ? 'step' : 'agent'}
-                                      </span>
-                                    </div>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
-
                   {isSummarizing ? (
                     <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400">
                       <Loader2 className="w-4 h-4 animate-spin" />

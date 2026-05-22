@@ -1,7 +1,7 @@
 import { agentApi } from '../services/api'
 import type { ActiveSessionInfo, RunningWorkflowInfo } from '../services/api-types'
 import { useAppStore } from '../stores/useAppStore'
-import { useChatStore, type ChatTab } from '../stores/useChatStore'
+import { normalizeEventViewMode, useChatStore, type ChatTab, type EventViewMode } from '../stores/useChatStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useRunningWorkflowsStore } from '../stores/useRunningWorkflowsStore'
@@ -109,6 +109,15 @@ function requestChatScrollToBottom(): void {
   setTimeout(() => window.dispatchEvent(new CustomEvent('chat-scroll-to-bottom')), 400)
 }
 
+function currentWorkflowViewMode(): EventViewMode {
+  const chatStore = useChatStore.getState()
+  const activeTab = chatStore.activeTabId ? chatStore.chatTabs[chatStore.activeTabId] : undefined
+  if (activeTab?.metadata?.mode === 'workflow') {
+    return normalizeEventViewMode(activeTab.viewMode)
+  }
+  return normalizeEventViewMode(chatStore.eventViewModePreference)
+}
+
 export async function restoreWorkflowSessionChat(
   session: ActiveSessionInfo,
   options: RestoreWorkflowSessionOptions = {},
@@ -116,6 +125,7 @@ export async function restoreWorkflowSessionChat(
   const resolvedPreset = options.preset || findWorkflowPresetForSession(session, options.runningWorkflow)
   const presetId = resolvedPreset?.id || session.preset_query_id || options.runningWorkflow?.preset_query_id
   const isActive = isActiveWorkflowSession(session)
+  const restoreViewMode = currentWorkflowViewMode()
 
   useRunningWorkflowsStore.getState().setIsRestoringWorkflow(true)
   try {
@@ -166,6 +176,7 @@ export async function restoreWorkflowSessionChat(
     if (builderTab?.sessionId !== session.session_id) {
       latestChatStore.updateTabSessionId(tabId, session.session_id)
     }
+    latestChatStore.setTabViewMode(tabId, restoreViewMode)
 
     const hasExistingEvents = latestChatStore.getTabEvents(session.session_id).length > 0
     // Fast path for switching back to an already-open running workflow:
@@ -255,6 +266,7 @@ async function restoreReadOnlyWorkflowRunChat(
 ): Promise<string> {
   const resolvedPreset = options.preset || findWorkflowPresetForSession(session, options.runningWorkflow)
   const presetId = resolvedPreset?.id || session.preset_query_id || options.runningWorkflow?.preset_query_id
+  const restoreViewMode = currentWorkflowViewMode()
 
   useAppStore.getState().setShowWorkflowsOverview(false)
   useModeStore.getState().setModeCategory('workflow')
@@ -294,6 +306,7 @@ async function restoreReadOnlyWorkflowRunChat(
 
   const tabId = existingTab?.tabId ?? await chatStore.createChatTab(desiredName, metadata, session.session_id)
   chatStore.setTabMetadata(tabId, metadata)
+  chatStore.setTabViewMode(tabId, restoreViewMode)
   if (existingTab && existingTab.name !== desiredName) {
     useChatStore.setState((state) => {
       const tab = state.chatTabs[tabId]

@@ -176,7 +176,7 @@ interface PreviousChatHistoryPanelProps {
   title?: string
   emptyText?: string
   actionLabel?: string
-  onHasChatsChange?: (hasChats: boolean) => void
+  onHasChatsChange?: (hasChats: boolean, isLoaded?: boolean) => void
   onSelectSession: (session: ChatHistorySession) => void | Promise<void>
 }
 
@@ -284,7 +284,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   }, [activeFilter])
 
   useEffect(() => {
-    onHasChatsChange?.(!isLoading && visibleSessions.length > 0)
+    onHasChatsChange?.(!isLoading && visibleSessions.length > 0, !isLoading)
   }, [isLoading, onHasChatsChange, visibleSessions.length])
 
   const loadExpandedMessages = useCallback(async (session: ChatHistorySession) => {

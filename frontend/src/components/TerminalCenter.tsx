@@ -12,6 +12,7 @@ interface TerminalCenterProps {
 const SELECTED_TERMINAL_HISTORY_LINES = 10000
 const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
 const INACTIVE_FALLBACK_SECONDS = 120
+const EMPTY_TERMINAL_RESPONSE_GRACE_POLLS = 10
 
 interface RoutingRouteSummary {
   route_id?: string
@@ -178,8 +179,12 @@ function formatTerminalTitle(terminal: TerminalSnapshot): string {
   // Title is just the step_id (the most useful identifier). Everything
   // else — parent, chip, workflow name, kind — moves to the meta row
   // so the title stays minimal and scannable in dense lists.
+  const kind = (terminal.execution_kind || terminal.scope || '').toLowerCase()
   if (isMainAgentTerminal(terminal)) {
     return terminal.agent_name || terminal.step_name || 'Main agent'
+  }
+  if (kind === 'background_agent' || kind === 'background' || kind === 'delegation' || kind === 'todo_task' || kind === 'sub_agent') {
+    return terminal.agent_name || terminal.step_name || terminal.display_title || visibleStepID(terminal) || formatTerminalKindLabel(terminal) || 'Terminal'
   }
   return visibleStepID(terminal) || terminal.step_name || formatTerminalKindLabel(terminal) || terminal.display_title || 'Terminal'
 }
@@ -957,6 +962,13 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const selectedTerminalIDRef = useRef<string | null>(null)
   const fetchInFlightRef = useRef(false)
   const detailRequestSeqRef = useRef(0)
+  const terminalsRef = useRef<TerminalSnapshot[]>([])
+  const emptyResponseCountRef = useRef(0)
+  const lastFetchScopeRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    terminalsRef.current = terminals
+  }, [terminals])
 
   useEffect(() => {
     if (!currentSessionId) {
@@ -1125,10 +1137,40 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const fetchTerminals = useCallback(async () => {
     if (fetchInFlightRef.current) return
     fetchInFlightRef.current = true
+    const fetchScope = viewAll ? 'all' : (currentSessionId || '')
+    if (lastFetchScopeRef.current !== fetchScope) {
+      lastFetchScopeRef.current = fetchScope
+      emptyResponseCountRef.current = 0
+    }
+
     try {
       const response = await agentApi.listTerminals(viewAll ? undefined : currentSessionId, 'none')
-      const visibleTerminals = (response.terminals || []).filter(terminal => !dismissedTerminalIDs.has(terminal.terminal_id))
-      setTerminals(dedupeTerminalsByPane(visibleTerminals))
+      let visibleTerminals = (response.terminals || []).filter(terminal => !dismissedTerminalIDs.has(terminal.terminal_id))
+
+      if (!viewAll && currentSessionId && visibleTerminals.length === 0 && terminalsRef.current.length > 0) {
+        const visibleTerminalIDs = new Set(terminalsRef.current.map(terminal => terminal.terminal_id))
+        const fallbackResponse = await agentApi.listTerminals(undefined, 'none')
+        const recoveredTerminals = (fallbackResponse.terminals || []).filter(terminal =>
+          visibleTerminalIDs.has(terminal.terminal_id) &&
+          !dismissedTerminalIDs.has(terminal.terminal_id)
+        )
+        if (recoveredTerminals.length > 0) {
+          visibleTerminals = recoveredTerminals
+        }
+      }
+
+      const nextTerminals = dedupeTerminalsByPane(visibleTerminals)
+      setTerminals(current => {
+        const currentMatchesScope = viewAll || !currentSessionId || current.every(terminal => terminal.session_id === currentSessionId)
+        if (!viewAll && currentSessionId && nextTerminals.length === 0 && current.length > 0 && currentMatchesScope) {
+          emptyResponseCountRef.current += 1
+          if (emptyResponseCountRef.current <= EMPTY_TERMINAL_RESPONSE_GRACE_POLLS) {
+            return current
+          }
+        }
+        emptyResponseCountRef.current = nextTerminals.length === 0 ? emptyResponseCountRef.current : 0
+        return nextTerminals
+      })
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load terminals')

@@ -648,7 +648,7 @@ export const agentApi = {
 
   listTerminals: async (sessionId?: string, content: 'none' | 'tail' | 'full' = 'tail'): Promise<ListTerminalsResponse> => {
     const params = sessionId ? { session_id: sessionId, content } : { content }
-    const response = await api.get('/api/terminals', { params })
+    const response = await api.get('/api/terminals', { params, timeout: 5000 })
     return response.data
   },
 

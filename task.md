@@ -1,9 +1,6 @@
-
-59. simply the query tools tu automatically query real time logs vs file system depending on if the agent is running or not  -- PROGRESS
-
 64. make multiagent like highly memory orientated having access to workflows. - progress
 
-65. over time as we added changes to a workflow.. all things don't get updated with it 
+65. over time as we added changes to a workflow.. all things don't get updated with it...... need to think on it 
 
 66. we need have a total to notify human based on connectors
 
@@ -15,3 +12,5 @@
 67. we should implement proper tree vs flat view. 
 
 68. optimize open code for kimi, glm, minimax, deepseek and free plans and go plan
+
+69. also to make onboarding easily.. most users might start with a single coding plan cli.. so need to make it easy to start chat and workflows ... maybe by setting some default cli right now user needs to manually set llm always

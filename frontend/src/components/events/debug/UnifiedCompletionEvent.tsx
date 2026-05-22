@@ -37,8 +37,8 @@ const shouldUseTerminalFormatting = (event: UnifiedCompletionEvent): boolean => 
 }
 
 const TerminalCompletionRenderer: React.FC<{ content: string }> = ({ content }) => (
-  <div className="overflow-x-auto max-w-full">
-    <pre className="m-0 min-w-max whitespace-pre pr-8 font-mono text-xs leading-5 text-gray-800 dark:text-gray-200">
+  <div className="min-w-0 max-w-full overflow-hidden">
+    <pre className="m-0 max-w-full whitespace-pre-wrap break-words font-mono text-xs leading-5 text-gray-800 dark:text-gray-200">
       {content}
     </pre>
   </div>

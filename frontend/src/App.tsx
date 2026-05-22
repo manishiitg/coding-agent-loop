@@ -32,7 +32,7 @@ import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useW
 import { useModeStore } from "./stores/useModeStore";
 import { useLLMStore } from "./stores/useLLMStore";
 import { useAuthStore } from "./stores/useAuthStore";
-import { waitForChatStoreHydration } from "./stores/useChatStore";
+import { normalizeEventViewMode, waitForChatStoreHydration } from "./stores/useChatStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import "./App.css";
@@ -1032,11 +1032,22 @@ function App() {
           rememberedWorkflowTab.metadata?.presetQueryId === activePresetId
         const builderTab = workflowTabs.find(tab => tab.metadata?.phaseId === 'workflow-builder')
         const streamingTab = workflowTabs.find(tab => chatStore.getTabStreamingStatus(tab.tabId) || tab.isStreaming)
-        const targetWorkflowTab = builderTab ||
-          (hasValidActiveTab ? activeTab : null) ||
-          (rememberedWorkflowTabMatchesPreset ? rememberedWorkflowTab : null) ||
-          streamingTab ||
-          workflowTabs[0]
+        const activeWorkflowViewMode = normalizeEventViewMode(
+          activeTab?.metadata?.mode === 'workflow'
+            ? activeTab.viewMode
+            : chatStore.eventViewModePreference
+        )
+        const targetWorkflowTab = activeWorkflowViewMode === 'terminal'
+          ? streamingTab ||
+            (hasValidActiveTab ? activeTab : null) ||
+            (rememberedWorkflowTabMatchesPreset ? rememberedWorkflowTab : null) ||
+            builderTab ||
+            workflowTabs[0]
+          : builderTab ||
+            (hasValidActiveTab ? activeTab : null) ||
+            (rememberedWorkflowTabMatchesPreset ? rememberedWorkflowTab : null) ||
+            streamingTab ||
+            workflowTabs[0]
 
         if (targetWorkflowTab) {
           if (!hasValidActiveTab || activeTabId !== targetWorkflowTab.tabId) {

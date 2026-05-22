@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { ArrowDown, ListTree, Radio, Terminal } from 'lucide-react'
+import { ArrowDown, ListTree, Radio, Terminal, X } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
@@ -15,6 +15,7 @@ interface WorkflowTabItemProps {
   isActive: boolean
   sessionStatus: TabSessionStatus | undefined
   onTabClick: (tabId: string) => void
+  onCloseTab: (tabId: string) => void
 }
 
 const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
@@ -22,6 +23,7 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   isActive,
   sessionStatus,
   onTabClick,
+  onCloseTab,
 }) => {
   const displayName = tab.metadata?.phaseId === 'workflow-builder' && tab.name === 'Workflow Builder'
     ? 'Chat'
@@ -68,6 +70,18 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
 
       {/* Tab Name */}
       <span className="min-w-0 max-w-[14rem] truncate whitespace-nowrap">{displayName}</span>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onCloseTab(tab.tabId)
+        }}
+        className="ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+        aria-label={`Close ${displayName}`}
+        title="Close tab"
+      >
+        <X className="h-3 w-3" />
+      </button>
     </div>
   )
 })
@@ -87,6 +101,7 @@ export const WorkflowChatTabs: React.FC = () => {
     chatTabs,
     activeTabId,
     switchTab,
+    closeTab,
     tabSessionStatus,
     autoScroll,
     setAutoScroll,
@@ -95,6 +110,7 @@ export const WorkflowChatTabs: React.FC = () => {
     chatTabs: state.chatTabs,
     activeTabId: state.activeTabId,
     switchTab: state.switchTab,
+    closeTab: state.closeTab,
     tabSessionStatus: state.tabSessionStatus,
     autoScroll: state.autoScroll,
     setAutoScroll: state.setAutoScroll,
@@ -121,10 +137,31 @@ export const WorkflowChatTabs: React.FC = () => {
     )
     const activeTab = activeTabId ? chatTabs[activeTabId] : undefined
     const activeWorkflowTab = activeTab?.metadata?.mode === 'workflow' ? activeTab : undefined
+    const isBuilderTab = (tab: ChatTab) => tab.metadata?.phaseId === 'workflow-builder'
+    const chooseVisibleBuilder = (tabs: ChatTab[]) => [...tabs].sort((a, b) => {
+      if (a.tabId === activeTabId) return -1
+      if (b.tabId === activeTabId) return 1
+      if (a.isStreaming !== b.isStreaming) return a.isStreaming ? -1 : 1
+      return b.createdAt - a.createdAt
+    })[0]
+
+    const matchedBuilders = matched.filter(isBuilderTab)
+    const visibleBuilder = chooseVisibleBuilder(matchedBuilders)
+    const visibleMatched = matched.filter(tab => !isBuilderTab(tab) || tab.tabId === visibleBuilder?.tabId)
+    const hasPresetBuilder = Boolean(visibleBuilder)
 
     const visibleById = new Map<string, ChatTab>()
-    matched.forEach(tab => visibleById.set(tab.tabId, tab))
-    if (activeWorkflowTab) visibleById.set(activeWorkflowTab.tabId, activeWorkflowTab)
+    visibleMatched.forEach(tab => visibleById.set(tab.tabId, tab))
+    if (activeWorkflowTab) {
+      const isDuplicateBuilder =
+        isBuilderTab(activeWorkflowTab) &&
+        hasPresetBuilder &&
+        activeWorkflowTab.metadata?.presetQueryId !== activePresetId
+
+      if (!isDuplicateBuilder) {
+        visibleById.set(activeWorkflowTab.tabId, activeWorkflowTab)
+      }
+    }
 
     const visible = visibleById.size > 0
       ? Array.from(visibleById.values())
@@ -142,6 +179,18 @@ export const WorkflowChatTabs: React.FC = () => {
   const handleTabClick = useCallback((tabId: string) => {
     switchTab(tabId)
   }, [switchTab])
+
+  const handleCloseTab = useCallback((tabId: string) => {
+    const nextWorkflowTabId = activeTabId === tabId
+      ? activeWorkflowTabs.find(tab => tab.tabId !== tabId)?.tabId ?? null
+      : null
+
+    void closeTab(tabId, false).then(() => {
+      if (nextWorkflowTabId) {
+        useChatStore.getState().switchTab(nextWorkflowTabId)
+      }
+    })
+  }, [activeTabId, activeWorkflowTabs, closeTab])
 
   // Close chat area when all workflow tabs are closed (but not on first render)
   useEffect(() => {
@@ -170,6 +219,7 @@ export const WorkflowChatTabs: React.FC = () => {
               isActive={tab.tabId === activeTabId}
               sessionStatus={tabSessionStatus[tab.tabId]}
               onTabClick={handleTabClick}
+              onCloseTab={handleCloseTab}
             />
           ))}
         </div>

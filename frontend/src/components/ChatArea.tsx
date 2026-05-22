@@ -3137,8 +3137,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             {displayEvents.length === 0 && !isStreaming && !isRestoringWorkflowSessions && !isChatCompatiblePhase(activeTab?.metadata?.phaseId) && activeEventViewMode !== 'terminal' && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
-            {/* Phase Chat Help - Show for chat-compatible phases until AI has responded */}
-            {!hidePhaseChatEmptyState && !isRestoringWorkflowSessions && !showWorkflowsOverview && !activeTab?.metadata?.isOrganizationAssistant && !activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && !displayEvents.some(e => e.type === 'unified_completion' || e.type === 'agent_end' || e.type === 'llm_generation_end') && (
+            {/* Phase Chat Help - Show only before the workflow-builder conversation starts */}
+            {!hidePhaseChatEmptyState && displayEvents.length === 0 && activeEventViewMode !== 'terminal' && !isRestoringWorkflowSessions && !showWorkflowsOverview && !activeTab?.metadata?.isOrganizationAssistant && !activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && (
               <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} compact={compact} />
             )}
 

@@ -746,12 +746,6 @@ func (snapshot Snapshot) WithContext(ctx Context) Snapshot {
 	if snapshot.Scope == "" && ctx.ExecutionName != "" {
 		snapshot.Scope = "session"
 	}
-	if snapshot.StepName == "" && snapshot.StepID == "" && snapshot.ExecutionKind != "main_agent" {
-		snapshot.StepName = ctx.ExecutionName
-	}
-	if snapshot.AgentName == "" && snapshot.ExecutionKind == "main_agent" {
-		snapshot.AgentName = firstNonEmpty(ctx.ExecutionName, "Main agent")
-	}
 	fillDisplayContext(&snapshot)
 	return snapshot
 }
@@ -1245,6 +1239,10 @@ func terminalTaskLabel(snapshot Snapshot) string {
 	switch firstNonEmpty(snapshot.ExecutionKind, snapshot.Scope) {
 	case "workflow_step", "step", "execution_only":
 		return firstNonEmpty(snapshot.StepID, snapshot.StepName)
+	case "main_agent", "main", "chat":
+		return firstNonEmpty(snapshot.AgentName, snapshot.StepName)
+	case "background_agent", "background", "delegation", "todo_task", "sub_agent":
+		return firstNonEmpty(snapshot.AgentName, snapshot.StepName, cleanOpaqueLabel(snapshot.Label), snapshot.StepID)
 	default:
 		return firstNonEmpty(snapshot.StepName, snapshot.AgentName, snapshot.StepID)
 	}

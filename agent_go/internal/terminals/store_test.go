@@ -271,11 +271,11 @@ func TestStoreMergesStructuredWorkflowToolCallsIntoTerminalContent(t *testing.T)
 
 func TestSnapshotWithContextFillsReadableDisplay(t *testing.T) {
 	snapshot := Snapshot{
-		TerminalID:    "session-1:main:7f6d",
+		TerminalID:    "session-1:main:821ee897-76aa-4b82-ae09-85250206d104",
 		SessionID:     "session-1",
-		OwnerID:       "main:7f6d",
+		OwnerID:       "main:821ee897-76aa-4b82-ae09-85250206d104",
 		ExecutionKind: "main_agent",
-		Label:         "main:7f6d",
+		Label:         "main:821ee897-76aa-4b82-ae09-85250206d104",
 		Scope:         "execution",
 		Status:        Status{ToolSummary: "api-bridge x2"},
 	}
@@ -286,17 +286,41 @@ func TestSnapshotWithContextFillsReadableDisplay(t *testing.T) {
 		ExecutionName: "Workflow builder",
 	})
 
-	if enriched.DisplayTitle != "Upwork -> Workflow builder" {
+	if enriched.DisplayTitle != "Upwork -> Main agent" {
 		t.Fatalf("display title = %q", enriched.DisplayTitle)
 	}
-	if enriched.DisplayMeta != "Main agent" {
+	if enriched.DisplayMeta != "" {
 		t.Fatalf("display meta = %q", enriched.DisplayMeta)
 	}
 	if enriched.WorkflowName != "Upwork" {
 		t.Fatalf("workflow name = %q", enriched.WorkflowName)
 	}
-	if enriched.AgentName != "Workflow builder" {
+	if enriched.AgentName != "" {
 		t.Fatalf("agent name = %q", enriched.AgentName)
+	}
+}
+
+func TestSnapshotWithContextDoesNotOverwriteTerminalIdentityFromCurrentExecution(t *testing.T) {
+	snapshot := Snapshot{
+		TerminalID:    "session-1:bg-agent-1",
+		SessionID:     "session-1",
+		OwnerID:       "bg-agent-1",
+		ExecutionKind: "background_agent",
+		Label:         "research-agent",
+		Scope:         "background_agent",
+	}
+
+	enriched := snapshot.WithContext(Context{
+		WorkflowLabel: "Upwork",
+		WorkspacePath: "Workflow/upwork",
+		ExecutionName: "Some other currently active child",
+	})
+
+	if enriched.DisplayTitle != "Upwork -> Research agent" {
+		t.Fatalf("display title = %q", enriched.DisplayTitle)
+	}
+	if enriched.AgentName != "" || enriched.StepName != "" {
+		t.Fatalf("terminal identity was overwritten: agent=%q step=%q", enriched.AgentName, enriched.StepName)
 	}
 }
 

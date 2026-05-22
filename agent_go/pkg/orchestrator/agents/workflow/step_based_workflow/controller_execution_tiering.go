@@ -138,13 +138,23 @@ func resetAdaptiveExecutionTierState(metadata *LearningMetadata, reason string) 
 	metadata.LastTierChangeAt = time.Now().Format(time.RFC3339)
 }
 
+// decideAdaptiveExecutionTier picks the LLM tier for a step using a single
+// signal: description stability + a counter of consecutive successful runs.
+//
+//   - First run on a new step (or after the description changes) → HIGH
+//   - 3 consecutive successful runs on the same description → promote to MEDIUM
+//   - MEDIUM failure → revert to HIGH; 2 successful HIGH runs recover MEDIUM
+//
+// Learning content (SKILL.md, references/*) is intentionally NOT consulted.
+// Direct-mode learning rewrites SKILL.md after almost every successful step,
+// so any content-based reset would oscillate the tier forever. The signal we
+// want is "is the step description stable enough that we trust the cheaper
+// tier on it?" — and the description hash is sufficient for that.
 func (hcpo *StepBasedWorkflowOrchestrator) decideAdaptiveExecutionTier(
 	ctx context.Context,
 	learningPathIdentifier string,
 	stepPath string,
-	hasLearnings bool,
 	currentDescriptionHash string,
-	currentLearningHash string,
 ) (adaptiveExecutionTierDecision, error) {
 	decision := adaptiveExecutionTierDecision{
 		Tier:   TierHigh,
@@ -159,46 +169,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) decideAdaptiveExecutionTier(
 	dirty := false
 	metadata.PreferredExecutionTier = normalizeExecutionTierPreference(metadata.PreferredExecutionTier)
 
-	if !hasLearnings {
-		if metadata.PreferredExecutionTier != executionTierPreferenceHigh || metadata.MediumSuccessStreak > 0 || metadata.HighSuccessStreakSinceMediumFailure > 0 {
-			resetAdaptiveExecutionTierState(metadata, "no learnings available — using Tier 1 (High)")
-			dirty = true
-		}
-		if currentDescriptionHash != "" && metadata.LastDescriptionHash != currentDescriptionHash {
-			metadata.LastDescriptionHash = currentDescriptionHash
-			dirty = true
-		}
-		if dirty {
-			if err := hcpo.writeLearningMetadataForExecutionTiering(ctx, learningPathIdentifier, metadata); err != nil {
-				return decision, err
-			}
-		}
-		decision.Reason = "high (no learnings available)"
-		return decision, nil
-	}
-
 	if currentDescriptionHash != "" && metadata.LastDescriptionHash != "" && metadata.LastDescriptionHash != currentDescriptionHash {
 		resetAdaptiveExecutionTierState(metadata, fmt.Sprintf("description changed (%s -> %s) — reverting to Tier 1 (High)", metadata.LastDescriptionHash[:8], currentDescriptionHash[:8]))
 		dirty = true
 	}
-	if currentLearningHash != "" && metadata.LearningContentHash != "" && metadata.LearningContentHash != currentLearningHash {
-		oldHash := metadata.LearningContentHash
-		if len(oldHash) > 8 {
-			oldHash = oldHash[:8]
-		}
-		newHash := currentLearningHash
-		if len(newHash) > 8 {
-			newHash = newHash[:8]
-		}
-		resetAdaptiveExecutionTierState(metadata, fmt.Sprintf("learning content changed (%s -> %s) — reverting to Tier 1 (High)", oldHash, newHash))
-		dirty = true
-	}
 	if currentDescriptionHash != "" && metadata.LastDescriptionHash != currentDescriptionHash {
 		metadata.LastDescriptionHash = currentDescriptionHash
-		dirty = true
-	}
-	if currentLearningHash != "" && metadata.LearningContentHash != currentLearningHash {
-		metadata.LearningContentHash = currentLearningHash
 		dirty = true
 	}
 
@@ -250,7 +226,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) recordAdaptiveExecutionTierSuccess(
 	stepPath string,
 	usedTier TierLevel,
 	currentDescriptionHash string,
-	currentLearningHash string,
 ) error {
 	metadata, err := hcpo.loadLearningMetadataForExecutionTiering(ctx, learningPathIdentifier, stepPath)
 	if err != nil {
@@ -260,9 +235,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) recordAdaptiveExecutionTierSuccess(
 	metadata.LastExecutionTier = executionTierPreferenceFromLevel(usedTier)
 	if currentDescriptionHash != "" {
 		metadata.LastDescriptionHash = currentDescriptionHash
-	}
-	if currentLearningHash != "" {
-		metadata.LearningContentHash = currentLearningHash
 	}
 
 	switch usedTier {
@@ -294,7 +266,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) recordAdaptiveExecutionTierFailure(
 	stepPath string,
 	failedTier TierLevel,
 	currentDescriptionHash string,
-	currentLearningHash string,
 	reason string,
 ) error {
 	if failedTier != TierMedium {
@@ -315,9 +286,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) recordAdaptiveExecutionTierFailure(
 	metadata.LastTierDecisionReason = fmt.Sprintf("medium tier failed: %s — reverting to Tier 1 (High)", reason)
 	if currentDescriptionHash != "" {
 		metadata.LastDescriptionHash = currentDescriptionHash
-	}
-	if currentLearningHash != "" {
-		metadata.LearningContentHash = currentLearningHash
 	}
 
 	return hcpo.writeLearningMetadataForExecutionTiering(ctx, learningPathIdentifier, metadata)

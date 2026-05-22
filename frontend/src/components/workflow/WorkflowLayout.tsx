@@ -34,9 +34,11 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   compact?: boolean
   hidePhaseChatEmptyState?: boolean
 }>(({ onNewChat, hideHeader, hideInput, compact, hidePhaseChatEmptyState }, ref) => {
-  // Only pass tabId if the active tab belongs to workflow mode AND the current preset.
-  // Legacy/restored builder tabs may not have presetQueryId, so allow those only when
-  // there is no exact tab for the active preset; otherwise they disappear from the UI.
+  // Prefer the active workflow tab when one is selected. The tab strip keeps
+  // active workflow tabs visible even while preset metadata is catching up
+  // after reload; ChatArea must use the same rule or the input area disappears.
+  // Legacy/restored builder tabs may not have presetQueryId, so allow those
+  // when there is no exact tab for the active preset.
   const currentPresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const workflowTabId = useChatStore(state => {
     const tabId = state.activeTabId
@@ -44,6 +46,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
     if (tab?.metadata?.mode !== 'workflow') return undefined
     const tabPresetId = tab.metadata?.presetQueryId
     if (tabPresetId === currentPresetId) return tabId
+    if (tabId === state.activeTabId) return tabId
     if (!tabPresetId && tab.metadata?.phaseId === 'workflow-builder') {
       const hasExactPresetTab = Object.values(state.chatTabs).some(candidate =>
         candidate.metadata?.mode === 'workflow' &&
@@ -60,6 +63,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
     if (tab?.metadata?.mode !== 'workflow') return undefined
     const tabPresetId = tab.metadata?.presetQueryId
     if (tabPresetId === currentPresetId) return tab?.metadata?.phaseId
+    if (tabId === state.activeTabId) return tab?.metadata?.phaseId
     if (!tabPresetId && tab.metadata?.phaseId === 'workflow-builder') {
       const hasExactPresetTab = Object.values(state.chatTabs).some(candidate =>
         candidate.metadata?.mode === 'workflow' &&

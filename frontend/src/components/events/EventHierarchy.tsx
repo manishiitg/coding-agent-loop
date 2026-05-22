@@ -741,11 +741,19 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   }, [getExecutionId, getParentId]);
 
   // Single-pass derivation: delegationStats + backgroundAgentStats + sessionEvents (was 3 separate useMemos)
-  const { delegationStats, backgroundAgentStats, findEventsBetweenStartEnd } = useMemo(() => {
+  const {
+    delegationStats,
+    backgroundAgentStats,
+    findEventsBetweenStartEnd,
+    agentSessionStartIdBySpanKey,
+    agentSessionSpanKeyByStartId,
+  } = useMemo(() => {
     const dStats = new Map<string, DelegationStats>()
     const bgStats = new Map<string, DelegationStats>()
-    const startEvents = new Map<string, { event: PollingEvent; index: number }>()
-    const endEvents = new Map<string, { event: PollingEvent; index: number }>()
+    const openAgentSessionStarts = new Map<string, Array<{ event: PollingEvent; index: number; spanKey: string }>>()
+    const agentSessionSpans: Array<{ spanKey: string; startEvent: PollingEvent; startIndex: number; endEvent?: PollingEvent; endIndex?: number }> = []
+    const agentSessionStartIdBySpanKey = new Map<string, string>()
+    const agentSessionSpanKeyByStartId = new Map<string, string>()
 
     // Temp storage for delegation_start events (need dStats populated first for bgStats)
     const delegationStartEvents: { bgAgentId: string; delegationId: string }[] = []
@@ -756,10 +764,30 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
       // --- Session events (was findEventsBetweenStartEnd) ---
       if (type === 'orchestrator_agent_start' || type === 'orchestrator_agent_end') {
-        const sessionKey = getAgentSessionKey(event)
-        if (sessionKey) {
-          if (type === 'orchestrator_agent_start') startEvents.set(sessionKey, { event, index: i })
-          else endEvents.set(sessionKey, { event, index: i })
+        const baseSessionKey = getAgentSessionKey(event)
+        if (baseSessionKey) {
+          if (type === 'orchestrator_agent_start') {
+            const spanKey = `${baseSessionKey}:start:${event.id}`
+            const starts = openAgentSessionStarts.get(baseSessionKey) || []
+            starts.push({ event, index: i, spanKey })
+            openAgentSessionStarts.set(baseSessionKey, starts)
+            agentSessionStartIdBySpanKey.set(spanKey, event.id)
+            agentSessionSpanKeyByStartId.set(event.id, spanKey)
+          } else {
+            const starts = openAgentSessionStarts.get(baseSessionKey) || []
+            const start = starts.pop()
+            if (start) {
+              agentSessionSpans.push({
+                spanKey: start.spanKey,
+                startEvent: start.event,
+                startIndex: start.index,
+                endEvent: event,
+                endIndex: i,
+              })
+            }
+            if (starts.length > 0) openAgentSessionStarts.set(baseSessionKey, starts)
+            else openAgentSessionStarts.delete(baseSessionKey)
+          }
         }
       }
 
@@ -829,25 +857,37 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       if (ds) bgStats.set(bgAgentId, ds)
     }
 
-    // Build session events map
-    const sessionEvents = new Map<string, Set<string>>()
-    startEvents.forEach((startInfo, sessionKey) => {
-      const endInfo = endEvents.get(sessionKey)
-      const eventIds = new Set<string>()
-      eventIds.add(startInfo.event.id)
+    openAgentSessionStarts.forEach(starts => {
+      starts.forEach(start => {
+        agentSessionSpans.push({
+          spanKey: start.spanKey,
+          startEvent: start.event,
+          startIndex: start.index,
+        })
+      })
+    })
+    agentSessionSpans.sort((a, b) => a.startIndex - b.startIndex)
 
-      if (endInfo) {
+    // Build session events map. Keys are occurrence-scoped by start event ID,
+    // not just correlation_id, because repeated workflow/step runs can reuse
+    // correlation IDs inside the same chat.
+    const sessionEvents = new Map<string, Set<string>>()
+    agentSessionSpans.forEach(span => {
+      const eventIds = new Set<string>()
+      eventIds.add(span.startEvent.id)
+
+      if (span.endEvent && span.endIndex !== undefined) {
         // Completed session: include all events between start and end by index
-        for (let j = startInfo.index + 1; j < endInfo.index; j++) eventIds.add(displayEvents[j].id)
-        eventIds.add(endInfo.event.id)
+        for (let j = span.startIndex + 1; j < span.endIndex; j++) eventIds.add(displayEvents[j].id)
+        eventIds.add(span.endEvent.id)
       } else {
         // In-progress session (no end event yet): prefer backend-owned execution_id.
         // Fallback to the older correlation-id allowlist for events emitted before the
         // backend attached execution ownership.
-        const sessionExecutionId = getExecutionId(startInfo.event)
-        const parts = sessionKey.split(':')
+        const sessionExecutionId = getExecutionId(span.startEvent)
+        const parts = span.spanKey.split(':')
         const sessionCorrelationId: string | undefined = parts[1] // agent_session:{correlationId}:{agentType}
-        for (let j = startInfo.index + 1; j < displayEvents.length; j++) {
+        for (let j = span.startIndex + 1; j < displayEvents.length; j++) {
           const evt = displayEvents[j]
           if (sessionExecutionId && getExecutionId(evt) === sessionExecutionId) {
             eventIds.add(evt.id)
@@ -868,10 +908,16 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         }
       }
 
-      sessionEvents.set(sessionKey, eventIds)
+      sessionEvents.set(span.spanKey, eventIds)
     })
 
-    return { delegationStats: dStats, backgroundAgentStats: bgStats, findEventsBetweenStartEnd: sessionEvents }
+    return {
+      delegationStats: dStats,
+      backgroundAgentStats: bgStats,
+      findEventsBetweenStartEnd: sessionEvents,
+      agentSessionStartIdBySpanKey,
+      agentSessionSpanKeyByStartId,
+    }
   }, [displayEvents, getAgentSessionKey, getExecutionId]);
 
   // Auto-collapse agent sessions that completed cleanly — surfaces the
@@ -1128,11 +1174,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     }
 
     findEventsBetweenStartEnd.forEach((eventIds, sessionKey) => {
-      const startEvent = filteredEvents.find(event => getAgentSessionKey(event) === sessionKey && event.type === 'orchestrator_agent_start')
-      if (!startEvent) return
+      const startEventId = agentSessionStartIdBySpanKey.get(sessionKey)
+      if (!startEventId) return
       eventIds.forEach((eventId) => {
-        if (eventId !== startEvent.id) {
-          agentSessionEventToStartId.set(eventId, startEvent.id)
+        if (eventId !== startEventId) {
+          agentSessionEventToStartId.set(eventId, startEventId)
         }
       })
     })
@@ -1266,7 +1312,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     });
 
     return rootEvents.map(event => buildTreeRecursive(event, 0));
-  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, executionTree, getAgentSessionKey, getExecutionId, getParentId]);
+  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, executionTree, agentSessionStartIdBySpanKey, getExecutionId, getParentId]);
 
   useEffect(() => {
     if (!isEventHierarchyDebugEnabled()) return;
@@ -1767,7 +1813,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const indentSize = 18;
     const indent = indentLevel * indentSize;
     
-    const sessionKey = getAgentSessionKey(event);
+    const sessionKey = event.type === 'orchestrator_agent_start'
+      ? agentSessionSpanKeyByStartId.get(event.id)
+      : undefined;
     const isCollapsed = sessionKey ? collapsedSessions.has(sessionKey) : false;
     const eventCount = sessionKey && findEventsBetweenStartEnd.has(sessionKey)
       ? findEventsBetweenStartEnd.get(sessionKey)!.size - 2 : undefined;
@@ -1842,7 +1890,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         </div>
       </div>
     );
-  }, [collapsedSessions, expandedNodes, expandedOwnedLogPanels, findEventsBetweenStartEnd, getAgentSessionKey, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, delegationStats, backgroundAgentStats, switchToTerminalView, toggleToolCallGroup, resolvedTabId]);
+  }, [collapsedSessions, expandedNodes, expandedOwnedLogPanels, findEventsBetweenStartEnd, agentSessionSpanKeyByStartId, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, delegationStats, backgroundAgentStats, switchToTerminalView, toggleToolCallGroup, resolvedTabId]);
 
   // Only auto-scroll when new top-level items are added (not when sub-agent events update internals).
   // Sub-agent events change displayEvents but don't add items to flattenedItems.

@@ -2273,16 +2273,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const liveChatTabs = useChatStore.getState().chatTabs
 
     // Determine which session IDs need SSE connections.
-    // Skip Terminal-view-mode tabs: TerminalCenter has its own
-    // /api/terminals poll and the events that SSE would deliver are
-    // useless (nothing renders them, they only consume memory).
-    // Re-entering Tree triggers a reconnect on the next effect
-    // pass and a poll-based backfill from lastEventIndex.
+    // Terminal view mode used to skip SSE — the assumption was that
+    // TerminalCenter's /api/terminals poll covered everything. That was
+    // true while every coding-agent provider was tmux-backed (live pane
+    // state came from polling). For structured CLI providers (gemini-cli
+    // since the contract flip, opencode-cli) the synthetic terminal is
+    // built from streaming_chunk events, so skipping SSE means the pane
+    // never updates and user messages appear lost. Connect SSE for every
+    // active tab regardless of view mode.
     const neededSessionIds = new Set<string>()
     for (const tab of tabsWithActiveSessions) {
       if (!tab.sessionId) continue
-      const liveMode = normalizeEventViewMode(liveChatTabs[tab.tabId]?.viewMode)
-      if (liveMode === 'terminal') continue
       neededSessionIds.add(tab.sessionId)
     }
     // TEMP debug — trace SSE effect re-runs during mode switches.
@@ -2299,11 +2300,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       })),
     }))
 
-    // Connect SSE for sessions that don't have a connection yet
+    // Connect SSE for sessions that don't have a connection yet (any
+    // view mode — see neededSessionIds comment for why terminal mode
+    // can no longer skip this).
     for (const tab of tabsWithActiveSessions) {
       if (!tab.sessionId) continue
       const liveMode = normalizeEventViewMode(liveChatTabs[tab.tabId]?.viewMode)
-      if (liveMode === 'terminal') continue
       const sid = tab.sessionId
       if (currentSSE[sid]) {
         console.log('[sse-effect] skip-connect already-connected ' + JSON.stringify({ sid }))

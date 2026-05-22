@@ -193,22 +193,31 @@ func TestWorkflowStartAutoNotificationTrailerForbidsToolCalls(t *testing.T) {
 	})
 
 	for _, tt := range []struct {
-		name string
-		msg  string
+		name        string
+		msg         string
+		maxNewlines int
 	}{
-		{"single-part start notification", singleAgent},
-		{"multi-part start notification", multiAgent},
+		// Single-part: header + trailer only. cursor-cli's tmux paste-compression
+		// flips to "[Pasted text +N lines]" above ~2 newlines, so the common
+		// case must stay strictly compact.
+		{"single-part start notification", singleAgent, 1},
+		// Multi-part (rare — several workflows starting at once) inherently
+		// needs one line per agent. Paste-compression is acceptable there.
+		{"multi-part start notification", multiAgent, 4},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, want := range []string{
 				"[AUTO-NOTIFICATION]",
-				"Acknowledge in one short sentence",
-				"Do NOT call any tools",
+				"Ack briefly",
+				"Do NOT call tools",
 				"completion will arrive as a separate AUTO-NOTIFICATION",
 			} {
 				if !strings.Contains(tt.msg, want) {
 					t.Fatalf("start trailer missing required directive %q, got:\n%s", want, tt.msg)
 				}
+			}
+			if got := strings.Count(tt.msg, "\n"); got > tt.maxNewlines {
+				t.Fatalf("start notification has %d newlines (max %d) — cursor will paste-compress it:\n%s", got, tt.maxNewlines, tt.msg)
 			}
 		})
 	}

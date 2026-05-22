@@ -7942,11 +7942,15 @@ func buildBackgroundAgentStartSyntheticMessage(_ string, parts []string) string 
 	// query_step / status-check tools to "verify" what the message already
 	// states, which (a) wastes a turn, and (b) sometimes races the completion
 	// notification, making the start ack look like a completion summary.
-	const trailer = "Acknowledge in one short sentence and continue tracking. Do NOT call any tools — the status above is already current; completion will arrive as a separate AUTO-NOTIFICATION."
+	//
+	// The message is kept compact (no blank line between content and trailer,
+	// minimal newlines overall) so cursor-cli's tmux paste-compression
+	// heuristic renders it inline rather than as "[Pasted text +N lines]".
+	const trailer = "Ack briefly; completion will arrive as a separate AUTO-NOTIFICATION. Do NOT call tools."
 	if len(parts) == 1 {
-		return fmt.Sprintf("[AUTO-NOTIFICATION]\n%s\n\n%s", strings.TrimPrefix(parts[0], "- "), trailer)
+		return fmt.Sprintf("[AUTO-NOTIFICATION] %s\n%s", strings.TrimPrefix(parts[0], "- "), trailer)
 	}
-	return fmt.Sprintf("[AUTO-NOTIFICATION]\nBackground activity started:\n%s\n\n%s", strings.Join(parts, "\n"), trailer)
+	return fmt.Sprintf("[AUTO-NOTIFICATION] Background activity started:\n%s\n%s", strings.Join(parts, "\n"), trailer)
 }
 
 func backgroundAgentStartLabel(snap BackgroundAgentSnapshot) string {
@@ -8199,18 +8203,21 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	isFailed := snap.Status == BGAgentFailed
 	actionHint := buildWorkshopActionHint(workshopMode, isLockCode, isLockLearnings, lockCodeConsecutiveFailures, lockCodeNeedsReview, isFailed)
 
-	// Include iteration and group_name if available in metadata
+	// Iteration and group go inline alongside id/status to keep the header
+	// to a single line — cursor-cli's tmux paste-compression collapses any
+	// multi-line user-message into a "[Pasted text +N lines]" placeholder,
+	// which hides the actual notification text from the operator.
 	contextInfo := ""
 	if snap.Metadata != nil {
 		if iter, ok := snap.Metadata["iteration"]; ok && iter != "" {
-			contextInfo += fmt.Sprintf("\nIteration: %s", iter)
+			contextInfo += fmt.Sprintf(", iter=%s", iter)
 		}
 		if gid, ok := snap.Metadata["group_name"]; ok && gid != "" {
-			contextInfo += fmt.Sprintf("\nGroup: %s", gid)
+			contextInfo += fmt.Sprintf(", group=%s", gid)
 		}
 	}
 	syntheticMsg := fmt.Sprintf(
-		"[AUTO-NOTIFICATION]\nAgent '%s' (ID: %s) completed.\nStatus: %s%s\nResult:\n%s%s",
+		"[AUTO-NOTIFICATION] Agent '%s' (id=%s) completed — status=%s%s.\nResult: %s%s",
 		snap.Name, snap.ID, snap.Status, contextInfo, resultText, actionHint)
 
 	// Bot connector sessions (slack / whatsapp / discord / telegram / etc.): the

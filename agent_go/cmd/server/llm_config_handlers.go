@@ -1096,8 +1096,14 @@ func validateGeminiCLI(apiKey string) llm.APIKeyValidationResponse {
 	if apiKey == "" {
 		apiKey = os.Getenv("GEMINI_API_KEY")
 	}
+	// GEMINI_CLI_TRUST_WORKSPACE=true is required for non-interactive runs in
+	// Gemini CLI 0.42+ — otherwise YOLO mode is silently downgraded to "default"
+	// and the run errors with "Gemini CLI is not running in a trusted directory".
+	// Matches what the structured/interactive adapters set when actually running
+	// the CLI for the user.
+	cmd.Env = append(os.Environ(), "GEMINI_CLI_TRUST_WORKSPACE=true")
 	if apiKey != "" {
-		cmd.Env = append(os.Environ(), "GEMINI_API_KEY="+apiKey)
+		cmd.Env = append(cmd.Env, "GEMINI_API_KEY="+apiKey)
 	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {

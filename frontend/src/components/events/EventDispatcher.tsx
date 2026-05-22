@@ -627,8 +627,18 @@ function getBackgroundExecutionKindLabel(kind?: string): string | undefined {
   if (!normalized) return undefined
   if (normalized === 'workshop background') return 'Background task'
   if (normalized === 'workflow step') return 'Workflow step'
+  if (normalized === 'workflow sub agent') return 'Sub-agent'
   if (normalized === 'background agent') return 'Background task'
   return titleCaseIdentifier(normalized)
+}
+
+function splitExecutionDisplayPath(displayName: string): { parentPath?: string; title: string } {
+  const parts = displayName.split(/\s+>\s+/).map(part => part.trim()).filter(Boolean)
+  if (parts.length <= 1) return { title: displayName }
+  return {
+    parentPath: parts.slice(0, -1).join(' > '),
+    title: parts[parts.length - 1],
+  }
 }
 
 // Helper function to wrap event component with orchestrator context
@@ -1875,6 +1885,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const agentId = fields?.agent_id || ''
     const rawName = fields?.name || ''
     const displayName = getBackgroundExecutionDisplayName(rawName)
+    const displayPath = splitExecutionDisplayPath(displayName)
     const status = inferOwnerStatusFromSummaryNodes(summaryNodes) || fields?.status || 'running'
     const kind = fields?.kind
     const kindLabel = getBackgroundExecutionKindLabel(kind)
@@ -1887,23 +1898,32 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     return (
       <CompactWrapper compact={compact}>
         <div className={`bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <span className={`inline-block w-2 h-2 rounded-full bg-blue-500 ${isRunning ? 'animate-pulse' : 'opacity-60'}`} />
-            <span className={`${compact ? 'text-xs' : 'text-sm'} font-medium text-blue-700 dark:text-blue-300`}>
-              {displayName}
-            </span>
-            {kindLabel && (
-              <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-blue-500/70 dark:text-blue-400/70`}>
-                {kindLabel}
-              </span>
-            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className={`${compact ? 'text-xs' : 'text-sm'} min-w-0 truncate font-medium text-blue-700 dark:text-blue-300`}>
+                  {displayPath.title}
+                </span>
+                {kindLabel && (
+                  <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} shrink-0 rounded border border-blue-700/40 px-1.5 py-0.5 leading-none text-blue-500/80 dark:text-blue-400/80`}>
+                    {kindLabel}
+                  </span>
+                )}
+                {displayPath.parentPath && (
+                  <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} min-w-0 truncate text-blue-500/65 dark:text-blue-400/65`}>
+                    inside {displayPath.parentPath}
+                  </span>
+                )}
+              </div>
+            </div>
             {hasLiveStats && (
-              <span className="text-[10px] text-blue-500 dark:text-blue-400 animate-pulse">
+              <span className="shrink-0 text-[10px] text-blue-500 dark:text-blue-400 animate-pulse">
                 {liveStats.toolCalls ? `${liveStats.toolCalls} tools` : ''}
               </span>
             )}
             {!hasLiveStats && (
-              <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-blue-500 dark:text-blue-400`}>
+              <span className={`${compact ? 'text-[10px]' : 'text-xs'} shrink-0 text-blue-500 dark:text-blue-400`}>
                 {isRunning ? 'Running' : titleCaseIdentifier(status)}
               </span>
             )}

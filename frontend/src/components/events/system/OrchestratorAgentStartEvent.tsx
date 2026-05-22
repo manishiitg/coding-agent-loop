@@ -7,6 +7,31 @@ import { useLLMStore } from '../../../stores'
 import { getModelDisplayName } from '../../../utils/llmDisplay'
 import { isEvaluationAgentEvent } from './eventDisplayUtils'
 
+function titleCaseIdentifier(value: string): string {
+  return value
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w+/g, word => {
+      const lower = word.toLowerCase()
+      if (lower === 'kb') return 'KB'
+      if (lower === 'id') return 'ID'
+      if (lower === 'api') return 'API'
+      return `${lower.charAt(0).toUpperCase()}${lower.slice(1)}`
+    })
+}
+
+function friendlyAgentName(event: OrchestratorAgentStartEvent): string {
+  const rawName = event.agent_name || ''
+  const stepTitle = typeof event.input_data?.step_title === 'string' ? event.input_data.step_title : ''
+  const title = stepTitle || rawName
+  const executionMarker = title.lastIndexOf('execution-')
+  if (executionMarker >= 0) {
+    return titleCaseIdentifier(title.slice(executionMarker + 'execution-'.length))
+  }
+  return titleCaseIdentifier(title.replace(/^step-\d+-(sub-)?/, '')) || 'Work item'
+}
+
 function formatWorkshopIteration(iteration?: number, inputIteration?: string): string | null {
   if (inputIteration && inputIteration.trim() !== '') return inputIteration
   if (typeof iteration === 'number' && iteration >= 0) return `iteration-${iteration}`
@@ -105,6 +130,13 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     if (agentType === 'plan_breakdown') return 'Plan Breakdown Agent'
     if (agentType === 'conditional') return 'Conditional LLM'
     return 'Agent'
+  }
+
+  const getTreeRoleLabel = () => {
+    if (agentType === 'todo_task_orchestrator') return 'Orchestrator'
+    if (isWorkflowStepExecution || isWorkshopStepExecution || isEvaluationAgent) return 'Workflow step'
+    if (agentType === 'todo_planner_execution' || agentType === 'generic_execution') return 'Sub-agent'
+    return getLabel()
   }
 
   const getAgentIcon = () => {
@@ -241,6 +273,8 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   const modeLabel = isEvaluationAgent
     ? (useLearnCodeMode ? 'Eval Learn Code' : modeFlags.use_code_execution_mode ? 'Eval Code Exec' : 'Eval')
     : (useLearnCodeMode ? 'Learn Code' : modeFlags.use_code_execution_mode ? 'Code Exec' : null)
+  const displayName = friendlyAgentName(event)
+  const treeRoleLabel = getTreeRoleLabel()
 
   return (
     <div className={`p-2 ${colors.bg} border ${colors.border} rounded transition-all duration-200 ${isWorkshopStep ? 'border-l-4 ml-2' : ''}`}>
@@ -253,19 +287,28 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
               <span className="text-sm">{agentIcon}</span>
             </div>
             <div className="min-w-0 flex-1">
-              <div className={`text-sm font-medium ${colors.text}`}>
-                {getLabel()} Started: {event.agent_name}
-                <span className={`text-xs font-normal ${colors.textSecondary}`}>
-                  {modeLabel ? ` | ${modeLabel}` : null}
-                  {workshopMeta
-                    ? ` | ${workshopMeta}`
-                    : ` | Model: ${modelDisplayName}`}
-                  {event.step_index !== undefined && ` | Step: ${event.step_index}`}
-                  {toolCallCount !== undefined && toolCallCount > 0 && ` | Tools: ${toolCallCount}`}
-                  {latestToolLabel && ` | Tool: ${latestToolLabel}`}
+              <div className={`flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium ${colors.text}`}>
+                <span className="min-w-0 truncate">{displayName}</span>
+                <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none ${colors.border} ${colors.textSecondary}`}>
+                  {treeRoleLabel}
                 </span>
+                {modeLabel && (
+                  <span className={`shrink-0 text-[10px] font-normal ${colors.textSecondary}`}>{modeLabel}</span>
+                )}
+                <span className={`shrink-0 text-[10px] font-normal ${colors.textSecondary}`}>
+                  {workshopMeta || `Model: ${modelDisplayName}`}
+                </span>
+                {event.step_index !== undefined && (
+                  <span className={`shrink-0 text-[10px] font-normal ${colors.textSecondary}`}>Step {event.step_index}</span>
+                )}
+                {toolCallCount !== undefined && toolCallCount > 0 && (
+                  <span className={`shrink-0 text-[10px] font-normal ${colors.textSecondary}`}>{toolCallCount} tools</span>
+                )}
+                {latestToolLabel && (
+                  <span className={`shrink-0 text-[10px] font-normal ${colors.textSecondary}`}>{latestToolLabel}</span>
+                )}
                 {isCollapsed && eventCount !== undefined && (
-                  <span className={`text-xs font-normal ${colors.textSecondary}`}> | {eventCount} events collapsed</span>
+                  <span className={`text-[10px] font-normal ${colors.textSecondary}`}>{eventCount} events collapsed</span>
                 )}
               </div>
             </div>

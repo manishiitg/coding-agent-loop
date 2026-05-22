@@ -1696,48 +1696,13 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
       if (isExecutionOwnerEvent(node.event)) {
         // Show nested execution owners as tree rows, but keep raw logs/tool events
-        // inside the owner's expandable log panel. Completed sibling runs are
-        // collapsed so tree mode reads like current work, not a raw audit log.
+        // inside the owner's expandable log panel. Keep completed execution
+        // siblings visible so the workflow reads as a run timeline, not just
+        // the active tail of the trace.
         const ownerChildren = node.children.filter(child => isExecutionOwnerEvent(child.event));
-        let completedRun: Array<{ child: EventNode; index: number }> = [];
-        const flushCompletedRun = () => {
-          if (completedRun.length === 0) return;
-          const firstIndex = completedRun[0].index;
-          const groupKey = `${key}-completed-executions-${firstIndex}`;
-          if (expandedCompletedExecutionGroups.has(groupKey)) {
-            list.push({
-              uniqueKey: `${groupKey}-collapse`,
-              isCompletedExecutionToggle: true,
-              completedExecutionToggleMode: 'collapse',
-              hiddenCount: completedRun.length,
-              groupKey,
-              completedExecutionLevel: node.level + 1 + levelOffset,
-            });
-            completedRun.forEach(({ child, index }) => {
-              flatten(child, `${key}-owner-child-${index}`, levelOffset);
-            });
-          } else {
-            list.push({
-              uniqueKey: `${groupKey}-expand`,
-              isCompletedExecutionToggle: true,
-              completedExecutionToggleMode: 'expand',
-              hiddenCount: completedRun.length,
-              groupKey,
-              completedExecutionLevel: node.level + 1 + levelOffset,
-            });
-          }
-          completedRun = [];
-        };
-
         ownerChildren.forEach((child, index) => {
-          if (isCompletedExecutionOwnerNode(child)) {
-            completedRun.push({ child, index });
-            return;
-          }
-          flushCompletedRun();
           flatten(child, `${key}-owner-child-${index}`, levelOffset);
         });
-        flushCompletedRun();
         return;
       }
 

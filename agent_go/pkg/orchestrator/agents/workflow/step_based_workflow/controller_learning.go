@@ -279,8 +279,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	}
 
 	// Execute extraction agent
+	hcpo.recordWorkflowContinuationPhase(ctx, step.GetID(), stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseLearningAgent, workflowContinuationStatusRunning, "", successLearningAgent)
 	learningResult, learningConv, err := successLearningAgent.Execute(ctx, successLearningTemplateVars, []llmtypes.MessageContent{})
+	hcpo.recordWorkflowContinuationPhase(ctx, step.GetID(), stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseLearningAgent, workflowContinuationStatusRunning, "", successLearningAgent)
 	if err != nil {
+		hcpo.recordWorkflowContinuationPhase(context.Background(), step.GetID(), stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseLearningAgent, workflowContinuationStatusFailed, err.Error(), successLearningAgent)
 		// Log learning failure
 		_ = hcpo.logLearningExecution(ctx, learningPathIdentifier, stepPath, map[string]interface{}{
 			"type":          "learning_failed",
@@ -293,6 +296,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning extraction completed for %s", learningPathIdentifier))
+	hcpo.recordWorkflowContinuationPhase(context.Background(), step.GetID(), stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseLearningAgent, workflowContinuationStatusCompleted, "", successLearningAgent)
 
 	// Determine log file path for conversation
 	var validationWorkspacePath string
@@ -439,6 +443,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Queued tracked background success learning for %s (execution_id=%s)", learningPathIdentifier, execID))
+	hcpo.recordWorkflowContinuationPhase(context.Background(), step.GetID(), stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseLearningAgent, workflowContinuationStatusPending, "", nil)
 
 	// Serialize learning agents through a single-writer queue (see queues.go).
 	// Concurrent step completions used to race on shared learnings/_global/ files via
@@ -447,8 +452,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 	enqueueLearningJob(func() {
 		var result string
 		var execErr error
+		hcpo.recordWorkflowContinuationPhase(execCtx, step.GetID(), stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseLearningAgent, workflowContinuationStatusRunning, "", nil)
 		defer func() {
 			skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
+			status := workflowContinuationStatusCompleted
+			errText := ""
+			if execErr != nil {
+				status = workflowContinuationStatusFailed
+				errText = execErr.Error()
+			}
+			hcpo.recordWorkflowContinuationPhase(context.Background(), step.GetID(), stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseLearningAgent, status, errText, nil)
 			if !skipNotify && hcpo.workshopExecutionNotifier != nil {
 				hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, result, nil, execErr)
 			}

@@ -103,12 +103,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdate(
 			Cancel:            cancel,
 		})
 	}
+	hcpo.recordWorkflowContinuationPhase(context.Background(), stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, workflowContinuationStatusPending, "", nil)
 
 	enqueueKBUpdateJob(func() {
 		var execErr error
 		var resultMsg string
+		hcpo.recordWorkflowContinuationPhase(execCtx, stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, workflowContinuationStatusRunning, "", nil)
 		defer func() {
 			cancel()
+			status := workflowContinuationStatusCompleted
+			errText := ""
+			if execErr != nil {
+				status = workflowContinuationStatusFailed
+				errText = execErr.Error()
+			}
+			hcpo.recordWorkflowContinuationPhase(context.Background(), stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, status, errText, nil)
 			if hcpo.workshopExecutionNotifier != nil {
 				hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, resultMsg, nil, execErr)
 			}
@@ -198,7 +207,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhase(
 		"NotesIndexPath":            notesIndexPath,
 	}
 
+	hcpo.recordWorkflowContinuationPhase(ctx, stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, workflowContinuationStatusRunning, "", agent)
 	result, _, err := agent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
+	hcpo.recordWorkflowContinuationPhase(ctx, stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, workflowContinuationStatusRunning, "", agent)
 	if err != nil {
 		return fmt.Errorf("KB update agent execution failed: %w", err)
 	}

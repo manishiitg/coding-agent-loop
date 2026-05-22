@@ -31,9 +31,9 @@ latest sync:
 | Capture handle into chat history | **Done** | `ChatHistoryAgentRuntime.AgentSessionHandle` populated via `CurrentAgentSessionHandle()` |
 | Restore handle on chat resume | **Done** | `ApplyAgentSessionHandle()` called during restore |
 | Remove legacy maps in `server.go` | **Done** | `claudeCodeSessionIDs`, `geminiSessionIDs`, `geminiProjectDirIDs`, and `restoreCodingAgentRuntime()` have been removed. Restore now flows through `seedCodingAgentRuntimeFromRestoredConversation()` and `ApplyAgentSessionHandle()`. |
-| Workflow step continuation (Step 5) | **Partial** | In-process workflow agents route through mcpagent continuation when a handle exists. Durable per-execution handle/phase persistence for restart and delayed post-step work is still pending. |
-| Learning / KB review continuation (Step 6) | **Partial** | Same-agent follow-up turns benefit from the shared continuation path. Durable lock-wait/restart recovery for learning and KB review is still pending. |
-| Kill-tmux recovery E2E test | **Provider done; builder partial** | Provider E2E verifies Claude Code and Codex CLI. Builder chat E2E has `--run-tmux-loss-resume`; Claude Code passed live, Codex CLI was stopped before final live verification after the transcript-selection fix. |
+| Workflow step continuation (Step 5) | **Partial** | In-process workflow agents route through mcpagent continuation when a handle exists. Workflow steps now persist `continuation_state.json` beside step logs with the latest `AgentSessionHandle` and phase statuses. Restart-time work-item replay is still pending. |
+| Learning / KB review continuation (Step 6) | **Partial** | Same-agent direct KB review / direct-learning turns benefit from the shared continuation path and now record lock-wait/running/completed phase state. Agent-mode learning/KB update jobs record pending/running/completed phase state, but restart replay is still pending. |
+| Kill-tmux recovery E2E test | **Done for Claude Code + Codex CLI chat** | Provider E2E verifies Claude Code and Codex CLI. Builder chat E2E `--run-tmux-loss-resume` has passed live for Claude Code and Codex CLI. |
 
 Day-to-day callers do not need to choose between `AskWithHistory` and
 `ContinueAgentSession`. The auto-routing in mcpagent decides based on the
@@ -692,8 +692,11 @@ Owner repo: `mcp-agent-builder-go`
 
 Status: **Partial.** Live workflow execution agents now reuse the same
 mcpagent continuation path when an `AgentSessionHandle` is already present.
-The remaining work is durable handle and phase persistence for delayed
-post-step work and backend restart recovery.
+Each workflow step also persists a `continuation_state.json` file under its
+step log folder. That file records the latest `AgentSessionHandle` plus phase
+states for main execution, pre-validation, direct KB review, direct learning,
+agent-mode learning, and KB update agents. The remaining work is restart-time
+work-item replay from that durable state.
 
 Likely areas:
 
@@ -710,6 +713,7 @@ Deliverables:
   steps have no equivalent. The handle must be persisted somewhere durable
   (e.g., a per-execution entry alongside the step state) so that a builder
   process restart does not lose it before the post-step learning turn fires.
+  **Current location:** `runs/{iteration}/{group}/logs/{step}/continuation_state.json`.
 - Persist post-step phase state separately from the handle. A handle only says
   how to continue an agent session; it does not say which workflow work remains.
   Durable state must record phases such as:
@@ -750,9 +754,11 @@ parent tool call silently.
 Owner repo: `mcp-agent-builder-go`
 
 Status: **Partial.** Learning and KB review turns that run through the same
-live execution agent inherit mcpagent continuation. The missing piece is durable
-post-step phase recovery when learning lock waits, process restarts, or tmux
-retention cleanup outlive the original in-memory execution.
+live execution agent inherit mcpagent continuation. Direct-learning lock waits
+are now written to `continuation_state.json` before the lock is acquired, so a
+long wait does not erase the provider handle. The missing piece is restart-time
+post-step phase recovery when process restarts outlive the original in-memory
+execution.
 
 Likely areas:
 
@@ -881,11 +887,9 @@ mcp-agent-builder-go:
   - terminal grouping current/previous pane test
 ```
 
-Current live status: Claude Code passed the builder chat tmux-loss run. Codex
-CLI has the test flag and the unsafe global transcript selection has been fixed
-by scoping rollout discovery to the tmux working directory, but the builder HTTP
-run was stopped before final verification. Re-run it before marking Codex
-builder chat recovery fully certified.
+Current live status: Claude Code and Codex CLI have both passed the builder
+chat tmux-loss run. Codex CLI launch now disables startup self-update checks so
+the resumed pane does not die while the E2E is waiting for the second turn.
 
 ## Suggested First Vertical Slice
 

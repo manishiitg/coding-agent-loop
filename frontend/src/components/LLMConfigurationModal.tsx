@@ -9,7 +9,7 @@ import { APIProviderSection } from './llm/APIProviderSection'
 import { APIKeyProviderSection } from './APIKeyProviderSection'
 import { llmConfigService, type ModelMetadata, type ProviderManifestEntry } from '../services/llm-config-api'
 import { LibraryTab } from './llm/LibraryTab'
-import { PROVIDER_ORDER, getProviderDisplayInfo, getProviderIntegrationKind, type ProviderType } from '../utils/llmDisplay'
+import { CODING_AGENT_PROVIDERS, PROVIDER_ORDER, getProviderDisplayInfo, getProviderIntegrationKind, type ProviderType } from '../utils/llmDisplay'
 import ModalPortal from './ui/ModalPortal'
 
 interface LLMConfigurationModalProps {
@@ -124,7 +124,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
   const getProviderForTab = (tab: TabType): APIKeyProviderType | null => {
     if (tab === 'audio-gemini') return 'vertex'
     if (tab === 'audio-minimax') return 'minimax'
-    if (tab === 'library' || tab === 'claude-code' || tab === 'gemini-cli' || tab === 'codex-cli' || tab === 'cursor-cli' || tab === 'opencode-cli') return null
+    if (tab === 'library' || CODING_AGENT_PROVIDERS.has(tab)) return null
     if (HIDDEN_CHAT_PROVIDER_TABS.has(tab as ProviderType)) return null
     return tab as APIKeyProviderType
   }

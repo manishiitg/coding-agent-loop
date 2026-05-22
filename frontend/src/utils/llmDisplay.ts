@@ -59,7 +59,7 @@ export const LLM_INTEGRATION_DISPLAY_INFO: Record<LLMIntegrationKind, LLMIntegra
   },
 }
 
-const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'opencode-cli'])
+export const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'opencode-cli'])
 const AUDIO_PROVIDER_PROVIDERS = new Set(['elevenlabs', 'deepgram'])
 
 const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {

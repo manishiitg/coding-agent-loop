@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer'
+import { CODING_AGENT_PROVIDERS } from '../../../utils/llmDisplay'
 
 interface UnifiedCompletionEvent {
   timestamp?: string
@@ -25,8 +26,6 @@ interface UnifiedCompletionEventDisplayProps {
   event: UnifiedCompletionEvent
 }
 
-const codingAgentProviders = new Set(['claude-code', 'codex-cli', 'gemini-cli', 'cursor-cli', 'opencode-cli'])
-
 const metadataBool = (value: unknown): boolean => value === true || value === 'true'
 
 const shouldUseTerminalFormatting = (event: UnifiedCompletionEvent): boolean => {
@@ -34,7 +33,7 @@ const shouldUseTerminalFormatting = (event: UnifiedCompletionEvent): boolean => 
     return true
   }
   const provider = typeof event.metadata?.provider === 'string' ? event.metadata.provider : ''
-  return codingAgentProviders.has(provider)
+  return CODING_AGENT_PROVIDERS.has(provider)
 }
 
 const TerminalCompletionRenderer: React.FC<{ content: string }> = ({ content }) => (

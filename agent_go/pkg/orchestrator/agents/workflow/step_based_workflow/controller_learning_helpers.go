@@ -48,10 +48,10 @@ func canReadLearnings(agentConfigs *AgentConfigs, step PlanStepInterface, isEval
 	return resolveLearningsAccess(agentConfigs) != LearningsAccessNone
 }
 
-// canWriteLearnings reports whether the post-step learning agent should run
-// for this step. Requires learnings_access == "read-write" AND a non-empty
-// learning_objective (the extraction target for the writer). Routing and eval
-// mode always skip.
+// canWriteLearnings reports whether the step agent should run its direct
+// post-completion learnings turn. Requires learnings_access == "read-write"
+// AND a non-empty learning_objective (the extraction target for the writer).
+// Routing and eval mode always skip.
 func canWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterface, isEvalMode bool) bool {
 	if isEvalMode || (step != nil && isRoutingStep(step)) {
 		return false

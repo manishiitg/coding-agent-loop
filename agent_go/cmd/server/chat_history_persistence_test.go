@@ -612,6 +612,33 @@ func TestCaptureChatHistoryAgentRuntimePersistsAgentSessionHandle(t *testing.T) 
 	}
 }
 
+func TestCaptureChatHistoryAgentRuntimeInfersProviderFromSessionHandle(t *testing.T) {
+	api := &StreamingAPI{}
+
+	agent := &mcpagent.Agent{
+		SessionID: "chat-session-1",
+		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
+			Provider:        "codex-cli",
+			Transport:       llmtypes.CodingProviderTransportTmux,
+			NativeSessionID: "codex-thread-typed",
+			ProjectDirID:    "Workflow/example",
+			Model:           "gpt-5.4",
+		},
+	}
+
+	runtime := api.captureChatHistoryAgentRuntime("chat-session-1", "", "", "Workflow/example", agent)
+
+	if runtime == nil {
+		t.Fatal("expected runtime metadata")
+	}
+	if runtime.Kind != "coding_agent" || runtime.Provider != "codex-cli" || runtime.ModelID != "gpt-5.4" {
+		t.Fatalf("runtime did not infer coding provider from handle: %#v", runtime)
+	}
+	if runtime.ExternalSessionID != "codex-thread-typed" || !runtime.ResumeSupported {
+		t.Fatalf("runtime did not mirror native session from handle: %#v", runtime)
+	}
+}
+
 func TestSeedCodingAgentRuntimeRestoresGeminiProjectDirForNextTurn(t *testing.T) {
 	sessionID := "gemini-restore-session"
 	workspace.ClearSessionShellConfig(sessionID)

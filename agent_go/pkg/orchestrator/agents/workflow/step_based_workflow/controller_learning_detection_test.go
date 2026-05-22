@@ -37,11 +37,11 @@ func TestInferHasNewLearningFromResult(t *testing.T) {
 
 func TestShouldAutoLockLearnings(t *testing.T) {
 	tests := []struct {
-		name                  string
-		id                    string
-		metadata              LearningMetadata
-		requireNoNewLearning  bool
-		expected              bool
+		name                 string
+		id                   string
+		metadata             LearningMetadata
+		requireNoNewLearning bool
+		expected             bool
 	}{
 		{
 			name: "locks after threshold and repeated no-op outcomes",
@@ -52,10 +52,10 @@ func TestShouldAutoLockLearnings(t *testing.T) {
 				ConsecutiveNoNewLearningRuns: autoLockConsecutiveNoNewLearningRuns,
 			},
 			requireNoNewLearning: true,
-			expected: true,
+			expected:             true,
 		},
 		{
-			name: "agent mode locks after threshold without no-op streak",
+			name: "legacy threshold-only lock path ignores no-op streak",
 			id:   "step-agent",
 			metadata: LearningMetadata{
 				LastDescriptionHash:          "1234567890abcdef",
@@ -74,7 +74,7 @@ func TestShouldAutoLockLearnings(t *testing.T) {
 				ConsecutiveNoNewLearningRuns: autoLockConsecutiveNoNewLearningRuns,
 			},
 			requireNoNewLearning: true,
-			expected: false,
+			expected:             false,
 		},
 		{
 			name: "does not lock when recent learning is still new",
@@ -85,7 +85,7 @@ func TestShouldAutoLockLearnings(t *testing.T) {
 				ConsecutiveNoNewLearningRuns: autoLockConsecutiveNoNewLearningRuns - 1,
 			},
 			requireNoNewLearning: true,
-			expected: false,
+			expected:             false,
 		},
 		{
 			name: "global learnings never auto-lock",
@@ -96,7 +96,7 @@ func TestShouldAutoLockLearnings(t *testing.T) {
 				ConsecutiveNoNewLearningRuns: autoLockConsecutiveNoNewLearningRuns + 5,
 			},
 			requireNoNewLearning: true,
-			expected: false,
+			expected:             false,
 		},
 	}
 

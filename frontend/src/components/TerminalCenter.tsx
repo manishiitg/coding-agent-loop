@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, Info, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
+import { AlertTriangle, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { agentApi } from '../services/api'
@@ -9,6 +9,7 @@ import { useChatStore } from '../stores/useChatStore'
 interface TerminalCenterProps {
   currentSessionId?: string
   compact?: boolean
+  hasConversationActivity?: boolean
 }
 
 const SELECTED_TERMINAL_HISTORY_LINES = 10000
@@ -117,6 +118,18 @@ function routeDecisionLabel(decision: RoutingDecision): string {
 function routeDecisionTitle(decision: RoutingDecision): string {
   const label = routeDecisionLabel(decision)
   return `Routing: ${label}${decision.nextStepId ? ` -> ${decision.nextStepId}` : ''}`
+}
+
+function routeDecisionDedupeKey(decision: RoutingDecision): string {
+  return [
+    decision.stepId || '',
+    decision.selectedRouteId || '',
+    decision.nextStepId || '',
+  ].join('|')
+}
+
+function routingDecisionTime(decision: RoutingDecision): number {
+  return decision.timestamp ? new Date(decision.timestamp).getTime() || 0 : 0
 }
 
 function sameEventIDs(a: PollingEvent[], b: PollingEvent[]): boolean {
@@ -355,6 +368,36 @@ function terminalPreValidationClass(terminal: TerminalSnapshot): string {
       return 'text-red-300'
     default:
       return 'text-neutral-400'
+  }
+}
+
+function terminalPreValidationChip(terminal: TerminalSnapshot): { label: string; className: string; title: string } | null {
+  const summary = terminalPreValidationSummary(terminal)
+  if (!summary) return null
+
+  const passed = terminal.status?.pre_validation_passed_checks || 0
+  const failed = terminal.status?.pre_validation_failed_checks || 0
+  const total = terminal.status?.pre_validation_total_checks || 0
+  const countLabel = total > 0 ? `${passed}/${total}` : ''
+  switch ((terminal.status?.pre_validation_status || '').toLowerCase()) {
+    case 'passed':
+      return {
+        label: countLabel ? `✓ ${countLabel}` : '✓',
+        className: 'border-emerald-700/60 bg-emerald-950/30 text-emerald-300',
+        title: summary,
+      }
+    case 'failed':
+      return {
+        label: failed > 0 ? `✕ ${failed}` : '✕',
+        className: 'border-red-700/60 bg-red-950/30 text-red-300',
+        title: summary,
+      }
+    default:
+      return {
+        label: countLabel ? `• ${countLabel}` : '•',
+        className: 'border-neutral-700 bg-neutral-900 text-neutral-400',
+        title: summary,
+      }
   }
 }
 
@@ -653,19 +696,27 @@ function sortTerminalsForRail(terminals: TerminalSnapshot[]): TerminalSnapshot[]
 }
 
 function terminalPaneKey(terminal: TerminalSnapshot): string {
-  return terminal.tmux_session || terminal.terminal_id
+  return terminal.terminal_id
 }
 
-function dedupeTerminalsByPane(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
-  const byPane = new Map<string, TerminalSnapshot>()
+function dedupeTerminalsByID(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
+  const byID = new Map<string, TerminalSnapshot>()
   for (const terminal of terminals) {
-    const key = terminalPaneKey(terminal)
-    const existing = byPane.get(key)
-    if (!existing || terminalUpdatedTime(terminal) >= terminalUpdatedTime(existing)) {
-      byPane.set(key, terminal)
+    const existing = byID.get(terminal.terminal_id)
+    const terminalIsRunning = terminalState(terminal) === 'running'
+    const existingIsRunning = existing ? terminalState(existing) === 'running' : false
+    if (
+      !existing ||
+      (terminalIsRunning && !existingIsRunning) ||
+      (
+        terminalIsRunning === existingIsRunning &&
+        terminalUpdatedTime(terminal) >= terminalUpdatedTime(existing)
+      )
+    ) {
+      byID.set(terminal.terminal_id, terminal)
     }
   }
-  return Array.from(byPane.values())
+  return Array.from(byID.values())
 }
 
 // ---------------------------------------------------------------------------
@@ -1090,7 +1141,34 @@ function extractErrorMessage(event: unknown): string {
   return ''
 }
 
-export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId, compact }) => {
+const DISMISSED_TERMINAL_ERRORS_KEY_PREFIX = 'terminal-dismissed-errors:'
+
+function dismissedTerminalErrorsKey(sessionId?: string): string | null {
+  return sessionId ? `${DISMISSED_TERMINAL_ERRORS_KEY_PREFIX}${sessionId}` : null
+}
+
+function readDismissedTerminalErrorIDs(sessionId?: string): Set<string> {
+  const key = dismissedTerminalErrorsKey(sessionId)
+  if (!key) return new Set()
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(key) || '[]')
+    return new Set(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function writeDismissedTerminalErrorIDs(sessionId: string | undefined, ids: Set<string>) {
+  const key = dismissedTerminalErrorsKey(sessionId)
+  if (!key) return
+  try {
+    window.localStorage.setItem(key, JSON.stringify(Array.from(ids).slice(-100)))
+  } catch {
+    // Best-effort UI preference only.
+  }
+}
+
+export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId, compact, hasConversationActivity = false }) => {
   // terminalCenterOpen was the legacy toggle gate (separate sidekick
   // panel); kept here for any callers that still pass the flag but no
   // longer affects rendering — Debug-mode mount is the only gate.
@@ -1110,7 +1188,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [userSelectedID, setUserSelectedID] = useState<string | null>(null)
   const [copiedTerminalID, setCopiedTerminalID] = useState<string | null>(null)
   const [dismissedTerminalIDs, setDismissedTerminalIDs] = useState<Set<string>>(() => new Set())
-  const [dismissedErrorIDs, setDismissedErrorIDs] = useState<Set<string>>(() => new Set())
+  const [dismissedRouteIDs, setDismissedRouteIDs] = useState<Set<string>>(() => new Set())
+  const [dismissedErrorIDs, setDismissedErrorIDs] = useState<Set<string>>(() => readDismissedTerminalErrorIDs(currentSessionId))
   const [error, setError] = useState<string | null>(null)
   const [debugInput, setDebugInput] = useState('')
   const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
@@ -1120,18 +1199,33 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const sessionEvents = useChatStore(state => (
     currentSessionId ? state.tabEvents[currentSessionId] : undefined
   ))
+  useEffect(() => {
+    setDismissedErrorIDs(readDismissedTerminalErrorIDs(currentSessionId))
+  }, [currentSessionId])
+
+  const dismissTerminalError = useCallback((errorID: string) => {
+    setDismissedErrorIDs(prev => {
+      const next = new Set(prev)
+      next.add(errorID)
+      writeDismissedTerminalErrorIDs(currentSessionId, next)
+      return next
+    })
+  }, [currentSessionId])
+
   const routingDecisions = useMemo(() => {
-    const byID = new Map<string, RoutingDecision>()
+    const byKey = new Map<string, RoutingDecision>()
     for (const event of [...(sessionEvents || []), ...terminalRoutingEvents]) {
       const decision = routingDecisionFromEvent(event)
-      if (decision) byID.set(decision.id, decision)
+      if (decision && dismissedRouteIDs.has(decision.id)) continue
+      if (!decision) continue
+      const key = routeDecisionDedupeKey(decision)
+      const existing = byKey.get(key)
+      if (!existing || routingDecisionTime(decision) >= routingDecisionTime(existing)) {
+        byKey.set(key, decision)
+      }
     }
-    return Array.from(byID.values()).sort((a, b) => {
-      const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
-      const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
-      return aTime - bTime
-    })
-  }, [sessionEvents, terminalRoutingEvents])
+    return Array.from(byKey.values()).sort((a, b) => routingDecisionTime(a) - routingDecisionTime(b))
+  }, [sessionEvents, terminalRoutingEvents, dismissedRouteIDs])
   const routingDecisionByNextStepID = useMemo(() => {
     const byStep = new Map<string, RoutingDecision>()
     for (const decision of routingDecisions) {
@@ -1366,7 +1460,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         }
       }
 
-      const nextTerminals = dedupeTerminalsByPane(visibleTerminals)
+      const nextTerminals = dedupeTerminalsByID(visibleTerminals)
       setTerminals(current => {
         const currentMatchesScope = viewAll || !currentSessionId || current.every(terminal => terminal.session_id === currentSessionId)
         if (!viewAll && currentSessionId && nextTerminals.length === 0 && current.length > 0 && currentMatchesScope) {
@@ -1459,6 +1553,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
     walk('', 0)
     for (const decision of routeDecisions) {
+      if (decision.nextStepId && known.has(decision.nextStepId)) continue
       if (!renderedRoutes.has(decision.id)) {
         out.push({ kind: 'route', decision, depth: 0 })
       }
@@ -1467,7 +1562,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   }
 
   const groupedTerminals = useMemo(() => {
-    const uniqueTerminals = dedupeTerminalsByPane(terminals)
+    const uniqueTerminals = dedupeTerminalsByID(terminals)
     // Build a single tree from ALL terminals (active + finished).
     // Splitting them was breaking the parent→child relationship when
     // a child step finished while its parent was still running — the
@@ -1658,7 +1753,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const renderRouteRailItem = (decision: RoutingDecision, depth: number = 0) => (
     <div
       key={`route-${decision.id}`}
-      className="block w-full border-l-2 border-l-teal-500/70 bg-teal-950/20 py-1.5 pl-2.5 pr-2.5 text-left text-xs text-teal-100"
+      className="group block w-full border-l-2 border-l-teal-500/70 bg-teal-950/20 py-1.5 pl-2.5 pr-2.5 text-left text-xs text-teal-100"
       title={routeDecisionTitle(decision)}
     >
       <div className="flex items-center gap-1.5">
@@ -1673,6 +1768,22 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         <span className="min-w-0 flex-1 truncate font-semibold">
           Routing: {routeDecisionLabel(decision)}
         </span>
+        <button
+          type="button"
+          onClick={event => {
+            event.stopPropagation()
+            setDismissedRouteIDs(current => {
+              const next = new Set(current)
+              next.add(decision.id)
+              return next
+            })
+          }}
+          className="shrink-0 rounded p-0.5 text-teal-300/50 opacity-0 hover:bg-teal-900/60 hover:text-teal-100 group-hover:opacity-100 focus:opacity-100"
+          title="Remove routing marker from UI"
+          aria-label="Remove routing marker from UI"
+        >
+          <X className="h-3 w-3" />
+        </button>
       </div>
       <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-teal-300/75">
         <span className="min-w-0 truncate">
@@ -1686,81 +1797,97 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   )
 
   const renderRailItem = (terminal: TerminalSnapshot, depth: number = 0) => (
-    <div
-      key={terminalPaneKey(terminal)}
-      role="button"
-      tabIndex={0}
-      onClick={() => {
-        setSelectedID(terminalPaneKey(terminal))
-        setUserSelectedID(terminalPaneKey(terminal))
-      }}
-      onKeyDown={event => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          setSelectedID(terminalPaneKey(terminal))
-          setUserSelectedID(terminalPaneKey(terminal))
-        }
-      }}
-      className={`group block w-full cursor-pointer border-l-2 py-1.5 pl-2.5 pr-2.5 text-left text-xs transition-colors ${
-        terminalPaneKey(terminal) === selectedTerminalKey
-          ? 'border-l-blue-400 bg-neutral-800 text-neutral-100'
-          : 'border-l-transparent text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200'
-      }`}
-    >
-      <div className="flex items-center gap-1.5">
-        {depth > 0 && (
-          <span className="shrink-0 select-none whitespace-pre font-mono text-[10px] text-neutral-500" aria-hidden>
-            {Array.from({ length: depth - 1 }, () => '│ ').join('')}└─→
-          </span>
-        )}
-        <span
-          className={`h-2 w-2 shrink-0 rounded-full ${terminalDotClass(terminal)}`}
-          title={terminalStateDescription(terminal)}
-          aria-label={terminalStateDescription(terminal)}
-        />
-        <span className="min-w-0 flex-1 truncate font-medium">{formatTerminalTitle(terminal)}</span>
-        {isArchivedTurnTerminal(terminal) && (
-          <span className="shrink-0 rounded border border-neutral-700 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-neutral-500">
-            previous
-          </span>
-        )}
-        {canDismissTerminal(terminal) && (
-          <button
-            type="button"
-            onClick={event => {
-              event.stopPropagation()
-              void dismissTerminal(terminal)
-            }}
-            className="shrink-0 rounded p-0.5 text-neutral-500 opacity-0 hover:bg-neutral-700 hover:text-neutral-100 group-hover:opacity-100"
-            title="Remove terminal from UI"
-            aria-label="Remove terminal from UI"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        )}
-      </div>
-      <div className="mt-0.5 flex items-center gap-1.5 text-[10px] opacity-70">
-        <span className="min-w-0 truncate">{formatTransportChip(terminal)}</span>
-        {terminalState(terminal) === 'closing' && (
-          <span className="shrink-0 text-amber-300">· {terminalStateLabel(terminal)}</span>
-        )}
-        {terminalFallbackInfo(terminal) && (
-          <span className="shrink-0 text-amber-300" title={terminalFallbackInfo(terminal)?.title}>
-            · {terminalFallbackInfo(terminal)?.label}
-          </span>
-        )}
-      </div>
-      {terminalPreValidationSummary(terminal) && (
-        <div className={`mt-0.5 truncate text-[10px] ${terminalPreValidationClass(terminal)}`}>
-          {terminalPreValidationSummary(terminal)}
+    (() => {
+      const preValidationChip = terminalPreValidationChip(terminal)
+      return (
+        <div
+          key={terminalPaneKey(terminal)}
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            setSelectedID(terminalPaneKey(terminal))
+            setUserSelectedID(terminalPaneKey(terminal))
+          }}
+          onKeyDown={event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              setSelectedID(terminalPaneKey(terminal))
+              setUserSelectedID(terminalPaneKey(terminal))
+            }
+          }}
+          className={`group block w-full cursor-pointer border-l-2 py-1.5 pl-2.5 pr-2.5 text-left text-xs transition-colors ${
+            terminalPaneKey(terminal) === selectedTerminalKey
+              ? 'border-l-blue-400 bg-neutral-800 text-neutral-100'
+              : 'border-l-transparent text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200'
+          }`}
+        >
+          <div className="flex items-center gap-1.5">
+            {depth > 0 && (
+              <span className="shrink-0 select-none whitespace-pre font-mono text-[10px] text-neutral-500" aria-hidden>
+                {Array.from({ length: depth - 1 }, () => '│ ').join('')}└─→
+              </span>
+            )}
+            <span
+              className={`h-2 w-2 shrink-0 rounded-full ${terminalDotClass(terminal)}`}
+              title={terminalStateDescription(terminal)}
+              aria-label={terminalStateDescription(terminal)}
+            />
+            <span className="min-w-0 flex-1 truncate font-medium">{formatTerminalTitle(terminal)}</span>
+            {canDismissTerminal(terminal) && (
+              <button
+                type="button"
+                onClick={event => {
+                  event.stopPropagation()
+                  void dismissTerminal(terminal)
+                }}
+                className="shrink-0 rounded p-0.5 text-neutral-500 opacity-0 hover:bg-neutral-700 hover:text-neutral-100 group-hover:opacity-100"
+                title="Remove terminal from UI"
+                aria-label="Remove terminal from UI"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5 text-[10px] opacity-70">
+            <span className="min-w-0 truncate">{formatTransportChip(terminal)}</span>
+            {preValidationChip && (
+              <span
+                className={`shrink-0 rounded border px-1 py-0.5 text-[9px] font-semibold leading-none ${preValidationChip.className}`}
+                title={preValidationChip.title}
+              >
+                {preValidationChip.label}
+              </span>
+            )}
+            {isArchivedTurnTerminal(terminal) && (
+              <span
+                className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-neutral-700 text-neutral-500"
+                title="Previous turn"
+                aria-label="Previous turn"
+              >
+                <History className="h-2.5 w-2.5" />
+              </span>
+            )}
+            {terminalState(terminal) === 'closing' && (
+              <span className="shrink-0 text-amber-300">· {terminalStateLabel(terminal)}</span>
+            )}
+            {terminalFallbackInfo(terminal) && (
+              <span className="shrink-0 text-amber-300" title={terminalFallbackInfo(terminal)?.title}>
+                · {terminalFallbackInfo(terminal)?.label}
+              </span>
+            )}
+          </div>
         </div>
-      )}
-    </div>
+      )
+    })()
   )
 
   return (
     <div className={`flex min-h-0 min-w-0 flex-col bg-[#202020] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {!hasConversationActivity ? (
+          <div className="flex flex-1" />
+        ) : (
+          <>
         {error && (
           <div className="rounded border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300">
             {error}
@@ -1777,11 +1904,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 <span className="min-w-0 flex-1 break-words leading-5">{entry.message}</span>
                 <button
                   type="button"
-                  onClick={() => setDismissedErrorIDs(prev => {
-                    const next = new Set(prev)
-                    next.add(entry.id)
-                    return next
-                  })}
+                  onClick={() => dismissTerminalError(entry.id)}
                   className="shrink-0 rounded p-0.5 text-red-400/60 hover:bg-red-900/40 hover:text-red-200"
                   title="Dismiss"
                   aria-label="Dismiss error"
@@ -2054,6 +2177,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               )}
             </div>
           </div>
+        )}
+          </>
         )}
       </div>
     </div>

@@ -436,6 +436,69 @@ func TestStoreArchivesActiveTerminalWhenChunkIndexResetsForFastFollowUp(t *testi
 	}
 }
 
+func TestStoreKeepsRestartedTurnRunningEvenIfFirstPaneLooksIdle(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+
+	store.HandleEvent("session-1", terminalEventAt("streaming_chunk", "exec-1", "old turn", 12, now))
+	store.HandleEvent("session-1", terminalEndEvent("exec-1", nil))
+	store.HandleEvent("session-1", terminalEventAt("streaming_chunk", "exec-1", "STATUS: COMPLETED\n❯", 1, now.Add(time.Second)))
+
+	snapshot, ok := store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if !snapshot.Active || snapshot.State != "running" {
+		t.Fatalf("restarted terminal should be running, active=%v state=%q", snapshot.Active, snapshot.State)
+	}
+	if snapshot.Content != "STATUS: COMPLETED\n❯" {
+		t.Fatalf("restart content = %q", snapshot.Content)
+	}
+}
+
+func TestStoreKeepsArchivedTurnWhenRestartReusesTmuxSession(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+	metadata := map[string]interface{}{
+		"tmux_session":   "shared-retry-pane",
+		"execution_kind": "workflow_step",
+		"scope":          "workflow_step",
+	}
+
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:run-1:bid-submit",
+		"old attempt",
+		12,
+		metadata,
+		now,
+	))
+	store.HandleEvent("session-1", terminalEndEvent("workflow-step:run-1:bid-submit", metadata))
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:run-1:bid-submit",
+		"new attempt",
+		1,
+		metadata,
+		now.Add(time.Second),
+	))
+
+	snapshots := store.List("session-1")
+	if len(snapshots) != 2 {
+		t.Fatalf("expected archived previous + current terminal, got %d", len(snapshots))
+	}
+	var archived, current bool
+	for _, snapshot := range snapshots {
+		switch {
+		case strings.Contains(snapshot.TerminalID, ":turn-") && !snapshot.Active && snapshot.Content == "old attempt":
+			archived = true
+		case snapshot.TerminalID == "session-1:workflow-step:run-1:bid-submit" && snapshot.Active && snapshot.Content == "new attempt":
+			current = true
+		}
+	}
+	if !archived || !current {
+		t.Fatalf("missing archived/current rows: archived=%v current=%v snapshots=%+v", archived, current, snapshots)
+	}
+}
+
 func TestStoreMarksTerminalInactiveOnStreamingEnd(t *testing.T) {
 	store := NewStore()
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "screen", 1))

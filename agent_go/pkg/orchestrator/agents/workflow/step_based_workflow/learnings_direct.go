@@ -11,8 +11,7 @@ import (
 // a mutex they'd race each other's diff_patches. Held for the duration of the
 // direct-learnings continuation turn (see controller_execution.go).
 //
-// Mirrors the post-step learning agent's serialization (which uses learningQueue);
-// direct mode uses a simpler in-process mutex since the turn is inline and short.
+// Uses a simple in-process mutex since the turn is inline and short.
 //
 // LIMITATION (intentional for v1): this is an in-process mutex. It does NOT
 // serialize writes across multiple orchestrator processes sharing the same

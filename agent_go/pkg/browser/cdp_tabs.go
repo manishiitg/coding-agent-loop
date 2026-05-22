@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -285,6 +286,86 @@ func findCDPTabID(output, tab string) string {
 		}
 	}
 	return ""
+}
+
+func formatCDPTabListForPrompt(output string) string {
+	raw := strings.TrimSpace(output)
+	if raw == "" {
+		return "(no tabs returned)"
+	}
+
+	var parsed cdpTabListOutput
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return truncatePromptField(raw, 2000)
+	}
+	if len(parsed.Data.Tabs) == 0 {
+		return "(no tabs found)"
+	}
+
+	const maxTabs = 30
+	lines := make([]string, 0, min(len(parsed.Data.Tabs), maxTabs)+1)
+	for i, tab := range parsed.Data.Tabs {
+		if i >= maxTabs {
+			lines = append(lines, fmt.Sprintf("... %d more tab(s) omitted", len(parsed.Data.Tabs)-maxTabs))
+			break
+		}
+
+		tabID := oneLine(tab.TabID)
+		if tabID == "" {
+			tabID = fmt.Sprintf("tab-%d", i+1)
+		}
+
+		status := ""
+		if tab.Active {
+			status = " active"
+		}
+
+		line := fmt.Sprintf("- %s%s", tabID, status)
+		if label := truncatePromptField(oneLine(tab.Label), 80); label != "" {
+			line += fmt.Sprintf(" label=%q", label)
+		}
+		if title := truncatePromptField(oneLine(tab.Title), 120); title != "" {
+			line += fmt.Sprintf(" title=%q", title)
+		}
+		if tabURL := truncatePromptField(oneLine(shortCDPTabURL(tab.URL)), 120); tabURL != "" {
+			line += fmt.Sprintf(" url=%q", tabURL)
+		}
+		lines = append(lines, line)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func shortCDPTabURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return raw
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func oneLine(value string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+}
+
+func truncatePromptField(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	if maxRunes <= 1 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-1]) + "..."
 }
 
 func stripRedundantTabCommandArg(command string, args []string) []string {

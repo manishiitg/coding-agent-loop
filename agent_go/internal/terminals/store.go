@@ -346,6 +346,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 		}
 		delete(s.forcedInactive, terminalID)
 	}
+	freshTurn := exists && isNewTerminalTurn(current, now, chunkIndex)
 	if exists && chunkIndex < current.ChunkIndex && !isNewTerminalTurn(current, now, chunkIndex) {
 		return
 	}
@@ -356,7 +357,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	// canonical terminalID for the new live turn. Skips when the
 	// current entry is empty (no real content yet) — that's just a
 	// pre-stream placeholder, not a finished run worth archiving.
-	if exists && !current.Active && isNewTerminalTurn(current, now, chunkIndex) && strings.TrimSpace(current.Content) != "" {
+	if exists && !current.Active && freshTurn && strings.TrimSpace(current.Content) != "" {
 		archived := current
 		archived.TerminalID = fmt.Sprintf("%s:turn-%d", terminalID, current.CreatedAt.UnixNano())
 		archived.Active = false
@@ -431,7 +432,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.ChunkIndex = chunkIndex
 	current.Active = true
 	current.State = terminalStateFromContent(content, true)
-	if boundedTerminalCanSelfComplete(current) && terminalContentLooksIdle(content) {
+	if !freshTurn && boundedTerminalCanSelfComplete(current) && terminalContentLooksIdle(content) {
 		current.Active = false
 		current.State = terminalStateFromContent(content, false)
 	}
@@ -664,6 +665,9 @@ func (s *Store) removeTmuxAliasesLocked(sessionID, terminalID, tmuxSession strin
 	}
 	for existingID := range s.bySession[sessionID] {
 		if existingID == terminalID {
+			continue
+		}
+		if strings.Contains(existingID, ":turn-") {
 			continue
 		}
 		existing, ok := s.byID[existingID]

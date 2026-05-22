@@ -155,6 +155,42 @@ func TestCDPTabAliasCache(t *testing.T) {
 	}
 }
 
+func TestFormatCDPTabListForPromptCompactsRawJSON(t *testing.T) {
+	output := `{"success":true,"data":{"tabs":[{"active":true,"label":"upwork_proposal","tabId":"t12","title":"` + strings.Repeat("Submit a Proposal ", 20) + `","url":"https://www.upwork.com/nx/proposals/job/~02/apply/?` + strings.Repeat("filter=abcdefghij&", 20) + `"},{"active":false,"label":"","tabId":"t13","title":"Inbox","url":"https://mail.example.com/inbox"}]},"error":null}`
+
+	got := formatCDPTabListForPrompt(output)
+	for _, want := range []string{
+		"- t12 active",
+		`label="upwork_proposal"`,
+		`title="Submit a Proposal`,
+		`url="https://www.upwork.com/`,
+		"- t13",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary missing %q:\n%s", want, got)
+		}
+	}
+	for _, raw := range []string{`"success"`, `"data"`, `"tabs"`, `"error"`} {
+		if strings.Contains(got, raw) {
+			t.Fatalf("summary should not include raw JSON key %q:\n%s", raw, got)
+		}
+	}
+	if strings.Contains(got, "filter=abcdefghij") {
+		t.Fatalf("summary should strip noisy URL query strings:\n%s", got)
+	}
+	if len(got) > 600 {
+		t.Fatalf("summary too large (%d bytes):\n%s", len(got), got)
+	}
+}
+
+func TestShortCDPTabURLStripsQueryAndFragment(t *testing.T) {
+	got := shortCDPTabURL("https://example.com/path/to/page?token=secret#section")
+	want := "https://example.com/path/to/page"
+	if got != want {
+		t.Fatalf("shortCDPTabURL() = %q, want %q", got, want)
+	}
+}
+
 func TestStripCDPArgs(t *testing.T) {
 	got := stripCDPArgs([]string{"--cdp", "http://localhost:9222", "new", "--label", "daily-post"})
 	want := []string{"new", "--label", "daily-post"}

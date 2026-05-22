@@ -33,7 +33,8 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   hideInput?: boolean
   compact?: boolean
   hidePhaseChatEmptyState?: boolean
-}>(({ onNewChat, hideHeader, hideInput, compact, hidePhaseChatEmptyState }, ref) => {
+  suppressTerminalPane?: boolean
+}>(({ onNewChat, hideHeader, hideInput, compact, hidePhaseChatEmptyState, suppressTerminalPane }, ref) => {
   // Prefer the active workflow tab when one is selected. The tab strip keeps
   // active workflow tabs visible even while preset metadata is catching up
   // after reload; ChatArea must use the same rule or the input area disappears.
@@ -86,6 +87,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
       hideInput={effectiveHideInput}
       compact={compact}
       hidePhaseChatEmptyState={hidePhaseChatEmptyState}
+      suppressTerminalPane={suppressTerminalPane}
       // Pass null (not undefined) when no tab matches the active workflow preset.
       // Otherwise ChatArea falls back to the global activeTabId and can briefly
       // render the previous workflow's blocking human-feedback/auth prompt.
@@ -569,7 +571,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       tab.metadata?.phaseId !== 'workflow-builder' ||
       tab.metadata?.isViewOnly ||
       tab.isStreaming ||
-      normalizeEventViewMode(tab.viewMode) === 'terminal' ||
       tab.config?.restoredConversationPath
     ) {
       return false
@@ -1757,6 +1758,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 hideInput
                 compact
                 hidePhaseChatEmptyState={showResumeHint && (!hasLoadedPreviousWorkflowChats || hasPreviousWorkflowChats)}
+                suppressTerminalPane={showResumeHint && (!hasLoadedPreviousWorkflowChats || hasPreviousWorkflowChats)}
               />
             </div>
           </div>

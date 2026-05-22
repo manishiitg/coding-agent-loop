@@ -6159,6 +6159,15 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	if underlyingAgent != nil {
 		if handle := underlyingAgent.CurrentAgentSessionHandle(); handle != nil && !handle.Empty() {
 			runtime.AgentSessionHandle = handle
+			if handle.Provider.Provider != "" && runtime.Provider == "" {
+				runtime.Provider = strings.ToLower(strings.TrimSpace(handle.Provider.Provider))
+			}
+			if handle.Provider.Model != "" && runtime.ModelID == "" {
+				runtime.ModelID = strings.TrimSpace(handle.Provider.Model)
+			}
+			if common.IsCLIProvider(runtime.Provider) {
+				runtime.Kind = "coding_agent"
+			}
 			if handle.Provider.NativeSessionID != "" {
 				runtime.ExternalSessionID = handle.Provider.NativeSessionID
 				runtime.ResumeSupported = true
@@ -6166,10 +6175,8 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 			if handle.Provider.ProjectDirID != "" {
 				runtime.ProjectDirID = handle.Provider.ProjectDirID
 			}
-			if handle.Provider.Provider != "" && runtime.Provider == "" {
-				runtime.Provider = strings.ToLower(strings.TrimSpace(handle.Provider.Provider))
-			}
 		}
+		provider = runtime.Provider
 		switch provider {
 		case "claude-code":
 			if sid := strings.TrimSpace(underlyingAgent.ClaudeCodeSessionID); sid != "" {
@@ -8409,24 +8416,56 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 				phaseID = strings.TrimSpace(req.PhaseID)
 			}
 			logPath := workflowBuilderConversationLogPath(workflowPhaseFolder, sessionID, time.Now())
-			if phaseID == "" {
-				if existingContent, exists, err := readFileFromWorkspace(context.Background(), logPath); err == nil && exists {
-					var existing struct {
-						PhaseID string `json:"phase_id"`
-					}
-					if json.Unmarshal([]byte(existingContent), &existing) == nil {
+			var existing struct {
+				PhaseID      string                   `json:"phase_id"`
+				WorkshopMode string                   `json:"workshop_mode,omitempty"`
+				Runtime      *ChatHistoryAgentRuntime `json:"runtime,omitempty"`
+			}
+			if existingContent, exists, err := readFileFromWorkspace(context.Background(), logPath); err == nil && exists {
+				if json.Unmarshal([]byte(existingContent), &existing) == nil {
+					if phaseID == "" {
 						phaseID = strings.TrimSpace(existing.PhaseID)
 					}
+				} else {
+					log.Printf("[BG AGENT] Failed to parse existing builder conversation metadata for %s", logPath)
 				}
+			} else if err != nil {
+				log.Printf("[BG AGENT] Failed to read existing builder conversation metadata for %s: %v", logPath, err)
 			}
 			if phaseID == "" {
 				phaseID = "workflow-builder"
+			}
+			chatRuntime := existing.Runtime
+			if chatRuntime == nil {
+				if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+					chatRuntime = api.captureChatHistoryAgentRuntime(sessionID, "", "", workflowPhaseFolder, underlyingAgent)
+				}
+			}
+			workshopMode := strings.TrimSpace(existing.WorkshopMode)
+			if chatRuntime != nil && chatRuntime.WorkshopMode != "" {
+				workshopMode = chatRuntime.WorkshopMode
+			}
+			if chatRuntime != nil && chatRuntime.WorkshopMode == "" && workshopMode != "" {
+				chatRuntime.WorkshopMode = workshopMode
+			}
+			var uiEvents []events.Event
+			if api.eventStore != nil {
+				uiEvents = trimChatHistoryUIEvents(api.eventStore.GetAllEventsRaw(sessionID))
 			}
 			convData := map[string]interface{}{
 				"session_id":           sessionID,
 				"phase_id":             phaseID,
 				"conversation_history": persistedHistory,
 				"updated_at":           time.Now().Format(time.RFC3339),
+			}
+			if workshopMode != "" {
+				convData["workshop_mode"] = workshopMode
+			}
+			if chatRuntime != nil {
+				convData["runtime"] = chatRuntime
+			}
+			if len(uiEvents) > 0 {
+				convData["ui_events"] = uiEvents
 			}
 			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
 				if err := writeRawFileToWorkspace(context.Background(), logPath, string(convJSON)); err != nil {

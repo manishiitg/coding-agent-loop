@@ -696,15 +696,15 @@ function terminalPaneKey(terminal: TerminalSnapshot): string {
 }
 
 function terminalRailPadding(depth: number): number {
-  return 10 + Math.min(Math.max(depth, 0), 10) * 8
+  return 8 + Math.min(Math.max(depth, 0), 10) * 6
 }
 
 function TerminalRailBranchMarker({ depth }: { depth: number }) {
   if (depth <= 0) return null
   return (
-    <span className="relative h-4 w-3 shrink-0" aria-hidden>
+    <span className="relative h-4 w-2.5 shrink-0" aria-hidden>
       <span className="absolute left-1 top-0 h-2.5 border-l border-neutral-700/70" />
-      <span className="absolute left-1 top-2.5 w-2 border-t border-neutral-700/70" />
+      <span className="absolute left-1 top-2.5 w-1.5 border-t border-neutral-700/70" />
     </span>
   )
 }
@@ -1849,11 +1849,21 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         >
           <div className="flex items-center gap-1.5">
             <TerminalRailBranchMarker depth={depth} />
-            <span
-              className={`h-2 w-2 shrink-0 rounded-full ${terminalDotClass(terminal)}`}
-              title={terminalStateDescription(terminal)}
-              aria-label={terminalStateDescription(terminal)}
-            />
+            {isRunning ? (
+              <span
+                className="w-2 shrink-0 text-center font-mono text-[10px] leading-none text-cyan-300/90"
+                title={terminalStateDescription(terminal)}
+                aria-label={terminalStateDescription(terminal)}
+              >
+                {railSpinner}
+              </span>
+            ) : (
+              <span
+                className={`h-2 w-2 shrink-0 rounded-full ${terminalDotClass(terminal)}`}
+                title={terminalStateDescription(terminal)}
+                aria-label={terminalStateDescription(terminal)}
+              />
+            )}
             <span className="min-w-0 flex-1 truncate font-medium">{formatTerminalTitle(terminal)}</span>
             {canDismissTerminal(terminal) && (
               <button
@@ -1871,11 +1881,6 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
             )}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[10px] opacity-70">
-            {isRunning && (
-              <span className="shrink-0 font-mono text-cyan-300/90" title="Terminal is running">
-                {railSpinner}
-              </span>
-            )}
             <span className="min-w-0 truncate">{formatTransportChip(terminal)}</span>
             {preValidationChip && (
               <span

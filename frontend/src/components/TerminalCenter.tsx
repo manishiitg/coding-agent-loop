@@ -695,6 +695,20 @@ function terminalPaneKey(terminal: TerminalSnapshot): string {
   return terminal.terminal_id
 }
 
+function terminalRailPadding(depth: number): number {
+  return 10 + Math.min(Math.max(depth, 0), 10) * 8
+}
+
+function TerminalRailBranchMarker({ depth }: { depth: number }) {
+  if (depth <= 0) return null
+  return (
+    <span className="relative h-4 w-3 shrink-0" aria-hidden>
+      <span className="absolute left-1 top-0 h-2.5 border-l border-neutral-700/70" />
+      <span className="absolute left-1 top-2.5 w-2 border-t border-neutral-700/70" />
+    </span>
+  )
+}
+
 function terminalDetailCacheKey(terminal: TerminalSnapshot): string {
   return `${terminal.terminal_id}:${terminal.chunk_index}:${terminal.updated_at || terminal.created_at || ''}`
 }
@@ -1761,19 +1775,16 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // dot + step title (top line), transport chip + closing countdown
   // (bottom line). Click → select; hover → highlight.
   // depth controls left padding so child terminals nest under their
-  // parent. Tree connectors (└) appear at depth >= 1.
+  // parent without drawing noisy repeated text guides.
   const renderRouteRailItem = (decision: RoutingDecision, depth: number = 0) => (
     <div
       key={`route-${decision.id}`}
       className="group block w-full border-l-2 border-l-cyan-400/70 bg-cyan-950/15 py-1.5 pl-2.5 pr-2.5 text-left text-xs text-cyan-100"
       title={routeDecisionTitle(decision)}
+      style={{ paddingLeft: terminalRailPadding(depth) }}
     >
       <div className="flex items-center gap-1.5">
-        {depth > 0 && (
-          <span className="shrink-0 select-none whitespace-pre font-mono text-[10px] text-neutral-500" aria-hidden>
-            {Array.from({ length: depth - 1 }, () => '│ ').join('')}└─→
-          </span>
-        )}
+        <TerminalRailBranchMarker depth={depth} />
         <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-cyan-400/15 text-cyan-300">
           <GitBranch className="h-3 w-3" />
         </span>
@@ -1834,13 +1845,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               ? 'border-l-emerald-300 bg-[#222826] text-neutral-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
               : 'border-l-transparent text-neutral-400 hover:bg-[#1b1f1d] hover:text-neutral-200'
           }`}
+          style={{ paddingLeft: terminalRailPadding(depth) }}
         >
           <div className="flex items-center gap-1.5">
-            {depth > 0 && (
-              <span className="shrink-0 select-none whitespace-pre font-mono text-[10px] text-neutral-500" aria-hidden>
-                {Array.from({ length: depth - 1 }, () => '│ ').join('')}└─→
-              </span>
-            )}
+            <TerminalRailBranchMarker depth={depth} />
             <span
               className={`h-2 w-2 shrink-0 rounded-full ${terminalDotClass(terminal)}`}
               title={terminalStateDescription(terminal)}

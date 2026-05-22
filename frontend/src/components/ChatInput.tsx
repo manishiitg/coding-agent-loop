@@ -6,9 +6,6 @@ import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
-import { CircularProgress } from './ui/CircularProgress'
-import { getEventData, isEventType } from '../generated/event-types'
-import type { TokenUsageEvent } from '../generated/events'
 import ServerSelectionDropdown from './ServerSelectionDropdown'
 import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
 import SecretSelectionDropdown from './secrets/SecretSelectionDropdown'
@@ -248,7 +245,7 @@ import SkillImportDialog from './skills/SkillImportDialog'
 import { MCPConfigPopup } from './MCPConfigPopup'
 import MCPDetailsModal from './MCPDetailsModal'
 import LLMConfigurationModal from './LLMConfigurationModal'
-import type { PlannerFile, PollingEvent, LLMProvider, ChatHistorySession } from '../services/api-types'
+import type { PlannerFile, LLMProvider, ChatHistorySession } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
@@ -388,9 +385,6 @@ interface ChatInputProps {
   onStopStreaming: () => void
   activeAgents?: ActiveAgentInfo[]
 }
-
-// Stable empty array reference to avoid infinite loops in selectors
-const EMPTY_EVENTS: never[] = []
 
 function isAutoNotificationMessage(msg: string): boolean {
   return msg.startsWith(AUTO_NOTIFICATION_PREFIX)
@@ -688,184 +682,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Note: activeTab may be undefined during initial render before tabs are created
   // This is expected and will resolve once the tab store initializes
   
-  // Get all tab events from the store (stable selector)
-  const allTabEvents = useChatStore(state => state.tabEvents)
-
-  // Derive tab-specific events with useMemo (avoids selector closure issues)
-  const tabEvents = useMemo(() => {
-    if (!tabSessionId) return EMPTY_EVENTS
-    return allTabEvents[tabSessionId] ?? EMPTY_EVENTS
-  }, [tabSessionId, allTabEvents])
-
-  // Helper: check if an event is from a sub-agent (delegation)
-  const isSubAgentEvent = useCallback((event: PollingEvent): boolean => {
-    const agentEvent = event.data as Record<string, unknown> | undefined
-    const innerData = agentEvent?.data as Record<string, unknown> | undefined
-    const comp = (event as unknown as Record<string, unknown>).component ?? innerData?.component ?? agentEvent?.component
-    const corrId = (event as unknown as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
-    return (typeof comp === 'string' && comp.startsWith('delegation-'))
-      || (typeof corrId === 'string' && corrId.startsWith('delegation-'))
-  }, [])
-
-  const getFirstNumber = useCallback((...values: unknown[]): number | undefined => {
-    for (const value of values) {
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        return value
-      }
-    }
-    return undefined
-  }, [])
-
-  const extractContextMetrics = useCallback((payload: Record<string, unknown> | undefined) => {
-    const generationInfo = (payload?.generation_info && typeof payload.generation_info === 'object')
-      ? payload.generation_info as Record<string, unknown>
-      : undefined
-    const metadata = (payload?.metadata && typeof payload.metadata === 'object')
-      ? payload.metadata as Record<string, unknown>
-      : undefined
-
-    const contextWindowUsage = getFirstNumber(
-      payload?.context_window_usage,
-      generationInfo?.current_context_window_usage,
-      metadata?.current_context_window_usage,
-      metadata?.context_window_usage
-    )
-    const modelContextWindow = getFirstNumber(
-      payload?.model_context_window,
-      generationInfo?.model_context_window,
-      metadata?.model_context_window
-    )
-    const directPercent = getFirstNumber(
-      payload?.context_usage_percent,
-      generationInfo?.context_usage_percent,
-      metadata?.context_usage_percent
-    )
-
-    const computedPercent = (
-      contextWindowUsage !== undefined &&
-      modelContextWindow !== undefined &&
-      modelContextWindow > 0
-    )
-      ? (contextWindowUsage / modelContextWindow) * 100
-      : undefined
-
-    const contextUsagePercent = directPercent && directPercent > 0
-      ? directPercent
-      : computedPercent ?? directPercent
-
-    const hasConcreteContextMetrics = contextWindowUsage !== undefined || modelContextWindow !== undefined
-    const normalizedContextUsagePercent = (
-      contextUsagePercent === undefined ||
-      contextUsagePercent === null ||
-      (contextUsagePercent === 0 && !hasConcreteContextMetrics)
-    )
-      ? undefined
-      : contextUsagePercent
-
-    return {
-      contextUsagePercent: normalizedContextUsagePercent,
-      contextWindowUsage,
-      modelContextWindow,
-      modelId: typeof payload?.model_id === 'string'
-        ? payload.model_id
-        : typeof metadata?.model_id === 'string'
-          ? metadata.model_id
-          : undefined,
-    }
-  }, [getFirstNumber])
-
-  // Find the latest token usage (optimized with backward iteration)
-  // In multi-agent mode, skip sub-agent events — show the PARENT agent's context usage
-  //
-  // NOTE: Backend serializes AgentEvent.Data (Go interface) flat — event.data.data IS the
-  // typed event (e.g. TokenUsageEvent) directly, NOT wrapped in EventDataUnion.
-  // The schema-gen uses EventDataUnion for JSON Schema but the wire format is flat.
-  // Use getEventData() or event.data?.data directly — NOT event.data?.data?.token_usage.
-  const { contextUsagePercent, latestTokenUsage } = useMemo(() => {
-    if (tabEvents.length === 0) return { contextUsagePercent: null, latestTokenUsage: null }
-
-    // Iterate backwards (newest first) to find the latest quickly
-    let latestTokenUsageEvent = null
-    let latestTotalEvent = null
-
-    for (let i = tabEvents.length - 1; i >= 0 && !latestTotalEvent; i--) {
-      const event = tabEvents[i]
-      if (isEventType(event, 'token_usage')) {
-        // Skip sub-agent token_usage events — we want the parent agent's context
-        if (isSubAgentEvent(event)) continue
-        const data = getEventData(event)
-        if (data.context === 'conversation_total') {
-          latestTotalEvent = event
-          break
-        }
-        if (!latestTokenUsageEvent) {
-          latestTokenUsageEvent = event
-        }
-      }
-    }
-
-    const latestEvent = latestTotalEvent || latestTokenUsageEvent
-
-    if (latestEvent && isEventType(latestEvent, 'token_usage')) {
-      const tokenUsage = getEventData(latestEvent) as TokenUsageEvent
-      const metrics = extractContextMetrics(tokenUsage as unknown as Record<string, unknown>)
-      const contextPercent = metrics.contextUsagePercent
-
-      if (contextPercent !== undefined && contextPercent !== null) {
-        return {
-          contextUsagePercent: contextPercent,
-          latestTokenUsage: {
-            ...tokenUsage,
-            context_usage_percent: contextPercent,
-            context_window_usage: metrics.contextWindowUsage ?? tokenUsage.context_window_usage,
-            model_context_window: metrics.modelContextWindow ?? tokenUsage.model_context_window,
-            model_id: metrics.modelId ?? tokenUsage.model_id,
-          }
-        }
-      }
-    }
-
-    // Fallback: Check llm_generation_end and tool_call_end events for context usage (iterate backwards)
-    for (let i = tabEvents.length - 1; i >= 0; i--) {
-      const event = tabEvents[i]
-      if (isSubAgentEvent(event)) continue
-
-      if (isEventType(event, 'llm_generation_end')) {
-        const data = getEventData(event)
-        const metrics = extractContextMetrics(data as unknown as Record<string, unknown>)
-        if (metrics.contextUsagePercent !== undefined && metrics.contextUsagePercent > 0) {
-          return {
-            contextUsagePercent: metrics.contextUsagePercent,
-            latestTokenUsage: {
-              context_usage_percent: metrics.contextUsagePercent,
-              model_context_window: metrics.modelContextWindow,
-              context_window_usage: metrics.contextWindowUsage,
-              model_id: metrics.modelId,
-            }
-          }
-        }
-      }
-
-      if (isEventType(event, 'tool_call_end')) {
-        const data = getEventData(event)
-        const metrics = extractContextMetrics(data as unknown as Record<string, unknown>)
-        if (metrics.contextUsagePercent !== undefined && metrics.contextUsagePercent > 0) {
-          return {
-            contextUsagePercent: metrics.contextUsagePercent,
-            latestTokenUsage: {
-              context_usage_percent: metrics.contextUsagePercent,
-              model_context_window: metrics.modelContextWindow,
-              context_window_usage: metrics.contextWindowUsage,
-              model_id: metrics.modelId,
-            }
-          }
-        }
-      }
-    }
-
-    return { contextUsagePercent: null, latestTokenUsage: null }
-  }, [tabEvents, isSubAgentEvent, extractContextMetrics])
-
   // Always use tab-specific config (ChatInput is only in multi-agent mode)
   // Memoize to prevent unnecessary re-renders when other config values change
   const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
@@ -4110,15 +3926,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </div>
                   )}
 
-                  {/* Context completion indicator */}
-                  {contextUsagePercent !== null && (
-                    <CircularProgress
-                      percentage={contextUsagePercent}
-                      size={24}
-                      strokeWidth={2.5}
-                      tokenUsage={latestTokenUsage}
-                    />
-                  )}
                   {isSummarizing ? (
                     <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400">
                       <Loader2 className="w-4 h-4 animate-spin" />

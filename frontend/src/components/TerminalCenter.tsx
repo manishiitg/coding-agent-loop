@@ -885,9 +885,9 @@ function formatTokens(n?: number): string {
   return String(n)
 }
 
-function formatCost(usd?: number): string {
+function formatStatusFooterCost(usd?: number): string {
   if (usd === undefined || usd === null || usd === 0) return ''
-  return `$${usd.toFixed(usd < 0.01 ? 4 : 2)}`
+  return `$${formatCost(usd)}`
 }
 
 const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content, scrollRef, onScroll, terminal }) => {
@@ -1009,7 +1009,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
             case 'attachment':
               return <div key={idx} className="text-neutral-500">{row.text}</div>
             case 'done':
-              return <div key={idx} className="text-emerald-400 mt-1">{row.text}</div>
+              return <div key={idx} className="text-emerald-500/70 mt-1 text-[10.5px] font-mono">{row.text}</div>
             case 'error':
               return <div key={idx} className="text-red-400">[error] {row.text}</div>
             case 'plain':
@@ -1024,7 +1024,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
         const st = terminal.status || {}
         const tokensIn = formatTokens(st.input_tokens)
         const tokensOut = formatTokens(st.output_tokens)
-        const cost = formatCost(st.cost_usd)
+        const cost = formatStatusFooterCost(st.cost_usd)
         const dur = typeof st.duration_ms === 'number' && st.duration_ms > 0
           ? `${(st.duration_ms / 1000).toFixed(st.duration_ms < 10_000 ? 1 : 0)}s`
           : ''

@@ -1,11 +1,18 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	internalevents "mcp-agent-builder-go/agent_go/internal/events"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -195,6 +202,42 @@ func TestRecordLiveCodingAgentUserMessageCapturesVisibleEvent(t *testing.T) {
 			}
 			assertLiveCodingUserMessageEvent(t, poll.Events[0], sessionID, string(tt.provider))
 		})
+	}
+}
+
+func TestHandleSteerMessageRoutesThroughAgentDelivery(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	sessionID := "structured-session"
+	runningAgent := &mcpagent.Agent{ModelID: "opencode"}
+	runningAgent.SetProvider(llm.ProviderOpenCodeCLI)
+	api := &StreamingAPI{
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+	}
+
+	body := bytes.NewBufferString(`{"message":"send this through delivery"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/steer", body)
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	rr := httptest.NewRecorder()
+
+	api.handleSteerMessage(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var response SteerMessageResponse
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.DeliveryStatus != "queued_for_injection" {
+		t.Fatalf("delivery_status = %q, want queued_for_injection", response.DeliveryStatus)
+	}
+	queued := runningAgent.DrainSteerMessages()
+	if len(queued) != 1 || queued[0] != "send this through delivery" {
+		t.Fatalf("queued messages = %#v", queued)
 	}
 }
 

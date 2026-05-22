@@ -8945,138 +8945,41 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if runningAgent.GetProvider() == llm.ProviderClaudeCode {
-		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
-		defer cancel()
-		if err := llmproviders.SendClaudeCodeExperimentalInput(steerCtx, sessionID, req.Message); err == nil {
-			messageID := newSteerMessageID()
-			provider := string(runningAgent.GetProvider())
-			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, "sent_to_cli")
-			log.Printf("[STEER] Sent live message to Claude Code session %s: %.80s", sessionID, req.Message)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(SteerMessageResponse{
-				Success:        true,
-				Message:        "Steer message sent to coding agent",
-				DeliveryStatus: "sent_to_cli",
-				Provider:       provider,
-				MessageID:      messageID,
-			})
-			return
-		} else {
-			log.Printf("[STEER] Claude Code live input unavailable for session %s: %v", sessionID, err)
-			http.Error(w, fmt.Sprintf("Live Claude Code input unavailable: %v", err), http.StatusConflict)
-			return
-		}
-	}
-	if runningAgent.GetProvider() == llm.ProviderCodexCLI {
-		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
-		defer cancel()
-		if err := llmproviders.SendCodexCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
-			messageID := newSteerMessageID()
-			provider := string(runningAgent.GetProvider())
-			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, "sent_to_cli")
-			log.Printf("[STEER] Sent live message to Codex CLI session %s: %.80s", sessionID, req.Message)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(SteerMessageResponse{
-				Success:        true,
-				Message:        "Steer message sent to coding agent",
-				DeliveryStatus: "sent_to_cli",
-				Provider:       provider,
-				MessageID:      messageID,
-			})
-			return
-		} else {
-			log.Printf("[STEER] Codex CLI live input unavailable for session %s: %v", sessionID, err)
-			http.Error(w, fmt.Sprintf("Live Codex CLI input unavailable: %v", err), http.StatusConflict)
-			return
-		}
-	}
-	if runningAgent.GetProvider() == llm.ProviderGeminiCLI {
-		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
-		defer cancel()
-		if err := llmproviders.SendGeminiCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
-			messageID := newSteerMessageID()
-			provider := string(runningAgent.GetProvider())
-			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, "sent_to_cli")
-			log.Printf("[STEER] Sent live message to Gemini CLI session %s: %.80s", sessionID, req.Message)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(SteerMessageResponse{
-				Success:        true,
-				Message:        "Steer message sent to coding agent",
-				DeliveryStatus: "sent_to_cli",
-				Provider:       provider,
-				MessageID:      messageID,
-			})
-			return
-		} else {
-			log.Printf("[STEER] Gemini CLI live input unavailable for session %s: %v", sessionID, err)
-			http.Error(w, fmt.Sprintf("Live Gemini CLI input unavailable: %v", err), http.StatusConflict)
-			return
-		}
-	}
-	if runningAgent.GetProvider() == llm.ProviderCursorCLI {
-		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
-		defer cancel()
-		if err := llmproviders.SendCursorCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
-			messageID := newSteerMessageID()
-			provider := string(runningAgent.GetProvider())
-			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, "sent_to_cli")
-			log.Printf("[STEER] Sent live message to Cursor CLI session %s: %.80s", sessionID, req.Message)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(SteerMessageResponse{
-				Success:        true,
-				Message:        "Steer message sent to coding agent",
-				DeliveryStatus: "sent_to_cli",
-				Provider:       provider,
-				MessageID:      messageID,
-			})
-			return
-		} else {
-			log.Printf("[STEER] Cursor CLI live input unavailable for session %s: %v", sessionID, err)
-			http.Error(w, fmt.Sprintf("Live Cursor CLI input unavailable: %v", err), http.StatusConflict)
-			return
-		}
-	}
-	if runningAgent.GetProvider() == llm.ProviderOpenCodeCLI {
-		steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
-		defer cancel()
-		if err := llmproviders.SendOpenCodeCLIInteractiveInput(steerCtx, sessionID, req.Message); err == nil {
-			messageID := newSteerMessageID()
-			provider := string(runningAgent.GetProvider())
-			api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, "sent_to_cli")
-			log.Printf("[STEER] Sent live message to OpenCode CLI session %s: %.80s", sessionID, req.Message)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(SteerMessageResponse{
-				Success:        true,
-				Message:        "Steer message sent to coding agent",
-				DeliveryStatus: "sent_to_cli",
-				Provider:       provider,
-				MessageID:      messageID,
-			})
-			return
-		} else {
-			log.Printf("[STEER] OpenCode CLI live input unavailable for session %s: %v", sessionID, err)
-			http.Error(w, fmt.Sprintf("Live OpenCode CLI input unavailable: %v", err), http.StatusConflict)
-			return
-		}
-	}
-
 	if err := r.Context().Err(); err != nil {
-		log.Printf("[STEER] Request canceled before queued steer fallback for session %s: %v", sessionID, err)
+		log.Printf("[STEER] Request canceled before delivery for session %s: %v", sessionID, err)
 		return
 	}
 
-	// Inject the steer message into the agent's pending queue
-	runningAgent.AddSteerMessage(req.Message)
+	steerCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentSteerTimeout)
+	defer cancel()
+	delivery, err := runningAgent.DeliverUserMessage(steerCtx, mcpagent.UserMessageDeliveryRequest{
+		SessionID: sessionID,
+		Message:   req.Message,
+		Intent:    mcpagent.UserMessageDeliveryIntentLiveInput,
+	})
+	if err != nil {
+		log.Printf("[STEER] Live input unavailable for provider %s session %s: %v", runningAgent.GetProvider(), sessionID, err)
+		http.Error(w, fmt.Sprintf("Live input unavailable: %v", err), http.StatusConflict)
+		return
+	}
+
 	messageID := newSteerMessageID()
-	provider := string(runningAgent.GetProvider())
-	log.Printf("[STEER] Queued steer message for session %s: %.80s", sessionID, req.Message)
+	provider := string(delivery.Provider)
+	if provider == "" {
+		provider = string(runningAgent.GetProvider())
+	}
+	deliveryStatus := string(delivery.DeliveryStatus)
+	if deliveryStatus == "" {
+		deliveryStatus = "queued_for_injection"
+	}
+	api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, deliveryStatus)
+	log.Printf("[STEER] Delivered user message to provider %s session %s status=%s: %.80s", provider, sessionID, deliveryStatus, req.Message)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(SteerMessageResponse{
 		Success:        true,
-		Message:        "Steer message queued for injection",
-		DeliveryStatus: "queued_for_injection",
+		Message:        "User message delivered",
+		DeliveryStatus: deliveryStatus,
 		Provider:       provider,
 		MessageID:      messageID,
 	})

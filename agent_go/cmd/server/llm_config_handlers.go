@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1004,11 +1003,13 @@ func validateOpenCodeCLI(apiKey, modelID string, options map[string]interface{})
 	return llm.ValidateAPIKey(req)
 }
 
-// validateClaudeCodeCLI validates the Claude Code CLI by checking it exists and sending a test prompt
+// validateClaudeCodeCLI validates the Claude Code CLI by checking it exists and
+// then running a real adapter call through llm.InitializeLLM so the test
+// exercises the same code path as a live workflow run (env vars, transport,
+// model resolution all match production).
 func validateClaudeCodeCLI() llm.APIKeyValidationResponse {
 	log.Printf("[CLAUDE-CODE VALIDATION] Starting CLI validation")
 
-	// Step 1: Check if claude CLI is on PATH
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
 		log.Printf("[CLAUDE-CODE VALIDATION] CLI not found on PATH: %v", err)
@@ -1019,60 +1020,76 @@ func validateClaudeCodeCLI() llm.APIKeyValidationResponse {
 	}
 	log.Printf("[CLAUDE-CODE VALIDATION] CLI found at: %s", claudePath)
 
-	// Step 2: Send a test prompt via the CLI and check for a response
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	workspaceDir, err := os.MkdirTemp("", "claude-code-validation-*")
+	if err != nil {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Could not create a temporary workspace for Claude Code validation.",
+		}
+	}
+	defer os.RemoveAll(workspaceDir)
+
+	model, err := llm.InitializeLLM(llm.Config{
+		Provider: llm.ProviderClaudeCode,
+		ModelID:  "claude-code",
+		Context:  context.Background(),
+	})
+	if err != nil {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Failed to initialize Claude Code: %v", err),
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "claude", "--print", "Say hello in one short sentence.")
-	// Remove ANTHROPIC_API_KEY from env so Claude Code uses its own OAuth credentials
-	// instead of picking up the server's API key (which may have different billing).
-	env := os.Environ()
-	filteredEnv := make([]string, 0, len(env)+1)
-	for _, e := range env {
-		if !strings.HasPrefix(e, "ANTHROPIC_API_KEY=") && !strings.HasPrefix(e, claudeCodeDisableAutoMemoryEnv+"=") {
-			filteredEnv = append(filteredEnv, e)
-		}
-	}
-	filteredEnv = append(filteredEnv, claudeCodeDisableAutoMemoryEnv+"=1")
-	cmd.Env = filteredEnv
-	output, err := cmd.CombinedOutput()
+	resp, err := model.GenerateContent(ctx, []llmtypes.MessageContent{
+		{
+			Role: llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: "Reply with exactly: Claude Code is working."},
+			},
+		},
+	}, llm.WithClaudeCodeWorkingDir(workspaceDir))
 	if err != nil {
-		errMsg := string(output)
 		if ctx.Err() == context.DeadlineExceeded {
-			log.Printf("[CLAUDE-CODE VALIDATION] CLI test timed out")
 			return llm.APIKeyValidationResponse{
 				Valid:   false,
-				Message: "Claude Code CLI timed out after 60s. Check that you are authenticated (run 'claude' to log in).",
+				Message: "Claude Code timed out after 90s. Check that you are authenticated (run 'claude' to log in).",
 			}
 		}
-		log.Printf("[CLAUDE-CODE VALIDATION] CLI test failed: %v — output: %s", err, errMsg)
 		return llm.APIKeyValidationResponse{
 			Valid:   false,
-			Message: fmt.Sprintf("Claude Code CLI error: %s", strings.TrimSpace(errMsg)),
+			Message: fmt.Sprintf("Claude Code error: %s", strings.TrimSpace(err.Error())),
 		}
 	}
 
-	responseText := strings.TrimSpace(string(output))
+	responseText := ""
+	if resp != nil && len(resp.Choices) > 0 {
+		responseText = strings.TrimSpace(resp.Choices[0].Content)
+	}
 	if responseText == "" {
-		log.Printf("[CLAUDE-CODE VALIDATION] CLI returned empty response")
 		return llm.APIKeyValidationResponse{
 			Valid:   false,
-			Message: "Claude Code CLI returned an empty response. Check authentication with 'claude'.",
+			Message: "Claude Code returned an empty response. Check authentication with 'claude'.",
 		}
 	}
 
 	log.Printf("[CLAUDE-CODE VALIDATION SUCCESS] Got response: %s", responseText)
 	return llm.APIKeyValidationResponse{
 		Valid:   true,
-		Message: fmt.Sprintf("Claude Code CLI is working. Response: %s", responseText),
+		Message: fmt.Sprintf("Claude Code is working. Response: %s", responseText),
 	}
 }
 
 // validateGeminiCLI validates the Gemini CLI by checking it exists and sending a test prompt
+// validateGeminiCLI validates the Gemini CLI by running a real adapter call
+// through llm.InitializeLLM so the test exercises the same path as production
+// (TRUST_WORKSPACE env, model alias resolution, transport, all match).
 func validateGeminiCLI(apiKey string) llm.APIKeyValidationResponse {
 	log.Printf("[GEMINI-CLI VALIDATION] Starting CLI validation")
 
-	// Step 1: Check if gemini CLI is on PATH
 	geminiPath, err := exec.LookPath("gemini")
 	if err != nil {
 		log.Printf("[GEMINI-CLI VALIDATION] CLI not found on PATH: %v", err)
@@ -1083,48 +1100,70 @@ func validateGeminiCLI(apiKey string) llm.APIKeyValidationResponse {
 	}
 	log.Printf("[GEMINI-CLI VALIDATION] CLI found at: %s", geminiPath)
 
-	// Step 1.5: Ensure Gemini CLI settings are configured for API key auth
-	// Without this, the CLI defaults to oauth-personal and fails in non-interactive mode.
+	// Gemini CLI defaults to oauth-personal auth which fails in non-interactive
+	// mode. Flip ~/.gemini/settings.json to "gemini-api-key" so the adapter's
+	// API-key auth path actually works.
 	ensureGeminiAPIKeyAuth()
 
-	// Step 2: Send a test prompt via the CLI and check for a response
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+	workspaceDir, err := os.MkdirTemp("", "gemini-cli-validation-*")
+	if err != nil {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Could not create a temporary workspace for Gemini CLI validation.",
+		}
+	}
+	defer os.RemoveAll(workspaceDir)
 
-	cmd := exec.CommandContext(ctx, "gemini", "--approval-mode", "yolo", "--prompt", "Say hello in one short sentence.")
-	// Pass API key as env var if provided (from frontend or server .env)
+	keys := &llm.ProviderAPIKeys{}
 	if apiKey == "" {
 		apiKey = os.Getenv("GEMINI_API_KEY")
 	}
-	// GEMINI_CLI_TRUST_WORKSPACE=true is required for non-interactive runs in
-	// Gemini CLI 0.42+ — otherwise YOLO mode is silently downgraded to "default"
-	// and the run errors with "Gemini CLI is not running in a trusted directory".
-	// Matches what the structured/interactive adapters set when actually running
-	// the CLI for the user.
-	cmd.Env = append(os.Environ(), "GEMINI_CLI_TRUST_WORKSPACE=true")
-	if apiKey != "" {
-		cmd.Env = append(cmd.Env, "GEMINI_API_KEY="+apiKey)
+	if strings.TrimSpace(apiKey) != "" {
+		keys.GeminiCLI = &apiKey
 	}
-	output, err := cmd.CombinedOutput()
+
+	model, err := llm.InitializeLLM(llm.Config{
+		Provider: llm.ProviderGeminiCLI,
+		ModelID:  "medium",
+		APIKeys:  keys,
+		Context:  context.Background(),
+	})
 	if err != nil {
-		errMsg := string(output)
-		if ctx.Err() == context.DeadlineExceeded {
-			log.Printf("[GEMINI-CLI VALIDATION] CLI test timed out")
-			return llm.APIKeyValidationResponse{
-				Valid:   false,
-				Message: "Gemini CLI timed out after 60s. Check that you are authenticated (run 'gemini' to log in).",
-			}
-		}
-		log.Printf("[GEMINI-CLI VALIDATION] CLI test failed: %v — output: %s", err, errMsg)
 		return llm.APIKeyValidationResponse{
 			Valid:   false,
-			Message: fmt.Sprintf("Gemini CLI error: %s", strings.TrimSpace(errMsg)),
+			Message: fmt.Sprintf("Failed to initialize Gemini CLI: %v", err),
 		}
 	}
 
-	responseText := strings.TrimSpace(string(output))
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	resp, err := model.GenerateContent(ctx, []llmtypes.MessageContent{
+		{
+			Role: llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: "Reply with exactly: Gemini CLI is working."},
+			},
+		},
+	}, llm.WithGeminiWorkingDir(workspaceDir))
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return llm.APIKeyValidationResponse{
+				Valid:   false,
+				Message: "Gemini CLI timed out after 90s. Check that you are authenticated (run 'gemini' to log in).",
+			}
+		}
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Gemini CLI error: %s", strings.TrimSpace(err.Error())),
+		}
+	}
+
+	responseText := ""
+	if resp != nil && len(resp.Choices) > 0 {
+		responseText = strings.TrimSpace(resp.Choices[0].Content)
+	}
 	if responseText == "" {
-		log.Printf("[GEMINI-CLI VALIDATION] CLI returned empty response")
 		return llm.APIKeyValidationResponse{
 			Valid:   false,
 			Message: "Gemini CLI returned an empty response. Check authentication with 'gemini'.",
@@ -1191,11 +1230,12 @@ func ensureGeminiAPIKeyAuth() {
 	log.Printf("[GEMINI-CLI] Configured settings.json for API key auth")
 }
 
-// validateCodexCLI validates the OpenAI Codex CLI by checking it exists and sending a test prompt
+// validateCodexCLI validates the OpenAI Codex CLI by running a real adapter
+// call through llm.InitializeLLM so the test exercises the same code path as
+// a live workflow run.
 func validateCodexCLI(apiKey string) llm.APIKeyValidationResponse {
 	log.Printf("[CODEX-CLI VALIDATION] Starting CLI validation")
 
-	// Step 1: Check if codex CLI is on PATH
 	codexPath, err := exec.LookPath("codex")
 	if err != nil {
 		log.Printf("[CODEX-CLI VALIDATION] CLI not found on PATH: %v", err)
@@ -1206,69 +1246,56 @@ func validateCodexCLI(apiKey string) llm.APIKeyValidationResponse {
 	}
 	log.Printf("[CODEX-CLI VALIDATION] CLI found at: %s", codexPath)
 
-	// Step 2: Send a test prompt via the CLI and check for a response
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	outputFile, err := os.CreateTemp("", "codex-cli-validation-*.txt")
-	if err != nil {
-		log.Printf("[CODEX-CLI VALIDATION] Failed to create output temp file: %v", err)
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: "Could not create a temporary file for Codex CLI validation.",
-		}
-	}
-	outputPath := outputFile.Name()
-	_ = outputFile.Close()
-	defer os.Remove(outputPath)
-
-	cmd := exec.CommandContext(ctx,
-		"codex",
-		"exec",
-		"--sandbox", "workspace-write",
-		"--skip-git-repo-check",
-		"--output-last-message", outputPath,
-		"-c", `model_reasoning_effort="medium"`,
-		"Say hello in one short sentence.",
-	)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	// Only pass API key if explicitly provided from frontend.
-	// Do NOT fall back to OPENAI_API_KEY — Codex CLI has its own auth
-	// (via `codex login` stored in ~/.codex/auth.json) which should be preferred.
+	keys := &llm.ProviderAPIKeys{}
 	if apiKey == "" {
 		apiKey = os.Getenv("CODEX_API_KEY")
 	}
-	if apiKey != "" {
-		cmd.Env = append(os.Environ(), "CODEX_API_KEY="+apiKey)
+	if strings.TrimSpace(apiKey) != "" {
+		keys.CodexCLI = &apiKey
 	}
-	output, err := cmd.Output()
+
+	model, err := llm.InitializeLLM(llm.Config{
+		Provider: llm.ProviderCodexCLI,
+		ModelID:  "medium",
+		APIKeys:  keys,
+		Context:  context.Background(),
+	})
 	if err != nil {
-		errMsg := stderr.String()
-		if strings.TrimSpace(errMsg) == "" {
-			errMsg = string(output)
-		}
-		if ctx.Err() == context.DeadlineExceeded {
-			log.Printf("[CODEX-CLI VALIDATION] CLI test timed out")
-			return llm.APIKeyValidationResponse{
-				Valid:   false,
-				Message: "Codex CLI timed out after 60s. Check that you are authenticated (run 'codex login').",
-			}
-		}
-		log.Printf("[CODEX-CLI VALIDATION] CLI test failed: %v — output: %s", err, errMsg)
 		return llm.APIKeyValidationResponse{
 			Valid:   false,
-			Message: fmt.Sprintf("Codex CLI error: %s", strings.TrimSpace(errMsg)),
+			Message: fmt.Sprintf("Failed to initialize Codex CLI: %v", err),
 		}
 	}
 
-	responseBytes, readErr := os.ReadFile(outputPath)
-	responseText := strings.TrimSpace(string(responseBytes))
-	if readErr != nil || responseText == "" {
-		responseText = strings.TrimSpace(string(output))
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	resp, err := model.GenerateContent(ctx, []llmtypes.MessageContent{
+		{
+			Role: llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: "Reply with exactly: Codex CLI is working."},
+			},
+		},
+	})
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return llm.APIKeyValidationResponse{
+				Valid:   false,
+				Message: "Codex CLI timed out after 90s. Check that you are authenticated (run 'codex login').",
+			}
+		}
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Codex CLI error: %s", strings.TrimSpace(err.Error())),
+		}
+	}
+
+	responseText := ""
+	if resp != nil && len(resp.Choices) > 0 {
+		responseText = strings.TrimSpace(resp.Choices[0].Content)
 	}
 	if responseText == "" {
-		log.Printf("[CODEX-CLI VALIDATION] CLI returned empty response")
 		return llm.APIKeyValidationResponse{
 			Valid:   false,
 			Message: "Codex CLI returned an empty response. Check authentication with 'codex login'.",

@@ -46,6 +46,19 @@ const OWNER_PRIMARY_COMPLETION_EVENT_TYPES = new Set([
   'agent_end',
 ]);
 
+const EXECUTION_FAILED_EVENT_TYPES = new Set([
+  'orchestrator_agent_error',
+  'background_agent_failed',
+  'conversation_error',
+  'workflow_error',
+  'agent_error',
+]);
+
+const EXECUTION_CANCELED_EVENT_TYPES = new Set([
+  'context_cancelled',
+  'batch_execution_canceled',
+]);
+
 const TREE_TOOL_CALL_PREVIEW_LIMIT = 5;
 const AUTO_EXPANDED_OWNER_TOOL_EVENT_LIMIT = 2;
 const EVENT_HIERARCHY_DEBUG_STORAGE_KEY = 'debug:event-hierarchy';
@@ -111,6 +124,32 @@ function dedupeOwnerInlineNodes(nodes: EventNode[]): EventNode[] {
 
   if (!hasPrimaryCompletion) return nodes;
   return nodes.filter(node => node.event.type !== 'unified_completion');
+}
+
+function executionOwnerStatus(node: EventNode): string {
+  const payload = getTerminalOwnerPayload(node.event);
+  const status = payload?.status;
+  if (typeof status === 'string' && status.trim() !== '') return status.trim().toLowerCase();
+
+  const nonExecutionChildren = node.children.filter(child => !isExecutionOwnerEvent(child.event));
+  for (const child of nonExecutionChildren) {
+    const type = child.event.type || '';
+    if (EXECUTION_FAILED_EVENT_TYPES.has(type)) return 'failed';
+  }
+  for (const child of nonExecutionChildren) {
+    const type = child.event.type || '';
+    if (EXECUTION_CANCELED_EVENT_TYPES.has(type)) return 'canceled';
+  }
+  for (const child of nonExecutionChildren) {
+    const type = child.event.type || '';
+    if (OWNER_PRIMARY_COMPLETION_EVENT_TYPES.has(type)) return 'completed';
+  }
+
+  return 'running';
+}
+
+function isCompletedExecutionOwnerNode(node: EventNode): boolean {
+  return executionOwnerStatus(node) === 'completed';
 }
 
 function extractAutoNotificationExecutionId(event: PollingEvent): string | undefined {
@@ -376,9 +415,12 @@ interface FlattenedItem {
   uniqueKey: string;
   levelOffset?: number;
   isToolCallToggle?: boolean;
+  isCompletedExecutionToggle?: boolean;
   toolCallToggleMode?: 'expand' | 'collapse' | 'terminal_hint';
+  completedExecutionToggleMode?: 'expand' | 'collapse';
   hiddenCount?: number;   // Per-group count for the "+" label
   groupKey?: string;      // Group key for per-group expand/collapse
+  completedExecutionLevel?: number;
   latestToolName?: string;  // Latest tool_call_start tool name in collapsed group
   latestToolLabel?: string;
 }
@@ -403,6 +445,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   const autoCollapsedSessionsRef = useRef<Set<string>>(new Set());
   // Per-group expand state for tool call groups (keyed by first event ID in group)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedCompletedExecutionGroups, setExpandedCompletedExecutionGroups] = useState<Set<string>>(new Set());
   const [expandedOwnedLogPanels, setExpandedOwnedLogPanels] = useState<Set<string>>(new Set());
   const [loadedOlderEvents, setLoadedOlderEvents] = useState<PollingEvent[]>([]);
   const [paginationOffset, setPaginationOffset] = useState<number>(0);
@@ -641,6 +684,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   useEffect(() => {
     setLoadedOlderEvents([])
     setPaginationOffset(0)
+    setExpandedCompletedExecutionGroups(new Set())
     const chatStore = useChatStore.getState()
     const hasMore = sessionId ? chatStore.getTabHasMoreOlderEvents(sessionId) : false
     setHasMoreOlderEvents(hasMore)
@@ -994,6 +1038,15 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
   const toggleToolCallGroup = useCallback((groupKey: string) => {
     setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (!next.has(groupKey)) next.add(groupKey);
+      else next.delete(groupKey);
+      return next;
+    });
+  }, []);
+
+  const toggleCompletedExecutionGroup = useCallback((groupKey: string) => {
+    setExpandedCompletedExecutionGroups(prev => {
       const next = new Set(prev);
       if (!next.has(groupKey)) next.add(groupKey);
       else next.delete(groupKey);
@@ -1481,12 +1534,48 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
       if (isExecutionOwnerEvent(node.event)) {
         // Show nested execution owners as tree rows, but keep raw logs/tool events
-        // inside the owner's expandable log panel.
-        node.children
-          .filter(child => isExecutionOwnerEvent(child.event))
-          .forEach((child, index) => {
-            flatten(child, `${key}-owner-child-${index}`, levelOffset);
-          });
+        // inside the owner's expandable log panel. Completed sibling runs are
+        // collapsed so tree mode reads like current work, not a raw audit log.
+        const ownerChildren = node.children.filter(child => isExecutionOwnerEvent(child.event));
+        let completedRun: Array<{ child: EventNode; index: number }> = [];
+        const flushCompletedRun = () => {
+          if (completedRun.length === 0) return;
+          const firstIndex = completedRun[0].index;
+          const groupKey = `${key}-completed-executions-${firstIndex}`;
+          if (expandedCompletedExecutionGroups.has(groupKey)) {
+            list.push({
+              uniqueKey: `${groupKey}-collapse`,
+              isCompletedExecutionToggle: true,
+              completedExecutionToggleMode: 'collapse',
+              hiddenCount: completedRun.length,
+              groupKey,
+              completedExecutionLevel: node.level + 1 + levelOffset,
+            });
+            completedRun.forEach(({ child, index }) => {
+              flatten(child, `${key}-owner-child-${index}`, levelOffset);
+            });
+          } else {
+            list.push({
+              uniqueKey: `${groupKey}-expand`,
+              isCompletedExecutionToggle: true,
+              completedExecutionToggleMode: 'expand',
+              hiddenCount: completedRun.length,
+              groupKey,
+              completedExecutionLevel: node.level + 1 + levelOffset,
+            });
+          }
+          completedRun = [];
+        };
+
+        ownerChildren.forEach((child, index) => {
+          if (isCompletedExecutionOwnerNode(child)) {
+            completedRun.push({ child, index });
+            return;
+          }
+          flushCompletedRun();
+          flatten(child, `${key}-owner-child-${index}`, levelOffset);
+        });
+        flushCompletedRun();
         return;
       }
 
@@ -1498,7 +1587,45 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         });
       }
     };
-    eventTree.forEach((node, index) => flatten(node, `${node.event.id}-root-${index}`));
+    let completedRootRun: Array<{ node: EventNode; index: number }> = [];
+    const flushCompletedRootRun = () => {
+      if (completedRootRun.length === 0) return;
+      const firstIndex = completedRootRun[0].index;
+      const groupKey = `root-completed-executions-${firstIndex}`;
+      if (expandedCompletedExecutionGroups.has(groupKey)) {
+        list.push({
+          uniqueKey: `${groupKey}-collapse`,
+          isCompletedExecutionToggle: true,
+          completedExecutionToggleMode: 'collapse',
+          hiddenCount: completedRootRun.length,
+          groupKey,
+          completedExecutionLevel: 0,
+        });
+        completedRootRun.forEach(({ node, index }) => {
+          flatten(node, `${node.event.id}-root-${index}`);
+        });
+      } else {
+        list.push({
+          uniqueKey: `${groupKey}-expand`,
+          isCompletedExecutionToggle: true,
+          completedExecutionToggleMode: 'expand',
+          hiddenCount: completedRootRun.length,
+          groupKey,
+          completedExecutionLevel: 0,
+        });
+      }
+      completedRootRun = [];
+    };
+
+    eventTree.forEach((node, index) => {
+      if (isExecutionOwnerEvent(node.event) && isCompletedExecutionOwnerNode(node)) {
+        completedRootRun.push({ node, index });
+        return;
+      }
+      flushCompletedRootRun();
+      flatten(node, `${node.event.id}-root-${index}`);
+    });
+    flushCompletedRootRun();
 
     // Tool call grouping — operates on the flat list so only main-agent events are affected.
     // Sub-agent events were excluded above (flattening stops at delegation_start).
@@ -1620,6 +1747,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           togglesMatch = false
           break
         }
+        if (list[i].isCompletedExecutionToggle && list[i].hiddenCount !== prev[i]?.hiddenCount) {
+          togglesMatch = false
+          break
+        }
+        if (list[i].isCompletedExecutionToggle && list[i].completedExecutionToggleMode !== prev[i]?.completedExecutionToggleMode) {
+          togglesMatch = false
+          break
+        }
         // Owner-card children render inside the card, not as flat rows. Changes to
         // these child arrays must still re-render the owning card so summary events
         // and collapsed log counts stay live.
@@ -1654,7 +1789,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     flattenedItemsRef.current = list;
     prevExpandedNodesRef.current = expandedNodes;
     return list;
-  }, [eventTree, expandedNodes, hideToolCalls, expandedGroups]);
+  }, [eventTree, expandedNodes, hideToolCalls, expandedGroups, expandedCompletedExecutionGroups]);
 
   // --- Render tracking (filter by [Render] or [Memo] in console) ---
   useRenderLogger('EventHierarchy', {
@@ -1715,6 +1850,46 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
   const renderItem = useCallback((_index: number, item: FlattenedItem) => {
     if (!item) return null;
+
+    if (item.isCompletedExecutionToggle) {
+      const count = item.hiddenCount || 0;
+      const key = item.groupKey;
+      const mode = item.completedExecutionToggleMode || 'expand';
+      const indentSize = 18;
+      const level = Math.max(0, item.completedExecutionLevel ?? 0);
+      return (
+        <div className="event-tree-node relative">
+          {level > 0 && Array.from({ length: level }).map((_, i) => (
+            <div
+              key={i}
+              className="absolute top-0 bottom-0 border-l border-gray-200/30 dark:border-gray-700/30"
+              style={{ left: `${(i + 1) * indentSize - 9}px` }}
+            />
+          ))}
+          <div className="event-tree-item relative z-10 py-0.5" style={{ paddingLeft: `${level * indentSize}px` }}>
+            <button
+              type="button"
+              onClick={() => {
+                if (!key) return;
+                toggleCompletedExecutionGroup(key);
+              }}
+              className="flex min-w-0 max-w-full items-center gap-2 rounded border border-emerald-800/35 bg-emerald-950/10 px-2 py-1 text-left text-[11px] leading-tight text-emerald-300/80 transition-colors hover:border-emerald-700/60 hover:bg-emerald-950/20 hover:text-emerald-200"
+            >
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500/70" />
+              <span className="shrink-0 font-medium">
+                {mode === 'expand' ? `Show ${count} completed step${count !== 1 ? 's' : ''}` : `Hide completed steps`}
+              </span>
+              <span className="min-w-0 truncate text-emerald-400/55">
+                {mode === 'expand' ? 'Done work is collapsed to keep the active path clear' : `${count} completed step${count !== 1 ? 's' : ''}`}
+              </span>
+              <span className="shrink-0 text-emerald-400/70">
+                {mode === 'expand' ? '▸' : '▾'}
+              </span>
+            </button>
+          </div>
+        </div>
+      );
+    }
 
     // Inline tool-call toggle sentinel
     if (item.isToolCallToggle) {
@@ -1890,7 +2065,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         </div>
       </div>
     );
-  }, [collapsedSessions, expandedNodes, expandedOwnedLogPanels, findEventsBetweenStartEnd, agentSessionSpanKeyByStartId, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, delegationStats, backgroundAgentStats, switchToTerminalView, toggleToolCallGroup, resolvedTabId]);
+  }, [collapsedSessions, expandedNodes, expandedOwnedLogPanels, findEventsBetweenStartEnd, agentSessionSpanKeyByStartId, terminalOwnerPreference, toggleAgentSession, toggleNode, toggleOwnedLogPanel, toggleCompletedExecutionGroup, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, delegationStats, backgroundAgentStats, switchToTerminalView, toggleToolCallGroup, resolvedTabId]);
 
   // Only auto-scroll when new top-level items are added (not when sub-agent events update internals).
   // Sub-agent events change displayEvents but don't add items to flattenedItems.

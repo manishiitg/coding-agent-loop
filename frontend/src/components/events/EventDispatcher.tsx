@@ -585,6 +585,52 @@ function getDelegationDisplayTitle(instruction: string): string {
   return title.length > 64 ? `${title.slice(0, 63)}...` : title
 }
 
+function titleCaseIdentifier(value: string): string {
+  return value
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w+/g, word => {
+      const lower = word.toLowerCase()
+      if (lower === 'kb') return 'KB'
+      if (lower === 'id') return 'ID'
+      if (lower === 'api') return 'API'
+      return `${lower.charAt(0).toUpperCase()}${lower.slice(1)}`
+    })
+}
+
+function getBackgroundExecutionDisplayName(rawName: string): string {
+  const stripped = rawName.replace(/^Planner:\s*/i, '').trim()
+  if (!stripped) return 'Task'
+
+  if (stripped.toLowerCase().startsWith('full-workflow')) {
+    return stripped.replace(/^full-workflow/i, 'Full workflow')
+  }
+
+  const workflowPrefix = 'Workflow step ->'
+  if (!stripped.startsWith(workflowPrefix)) return titleCaseIdentifier(stripped)
+
+  let stepName = stripped.slice(workflowPrefix.length).trim()
+  const executionMarker = stepName.lastIndexOf('execution-')
+  if (executionMarker >= 0) {
+    stepName = stepName.slice(executionMarker + 'execution-'.length)
+  } else {
+    stepName = stepName.replace(/^step-\d+-(sub-)?/, '')
+  }
+
+  return titleCaseIdentifier(stepName) || 'Workflow step'
+}
+
+function getBackgroundExecutionKindLabel(kind?: string): string | undefined {
+  if (!kind) return undefined
+  const normalized = kind.replace(/[-_\s]+/g, ' ').trim().toLowerCase()
+  if (!normalized) return undefined
+  if (normalized === 'workshop background') return 'Background task'
+  if (normalized === 'workflow step') return 'Workflow step'
+  if (normalized === 'background agent') return 'Background task'
+  return titleCaseIdentifier(normalized)
+}
+
 // Helper function to wrap event component with orchestrator context
 function WithContext<T extends { metadata?: Record<string, unknown> }>({
   Component,
@@ -1828,10 +1874,10 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const fields = data?.data?.fields || data?.data || data
     const agentId = fields?.agent_id || ''
     const rawName = fields?.name || ''
-    // Strip internal prefixes like "Planner: " for user-facing display
-    const displayName = rawName.replace(/^Planner:\s*/i, '').trim() || 'Task'
+    const displayName = getBackgroundExecutionDisplayName(rawName)
     const status = inferOwnerStatusFromSummaryNodes(summaryNodes) || fields?.status || 'running'
     const kind = fields?.kind
+    const kindLabel = getBackgroundExecutionKindLabel(kind)
     const isRunning = status === 'running' || status === 'active' || status === 'in_progress'
 
     // Look up live stats via background agent ID → delegation stats mapping
@@ -1846,9 +1892,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             <span className={`${compact ? 'text-xs' : 'text-sm'} font-medium text-blue-700 dark:text-blue-300`}>
               {displayName}
             </span>
-            {kind && (
+            {kindLabel && (
               <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-blue-500/70 dark:text-blue-400/70`}>
-                {kind.replace(/_/g, ' ')}
+                {kindLabel}
               </span>
             )}
             {hasLiveStats && (
@@ -1858,7 +1904,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             )}
             {!hasLiveStats && (
               <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-blue-500 dark:text-blue-400`}>
-                {isRunning ? 'in progress...' : status}
+                {isRunning ? 'Running' : titleCaseIdentifier(status)}
               </span>
             )}
             {liveStats?.contextUsagePercent !== undefined && liveStats.contextUsagePercent > 0 && (

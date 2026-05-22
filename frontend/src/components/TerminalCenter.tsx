@@ -509,7 +509,7 @@ function canSendTerminalDebugInput(terminal: TerminalSnapshot): boolean {
 }
 
 function hasTerminalDebugActions(terminal: TerminalSnapshot): boolean {
-  return Boolean(terminal.terminal_id)
+  return Boolean(terminal.tmux_session)
 }
 
 function shellQuote(value: string): string {

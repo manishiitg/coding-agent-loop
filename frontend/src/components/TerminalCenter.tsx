@@ -584,21 +584,15 @@ function turnIndexFromTerminalID(terminalID: string): number {
   return m ? parseInt(m[1], 10) : 0
 }
 
-// aggregatePriorTurnContent stitches every archived :turn- terminal that
-// belongs to the same chat session as `current` into a single scrollback
-// string, in chronological order, and returns it concatenated with the
-// current terminal's content. Used when the selected terminal is the
-// "live" synthetic terminal for a structured CLI (gemini-cli, opencode-cli)
-// — the user sees prior turns the way a real tmux pane would have shown
-// them, without us doing any backend changes.
-function aggregatePriorTurnContent(current: TerminalSnapshot, allTerminals: TerminalSnapshot[]): string {
-  const currentContent = current.content || ''
-  if (isArchivedTurnTerminal(current) || !isSyntheticTerminal(current)) {
-    return currentContent
-  }
+// findPriorArchivedTurns returns the `:turn-N` archived terminals for the
+// same session as `current`, sorted in chronological order. Used both to
+// drive the lazy content fetch and to stitch the aggregated scrollback.
+function findPriorArchivedTurns(current: TerminalSnapshot, allTerminals: TerminalSnapshot[]): TerminalSnapshot[] {
   const sessionID = (current.session_id || '').trim()
-  if (!sessionID) return currentContent
-  const priorTurns = allTerminals
+  if (!sessionID || isArchivedTurnTerminal(current) || !isSyntheticTerminal(current)) {
+    return []
+  }
+  return allTerminals
     .filter(t =>
       t.terminal_id !== current.terminal_id &&
       (t.session_id || '').trim() === sessionID &&
@@ -606,10 +600,23 @@ function aggregatePriorTurnContent(current: TerminalSnapshot, allTerminals: Term
       isSyntheticTerminal(t),
     )
     .sort((a, b) => turnIndexFromTerminalID(a.terminal_id) - turnIndexFromTerminalID(b.terminal_id))
+}
+
+// aggregatePriorTurnContent stitches archived :turn- snapshot bodies (read
+// from `contentByID` — the rail poll fetches metadata only, so per-archived
+// content has to be loaded on demand and cached) in front of the current
+// live terminal's content. Result reads like a tmux pane scrollback.
+function aggregatePriorTurnContent(
+  current: TerminalSnapshot,
+  priorTurns: TerminalSnapshot[],
+  contentByID: Record<string, string>,
+): string {
+  const currentContent = current.content || ''
   if (priorTurns.length === 0) return currentContent
   const parts: string[] = []
   for (const t of priorTurns) {
-    const c = (t.content || '').trim()
+    const cached = contentByID[t.terminal_id]
+    const c = (cached ?? t.content ?? '').trim()
     if (c) parts.push(c)
   }
   if (currentContent.trim()) parts.push(currentContent)
@@ -945,6 +952,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // without leaking terminals from other chat tabs / unrelated workflows.
   const [viewAll, setViewAll] = useState(false)
   const [terminals, setTerminals] = useState<TerminalSnapshot[]>([])
+  // archivedTurnContents caches `:turn-N` snapshot bodies so we can stitch
+  // prior turns into the live synthetic terminal's scrollback without
+  // refetching on every render. Archived turns are immutable once written,
+  // so the cache is correct without invalidation.
+  const [archivedTurnContents, setArchivedTurnContents] = useState<Record<string, string>>({})
   const [selectedTerminalDetail, setSelectedTerminalDetail] = useState<TerminalSnapshot | null>(null)
   const [selectedID, setSelectedID] = useState<string | null>(null)
   const [userSelectedID, setUserSelectedID] = useState<string | null>(null)
@@ -1391,19 +1403,47 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
     return selectedTerminal
   }, [selectedTerminal, selectedTerminalDetail, selectedTerminalKey])
+  const priorArchivedTurns = useMemo(
+    () => (selectedTerminalView ? findPriorArchivedTurns(selectedTerminalView, terminals) : []),
+    [selectedTerminalView, terminals],
+  )
+
+  // Lazily fetch full content for each prior :turn- snapshot so the
+  // aggregated scrollback isn't blank. The rail's listTerminals poll uses
+  // content='none' for payload size, so archived turn bodies aren't already
+  // in state. Archived snapshots are immutable, so a one-shot fetch per id
+  // is enough — keep a cache to skip refetches when terminals state churns.
+  useEffect(() => {
+    if (priorArchivedTurns.length === 0) return
+    let cancelled = false
+    const missing = priorArchivedTurns.filter(t => archivedTurnContents[t.terminal_id] === undefined)
+    if (missing.length === 0) return
+    void Promise.all(missing.map(async t => {
+      try {
+        const detail = await agentApi.getTerminal(t.terminal_id)
+        return { id: t.terminal_id, content: detail.content || '' }
+      } catch (err) {
+        console.warn('Failed to load archived turn content', t.terminal_id, err)
+        return { id: t.terminal_id, content: '' }
+      }
+    })).then(results => {
+      if (cancelled) return
+      setArchivedTurnContents(prev => {
+        const next = { ...prev }
+        for (const r of results) next[r.id] = r.content
+        return next
+      })
+    })
+    return () => { cancelled = true }
+  }, [priorArchivedTurns, archivedTurnContents])
+
   const selectedTerminalDisplayContent = useMemo(
     () => {
       if (!selectedTerminalView) return ''
-      // For synthetic terminals (structured CLIs + API providers), the rail
-      // shows each prior turn as its own :turn-N entry. The user wants the
-      // selected "live" terminal to read like a real tmux pane — i.e. with
-      // all prior turns in scrollback. Stitch them in chronologically here
-      // before trimming. No backend changes required; the per-turn snapshots
-      // are already in `terminals` from the existing /api/terminals poll.
-      const aggregated = aggregatePriorTurnContent(selectedTerminalView, terminals)
+      const aggregated = aggregatePriorTurnContent(selectedTerminalView, priorArchivedTurns, archivedTurnContents)
       return trimTerminalDisplayContent(aggregated)
     },
-    [selectedTerminalView, terminals],
+    [selectedTerminalView, priorArchivedTurns, archivedTurnContents],
   )
   const selectedRouteDecision = selectedTerminalView?.step_id
     ? routingDecisionByNextStepID.get(selectedTerminalView.step_id)

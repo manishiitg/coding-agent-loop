@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
@@ -184,6 +185,7 @@ type WorkshopChatSession struct {
 	cancelAllServerAgents func()                    // optional: cancel all running agents in server registry
 	listServerAgents      func() []ServerAgentInfo  // optional: list all agents from server registry
 	workshopModeOverride  string                    // frontend-selected workshop mode
+	recoveryOnce          sync.Once                 // starts durable continuation replay once server notifiers are wired
 }
 
 // GetConfig returns the workshop config (for accessing session-aware executors, etc.)
@@ -364,6 +366,11 @@ func (s *WorkshopChatSession) SetExtraSubAgentNotifier(n SubAgentNotifier) {
 func (s *WorkshopChatSession) SetWorkshopExecutionNotifier(n WorkshopExecutionNotifier) {
 	s.executionNotifier = n
 	s.controller.SetWorkshopExecutionNotifier(n)
+	if n != nil {
+		s.recoveryOnce.Do(func() {
+			go s.RecoverPendingContinuations(context.Background())
+		})
+	}
 }
 
 // SetExecutionStateChecks sets server-level callbacks for querying and controlling background execution state.

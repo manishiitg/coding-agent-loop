@@ -12,6 +12,7 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
 	orchestratorevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -49,6 +50,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendOrchestrationLogEntry(ctx conte
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
 func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.Context, stepIndex int, stepPath string, learningPathIdentifier string, totalSteps int, step PlanStepInterface, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool, turnCount int, executionLLM string, triggerReason string) error {
+	return hcpo.runSuccessLearningPhaseWithHandle(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionHistory, validationResponse, isCodeExecutionMode, turnCount, executionLLM, triggerReason, nil)
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhaseWithHandle(ctx context.Context, stepIndex int, stepPath string, learningPathIdentifier string, totalSteps int, step PlanStepInterface, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool, turnCount int, executionLLM string, triggerReason string, sessionHandle *mcpagent.AgentSessionHandle) error {
 	// Get agent configs once at the start
 	agentConfigs := getAgentConfigs(step)
 
@@ -156,6 +161,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", learningPathIdentifier, successLearningAgentName, agentConfigs, isCodeExecutionMode, step.GetID(), stepPath, stepIndex)
 	if err != nil {
 		return fmt.Errorf("failed to create success learning agent: %w", err)
+	}
+	if sessionHandle != nil && !sessionHandle.Empty() {
+		if base := successLearningAgent.GetBaseAgent(); base != nil && base.Agent() != nil {
+			base.Agent().ApplyAgentSessionHandle(sessionHandle)
+			hcpo.GetLogger().Info(fmt.Sprintf("🧠 Resuming success learning agent for %s from stored session handle", learningPathIdentifier))
+		}
 	}
 
 	// Format validation result for template
@@ -400,6 +411,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 	executionLLM string,
 	triggerReason string,
 ) bool {
+	return hcpo.startTrackedSuccessLearningPhaseWithHandle(stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionHistory, validationResponse, isCodeExecutionMode, turnCount, executionLLM, triggerReason, nil)
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhaseWithHandle(
+	stepIndex int,
+	stepPath string,
+	learningPathIdentifier string,
+	totalSteps int,
+	step PlanStepInterface,
+	executionHistory []llmtypes.MessageContent,
+	validationResponse *ValidationResponse,
+	isCodeExecutionMode bool,
+	turnCount int,
+	executionLLM string,
+	triggerReason string,
+	sessionHandle *mcpagent.AgentSessionHandle,
+) bool {
 	if hcpo.workshopStepRegistry == nil {
 		return false
 	}
@@ -444,35 +472,38 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Queued tracked background success learning for %s (execution_id=%s)", learningPathIdentifier, execID))
 	hcpo.recordWorkflowContinuationPhase(context.Background(), step.GetID(), stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseLearningAgent, workflowContinuationStatusPending, "", nil)
+	runFolder := hcpo.selectedRunFolder
 
 	// Serialize learning agents through a single-writer queue (see queues.go).
 	// Concurrent step completions used to race on shared learnings/_global/ files via
 	// bare `go func()`. The queue preserves FIFO completion order so cumulative context
 	// builds up naturally and no file-level locking is needed on learnings writes.
 	enqueueLearningJob(func() {
-		var result string
-		var execErr error
-		hcpo.recordWorkflowContinuationPhase(execCtx, step.GetID(), stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseLearningAgent, workflowContinuationStatusRunning, "", nil)
-		defer func() {
-			skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
-			status := workflowContinuationStatusCompleted
-			errText := ""
-			if execErr != nil {
-				status = workflowContinuationStatusFailed
-				errText = execErr.Error()
-			}
-			hcpo.recordWorkflowContinuationPhase(context.Background(), step.GetID(), stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseLearningAgent, status, errText, nil)
-			if !skipNotify && hcpo.workshopExecutionNotifier != nil {
-				hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, result, nil, execErr)
-			}
-		}()
+		hcpo.withWorkflowContinuationRunFolder(runFolder, func() {
+			var result string
+			var execErr error
+			hcpo.recordWorkflowContinuationPhase(execCtx, step.GetID(), stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseLearningAgent, workflowContinuationStatusRunning, "", nil)
+			defer func() {
+				skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
+				status := workflowContinuationStatusCompleted
+				errText := ""
+				if execErr != nil {
+					status = workflowContinuationStatusFailed
+					errText = execErr.Error()
+				}
+				hcpo.recordWorkflowContinuationPhase(context.Background(), step.GetID(), stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseLearningAgent, status, errText, nil)
+				if !skipNotify && hcpo.workshopExecutionNotifier != nil {
+					hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, result, nil, execErr)
+				}
+			}()
 
-		execErr = hcpo.runSuccessLearningPhase(execCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionHistory, validationResponse, isCodeExecutionMode, turnCount, executionLLM, triggerReason)
-		if execErr != nil {
-			result = fmt.Sprintf("Success learning failed for %s: %v", stepLabel, execErr)
-		} else {
-			result = fmt.Sprintf("Success learning completed for %s", stepLabel)
-		}
+			execErr = hcpo.runSuccessLearningPhaseWithHandle(execCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionHistory, validationResponse, isCodeExecutionMode, turnCount, executionLLM, triggerReason, sessionHandle)
+			if execErr != nil {
+				result = fmt.Sprintf("Success learning failed for %s: %v", stepLabel, execErr)
+			} else {
+				result = fmt.Sprintf("Success learning completed for %s", stepLabel)
+			}
+		})
 	})
 
 	return true

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
@@ -14,12 +15,15 @@ import (
 
 const workflowContinuationStateFilename = "continuation_state.json"
 
+var workflowContinuationRunFolderMu sync.Mutex
+
 const (
 	workflowContinuationOwnerStepExecution = "workflow_step"
 
 	workflowContinuationStatusPending        = "pending"
 	workflowContinuationStatusRunning        = "running"
 	workflowContinuationStatusWaitingForLock = "waiting_for_lock"
+	workflowContinuationStatusRecoveryQueued = "recovery_queued"
 	workflowContinuationStatusCompleted      = "completed"
 	workflowContinuationStatusFailed         = "failed"
 	workflowContinuationStatusSkipped        = "skipped"
@@ -45,9 +49,10 @@ type WorkflowContinuationState struct {
 }
 
 type WorkflowContinuationPhaseRecord struct {
-	Status    string `json:"status"`
-	Error     string `json:"error,omitempty"`
-	UpdatedAt string `json:"updated_at"`
+	Status             string                       `json:"status"`
+	Error              string                       `json:"error,omitempty"`
+	AgentSessionHandle *mcpagent.AgentSessionHandle `json:"agent_session_handle,omitempty"`
+	UpdatedAt          string                       `json:"updated_at"`
 }
 
 type workflowContinuationStateUpdate struct {
@@ -86,6 +91,22 @@ func workflowContinuationStatePath(workspacePath, runFolder, stepID, stepPath st
 	return fmt.Sprintf("%s/%s", getValidationFolderPath(validationWorkspacePath, stepID, stepPath), workflowContinuationStateFilename)
 }
 
+func (hcpo *StepBasedWorkflowOrchestrator) withWorkflowContinuationRunFolder(runFolder string, fn func()) {
+	if hcpo == nil || fn == nil {
+		return
+	}
+	workflowContinuationRunFolderMu.Lock()
+	previous := hcpo.selectedRunFolder
+	if strings.TrimSpace(runFolder) != "" {
+		hcpo.selectedRunFolder = strings.TrimSpace(runFolder)
+	}
+	defer func() {
+		hcpo.selectedRunFolder = previous
+		workflowContinuationRunFolderMu.Unlock()
+	}()
+	fn()
+}
+
 func upsertWorkflowContinuationState(existing *WorkflowContinuationState, update workflowContinuationStateUpdate) *WorkflowContinuationState {
 	now := update.now
 	if now.IsZero() {
@@ -110,13 +131,80 @@ func upsertWorkflowContinuationState(existing *WorkflowContinuationState, update
 		state.Phases = make(map[string]WorkflowContinuationPhaseRecord)
 	}
 	if update.phase != "" && update.status != "" {
+		phaseHandle := update.handle
+		if (phaseHandle == nil || phaseHandle.Empty()) && state.Phases != nil {
+			if existingPhase, ok := state.Phases[update.phase]; ok {
+				phaseHandle = existingPhase.AgentSessionHandle
+			}
+		}
 		state.Phases[update.phase] = WorkflowContinuationPhaseRecord{
-			Status:    update.status,
-			Error:     truncateWorkflowContinuationError(update.errorMessage),
-			UpdatedAt: timestamp,
+			Status:             update.status,
+			Error:              truncateWorkflowContinuationError(update.errorMessage),
+			AgentSessionHandle: phaseHandle,
+			UpdatedAt:          timestamp,
 		}
 	}
 	return state
+}
+
+func workflowContinuationStatusNeedsRecovery(status string) bool {
+	switch strings.TrimSpace(status) {
+	case workflowContinuationStatusPending, workflowContinuationStatusRunning, workflowContinuationStatusWaitingForLock, workflowContinuationStatusRecoveryQueued:
+		return true
+	default:
+		return false
+	}
+}
+
+func workflowContinuationPhaseStatus(state *WorkflowContinuationState, phase string) string {
+	if state == nil || state.Phases == nil {
+		return ""
+	}
+	return strings.TrimSpace(state.Phases[phase].Status)
+}
+
+func workflowContinuationPhaseHandle(state *WorkflowContinuationState, phase string) *mcpagent.AgentSessionHandle {
+	if state == nil {
+		return nil
+	}
+	if state.Phases != nil {
+		if record, ok := state.Phases[phase]; ok && record.AgentSessionHandle != nil && !record.AgentSessionHandle.Empty() {
+			return record.AgentSessionHandle
+		}
+	}
+	if state.AgentSessionHandle != nil && !state.AgentSessionHandle.Empty() {
+		return state.AgentSessionHandle
+	}
+	return nil
+}
+
+func (state *WorkflowContinuationState) postStepGateSatisfied() bool {
+	if state == nil {
+		return false
+	}
+	if workflowContinuationPhaseStatus(state, workflowContinuationPhaseMainExecution) != workflowContinuationStatusCompleted {
+		return false
+	}
+	preValidationStatus := workflowContinuationPhaseStatus(state, workflowContinuationPhasePreValidation)
+	return preValidationStatus == "" || preValidationStatus == workflowContinuationStatusCompleted
+}
+
+func (state *WorkflowContinuationState) PendingRecoveryPhases() []string {
+	if !state.postStepGateSatisfied() {
+		return nil
+	}
+	phases := make([]string, 0, 4)
+	for _, phase := range []string{
+		workflowContinuationPhaseKBReview,
+		workflowContinuationPhaseDirectLearning,
+		workflowContinuationPhaseLearningAgent,
+		workflowContinuationPhaseKBUpdateAgent,
+	} {
+		if workflowContinuationStatusNeedsRecovery(workflowContinuationPhaseStatus(state, phase)) {
+			phases = append(phases, phase)
+		}
+	}
+	return phases
 }
 
 func truncateWorkflowContinuationError(message string) string {
@@ -137,13 +225,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) recordWorkflowContinuationPhase(
 	errorMessage string,
 	agent agents.OrchestratorAgent,
 ) {
+	hcpo.recordWorkflowContinuationPhaseForRunFolder(ctx, hcpo.selectedRunFolder, stepID, stepPath, ownerKind, phase, status, errorMessage, agent)
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) recordWorkflowContinuationPhaseForRunFolder(
+	ctx context.Context,
+	runFolder string,
+	stepID string,
+	stepPath string,
+	ownerKind string,
+	phase string,
+	status string,
+	errorMessage string,
+	agent agents.OrchestratorAgent,
+) {
 	if hcpo == nil || strings.TrimSpace(stepID) == "" || strings.TrimSpace(phase) == "" || strings.TrimSpace(status) == "" {
 		return
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	path := workflowContinuationStatePath(hcpo.GetWorkspacePath(), hcpo.selectedRunFolder, stepID, stepPath)
+	path := workflowContinuationStatePath(hcpo.GetWorkspacePath(), runFolder, stepID, stepPath)
 	var existing *WorkflowContinuationState
 	if content, err := hcpo.ReadWorkspaceFile(ctx, path); err == nil && strings.TrimSpace(content) != "" {
 		var parsed WorkflowContinuationState
@@ -153,7 +255,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) recordWorkflowContinuationPhase(
 	}
 	state := upsertWorkflowContinuationState(existing, workflowContinuationStateUpdate{
 		workspacePath: hcpo.GetWorkspacePath(),
-		runFolder:     hcpo.selectedRunFolder,
+		runFolder:     strings.TrimSpace(runFolder),
 		stepID:        stepID,
 		stepPath:      stepPath,
 		ownerKind:     ownerKind,

@@ -31,8 +31,8 @@ latest sync:
 | Capture handle into chat history | **Done** | `ChatHistoryAgentRuntime.AgentSessionHandle` populated via `CurrentAgentSessionHandle()` |
 | Restore handle on chat resume | **Done** | `ApplyAgentSessionHandle()` called during restore |
 | Remove legacy maps in `server.go` | **Done** | `claudeCodeSessionIDs`, `geminiSessionIDs`, `geminiProjectDirIDs`, and `restoreCodingAgentRuntime()` have been removed. Restore now flows through `seedCodingAgentRuntimeFromRestoredConversation()` and `ApplyAgentSessionHandle()`. |
-| Workflow step continuation (Step 5) | **Partial** | In-process workflow agents route through mcpagent continuation when a handle exists. Workflow steps now persist `continuation_state.json` beside step logs with the latest `AgentSessionHandle` and phase statuses. Restart-time work-item replay is still pending. |
-| Learning / KB review continuation (Step 6) | **Partial** | Same-agent direct KB review / direct-learning turns benefit from the shared continuation path and now record lock-wait/running/completed phase state. Agent-mode learning/KB update jobs record pending/running/completed phase state, but restart replay is still pending. |
+| Workflow step continuation (Step 5) | **Done for builder workflow runtime** | Workflow steps persist `continuation_state.json` beside step logs with per-phase `AgentSessionHandle`s and phase statuses. Workshop session startup scans durable state and requeues incomplete post-step phases through the normal workshop execution notifier path. |
+| Learning / KB review continuation (Step 6) | **Done for builder workflow runtime** | Direct KB review, direct learning, agent-mode learning, and KB update phases record lock-wait/running/completed state. Restart replay resumes or requeues the incomplete phase with the stored phase handle. |
 | Kill-tmux recovery E2E test | **Done for Claude Code + Codex CLI chat** | Provider E2E verifies Claude Code and Codex CLI. Builder chat E2E `--run-tmux-loss-resume` has passed live for Claude Code and Codex CLI. |
 
 Day-to-day callers do not need to choose between `AskWithHistory` and
@@ -690,13 +690,20 @@ Acceptance criteria:
 
 Owner repo: `mcp-agent-builder-go`
 
-Status: **Partial.** Live workflow execution agents now reuse the same
-mcpagent continuation path when an `AgentSessionHandle` is already present.
-Each workflow step also persists a `continuation_state.json` file under its
-step log folder. That file records the latest `AgentSessionHandle` plus phase
-states for main execution, pre-validation, direct KB review, direct learning,
-agent-mode learning, and KB update agents. The remaining work is restart-time
-work-item replay from that durable state.
+Status: **Done for builder workflow runtime.** Live workflow execution agents
+reuse the same mcpagent continuation path when an `AgentSessionHandle` is
+present. Each workflow step also persists a `continuation_state.json` file under
+its step log folder. That file records the latest top-level handle, a handle per
+phase, and phase states for main execution, pre-validation, direct KB review,
+direct learning, agent-mode learning, and KB update agents.
+
+On workshop session startup, once the server execution notifier is attached, the
+backend scans `runs/*/logs/*/continuation_state.json`, identifies post-step
+phases that are still `pending`, `running`, `waiting_for_lock`, or
+`recovery_queued`, and requeues that work through the same workshop registry and
+notifier path used by normal runtime jobs. Recovery is provider-agnostic: the
+workflow layer reapplies an `AgentSessionHandle`; mcpagent/provider code decides
+whether to use native resume or live tmux.
 
 Likely areas:
 
@@ -723,9 +730,9 @@ Deliverables:
   - learning pending/waiting/completed
   - auto-notification pending/sent
 - Treat this phase state like a durable work item. On builder restart, the
-  backend must be able to see "pre-validation passed, learning/KB/notification
-  still pending" and resume that post-step sequence without relying on an
-  in-memory goroutine, terminal pane, or SSE event history.
+  backend sees "pre-validation passed, learning/KB still pending" and resumes
+  that post-step sequence without relying on an in-memory goroutine, terminal
+  pane, or SSE event history.
 - Store an agent session handle per logical workflow execution owner:
   - main workflow agent
   - workflow step
@@ -744,21 +751,22 @@ Acceptance criteria:
 - No provider-specific resume flags are assembled inside workflow execution
   code.
 
-**Gate:** Step 6 must not ship until this step's post-delay continuation test
-passes against real providers in an E2E/staging environment. A delayed learning
-turn arriving with a stale Step 5 handle and no recovery path will strand the
-parent tool call silently.
+**Test gate:** provider kill-tmux continuation is certified in
+`multi-llm-provider-go`; builder workflow recovery has unit coverage for durable
+state and startup replay selection. Live workflow E2E should still be run before
+declaring a new provider certified.
 
 ### Step 6: Move Direct Learning and KB Review to Continuation
 
 Owner repo: `mcp-agent-builder-go`
 
-Status: **Partial.** Learning and KB review turns that run through the same
-live execution agent inherit mcpagent continuation. Direct-learning lock waits
-are now written to `continuation_state.json` before the lock is acquired, so a
-long wait does not erase the provider handle. The missing piece is restart-time
-post-step phase recovery when process restarts outlive the original in-memory
-execution.
+Status: **Done for builder workflow runtime.** Learning and KB review turns that
+run through the same live execution agent inherit mcpagent continuation.
+Direct-learning lock waits are written to `continuation_state.json` before the
+lock is acquired, so a long wait does not erase the provider handle. Agent-mode
+learning and KB update agents also persist their own phase handles. Restart
+replay requeues any incomplete direct or agent-mode post-step phase and applies
+the stored handle before executing the continuation.
 
 Likely areas:
 

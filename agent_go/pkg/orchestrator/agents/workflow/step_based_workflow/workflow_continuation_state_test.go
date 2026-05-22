@@ -65,7 +65,93 @@ func TestUpsertWorkflowContinuationStatePreservesHandleAcrossPhaseUpdates(t *tes
 	if got := state.Phases[workflowContinuationPhaseDirectLearning].Status; got != workflowContinuationStatusWaitingForLock {
 		t.Fatalf("direct learning phase status = %q", got)
 	}
+	if phaseHandle := state.Phases[workflowContinuationPhaseMainExecution].AgentSessionHandle; phaseHandle == nil || phaseHandle.Provider.NativeSessionID != "codex-thread-1" {
+		t.Fatalf("main phase handle not stored: %#v", phaseHandle)
+	}
 	if state.UpdatedAt != secondTime.Format(time.RFC3339Nano) {
 		t.Fatalf("updated_at = %q", state.UpdatedAt)
+	}
+}
+
+func TestUpsertWorkflowContinuationStatePreservesPerPhaseHandle(t *testing.T) {
+	firstHandle := &mcpagent.AgentSessionHandle{
+		SessionID: "session-main",
+		Provider: llmtypes.CodingProviderSessionHandle{
+			Provider:        "claude-code",
+			Transport:       "tmux",
+			NativeSessionID: "claude-main",
+		},
+	}
+	learningHandle := &mcpagent.AgentSessionHandle{
+		SessionID: "session-learning",
+		Provider: llmtypes.CodingProviderSessionHandle{
+			Provider:        "claude-code",
+			Transport:       "tmux",
+			NativeSessionID: "claude-learning",
+		},
+	}
+	state := upsertWorkflowContinuationState(nil, workflowContinuationStateUpdate{
+		workspacePath: "Workflow/demo",
+		runFolder:     "iteration-0/group-a",
+		stepID:        "step-output",
+		stepPath:      "step-2",
+		phase:         workflowContinuationPhaseMainExecution,
+		status:        workflowContinuationStatusCompleted,
+		handle:        firstHandle,
+		now:           time.Date(2026, 5, 22, 10, 0, 0, 0, time.UTC),
+	})
+	state = upsertWorkflowContinuationState(state, workflowContinuationStateUpdate{
+		workspacePath: "Workflow/demo",
+		runFolder:     "iteration-0/group-a",
+		stepID:        "step-output",
+		stepPath:      "step-2",
+		phase:         workflowContinuationPhaseLearningAgent,
+		status:        workflowContinuationStatusRunning,
+		handle:        learningHandle,
+		now:           time.Date(2026, 5, 22, 10, 1, 0, 0, time.UTC),
+	})
+	state = upsertWorkflowContinuationState(state, workflowContinuationStateUpdate{
+		workspacePath: "Workflow/demo",
+		runFolder:     "iteration-0/group-a",
+		stepID:        "step-output",
+		stepPath:      "step-2",
+		phase:         workflowContinuationPhaseLearningAgent,
+		status:        workflowContinuationStatusWaitingForLock,
+		now:           time.Date(2026, 5, 22, 10, 2, 0, 0, time.UTC),
+	})
+
+	if got := workflowContinuationPhaseHandle(state, workflowContinuationPhaseMainExecution).Provider.NativeSessionID; got != "claude-main" {
+		t.Fatalf("main handle = %q", got)
+	}
+	if got := workflowContinuationPhaseHandle(state, workflowContinuationPhaseLearningAgent).Provider.NativeSessionID; got != "claude-learning" {
+		t.Fatalf("learning handle = %q", got)
+	}
+}
+
+func TestWorkflowContinuationPendingRecoveryPhasesRequireCompletedGate(t *testing.T) {
+	state := &WorkflowContinuationState{
+		Phases: map[string]WorkflowContinuationPhaseRecord{
+			workflowContinuationPhaseMainExecution: {
+				Status: workflowContinuationStatusRunning,
+			},
+			workflowContinuationPhaseLearningAgent: {
+				Status: workflowContinuationStatusWaitingForLock,
+			},
+		},
+	}
+	if phases := state.PendingRecoveryPhases(); len(phases) != 0 {
+		t.Fatalf("pending phases before main completion = %v, want none", phases)
+	}
+
+	state.Phases[workflowContinuationPhaseMainExecution] = WorkflowContinuationPhaseRecord{Status: workflowContinuationStatusCompleted}
+	state.Phases[workflowContinuationPhasePreValidation] = WorkflowContinuationPhaseRecord{Status: workflowContinuationStatusCompleted}
+	state.Phases[workflowContinuationPhaseKBUpdateAgent] = WorkflowContinuationPhaseRecord{Status: workflowContinuationStatusPending}
+
+	phases := state.PendingRecoveryPhases()
+	if len(phases) != 2 {
+		t.Fatalf("pending phases len = %d, want 2 (%v)", len(phases), phases)
+	}
+	if phases[0] != workflowContinuationPhaseLearningAgent || phases[1] != workflowContinuationPhaseKBUpdateAgent {
+		t.Fatalf("pending phases = %v", phases)
 	}
 }

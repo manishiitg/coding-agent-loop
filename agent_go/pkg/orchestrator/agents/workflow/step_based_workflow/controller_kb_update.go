@@ -11,6 +11,7 @@ import (
 
 	orchestratorevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -26,6 +27,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdate(
 	stepIndex int,
 	stepPath string,
 	step PlanStepInterface,
+) bool {
+	return hcpo.maybeEnqueueKBUpdateWithHandle(stepIndex, stepPath, step, nil)
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdateWithHandle(
+	stepIndex int,
+	stepPath string,
+	step PlanStepInterface,
+	sessionHandle *mcpagent.AgentSessionHandle,
 ) bool {
 	if !hcpo.UseKnowledgebase() || hcpo.LockKnowledgebase() {
 		return false
@@ -104,32 +114,35 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdate(
 		})
 	}
 	hcpo.recordWorkflowContinuationPhase(context.Background(), stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, workflowContinuationStatusPending, "", nil)
+	recoveryRunFolder := runFolder
 
 	enqueueKBUpdateJob(func() {
-		var execErr error
-		var resultMsg string
-		hcpo.recordWorkflowContinuationPhase(execCtx, stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, workflowContinuationStatusRunning, "", nil)
-		defer func() {
-			cancel()
-			status := workflowContinuationStatusCompleted
-			errText := ""
+		hcpo.withWorkflowContinuationRunFolder(recoveryRunFolder, func() {
+			var execErr error
+			var resultMsg string
+			hcpo.recordWorkflowContinuationPhase(execCtx, stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, workflowContinuationStatusRunning, "", nil)
+			defer func() {
+				cancel()
+				status := workflowContinuationStatusCompleted
+				errText := ""
+				if execErr != nil {
+					status = workflowContinuationStatusFailed
+					errText = execErr.Error()
+				}
+				hcpo.recordWorkflowContinuationPhase(context.Background(), stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, status, errText, nil)
+				if hcpo.workshopExecutionNotifier != nil {
+					hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, resultMsg, nil, execErr)
+				}
+			}()
+			execErr = hcpo.runKBUpdatePhaseWithHandle(execCtx, stepIndex, stepPath, stepID, stepTitle, stepDescription, runFolder, contribution, stepContextOutput, sessionHandle)
 			if execErr != nil {
-				status = workflowContinuationStatusFailed
-				errText = execErr.Error()
+				resultMsg = fmt.Sprintf("KB update failed for %s: %v", stepLabel, execErr)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ KB update phase failed for %s: %v", stepLabel, execErr))
+			} else {
+				resultMsg = fmt.Sprintf("KB update completed for %s", stepLabel)
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ KB update completed for %s", stepLabel))
 			}
-			hcpo.recordWorkflowContinuationPhase(context.Background(), stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, status, errText, nil)
-			if hcpo.workshopExecutionNotifier != nil {
-				hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, resultMsg, nil, execErr)
-			}
-		}()
-		execErr = hcpo.runKBUpdatePhase(execCtx, stepIndex, stepPath, stepID, stepTitle, stepDescription, runFolder, contribution, stepContextOutput)
-		if execErr != nil {
-			resultMsg = fmt.Sprintf("KB update failed for %s: %v", stepLabel, execErr)
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ KB update phase failed for %s: %v", stepLabel, execErr))
-		} else {
-			resultMsg = fmt.Sprintf("KB update completed for %s", stepLabel)
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ KB update completed for %s", stepLabel))
-		}
+		})
 	})
 	return true
 }
@@ -144,6 +157,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhase(
 	runFolder string,
 	contribution string,
 	stepContextOutput string,
+) error {
+	return hcpo.runKBUpdatePhaseWithHandle(ctx, stepIndex, stepPath, stepID, stepTitle, stepDescription, runFolder, contribution, stepContextOutput, nil)
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhaseWithHandle(
+	ctx context.Context,
+	stepIndex int,
+	stepPath string,
+	stepID string,
+	stepTitle string,
+	stepDescription string,
+	runFolder string,
+	contribution string,
+	stepContextOutput string,
+	sessionHandle *mcpagent.AgentSessionHandle,
 ) error {
 	hcpo.GetLogger().Info(fmt.Sprintf("📚 Starting KB update for step %s/%s", stepID, stepPath))
 
@@ -190,6 +218,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhase(
 	agent, err := hcpo.createKBUpdateAgent(ctx, "kb_update", agentName, agentConfigs, stepID, stepPath, stepIndex)
 	if err != nil {
 		return fmt.Errorf("failed to create KB update agent: %w", err)
+	}
+	if sessionHandle != nil && !sessionHandle.Empty() {
+		if base := agent.GetBaseAgent(); base != nil && base.Agent() != nil {
+			base.Agent().ApplyAgentSessionHandle(sessionHandle)
+			hcpo.GetLogger().Info(fmt.Sprintf("📚 Resuming KB update agent for %s from stored session handle", stepID))
+		}
 	}
 
 	templateVars := map[string]string{

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, Info, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useChatStore } from '../stores/useChatStore'
@@ -778,9 +780,113 @@ interface StructuredTerminalViewProps {
   content: string
   scrollRef: React.RefObject<HTMLDivElement | null>
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void
+  // Optional snapshot is used to render a Claude-Code-style bottom status
+  // footer (model · turns · tokens · cost · elapsed) and to drive the
+  // streaming spinner when the pane is still active.
+  terminal?: TerminalSnapshot | null
 }
 
-const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content, scrollRef, onScroll }) => {
+// SPINNER_FRAMES animates while a synthetic terminal is still active. Same
+// vocabulary Claude Code's TUI uses for its working-state indicator.
+const SPINNER_FRAMES = ['◐', '◓', '◑', '◒']
+
+function useSpinnerFrame(active: boolean): string {
+  const [frame, setFrame] = useState(0)
+  useEffect(() => {
+    if (!active) return
+    const id = window.setInterval(() => {
+      setFrame(f => (f + 1) % SPINNER_FRAMES.length)
+    }, 110)
+    return () => window.clearInterval(id)
+  }, [active])
+  return SPINNER_FRAMES[frame]
+}
+
+// terminalMarkdownComponents tunes ReactMarkdown's element rendering so the
+// assistant's markdown reads cleanly inside a terminal pane: monospace
+// throughout, no oversized headings, subtle bullets, inline-code chips with
+// a faint background. Keeps fenced code blocks readable without dominating
+// the scrollback.
+const terminalMarkdownComponents = {
+  h1: ({ children }: { children?: React.ReactNode }) => (
+    <div className="mt-2 mb-1 text-cyan-300 font-semibold uppercase tracking-wide text-[12px]">{children}</div>
+  ),
+  h2: ({ children }: { children?: React.ReactNode }) => (
+    <div className="mt-2 mb-0.5 text-cyan-300 font-semibold text-[12px]">{children}</div>
+  ),
+  h3: ({ children }: { children?: React.ReactNode }) => (
+    <div className="mt-1.5 mb-0.5 text-cyan-200 font-semibold text-[12px]">{children}</div>
+  ),
+  h4: ({ children }: { children?: React.ReactNode }) => (
+    <div className="mt-1 mb-0.5 text-neutral-200 font-semibold text-[12px]">{children}</div>
+  ),
+  h5: ({ children }: { children?: React.ReactNode }) => (
+    <div className="mt-1 mb-0.5 text-neutral-200 font-semibold text-[12px]">{children}</div>
+  ),
+  h6: ({ children }: { children?: React.ReactNode }) => (
+    <div className="mt-1 mb-0.5 text-neutral-300 font-semibold text-[12px]">{children}</div>
+  ),
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <div className="text-neutral-100 whitespace-pre-wrap break-words my-0.5">{children}</div>
+  ),
+  ul: ({ children }: { children?: React.ReactNode }) => (
+    <ul className="my-0.5 ml-3 list-none text-neutral-100">{children}</ul>
+  ),
+  ol: ({ children }: { children?: React.ReactNode }) => (
+    <ol className="my-0.5 ml-3 list-none text-neutral-100">{children}</ol>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => (
+    <li className="relative pl-3 before:absolute before:left-0 before:text-neutral-500 before:content-['•']">{children}</li>
+  ),
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <span className="text-amber-200 font-semibold">{children}</span>
+  ),
+  em: ({ children }: { children?: React.ReactNode }) => (
+    <span className="text-neutral-200 italic">{children}</span>
+  ),
+  code: ({ inline, children }: { inline?: boolean; children?: React.ReactNode }) => inline
+    ? <code className="rounded bg-neutral-800 px-1 text-amber-200">{children}</code>
+    : <code className="text-neutral-200">{children}</code>,
+  pre: ({ children }: { children?: React.ReactNode }) => (
+    <pre className="my-1 rounded bg-neutral-900/80 border border-neutral-800 p-2 overflow-x-auto whitespace-pre text-[11.5px] text-neutral-100">{children}</pre>
+  ),
+  a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
+    <a href={href} target="_blank" rel="noreferrer" className="text-cyan-300 underline decoration-dotted">{children}</a>
+  ),
+  blockquote: ({ children }: { children?: React.ReactNode }) => (
+    <div className="border-l-2 border-neutral-700 pl-2 text-neutral-300 my-0.5">{children}</div>
+  ),
+  hr: () => <div className="my-1.5 border-t border-dashed border-neutral-800" />,
+  table: ({ children }: { children?: React.ReactNode }) => (
+    <div className="my-1 overflow-x-auto"><table className="border-collapse text-[11.5px]">{children}</table></div>
+  ),
+  th: ({ children }: { children?: React.ReactNode }) => (
+    <th className="border border-neutral-700 px-2 py-0.5 text-left text-cyan-200">{children}</th>
+  ),
+  td: ({ children }: { children?: React.ReactNode }) => (
+    <td className="border border-neutral-800 px-2 py-0.5 text-neutral-200">{children}</td>
+  ),
+}
+
+const TerminalAssistantMarkdown: React.FC<{ text: string }> = ({ text }) => (
+  <ReactMarkdown remarkPlugins={[remarkGfm]} components={terminalMarkdownComponents}>
+    {text}
+  </ReactMarkdown>
+)
+
+function formatTokens(n?: number): string {
+  if (n === undefined || n === null) return '–'
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return String(n)
+}
+
+function formatCost(usd?: number): string {
+  if (usd === undefined || usd === null || usd === 0) return ''
+  return `$${usd.toFixed(usd < 0.01 ? 4 : 2)}`
+}
+
+const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content, scrollRef, onScroll, terminal }) => {
   const rows = useMemo(() => parseTerminalContent(content), [content])
   // Long user prompts and tool rows collapse behind one-line summaries.
   // We key by row index; content updates are append-only so indexes stay
@@ -794,107 +900,145 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
       return next
     })
   }, [])
+  const isStreaming = !!terminal?.active && (terminal.state === 'running' || terminal.state === 'idle' || terminal.state === undefined)
+  const spinner = useSpinnerFrame(isStreaming)
   return (
-    <div
-      ref={scrollRef}
-      onScroll={onScroll}
-      className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-2.5 font-mono text-[12px] leading-5"
-    >
-      {rows.map((row, idx) => {
-        switch (row.kind) {
-          case 'banner':
-            return (
-              <div key={idx} className="text-cyan-300">
-                <span className="text-neutral-500">$ </span>{row.text}
-              </div>
-            )
-          case 'context':
-            return <div key={idx} className="text-neutral-500">↳ {row.text}</div>
-          case 'user':
-            {
-              const longUserMessage = shouldCollapseUserMessage(row.text)
-              const isOpen = expanded.has(idx) || !longUserMessage
-              const preview = compactTerminalPreview(row.text)
-              if (!longUserMessage) {
+    <div className="min-w-0 flex-1 flex flex-col">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-2.5 font-mono text-[12px] leading-5"
+      >
+        {rows.map((row, idx) => {
+          // Subtle divider between turns: a new banner (other than the first
+          // row) marks a fresh turn boundary in the aggregated scrollback.
+          const showDivider = row.kind === 'banner' && idx > 0
+          switch (row.kind) {
+            case 'banner':
+              return (
+                <div key={idx}>
+                  {showDivider && <div className="my-2 border-t border-dashed border-neutral-800/70" />}
+                  <div className="text-cyan-300/90">
+                    <span className="text-neutral-500">$ </span>{row.text}
+                  </div>
+                </div>
+              )
+            case 'context':
+              return <div key={idx} className="text-neutral-500">↳ {row.text}</div>
+            case 'user':
+              {
+                const longUserMessage = shouldCollapseUserMessage(row.text)
+                const isOpen = expanded.has(idx) || !longUserMessage
+                const preview = compactTerminalPreview(row.text)
                 return (
-                  <div key={idx} className="text-blue-300 whitespace-pre-wrap break-words">
-                    <span className="text-blue-500">&gt; user: </span>{row.text}
+                  <div key={idx} className="my-1 rounded border border-blue-900/60 bg-blue-950/30 px-2 py-1">
+                    {longUserMessage ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => toggle(idx)}
+                          className="w-full text-left text-blue-200 hover:bg-blue-950/40 rounded px-0.5 -mx-0.5"
+                        >
+                          <span className="text-blue-400">&gt;</span>
+                          <span className="ml-1">{preview}</span>
+                          <span className="ml-1 text-blue-500/70">{isOpen ? '▾' : '▸'}</span>
+                        </button>
+                        {isOpen && (
+                          <pre className="mt-1 ml-3 whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-blue-100">
+                            {row.text}
+                          </pre>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-blue-100 whitespace-pre-wrap break-words">
+                        <span className="text-blue-400">&gt;</span> {row.text}
+                      </div>
+                    )}
                   </div>
                 )
               }
+            case 'asst':
               return (
-                <div key={idx}>
+                <div key={idx} className="my-1 pl-1">
+                  <TerminalAssistantMarkdown text={row.text} />
+                </div>
+              )
+            case 'tool': {
+              const hasResult = row.result !== undefined
+              const isError = row.resultPrefix === '✗'
+              const longResult = (row.result?.length ?? 0) > 80
+              const isOpen = expanded.has(idx) || (hasResult && !longResult)
+              const statusColor = !hasResult
+                ? 'text-yellow-300'
+                : isError
+                  ? 'text-red-400'
+                  : 'text-emerald-400'
+              return (
+                <div key={idx} className="my-0.5">
                   <button
                     type="button"
                     onClick={() => toggle(idx)}
-                    className="w-full rounded px-0.5 -mx-0.5 text-left text-blue-300 hover:bg-white/5"
+                    className="w-full text-left hover:bg-white/5 rounded px-0.5 -mx-0.5"
                   >
-                    <span className="text-blue-500">&gt; user: </span>
-                    <span>{preview}</span>
-                    <span className="ml-1 text-neutral-600">{isOpen ? '▾' : '▸'}</span>
+                    <span className={statusColor}>
+                      {hasResult ? (isError ? '✗' : '⏺') : '→'}
+                    </span>
+                    <span className="text-amber-300 ml-1">{row.name}</span>
+                    {row.args && (
+                      <span className="text-neutral-400 ml-1" title={row.args}>
+                        ({!isOpen ? compactTerminalPreview(row.args, TERMINAL_TOOL_ARGS_PREVIEW_CHARS) : row.args})
+                      </span>
+                    )}
+                    {hasResult && longResult && (
+                      <span className="text-neutral-600 ml-1">{isOpen ? '▾' : '▸'}</span>
+                    )}
                   </button>
-                  {isOpen && (
-                    <pre className="ml-4 mt-0.5 whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-blue-100">
-                      {row.text}
-                    </pre>
+                  {hasResult && isOpen && (
+                    <div className={`ml-1 flex whitespace-pre-wrap break-words ${isError ? 'text-red-300' : 'text-neutral-300'}`}>
+                      <span className="text-neutral-600 select-none mr-1">└─</span>
+                      <span className="flex-1">{row.result}</span>
+                    </div>
                   )}
                 </div>
               )
             }
-          case 'asst':
-            return (
-              <div key={idx} className="text-neutral-100 whitespace-pre-wrap break-words">
-                <span className="text-neutral-500">&lt; asst: </span>{row.text}
-              </div>
-            )
-          case 'tool': {
-            const hasResult = row.result !== undefined
-            const isError = row.resultPrefix === '✗'
-            const longResult = (row.result?.length ?? 0) > 80
-            const isOpen = expanded.has(idx) || (hasResult && !longResult)
-            const statusColor = !hasResult
-              ? 'text-yellow-300'
-              : isError
-                ? 'text-red-400'
-                : 'text-emerald-400'
-            return (
-              <div key={idx}>
-                <button
-                  type="button"
-                  onClick={() => toggle(idx)}
-                  className="w-full text-left hover:bg-white/5 rounded px-0.5 -mx-0.5"
-                >
-                  <span className={statusColor}>
-                    {hasResult ? (isError ? '✗' : '✓') : '→'}
-                  </span>
-                  <span className="text-amber-300 ml-1">{row.name}</span>
-                  {row.args && (
-                    <span className="text-neutral-400 ml-1" title={row.args}>
-                      ({!isOpen ? compactTerminalPreview(row.args, TERMINAL_TOOL_ARGS_PREVIEW_CHARS) : row.args})
-                    </span>
-                  )}
-                  {hasResult && longResult && (
-                    <span className="text-neutral-600 ml-1">{isOpen ? '▾' : '▸'}</span>
-                  )}
-                </button>
-                {hasResult && isOpen && (
-                  <div className={`ml-4 whitespace-pre-wrap break-words ${isError ? 'text-red-300' : 'text-neutral-300'}`}>
-                    {row.result}
-                  </div>
-                )}
-              </div>
-            )
+            case 'attachment':
+              return <div key={idx} className="text-neutral-500">{row.text}</div>
+            case 'done':
+              return <div key={idx} className="text-emerald-400 mt-1">{row.text}</div>
+            case 'error':
+              return <div key={idx} className="text-red-400">[error] {row.text}</div>
+            case 'plain':
+              return <div key={idx} className="text-neutral-300 whitespace-pre-wrap break-words">{row.text}</div>
           }
-          case 'attachment':
-            return <div key={idx} className="text-neutral-500">{row.text}</div>
-          case 'done':
-            return <div key={idx} className="text-emerald-400 mt-1">{row.text}</div>
-          case 'error':
-            return <div key={idx} className="text-red-400">[error] {row.text}</div>
-          case 'plain':
-            return <div key={idx} className="text-neutral-300 whitespace-pre-wrap break-words">{row.text}</div>
-        }
-      })}
+        })}
+        {isStreaming && (
+          <div className="mt-1 text-cyan-300/80">{spinner} <span className="text-neutral-500">working…</span></div>
+        )}
+      </div>
+      {terminal && (() => {
+        const st = terminal.status || {}
+        const tokensIn = formatTokens(st.input_tokens)
+        const tokensOut = formatTokens(st.output_tokens)
+        const cost = formatCost(st.cost_usd)
+        const dur = typeof st.duration_ms === 'number' && st.duration_ms > 0
+          ? `${(st.duration_ms / 1000).toFixed(st.duration_ms < 10_000 ? 1 : 0)}s`
+          : ''
+        const tools = typeof st.tool_count === 'number' && st.tool_count > 0 ? `${st.tool_count} tools` : ''
+        const segments = [
+          st.provider_label || terminal.label || terminal.execution_kind || 'pane',
+          tools,
+          tokensIn !== '–' || tokensOut !== '–' ? `${tokensIn} in · ${tokensOut} out` : '',
+          cost,
+          dur,
+        ].filter(Boolean)
+        return (
+          <div className="border-t border-neutral-800 px-3 py-1 text-[11px] font-mono text-neutral-500 flex items-center gap-2">
+            <span className={isStreaming ? 'text-cyan-300/80' : 'text-neutral-600'}>{isStreaming ? spinner : '·'}</span>
+            <span className="truncate">{segments.join('  ·  ')}</span>
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -1887,6 +2031,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       content={selectedTerminalDisplayContent}
                       scrollRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
                       onScroll={handleTerminalScroll}
+                      terminal={selectedTerminalView}
                     />
                   ) : (
                     <pre

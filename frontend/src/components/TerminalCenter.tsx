@@ -576,6 +576,46 @@ function isArchivedTurnTerminal(terminal: TerminalSnapshot): boolean {
   return terminal.terminal_id.includes(':turn-')
 }
 
+// turnIndexFromTerminalID parses ":turn-N" out of an archived-turn terminal_id.
+// Returns 0 for terminals that don't carry a turn marker so the caller can
+// safely sort mixed lists.
+function turnIndexFromTerminalID(terminalID: string): number {
+  const m = terminalID.match(/:turn-(\d+)/)
+  return m ? parseInt(m[1], 10) : 0
+}
+
+// aggregatePriorTurnContent stitches every archived :turn- terminal that
+// belongs to the same chat session as `current` into a single scrollback
+// string, in chronological order, and returns it concatenated with the
+// current terminal's content. Used when the selected terminal is the
+// "live" synthetic terminal for a structured CLI (gemini-cli, opencode-cli)
+// — the user sees prior turns the way a real tmux pane would have shown
+// them, without us doing any backend changes.
+function aggregatePriorTurnContent(current: TerminalSnapshot, allTerminals: TerminalSnapshot[]): string {
+  const currentContent = current.content || ''
+  if (isArchivedTurnTerminal(current) || !isSyntheticTerminal(current)) {
+    return currentContent
+  }
+  const sessionID = (current.session_id || '').trim()
+  if (!sessionID) return currentContent
+  const priorTurns = allTerminals
+    .filter(t =>
+      t.terminal_id !== current.terminal_id &&
+      (t.session_id || '').trim() === sessionID &&
+      isArchivedTurnTerminal(t) &&
+      isSyntheticTerminal(t),
+    )
+    .sort((a, b) => turnIndexFromTerminalID(a.terminal_id) - turnIndexFromTerminalID(b.terminal_id))
+  if (priorTurns.length === 0) return currentContent
+  const parts: string[] = []
+  for (const t of priorTurns) {
+    const c = (t.content || '').trim()
+    if (c) parts.push(c)
+  }
+  if (currentContent.trim()) parts.push(currentContent)
+  return parts.join('\n\n')
+}
+
 function sortTerminalsNewestFirst(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
   return [...terminals].sort((a, b) => {
     const mainDelta = (isMainAgentTerminal(b) && !isArchivedTurnTerminal(b) ? 1 : 0) - (isMainAgentTerminal(a) && !isArchivedTurnTerminal(a) ? 1 : 0)
@@ -1352,8 +1392,18 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     return selectedTerminal
   }, [selectedTerminal, selectedTerminalDetail, selectedTerminalKey])
   const selectedTerminalDisplayContent = useMemo(
-    () => trimTerminalDisplayContent(selectedTerminalView?.content || ''),
-    [selectedTerminalView?.content],
+    () => {
+      if (!selectedTerminalView) return ''
+      // For synthetic terminals (structured CLIs + API providers), the rail
+      // shows each prior turn as its own :turn-N entry. The user wants the
+      // selected "live" terminal to read like a real tmux pane — i.e. with
+      // all prior turns in scrollback. Stitch them in chronologically here
+      // before trimming. No backend changes required; the per-turn snapshots
+      // are already in `terminals` from the existing /api/terminals poll.
+      const aggregated = aggregatePriorTurnContent(selectedTerminalView, terminals)
+      return trimTerminalDisplayContent(aggregated)
+    },
+    [selectedTerminalView, terminals],
   )
   const selectedRouteDecision = selectedTerminalView?.step_id
     ? routingDecisionByNextStepID.get(selectedTerminalView.step_id)

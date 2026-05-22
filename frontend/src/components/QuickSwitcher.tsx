@@ -727,9 +727,15 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
                         {item.type === 'active' ? 'active' : item.type}
                       </span>
                       {activeSession && item.type !== 'active' && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-medium flex-shrink-0">
-                          active
-                        </span>
+                        activeSession.needs_user_input ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-medium flex-shrink-0">
+                            needs input
+                          </span>
+                        ) : (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-medium flex-shrink-0">
+                            active
+                          </span>
+                        )
                       )}
                       {item.isActive && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 font-medium flex-shrink-0">

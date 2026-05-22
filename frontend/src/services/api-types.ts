@@ -988,6 +988,9 @@ export interface RunningWorkflowInfo {
   minimized_at?: number;
   current_step_id?: string;
   current_step_title?: string;
+  needs_user_input?: boolean;
+  waiting_message?: string;
+  waiting_since?: string;
 }
 
 export interface UpdateRunningWorkflowRequest {

@@ -24,7 +24,9 @@ export interface RunningWorkflow {
   runFolder: string             // Run folder context
   phaseId: string               // Which phase (planning, execution, etc.)
   phaseName: string             // Display name
-  status: 'running' | 'completed' | 'failed' | 'paused'
+  status: 'running' | 'waiting_for_input' | 'completed' | 'failed' | 'paused'
+  waitingForInputSince?: number // Timestamp (ms) when waiting_for_input was first set
+  waitingMessage?: string       // Message from the blocking event
   currentStepTitle?: string     // Title of the currently executing step
   selectedGroupIds?: string[]   // Selected group IDs (for batch execution)
   minimizedAt: number           // Timestamp when minimized
@@ -46,15 +48,14 @@ const loadRunningWorkflowsFromStorage = (): RunningWorkflow[] => {
 
       const cleaned = workflows
         .map(wf => {
-          // Mark any "running" workflows that are older than 1 hour as stale
-          if (wf.status === 'running' && (now - wf.lastUpdated) > STALE_THRESHOLD) {
+          // Mark any "running" or "waiting_for_input" workflows that are older than 1 hour as stale
+          if ((wf.status === 'running' || wf.status === 'waiting_for_input') && (now - wf.lastUpdated) > STALE_THRESHOLD) {
             return { ...wf, status: 'failed' as const }
           }
           return wf
         })
-        // Remove completed/failed workflows on load - they have no active sessions
-        // and will just trigger unnecessary polling and event hydration
-        .filter(wf => wf.status === 'running')
+        // Remove completed/failed/paused workflows on load - they have no active sessions
+        .filter(wf => wf.status === 'running' || wf.status === 'waiting_for_input')
 
       // Persist cleaned state back
       localStorage.setItem(storageKey, JSON.stringify(cleaned))
@@ -275,7 +276,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
       // Get count of running workflows
       getRunningWorkflowCount: () => {
         const state = get()
-        const running = state.runningWorkflows.filter(bg => bg.status === 'running').length
+        const running = state.runningWorkflows.filter(bg => bg.status === 'running' || bg.status === 'waiting_for_input').length
         return { running, total: state.runningWorkflows.length }
       },
 
@@ -318,7 +319,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
           clearInterval(state.runningPollingInterval)
         }
 
-        const runningCount = state.runningWorkflows.filter(w => w.status === 'running').length
+        const runningCount = state.runningWorkflows.filter(w => w.status === 'running' || w.status === 'waiting_for_input').length
 
         // Choose polling interval based on context
         let interval: number = POLLING_INTERVALS.BACKGROUND
@@ -349,9 +350,9 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
       // Poll events for all running workflows (with optimizations)
       pollRunningWorkflows: async () => {
         const state = get()
-        // Only poll running workflows - completed/failed ones are removed on load
+        // Poll running and waiting_for_input workflows
         const workflowsToPoll = state.runningWorkflows.filter(bg =>
-          bg.status === 'running'
+          bg.status === 'running' || bg.status === 'waiting_for_input'
         )
 
         if (workflowsToPoll.length === 0) {
@@ -365,9 +366,21 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
         const chatStore = useChatStore.getState()
 
         for (const bg of workflowsToPoll) {
+          // Auto-stop workflows that have been waiting for input too long
+          if (bg.status === 'waiting_for_input' && bg.waitingForInputSince) {
+            if (Date.now() - bg.waitingForInputSince > WORKFLOW_LIMITS.WAITING_INPUT_AUTO_STOP_MS) {
+              console.warn(`[RunningWorkflowsStore] Auto-stopping ${bg.id} (waited for input > 30min)`)
+              agentApi.stopSession(bg.sessionId).catch(err => {
+                console.warn('[RunningWorkflowsStore] Auto-stop failed:', err)
+              })
+              get().updateRunningWorkflowStatus(bg.id, { status: 'paused', waitingForInputSince: undefined, waitingMessage: undefined })
+              continue
+            }
+          }
+
           // Mark as failed if too many consecutive poll failures
           if (bg.failedPollCount >= VALIDATION_CONFIG.MAX_POLL_RETRIES) {
-            if (bg.status === 'running') {
+            if (bg.status === 'running' || bg.status === 'waiting_for_input') {
               console.warn(`[RunningWorkflowsStore] Marking ${bg.id} as failed (too many poll failures)`)
               get().updateRunningWorkflowStatus(bg.id, { status: 'failed' })
             }
@@ -389,14 +402,16 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
             let shouldMarkPaused = false
             let shouldMarkFailed = false
             let hasRunningEvents = false  // Track if we see events indicating workflow is still running
+            let shouldMarkWaitingForInput = false
+            let shouldResumeFromWaiting = false
+            let newWaitingMessage: string | undefined
 
             if (response.session_status === 'active' || response.session_status === 'running') {
               if (bg.status === 'completed' || bg.status === 'failed') {
                 // Workflow was marked completed/failed but is now active again - resume tracking
-                // This can happen when a workflow is restarted after failure
-                get().updateRunningWorkflowStatus(bg.id, { 
+                get().updateRunningWorkflowStatus(bg.id, {
                   status: 'running',
-                  failedPollCount: 0,  // Reset failure count on restart
+                  failedPollCount: 0,
                   lastPollError: undefined
                 })
               }
@@ -419,7 +434,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
               // Process events for progress updates
               for (const event of response.events) {
                 // Check for events that indicate workflow is still running
-                // These events mean the workflow is active, even if it was previously marked as completed
                 const runningEventTypes = [
                   'agent_start',
                   'tool_call_start',
@@ -433,8 +447,27 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                   hasRunningEvents = true
                 }
 
+                // Blocking-input events — workflow is waiting for human response
+                if (event.type === 'blocking_human_feedback' || event.type === 'request_human_feedback' || event.type === 'plan_approval') {
+                  shouldMarkWaitingForInput = true
+                  shouldResumeFromWaiting = false
+                  const d = event.data as Record<string, unknown> | undefined
+                  for (const key of ['question', 'message', 'prompt', 'title', 'action_description']) {
+                    const val = d?.[key]
+                    if (typeof val === 'string' && val) {
+                      newWaitingMessage = val.length > 160 ? val.slice(0, 157) + '...' : val
+                      break
+                    }
+                  }
+                }
+
+                // Resume events — workflow got a response or ended
+                if (event.type === 'human_verification_response' || event.type === 'workflow_end' || event.type === 'conversation_end' || event.type === 'context_canceled') {
+                  shouldResumeFromWaiting = true
+                  shouldMarkWaitingForInput = false
+                }
+
                 // Check for completion/error events (primary check for workflows)
-                // workflow_end event is the true indicator of workflow completion
                 if (event.type && hasWorkflowCompletion([event])) {
                   shouldMarkCompleted = true
                 } else if (event.type && hasWorkflowError([event])) {
@@ -449,29 +482,34 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
             }
 
             // Apply status updates after processing events
-            // This ensures we see workflow_end events before marking as completed
-            
-            // If we see running events (step_progress_updated, etc.) 
-            // and workflow was marked as completed, reset it back to running
-            // This handles cases where workflow was incorrectly marked as completed
             if (hasRunningEvents && bg.status === 'completed') {
-              get().updateRunningWorkflowStatus(bg.id, { 
+              get().updateRunningWorkflowStatus(bg.id, {
                 status: 'running',
                 failedPollCount: 0,
                 lastPollError: undefined
               })
-              // Continue processing - don't return, let it keep polling
             } else if (shouldMarkFailed) {
-              get().updateRunningWorkflowStatus(bg.id, { status: 'failed' })
+              get().updateRunningWorkflowStatus(bg.id, { status: 'failed', waitingForInputSince: undefined, waitingMessage: undefined })
               continue
             } else if (shouldMarkCompleted) {
-              // Only mark as completed if we saw a workflow_end event
-              get().updateRunningWorkflowStatus(bg.id, { status: 'completed' })
+              get().updateRunningWorkflowStatus(bg.id, { status: 'completed', waitingForInputSince: undefined, waitingMessage: undefined })
               chatStore.cleanupTabEvents?.(bg.sessionId, EVENT_CONFIG.MAX_EVENTS_PER_COMPLETED_SESSION)
               continue
             } else if (shouldMarkPaused) {
-              get().updateRunningWorkflowStatus(bg.id, { status: 'paused' })
+              get().updateRunningWorkflowStatus(bg.id, { status: 'paused', waitingForInputSince: undefined, waitingMessage: undefined })
               continue
+            } else if (shouldMarkWaitingForInput && bg.status !== 'waiting_for_input') {
+              get().updateRunningWorkflowStatus(bg.id, {
+                status: 'waiting_for_input',
+                waitingForInputSince: Date.now(),
+                waitingMessage: newWaitingMessage,
+              })
+            } else if (shouldResumeFromWaiting && bg.status === 'waiting_for_input') {
+              get().updateRunningWorkflowStatus(bg.id, {
+                status: 'running',
+                waitingForInputSince: undefined,
+                waitingMessage: undefined,
+              })
             }
 
             // Reset failure count on success
@@ -520,9 +558,18 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
 
         if (state.runningWorkflows.length === 0) return
 
+        // Fetch the server-side list once — it now includes needs_user_input.
+        let backendMap: Map<string, { needs_user_input?: boolean; waiting_message?: string; waiting_since?: string }> = new Map()
+        try {
+          const { running } = await agentApi.listRunningWorkflows()
+          for (const wf of running) {
+            backendMap.set(wf.session_id, wf)
+          }
+        } catch {
+          // Fall through — we'll still do per-session status checks below
+        }
 
         const validWorkflows: RunningWorkflow[] = []
-        const removedIds: string[] = []
 
         for (const bg of state.runningWorkflows) {
           try {
@@ -530,6 +577,8 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
 
             if (sessionStatus) {
               let updatedStatus = bg.status
+              const backend = backendMap.get(bg.sessionId)
+
               if (sessionStatus.status === 'error') {
                 updatedStatus = 'failed'
               } else if (sessionStatus.status === 'completed') {
@@ -537,20 +586,32 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
               } else if (sessionStatus.status === 'stopped') {
                 updatedStatus = 'paused'
               } else if (sessionStatus.status === 'active' || sessionStatus.status === 'running') {
-                updatedStatus = 'running'
+                // Use backend needs_user_input if available; otherwise keep existing waiting state
+                if (backend?.needs_user_input) {
+                  updatedStatus = 'waiting_for_input'
+                } else if (bg.status === 'waiting_for_input') {
+                  // Backend says active but no blocking event found — resume running
+                  updatedStatus = 'running'
+                } else {
+                  updatedStatus = 'running'
+                }
               }
 
               validWorkflows.push({
                 ...bg,
                 status: updatedStatus,
+                waitingMessage: updatedStatus === 'waiting_for_input' ? (backend?.waiting_message ?? bg.waitingMessage) : undefined,
+                waitingForInputSince: updatedStatus === 'waiting_for_input'
+                  ? (bg.waitingForInputSince ?? (backend?.waiting_since ? new Date(backend.waiting_since).getTime() : now))
+                  : undefined,
                 lastUpdated: now
               })
             } else {
-              removedIds.push(bg.id)
+              // Session not found on backend — remove it
+              console.warn(`[RunningWorkflowsStore] Session ${bg.sessionId} not found, removing`)
             }
           } catch {
             console.warn(`[RunningWorkflowsStore] Session ${bg.sessionId} not found, removing`)
-            removedIds.push(bg.id)
           }
         }
 
@@ -564,8 +625,8 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
         const now = Date.now()
 
         const filtered = state.runningWorkflows.filter(wf => {
-          // Keep running workflows
-          if (wf.status === 'running') return true
+          // Keep active workflows (running or waiting for input)
+          if (wf.status === 'running' || wf.status === 'waiting_for_input') return true
 
           // Remove old completed/failed workflows
           const age = now - wf.lastUpdated
@@ -606,7 +667,7 @@ if (initialWorkflows.some(wf => wf.status === 'running')) {
 export const useRunningWorkflows = () => useRunningWorkflowsStore(state => state.runningWorkflows)
 export const useShowRunningDrawer = () => useRunningWorkflowsStore(state => state.showRunningDrawer)
 export const useRunningWorkflowsRunningCount = () => useRunningWorkflowsStore(
-  state => state.runningWorkflows.filter(bg => bg.status === 'running').length
+  state => state.runningWorkflows.filter(bg => bg.status === 'running' || bg.status === 'waiting_for_input').length
 )
 export const useRunningWorkflowsTotalCount = () => useRunningWorkflowsStore(
   state => state.runningWorkflows.length

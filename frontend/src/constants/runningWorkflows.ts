@@ -25,6 +25,8 @@ export const WORKFLOW_LIMITS = {
   MAX_TRACKED_WORKFLOWS: 10,
   /** Time in ms before auto-removing completed/failed workflows (1 hour) */
   COMPLETED_WORKFLOW_TTL: 3600000,
+  /** Auto-stop a workflow waiting for input after this duration (30 min) */
+  WAITING_INPUT_AUTO_STOP_MS: 30 * 60 * 1000,
 } as const
 
 /**

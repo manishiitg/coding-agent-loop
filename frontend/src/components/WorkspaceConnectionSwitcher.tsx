@@ -78,7 +78,7 @@ function parseWorkspaceInput(value: string): { serverUrl: string; code?: string 
 function detachAndReload(workspaceId: string) {
   const chatStore = useChatStore.getState()
   const runningStore = useRunningWorkflowsStore.getState()
-  const hasRunningWorkflows = runningStore.runningWorkflows.some(workflow => workflow.status === 'running')
+  const hasRunningWorkflows = runningStore.runningWorkflows.some(workflow => workflow.status === 'running' || workflow.status === 'waiting_for_input')
   const hasActiveTabs = Object.values(chatStore.chatTabs).some(tab => tab.isStreaming || tab.hasRunningBgAgents)
 
   if ((hasRunningWorkflows || hasActiveTabs) && typeof window !== 'undefined') {

@@ -629,6 +629,10 @@ type ActiveWorkflowExecution struct {
 	MinimizedAt      int64  `json:"minimized_at,omitempty"` // unix ms
 	CurrentStepID    string `json:"current_step_id,omitempty"`
 	CurrentStepTitle string `json:"current_step_title,omitempty"`
+	// Blocking-input state — set by the list endpoint via deriveSessionUserInputState.
+	NeedsUserInput bool       `json:"needs_user_input,omitempty"`
+	WaitingMessage string     `json:"waiting_message,omitempty"`
+	WaitingSince   *time.Time `json:"waiting_since,omitempty"`
 }
 
 // RunMetadataLLM captures which model was used for a specific role

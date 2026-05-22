@@ -301,6 +301,9 @@ function sessionFromRunningWorkflow(workflow: RunningWorkflowInfo): ActiveSessio
     query: workflowFallbackName(workflow),
     title: workflowFallbackName(workflow),
     triggered_by: workflow.triggered_by,
+    needs_user_input: workflow.needs_user_input,
+    waiting_message: workflow.waiting_message,
+    waiting_since: workflow.waiting_since,
   }
 }
 

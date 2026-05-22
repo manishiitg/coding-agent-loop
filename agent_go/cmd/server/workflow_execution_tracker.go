@@ -349,8 +349,6 @@ func (api *StreamingAPI) runningTrackedExecutionBySessionLocked(sessionID string
 
 func (api *StreamingAPI) listRunningWorkflowExecutions(userID string) []ActiveWorkflowExecution {
 	api.trackedWorkflowExecutionsMux.RLock()
-	defer api.trackedWorkflowExecutionsMux.RUnlock()
-
 	list := make([]ActiveWorkflowExecution, 0, len(api.trackedWorkflowExecutions))
 	for _, exec := range api.trackedWorkflowExecutions {
 		if !trackedExecutionAppearsInRunningWorkflowList(exec) {
@@ -360,6 +358,16 @@ func (api *StreamingAPI) listRunningWorkflowExecutions(userID string) []ActiveWo
 			continue
 		}
 		list = append(list, trackedExecutionToActive(exec))
+	}
+	api.trackedWorkflowExecutionsMux.RUnlock()
+
+	// Enrich with blocking-input state after releasing the map lock because
+	// deriveSessionUserInputState reads from the eventStore (separate lock).
+	for i := range list {
+		needsInput, _, waitingSince, waitingMessage := api.deriveSessionUserInputState(list[i].SessionID)
+		list[i].NeedsUserInput = needsInput
+		list[i].WaitingMessage = waitingMessage
+		list[i].WaitingSince = waitingSince
 	}
 
 	sort.Slice(list, func(i, j int) bool {
@@ -372,8 +380,6 @@ func (api *StreamingAPI) listRunningWorkflowExecutionsForWorkspace(workspacePath
 	normalizedWorkspace := normalizeTrackedWorkspacePath(workspacePath)
 
 	api.trackedWorkflowExecutionsMux.RLock()
-	defer api.trackedWorkflowExecutionsMux.RUnlock()
-
 	list := make([]ActiveWorkflowExecution, 0, len(api.trackedWorkflowExecutions))
 	for _, exec := range api.trackedWorkflowExecutions {
 		if !trackedExecutionAppearsInRunningWorkflowList(exec) {
@@ -383,6 +389,15 @@ func (api *StreamingAPI) listRunningWorkflowExecutionsForWorkspace(workspacePath
 			continue
 		}
 		list = append(list, trackedExecutionToActive(exec))
+	}
+	api.trackedWorkflowExecutionsMux.RUnlock()
+
+	// Enrich with blocking-input state after releasing the map lock.
+	for i := range list {
+		needsInput, _, waitingSince, waitingMessage := api.deriveSessionUserInputState(list[i].SessionID)
+		list[i].NeedsUserInput = needsInput
+		list[i].WaitingMessage = waitingMessage
+		list[i].WaitingSince = waitingSince
 	}
 
 	sort.Slice(list, func(i, j int) bool {

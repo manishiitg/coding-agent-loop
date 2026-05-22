@@ -3144,7 +3144,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} compact={compact} />
             )}
 
-            {activeTab?.sessionId && tabEvents.some(e => e.type === 'conversation_resumed') && (
+            {activeTab?.sessionId && displayEvents.length > 0 && (
               <div className="flex justify-end px-2 py-1">
                 <button
                   onClick={handleNewChat}

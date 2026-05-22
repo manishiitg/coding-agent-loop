@@ -403,6 +403,39 @@ func TestStoreAllowsChunkIndexResetForNewTurn(t *testing.T) {
 	}
 }
 
+func TestStoreArchivesActiveTerminalWhenChunkIndexResetsForFastFollowUp(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+
+	store.HandleEvent("session-1", terminalEventAt("streaming_chunk", "exec-1", "old turn", 12, now))
+	store.HandleEvent("session-1", terminalEventAt("streaming_chunk", "exec-1", "new turn starts immediately", 1, now.Add(10*time.Millisecond)))
+
+	snapshot, ok := store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if snapshot.Content != "new turn starts immediately" {
+		t.Fatalf("new turn did not replace canonical terminal content: %q", snapshot.Content)
+	}
+
+	snapshots := store.List("session-1")
+	if len(snapshots) != 2 {
+		t.Fatalf("snapshot count = %d, want canonical plus archived turn", len(snapshots))
+	}
+	var foundArchive bool
+	for _, item := range snapshots {
+		if strings.Contains(item.TerminalID, ":turn-") {
+			foundArchive = true
+			if item.Content != "old turn" {
+				t.Fatalf("archived content = %q, want old turn", item.Content)
+			}
+		}
+	}
+	if !foundArchive {
+		t.Fatalf("expected archived prior turn, got %#v", snapshots)
+	}
+}
+
 func TestStoreMarksTerminalInactiveOnStreamingEnd(t *testing.T) {
 	store := NewStore()
 	store.HandleEvent("session-1", terminalEvent("streaming_chunk", "exec-1", "screen", 1))

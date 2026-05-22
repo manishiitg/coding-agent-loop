@@ -907,7 +907,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
   const isStreaming = !!terminal?.active && (terminal.state === 'running' || terminal.state === 'idle' || terminal.state === undefined)
   const spinner = useSpinnerFrame(isStreaming)
   return (
-    <div className="min-w-0 flex-1 flex flex-col">
+    <div className="min-h-0 min-w-0 flex-1 flex flex-col overflow-hidden">
       <div
         ref={scrollRef}
         onScroll={onScroll}
@@ -1351,15 +1351,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
 
     try {
-      // content='tail' so the rail entries carry their actual content
-      // in the poll response. Previously this was 'none' (metadata only)
-      // and the synthetic-terminal view relied on a secondary getTerminal
-      // fetch that only refired when chunk_index/updated_at deps changed
-      // — which left the displayed content frozen on the first body the
-      // detail fetch returned, even as new streaming_chunk events kept
-      // arriving and incrementing the snapshot on the backend. With
-      // 'tail' the rail data IS the source of truth on every 600ms tick.
-      const response = await agentApi.listTerminals(viewAll ? undefined : currentSessionId, 'tail')
+      const response = await agentApi.listTerminals(viewAll ? undefined : currentSessionId, 'none')
       let visibleTerminals = (response.terminals || []).filter(terminal => !dismissedTerminalIDs.has(terminal.terminal_id))
 
       if (!viewAll && currentSessionId && visibleTerminals.length === 0 && terminalsRef.current.length > 0) {
@@ -1375,28 +1367,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       }
 
       const nextTerminals = dedupeTerminalsByPane(visibleTerminals)
-      // TEMP DEBUG — diagnose multi-turn staleness. Logs every poll's
-      // shape so we can see whether new turns add archived entries, the
-      // live entry's chunk_index advances, and content actually changes.
-      // Strip once the staleness bug is closed.
-      console.log('[term-poll] ' + JSON.stringify({
-        session: currentSessionId || 'all',
-        count: nextTerminals.length,
-        entries: nextTerminals.slice(0, 5).map(t => ({
-          id: t.terminal_id,
-          archived: t.terminal_id.includes(':turn-'),
-          chunk: t.chunk_index,
-          state: t.state,
-          contentLen: (t.content || '').length,
-          contentTail: (t.content || '').slice(-80),
-        })),
-      }))
       setTerminals(current => {
         const currentMatchesScope = viewAll || !currentSessionId || current.every(terminal => terminal.session_id === currentSessionId)
         if (!viewAll && currentSessionId && nextTerminals.length === 0 && current.length > 0 && currentMatchesScope) {
           emptyResponseCountRef.current += 1
           if (emptyResponseCountRef.current <= EMPTY_TERMINAL_RESPONSE_GRACE_POLLS) {
-            console.log('[term-poll] kept current (grace period for empty response)')
             return current
           }
         }
@@ -1571,16 +1546,6 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const selectedTerminalKey = selectedTerminal ? terminalPaneKey(selectedTerminal) : null
   const selectedTerminalView = useMemo(() => {
     if (!selectedTerminal) return null
-    // Synthetic terminals (gemini-cli structured, opencode-cli, API
-    // providers) always read from the polled snapshot — the rail poll
-    // now fetches content='tail' so its content field is current on
-    // every 600ms tick. The secondary detail fetch existed to grab
-    // deep tmux history; for synthetics it just races against the
-    // poll and freezes the view on whatever chunk_index it was
-    // when the fetch first landed.
-    if (isSyntheticTerminal(selectedTerminal)) {
-      return selectedTerminal
-    }
     if (selectedTerminalDetail && terminalPaneKey(selectedTerminalDetail) === selectedTerminalKey) {
       return { ...selectedTerminal, content: selectedTerminalDetail.content }
     }
@@ -1861,7 +1826,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
 
             {/* Right pane — the selected terminal's content. Header
                 bar at top (chip + meta + actions), content below. */}
-            <div className="flex min-w-0 flex-1 flex-col">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               {selectedTerminalView ? (
                 <>
                   <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2 text-xs text-gray-400">

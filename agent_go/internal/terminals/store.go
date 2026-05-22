@@ -346,7 +346,8 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 		}
 		delete(s.forcedInactive, terminalID)
 	}
-	if exists && chunkIndex < current.ChunkIndex && !isNewTerminalTurn(current, now, chunkIndex) {
+	chunkIndexResetTurn := exists && isChunkIndexResetTerminalTurn(current, content, chunkIndex)
+	if exists && chunkIndex < current.ChunkIndex && !isNewTerminalTurn(current, now, chunkIndex) && !chunkIndexResetTurn {
 		return
 	}
 	// Rerun: a new turn has arrived for an owner whose previous turn
@@ -356,7 +357,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	// canonical terminalID for the new live turn. Skips when the
 	// current entry is empty (no real content yet) — that's just a
 	// pre-stream placeholder, not a finished run worth archiving.
-	if exists && !current.Active && isNewTerminalTurn(current, now, chunkIndex) && strings.TrimSpace(current.Content) != "" {
+	if exists && ((!current.Active && isNewTerminalTurn(current, now, chunkIndex)) || chunkIndexResetTurn) && strings.TrimSpace(current.Content) != "" {
 		archived := current
 		archived.TerminalID = fmt.Sprintf("%s:turn-%d", terminalID, current.CreatedAt.UnixNano())
 		archived.Active = false
@@ -719,6 +720,16 @@ func isNewTerminalTurn(current Snapshot, eventTime time.Time, chunkIndex int) bo
 		return false
 	}
 	return eventTime.After(current.UpdatedAt.Add(250 * time.Millisecond))
+}
+
+func isChunkIndexResetTerminalTurn(current Snapshot, content string, chunkIndex int) bool {
+	if current.ChunkIndex <= 2 || chunkIndex > 2 {
+		return false
+	}
+	if strings.TrimSpace(content) == "" || content == current.Content {
+		return false
+	}
+	return true
 }
 
 func isNewTerminalTurnAfterManualComplete(current Snapshot, eventTime time.Time, chunkIndex int, forcedAt time.Time) bool {

@@ -1675,6 +1675,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [showRunningDrawer, setShowChatArea])
 
+  const handleWorkflowNewChat = useCallback(() => {
+    chatAreaRef.current?.handleNewChat()
+  }, [])
+
   // No preset selected state
   if (!activeWorkflowPreset && !workspacePath) {
     return (
@@ -1730,7 +1734,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               : 'flex-1'
           }`}>
             <div className="flex-shrink-0">
-              <WorkflowChatTabs />
+              <WorkflowChatTabs onNewChat={handleWorkflowNewChat} />
             </div>
 
             {isRestoringWorkflowSessions && (

@@ -1917,15 +1917,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         return false
       }
 
-      // Terminal view mode renders only TerminalCenter (which polls
-      // /api/terminals on its own). Skip event polling for that tab
-      // — events would accumulate in memory unread. When the user
-      // switches back to Tree the next poll cycle catches up.
-      // currentTab from chatStore.getTab is live, no staleness.
-      if (normalizeEventViewMode(currentTab.viewMode) === 'terminal') {
-        return false
-      }
-
       // Multi-agent tabs always get polled — bg agents can produce events
       // after the orchestrator completes (session_status='completed')
       if (currentTab.metadata?.mode === 'multi-agent') {
@@ -2171,10 +2162,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   }, [getActiveSessions, switchTab, selectedModeCategory])
 
   // Key that changes whenever any tab's view-mode flips, so the
-  // SSE connect/disconnect effect (which gates on viewMode === 'terminal')
-  // re-runs. tabsWithActiveSessions alone doesn't capture viewMode
-  // changes, so without this key a Terminal→Tree switch would leave
-  // SSE disconnected and Tree mode would show stale events.
+  // Key that changes whenever any tab's view-mode flips. The SSE effect
+  // uses it as a cheap wake-up signal so mode changes do not leave a tab's
+  // connection state stale.
   const viewModeKey = useChatStore(state =>
     Object.entries(state.chatTabs)
       .map(([tid, t]) => `${tid}:${normalizeEventViewMode(t.viewMode)}`)
@@ -2266,12 +2256,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   useEffect(() => {
     // Read SSE state fresh from store (not from React state to avoid dep cycle)
     const currentSSE = useChatStore.getState().sseConnections
-    // Also read tabs fresh from the store. The memoized
-    // tabsWithActiveSessions only refreshes on add/remove/session
-    // changes, so tab.viewMode is stale across mode flips. Reading
-    // from the store directly catches the latest viewMode.
-    const liveChatTabs = useChatStore.getState().chatTabs
-
     // Determine which session IDs need SSE connections.
     // Terminal view mode used to skip SSE — the assumption was that
     // TerminalCenter's /api/terminals poll covered everything. That was
@@ -2286,32 +2270,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       if (!tab.sessionId) continue
       neededSessionIds.add(tab.sessionId)
     }
-    // TEMP debug — trace SSE effect re-runs during mode switches.
-    console.log('[sse-effect] ' + JSON.stringify({
-      viewModeKey,
-      currentlyConnected: Object.keys(currentSSE),
-      needed: Array.from(neededSessionIds),
-      tabsInActiveList: tabsWithActiveSessions.length,
-      tabsInActiveListSids: tabsWithActiveSessions.map(t => t.sessionId),
-      liveTabModes: tabsWithActiveSessions.map(t => ({
-        sid: t.sessionId,
-        liveMode: normalizeEventViewMode(liveChatTabs[t.tabId]?.viewMode),
-        staleMode: normalizeEventViewMode(t.viewMode),
-      })),
-    }))
-
     // Connect SSE for sessions that don't have a connection yet (any
     // view mode — see neededSessionIds comment for why terminal mode
     // can no longer skip this).
     for (const tab of tabsWithActiveSessions) {
       if (!tab.sessionId) continue
-      const liveMode = normalizeEventViewMode(liveChatTabs[tab.tabId]?.viewMode)
       const sid = tab.sessionId
       if (currentSSE[sid]) {
-        console.log('[sse-effect] skip-connect already-connected ' + JSON.stringify({ sid }))
         continue
       }
-      console.log('[sse-effect] connecting ' + JSON.stringify({ sid, liveMode }))
 
       connectSSE(
         sid,
@@ -2332,10 +2299,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           t => t.sessionId === sid && t.isStreaming === true && !t.isCompleted
         )
         if (!stillStreaming) {
-          console.log('[sse-effect] disconnecting ' + JSON.stringify({ sid, reason: 'not in needed' }))
           disconnectSSE(sid)
-        } else {
-          console.log('[sse-effect] skip-disconnect still-streaming ' + JSON.stringify({ sid }))
         }
       }
     }
@@ -2352,11 +2316,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // doesn't have to wait for the next poll tick.
   const prevActiveViewModeRef = useRef<string>(activeEventViewMode)
   useEffect(() => {
-    console.log('[mode-switch-poll] ' + JSON.stringify({
-      prev: prevActiveViewModeRef.current,
-      next: activeEventViewMode,
-      willKickPoll: prevActiveViewModeRef.current === 'terminal' && activeEventViewMode !== 'terminal',
-    }))
     if (prevActiveViewModeRef.current === 'terminal' && activeEventViewMode !== 'terminal') {
       void pollEvents()
     }
@@ -2966,8 +2925,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }, 200)
   }, [activeTab?.isStreaming, activeTab?.config?.queuedMessages, activeTab?.config?.isQueueProcessing, activeTab?.tabId])
 
-  // Handle new chat - clear backend session and reset all chat state
+  // Handle new chat for the active tab. Keep this scoped: workflow and
+  // multi-agent tabs can coexist, so starting a fresh conversation in one tab
+  // must not clear every tab/event/SSE connection in the app.
   const handleNewChat = useCallback(async () => {
+    const chatStore = useChatStore.getState()
     // Clear conversation history from backend first (if sessionId is available)
     const currentSessionId = getSessionId()
     const sessionIdToClear = activeTab?.sessionId || currentSessionId
@@ -2991,14 +2953,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       clearWorkflowState()
     }
     
-    // Reset frontend state
-    resetChatState()
-    
-    // Clear queued messages and reset notification dedup tracker
     if (activeTab) {
-      const chatStore = useChatStore.getState()
+      chatStore.resetTabChat(activeTab.tabId)
       chatStore.setTabConfig(activeTab.tabId, { queuedMessages: [], isQueueProcessing: false })
+    } else {
+      // Legacy fallback for the rare case where New Chat is triggered before
+      // a tab exists. Normal tabbed chats use resetTabChat above.
+      resetChatState()
+      resetSessionId()
+      onNewChat()
     }
+
     notifiedWorkshopAgentsRef.current.clear()
     
     // Explicitly reset events and tracking for new chat
@@ -3007,12 +2972,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     setLastEventIndex(-1)
     processedCompletionEventsRef.current.clear()
     
-    // Clear guidance state
-    // Reset session ID for the active tab (will generate a new one on next query)
-    resetSessionId()
-    
-    // Call the parent's new chat handler
-    onNewChat()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearWorkflowState, resetChatState, onNewChat, activeTab?.sessionId, activeTab?.tabId, selectedModeCategory, selectedWorkflowPreset, setCurrentWorkflowPhase, setLastEventIndex])
 
@@ -3142,20 +3101,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             {/* Phase Chat Help - Show only before the workflow-builder conversation starts */}
             {!hidePhaseChatEmptyState && displayEvents.length === 0 && activeEventViewMode !== 'terminal' && !isRestoringWorkflowSessions && !showWorkflowsOverview && !activeTab?.metadata?.isOrganizationAssistant && !activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && (
               <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} compact={compact} />
-            )}
-
-            {activeTab?.sessionId && displayEvents.length > 0 && (
-              <div className="flex justify-end px-2 py-1">
-                <button
-                  onClick={handleNewChat}
-                  disabled={isStreaming}
-                  className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-30 flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                  title="Start a new conversation"
-                >
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                  New Chat
-                </button>
-              </div>
             )}
 
             {activeTab?.sessionId && activeEventViewMode === 'terminal' && (

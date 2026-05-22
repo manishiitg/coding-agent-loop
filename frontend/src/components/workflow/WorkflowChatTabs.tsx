@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { ArrowDown, ListTree, Terminal, X } from 'lucide-react'
+import { ArrowDown, ListTree, Plus, Terminal, X } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
@@ -73,7 +73,11 @@ WorkflowTabItem.displayName = 'WorkflowTabItem'
  * Mini ChatTabs component for workflow mode chat area
  * Only shows workflow tabs that are active (have sessionId or isStreaming)
  */
-export const WorkflowChatTabs: React.FC = () => {
+interface WorkflowChatTabsProps {
+  onNewChat?: () => void
+}
+
+export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat }) => {
   const {
     chatTabs,
     activeTabId,
@@ -279,6 +283,20 @@ export const WorkflowChatTabs: React.FC = () => {
                 </Tooltip>
               ))}
             </div>
+            {onNewChat && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onNewChat()
+                }}
+                className="ml-1 inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+                title="Start a new workflow chat"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">New Chat</span>
+              </button>
+            )}
           </div>
         )}
       </div>

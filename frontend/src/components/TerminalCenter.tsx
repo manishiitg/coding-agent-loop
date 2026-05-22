@@ -765,10 +765,14 @@ function parseTerminalContent(content: string): TerminalRow[] {
       continue
     }
     const classified = classifyTerminalLine(line)
-    // Coalesce consecutive assistant continuation lines into one row
+    // Coalesce consecutive assistant continuation lines into one row. Join
+    // with a newline (not a space) so the markdown structure that the model
+    // emitted — lists, paragraph breaks, fenced code, headings — survives
+    // and ReactMarkdown can render it. An empty continuation line becomes a
+    // blank line, which markdown reads as a paragraph break.
     if (classified.kind === 'asst' && rows.length > 0 && rows[rows.length - 1].kind === 'asst') {
       const prev = rows[rows.length - 1] as { kind: 'asst'; text: string }
-      prev.text = `${prev.text}${prev.text && classified.text ? ' ' : ''}${classified.text}`
+      prev.text = prev.text ? `${prev.text}\n${classified.text}` : classified.text
       continue
     }
     rows.push(classified)
@@ -827,16 +831,16 @@ const terminalMarkdownComponents = {
     <div className="mt-1 mb-0.5 text-neutral-300 font-semibold text-[12px]">{children}</div>
   ),
   p: ({ children }: { children?: React.ReactNode }) => (
-    <div className="text-neutral-100 whitespace-pre-wrap break-words my-0.5">{children}</div>
+    <div className="text-neutral-100 break-words my-1.5 leading-6">{children}</div>
   ),
   ul: ({ children }: { children?: React.ReactNode }) => (
-    <ul className="my-0.5 ml-3 list-none text-neutral-100">{children}</ul>
+    <ul className="my-1.5 ml-3 list-none text-neutral-100 space-y-0.5">{children}</ul>
   ),
   ol: ({ children }: { children?: React.ReactNode }) => (
-    <ol className="my-0.5 ml-3 list-none text-neutral-100">{children}</ol>
+    <ol className="my-1.5 ml-3 list-none text-neutral-100 space-y-0.5">{children}</ol>
   ),
   li: ({ children }: { children?: React.ReactNode }) => (
-    <li className="relative pl-3 before:absolute before:left-0 before:text-neutral-500 before:content-['•']">{children}</li>
+    <li className="relative pl-4 leading-6 before:absolute before:left-0 before:top-0 before:text-neutral-500 before:content-['•']">{children}</li>
   ),
   strong: ({ children }: { children?: React.ReactNode }) => (
     <span className="text-amber-200 font-semibold">{children}</span>
@@ -959,7 +963,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
               }
             case 'asst':
               return (
-                <div key={idx} className="my-1 pl-1">
+                <div key={idx} className="my-1.5 pl-3 border-l border-neutral-800/80 text-[12.5px] leading-6">
                   <TerminalAssistantMarkdown text={row.text} />
                 </div>
               )

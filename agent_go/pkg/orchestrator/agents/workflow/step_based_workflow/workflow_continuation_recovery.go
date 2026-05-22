@@ -175,33 +175,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) queueWorkflowContinuationRecovery(ctx
 		for _, phase := range pendingPhases {
 			switch phase {
 			case workflowContinuationPhaseLearningAgent:
-				hcpo.recordWorkflowContinuationPhaseForRunFolder(context.Background(), state.RunFolder, state.StepID, state.StepPath, workflowContinuationOwnerStepExecution, phase, workflowContinuationStatusRecoveryQueued, "", nil)
-				if hcpo.startTrackedSuccessLearningPhaseWithHandle(
-					runtime.StepIndex,
-					runtime.StepPath,
-					runtime.LearningPathIdentifier,
-					runtime.TotalSteps,
-					runtime.Step,
-					runtime.ExecutionHistory,
-					runtime.ValidationResponse,
-					runtime.IsCodeExecutionMode,
-					runtime.TurnCount,
-					runtime.ExecutionLLM,
-					"Recovered after backend restart",
-					workflowContinuationPhaseHandle(state, phase),
-				) {
-					queued++
-				} else {
-					handle := workflowContinuationPhaseHandle(state, phase)
-					enqueueLearningJob(func() {
-						hcpo.withWorkflowContinuationRunFolder(state.RunFolder, func() {
-							if err := hcpo.runSuccessLearningPhaseWithHandle(context.Background(), runtime.StepIndex, runtime.StepPath, runtime.LearningPathIdentifier, runtime.TotalSteps, runtime.Step, runtime.ExecutionHistory, runtime.ValidationResponse, runtime.IsCodeExecutionMode, runtime.TurnCount, runtime.ExecutionLLM, "Recovered after backend restart", handle); err != nil {
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Recovered success learning failed for %s: %v", state.StepID, err))
-							}
-						})
-					})
-					queued++
-				}
+				// Agent-mode post-step learning is retired (see
+				// resolveLearningsWriteMethod / controller_execution.go). Any
+				// pending learning-agent phase recovered from disk is marked
+				// skipped — direct-mode learning happens inline in the step
+				// agent's own post-completion turn and has its own recovery
+				// path (workflowContinuationPhaseDirectLearning below).
+				hcpo.recordWorkflowContinuationPhaseForRunFolder(context.Background(), state.RunFolder, state.StepID, state.StepPath, workflowContinuationOwnerStepExecution, phase, workflowContinuationStatusSkipped, "Agent-mode learning retired; direct mode handles writes", nil)
 			case workflowContinuationPhaseKBUpdateAgent:
 				hcpo.recordWorkflowContinuationPhaseForRunFolder(context.Background(), state.RunFolder, state.StepID, state.StepPath, workflowContinuationOwnerStepExecution, phase, workflowContinuationStatusRecoveryQueued, "", nil)
 				if hcpo.maybeEnqueueKBUpdateWithHandle(runtime.StepIndex, runtime.StepPath, runtime.Step, workflowContinuationPhaseHandle(state, phase)) {

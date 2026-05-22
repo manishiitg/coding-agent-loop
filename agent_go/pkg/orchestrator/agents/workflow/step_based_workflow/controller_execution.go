@@ -2620,54 +2620,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 				}
 
-				// Learning agents — gated on learning-enabled + not-locked (existing behavior).
-				// Additionally: if the step ran direct-learnings inline this turn, the
-				// post-step learning agent MUST be skipped — direct is the canonical
-				// writer under that method, and running the agent on top would double-
-				// contribute and potentially clobber the step's own SKILL.md writes.
-				if isLearningDisabled || shouldSkipLearningDueToLock || learningsDirectPerformed {
-					if isLearningDisabled {
-						hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled: Skipping learning agents for step %d", stepIndex+1))
-					} else if shouldSkipLearningDueToLock {
-						hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping learning agents for step %d (using existing learnings)", stepIndex+1))
-					} else if learningsDirectPerformed {
-						hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-learnings: Skipping post-step learning agent for step %d (step agent wrote SKILL.md inline)", stepIndex+1))
-					}
-				} else if validationResponse.IsSuccessCriteriaMet && populatedTodoStep != nil {
-					// Success Learning Agent - analyze what worked well and update plan.json
-					learningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, getAgentConfigs(step))
-					hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running success learning analysis for %s", stepPath))
-					triggerReason := "Validation passed (success criteria met)"
-					// Run success learning in background so next step can start immediately.
-					// In workshop mode, register it as a tracked execution so the UI can show it
-					// and stop_step/stop_all_executions can cancel it.
-					if !hcpo.startTrackedSuccessLearningPhase(
-						stepIndex,
-						stepPath,
-						learningPathIdentifier,
-						totalSteps,
-						populatedTodoStep,
-						executionConversationHistory,
-						validationResponse,
-						isCodeExecutionMode,
-						turnCount,
-						executionLLM,
-						triggerReason,
-					) {
-						// Fallback (non-workshop) path: serialize through the shared learningQueue.
-						// This mirrors the tracked path in startTrackedSuccessLearningPhase — both
-						// flow into the same single-writer worker so concurrent step completions
-						// never race on learnings/_global/ files.
-						enqueueLearningJob(func() {
-							bgCtx := context.Background()
-							bgErr := hcpo.runSuccessLearningPhase(bgCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, populatedTodoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, turnCount, executionLLM, triggerReason)
-							if bgErr != nil {
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, bgErr))
-							} else {
-								hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for %s", stepPath))
-							}
-						})
-					}
+				// Post-step learning AGENT (the separate analytical reviewer that
+				// reads the step trace and writes SKILL.md as its own LLM turn) is
+				// retired. All steps now use direct-mode learning: the step agent
+				// itself writes SKILL.md inline during its dedicated post-completion
+				// turn (gated earlier in this method by shouldDirectWriteLearnings
+				// and the learningsDirectPerformed flag). The lock / disabled log
+				// lines are kept so operators see the gate, but no background
+				// launch happens.
+				if isLearningDisabled {
+					hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled: Skipping learning for step %d", stepIndex+1))
+				} else if shouldSkipLearningDueToLock {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping learning for step %d (using existing learnings)", stepIndex+1))
 				}
 
 				// Post-step knowledgebase update — INDEPENDENT of learning lock/disable.

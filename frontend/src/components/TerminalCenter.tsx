@@ -767,6 +767,10 @@ function shouldCollapseUserMessage(value: string): boolean {
   return value.includes('\n') || Array.from(value.trim()).length > TERMINAL_USER_PREVIEW_CHARS
 }
 
+function terminalUserMessageLabel(value: string): string {
+  return value.trim().startsWith('[AUTO-NOTIFICATION]') ? 'Auto notification' : 'User message'
+}
+
 function classifyTerminalLine(line: string): TerminalRow {
   if (line.startsWith('$ ')) return { kind: 'banner', text: line.slice(2) }
   if (line.startsWith('↳ ')) return { kind: 'context', text: line.slice(2) }
@@ -999,6 +1003,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
                 const longUserMessage = shouldCollapseUserMessage(row.text)
                 const isOpen = expanded.has(idx) || !longUserMessage
                 const preview = compactTerminalPreview(row.text)
+                const label = terminalUserMessageLabel(row.text)
                 return (
                   <div key={idx} className="my-1 rounded border border-cyan-900/55 bg-cyan-950/15 px-2 py-1">
                     {longUserMessage ? (
@@ -1009,11 +1014,11 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
                           className="w-full rounded px-0.5 -mx-0.5 text-left text-cyan-100 hover:bg-cyan-950/30"
                         >
                           <span className="text-cyan-300">&gt;</span>
-                          <span className="ml-1">{preview}</span>
+                          <span className="ml-1">{isOpen ? label : preview}</span>
                           <span className="ml-1 text-cyan-500/70">{isOpen ? '▾' : '▸'}</span>
                         </button>
                         {isOpen && (
-                          <pre className="mt-1 ml-3 whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-cyan-50">
+                          <pre className="mt-1 ml-3 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono text-[12px] leading-5 text-cyan-50">
                             {row.text}
                           </pre>
                         )}

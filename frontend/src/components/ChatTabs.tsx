@@ -22,7 +22,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     activeTabId,
     switchTab,
     closeTab,
-    tabSessionStatus,
     tabEvents,
     autoScroll: storeAutoScroll,
     setAutoScroll,
@@ -137,40 +136,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     }
   }
 
-  // Get tab color/indicator based on session status
-  const getTabIndicator = (tab: ChatTab) => {
-    const sessionStatus = tabSessionStatus[tab.tabId]
-    
-    // Priority: streaming > session status > completed > default
-    if (tab.isStreaming) {
-      return 'bg-green-500 animate-pulse' // Streaming
-    }
-    
-    if (sessionStatus?.status) {
-      switch (sessionStatus.status) {
-        case 'running':
-          return 'bg-blue-500' // Active/running
-        case 'paused':
-          return 'bg-yellow-500' // Paused
-        case 'completed':
-          return 'bg-gray-400' // Completed
-        case 'stopped':
-          return 'bg-gray-500' // Stopped
-        case 'error':
-          return 'bg-red-500' // Error
-        default:
-          return 'bg-gray-400' // Unknown status
-      }
-    }
-    
-    if (tab.isCompleted) {
-      return 'bg-gray-400' // Completed
-    }
-    
-    // Default: no session or unknown
-    return 'bg-gray-400'
-  }
-  
   // Show tabs bar in multi-agent mode (workflow tabs are shown in WorkflowChatTabs inside ChatArea panel)
   const shouldShowTabsBar = selectedModeCategory === 'multi-agent' && !showWorkflowsOverview
   const hasTabs = modeTabs.length > 0
@@ -188,7 +153,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
       {/* Existing Tabs */}
       {modeTabs.map((tab) => {
         const isActive = tab.tabId === activeTabId
-        const indicatorColor = getTabIndicator(tab)
+        const canCloseTab = modeTabs.length > 1
         
         // Determine active border color based on mode
           const activeBorderClass = 'border-blue-500'
@@ -235,9 +200,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
                 }
               `}
             >
-              {/* Status Indicator */}
-              <div className={`w-2 h-2 rounded-full ${indicatorColor}`} />
-              
               {/* Tab Name */}
               <span className="whitespace-nowrap">{tab.name}</span>
               
@@ -248,20 +210,22 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
                 </span>
               )}
 
-              <button
-                type="button"
-                onClick={(event) => handleCloseTab(event, tab.tabId)}
-                onKeyDown={(event) => event.stopPropagation()}
-                className={`
-                  flex h-4 w-4 shrink-0 items-center justify-center rounded text-gray-400 transition-colors
-                  hover:bg-gray-200 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-200
-                  ${isActive ? 'opacity-80' : 'opacity-60 group-hover:opacity-90 focus:opacity-100'}
-                `}
-                title="Close chat"
-                aria-label={`Close ${tab.name}`}
-              >
-                <X className="h-3 w-3" />
-              </button>
+              {canCloseTab && (
+                <button
+                  type="button"
+                  onClick={(event) => handleCloseTab(event, tab.tabId)}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  className={`
+                    flex h-4 w-4 shrink-0 items-center justify-center rounded text-gray-400 transition-colors
+                    hover:bg-gray-200 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-200
+                    ${isActive ? 'opacity-80' : 'opacity-60 group-hover:opacity-90 focus:opacity-100'}
+                  `}
+                  title="Close chat"
+                  aria-label={`Close ${tab.name}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
             </div>
           )
         })}

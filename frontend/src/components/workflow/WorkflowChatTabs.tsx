@@ -1,7 +1,7 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { ArrowDown, ListTree, Radio, Terminal, X } from 'lucide-react'
-import { normalizeEventViewMode, useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
+import { ArrowDown, ListTree, Terminal, X } from 'lucide-react'
+import { normalizeEventViewMode, useChatStore, type ChatTab } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 interface WorkflowTabItemProps {
   tab: ChatTab
   isActive: boolean
-  sessionStatus: TabSessionStatus | undefined
+  canClose: boolean
   onTabClick: (tabId: string) => void
   onCloseTab: (tabId: string) => void
 }
@@ -21,30 +21,13 @@ interface WorkflowTabItemProps {
 const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   tab,
   isActive,
-  sessionStatus,
+  canClose,
   onTabClick,
   onCloseTab,
 }) => {
   const displayName = tab.metadata?.phaseId === 'workflow-builder' && tab.name === 'Workflow Builder'
     ? 'Chat'
     : tab.name
-  const indicatorColor = useMemo(() => {
-    if (tab.isStreaming) return 'bg-green-500 animate-pulse'
-
-    if (sessionStatus?.status) {
-      switch (sessionStatus.status) {
-        case 'running':  return 'bg-blue-500'
-        case 'paused':   return 'bg-yellow-500'
-        case 'completed': return 'bg-gray-400'
-        case 'stopped':  return 'bg-gray-500'
-        case 'error':    return 'bg-red-500'
-        default:         return 'bg-gray-400'
-      }
-    }
-
-    if (tab.isCompleted) return 'bg-gray-400'
-    return 'bg-gray-400'
-  }, [tab.isStreaming, tab.isCompleted, sessionStatus?.status])
 
   return (
     <div
@@ -60,28 +43,22 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
         }
       `}
     >
-      {/* Status Indicator */}
-      <div className={`w-1.5 h-1.5 rounded-full ${indicatorColor}`} />
-
-      {/* Scheduled-run badge — distinguishes read-only schedule observer tabs */}
-      {tab.metadata?.isScheduledRun && (
-        <Radio className="w-3 h-3 text-green-500 animate-pulse" />
-      )}
-
       {/* Tab Name */}
       <span className="min-w-0 max-w-[14rem] truncate whitespace-nowrap">{displayName}</span>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          onCloseTab(tab.tabId)
-        }}
-        className="ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200"
-        aria-label={`Close ${displayName}`}
-        title="Close tab"
-      >
-        <X className="h-3 w-3" />
-      </button>
+      {canClose && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onCloseTab(tab.tabId)
+          }}
+          className="ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+          aria-label={`Close ${displayName}`}
+          title="Close tab"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
     </div>
   )
 })
@@ -102,7 +79,6 @@ export const WorkflowChatTabs: React.FC = () => {
     activeTabId,
     switchTab,
     closeTab,
-    tabSessionStatus,
     autoScroll,
     setAutoScroll,
     setTabViewMode,
@@ -111,7 +87,6 @@ export const WorkflowChatTabs: React.FC = () => {
     activeTabId: state.activeTabId,
     switchTab: state.switchTab,
     closeTab: state.closeTab,
-    tabSessionStatus: state.tabSessionStatus,
     autoScroll: state.autoScroll,
     setAutoScroll: state.setAutoScroll,
     setTabViewMode: state.setTabViewMode,
@@ -217,7 +192,7 @@ export const WorkflowChatTabs: React.FC = () => {
               key={tab.tabId}
               tab={tab}
               isActive={tab.tabId === activeTabId}
-              sessionStatus={tabSessionStatus[tab.tabId]}
+              canClose={activeWorkflowTabs.length > 1}
               onTabClick={handleTabClick}
               onCloseTab={handleCloseTab}
             />

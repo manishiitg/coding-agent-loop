@@ -502,6 +502,13 @@ function isScrolledNearBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 24
 }
 
+function trimTerminalDisplayContent(content: string): string {
+  // Tmux screen captures often include the pane's empty rows after the last
+  // prompt. Keep the raw snapshot in state, but do not render those trailing
+  // blank rows or first-open auto-scroll lands on empty space.
+  return content.replace(/(?:[ \t\r]*\n)+[ \t\r]*$/g, '')
+}
+
 function terminalUpdatedTime(terminal: TerminalSnapshot): number {
   const value = new Date(terminal.updated_at || terminal.created_at).getTime()
   return Number.isNaN(value) ? 0 : value
@@ -1344,6 +1351,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
     return selectedTerminal
   }, [selectedTerminal, selectedTerminalDetail, selectedTerminalKey])
+  const selectedTerminalDisplayContent = useMemo(
+    () => trimTerminalDisplayContent(selectedTerminalView?.content || ''),
+    [selectedTerminalView?.content],
+  )
   const selectedRouteDecision = selectedTerminalView?.step_id
     ? routingDecisionByNextStepID.get(selectedTerminalView.step_id)
     : undefined
@@ -1383,7 +1394,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
 
   useEffect(() => {
     const el = terminalOutputRef.current
-    if (!el || !selectedTerminalView?.content) return
+    if (!el || !selectedTerminalDisplayContent) return
 
     const terminalChanged = selectedTerminalIDRef.current !== selectedTerminalKey
     if (terminalChanged) {
@@ -1394,10 +1405,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     if (!terminalAutoScrollRef.current) return
 
     const frame = window.requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight
+      const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+      el.scrollTop = maxScrollTop
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [selectedTerminalKey, selectedTerminalView?.content])
+  }, [selectedTerminalKey, selectedTerminalDisplayContent])
 
 
   // Rail item — one row in the left rail. Compact vertical layout:
@@ -1782,7 +1794,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                   )}
                   {isSyntheticTerminal(selectedTerminalView) ? (
                     <StructuredTerminalView
-                      content={selectedTerminalView.content}
+                      content={selectedTerminalDisplayContent}
                       scrollRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
                       onScroll={handleTerminalScroll}
                     />
@@ -1792,7 +1804,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       onScroll={handleTerminalScroll}
                       className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-2.5 font-mono text-[12px] leading-5 whitespace-pre-wrap break-words text-gray-100"
                     >
-                      {selectedTerminalView.content}
+                      {selectedTerminalDisplayContent}
                     </pre>
                   )}
                 </>

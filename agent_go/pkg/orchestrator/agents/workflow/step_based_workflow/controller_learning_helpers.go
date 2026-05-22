@@ -3,7 +3,6 @@ package step_based_workflow
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -101,25 +100,6 @@ func resolveLearningsWriteMethod(_ *AgentConfigs) string {
 // the call sites still read intuitively.
 func shouldDirectWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterface, isEvalMode bool) bool {
 	return canWriteLearnings(agentConfigs, step, isEvalMode)
-}
-
-// getEffectiveToolsForStep returns the list of effective MCP server/tool names for a step.
-// Uses step-level filtering against the workflow cap, or workflow defaults.
-func (hcpo *StepBasedWorkflowOrchestrator) getEffectiveToolsForStep(step PlanStepInterface) []string {
-	agentConfigs := getAgentConfigs(step)
-	workflowServers := hcpo.GetSelectedServers()
-
-	var result []string
-	if agentConfigs != nil && len(agentConfigs.SelectedTools) > 0 {
-		result = filterToolsByWorkflow(agentConfigs.SelectedTools, workflowServers)
-	} else if agentConfigs != nil && len(agentConfigs.SelectedServers) > 0 {
-		result = filterServersByWorkflow(agentConfigs.SelectedServers, workflowServers)
-	} else {
-		result = workflowServers
-	}
-
-	sort.Strings(result)
-	return result
 }
 
 // findStepInPlan recursively finds a step by ID in the plan structure

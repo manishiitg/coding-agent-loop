@@ -545,15 +545,6 @@ func isTerminalWorkedForLine(lower string) bool {
 		strings.HasPrefix(lower, "worked for ")
 }
 
-func terminalHasExplicitFailure(content string) bool {
-	for _, lower := range terminalTailLines(content, 80) {
-		if terminalLineIsFailure(lower) {
-			return true
-		}
-	}
-	return false
-}
-
 func terminalLineIsFailure(lower string) bool {
 	return strings.Contains(lower, "status: failed") ||
 		strings.Contains(lower, "pre-validation failed") ||

@@ -1590,7 +1590,7 @@ func TestNoisyTerminalLineFiltersCursorChrome(t *testing.T) {
 
 // Multi-turn pane: when several "Assistant:" blocks are on screen, the live
 // preview should surface the LATEST one (matches Claude/Gemini markerPreview
-// behaviour).
+// behavior).
 func TestDeriveStatusCursorPreviewPicksLatestAssistantTurn(t *testing.T) {
 	screen := `  Cursor Agent
 

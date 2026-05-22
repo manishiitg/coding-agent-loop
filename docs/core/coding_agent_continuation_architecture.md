@@ -30,10 +30,10 @@ latest sync:
 | Auto-routing inside `AskWithHistory` | **Done** | `mcpagent/agent/llm_generation.go:1378` — detects coding-agent handle and routes to `ContinueCodingAgentSession` automatically |
 | Capture handle into chat history | **Done** | `ChatHistoryAgentRuntime.AgentSessionHandle` populated via `CurrentAgentSessionHandle()` |
 | Restore handle on chat resume | **Done** | `ApplyAgentSessionHandle()` called during restore |
-| Remove legacy maps in `server.go` | **Pending** | `claudeCodeSessionIDs`, `geminiSessionIDs`, `geminiProjectDirIDs` still present at `server.go:276–282`; `restoreCodingAgentRuntime()` at `server.go:6206` still called |
-| Workflow step continuation (Step 5) | **Not started** | Needs handle persistence per workflow execution owner |
-| Learning / KB review continuation (Step 6) | **Not started** | Gated on Step 5 |
-| Kill-tmux recovery E2E test | **Done at provider layer** | `RUN_CODING_AGENT_CONTINUATION_REAL_E2E=1 go test . -run TestCodingAgentContinuationRealE2EAfterTmuxLoss` verifies Claude Code and Codex CLI; Builder chat E2E has optional `--run-tmux-loss-resume` |
+| Remove legacy maps in `server.go` | **Done** | `claudeCodeSessionIDs`, `geminiSessionIDs`, `geminiProjectDirIDs`, and `restoreCodingAgentRuntime()` have been removed. Restore now flows through `seedCodingAgentRuntimeFromRestoredConversation()` and `ApplyAgentSessionHandle()`. |
+| Workflow step continuation (Step 5) | **Partial** | In-process workflow agents route through mcpagent continuation when a handle exists. Durable per-execution handle/phase persistence for restart and delayed post-step work is still pending. |
+| Learning / KB review continuation (Step 6) | **Partial** | Same-agent follow-up turns benefit from the shared continuation path. Durable lock-wait/restart recovery for learning and KB review is still pending. |
+| Kill-tmux recovery E2E test | **Provider done; builder partial** | Provider E2E verifies Claude Code and Codex CLI. Builder chat E2E has `--run-tmux-loss-resume`; Claude Code passed live, Codex CLI was stopped before final live verification after the transcript-selection fix. |
 
 Day-to-day callers do not need to choose between `AskWithHistory` and
 `ContinueAgentSession`. The auto-routing in mcpagent decides based on the
@@ -73,15 +73,15 @@ Claude resume id
 Codex thread id
 Gemini session id + project dir id
 tmux session name
-backend session/provider maps (claudeCodeSessionIDs, geminiSessionIDs, geminiProjectDirIDs in server.go)
 terminal owner ids
 ```
 
-A partial handle-like struct already exists in the builder:
+A handle-like struct already exists in the builder:
 `ChatHistoryAgentRuntime` in `chat_history_persistence.go` stores
-`ExternalSessionID`, `ProjectDirID`, `ResumeFlag`, `ResumeSupported`,
-`WorkspacePath`, and `Provider`. It is a builder persistence/runtime container
-with no continuation behavior.
+`AgentSessionHandle` plus compatibility fields such as `ExternalSessionID`,
+`ProjectDirID`, `ResumeFlag`, `ResumeSupported`, `WorkspacePath`, and
+`Provider`. The compatibility fields allow old history files to restore into
+the new handle path.
 
 The migration should not move builder-specific history state into
 `multi-llm-provider-go`. Instead:
@@ -444,10 +444,13 @@ testing multi-turn memory, not recovery.
 - **Done:** `ChatHistoryAgentRuntime.AgentSessionHandle` is captured and
   restored on chat resume; chat path benefits automatically from the
   auto-routing in mcpagent.
-- **Pending:** remove legacy `claudeCodeSessionIDs`, `geminiSessionIDs`,
-  `geminiProjectDirIDs` maps and `restoreCodingAgentRuntime()` from
-  `server.go`.
-- **Pending:** workflow step / learning / KB review continuation paths.
+- **Done:** legacy `claudeCodeSessionIDs`, `geminiSessionIDs`,
+  `geminiProjectDirIDs` maps and `restoreCodingAgentRuntime()` have been
+  removed from `server.go`.
+- **Partial:** workflow step / learning / KB review calls that stay inside the
+  same live `mcpagent.Agent` now route through continuation automatically.
+- **Pending:** durable workflow-step handle storage and post-step phase
+  persistence for restart, long lock waits, and delayed learning/KB review.
 - **Pending:** terminal grouping of old/new panes under one logical execution.
 
 ### Phase 4: Codex CLI — **DONE (alongside Phase 1)**
@@ -687,6 +690,11 @@ Acceptance criteria:
 
 Owner repo: `mcp-agent-builder-go`
 
+Status: **Partial.** Live workflow execution agents now reuse the same
+mcpagent continuation path when an `AgentSessionHandle` is already present.
+The remaining work is durable handle and phase persistence for delayed
+post-step work and backend restart recovery.
+
 Likely areas:
 
 - workflow execution agent creation
@@ -740,6 +748,11 @@ parent tool call silently.
 ### Step 6: Move Direct Learning and KB Review to Continuation
 
 Owner repo: `mcp-agent-builder-go`
+
+Status: **Partial.** Learning and KB review turns that run through the same
+live execution agent inherit mcpagent continuation. The missing piece is durable
+post-step phase recovery when learning lock waits, process restarts, or tmux
+retention cleanup outlive the original in-memory execution.
 
 Likely areas:
 
@@ -819,19 +832,24 @@ Acceptance criteria:
 
 Owner repo: `mcp-agent-builder-go`
 
+Status: **Done for builder session maps and runtime restore.** Keep the
+compatibility readers for old chat-history fields until old history files no
+longer need migration.
+
 Deliverables:
 
 - Remove or deprecate backend maps (`claudeCodeSessionIDs`, `geminiSessionIDs`,
-  `geminiProjectDirIDs`) in `server.go`.
-- Convert `restoreCodingAgentRuntime()` into a compatibility reader that loads
-  old chat history into `AgentSessionHandle`, then remove it after history
-  migration is complete.
+  `geminiProjectDirIDs`) in `server.go`. **Done.**
+- Replace `restoreCodingAgentRuntime()` with compatibility restore through
+  `seedCodingAgentRuntimeFromRestoredConversation()` and
+  `ApplyAgentSessionHandle()`. **Done.**
 - Remove provider-specific continuation branches from chat/steer/workflow code.
 - Keep compatibility migration for existing history files if needed.
 
-Do **not** delete all provider maps in one shot. Remove per provider as each
-provider's handle path is certified. Removing Claude Code's map should not
-depend on Gemini cleanup, Codex cleanup, or future provider cleanup.
+Do **not** add new provider maps in `server.go`. Provider-specific native IDs
+may still be mirrored into `mcpagent.Agent` fields for adapter compatibility,
+but builder persistence should treat `AgentSessionHandle` as the durable source
+of truth.
 
 Acceptance criteria:
 
@@ -863,8 +881,11 @@ mcp-agent-builder-go:
   - terminal grouping current/previous pane test
 ```
 
-After Codex is implemented, the same gates should run for Codex without changing
-builder workflow code.
+Current live status: Claude Code passed the builder chat tmux-loss run. Codex
+CLI has the test flag and the unsafe global transcript selection has been fixed
+by scoping rollout discovery to the tmux working directory, but the builder HTTP
+run was stopped before final verification. Re-run it before marking Codex
+builder chat recovery fully certified.
 
 ## Suggested First Vertical Slice
 

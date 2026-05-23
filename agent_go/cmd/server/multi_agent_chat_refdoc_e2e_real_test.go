@@ -286,3 +286,214 @@ func TestMultiAgentChatPromptSteersToReferenceDocs_ClaudeCode(t *testing.T) {
 		})
 	}
 }
+
+// TestMultiAgentChatFullConversation_ClaudeCode is a single multi-turn
+// conversation that exercises every capability the multi-agent chat prompt
+// is supposed to surface: schedule management, secret management, memory
+// save/recall, employees + workflow assignments context, and workflow
+// context inspection. The whole flow runs in ONE conversation (the adapter
+// threads claude-code's native session via NativeSessionID), so each turn
+// gets to depend on prior context if the LLM is steered correctly.
+//
+// What this proves end-to-end:
+//   - The full assembled system prompt (delegation rules + memory
+//     instructions + synthetic employees/workflow context) holds together
+//     and steers the LLM on every relevant axis.
+//   - get_reference_doc pointers actually steer the model on schedule and
+//     secret asks (same as the per-capability tests above, but verified in
+//     a real session not just a one-shot).
+//   - Memory tool surface (save_memory / recall_memory) shows up in the
+//     model's plan when the user explicitly asks to remember / recall.
+//   - Auto-injected employees context lets the model resolve "who handles
+//     X workflow?" by name without re-asking the user.
+//   - Auto-injected workflow context lets the model describe a workflow's
+//     purpose / structure without inventing details.
+//
+// Gating:
+//   - RUN_MULTIAGENT_REFDOC_CC_E2E=1 (shared with the per-capability test).
+//   - `claude` binary on PATH.
+//
+// Cost: uses Claude subscription, not API credits.
+func TestMultiAgentChatFullConversation_ClaudeCode(t *testing.T) {
+	if os.Getenv("RUN_MULTIAGENT_REFDOC_CC_E2E") == "" {
+		t.Skip("set RUN_MULTIAGENT_REFDOC_CC_E2E=1 to run this claude-code multi-turn e2e")
+	}
+	if _, err := exec.LookPath("claude"); err != nil {
+		t.Skipf("claude binary not found on PATH: %v", err)
+	}
+	model := strings.TrimSpace(os.Getenv("CLAUDE_CODE_REFDOC_MODEL"))
+	if model == "" {
+		model = "claude-haiku-4-5-20251001"
+	}
+
+	// Build the full system prompt the chat session would normally see.
+	// Delegation prompt: real (cheat sheets + pointers).
+	// Memory prompt: real.
+	// Employees + workflow context: synthetic — production reads files
+	// at request time, but for an isolated e2e test we inject fixed
+	// content with distinctive names/tokens we can grep for.
+	delegationPrompt := virtualtools.GetMultiAgentDelegationInstructionsWithUser("Chats", "default")
+	memoryPrompt := virtualtools.GetMemoryInstructions("_users/default/memory")
+	const employeeName = "Priya"
+	const employeeWorkflow = "Workflow/bot-whatsapp-customer-support"
+	const workflowDescription = "an automated customer-support bot that triages incoming WhatsApp messages, classifies intent, and routes to the right handler step (refund, escalation, FAQ-bot, human-agent)"
+	employeesSection := `
+## Current Employees & Workflow Assignments
+
+This workspace has the following employees with their assigned workflows. If the user's message names any employee below, treat that employee's assigned workflows as the primary source of truth and inspect the relevant workflow folder to ground your answer.
+
+- **` + employeeName + `** (` + "`emp-001`" + `)
+  - ` + "`" + employeeWorkflow + "`" + `
+- **Arjun** (` + "`emp-002`" + `)
+  - ` + "`Workflow/data-ingestion-pipeline`" + `
+`
+	workflowContextSection := `
+## Workflow Context (Read-Only)
+
+The following workflow(s) have been selected as reference context for this conversation. You have read-only access — read files, list directories, but cannot modify.
+
+### Workflow: bot-whatsapp-customer-support
+**Workspace Path:** ` + "`" + employeeWorkflow + "/`" + `
+
+**Workflow Manifest (workflow.json):**
+This workflow is ` + workflowDescription + `. It runs continuously and updates ` + "`db/whatsapp_tickets.json`" + ` with each handled message. Owner: ` + employeeName + `.
+
+**Key Steps:**
+- step-ingest-whatsapp: pulls new WhatsApp messages from the inbox
+- step-classify-intent: LLM classifies each message into one of (refund, escalation, faq, human-handoff)
+- step-route-handler: dispatches each message to the appropriate sub-agent
+`
+	systemPrompt := delegationPrompt + employeesSection + workflowContextSection + memoryPrompt
+
+	adapter := claudecodeadapter.NewClaudeCodeExperimentalAdapter(model, &e2eMockLogger{})
+	t.Cleanup(func() {
+		_ = claudecodeadapter.CleanupClaudeCodeExperimentalSessions(context.Background())
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+
+	// Running conversation history. The system prompt is set on the first
+	// message; subsequent turns inherit it via the claude-code session.
+	history := []llmtypes.MessageContent{
+		{Role: llmtypes.ChatMessageTypeSystem, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: systemPrompt}}},
+	}
+
+	type turn struct {
+		name          string
+		userMsg       string
+		mustMentionAny [][]string // groups: response must contain at least one phrase from EACH group
+		mustNotMention []string   // response must NOT contain these (red flags)
+	}
+	turns := []turn{
+		{
+			name:    "1_schedule_request",
+			userMsg: "Hi. I want to schedule a multi-agent task that runs every weekday at 9:00 AM. Walk me through exactly what tools you would call, in order, to set this up.",
+			mustMentionAny: [][]string{
+				{"get_reference_doc"},
+				{"schedule-management"},
+			},
+		},
+		{
+			name:    "2_secret_storage",
+			userMsg: "Different topic — I also want to save a Slack API token as SLACK_TOKEN. What tool do you call first, before doing anything else?",
+			mustMentionAny: [][]string{
+				{"get_reference_doc"},
+				{"secret-management"},
+			},
+		},
+		{
+			name:    "3_memory_save",
+			userMsg: "Please remember for future sessions: I prefer all my notifications routed to the Slack #ops channel rather than email. Save that as a preference.",
+			mustMentionAny: [][]string{
+				{"save_memory"},
+			},
+		},
+		{
+			name:    "4_memory_recall",
+			userMsg: "What preference did I ask you to save earlier in this conversation? If you need to, recall it from memory.",
+			mustMentionAny: [][]string{
+				// Either it remembers from session context OR it states intent to recall from memory.
+				{"slack", "#ops", "recall_memory", "notifications"},
+			},
+		},
+		{
+			name:    "5_employees_lookup",
+			userMsg: "Who handles the bot-whatsapp-customer-support workflow? Use the employee context you already have — don't ask me, just answer from what's loaded.",
+			mustMentionAny: [][]string{
+				// Either name or workflow path. Should NOT invent another name.
+				{strings.ToLower(employeeName)},
+			},
+			mustNotMention: []string{
+				"I don't know", "I don't have", "cannot find", "no information",
+			},
+		},
+		{
+			name:    "6_workflow_context_inspect",
+			userMsg: "Briefly describe what the bot-whatsapp-customer-support workflow does, based on the workflow context loaded in this session. Don't make anything up — only use what's already in the system prompt.",
+			mustMentionAny: [][]string{
+				// Should reference the distinctive content from the synthetic workflow context.
+				{"whatsapp", "customer-support", "triage", "refund", "escalation", "faq"},
+			},
+		},
+	}
+
+	successCount := 0
+	for i, turn := range turns {
+		turnNum := i + 1
+		t.Run(turn.name, func(t *testing.T) {
+			history = append(history, llmtypes.MessageContent{
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: turn.userMsg}},
+			})
+
+			t.Logf("→ turn %d: %s", turnNum, truncateRefdocLog(turn.userMsg, 200))
+			t0 := time.Now()
+			resp, err := adapter.GenerateContent(ctx, history)
+			elapsed := time.Since(t0)
+			if err != nil {
+				t.Fatalf("turn %d GenerateContent: %v", turnNum, err)
+			}
+			if len(resp.Choices) == 0 {
+				t.Fatalf("turn %d: no choices", turnNum)
+			}
+			text := resp.Choices[0].Content
+			t.Logf("← turn %d (%v): %s", turnNum, elapsed, truncateRefdocLog(text, 800))
+
+			// Append assistant response to history so subsequent turns
+			// see prior context.
+			history = append(history, llmtypes.MessageContent{
+				Role:  llmtypes.ChatMessageTypeAI,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: text}},
+			})
+
+			lower := strings.ToLower(text)
+			passed := true
+			for _, group := range turn.mustMentionAny {
+				hit := false
+				for _, phrase := range group {
+					if strings.Contains(lower, strings.ToLower(phrase)) {
+						hit = true
+						break
+					}
+				}
+				if !hit {
+					t.Errorf("turn %d (%s): response missing any of %v\n  response: %s", turnNum, turn.name, group, truncateRefdocLog(text, 500))
+					passed = false
+				}
+			}
+			for _, bad := range turn.mustNotMention {
+				if strings.Contains(lower, strings.ToLower(bad)) {
+					t.Errorf("turn %d (%s): response contains forbidden phrase %q\n  response: %s", turnNum, turn.name, bad, truncateRefdocLog(text, 500))
+					passed = false
+				}
+			}
+			if passed {
+				successCount++
+				t.Logf("✅ turn %d passed", turnNum)
+			}
+		})
+	}
+
+	t.Logf("Final: %d/%d turns passed", successCount, len(turns))
+}

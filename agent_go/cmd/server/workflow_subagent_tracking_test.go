@@ -179,29 +179,46 @@ func TestWorkflowStartAutoNotificationPayloadAndDrain(t *testing.T) {
 	}
 }
 
-// Pin which execution IDs are treated as internal post-step phases. Adding a
-// new phase that should skip the chat START notification means updating
-// isInternalPostStepExecutionID and adding its prefix here.
-func TestIsInternalPostStepExecutionID(t *testing.T) {
-	for _, id := range []string{
-		"learn-prepare-test-fixtures-12345",
-		"kb-update-prepare-test-fixtures-67890",
-	} {
-		if !isInternalPostStepExecutionID(id) {
-			t.Fatalf("expected %q to be classified as an internal post-step phase", id)
-		}
+func TestWorkflowStepStartAndCompletionNotifyMainAgent(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	const sessionID = "session-workflow-step-notify"
+	const execID = "workflow-full-123-step-1"
+
+	api := &StreamingAPI{
+		bgAgentRegistry:           NewBackgroundAgentRegistry(),
+		eventStore:                store,
+		sessionBusy:               map[string]bool{sessionID: true},
+		pendingStartNotifications: make(map[string][]string),
+		completionLoopStarted:     make(map[string]bool),
 	}
-	for _, id := range []string{
-		"exec-prepare-test-fixtures-1779452802932282000",
-		"flow-0001",
-		"todo-sub-step-route",
-		"learning-not-prefixed", // missing "-" sentinel
-		"kb-update", // bare keyword
-		"",
-	} {
-		if isInternalPostStepExecutionID(id) {
-			t.Fatalf("expected %q to be classified as a user-facing execution (not internal phase)", id)
+	ch := api.bgAgentRegistry.GetNotificationChannel(sessionID)
+
+	notifier := &workshopExecutionBgNotifier{
+		api:       api,
+		sessionID: sessionID,
+	}
+	notifier.OnExecutionStart(todo_creation_human.WorkshopExecutionStart{
+		ID:   execID,
+		Name: "Workflow step -> cdp-test",
+	})
+
+	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 1 || pending[0] != execID {
+		t.Fatalf("expected workflow-step start notification for %q, got %#v", execID, pending)
+	}
+
+	notifier.OnExecutionComplete(execID, "Workflow step -> cdp-test", "step completed", map[string]string{
+		"execution_type": "workflow-step",
+	}, nil)
+
+	select {
+	case got := <-ch:
+		if got != execID {
+			t.Fatalf("expected workflow-step completion notification for %q, got %q", execID, got)
 		}
+	case <-time.After(time.Second):
+		t.Fatal("expected workflow-step completion notification")
 	}
 }
 

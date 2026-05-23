@@ -79,12 +79,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdateWithHandle(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("📚 Enqueued KB update for step %s (contribution=%d chars)", stepID, len(contribution)))
 
-	// Surface the KB update as a tracked execution so the workshop UI shows it
-	// alongside learning, harden, replan, etc. Mirrors the learning-agent pattern
-	// at controller_learning.go:410-454. Without this the KB agent runs invisibly
-	// and users have no signal that notes are about to change.
-	execLabel := fmt.Sprintf("KB Update: %s", stepLabel)
-	execID := fmt.Sprintf("kb-update-%s-%05d", stepID, time.Now().UnixNano()%100000)
 	baseCtx := hcpo.workshopSessionCtx
 	if baseCtx == nil {
 		baseCtx = context.Background()
@@ -95,31 +89,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdateWithHandle(
 	execCtx = context.WithValue(execCtx, orchestratorevents.ForceCorrelationIDKey, agentSessionID)
 	execCtx = context.WithValue(execCtx, orchestratorevents.IsSubAgentContextKey, true)
 
-	if hcpo.workshopStepRegistry != nil {
-		exec := &WorkshopStepExecution{
-			ID:             execID,
-			StepID:         execLabel,
-			AgentSessionID: agentSessionID,
-			Status:         WorkshopStepRunning,
-			cancel:         cancel,
-		}
-		hcpo.workshopStepRegistry.Register(exec)
-	}
-	if hcpo.workshopExecutionNotifier != nil {
-		hcpo.workshopExecutionNotifier.OnExecutionStart(WorkshopExecutionStart{
-			ID:                execID,
-			ParentExecutionID: currentWorkshopParentExecutionID(baseCtx),
-			Name:              execLabel,
-			Cancel:            cancel,
-		})
-	}
 	hcpo.recordWorkflowContinuationPhase(context.Background(), stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, workflowContinuationStatusPending, "", nil)
 	recoveryRunFolder := runFolder
 
 	enqueueKBUpdateJob(func() {
 		hcpo.withWorkflowContinuationRunFolder(recoveryRunFolder, func() {
 			var execErr error
-			var resultMsg string
 			hcpo.recordWorkflowContinuationPhase(execCtx, stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, workflowContinuationStatusRunning, "", nil)
 			defer func() {
 				cancel()
@@ -130,16 +105,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdateWithHandle(
 					errText = execErr.Error()
 				}
 				hcpo.recordWorkflowContinuationPhase(context.Background(), stepID, stepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseKBUpdateAgent, status, errText, nil)
-				if hcpo.workshopExecutionNotifier != nil {
-					hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, resultMsg, nil, execErr)
-				}
 			}()
 			execErr = hcpo.runKBUpdatePhaseWithHandle(execCtx, stepIndex, stepPath, stepID, stepTitle, stepDescription, runFolder, contribution, stepContextOutput, sessionHandle)
 			if execErr != nil {
-				resultMsg = fmt.Sprintf("KB update failed for %s: %v", stepLabel, execErr)
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ KB update phase failed for %s: %v", stepLabel, execErr))
 			} else {
-				resultMsg = fmt.Sprintf("KB update completed for %s", stepLabel)
 				hcpo.GetLogger().Info(fmt.Sprintf("✅ KB update completed for %s", stepLabel))
 			}
 		})

@@ -7226,24 +7226,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 		"agent_id": start.ID,
 		"name":     start.Name,
 	})
-	// Skip chat [AUTO-NOTIFICATION] START for internal/normal workflow-step tracking.
-	if shouldNotifyWorkshopBackgroundStart(start) {
-		n.api.notifyBackgroundAgentStarted(n.sessionID, start.ID)
-	}
-}
-
-// isInternalPostStepExecutionID reports whether an execution ID belongs to a
-// post-step phase that always runs *after* a step completion which already
-// fired its own START + COMPLETION notifications. Emitting a second "started"
-// chat turn for these phases is pure noise, so OnExecutionStart suppresses it.
-// The COMPLETION notification still fires (OnExecutionComplete is unchanged)
-// so the operator knows when the post-step work finishes.
-//
-// ID prefixes are assigned at the launcher:
-//   - "learn-…"     → controller_learning.go startTrackedSuccessLearningPhase
-//   - "kb-update-…" → controller_kb_update.go maybeEnqueueKBUpdate
-func isInternalPostStepExecutionID(id string) bool {
-	return strings.HasPrefix(id, "learn-") || strings.HasPrefix(id, "kb-update-")
+	n.api.notifyBackgroundAgentStarted(n.sessionID, start.ID)
 }
 
 func isWorkflowStepTrackingExecution(id, name string, meta map[string]string) bool {
@@ -7256,24 +7239,6 @@ func isWorkflowStepTrackingExecution(id, name string, meta map[string]string) bo
 	trimmedID := strings.TrimSpace(id)
 	return strings.HasPrefix(trimmedID, "workflow-step-") ||
 		(strings.HasPrefix(trimmedID, "workflow-full-") && strings.Contains(trimmedID, "-step-"))
-}
-
-func shouldNotifyWorkshopBackgroundStart(start todo_creation_human.WorkshopExecutionStart) bool {
-	if isInternalPostStepExecutionID(start.ID) {
-		return false
-	}
-	return !isWorkflowStepTrackingExecution(start.ID, start.Name, nil)
-}
-
-func shouldEmitWorkshopBackgroundCompletionEvent(meta map[string]string) bool {
-	if meta == nil {
-		return true
-	}
-	return strings.TrimSpace(meta["execution_type"]) != "workflow-step"
-}
-
-func shouldNotifyWorkshopBackgroundCompletion(id, name string, meta map[string]string) bool {
-	return !isWorkflowStepTrackingExecution(id, name, meta)
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result string, meta map[string]string, err error) {
@@ -7312,39 +7277,30 @@ func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result s
 	if len(meta) > 0 {
 		agent.SetMetadata(meta)
 	}
-	emitCompletionEvent := shouldEmitWorkshopBackgroundCompletionEvent(meta)
 	if err != nil {
 		agent.SetError(err.Error())
 		n.api.completeTrackedExecution(execID, trackedExecutionStatusFailed, err.Error(), meta)
-		if emitCompletionEvent {
-			n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
-				"agent_id": execID,
-				"name":     name,
-				"status":   "failed",
-				"error":    err.Error(),
-				"duration": duration.Truncate(time.Second).String(),
-			})
-		}
+		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
+			"agent_id": execID,
+			"name":     name,
+			"status":   "failed",
+			"error":    err.Error(),
+			"duration": duration.Truncate(time.Second).String(),
+		})
 	} else {
 		agent.SetResult(result) // Store full result — truncation only happens at display/notification time
 		n.api.completeTrackedExecution(execID, trackedExecutionStatusCompleted, "", meta)
-		if emitCompletionEvent {
-			n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
-				"agent_id": execID,
-				"name":     name,
-				"status":   "completed",
-				"result":   truncateForToolResponse(result, 500),
-				"duration": duration.Truncate(time.Second).String(),
-			})
-		}
+		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
+			"agent_id": execID,
+			"name":     name,
+			"status":   "completed",
+			"result":   truncateForToolResponse(result, 500),
+			"duration": duration.Truncate(time.Second).String(),
+		})
 	}
 
-	// Signal completion to the notification loop only for user-visible
-	// background work. Normal workflow steps have their own step-completed
-	// events and should not produce synthetic background activity turns.
-	if shouldNotifyWorkshopBackgroundCompletion(execID, name, meta) {
-		n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
-	}
+	// Signal completion to the notification loop (triggers auto-notification synthetic turn).
+	n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionTerminated(execID, name string) {
@@ -7990,9 +7946,6 @@ func (api *StreamingAPI) processBatchedBackgroundAgentStartsLocked(sessionID str
 		if snap.Status == BGAgentCanceled {
 			continue
 		}
-		if isWorkflowStepTrackingExecution(snap.ID, snap.Name, snap.Metadata) {
-			continue
-		}
 		parts = append(parts, backgroundAgentStartNotificationPart(snap))
 		emittedIDs = append(emittedIDs, agentID)
 	}
@@ -8121,9 +8074,6 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		if snap.Status == BGAgentCanceled {
 			continue
 		}
-		if isWorkflowStepTrackingExecution(snap.ID, snap.Name, snap.Metadata) {
-			continue
-		}
 		var resultText string
 		if snap.Status == BGAgentCompleted {
 			resultText = snap.Result // Full result — no truncation in auto-notification
@@ -8249,10 +8199,6 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	snap := agent.GetSnapshot()
 	if snap.Status == BGAgentCanceled {
 		log.Printf("[BG AGENT] Agent %s for session %s was canceled, suppressing synthetic turn", agentID, sessionID)
-		return
-	}
-	if isWorkflowStepTrackingExecution(snap.ID, snap.Name, snap.Metadata) {
-		log.Printf("[BG AGENT] Agent %s for session %s is workflow-step tracking, suppressing synthetic turn", agentID, sessionID)
 		return
 	}
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { X, RefreshCw, Loader2 } from 'lucide-react'
+import { X, RefreshCw, Loader2, Plus, Minus } from 'lucide-react'
 import { agentApi } from '../services/api'
-import type { CostSummary, CostAggregate } from '../services/api-types'
+import type { CostSummary, CostAggregate, CostDateAggregate } from '../services/api-types'
 
 interface CostDashboardProps {
   isOpen: boolean
@@ -31,6 +31,69 @@ function AggregateRow({ label, agg }: { label: string; agg: CostAggregate }) {
       <td className="px-3 py-2 text-sm text-right text-gray-600 dark:text-gray-400">{formatTokens(agg.completion_tokens)}</td>
       <td className="px-3 py-2 text-sm text-right font-medium text-gray-900 dark:text-gray-100">{formatCost(agg.total_cost_usd)}</td>
     </tr>
+  )
+}
+
+// DateRow renders one date with an expandable per-model breakdown.
+// When `by_model` is present and non-empty, clicking the +/− toggle
+// shows one nested row per model that contributed on that date,
+// sorted by descending cost.
+function DateRow({ date, agg }: { date: string; agg: CostDateAggregate }) {
+  const [expanded, setExpanded] = useState(false)
+  const byModel = agg.by_model ?? {}
+  const modelKeys = Object.keys(byModel).sort(
+    (a, b) => byModel[b].total_cost_usd - byModel[a].total_cost_usd,
+  )
+  const hasBreakdown = modelKeys.length > 0
+  return (
+    <>
+      <tr className="border-b border-gray-100 dark:border-gray-800">
+        <td className="px-3 py-2 text-sm text-gray-900 dark:text-gray-100">
+          <button
+            type="button"
+            onClick={() => hasBreakdown && setExpanded((v) => !v)}
+            disabled={!hasBreakdown}
+            className={`inline-flex items-center gap-1.5 ${
+              hasBreakdown
+                ? 'cursor-pointer hover:text-blue-600 dark:hover:text-blue-400'
+                : 'cursor-default'
+            }`}
+            aria-expanded={expanded}
+            aria-label={
+              hasBreakdown ? (expanded ? 'Collapse model breakdown' : 'Expand model breakdown') : undefined
+            }
+          >
+            {hasBreakdown ? (
+              expanded ? (
+                <Minus className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
+              ) : (
+                <Plus className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
+              )
+            ) : (
+              <span className="w-3.5 h-3.5 inline-block" />
+            )}
+            <span>{date}</span>
+          </button>
+        </td>
+        <td className="px-3 py-2 text-sm text-right text-gray-600 dark:text-gray-400">{agg.call_count}</td>
+        <td className="px-3 py-2 text-sm text-right text-gray-600 dark:text-gray-400">{formatTokens(agg.prompt_tokens)}</td>
+        <td className="px-3 py-2 text-sm text-right text-gray-600 dark:text-gray-400">{formatTokens(agg.completion_tokens)}</td>
+        <td className="px-3 py-2 text-sm text-right font-medium text-gray-900 dark:text-gray-100">{formatCost(agg.total_cost_usd)}</td>
+      </tr>
+      {expanded &&
+        modelKeys.map((m) => {
+          const ma = byModel[m]
+          return (
+            <tr key={`${date}:${m}`} className="border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/40">
+              <td className="px-3 py-1.5 pl-9 text-xs text-gray-600 dark:text-gray-400">{m}</td>
+              <td className="px-3 py-1.5 text-xs text-right text-gray-500 dark:text-gray-500">{ma.call_count}</td>
+              <td className="px-3 py-1.5 text-xs text-right text-gray-500 dark:text-gray-500">{formatTokens(ma.prompt_tokens)}</td>
+              <td className="px-3 py-1.5 text-xs text-right text-gray-500 dark:text-gray-500">{formatTokens(ma.completion_tokens)}</td>
+              <td className="px-3 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300">{formatCost(ma.total_cost_usd)}</td>
+            </tr>
+          )
+        })}
+    </>
   )
 }
 
@@ -178,7 +241,7 @@ export default function CostDashboard({ isOpen, onClose }: CostDashboardProps) {
                     </thead>
                     <tbody>
                       {sortedDates.map((d) => (
-                        <AggregateRow key={d} label={d} agg={summary.by_date[d]} />
+                        <DateRow key={d} date={d} agg={summary.by_date[d]} />
                       ))}
                     </tbody>
                   </table>

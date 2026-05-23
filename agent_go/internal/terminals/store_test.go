@@ -436,6 +436,35 @@ func TestStoreArchivesActiveTerminalWhenChunkIndexResetsForFastFollowUp(t *testi
 	}
 }
 
+func TestStoreDoesNotArchiveSameTurnWhenLowerChunkExtendsContent(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+	partial := "$ gemini --output-format stream-json model=auto msgs=1\n" +
+		"> user: run again\n" +
+		"→ tool: mcp_api-bridge_execute_shell_command({\"command\":\"curl ...\"})\n" +
+		"✓ result mcp_api-bridge_execute_shell_command: workflow started"
+	complete := partial + "\n" +
+		"< asst: I've triggered another full workflow execution.\n" +
+		"[done · 12.3s · 20699 in · 184 out]"
+
+	store.HandleEvent("session-1", terminalEventAt("streaming_chunk", "main:session-1", partial, 4, now))
+	store.HandleEvent("session-1", terminalEventAt("streaming_chunk", "main:session-1", complete, 1, now.Add(10*time.Millisecond)))
+
+	snapshots := store.List("session-1")
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshot count = %d, want only canonical turn: %#v", len(snapshots), snapshots)
+	}
+	if snapshots[0].TerminalID != "session-1:main:session-1" {
+		t.Fatalf("terminal id = %q, want canonical main terminal", snapshots[0].TerminalID)
+	}
+	if snapshots[0].Content != complete {
+		t.Fatalf("content = %q, want complete transcript", snapshots[0].Content)
+	}
+	if snapshots[0].ChunkIndex != 4 {
+		t.Fatalf("chunk index = %d, want previous max 4", snapshots[0].ChunkIndex)
+	}
+}
+
 func TestStoreKeepsRestartedTurnRunningEvenIfFirstPaneLooksIdle(t *testing.T) {
 	store := NewStore()
 	now := time.Now()
@@ -935,6 +964,142 @@ func TestStoreSelfCompletesMainAgentFromIdlePromptStatus(t *testing.T) {
 	}
 	if snapshot.State != "completed" {
 		t.Fatalf("state = %q, want completed", snapshot.State)
+	}
+}
+
+func TestStoreTerminalOwnerPrefersMetadataExecutionOwnerOverEventExecutionID(t *testing.T) {
+	store := NewStore()
+	sessionID := "session-1"
+	stepOwnerID := "workflow-step:workflow-full-1:prepare-fixtures"
+
+	store.HandleEvent(sessionID, terminalEventWithMetadata(
+		"main:"+sessionID,
+		"$ vertex.generateContent model=gemini-3.1-flash-lite-preview msgs=2 tools=15\n> user: **DESCRIPTION**: Create test_fixtures.json",
+		1,
+		map[string]interface{}{
+			"execution_owner_id": stepOwnerID,
+			"execution_kind":     "workflow_step",
+			"current_step_id":    "prepare-fixtures",
+			"step_transport":     "structured",
+			"provider":           "vertex",
+		},
+		time.Now(),
+	))
+
+	if _, ok := store.Get(sessionID + ":main:" + sessionID); ok {
+		t.Fatalf("workflow step terminal content was incorrectly routed to the main-agent terminal")
+	}
+	snapshot, ok := store.Get(sessionID + ":" + stepOwnerID)
+	if !ok {
+		t.Fatalf("expected workflow-step terminal snapshot")
+	}
+	if snapshot.OwnerID != stepOwnerID {
+		t.Fatalf("owner id = %q, want %q", snapshot.OwnerID, stepOwnerID)
+	}
+	if snapshot.ExecutionKind != "workflow_step" {
+		t.Fatalf("execution kind = %q, want workflow_step", snapshot.ExecutionKind)
+	}
+}
+
+func TestStoreTerminalOwnerPrefersWorkflowStepExecutionOverWorkflowRunID(t *testing.T) {
+	store := NewStore()
+	sessionID := "session-1"
+	workflowID := "workflow-full-1779513614303714000"
+	stepOwnerID := "workflow-step:" + workflowID + ":prepare-test-fixtures"
+
+	store.HandleEvent(sessionID, terminalEventWithMetadata(
+		stepOwnerID,
+		"$ vertex.generateContent model=gemini-3.1-flash-lite-preview msgs=2 tools=15\n> user: create fixtures",
+		1,
+		map[string]interface{}{
+			"execution_id":      workflowID,
+			"execution_kind":    "workflow_step",
+			"current_step_id":   "prepare-test-fixtures",
+			"current_step_type": "api",
+			"provider":          "vertex",
+		},
+		time.Now(),
+	))
+
+	if _, ok := store.Get(sessionID + ":" + workflowID); ok {
+		t.Fatalf("workflow-step terminal was incorrectly owned by workflow run id")
+	}
+	snapshot, ok := store.Get(sessionID + ":" + stepOwnerID)
+	if !ok {
+		t.Fatalf("expected workflow-step terminal snapshot")
+	}
+	if snapshot.OwnerID != stepOwnerID {
+		t.Fatalf("owner id = %q, want %q", snapshot.OwnerID, stepOwnerID)
+	}
+}
+
+func TestStoreTerminalOwnerSynthesizesWorkflowStepWhenOnlyWorkflowRunIDIsPresent(t *testing.T) {
+	store := NewStore()
+	sessionID := "session-1"
+	workflowID := "workflow-full-1779513614303714000"
+	stepOwnerID := "workflow-step:" + workflowID + ":prepare-test-fixtures"
+
+	store.HandleEvent(sessionID, terminalEventWithMetadata(
+		workflowID,
+		"$ vertex.generateContent model=gemini-3.1-flash-lite-preview msgs=2 tools=15\n> user: create fixtures",
+		1,
+		map[string]interface{}{
+			"execution_id":    workflowID,
+			"execution_kind":  "workflow_step",
+			"current_step_id": "prepare-test-fixtures",
+			"provider":        "vertex",
+		},
+		time.Now(),
+	))
+
+	if _, ok := store.Get(sessionID + ":" + workflowID); ok {
+		t.Fatalf("workflow-step terminal was incorrectly owned by workflow run id")
+	}
+	snapshot, ok := store.Get(sessionID + ":" + stepOwnerID)
+	if !ok {
+		t.Fatalf("expected synthesized workflow-step terminal snapshot")
+	}
+	if snapshot.OwnerID != stepOwnerID {
+		t.Fatalf("owner id = %q, want %q", snapshot.OwnerID, stepOwnerID)
+	}
+}
+
+func TestStorePreservesStructuredTerminalRowsFromMetadata(t *testing.T) {
+	store := NewStore()
+	rows := []interface{}{
+		map[string]interface{}{"kind": "banner", "text": "gemini --output-format stream-json model=auto msgs=1"},
+		map[string]interface{}{"kind": "user", "text": "[AUTO-NOTIFICATION] Background agent started.\nAck briefly; do not call tools."},
+		map[string]interface{}{"kind": "asst", "text": "Acknowledged. I will wait for completion."},
+	}
+
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		"$ gemini --output-format stream-json model=auto msgs=1\n> user: [AUTO-NOTIFICATION] Background agent started.\n  Ack briefly; do not call tools.\n  Acknowledged. I will wait for completion.",
+		1,
+		map[string]interface{}{
+			"execution_kind": "main_agent",
+			"step_transport": "structured",
+			"provider":       "gemini-cli",
+			"rows":           rows,
+		},
+		time.Now(),
+	))
+
+	snapshot, ok := store.Get("session-1:main:session-1")
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if len(snapshot.Rows) != 3 {
+		t.Fatalf("rows len = %d, want 3: %#v", len(snapshot.Rows), snapshot.Rows)
+	}
+	if snapshot.Rows[1].Kind != "user" {
+		t.Fatalf("row[1].Kind = %q, want user", snapshot.Rows[1].Kind)
+	}
+	if snapshot.Rows[2].Kind != "asst" {
+		t.Fatalf("row[2].Kind = %q, want asst", snapshot.Rows[2].Kind)
+	}
+	if snapshot.Rows[2].Text != "Acknowledged. I will wait for completion." {
+		t.Fatalf("assistant row text = %q", snapshot.Rows[2].Text)
 	}
 }
 

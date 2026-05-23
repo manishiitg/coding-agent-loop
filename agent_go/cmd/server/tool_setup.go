@@ -177,6 +177,15 @@ func extractRootCauseError(err error) string {
 	return deepestErr.Error()
 }
 
+func isToolBackedChatMode(agentMode string) bool {
+	switch strings.TrimSpace(agentMode) {
+	case "", "simple", "multi-agent":
+		return true
+	default:
+		return false
+	}
+}
+
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
 // workflowMode: if true, includes advanced + human + todo tools for workflow mode
 //

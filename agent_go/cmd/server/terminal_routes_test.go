@@ -229,10 +229,70 @@ func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T
 	if !strings.Contains(terminal.Content, "MCP_API_TOKEN=[redacted]") {
 		t.Fatalf("terminal content missing redacted token marker:\n%s", terminal.Content)
 	}
+	if len(terminal.Rows) == 0 {
+		t.Fatalf("terminal rows were empty")
+	}
+	var toolRow *terminals.Row
+	for i := range terminal.Rows {
+		if terminal.Rows[i].Kind == "tool" {
+			toolRow = &terminal.Rows[i]
+			break
+		}
+	}
+	if toolRow == nil {
+		t.Fatalf("terminal rows missing typed tool row: %#v", terminal.Rows)
+	}
+	if toolRow.Name != "mcp_api-bridge_execute_shell_command" {
+		t.Fatalf("tool row name = %q", toolRow.Name)
+	}
+	if !strings.Contains(toolRow.Result, "MCP_API_TOKEN=[redacted]") {
+		t.Fatalf("tool row result missing redacted token marker: %q", toolRow.Result)
+	}
 	toolIdx := strings.Index(terminal.Content, "→ tool:")
 	doneIdx := strings.Index(terminal.Content, "[done")
 	if toolIdx < 0 || doneIdx < 0 || toolIdx > doneIdx {
 		t.Fatalf("tool rows should appear before done footer:\n%s", terminal.Content)
+	}
+}
+
+func TestTerminalRoutesMetadataListReturnsMandatoryEmptyRows(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-metadata"
+	store.HandleEvent(sessionID, terminalRouteStructuredChunkEvent(
+		sessionID,
+		"workflow-step:check",
+		"$ gemini --output-format stream-json model=auto msgs=1\n> user: hello",
+		1,
+		map[string]interface{}{
+			"kind":               "terminal",
+			"execution_owner_id": "workflow-step:check",
+			"execution_kind":     "workflow_step",
+			"step_transport":     "structured",
+		},
+	))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals?session_id="+sessionID+"&content=none", nil)
+	rec := httptest.NewRecorder()
+	api.handleListTerminals(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var response listTerminalsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(response.Terminals) != 1 {
+		t.Fatalf("terminal count = %d, want 1", len(response.Terminals))
+	}
+	if response.Terminals[0].Content != "" {
+		t.Fatalf("content = %q, want empty", response.Terminals[0].Content)
+	}
+	if response.Terminals[0].Rows == nil {
+		t.Fatalf("rows = nil, want mandatory empty array")
+	}
+	if len(response.Terminals[0].Rows) != 0 {
+		t.Fatalf("rows len = %d, want 0", len(response.Terminals[0].Rows))
 	}
 }
 

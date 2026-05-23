@@ -38,6 +38,155 @@ func TestExtractWorkflowContextFolders(t *testing.T) {
 	}
 }
 
+func TestIsToolBackedChatMode(t *testing.T) {
+	tests := []struct {
+		name      string
+		agentMode string
+		want      bool
+	}{
+		{name: "empty", agentMode: "", want: true},
+		{name: "simple", agentMode: "simple", want: true},
+		{name: "multi agent", agentMode: "multi-agent", want: true},
+		{name: "trimmed multi agent", agentMode: " multi-agent ", want: true},
+		{name: "workflow phase", agentMode: "workflow_phase", want: false},
+		{name: "workflow", agentMode: "workflow", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isToolBackedChatMode(tt.agentMode); got != tt.want {
+				t.Fatalf("isToolBackedChatMode(%q) = %v, want %v", tt.agentMode, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldEmitWorkshopBackgroundCompletionEvent(t *testing.T) {
+	tests := []struct {
+		name string
+		meta map[string]string
+		want bool
+	}{
+		{
+			name: "nil metadata emits normal background completion",
+			meta: nil,
+			want: true,
+		},
+		{
+			name: "workflow step completion is represented by step events",
+			meta: map[string]string{"execution_type": "workflow-step"},
+			want: false,
+		},
+		{
+			name: "other workshop execution completion still emits",
+			meta: map[string]string{"execution_type": "workflow-execution-phase"},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldEmitWorkshopBackgroundCompletionEvent(tt.meta); got != tt.want {
+				t.Fatalf("shouldEmitWorkshopBackgroundCompletionEvent(%v) = %v, want %v", tt.meta, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldNotifyWorkshopBackgroundStart(t *testing.T) {
+	tests := []struct {
+		name  string
+		start todo_creation_human.WorkshopExecutionStart
+		want  bool
+	}{
+		{
+			name: "normal background work notifies",
+			start: todo_creation_human.WorkshopExecutionStart{
+				ID:   "workflow-full-123",
+				Name: "full-workflow [Test Group / iteration-0]",
+			},
+			want: true,
+		},
+		{
+			name: "workflow step tracking does not notify",
+			start: todo_creation_human.WorkshopExecutionStart{
+				ID:   "workflow-full-123-step-0-456",
+				Name: "Workflow step -> step-1-execution-prepare-regression-fixtures",
+			},
+			want: false,
+		},
+		{
+			name: "internal post-step phase does not notify start",
+			start: todo_creation_human.WorkshopExecutionStart{
+				ID:   "learn-step-123",
+				Name: "Learning update",
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldNotifyWorkshopBackgroundStart(tt.start); got != tt.want {
+				t.Fatalf("shouldNotifyWorkshopBackgroundStart(%+v) = %v, want %v", tt.start, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldNotifyWorkshopBackgroundCompletion(t *testing.T) {
+	if shouldNotifyWorkshopBackgroundCompletion("workflow-full-123-step-0-456", "Workflow step -> step-1", map[string]string{"execution_type": "workflow-step"}) {
+		t.Fatal("workflow step tracking completion should not notify")
+	}
+	if !shouldNotifyWorkshopBackgroundCompletion("workflow-full-123", "full-workflow [Test Group / iteration-0]", nil) {
+		t.Fatal("normal background completion should notify")
+	}
+}
+
+func TestIsWorkflowStepTrackingExecution(t *testing.T) {
+	tests := []struct {
+		name     string
+		id       string
+		execName string
+		meta     map[string]string
+		want     bool
+	}{
+		{
+			name:     "metadata marks workflow step",
+			id:       "exec-1",
+			execName: "Prepare Regression Fixtures",
+			meta:     map[string]string{"execution_type": "workflow-step"},
+			want:     true,
+		},
+		{
+			name:     "workflow step display name",
+			id:       "workflow-full-123-step-0-456",
+			execName: "Workflow step -> step-1-execution-prepare-regression-fixtures",
+			want:     true,
+		},
+		{
+			name:     "workflow run is not a step",
+			id:       "workflow-full-123",
+			execName: "full-workflow [Test Group / iteration-0]",
+			want:     false,
+		},
+		{
+			name:     "generic id containing step word is not enough",
+			id:       "post-step-cleanup",
+			execName: "Learning update",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isWorkflowStepTrackingExecution(tt.id, tt.execName, tt.meta); got != tt.want {
+				t.Fatalf("isWorkflowStepTrackingExecution(%q, %q, %v) = %v, want %v", tt.id, tt.execName, tt.meta, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCollectAdditionalFolderGuardFolders(t *testing.T) {
 	query := "Please inspect this.\n📁 Files in context: Workflow/Main/plan.json, skills/custom/SKILL.md, Chats/ignore.md\n"
 	workflowPaths := []string{"Workflow/Referenced", "Workflow/Main"}

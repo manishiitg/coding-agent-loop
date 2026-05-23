@@ -611,12 +611,16 @@ function getBackgroundExecutionDisplayName(rawName: string): string {
   if (!stripped.startsWith(workflowPrefix)) return titleCaseIdentifier(stripped)
 
   let stepName = stripped.slice(workflowPrefix.length).trim()
+  if (/^workflow-full-\d+-step-\d+-\d+$/.test(stepName) || /^workflow-step-\d+-\d+$/.test(stepName)) {
+    return 'Workflow step'
+  }
   const executionMarker = stepName.lastIndexOf('execution-')
   if (executionMarker >= 0) {
     stepName = stepName.slice(executionMarker + 'execution-'.length)
   } else {
     stepName = stepName.replace(/^step-\d+-(sub-)?/, '')
   }
+  stepName = stepName.replace(/-\d{12,}$/g, '')
 
   return titleCaseIdentifier(stepName) || 'Workflow step'
 }
@@ -2053,6 +2057,33 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const error = fields?.error || ''
     const isSuccess = status === 'completed'
     const isFailed = status === 'failed'
+
+    if (compact && (result || error)) {
+      return (
+        <CompactWrapper compact={compact}>
+          <div className={`border-l-2 ${isFailed ? 'border-red-400' : 'border-emerald-400'} pl-3 py-1`}>
+            <div className="mb-1 flex min-w-0 items-center gap-2">
+              <span className={`text-[10px] font-medium uppercase tracking-wide ${isFailed ? 'text-red-600 dark:text-red-300' : 'text-emerald-600 dark:text-emerald-300'}`}>
+                {isFailed ? 'Error' : 'Result'}
+              </span>
+              <span className="truncate text-[10px] text-muted-foreground">
+                {displayName}
+              </span>
+            </div>
+            {error && (
+              <div className="whitespace-pre-wrap break-words text-xs text-red-600 dark:text-red-300">
+                {error}
+              </div>
+            )}
+            {result && (
+              <div className="max-h-56 overflow-y-auto overscroll-y-contain text-xs text-foreground/85">
+                <MarkdownRenderer content={result} className="text-xs" />
+              </div>
+            )}
+          </div>
+        </CompactWrapper>
+      )
+    }
 
     const bgColor = isSuccess ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' :
                     isFailed ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' :

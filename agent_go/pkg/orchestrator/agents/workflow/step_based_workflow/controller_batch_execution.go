@@ -194,9 +194,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 	// Create ExecutionManager for centralized cleanup management
 	execManager := NewExecutionManager(hcpo)
 
-	// Emit batch execution start event
-	hcpo.emitBatchExecutionStartEvent(ctx, totalGroups, enabledGroupNames, iteration)
-
 	result := &BatchExecutionResult{
 		TotalGroups:         totalGroups,
 		CompletedGroupNames: make([]string, 0),
@@ -367,9 +364,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			}
 		}
 
-		// Emit batch group start event
-		hcpo.emitBatchGroupStartEvent(ctx, group.Name, groupIndex, totalGroups, group.Values, runFolder, iteration)
-
 		groupStartTime := time.Now()
 
 		// Load the freshly initialized progress (created by ApplyCleanup)
@@ -399,7 +393,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 				result.Error = err.Error() // Capture first failure reason
 			}
 			hcpo.finalizeRunMetadata(ctx, runFolder, "failed", groupStartTime, groupStartTime.Add(groupDuration))
-			hcpo.emitBatchGroupEndEvent(ctx, group.Name, groupIndex, totalGroups, false, err.Error(), groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
 
 			// Check if we should stop on first failure
 			// For now, continue with other groups
@@ -410,7 +403,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		result.CompletedGroups++
 		result.CompletedGroupNames = append(result.CompletedGroupNames, group.Name)
 		hcpo.finalizeRunMetadata(ctx, runFolder, "completed", groupStartTime, groupStartTime.Add(groupDuration))
-		hcpo.emitBatchGroupEndEvent(ctx, group.Name, groupIndex, totalGroups, true, "", groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
 
 		// Auto-evaluation: Run scoring for this group if evaluation_plan.json exists
 		disableEval := hcpo.executionOptions != nil && hcpo.executionOptions.DisableEval
@@ -443,9 +435,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 	result.Duration = time.Since(startTime)
 	result.Success = result.FailedGroups == 0 && result.CanceledGroups == 0
 
-	// Emit batch execution end event
 	hcpo.ApplyWorkflowLogContext(hcpo.GetWorkspacePath(), "")
-	hcpo.emitBatchExecutionEndEvent(ctx, result, iteration)
 
 	// Clear batch context on context-aware bridge (cleanup after batch ends)
 	if bridge := hcpo.GetContextAwareBridge(); bridge != nil {
@@ -637,115 +627,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) getNextIterationNumber(ctx context.Co
 	return maxIteration + 1
 }
 
-// Event emission helpers for batch execution
-
-func (hcpo *StepBasedWorkflowOrchestrator) emitBatchExecutionStartEvent(ctx context.Context, totalGroups int, enabledGroupNames []string, iteration int) {
-	bridge := hcpo.GetContextAwareBridge()
-	if bridge == nil {
-		return
-	}
-
-	// Convert execution options to map for event
-	var executionOptionsMap map[string]interface{}
-	if hcpo.executionOptions != nil {
-		executionOptionsMap = hcpo.executionOptionsToMap()
-	}
-
-	event := events.NewBatchExecutionStartEvent(totalGroups, enabledGroupNames, iteration, hcpo.GetWorkspacePath(), executionOptionsMap)
-	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
-		Type:      events.BatchExecutionStart,
-		Timestamp: time.Now(),
-		Data:      event,
-	})
-}
-
-// executionOptionsToMap converts ExecutionOptions to a map for event serialization
-func (hcpo *StepBasedWorkflowOrchestrator) executionOptionsToMap() map[string]interface{} {
-	if hcpo.executionOptions == nil {
-		return nil
-	}
-
-	opts := hcpo.executionOptions
-	result := make(map[string]interface{})
-
-	if opts.RunMode != "" {
-		result["run_mode"] = opts.RunMode
-	}
-	if opts.SelectedRunFolder != "" {
-		result["selected_run_folder"] = opts.SelectedRunFolder
-	}
-	if opts.ExecutionStrategy != "" {
-		result["execution_strategy"] = opts.ExecutionStrategy
-	}
-	if opts.ResumeFromStep > 0 {
-		result["resume_from_step"] = opts.ResumeFromStep
-	}
-	if opts.ResumeFromBranchStep != nil {
-		result["resume_from_branch_step"] = map[string]interface{}{
-			"parent_step_index": opts.ResumeFromBranchStep.ParentStepIndex,
-			"branch_type":       opts.ResumeFromBranchStep.BranchType,
-			"branch_step_index": opts.ResumeFromBranchStep.BranchStepIndex,
-		}
-	}
-	if opts.PlanChangeAction != "" {
-		result["plan_change_action"] = opts.PlanChangeAction
-	}
-
-	return result
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) emitBatchGroupStartEvent(ctx context.Context, groupName string, groupIndex, totalGroups int, variableValues map[string]string, runFolder string, iteration int) {
-	bridge := hcpo.GetContextAwareBridge()
-	if bridge == nil {
-		return
-	}
-
-	event := events.NewBatchGroupStartEvent(groupName, groupIndex, totalGroups, variableValues, runFolder, iteration, hcpo.GetWorkspacePath())
-	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
-		Type:      events.BatchGroupStart,
-		Timestamp: time.Now(),
-		Data:      event,
-	})
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) emitBatchGroupEndEvent(ctx context.Context, groupName string, groupIndex, totalGroups int, success bool, errorMsg string, duration time.Duration, completedSteps, totalSteps int, runFolder string, remainingGroups int) {
-	bridge := hcpo.GetContextAwareBridge()
-	if bridge == nil {
-		return
-	}
-
-	event := events.NewBatchGroupEndEvent(groupName, groupIndex, totalGroups, success, errorMsg, duration, completedSteps, totalSteps, runFolder, remainingGroups)
-	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
-		Type:      events.BatchGroupEnd,
-		Timestamp: time.Now(),
-		Data:      event,
-	})
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) emitBatchExecutionEndEvent(ctx context.Context, result *BatchExecutionResult, iteration int) {
-	bridge := hcpo.GetContextAwareBridge()
-	if bridge == nil {
-		return
-	}
-
-	event := events.NewBatchExecutionEndEvent(
-		result.TotalGroups,
-		result.CompletedGroups,
-		result.FailedGroups,
-		result.CanceledGroups,
-		result.Duration,
-		result.Success,
-		result.Error,
-		iteration,
-		result.CompletedGroupNames,
-		result.FailedGroupNames,
-	)
-	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
-		Type:      events.BatchExecutionEnd,
-		Timestamp: time.Now(),
-		Data:      event,
-	})
-}
+// Cancellation remains a user-visible terminal event; routine batch/group
+// wrapper lifecycle events are not emitted.
 
 func (hcpo *StepBasedWorkflowOrchestrator) emitBatchExecutionCanceledEvent(ctx context.Context, totalGroups, completedGroups int, canceledGroupName string, remainingGroupNames []string, reason string) {
 	bridge := hcpo.GetContextAwareBridge()

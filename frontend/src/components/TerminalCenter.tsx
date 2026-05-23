@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { AlertTriangle, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Palette, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useChatStore } from '../stores/useChatStore'
+import { MarkdownRenderer } from './ui/MarkdownRenderer'
 
 interface TerminalCenterProps {
   currentSessionId?: string
@@ -19,6 +18,401 @@ const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
 const INACTIVE_FALLBACK_SECONDS = 120
 const EMPTY_TERMINAL_RESPONSE_GRACE_POLLS = 10
 const TERMINAL_POLL_INTERVAL_MS = 1500
+
+type TerminalColorScheme = 'neon' | 'mono' | 'homebrew' | 'catppuccin' | 'nord' | 'gruvbox' | 'solarized' | 'tokyo'
+
+const DEFAULT_TERMINAL_COLOR_SCHEME: TerminalColorScheme = 'homebrew'
+const TERMINAL_COLOR_SCHEME_STORAGE_KEY = 'terminal-color-scheme'
+
+const TERMINAL_THEMES = {
+  neon: {
+    selection: 'selection:bg-cyan-500/25',
+    contentText: 'text-[12px] leading-5',
+    assistantLabelText: 'text-[11px] leading-4',
+    assistantBodyText: 'text-[12.5px] leading-6',
+    toolText: 'text-[11px] leading-4',
+    doneText: 'text-[10.5px]',
+    footerText: 'text-[11px]',
+    headerText: 'text-xs',
+    railText: 'text-xs',
+    railMetaText: 'text-[10px]',
+    chipText: 'text-[10px]',
+    microText: 'text-[9px]',
+    markdown:
+      '!font-mono !text-[12.5px] !leading-6 !text-neutral-100 [&_*]:!font-mono [&_p]:!my-1 [&_p]:!leading-6 [&_p]:!text-neutral-100 [&_ul]:!my-1 [&_ol]:!my-1 [&_li]:!my-0.5 [&_li]:!leading-6 [&_strong]:!text-amber-200 [&_code]:!rounded [&_code]:!bg-neutral-900/80 [&_code]:!px-1 [&_code]:!text-amber-200 [&_pre]:!my-1.5 [&_pre]:!rounded [&_pre]:!border [&_pre]:!border-neutral-800 [&_pre]:!bg-neutral-950/70 [&_pre]:!p-2 [&_pre]:!text-[11.5px] [&_a]:!text-cyan-300 [&_blockquote]:!my-1 [&_blockquote]:!border-neutral-700 [&_h1]:!text-[13px] [&_h2]:!text-[13px] [&_h3]:!text-[12.5px] [&_h1]:!text-cyan-300 [&_h2]:!text-cyan-300 [&_h3]:!text-cyan-200',
+    prompt: 'text-cyan-300/90',
+    userAuto: 'text-cyan-300/80',
+    user: 'text-emerald-300/85',
+    assistant: 'text-cyan-300/85',
+    toolPending: 'text-yellow-300',
+    done: 'text-emerald-500/70',
+    streaming: 'text-cyan-300/80',
+    preValidationPassedText: 'text-emerald-300',
+    preValidationPassedChip: 'border-emerald-700/60 bg-emerald-950/30 text-emerald-300',
+    dotRunning: 'bg-emerald-400',
+    dotCompleted: 'bg-sky-400',
+    dotClosing: 'bg-amber-400',
+    stateRunning: 'text-emerald-300',
+    stateCompleted: 'text-sky-300',
+    stateClosing: 'text-amber-300',
+    routeRail: 'border-l-cyan-400/70 bg-cyan-950/15 text-cyan-100',
+    routeIcon: 'bg-cyan-400/15 text-cyan-300',
+    routeClose: 'text-cyan-300/50 hover:bg-cyan-900/45 hover:text-cyan-100',
+    routeMeta: 'text-cyan-300/75',
+    railSelected: 'border-l-emerald-300 bg-[#222826] text-neutral-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]',
+    railSpinner: 'text-cyan-300/90',
+    selectedRouteChip: 'border-cyan-700/60 bg-cyan-950/25 text-cyan-200',
+    warningText: 'text-amber-300',
+    warningChip: 'border-amber-800/70 bg-amber-950/30 text-amber-200',
+    copiedIcon: 'text-emerald-300',
+    debugActive: 'border-cyan-700/80 text-cyan-300',
+    inputFocus: 'focus:border-cyan-500/80',
+    emptyPulse: 'bg-blue-400',
+  },
+  mono: {
+    selection: 'selection:bg-white/15',
+    contentText: 'text-[12px] leading-[1.55]',
+    assistantLabelText: 'text-[10.5px] leading-4',
+    assistantBodyText: 'text-[12px] leading-5',
+    toolText: 'text-[10.5px] leading-4',
+    doneText: 'text-[10px]',
+    footerText: 'text-[10.5px]',
+    headerText: 'text-[11px]',
+    railText: 'text-[11px]',
+    railMetaText: 'text-[9.5px]',
+    chipText: 'text-[9.5px]',
+    microText: 'text-[9px]',
+    markdown:
+      '!font-mono !text-[12.5px] !leading-6 !text-neutral-100 [&_*]:!font-mono [&_p]:!my-1 [&_p]:!leading-6 [&_p]:!text-neutral-100 [&_ul]:!my-1 [&_ol]:!my-1 [&_li]:!my-0.5 [&_li]:!leading-6 [&_strong]:!text-neutral-50 [&_code]:!rounded [&_code]:!bg-neutral-900/80 [&_code]:!px-1 [&_code]:!text-neutral-100 [&_pre]:!my-1.5 [&_pre]:!rounded [&_pre]:!border [&_pre]:!border-neutral-800 [&_pre]:!bg-neutral-950/70 [&_pre]:!p-2 [&_pre]:!text-[11.5px] [&_a]:!text-neutral-100 [&_blockquote]:!my-1 [&_blockquote]:!border-neutral-700 [&_h1]:!text-[13px] [&_h2]:!text-[13px] [&_h3]:!text-[12.5px] [&_h1]:!text-neutral-50 [&_h2]:!text-neutral-50 [&_h3]:!text-neutral-100',
+    prompt: 'text-neutral-100',
+    userAuto: 'text-neutral-400',
+    user: 'text-neutral-200',
+    assistant: 'text-neutral-100',
+    toolPending: 'text-neutral-300',
+    done: 'text-neutral-500',
+    streaming: 'text-neutral-300',
+    preValidationPassedText: 'text-neutral-300',
+    preValidationPassedChip: 'border-neutral-700/80 bg-neutral-900/70 text-neutral-300',
+    dotRunning: 'bg-neutral-100',
+    dotCompleted: 'bg-neutral-500',
+    dotClosing: 'bg-neutral-400',
+    stateRunning: 'text-neutral-100',
+    stateCompleted: 'text-neutral-400',
+    stateClosing: 'text-neutral-400',
+    routeRail: 'border-l-neutral-500 bg-neutral-900/45 text-neutral-200',
+    routeIcon: 'bg-neutral-800 text-neutral-200',
+    routeClose: 'text-neutral-500 hover:bg-neutral-800 hover:text-neutral-100',
+    routeMeta: 'text-neutral-500',
+    railSelected: 'border-l-neutral-100 bg-[#242424] text-neutral-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]',
+    railSpinner: 'text-neutral-100',
+    selectedRouteChip: 'border-neutral-700/80 bg-neutral-900/80 text-neutral-200',
+    warningText: 'text-neutral-400',
+    warningChip: 'border-neutral-700/80 bg-neutral-900/70 text-neutral-300',
+    copiedIcon: 'text-neutral-100',
+    debugActive: 'border-neutral-500 text-neutral-100',
+    inputFocus: 'focus:border-neutral-400',
+    emptyPulse: 'bg-neutral-400',
+  },
+  homebrew: {
+    selection: 'selection:bg-lime-300/20',
+    contentText: 'text-[12.5px] leading-[1.65]',
+    assistantLabelText: 'text-[11px] leading-4',
+    assistantBodyText: 'text-[12.5px] leading-6',
+    toolText: 'text-[11px] leading-4',
+    doneText: 'text-[10.5px]',
+    footerText: 'text-[11px]',
+    headerText: 'text-[11px]',
+    railText: 'text-[11.5px]',
+    railMetaText: 'text-[10px]',
+    chipText: 'text-[10px]',
+    microText: 'text-[9px]',
+    markdown:
+      '!font-mono !text-[12.5px] !leading-6 !text-neutral-100 [&_*]:!font-mono [&_p]:!my-1 [&_p]:!leading-6 [&_p]:!text-neutral-100 [&_ul]:!my-1 [&_ol]:!my-1 [&_li]:!my-0.5 [&_li]:!leading-6 [&_strong]:!text-neutral-50 [&_code]:!rounded [&_code]:!bg-neutral-900/85 [&_code]:!px-1 [&_code]:!text-neutral-100 [&_pre]:!my-1.5 [&_pre]:!rounded [&_pre]:!border [&_pre]:!border-neutral-800 [&_pre]:!bg-black/45 [&_pre]:!p-2 [&_pre]:!text-[11.5px] [&_a]:!text-lime-200 [&_blockquote]:!my-1 [&_blockquote]:!border-neutral-700 [&_h1]:!text-[13px] [&_h2]:!text-[13px] [&_h3]:!text-[12.5px] [&_h1]:!text-neutral-50 [&_h2]:!text-neutral-50 [&_h3]:!text-neutral-100',
+    prompt: 'text-lime-200/90',
+    userAuto: 'text-neutral-400',
+    user: 'text-neutral-100',
+    assistant: 'text-neutral-100',
+    toolPending: 'text-lime-200/80',
+    done: 'text-neutral-500',
+    streaming: 'text-lime-200/85',
+    preValidationPassedText: 'text-lime-200/80',
+    preValidationPassedChip: 'border-lime-900/50 bg-lime-950/20 text-lime-200/80',
+    dotRunning: 'bg-lime-300',
+    dotCompleted: 'bg-neutral-500',
+    dotClosing: 'bg-neutral-400',
+    stateRunning: 'text-lime-200',
+    stateCompleted: 'text-neutral-400',
+    stateClosing: 'text-neutral-400',
+    routeRail: 'border-l-lime-300/60 bg-lime-950/10 text-neutral-200',
+    routeIcon: 'bg-lime-950/45 text-lime-200/80',
+    routeClose: 'text-neutral-500 hover:bg-neutral-800 hover:text-neutral-100',
+    routeMeta: 'text-neutral-500',
+    railSelected: 'border-l-lime-300 bg-[#20231d] text-neutral-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]',
+    railSpinner: 'text-lime-200/90',
+    selectedRouteChip: 'border-lime-900/55 bg-lime-950/20 text-lime-100/85',
+    warningText: 'text-neutral-400',
+    warningChip: 'border-neutral-700/80 bg-neutral-900/70 text-neutral-300',
+    copiedIcon: 'text-lime-200',
+    debugActive: 'border-lime-700/70 text-lime-200',
+    inputFocus: 'focus:border-lime-700/80',
+    emptyPulse: 'bg-lime-300',
+  },
+  catppuccin: {
+    selection: 'selection:bg-pink-300/20',
+    contentText: 'text-[12.5px] leading-[1.62]',
+    assistantLabelText: 'text-[11px] leading-4',
+    assistantBodyText: 'text-[12.5px] leading-6',
+    toolText: 'text-[11px] leading-4',
+    doneText: 'text-[10.5px]',
+    footerText: 'text-[11px]',
+    headerText: 'text-[11px]',
+    railText: 'text-[11.5px]',
+    railMetaText: 'text-[10px]',
+    chipText: 'text-[10px]',
+    microText: 'text-[9px]',
+    markdown:
+      '!font-mono !text-[12.5px] !leading-6 !text-[#cdd6f4] [&_*]:!font-mono [&_p]:!my-1 [&_p]:!leading-6 [&_p]:!text-[#cdd6f4] [&_ul]:!my-1 [&_ol]:!my-1 [&_li]:!my-0.5 [&_li]:!leading-6 [&_strong]:!text-[#f5e0dc] [&_code]:!rounded [&_code]:!bg-[#11111b]/85 [&_code]:!px-1 [&_code]:!text-[#f5c2e7] [&_pre]:!my-1.5 [&_pre]:!rounded [&_pre]:!border [&_pre]:!border-[#45475a] [&_pre]:!bg-[#11111b]/75 [&_pre]:!p-2 [&_pre]:!text-[11.5px] [&_a]:!text-[#89b4fa] [&_blockquote]:!my-1 [&_blockquote]:!border-[#585b70] [&_h1]:!text-[13px] [&_h2]:!text-[13px] [&_h3]:!text-[12.5px] [&_h1]:!text-[#f5c2e7] [&_h2]:!text-[#f5c2e7] [&_h3]:!text-[#cba6f7]',
+    prompt: 'text-[#89b4fa]',
+    userAuto: 'text-[#a6adc8]',
+    user: 'text-[#cdd6f4]',
+    assistant: 'text-[#f5c2e7]',
+    toolPending: 'text-[#f9e2af]',
+    done: 'text-[#a6adc8]',
+    streaming: 'text-[#89b4fa]',
+    preValidationPassedText: 'text-[#a6e3a1]',
+    preValidationPassedChip: 'border-[#a6e3a1]/40 bg-[#1e1e2e] text-[#a6e3a1]',
+    dotRunning: 'bg-[#89b4fa]',
+    dotCompleted: 'bg-[#a6adc8]',
+    dotClosing: 'bg-[#f9e2af]',
+    stateRunning: 'text-[#89b4fa]',
+    stateCompleted: 'text-[#a6adc8]',
+    stateClosing: 'text-[#f9e2af]',
+    routeRail: 'border-l-[#cba6f7] bg-[#1e1e2e]/55 text-[#cdd6f4]',
+    routeIcon: 'bg-[#313244] text-[#cba6f7]',
+    routeClose: 'text-[#a6adc8] hover:bg-[#313244] hover:text-[#f5e0dc]',
+    routeMeta: 'text-[#a6adc8]',
+    railSelected: 'border-l-[#89b4fa] bg-[#1e1e2e] text-[#cdd6f4] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]',
+    railSpinner: 'text-[#89b4fa]',
+    selectedRouteChip: 'border-[#cba6f7]/50 bg-[#1e1e2e] text-[#cba6f7]',
+    warningText: 'text-[#f9e2af]',
+    warningChip: 'border-[#f9e2af]/45 bg-[#1e1e2e] text-[#f9e2af]',
+    copiedIcon: 'text-[#a6e3a1]',
+    debugActive: 'border-[#89b4fa]/70 text-[#89b4fa]',
+    inputFocus: 'focus:border-[#89b4fa]',
+    emptyPulse: 'bg-[#89b4fa]',
+  },
+  nord: {
+    selection: 'selection:bg-sky-300/20',
+    contentText: 'text-[12px] leading-[1.6]',
+    assistantLabelText: 'text-[10.5px] leading-4',
+    assistantBodyText: 'text-[12px] leading-5',
+    toolText: 'text-[10.5px] leading-4',
+    doneText: 'text-[10px]',
+    footerText: 'text-[10.5px]',
+    headerText: 'text-[11px]',
+    railText: 'text-[11px]',
+    railMetaText: 'text-[9.5px]',
+    chipText: 'text-[9.5px]',
+    microText: 'text-[9px]',
+    markdown:
+      '!font-mono !text-[12px] !leading-5 !text-[#d8dee9] [&_*]:!font-mono [&_p]:!my-1 [&_p]:!leading-5 [&_p]:!text-[#d8dee9] [&_ul]:!my-1 [&_ol]:!my-1 [&_li]:!my-0.5 [&_li]:!leading-5 [&_strong]:!text-[#eceff4] [&_code]:!rounded [&_code]:!bg-[#2e3440]/85 [&_code]:!px-1 [&_code]:!text-[#88c0d0] [&_pre]:!my-1.5 [&_pre]:!rounded [&_pre]:!border [&_pre]:!border-[#4c566a] [&_pre]:!bg-[#2e3440]/70 [&_pre]:!p-2 [&_pre]:!text-[11.5px] [&_a]:!text-[#88c0d0] [&_blockquote]:!my-1 [&_blockquote]:!border-[#4c566a] [&_h1]:!text-[13px] [&_h2]:!text-[13px] [&_h3]:!text-[12.5px] [&_h1]:!text-[#88c0d0] [&_h2]:!text-[#88c0d0] [&_h3]:!text-[#81a1c1]',
+    prompt: 'text-[#88c0d0]',
+    userAuto: 'text-[#8fbcbb]',
+    user: 'text-[#eceff4]',
+    assistant: 'text-[#d8dee9]',
+    toolPending: 'text-[#ebcb8b]',
+    done: 'text-[#8fbcbb]/75',
+    streaming: 'text-[#88c0d0]',
+    preValidationPassedText: 'text-[#a3be8c]',
+    preValidationPassedChip: 'border-[#a3be8c]/45 bg-[#2e3440]/70 text-[#a3be8c]',
+    dotRunning: 'bg-[#88c0d0]',
+    dotCompleted: 'bg-[#81a1c1]',
+    dotClosing: 'bg-[#ebcb8b]',
+    stateRunning: 'text-[#88c0d0]',
+    stateCompleted: 'text-[#81a1c1]',
+    stateClosing: 'text-[#ebcb8b]',
+    routeRail: 'border-l-[#88c0d0] bg-[#2e3440]/45 text-[#d8dee9]',
+    routeIcon: 'bg-[#3b4252] text-[#88c0d0]',
+    routeClose: 'text-[#4c566a] hover:bg-[#3b4252] hover:text-[#eceff4]',
+    routeMeta: 'text-[#81a1c1]',
+    railSelected: 'border-l-[#88c0d0] bg-[#242933] text-[#eceff4] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]',
+    railSpinner: 'text-[#88c0d0]',
+    selectedRouteChip: 'border-[#88c0d0]/50 bg-[#2e3440]/70 text-[#88c0d0]',
+    warningText: 'text-[#ebcb8b]',
+    warningChip: 'border-[#ebcb8b]/45 bg-[#2e3440]/70 text-[#ebcb8b]',
+    copiedIcon: 'text-[#a3be8c]',
+    debugActive: 'border-[#88c0d0]/70 text-[#88c0d0]',
+    inputFocus: 'focus:border-[#88c0d0]',
+    emptyPulse: 'bg-[#88c0d0]',
+  },
+  gruvbox: {
+    selection: 'selection:bg-yellow-300/20',
+    contentText: 'text-[12.5px] leading-[1.62]',
+    assistantLabelText: 'text-[11px] leading-4',
+    assistantBodyText: 'text-[12.5px] leading-6',
+    toolText: 'text-[11px] leading-4',
+    doneText: 'text-[10.5px]',
+    footerText: 'text-[11px]',
+    headerText: 'text-[11px]',
+    railText: 'text-[11.5px]',
+    railMetaText: 'text-[10px]',
+    chipText: 'text-[10px]',
+    microText: 'text-[9px]',
+    markdown:
+      '!font-mono !text-[12.5px] !leading-6 !text-[#ebdbb2] [&_*]:!font-mono [&_p]:!my-1 [&_p]:!leading-6 [&_p]:!text-[#ebdbb2] [&_ul]:!my-1 [&_ol]:!my-1 [&_li]:!my-0.5 [&_li]:!leading-6 [&_strong]:!text-[#fbf1c7] [&_code]:!rounded [&_code]:!bg-[#1d2021]/85 [&_code]:!px-1 [&_code]:!text-[#fabd2f] [&_pre]:!my-1.5 [&_pre]:!rounded [&_pre]:!border [&_pre]:!border-[#504945] [&_pre]:!bg-[#1d2021]/75 [&_pre]:!p-2 [&_pre]:!text-[11.5px] [&_a]:!text-[#83a598] [&_blockquote]:!my-1 [&_blockquote]:!border-[#665c54] [&_h1]:!text-[13px] [&_h2]:!text-[13px] [&_h3]:!text-[12.5px] [&_h1]:!text-[#fabd2f] [&_h2]:!text-[#fabd2f] [&_h3]:!text-[#d3869b]',
+    prompt: 'text-[#b8bb26]',
+    userAuto: 'text-[#a89984]',
+    user: 'text-[#ebdbb2]',
+    assistant: 'text-[#fbf1c7]',
+    toolPending: 'text-[#fabd2f]',
+    done: 'text-[#a89984]',
+    streaming: 'text-[#b8bb26]',
+    preValidationPassedText: 'text-[#b8bb26]',
+    preValidationPassedChip: 'border-[#b8bb26]/45 bg-[#282828]/70 text-[#b8bb26]',
+    dotRunning: 'bg-[#b8bb26]',
+    dotCompleted: 'bg-[#a89984]',
+    dotClosing: 'bg-[#fabd2f]',
+    stateRunning: 'text-[#b8bb26]',
+    stateCompleted: 'text-[#a89984]',
+    stateClosing: 'text-[#fabd2f]',
+    routeRail: 'border-l-[#fabd2f] bg-[#282828]/55 text-[#ebdbb2]',
+    routeIcon: 'bg-[#3c3836] text-[#fabd2f]',
+    routeClose: 'text-[#928374] hover:bg-[#3c3836] hover:text-[#fbf1c7]',
+    routeMeta: 'text-[#a89984]',
+    railSelected: 'border-l-[#fabd2f] bg-[#2d2926] text-[#fbf1c7] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]',
+    railSpinner: 'text-[#b8bb26]',
+    selectedRouteChip: 'border-[#fabd2f]/50 bg-[#282828]/70 text-[#fabd2f]',
+    warningText: 'text-[#fabd2f]',
+    warningChip: 'border-[#fabd2f]/45 bg-[#282828]/70 text-[#fabd2f]',
+    copiedIcon: 'text-[#b8bb26]',
+    debugActive: 'border-[#fabd2f]/70 text-[#fabd2f]',
+    inputFocus: 'focus:border-[#fabd2f]',
+    emptyPulse: 'bg-[#b8bb26]',
+  },
+  solarized: {
+    selection: 'selection:bg-cyan-300/20',
+    contentText: 'text-[12px] leading-[1.6]',
+    assistantLabelText: 'text-[10.5px] leading-4',
+    assistantBodyText: 'text-[12px] leading-5',
+    toolText: 'text-[10.5px] leading-4',
+    doneText: 'text-[10px]',
+    footerText: 'text-[10.5px]',
+    headerText: 'text-[11px]',
+    railText: 'text-[11px]',
+    railMetaText: 'text-[9.5px]',
+    chipText: 'text-[9.5px]',
+    microText: 'text-[9px]',
+    markdown:
+      '!font-mono !text-[12px] !leading-5 !text-[#93a1a1] [&_*]:!font-mono [&_p]:!my-1 [&_p]:!leading-5 [&_p]:!text-[#93a1a1] [&_ul]:!my-1 [&_ol]:!my-1 [&_li]:!my-0.5 [&_li]:!leading-5 [&_strong]:!text-[#eee8d5] [&_code]:!rounded [&_code]:!bg-[#002b36]/85 [&_code]:!px-1 [&_code]:!text-[#2aa198] [&_pre]:!my-1.5 [&_pre]:!rounded [&_pre]:!border [&_pre]:!border-[#586e75] [&_pre]:!bg-[#002b36]/75 [&_pre]:!p-2 [&_pre]:!text-[11.5px] [&_a]:!text-[#268bd2] [&_blockquote]:!my-1 [&_blockquote]:!border-[#586e75] [&_h1]:!text-[13px] [&_h2]:!text-[13px] [&_h3]:!text-[12.5px] [&_h1]:!text-[#b58900] [&_h2]:!text-[#b58900] [&_h3]:!text-[#2aa198]',
+    prompt: 'text-[#2aa198]',
+    userAuto: 'text-[#839496]',
+    user: 'text-[#eee8d5]',
+    assistant: 'text-[#93a1a1]',
+    toolPending: 'text-[#b58900]',
+    done: 'text-[#839496]',
+    streaming: 'text-[#2aa198]',
+    preValidationPassedText: 'text-[#859900]',
+    preValidationPassedChip: 'border-[#859900]/45 bg-[#073642]/70 text-[#859900]',
+    dotRunning: 'bg-[#2aa198]',
+    dotCompleted: 'bg-[#268bd2]',
+    dotClosing: 'bg-[#b58900]',
+    stateRunning: 'text-[#2aa198]',
+    stateCompleted: 'text-[#268bd2]',
+    stateClosing: 'text-[#b58900]',
+    routeRail: 'border-l-[#2aa198] bg-[#073642]/55 text-[#93a1a1]',
+    routeIcon: 'bg-[#002b36] text-[#2aa198]',
+    routeClose: 'text-[#586e75] hover:bg-[#073642] hover:text-[#eee8d5]',
+    routeMeta: 'text-[#839496]',
+    railSelected: 'border-l-[#2aa198] bg-[#073642] text-[#eee8d5] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]',
+    railSpinner: 'text-[#2aa198]',
+    selectedRouteChip: 'border-[#2aa198]/50 bg-[#073642]/70 text-[#2aa198]',
+    warningText: 'text-[#b58900]',
+    warningChip: 'border-[#b58900]/45 bg-[#073642]/70 text-[#b58900]',
+    copiedIcon: 'text-[#859900]',
+    debugActive: 'border-[#2aa198]/70 text-[#2aa198]',
+    inputFocus: 'focus:border-[#2aa198]',
+    emptyPulse: 'bg-[#2aa198]',
+  },
+  tokyo: {
+    selection: 'selection:bg-indigo-300/20',
+    contentText: 'text-[12px] leading-[1.58]',
+    assistantLabelText: 'text-[10.5px] leading-4',
+    assistantBodyText: 'text-[12px] leading-5',
+    toolText: 'text-[10.5px] leading-4',
+    doneText: 'text-[10px]',
+    footerText: 'text-[10.5px]',
+    headerText: 'text-[11px]',
+    railText: 'text-[11px]',
+    railMetaText: 'text-[9.5px]',
+    chipText: 'text-[9.5px]',
+    microText: 'text-[9px]',
+    markdown:
+      '!font-mono !text-[12px] !leading-5 !text-[#c0caf5] [&_*]:!font-mono [&_p]:!my-1 [&_p]:!leading-5 [&_p]:!text-[#c0caf5] [&_ul]:!my-1 [&_ol]:!my-1 [&_li]:!my-0.5 [&_li]:!leading-5 [&_strong]:!text-[#d5d6db] [&_code]:!rounded [&_code]:!bg-[#1a1b26]/85 [&_code]:!px-1 [&_code]:!text-[#bb9af7] [&_pre]:!my-1.5 [&_pre]:!rounded [&_pre]:!border [&_pre]:!border-[#414868] [&_pre]:!bg-[#1a1b26]/75 [&_pre]:!p-2 [&_pre]:!text-[11.5px] [&_a]:!text-[#7aa2f7] [&_blockquote]:!my-1 [&_blockquote]:!border-[#414868] [&_h1]:!text-[13px] [&_h2]:!text-[13px] [&_h3]:!text-[12.5px] [&_h1]:!text-[#7dcfff] [&_h2]:!text-[#7dcfff] [&_h3]:!text-[#bb9af7]',
+    prompt: 'text-[#7dcfff]',
+    userAuto: 'text-[#9aa5ce]',
+    user: 'text-[#c0caf5]',
+    assistant: 'text-[#c0caf5]',
+    toolPending: 'text-[#e0af68]',
+    done: 'text-[#9aa5ce]',
+    streaming: 'text-[#7dcfff]',
+    preValidationPassedText: 'text-[#9ece6a]',
+    preValidationPassedChip: 'border-[#9ece6a]/45 bg-[#1a1b26]/70 text-[#9ece6a]',
+    dotRunning: 'bg-[#7dcfff]',
+    dotCompleted: 'bg-[#7aa2f7]',
+    dotClosing: 'bg-[#e0af68]',
+    stateRunning: 'text-[#7dcfff]',
+    stateCompleted: 'text-[#7aa2f7]',
+    stateClosing: 'text-[#e0af68]',
+    routeRail: 'border-l-[#7dcfff] bg-[#1a1b26]/55 text-[#c0caf5]',
+    routeIcon: 'bg-[#24283b] text-[#7dcfff]',
+    routeClose: 'text-[#565f89] hover:bg-[#24283b] hover:text-[#c0caf5]',
+    routeMeta: 'text-[#9aa5ce]',
+    railSelected: 'border-l-[#7dcfff] bg-[#1f2335] text-[#c0caf5] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]',
+    railSpinner: 'text-[#7dcfff]',
+    selectedRouteChip: 'border-[#7dcfff]/50 bg-[#1a1b26]/70 text-[#7dcfff]',
+    warningText: 'text-[#e0af68]',
+    warningChip: 'border-[#e0af68]/45 bg-[#1a1b26]/70 text-[#e0af68]',
+    copiedIcon: 'text-[#9ece6a]',
+    debugActive: 'border-[#7dcfff]/70 text-[#7dcfff]',
+    inputFocus: 'focus:border-[#7dcfff]',
+    emptyPulse: 'bg-[#7dcfff]',
+  },
+} as const
+
+type TerminalTheme = (typeof TERMINAL_THEMES)[TerminalColorScheme]
+
+const TERMINAL_COLOR_SCHEME_OPTIONS: Array<{ value: TerminalColorScheme; label: string }> = [
+  { value: 'homebrew', label: 'Homebrew' },
+  { value: 'mono', label: 'Mono' },
+  { value: 'catppuccin', label: 'Catppuccin' },
+  { value: 'nord', label: 'Nord' },
+  { value: 'gruvbox', label: 'Gruvbox' },
+  { value: 'solarized', label: 'Solarized' },
+  { value: 'tokyo', label: 'Tokyo Night' },
+  { value: 'neon', label: 'Neon' },
+]
+
+function isTerminalColorScheme(value: string | null): value is TerminalColorScheme {
+  return TERMINAL_COLOR_SCHEME_OPTIONS.some(option => option.value === value)
+}
+
+function readStoredTerminalColorScheme(): TerminalColorScheme {
+  if (typeof window === 'undefined') return DEFAULT_TERMINAL_COLOR_SCHEME
+  try {
+    const stored = window.localStorage.getItem(TERMINAL_COLOR_SCHEME_STORAGE_KEY)
+    return isTerminalColorScheme(stored) ? stored : DEFAULT_TERMINAL_COLOR_SCHEME
+  } catch {
+    return DEFAULT_TERMINAL_COLOR_SCHEME
+  }
+}
+
+function writeStoredTerminalColorScheme(scheme: TerminalColorScheme) {
+  try {
+    window.localStorage.setItem(TERMINAL_COLOR_SCHEME_STORAGE_KEY, scheme)
+  } catch {
+    // Best-effort visual preference only.
+  }
+}
 
 interface RoutingRouteSummary {
   route_id?: string
@@ -306,42 +700,12 @@ function formatTerminalMeta(terminal: TerminalSnapshot): string {
     chip,
     modelLabel,
     terminal.step_type ? humanizeIdentifier(terminal.step_type) : '',
-    terminal.scope ? humanizeIdentifier(terminal.scope) : '',
   ]
-  if (terminal.step_index && terminal.step_total) {
-    parts.push(`step ${terminal.step_index}/${terminal.step_total}`)
-  }
   if (terminal.step_attempt && terminal.step_attempt > 1) {
     parts.push(`attempt ${terminal.step_attempt}`)
   }
-  if (terminal.step_triggered_by) {
-    parts.push(`triggered by ${humanizeIdentifier(terminal.step_triggered_by)}`)
-  }
-  if (terminal.parent_step_id) {
-    parts.push(`parent ${terminal.parent_step_id}`)
-  }
   if (terminal.step_execution_mode) {
     parts.push(humanizeIdentifier(terminal.step_execution_mode))
-  }
-  // Cost / duration / tokens — prefer the structured fields on
-  // terminal.status (populated from the streaming_end event's
-  // completion meta for both tmux and non-tmux transports). Fall
-  // back to regex-parsing the synthetic [done · ...] trailer for
-  // older snapshots that haven't been re-emitted yet.
-  const statusStats = terminal.status
-  const durationFromStatus = statusStats?.duration_ms ? humanizeMs(statusStats.duration_ms) : ''
-  const tokensInFromStatus = statusStats?.input_tokens ? statusStats.input_tokens.toString() : ''
-  const tokensOutFromStatus = statusStats?.output_tokens ? statusStats.output_tokens.toString() : ''
-  const costFromStatus = statusStats?.cost_usd ? `$${formatCost(statusStats.cost_usd)}` : ''
-  const stats = (durationFromStatus || tokensInFromStatus || costFromStatus)
-    ? { duration: durationFromStatus, tokensIn: tokensInFromStatus, tokensOut: tokensOutFromStatus, cost: costFromStatus }
-    : extractDoneStats(terminal.content)
-  if (stats.duration) parts.push(stats.duration)
-  if (stats.tokensIn && stats.tokensOut) parts.push(`${stats.tokensIn}↑ ${stats.tokensOut}↓`)
-  if (stats.cost) parts.push(stats.cost)
-  // Tool count from the live status (set by the adapter event listener).
-  if (terminal.status?.tool_count && terminal.status.tool_count > 0) {
-    parts.push(`${terminal.status.tool_count} tools`)
   }
   if (terminal.display_meta) parts.push(terminal.display_meta)
   return [...new Set(parts.filter(Boolean))].join(' · ')
@@ -355,10 +719,10 @@ function terminalPreValidationSummary(terminal: TerminalSnapshot): string {
   return terminal.status?.pre_validation_summary || ''
 }
 
-function terminalPreValidationClass(terminal: TerminalSnapshot): string {
+function terminalPreValidationClass(terminal: TerminalSnapshot, theme: TerminalTheme): string {
   switch ((terminal.status?.pre_validation_status || '').toLowerCase()) {
     case 'passed':
-      return 'text-emerald-300'
+      return theme.preValidationPassedText
     case 'failed':
       return 'text-red-300'
     default:
@@ -366,7 +730,7 @@ function terminalPreValidationClass(terminal: TerminalSnapshot): string {
   }
 }
 
-function terminalPreValidationChip(terminal: TerminalSnapshot): { label: string; className: string; title: string } | null {
+function terminalPreValidationChip(terminal: TerminalSnapshot, theme: TerminalTheme): { label: string; className: string; title: string } | null {
   const summary = terminalPreValidationSummary(terminal)
   if (!summary) return null
 
@@ -378,7 +742,7 @@ function terminalPreValidationChip(terminal: TerminalSnapshot): { label: string;
     case 'passed':
       return {
         label: countLabel ? `✓ ${countLabel}` : '✓',
-        className: 'border-emerald-700/60 bg-emerald-950/30 text-emerald-300',
+        className: theme.preValidationPassedChip,
         title: summary,
       }
     case 'failed':
@@ -460,35 +824,35 @@ function terminalStateDescription(terminal: TerminalSnapshot): string {
   }
 }
 
-function terminalDotClass(terminal: TerminalSnapshot): string {
+function terminalDotClass(terminal: TerminalSnapshot, theme: TerminalTheme): string {
   switch (terminalState(terminal)) {
     case 'running':
-      return 'bg-emerald-400'
+      return theme.dotRunning
     case 'completed':
-      return 'bg-sky-400'
+      return theme.dotCompleted
     case 'failed':
       return 'bg-red-400'
     case 'stale':
       return 'bg-zinc-400'
     case 'closing':
-      return 'bg-amber-400'
+      return theme.dotClosing
     default:
       return 'bg-neutral-500'
   }
 }
 
-function terminalStateTextClass(terminal: TerminalSnapshot): string {
+function terminalStateTextClass(terminal: TerminalSnapshot, theme: TerminalTheme): string {
   switch (terminalState(terminal)) {
     case 'running':
-      return 'text-emerald-300'
+      return theme.stateRunning
     case 'completed':
-      return 'text-sky-300'
+      return theme.stateCompleted
     case 'failed':
       return 'text-red-300'
     case 'stale':
       return 'text-zinc-300'
     case 'closing':
-      return 'text-amber-300'
+      return theme.stateClosing
     default:
       return 'text-neutral-500'
   }
@@ -629,6 +993,7 @@ function turnIndexFromTerminalID(terminalID: string): number {
 // drive the lazy content fetch and to stitch the aggregated scrollback.
 function findPriorArchivedTurns(current: TerminalSnapshot, allTerminals: TerminalSnapshot[]): TerminalSnapshot[] {
   const sessionID = (current.session_id || '').trim()
+  const ownerID = (current.owner_id || '').trim()
   if (!sessionID || isArchivedTurnTerminal(current) || !isSyntheticTerminal(current)) {
     return []
   }
@@ -636,6 +1001,7 @@ function findPriorArchivedTurns(current: TerminalSnapshot, allTerminals: Termina
     .filter(t =>
       t.terminal_id !== current.terminal_id &&
       (t.session_id || '').trim() === sessionID &&
+      (t.owner_id || '').trim() === ownerID &&
       isArchivedTurnTerminal(t) &&
       isSyntheticTerminal(t),
     )
@@ -747,7 +1113,7 @@ type TerminalRow =
   | { kind: 'context'; text: string }
   | { kind: 'user'; text: string }
   | { kind: 'asst'; text: string }
-  | { kind: 'tool'; name: string; args: string; result?: string; resultPrefix?: '✓' | '✗' }
+  | { kind: 'tool'; name: string; args: string; result?: string; resultPrefix?: '✓' | '✗'; result_prefix?: '✓' | '✗' | string }
   | { kind: 'attachment'; text: string }
   | { kind: 'done'; text: string }
   | { kind: 'error'; text: string }
@@ -767,8 +1133,21 @@ function shouldCollapseUserMessage(value: string): boolean {
   return value.includes('\n') || Array.from(value.trim()).length > TERMINAL_USER_PREVIEW_CHARS
 }
 
-function terminalUserMessageLabel(value: string): string {
-  return value.trim().startsWith('[AUTO-NOTIFICATION]') ? 'Auto notification' : 'User message'
+function terminalUserMessageMeta(value: string): { label: string; body: string; isAuto: boolean } {
+  const trimmed = value.trim()
+  const isAuto = trimmed.startsWith('[AUTO-NOTIFICATION]')
+  if (isAuto) {
+    return {
+      label: 'Auto',
+      body: trimmed.replace(/^\[AUTO-NOTIFICATION\]\s*/, ''),
+      isAuto,
+    }
+  }
+  return { label: 'User', body: value, isAuto }
+}
+
+function isAutoNotificationText(value: string): boolean {
+  return value.trim().startsWith('[AUTO-NOTIFICATION]')
 }
 
 function classifyTerminalLine(line: string): TerminalRow {
@@ -797,6 +1176,20 @@ function classifyTerminalLine(line: string): TerminalRow {
   return { kind: 'plain', text: line }
 }
 
+function isTerminalRowBoundary(line: string): boolean {
+  return line.startsWith('$ ') ||
+    line.startsWith('↳ ') ||
+    line.startsWith('> user: ') ||
+    line.startsWith('< asst: ') ||
+    line.startsWith('[image ') ||
+    line.startsWith('[document ') ||
+    line.startsWith('[done') ||
+    line.startsWith('[error]') ||
+    line.startsWith('→ ') ||
+    /^([✓✗])\s+result\s+([^:]+):\s*(.*)$/.test(line) ||
+    /^([✓✗])\s+(\S+)\s+\(([^)]+)\)\s*(.*)$/.test(line)
+}
+
 // Pair tool starts with their matching result lines. A line beginning
 // "✓ result <name>:" or "✗ result <name>:" or the short "✓ <name> (<dur>) ..."
 // form gets merged into the most recent tool row with the same name.
@@ -804,17 +1197,21 @@ function parseTerminalContent(content: string): TerminalRow[] {
   if (!content) return []
   const lines = content.split('\n')
   const rows: TerminalRow[] = []
+  let activeToolResultIndex: number | null = null
+  let activeTextRowIndex: number | null = null
   for (const line of lines) {
     // Tool result variants
     const fullResult = line.match(/^([✓✗])\s+result\s+([^:]+):\s*(.*)$/)
     if (fullResult) {
       const [, prefix, name, body] = fullResult
+      activeTextRowIndex = null
       // Find the most recent tool row with this name that has no result yet
       for (let i = rows.length - 1; i >= 0; i--) {
         const row = rows[i]
         if (row.kind === 'tool' && row.name === name.trim() && !row.result) {
           row.result = body
           row.resultPrefix = prefix as '✓' | '✗'
+          activeToolResultIndex = i
           break
         }
       }
@@ -823,17 +1220,39 @@ function parseTerminalContent(content: string): TerminalRow[] {
     const shortResult = line.match(/^([✓✗])\s+(\S+)\s+\(([^)]+)\)\s*(.*)$/)
     if (shortResult) {
       const [, prefix, name, dur, body] = shortResult
+      activeTextRowIndex = null
       for (let i = rows.length - 1; i >= 0; i--) {
         const row = rows[i]
         if (row.kind === 'tool' && row.name === name && !row.result) {
           row.result = body ? `${dur} · ${body}` : dur
           row.resultPrefix = prefix as '✓' | '✗'
+          activeToolResultIndex = i
           break
         }
       }
       continue
     }
+    if (activeToolResultIndex !== null && !isTerminalRowBoundary(line)) {
+      const activeTool = rows[activeToolResultIndex]
+      if (activeTool?.kind === 'tool') {
+        activeTool.result = activeTool.result ? `${activeTool.result}\n${line}` : line
+        continue
+      }
+      activeToolResultIndex = null
+    }
+    if (activeTextRowIndex !== null && !isTerminalRowBoundary(line)) {
+      const activeTextRow = rows[activeTextRowIndex]
+      const shouldAttachToTextRow = activeTextRow?.kind === 'asst' ||
+        (activeTextRow?.kind === 'user' && isAutoNotificationText(activeTextRow.text))
+      if (shouldAttachToTextRow) {
+        const continuation = line.startsWith('  ') ? line.slice(2) : line
+        activeTextRow.text = activeTextRow.text ? `${activeTextRow.text}\n${continuation}` : continuation
+        continue
+      }
+      activeTextRowIndex = null
+    }
     const classified = classifyTerminalLine(line)
+    activeToolResultIndex = null
     // Coalesce consecutive assistant continuation lines into one row. Join
     // with a newline (not a space) so the markdown structure that the model
     // emitted — lists, paragraph breaks, fenced code, headings — survives
@@ -842,8 +1261,18 @@ function parseTerminalContent(content: string): TerminalRow[] {
     if (classified.kind === 'asst' && rows.length > 0 && rows[rows.length - 1].kind === 'asst') {
       const prev = rows[rows.length - 1] as { kind: 'asst'; text: string }
       prev.text = prev.text ? `${prev.text}\n${classified.text}` : classified.text
+      activeTextRowIndex = rows.length - 1
       continue
     }
+    if (classified.kind === 'asst' && line.startsWith('  ')) {
+      rows.push({ kind: 'plain', text: line })
+      activeTextRowIndex = null
+      continue
+    }
+    activeTextRowIndex = (
+      classified.kind === 'asst' ||
+      (classified.kind === 'user' && isAutoNotificationText(classified.text))
+    ) ? rows.length : null
     rows.push(classified)
   }
   return rows
@@ -851,8 +1280,11 @@ function parseTerminalContent(content: string): TerminalRow[] {
 
 interface StructuredTerminalViewProps {
   content: string
+  rows?: TerminalSnapshot['rows']
   scrollRef: React.RefObject<HTMLDivElement | null>
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void
+  onWheel: (e: React.WheelEvent<HTMLDivElement>) => void
+  theme: TerminalTheme
   // Optional snapshot is used to render a Claude-Code-style bottom status
   // footer (model · turns · tokens · cost · elapsed) and to drive the
   // streaming spinner when the pane is still active.
@@ -875,77 +1307,45 @@ function useSpinnerFrame(active: boolean): string {
   return SPINNER_FRAMES[frame]
 }
 
-// terminalMarkdownComponents tunes ReactMarkdown's element rendering so the
-// assistant's markdown reads cleanly inside a terminal pane: monospace
-// throughout, no oversized headings, subtle bullets, inline-code chips with
-// a faint background. Keeps fenced code blocks readable without dominating
-// the scrollback.
-const terminalMarkdownComponents = {
-  h1: ({ children }: { children?: React.ReactNode }) => (
-    <div className="mt-2 mb-1 text-cyan-300 font-semibold uppercase tracking-wide text-[12px]">{children}</div>
-  ),
-  h2: ({ children }: { children?: React.ReactNode }) => (
-    <div className="mt-2 mb-0.5 text-cyan-300 font-semibold text-[12px]">{children}</div>
-  ),
-  h3: ({ children }: { children?: React.ReactNode }) => (
-    <div className="mt-1.5 mb-0.5 text-cyan-200 font-semibold text-[12px]">{children}</div>
-  ),
-  h4: ({ children }: { children?: React.ReactNode }) => (
-    <div className="mt-1 mb-0.5 text-neutral-200 font-semibold text-[12px]">{children}</div>
-  ),
-  h5: ({ children }: { children?: React.ReactNode }) => (
-    <div className="mt-1 mb-0.5 text-neutral-200 font-semibold text-[12px]">{children}</div>
-  ),
-  h6: ({ children }: { children?: React.ReactNode }) => (
-    <div className="mt-1 mb-0.5 text-neutral-300 font-semibold text-[12px]">{children}</div>
-  ),
-  p: ({ children }: { children?: React.ReactNode }) => (
-    <div className="text-neutral-100 break-words my-1.5 leading-6">{children}</div>
-  ),
-  ul: ({ children }: { children?: React.ReactNode }) => (
-    <ul className="my-1.5 ml-3 list-none text-neutral-100 space-y-0.5">{children}</ul>
-  ),
-  ol: ({ children }: { children?: React.ReactNode }) => (
-    <ol className="my-1.5 ml-3 list-none text-neutral-100 space-y-0.5">{children}</ol>
-  ),
-  li: ({ children }: { children?: React.ReactNode }) => (
-    <li className="relative pl-4 leading-6 before:absolute before:left-0 before:top-0 before:text-neutral-500 before:content-['•']">{children}</li>
-  ),
-  strong: ({ children }: { children?: React.ReactNode }) => (
-    <span className="text-amber-200 font-semibold">{children}</span>
-  ),
-  em: ({ children }: { children?: React.ReactNode }) => (
-    <span className="text-neutral-200 italic">{children}</span>
-  ),
-  code: ({ inline, children }: { inline?: boolean; children?: React.ReactNode }) => inline
-    ? <code className="rounded bg-neutral-800 px-1 text-amber-200">{children}</code>
-    : <code className="text-neutral-200">{children}</code>,
-  pre: ({ children }: { children?: React.ReactNode }) => (
-    <pre className="my-1 rounded bg-neutral-900/80 border border-neutral-800 p-2 overflow-x-auto whitespace-pre text-[11.5px] text-neutral-100">{children}</pre>
-  ),
-  a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
-    <a href={href} target="_blank" rel="noreferrer" className="text-cyan-300 underline decoration-dotted">{children}</a>
-  ),
-  blockquote: ({ children }: { children?: React.ReactNode }) => (
-    <div className="border-l-2 border-neutral-700 pl-2 text-neutral-300 my-0.5">{children}</div>
-  ),
-  hr: () => <div className="my-1.5 border-t border-dashed border-neutral-800" />,
-  table: ({ children }: { children?: React.ReactNode }) => (
-    <div className="my-1 overflow-x-auto"><table className="border-collapse text-[11.5px]">{children}</table></div>
-  ),
-  th: ({ children }: { children?: React.ReactNode }) => (
-    <th className="border border-neutral-700 px-2 py-0.5 text-left text-cyan-200">{children}</th>
-  ),
-  td: ({ children }: { children?: React.ReactNode }) => (
-    <td className="border border-neutral-800 px-2 py-0.5 text-neutral-200">{children}</td>
-  ),
-}
-
-const TerminalAssistantMarkdown: React.FC<{ text: string }> = ({ text }) => (
-  <ReactMarkdown remarkPlugins={[remarkGfm]} components={terminalMarkdownComponents}>
-    {text}
-  </ReactMarkdown>
+const TerminalAssistantMarkdown: React.FC<{ text: string; theme: TerminalTheme }> = ({ text, theme }) => (
+  <MarkdownRenderer
+    content={text}
+    maxHeight="none"
+    className={theme.markdown}
+  />
 )
+
+function normalizeTerminalRows(rows: TerminalSnapshot['rows'] | undefined): TerminalRow[] {
+  if (!Array.isArray(rows)) return []
+  const normalized: TerminalRow[] = []
+  for (const row of rows) {
+    switch (row.kind) {
+      case 'banner':
+      case 'context':
+      case 'user':
+      case 'asst':
+      case 'attachment':
+      case 'done':
+      case 'error':
+      case 'plain':
+        normalized.push({ kind: row.kind, text: row.text || '' } as TerminalRow)
+        break
+      case 'tool':
+        normalized.push({
+          kind: 'tool',
+          name: row.name || 'tool',
+          args: row.args || '',
+          result: row.result,
+          resultPrefix: row.result_prefix === '✗' ? '✗' : row.result_prefix === '✓' ? '✓' : undefined,
+          result_prefix: row.result_prefix,
+        })
+        break
+      default:
+        normalized.push({ kind: 'plain', text: row.text || '' })
+    }
+  }
+  return normalized
+}
 
 function formatTokens(n?: number): string {
   if (n === undefined || n === null) return '–'
@@ -959,8 +1359,11 @@ function formatStatusFooterCost(usd?: number): string {
   return `$${formatCost(usd)}`
 }
 
-const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content, scrollRef, onScroll, terminal }) => {
-  const rows = useMemo(() => parseTerminalContent(content), [content])
+const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content, rows: structuredRows, scrollRef, onScroll, onWheel, terminal, theme }) => {
+  const rows = useMemo(() => {
+    const normalizedRows = normalizeTerminalRows(structuredRows)
+    return normalizedRows.length > 0 ? normalizedRows : parseTerminalContent(content)
+  }, [content, structuredRows])
   // Long user prompts and tool rows collapse behind one-line summaries.
   // We key by row index; content updates are append-only so indexes stay
   // stable for existing rows.
@@ -980,7 +1383,8 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-2.5 font-mono text-[12px] leading-5 selection:bg-cyan-500/25"
+        onWheel={onWheel}
+        className={`min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-2.5 font-mono ${theme.contentText} ${theme.selection}`}
       >
         {rows.map((row, idx) => {
           // Subtle divider between turns: a new banner (other than the first
@@ -991,7 +1395,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
               return (
                 <div key={idx}>
                   {showDivider && <div className="my-2 border-t border-dashed border-neutral-700/60" />}
-                  <div className="text-cyan-300/90">
+                  <div className={theme.prompt}>
                     <span className="text-neutral-500">$ </span>{row.text}
                   </div>
                 </div>
@@ -1000,32 +1404,40 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
               return <div key={idx} className="text-neutral-500">↳ {row.text}</div>
             case 'user':
               {
-                const longUserMessage = shouldCollapseUserMessage(row.text)
+                const message = terminalUserMessageMeta(row.text)
+                const longUserMessage = shouldCollapseUserMessage(message.body)
                 const isOpen = expanded.has(idx) || !longUserMessage
-                const preview = compactTerminalPreview(row.text)
-                const label = terminalUserMessageLabel(row.text)
+                const preview = compactTerminalPreview(message.body)
+                const labelClass = message.isAuto ? theme.userAuto : theme.user
                 return (
-                  <div key={idx} className="my-1 rounded border border-cyan-900/55 bg-cyan-950/15 px-2 py-1">
+                  <div key={idx} className="my-0.5">
                     {longUserMessage ? (
                       <>
                         <button
                           type="button"
                           onClick={() => toggle(idx)}
-                          className="w-full rounded px-0.5 -mx-0.5 text-left text-cyan-100 hover:bg-cyan-950/30"
+                          className="group flex w-full min-w-0 items-start gap-1.5 rounded px-0.5 py-0.5 text-left hover:bg-white/[0.04]"
                         >
-                          <span className="text-cyan-300">&gt;</span>
-                          <span className="ml-1">{isOpen ? label : preview}</span>
-                          <span className="ml-1 text-cyan-500/70">{isOpen ? '▾' : '▸'}</span>
+                          <span className="shrink-0 text-neutral-500">&gt;</span>
+                          <span className={`shrink-0 font-semibold ${labelClass}`}>{message.label}</span>
+                          <span className="min-w-0 flex-1 truncate text-neutral-300">
+                            {isOpen ? 'message' : preview}
+                          </span>
+                          <span className="shrink-0 font-mono text-[10px] text-neutral-600 group-hover:text-neutral-400">
+                            {isOpen ? '[-]' : '[+]'}
+                          </span>
                         </button>
                         {isOpen && (
-                          <pre className="mt-1 ml-3 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono text-[12px] leading-5 text-cyan-50">
-                            {row.text}
+                          <pre className={`ml-5 border-l border-neutral-800/80 pl-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono text-neutral-200 ${theme.contentText}`}>
+                            {message.body}
                           </pre>
                         )}
                       </>
                     ) : (
-                      <div className="text-cyan-50 whitespace-pre-wrap break-words">
-                        <span className="text-cyan-300">&gt;</span> {row.text}
+                      <div className="flex min-w-0 items-start gap-1.5 whitespace-pre-wrap break-words px-0.5 py-0.5 text-neutral-200">
+                        <span className="shrink-0 text-neutral-500">&gt;</span>
+                        <span className={`shrink-0 font-semibold ${labelClass}`}>{message.label}</span>
+                        <span className="min-w-0 flex-1">{message.body}</span>
                       </div>
                     )}
                   </div>
@@ -1033,8 +1445,14 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
               }
             case 'asst':
               return (
-                <div key={idx} className="my-1.5 border-l border-neutral-700/70 pl-3 text-[12.5px] leading-6">
-                  <TerminalAssistantMarkdown text={row.text} />
+                <div key={idx} className="my-1.5">
+                  <div className={`mb-0.5 flex items-center gap-1.5 px-0.5 ${theme.assistantLabelText}`}>
+                    <span className="text-neutral-500">&lt;</span>
+                    <span className={`font-semibold ${theme.assistant}`}>AI</span>
+                  </div>
+                  <div className={`border-l border-neutral-700/70 pl-3 ${theme.assistantBodyText}`}>
+                    <TerminalAssistantMarkdown text={row.text} theme={theme} />
+                  </div>
                 </div>
               )
             case 'tool': {
@@ -1043,23 +1461,23 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
               const longResult = (row.result?.length ?? 0) > 80
               const isOpen = expanded.has(idx) || (hasResult && !longResult)
               const statusColor = !hasResult
-                ? 'text-yellow-300'
+                ? theme.toolPending
                 : isError
                   ? 'text-red-400'
-                  : 'text-emerald-400'
+                  : 'text-neutral-500'
               return (
-                <div key={idx} className="my-0.5">
+                <div key={idx} className={`my-px ${theme.toolText}`}>
                   <button
                     type="button"
                     onClick={() => toggle(idx)}
-                    className="w-full rounded px-0.5 -mx-0.5 text-left hover:bg-white/5"
+                    className="w-full rounded px-0.5 -mx-0.5 text-left text-neutral-500 hover:bg-white/[0.035] hover:text-neutral-300"
                   >
                     <span className={statusColor}>
-                      {hasResult ? (isError ? '✗' : '⏺') : '→'}
+                      {hasResult ? (isError ? '✗' : '·') : '→'}
                     </span>
-                    <span className="text-amber-200 ml-1">{row.name}</span>
+                    <span className="ml-1 text-neutral-400">{row.name}</span>
                     {row.args && (
-                      <span className="text-neutral-400 ml-1" title={row.args}>
+                      <span className="ml-1 text-neutral-600" title={row.args}>
                         ({!isOpen ? compactTerminalPreview(row.args, TERMINAL_TOOL_ARGS_PREVIEW_CHARS) : row.args})
                       </span>
                     )}
@@ -1068,7 +1486,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
                     )}
                   </button>
                   {hasResult && isOpen && (
-                    <div className={`ml-1 flex whitespace-pre-wrap break-words ${isError ? 'text-red-300' : 'text-neutral-300'}`}>
+                    <div className={`ml-1 flex whitespace-pre-wrap break-words ${isError ? 'text-red-300' : 'text-neutral-500'}`}>
                       <span className="text-neutral-600 select-none mr-1">└─</span>
                       <span className="flex-1">{row.result}</span>
                     </div>
@@ -1079,7 +1497,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
             case 'attachment':
               return <div key={idx} className="text-neutral-500">{row.text}</div>
             case 'done':
-              return <div key={idx} className="text-emerald-500/70 mt-1 text-[10.5px] font-mono">{row.text}</div>
+              return <div key={idx} className={`${theme.done} mt-1 ${theme.doneText} font-mono`}>{row.text}</div>
             case 'error':
               return <div key={idx} className="text-red-400">[error] {row.text}</div>
             case 'plain':
@@ -1087,7 +1505,7 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
           }
         })}
         {isStreaming && (
-          <div className="mt-1 text-cyan-300/80">{spinner} <span className="text-neutral-500">working…</span></div>
+          <div className={`mt-1 ${theme.streaming}`}>{spinner} <span className="text-neutral-500">working…</span></div>
         )}
       </div>
       {terminal && (() => {
@@ -1098,7 +1516,8 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
         const dur = typeof st.duration_ms === 'number' && st.duration_ms > 0
           ? `${(st.duration_ms / 1000).toFixed(st.duration_ms < 10_000 ? 1 : 0)}s`
           : ''
-        const tools = typeof st.tool_count === 'number' && st.tool_count > 0 ? `${st.tool_count} tools` : ''
+        const toolCount = typeof st.tool_count === 'number' ? st.tool_count : 0
+        const tools = toolCount > 0 ? `${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}` : ''
         const segments = [
           st.provider_label || terminal.label || terminal.execution_kind || 'pane',
           tools,
@@ -1107,8 +1526,8 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
           dur,
         ].filter(Boolean)
         return (
-          <div className="flex items-center gap-2 border-t border-neutral-700/70 bg-[#101211] px-3 py-1 font-mono text-[11px] text-neutral-500">
-            <span className={isStreaming ? 'text-cyan-300/80' : 'text-neutral-600'}>{isStreaming ? spinner : '·'}</span>
+          <div className={`flex items-center gap-2 border-t border-neutral-700/70 bg-[#101211] px-3 py-1 font-mono text-neutral-500 ${theme.footerText}`}>
+            <span className={isStreaming ? theme.streaming : 'text-neutral-600'}>{isStreaming ? spinner : '·'}</span>
             <span className="truncate">{segments.join('  ·  ')}</span>
           </div>
         )
@@ -1218,6 +1637,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [dismissedRouteIDs, setDismissedRouteIDs] = useState<Set<string>>(() => new Set())
   const [dismissedErrorIDs, setDismissedErrorIDs] = useState<Set<string>>(() => readDismissedTerminalErrorIDs(currentSessionId))
   const [expandedErrorIDs, setExpandedErrorIDs] = useState<Set<string>>(() => new Set())
+  const [terminalColorScheme, setTerminalColorScheme] = useState<TerminalColorScheme>(() => readStoredTerminalColorScheme())
   const [error, setError] = useState<string | null>(null)
   const [debugInput, setDebugInput] = useState('')
   const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
@@ -1238,6 +1658,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       return next
     })
   }, [currentSessionId])
+
+  const updateTerminalColorScheme = useCallback((scheme: TerminalColorScheme) => {
+    setTerminalColorScheme(scheme)
+    writeStoredTerminalColorScheme(scheme)
+  }, [])
 
   const toggleTerminalError = useCallback((errorID: string) => {
     setExpandedErrorIDs(prev => {
@@ -1299,12 +1724,14 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   }, [sessionEvents, dismissedErrorIDs])
   const terminalOutputRef = useRef<HTMLElement | null>(null)
   const terminalAutoScrollRef = useRef(true)
+  const terminalManualScrollLockRef = useRef(false)
   const selectedTerminalIDRef = useRef<string | null>(null)
   const fetchInFlightRef = useRef(false)
   const detailRequestSeqRef = useRef(0)
   const terminalsRef = useRef<TerminalSnapshot[]>([])
   const emptyResponseCountRef = useRef(0)
   const lastFetchScopeRef = useRef<string | null>(null)
+  const terminalTheme = TERMINAL_THEMES[terminalColorScheme]
 
   useEffect(() => {
     terminalsRef.current = terminals
@@ -1450,7 +1877,17 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     const key = terminalPaneKey(terminal)
     setSelectedID(key)
     setUserSelectedID(key)
+    terminalAutoScrollRef.current = true
+    terminalManualScrollLockRef.current = false
     setDebugPanelOpenForID(current => current === key ? null : key)
+  }, [])
+
+  const selectTerminalFromRail = useCallback((terminal: TerminalSnapshot) => {
+    const key = terminalPaneKey(terminal)
+    setSelectedID(key)
+    setUserSelectedID(key)
+    terminalAutoScrollRef.current = true
+    terminalManualScrollLockRef.current = false
   }, [])
 
   const fetchTerminals = useCallback(async () => {
@@ -1753,7 +2190,16 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const handleTerminalScroll = useCallback(() => {
     const el = terminalOutputRef.current
     if (!el) return
-    terminalAutoScrollRef.current = isScrolledNearBottom(el)
+    const isNearBottom = isScrolledNearBottom(el)
+    terminalAutoScrollRef.current = isNearBottom
+    terminalManualScrollLockRef.current = !isNearBottom
+  }, [])
+
+  const handleTerminalWheel = useCallback((event: React.WheelEvent<HTMLElement>) => {
+    if (event.deltaY < 0) {
+      terminalAutoScrollRef.current = false
+      terminalManualScrollLockRef.current = true
+    }
   }, [])
 
   useEffect(() => {
@@ -1762,11 +2208,15 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
 
     const terminalChanged = selectedTerminalIDRef.current !== selectedTerminalKey
     if (terminalChanged) {
+      const isFirstSelection = selectedTerminalIDRef.current === null
       selectedTerminalIDRef.current = selectedTerminalKey
-      terminalAutoScrollRef.current = true
+      if (isFirstSelection || !terminalManualScrollLockRef.current) {
+        terminalAutoScrollRef.current = true
+        terminalManualScrollLockRef.current = false
+      }
     }
 
-    if (!terminalAutoScrollRef.current) return
+    if (!terminalAutoScrollRef.current || terminalManualScrollLockRef.current) return
 
     const frame = window.requestAnimationFrame(() => {
       const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
@@ -1784,13 +2234,13 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const renderRouteRailItem = (decision: RoutingDecision, depth: number = 0) => (
     <div
       key={`route-${decision.id}`}
-      className="group block w-full border-l-2 border-l-cyan-400/70 bg-cyan-950/15 py-1.5 pl-2.5 pr-2.5 text-left text-xs text-cyan-100"
+      className={`group block w-full border-l-2 py-1.5 pl-2.5 pr-2.5 text-left ${terminalTheme.railText} ${terminalTheme.routeRail}`}
       title={routeDecisionTitle(decision)}
       style={{ paddingLeft: terminalRailPadding(depth) }}
     >
       <div className="flex items-center gap-1.5">
         <TerminalRailBranchMarker depth={depth} />
-        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-cyan-400/15 text-cyan-300">
+        <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded ${terminalTheme.routeIcon}`}>
           <GitBranch className="h-3 w-3" />
         </span>
         <span className="min-w-0 flex-1 truncate font-semibold">
@@ -1806,14 +2256,14 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               return next
             })
           }}
-          className="shrink-0 rounded p-0.5 text-cyan-300/50 opacity-0 hover:bg-cyan-900/45 hover:text-cyan-100 group-hover:opacity-100 focus:opacity-100"
+          className={`shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 focus:opacity-100 ${terminalTheme.routeClose}`}
           title="Remove routing marker from UI"
           aria-label="Remove routing marker from UI"
         >
           <X className="h-3 w-3" />
         </button>
       </div>
-      <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-cyan-300/75">
+      <div className={`mt-0.5 flex items-center gap-1.5 ${terminalTheme.railMetaText} ${terminalTheme.routeMeta}`}>
         <span className="min-w-0 truncate">
           {decision.nextStepId ? `next ${decision.nextStepId}` : decision.stepTitle || decision.stepId || 'route selected'}
         </span>
@@ -1826,7 +2276,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
 
   const renderRailItem = (terminal: TerminalSnapshot, depth: number = 0) => (
     (() => {
-      const preValidationChip = terminalPreValidationChip(terminal)
+      const preValidationChip = terminalPreValidationChip(terminal, terminalTheme)
       const state = terminalState(terminal)
       const isRunning = state === 'running'
       return (
@@ -1835,19 +2285,17 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
           role="button"
           tabIndex={0}
           onClick={() => {
-            setSelectedID(terminalPaneKey(terminal))
-            setUserSelectedID(terminalPaneKey(terminal))
+            selectTerminalFromRail(terminal)
           }}
           onKeyDown={event => {
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault()
-              setSelectedID(terminalPaneKey(terminal))
-              setUserSelectedID(terminalPaneKey(terminal))
+              selectTerminalFromRail(terminal)
             }
           }}
-          className={`group block w-full cursor-pointer border-l-2 py-1.5 pl-2.5 pr-2.5 text-left text-xs transition-colors ${
+          className={`group block w-full cursor-pointer border-l-2 py-1.5 pl-2.5 pr-2.5 text-left transition-colors ${terminalTheme.railText} ${
             terminalPaneKey(terminal) === selectedTerminalKey
-              ? 'border-l-emerald-300 bg-[#222826] text-neutral-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
+              ? terminalTheme.railSelected
               : 'border-l-transparent text-neutral-400 hover:bg-[#1b1f1d] hover:text-neutral-200'
           }`}
           style={{ paddingLeft: terminalRailPadding(depth) }}
@@ -1856,7 +2304,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
             <TerminalRailBranchMarker depth={depth} />
             {isRunning ? (
               <span
-                className="w-2 shrink-0 text-center font-mono text-[10px] leading-none text-cyan-300/90"
+                className={`w-2 shrink-0 text-center font-mono text-[10px] leading-none ${terminalTheme.railSpinner}`}
                 title={terminalStateDescription(terminal)}
                 aria-label={terminalStateDescription(terminal)}
               >
@@ -1864,7 +2312,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               </span>
             ) : (
               <span
-                className={`h-2 w-2 shrink-0 rounded-full ${terminalDotClass(terminal)}`}
+                className={`h-2 w-2 shrink-0 rounded-full ${terminalDotClass(terminal, terminalTheme)}`}
                 title={terminalStateDescription(terminal)}
                 aria-label={terminalStateDescription(terminal)}
               />
@@ -1885,11 +2333,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               </button>
             )}
           </div>
-          <div className="mt-0.5 flex items-center gap-1.5 text-[10px] opacity-70">
+          <div className={`mt-0.5 flex items-center gap-1.5 opacity-70 ${terminalTheme.railMetaText}`}>
             <span className="min-w-0 truncate">{formatTransportChip(terminal)}</span>
             {preValidationChip && (
               <span
-                className={`shrink-0 rounded border px-1 py-0.5 text-[9px] font-semibold leading-none ${preValidationChip.className}`}
+                className={`shrink-0 rounded border px-1 py-0.5 font-semibold leading-none ${terminalTheme.microText} ${preValidationChip.className}`}
                 title={preValidationChip.title}
               >
                 {preValidationChip.label}
@@ -1905,10 +2353,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               </span>
             )}
             {state === 'closing' && (
-              <span className="shrink-0 text-amber-300">· {terminalStateLabel(terminal)}</span>
+              <span className={`shrink-0 ${terminalTheme.warningText}`}>· {terminalStateLabel(terminal)}</span>
             )}
             {terminalFallbackInfo(terminal) && (
-              <span className="shrink-0 text-amber-300" title={terminalFallbackInfo(terminal)?.title}>
+              <span className={`shrink-0 ${terminalTheme.warningText}`} title={terminalFallbackInfo(terminal)?.title}>
                 · {terminalFallbackInfo(terminal)?.label}
               </span>
             )}
@@ -1984,7 +2432,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               right pane shows live output, tool calls, and cost.
             </div>
             <div className="mt-1 flex items-center gap-1.5 text-[11px] text-neutral-600">
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
+              <span className={`inline-block h-1.5 w-1.5 animate-pulse rounded-full ${terminalTheme.emptyPulse}`} />
               <span>Watching for activity…</span>
             </div>
           </div>
@@ -2009,11 +2457,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               {selectedTerminalView ? (
                 <>
-                  <div className="flex items-center justify-between gap-3 border-b border-neutral-700/70 bg-[#171a18] px-3 py-2 text-xs text-neutral-400">
+                  <div className={`flex items-center justify-between gap-3 border-b border-neutral-700/70 bg-[#171a18] px-3 py-2 text-neutral-400 ${terminalTheme.headerText}`}>
                     <div className="flex min-w-0 flex-1 items-center gap-2">
                       {selectedRouteDecision && (
                         <span
-                          className="inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded border border-cyan-700/60 bg-cyan-950/25 px-1.5 py-0.5 text-[10px] font-medium text-cyan-200"
+                          className={`inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 font-medium ${terminalTheme.chipText} ${terminalTheme.selectedRouteChip}`}
                           title={routeDecisionTitle(selectedRouteDecision)}
                         >
                           <GitBranch className="h-3 w-3 shrink-0" />
@@ -2027,7 +2475,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                     <div className="flex shrink-0 items-center gap-2">
                       {terminalState(selectedTerminalView) === 'closing' && (
                         <span
-                          className="text-amber-300"
+                          className={terminalTheme.warningText}
                           title={terminalStateDescription(selectedTerminalView)}
                         >
                           {terminalStateLabel(selectedTerminalView)}
@@ -2035,7 +2483,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       )}
                       {terminalFallbackInfo(selectedTerminalView) && (
                         <span
-                          className="rounded border border-amber-800/70 bg-amber-950/30 px-1.5 py-0.5 text-[10px] font-medium text-amber-200"
+                          className={`rounded border px-1.5 py-0.5 font-medium ${terminalTheme.chipText} ${terminalTheme.warningChip}`}
                           title={terminalFallbackInfo(selectedTerminalView)?.title}
                         >
                           {terminalFallbackInfo(selectedTerminalView)?.label}
@@ -2049,7 +2497,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                         aria-label="Copy terminal debug IDs"
                       >
                         {copiedTerminalID === selectedTerminalView.terminal_id ? (
-                          <Check className="h-3.5 w-3.5 text-emerald-300" />
+                          <Check className={`h-3.5 w-3.5 ${terminalTheme.copiedIcon}`} />
                         ) : (
                           <Info className="h-3.5 w-3.5" />
                         )}
@@ -2060,7 +2508,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                           onClick={() => toggleDebugPanel(selectedTerminalView)}
                           className={`inline-flex items-center justify-center rounded border p-1 hover:bg-neutral-800/80 hover:text-neutral-100 ${
                             debugPanelOpenForID === terminalPaneKey(selectedTerminalView)
-                              ? 'border-cyan-700/80 text-cyan-300'
+                              ? terminalTheme.debugActive
                               : 'border-neutral-700/90 text-neutral-300'
                           }`}
                           title="Debug terminal actions"
@@ -2069,6 +2517,27 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                           <Bug className="h-3.5 w-3.5" />
                         </button>
                       )}
+                      <label
+                        className={`relative inline-flex h-6 w-7 items-center justify-center rounded border border-neutral-700/90 bg-[#101211] text-neutral-500 hover:bg-neutral-800/80 hover:text-neutral-100 focus-within:text-neutral-100 ${terminalTheme.inputFocus}`}
+                        title={`Terminal color theme: ${TERMINAL_COLOR_SCHEME_OPTIONS.find(option => option.value === terminalColorScheme)?.label || terminalColorScheme}`}
+                        aria-label="Terminal color theme"
+                      >
+                        <Palette className="pointer-events-none h-3.5 w-3.5" />
+                        <select
+                          value={terminalColorScheme}
+                          onChange={event => {
+                            const next = event.target.value
+                            if (isTerminalColorScheme(next)) updateTerminalColorScheme(next)
+                          }}
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                        >
+                          {TERMINAL_COLOR_SCHEME_OPTIONS.map(option => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                       {canDismissTerminal(selectedTerminalView) && (
                         <button
                           type="button"
@@ -2083,12 +2552,12 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                     </div>
                   </div>
                   {terminalPreValidationSummary(selectedTerminalView) && (
-                    <div className={`border-b border-neutral-700/70 bg-[#151716] px-3 py-1.5 text-xs ${terminalPreValidationClass(selectedTerminalView)}`}>
+                    <div className={`border-b border-neutral-700/70 bg-[#151716] px-3 py-1.5 ${terminalTheme.headerText} ${terminalPreValidationClass(selectedTerminalView, terminalTheme)}`}>
                       {terminalPreValidationSummary(selectedTerminalView)}
                     </div>
                   )}
                   {debugPanelOpenForID === terminalPaneKey(selectedTerminalView) && hasTerminalDebugActions(selectedTerminalView) && (
-                    <div className="flex flex-wrap items-center gap-1.5 border-b border-neutral-700/70 bg-[#151716] px-3 py-2 text-xs">
+                    <div className={`flex flex-wrap items-center gap-1.5 border-b border-neutral-700/70 bg-[#151716] px-3 py-2 ${terminalTheme.headerText}`}>
                       <button
                         type="button"
                         onClick={() => void copyTerminalPaneText(selectedTerminalView)}
@@ -2168,7 +2637,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                               }
                             }}
                             placeholder="Debug paste to this tmux terminal"
-                            className="min-w-[220px] flex-1 rounded border border-neutral-700/90 bg-[#101211] px-2 py-1.5 text-neutral-100 placeholder:text-neutral-600 focus:border-cyan-500/80 focus:outline-none"
+                            className={`min-w-[220px] flex-1 rounded border border-neutral-700/90 bg-[#101211] px-2 py-1.5 text-neutral-100 placeholder:text-neutral-600 focus:outline-none ${terminalTheme.inputFocus}`}
                           />
                           <button
                             type="button"
@@ -2213,15 +2682,19 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                   {isSyntheticTerminal(selectedTerminalView) ? (
                     <StructuredTerminalView
                       content={selectedTerminalDisplayContent}
+                      rows={priorArchivedTurns.length === 0 ? selectedTerminalView.rows : undefined}
                       scrollRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
                       onScroll={handleTerminalScroll}
+                      onWheel={handleTerminalWheel as (e: React.WheelEvent<HTMLDivElement>) => void}
                       terminal={selectedTerminalView}
+                      theme={terminalTheme}
                     />
                   ) : (
                     <pre
                       ref={terminalOutputRef as React.RefObject<HTMLPreElement | null>}
                       onScroll={handleTerminalScroll}
-                      className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-[#0b0d0c] p-2.5 font-mono text-[12px] leading-5 whitespace-pre-wrap break-words text-neutral-100 selection:bg-cyan-500/25"
+                      onWheel={handleTerminalWheel}
+                      className={`min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-[#0b0d0c] p-2.5 font-mono whitespace-pre-wrap break-words text-neutral-100 ${terminalTheme.contentText} ${terminalTheme.selection}`}
                     >
                       {selectedTerminalDisplayContent}
                     </pre>

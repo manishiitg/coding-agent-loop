@@ -42,6 +42,7 @@ type Snapshot struct {
 	DisplayMeta       string     `json:"display_meta,omitempty"`
 	TmuxSession       string     `json:"tmux_session,omitempty"`
 	Content           string     `json:"content"`
+	Rows              []Row      `json:"rows"`
 	ChunkIndex        int        `json:"chunk_index"`
 	Active            bool       `json:"active"`
 	State             string     `json:"state"`
@@ -347,8 +348,9 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 		delete(s.forcedInactive, terminalID)
 	}
 	inactiveNewTurn := exists && !current.Active && isNewTerminalTurn(current, now, chunkIndex)
-	chunkIndexResetTurn := exists && current.Active && isChunkIndexResetTerminalTurn(current, content, chunkIndex)
-	if exists && chunkIndex < current.ChunkIndex && !inactiveNewTurn && !chunkIndexResetTurn {
+	sameTurnExtension := exists && chunkIndex < current.ChunkIndex && terminalContentExtends(current.Content, content)
+	chunkIndexResetTurn := exists && current.Active && !sameTurnExtension && isChunkIndexResetTerminalTurn(current, content, chunkIndex)
+	if exists && chunkIndex < current.ChunkIndex && !inactiveNewTurn && !chunkIndexResetTurn && !sameTurnExtension {
 		return
 	}
 	freshTurn := inactiveNewTurn || chunkIndexResetTurn
@@ -431,6 +433,14 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	content = s.contentWithToolLinesLocked(terminalID, content)
 	contentChanged := !exists || current.Content != content
 	current.Content = content
+	if rows := terminalRowsFromMetadata(metadata); len(rows) > 0 {
+		current.Rows = rows
+	} else if contentChanged {
+		current.Rows = nil
+	}
+	if sameTurnExtension && chunkIndex < current.ChunkIndex {
+		chunkIndex = current.ChunkIndex
+	}
 	current.ChunkIndex = chunkIndex
 	current.Active = true
 	current.State = terminalStateFromContent(content, true)
@@ -607,6 +617,91 @@ func truncateTerminalToolText(value string) string {
 	return string(runes[:terminalToolTextMaxRunes]) + "... [truncated]"
 }
 
+func terminalRowsFromMetadata(metadata map[string]interface{}) []Row {
+	if len(metadata) == 0 {
+		return nil
+	}
+	raw, ok := metadata["rows"]
+	if !ok || raw == nil {
+		raw, ok = metadata["terminal_rows"]
+	}
+	if !ok || raw == nil {
+		return nil
+	}
+	switch rows := raw.(type) {
+	case []Row:
+		return cloneTerminalRows(rows)
+	case []map[string]interface{}:
+		return terminalRowsFromMaps(rows)
+	case []interface{}:
+		return terminalRowsFromInterfaces(rows)
+	default:
+		data, err := json.Marshal(raw)
+		if err != nil {
+			return nil
+		}
+		var parsed []Row
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			return nil
+		}
+		return cloneTerminalRows(parsed)
+	}
+}
+
+func terminalRowsFromMaps(items []map[string]interface{}) []Row {
+	rows := make([]Row, 0, len(items))
+	for _, item := range items {
+		row := Row{
+			Kind:         stringValue(item, "kind"),
+			Text:         stringValue(item, "text"),
+			Name:         stringValue(item, "name"),
+			Args:         stringValue(item, "args"),
+			Result:       stringValue(item, "result"),
+			ResultPrefix: stringValue(item, "result_prefix"),
+		}
+		if row.Kind != "" {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func terminalRowsFromInterfaces(items []interface{}) []Row {
+	rows := make([]Row, 0, len(items))
+	for _, item := range items {
+		switch value := item.(type) {
+		case Row:
+			rows = append(rows, value)
+		case map[string]interface{}:
+			rows = append(rows, terminalRowsFromMaps([]map[string]interface{}{value})...)
+		default:
+			data, err := json.Marshal(value)
+			if err != nil {
+				continue
+			}
+			var row Row
+			if err := json.Unmarshal(data, &row); err != nil {
+				continue
+			}
+			if row.Kind != "" {
+				rows = append(rows, row)
+			}
+		}
+	}
+	return rows
+}
+
+func cloneTerminalRows(rows []Row) []Row {
+	out := make([]Row, 0, len(rows))
+	for _, row := range rows {
+		if row.Kind == "" {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 func (s *Store) reconcileTerminalStateLocked(terminalID string, now time.Time) (Snapshot, bool) {
 	snapshot, ok := s.byID[terminalID]
 	if !ok {
@@ -735,6 +830,15 @@ func isChunkIndexResetTerminalTurn(current Snapshot, content string, chunkIndex 
 		return false
 	}
 	return true
+}
+
+func terminalContentExtends(existing, next string) bool {
+	existing = strings.TrimRight(existing, "\n")
+	next = strings.TrimRight(next, "\n")
+	if existing == "" || next == "" || existing == next {
+		return false
+	}
+	return strings.HasPrefix(next, existing)
 }
 
 func isNewTerminalTurnAfterManualComplete(current Snapshot, eventTime time.Time, chunkIndex int, forcedAt time.Time) bool {
@@ -1169,16 +1273,17 @@ func isStructuredWorkflowTerminalMetadata(metadata map[string]interface{}) bool 
 
 func terminalOwnerID(sessionID string, event storeevents.Event, metadata map[string]interface{}) string {
 	candidates := []string{
-		event.ExecutionID,
 		stringValue(metadata, "execution_owner_id"),
 		stringValue(metadata, "owner_execution_id"),
-		stringValue(metadata, "execution_id"),
+		workflowStepOwnerCandidate(event, metadata),
 		stringValue(metadata, "background_agent_id"),
 		stringValue(metadata, "delegation_id"),
 		stringValue(metadata, "agent_id"),
 		stringValue(metadata, "current_step_id"),
 		stringValue(metadata, "workflow_step_id"),
 		stringValue(metadata, "step_id"),
+		stringValue(metadata, "execution_id"),
+		event.ExecutionID,
 		stringValue(metadata, "correlation_id"),
 	}
 	for _, candidate := range candidates {
@@ -1186,6 +1291,35 @@ func terminalOwnerID(sessionID string, event storeevents.Event, metadata map[str
 		if candidate != "" && candidate != sessionID {
 			return candidate
 		}
+	}
+	return ""
+}
+
+func workflowStepOwnerCandidate(event storeevents.Event, metadata map[string]interface{}) string {
+	for _, candidate := range []string{
+		event.ExecutionID,
+		stringValue(metadata, "execution_id"),
+		stringValue(metadata, "agent_execution_id"),
+	} {
+		candidate = strings.TrimSpace(candidate)
+		if strings.HasPrefix(candidate, "workflow-step:") {
+			return candidate
+		}
+	}
+
+	workflowID := firstNonEmpty(
+		stringValue(metadata, "workflow_execution_id"),
+		stringValue(metadata, "workflow_run_id"),
+		stringValue(metadata, "execution_id"),
+		event.ExecutionID,
+	)
+	stepID := firstNonEmpty(
+		stringValue(metadata, "current_step_id"),
+		stringValue(metadata, "workflow_step_id"),
+		stringValue(metadata, "step_id"),
+	)
+	if strings.HasPrefix(workflowID, "workflow-full-") && stepID != "" {
+		return "workflow-step:" + workflowID + ":" + stepID
 	}
 	return ""
 }

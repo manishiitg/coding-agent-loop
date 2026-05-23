@@ -78,13 +78,23 @@ func (a *Aggregate) add(e Entry) {
 	a.CallCount++
 }
 
+// DateAggregate is one row in the per-date rollup. It embeds Aggregate
+// so its JSON shape stays flat (existing consumers reading
+// `prompt_tokens`/`call_count`/etc. at the date level keep working),
+// and adds a per-model breakdown for clients that want to expand the
+// row.
+type DateAggregate struct {
+	Aggregate
+	ByModel map[string]*Aggregate `json:"by_model,omitempty"`
+}
+
 // Summary is the aggregated view returned by Summarize.
 type Summary struct {
-	From    string                `json:"from,omitempty"`
-	To      string                `json:"to,omitempty"`
-	Total   Aggregate             `json:"total"`
-	ByDate  map[string]*Aggregate `json:"by_date"`  // YYYY-MM-DD UTC
-	ByModel map[string]*Aggregate `json:"by_model"` // model_id
+	From    string                    `json:"from,omitempty"`
+	To      string                    `json:"to,omitempty"`
+	Total   Aggregate                 `json:"total"`
+	ByDate  map[string]*DateAggregate `json:"by_date"`  // YYYY-MM-DD UTC
+	ByModel map[string]*Aggregate     `json:"by_model"` // model_id
 }
 
 // Ledger appends token_usage records to _system/costs.jsonl through the
@@ -216,7 +226,7 @@ func (l *Ledger) Summarize(from, to string) (*Summary, error) {
 	summary := &Summary{
 		From:    from,
 		To:      to,
-		ByDate:  make(map[string]*Aggregate),
+		ByDate:  make(map[string]*DateAggregate),
 		ByModel: make(map[string]*Aggregate),
 	}
 
@@ -249,11 +259,21 @@ func (l *Ledger) Summarize(from, to string) (*Summary, error) {
 		summary.Total.add(e)
 		bucket, ok := summary.ByDate[date]
 		if !ok {
-			bucket = &Aggregate{}
+			bucket = &DateAggregate{ByModel: make(map[string]*Aggregate)}
 			summary.ByDate[date] = bucket
 		}
-		bucket.add(e)
+		bucket.Aggregate.add(e)
 		if e.ModelID != "" {
+			if bucket.ByModel == nil {
+				bucket.ByModel = make(map[string]*Aggregate)
+			}
+			dm, ok := bucket.ByModel[e.ModelID]
+			if !ok {
+				dm = &Aggregate{}
+				bucket.ByModel[e.ModelID] = dm
+			}
+			dm.add(e)
+
 			mb, ok := summary.ByModel[e.ModelID]
 			if !ok {
 				mb = &Aggregate{}

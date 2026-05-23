@@ -1,7 +1,6 @@
 import React, { useCallback, useState } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer'
-import { CODING_AGENT_PROVIDERS } from '../../../utils/llmDisplay'
 
 interface UnifiedCompletionEvent {
   timestamp?: string
@@ -25,24 +24,6 @@ interface UnifiedCompletionEvent {
 interface UnifiedCompletionEventDisplayProps {
   event: UnifiedCompletionEvent
 }
-
-const metadataBool = (value: unknown): boolean => value === true || value === 'true'
-
-const shouldUseTerminalFormatting = (event: UnifiedCompletionEvent): boolean => {
-  if (metadataBool(event.metadata?.coding_agent_terminal_format)) {
-    return true
-  }
-  const provider = typeof event.metadata?.provider === 'string' ? event.metadata.provider : ''
-  return CODING_AGENT_PROVIDERS.has(provider)
-}
-
-const TerminalCompletionRenderer: React.FC<{ content: string }> = ({ content }) => (
-  <div className="min-w-0 max-w-full overflow-hidden">
-    <pre className="m-0 max-w-full whitespace-pre-wrap break-words font-mono text-xs leading-5 text-gray-800 dark:text-gray-200">
-      {content}
-    </pre>
-  </div>
-)
 
 export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDisplayProps> = ({ event }) => {
 
@@ -84,19 +65,6 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
   // assistant messages. Otherwise an event with status=error and final_result
   // collapses to a generic "Error" box and hides the useful restored summary.
   if (event.final_result) {
-    const useTerminalFormatting = shouldUseTerminalFormatting(event)
-    // Detect JSON
-    let isJSON = false
-    let parsedJSON: unknown = null
-    if (!useTerminalFormatting) {
-      try {
-        parsedJSON = JSON.parse(event.final_result)
-        isJSON = true
-      } catch {
-        // not JSON
-      }
-    }
-
     return (
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
@@ -105,20 +73,12 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
               <button
                 onClick={handleCopy}
                 className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                title={useTerminalFormatting ? 'Copy text' : 'Copy markdown'}
+                title="Copy markdown"
               >
                 {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
             </div>
-            {useTerminalFormatting ? (
-              <TerminalCompletionRenderer content={event.final_result} />
-            ) : isJSON ? (
-              <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap">
-                {JSON.stringify(parsedJSON, null, 2)}
-              </pre>
-            ) : (
-              <ConversationMarkdownRenderer content={event.final_result} maxHeight="none" framed={false} />
-            )}
+            <ConversationMarkdownRenderer content={event.final_result} maxHeight="none" framed={false} />
           </div>
           <div className="flex items-center gap-2 mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500">
             {event.duration && <span>{formatDuration(event.duration)}</span>}

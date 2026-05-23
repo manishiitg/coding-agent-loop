@@ -200,6 +200,21 @@ func TestCostSummaryHTTPCapturesRealClaudeCodeTmuxTurn(t *testing.T) {
 		t.Fatalf("CompletionTokens = 0 — sidecar parser regression. gi.Additional=%v", gi.Additional)
 	}
 
+	// Verify the adapter populates CodingProviderIntermediateMessages
+	// from the sidecar JSONL — even a single-turn "Reply OK" produces
+	// at least one assistant text message from the CLI's transcript.
+	// (mcpagent will splice these into conversation_history in the
+	// non-direct-LLM flow; this test exercises only the adapter, but
+	// the assertion proves the wiring works end-to-end.)
+	intermediate, hasIntermediate := llmtypes.ExtractCodingProviderIntermediateMessages(gi)
+	if !hasIntermediate || len(intermediate.Messages) == 0 {
+		t.Fatalf("CodingProviderIntermediateMessages empty — adapter should reconstruct CLI turn trail from sidecar JSONL (responseSessionID handle=%+v)", gi.CodingProviderSessionHandle)
+	}
+	if intermediate.Transport != llmtypes.CodingProviderTransportTmux {
+		t.Fatalf("intermediate.Transport = %q, want %q", intermediate.Transport, llmtypes.CodingProviderTransportTmux)
+	}
+	t.Logf("✅ adapter populated %d intermediate message(s) from sidecar", len(intermediate.Messages))
+
 	additional := map[string]interface{}{}
 	for k, v := range gi.Additional {
 		additional[k] = v

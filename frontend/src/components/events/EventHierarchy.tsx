@@ -59,14 +59,18 @@ const EXECUTION_CANCELED_EVENT_TYPES = new Set([
   'batch_execution_canceled',
 ]);
 
+const EXECUTION_NODE_STATUS_MIRROR_EVENT_TYPES = new Set([
+  'orchestrator_agent_end',
+  'orchestrator_agent_error',
+  'background_agent_completed',
+  'background_agent_failed',
+  'background_agent_terminated',
+]);
+
 const TREE_VISIBLE_EXECUTION_DETAIL_TYPES = new Set([
-  'batch_execution_start',
-  'batch_execution_end',
-  'batch_group_start',
-  'batch_group_end',
-  'workflow_start',
   'workflow_progress',
-  'workflow_end',
+  'background_agent_completed',
+  'background_agent_failed',
   'routing_evaluated',
   'pre_validation_completed',
   'independent_steps_selected',
@@ -130,6 +134,34 @@ function firstStringField(records: Array<Record<string, unknown> | undefined>, f
 
 function isExecutionOwnerEvent(event: PollingEvent): boolean {
   return !!event.type && EXECUTION_OWNER_EVENT_TYPES.has(event.type);
+}
+
+function isStatusOnlyCompletionText(value: string): boolean {
+  const normalized = value
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return true;
+
+  const withoutStepName = normalized
+    .replace(/^Workflow step\s*->\s*.+?\s+STATUS:/i, 'STATUS:')
+    .trim();
+  return /^STATUS:\s*(COMPLETED|FAILED|CANCELED|CANCELLED|TERMINATED)$/i.test(withoutStepName);
+}
+
+function getExecutionCompletionText(event: PollingEvent): string {
+  const data = asRecord(event.data);
+  const payload = asRecord(data?.data) || data;
+  const fields = asRecord(payload?.fields);
+  const error = firstStringField([fields, payload, data], ['error']);
+  if (error) return error;
+
+  const result = firstStringField([fields, payload, data], ['result', 'summary', 'message']) || '';
+  return isStatusOnlyCompletionText(result) ? '' : result;
+}
+
+function isExecutionNodeStatusMirrorEvent(event: PollingEvent): boolean {
+  if (getExecutionCompletionText(event) !== '') return false;
+  return !!event.type && EXECUTION_NODE_STATUS_MIRROR_EVENT_TYPES.has(event.type);
 }
 
 // Only tool-detail events remain behind the collapsed panel on an owner card.
@@ -249,7 +281,10 @@ function isRootLikeExecutionId(executionId: string): boolean {
 
 function prettyExecutionName(executionId: string): string {
   const tail = executionId.split(':').pop() || executionId;
-  return tail.replace(/^workflow-full-\d+-?/, 'Workflow ').replace(/-/g, ' ').trim() || executionId;
+  if (/^workflow-full-\d+-step-\d+-\d+$/.test(tail) || /^workflow-step-\d+-\d+$/.test(tail)) {
+    return 'Workflow step';
+  }
+  return tail.replace(/^workflow-full-\d+-?/, 'Workflow ').replace(/-\d{12,}$/g, '').replace(/-/g, ' ').trim() || executionId;
 }
 
 function eventDerivedOwnerName(event: PollingEvent, executionId: string): string {
@@ -642,7 +677,10 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     if (result.length <= MAX_EVENTS_TO_PROCESS) return returnStable(result);
 
-    // Smart cap: preserve structural events, cap sub-agent children per delegation.
+    // Smart cap: preserve structural events across the whole run, then fill the
+    // remaining budget with recent detail events. Refreshing a long workflow
+    // should not reshape the execution tree just because older context fell out
+    // of the non-structural detail budget.
     // Structural events (delegation_start/end, orchestrator boundaries) are always kept
     // because dropping them breaks the tree (orphan children, missing cards).
     // Sub-agent child events are capped per delegation since SubAgentHierarchy only renders 30.
@@ -666,20 +704,26 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       'user_message'
     ]);
 
+    const structuralEvents = new Map<string, PollingEvent>();
+    result.forEach(event => {
+      if (STRUCTURAL_TYPES.has(event.type || '')) {
+        structuralEvents.set(event.id, event);
+      }
+    });
+
+    const detailBudget = Math.max(MAX_EVENTS_TO_PROCESS - structuralEvents.size, 0);
+
     // Count children per delegation (events with a delegation- correlation_id)
     const delegationChildCounts = new Map<string, number>();
-    const capped: PollingEvent[] = [];
+    const recentDetailEvents: PollingEvent[] = [];
 
     // Iterate newest-first so we keep the latest children per delegation
     for (let i = result.length - 1; i >= 0; i--) {
       const ev = result[i];
       const type = ev.type || '';
 
-      // Always keep structural events
-      if (STRUCTURAL_TYPES.has(type)) {
-        capped.push(ev);
-        continue;
-      }
+      if (STRUCTURAL_TYPES.has(type)) continue;
+      if (recentDetailEvents.length >= detailBudget) break;
 
       // Check if this is a sub-agent child event (has delegation- correlation_id)
       let delegationId: string | undefined;
@@ -697,13 +741,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         delegationChildCounts.set(delegationId, count + 1);
       }
 
-      capped.push(ev);
-      // Stop once we have enough
-      if (capped.length >= MAX_EVENTS_TO_PROCESS) break;
+      recentDetailEvents.push(ev);
     }
 
-    // Reverse back to chronological order
-    capped.reverse();
+    const capped = [...structuralEvents.values(), ...recentDetailEvents];
+    capped.sort((a, b) => compareEventsChronologically(a, b, sourceOrder));
     return returnStable(capped);
   }, [events, loadedOlderEvents]);
 
@@ -1366,6 +1408,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
       for (const event of realFilteredEvents) {
         if (ownerEventIds.has(event.id) || isExecutionOwnerEvent(event)) continue;
+        if (isExecutionNodeStatusMirrorEvent(event)) continue;
 
         const rawExecutionId = getExecutionId(event);
         const rawParentExecutionId = getEventParentExecutionId(event)?.trim();
@@ -1424,10 +1467,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         return !executionId || isRootLikeExecutionId(executionId) || !executionNodeById.has(executionId);
       });
 
-      return [
+      const rootNodes = [
         ...executionRoots,
         ...fallbackRootEvents.map(event => buildAttachedEventNode(event, 0)),
       ];
+      return rootNodes.sort((a, b) => compareEventsChronologically(a.event, b.event, new Map()));
     }
 
     const sourceOrder = new Map<string, number>();

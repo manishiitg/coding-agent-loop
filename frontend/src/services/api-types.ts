@@ -473,6 +473,7 @@ export interface TerminalSnapshot {
   step_transport?: string
   step_triggered_by?: string
   content: string
+  rows: TerminalSnapshotRow[]
   chunk_index: number
   active: boolean
   state?: 'running' | 'completed' | 'failed' | 'idle' | 'closing' | 'stale' | string
@@ -481,6 +482,15 @@ export interface TerminalSnapshot {
   status: TerminalStatus
   created_at: string
   updated_at: string
+}
+
+export interface TerminalSnapshotRow {
+  kind: string
+  text?: string
+  name?: string
+  args?: string
+  result?: string
+  result_prefix?: '✓' | '✗' | string
 }
 
 export interface TerminalStatus {
@@ -1014,11 +1024,19 @@ export interface CostAggregate {
   call_count: number
 }
 
+// CostDateAggregate is one row in the per-date rollup. It inherits all
+// CostAggregate fields (so existing per-date totals still read flat),
+// and adds an optional per-model breakdown for that date so clients
+// can expand a row to see which models contributed.
+export interface CostDateAggregate extends CostAggregate {
+  by_model?: Record<string, CostAggregate>
+}
+
 export interface CostSummary {
   from?: string
   to?: string
   total: CostAggregate
-  by_date: Record<string, CostAggregate>
+  by_date: Record<string, CostDateAggregate>
   by_model: Record<string, CostAggregate>
 }
 

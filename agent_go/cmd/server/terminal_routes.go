@@ -453,18 +453,18 @@ func sendTerminalKey(ctx context.Context, tmuxSession, key string) error {
 func (api *StreamingAPI) enrichTerminalSnapshot(snapshot terminals.Snapshot) terminals.Snapshot {
 	active, exists := api.getActiveSession(snapshot.SessionID)
 	if !exists || active == nil {
-		return snapshot.WithContext(terminals.Context{})
+		return withTerminalRows(snapshot.WithContext(terminals.Context{}))
 	}
 	enriched := api.buildActiveSessionInfoSummary(active)
 	if enriched == nil {
-		return snapshot.WithContext(terminals.Context{})
+		return withTerminalRows(snapshot.WithContext(terminals.Context{}))
 	}
-	return snapshot.WithContext(terminals.Context{
+	return withTerminalRows(snapshot.WithContext(terminals.Context{
 		WorkflowName:  enriched.WorkflowName,
 		WorkflowLabel: enriched.WorkflowLabel,
 		WorkspacePath: enriched.WorkspacePath,
 		ExecutionName: enriched.CurrentExecutionName,
-	})
+	}))
 }
 
 func (api *StreamingAPI) canAccessTerminalSession(r *http.Request, sessionID string) bool {
@@ -492,11 +492,35 @@ func compactTerminalSnapshotForList(snapshot terminals.Snapshot, contentMode str
 	switch contentMode {
 	case "none", "metadata":
 		snapshot.Content = ""
+		snapshot.Rows = []terminals.Row{}
 	case "full":
+		snapshot = withTerminalRows(snapshot)
 		return snapshot
 	default:
 		snapshot.Content = terminalContentTail(snapshot.Content, listTerminalContentMaxBytes)
+		snapshot = withTerminalRows(snapshot)
 	}
+	return snapshot
+}
+
+func withTerminalRows(snapshot terminals.Snapshot) terminals.Snapshot {
+	if strings.TrimSpace(snapshot.Content) == "" {
+		snapshot.Rows = []terminals.Row{}
+		return snapshot
+	}
+	if strings.TrimSpace(snapshot.TmuxSession) != "" && strings.ToLower(strings.TrimSpace(snapshot.StepTransport)) == "tmux" {
+		snapshot.Rows = []terminals.Row{}
+		return snapshot
+	}
+	if len(snapshot.Rows) > 0 {
+		snapshot.Status = terminals.StatusWithRows(snapshot.Status, snapshot.Rows)
+		return snapshot
+	}
+	snapshot.Rows = terminals.ParseRows(snapshot.Content)
+	if snapshot.Rows == nil {
+		snapshot.Rows = []terminals.Row{}
+	}
+	snapshot.Status = terminals.StatusWithRows(snapshot.Status, snapshot.Rows)
 	return snapshot
 }
 

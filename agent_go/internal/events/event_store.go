@@ -54,6 +54,10 @@ var NEVER_SHOW_EVENTS = map[string]bool{
 // step_progress_updated is NOT in this list because it's required for React Flow canvas
 // node highlighting - it must always be sent to frontend for workflow mode to function correctly.
 var HIDDEN_EVENTS = map[string]bool{
+	"batch_execution_end":       true,
+	"batch_execution_start":     true,
+	"batch_group_end":           true,
+	"batch_group_start":         true,
 	"llm_generation_start":      true,
 	"llm_generation_with_retry": true,
 	"conversation_start":        true,
@@ -82,10 +86,6 @@ var STRUCTURAL_EVENTS = map[string]bool{
 	"background_agent_started":    true,
 	"background_agent_terminated": true,
 	"batch_execution_canceled":    true,
-	"batch_execution_end":         true,
-	"batch_execution_start":       true,
-	"batch_group_end":             true,
-	"batch_group_start":           true,
 	"blocking_human_feedback":     true,
 	"context_cancelled":           true, //nolint:misspell // Event schema uses the British spelling.
 	"conversation_end":            true,

@@ -64,6 +64,21 @@ func TestCostSummaryHTTPCapturesRealCursorTurn(t *testing.T) {
 	}
 	gi := resp.Choices[0].GenerationInfo
 
+	// Best-effort: cursor commits its sqlite store.db asynchronously
+	// after the tmux pane settles — observed 19s on trivial "Reply
+	// OK" turns. The adapter waits up to ~4s, so fast trivial turns
+	// may still return empty intermediate messages. Real tool-using
+	// turns produce mid-turn commits and are usually captured. Log
+	// the outcome but don't fail the test on empty.
+	if intermediate, ok := llmtypes.ExtractCodingProviderIntermediateMessages(gi); ok && len(intermediate.Messages) > 0 {
+		if intermediate.Transport != llmtypes.CodingProviderTransportTmux {
+			t.Fatalf("intermediate.Transport = %q, want %q", intermediate.Transport, llmtypes.CodingProviderTransportTmux)
+		}
+		t.Logf("✅ adapter populated %d intermediate message(s) from cursor store.db", len(intermediate.Messages))
+	} else {
+		t.Logf("⚠️  CodingProviderIntermediateMessages empty — cursor commits sqlite async (observed up to 19s on trivial turns); long tool-using turns are captured mid-flow")
+	}
+
 	additional := map[string]interface{}{}
 	for k, v := range gi.Additional {
 		additional[k] = v

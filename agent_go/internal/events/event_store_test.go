@@ -164,6 +164,57 @@ func TestGetEventsInitialFetchPreservesStructuralEventsOutsideLimit(t *testing.T
 	}
 }
 
+func TestEventStoreRetentionPreservesStructuralWorkflowMilestones(t *testing.T) {
+	store := NewEventStore(5)
+	defer store.Stop()
+
+	now := time.Now()
+	sessionID := "session-retention-structural"
+	store.AddEvent(sessionID, Event{
+		ID:        "route-selected",
+		Type:      "todo_task_route_selected",
+		Timestamp: now,
+		SessionID: sessionID,
+		Data: &pkgevents.AgentEvent{
+			Type:      pkgevents.EventType("todo_task_route_selected"),
+			Timestamp: now,
+		},
+	})
+
+	for i := 0; i < 10; i++ {
+		eventID := fmt.Sprintf("tool-%02d", i)
+		store.AddEvent(sessionID, Event{
+			ID:        eventID,
+			Type:      string(pkgevents.ToolCallStart),
+			Timestamp: now.Add(time.Duration(i+1) * time.Millisecond),
+			SessionID: sessionID,
+			Data: &pkgevents.AgentEvent{
+				Type:      pkgevents.ToolCallStart,
+				Timestamp: now.Add(time.Duration(i+1) * time.Millisecond),
+			},
+		})
+	}
+
+	rawIDs := eventIDs(store.GetAllEventsRaw(sessionID))
+	if !contains(rawIDs, "route-selected") {
+		t.Fatalf("retention should keep structural route event, got ids %v", rawIDs)
+	}
+	if contains(rawIDs, "tool-00") {
+		t.Fatalf("retention should drop oldest noisy tool events first, got ids %v", rawIDs)
+	}
+	if !contains(rawIDs, "tool-09") {
+		t.Fatalf("retention should keep newest noisy events after structural milestones, got ids %v", rawIDs)
+	}
+	if len(rawIDs) != 5 {
+		t.Fatalf("expected retention cap of 5 events, got %d ids %v", len(rawIDs), rawIDs)
+	}
+
+	result := store.GetEvents(sessionID, GetEventsOptions{SinceIndex: -1})
+	if gotIDs := eventIDs(result.Events); !contains(gotIDs, "route-selected") {
+		t.Fatalf("polling should return retained structural route event, got ids %v", gotIDs)
+	}
+}
+
 func eventTypes(events []Event) []string {
 	types := make([]string, 0, len(events))
 	for _, event := range events {

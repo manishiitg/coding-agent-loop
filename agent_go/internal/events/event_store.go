@@ -152,6 +152,52 @@ func preserveInitialStructuralEvents(filteredEvents []Event, limit int) []Event 
 	return result
 }
 
+func pruneEventsForRetention(events []Event, maxEvents int) ([]Event, int) {
+	if maxEvents <= 0 || len(events) <= maxEvents {
+		return events, 0
+	}
+
+	toDrop := len(events) - maxEvents
+	drop := make([]bool, len(events))
+	dropped := 0
+
+	// Prefer dropping old noisy/detail events first. Structural workflow
+	// milestones are what make restored tree/activity views understandable, so
+	// keep them whenever the buffer can make room by pruning tool/log noise.
+	for i, event := range events {
+		if dropped >= toDrop {
+			break
+		}
+		if STRUCTURAL_EVENTS[event.Type] {
+			continue
+		}
+		drop[i] = true
+		dropped++
+	}
+
+	// If a session emits more structural events than the configured cap, fall
+	// back to dropping the oldest remaining events so the bound still holds.
+	for i := range events {
+		if dropped >= toDrop {
+			break
+		}
+		if drop[i] {
+			continue
+		}
+		drop[i] = true
+		dropped++
+	}
+
+	pruned := make([]Event, 0, maxEvents)
+	for i, event := range events {
+		if drop[i] {
+			continue
+		}
+		pruned = append(pruned, event)
+	}
+	return pruned, dropped
+}
+
 // Event represents a generic event that can be stored and retrieved
 // Both MCP agent and orchestrator events now use the same AgentEvent structure
 type Event struct {
@@ -607,8 +653,8 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 
 	// Remove old events if over limit
 	if len(es.events[sessionID]) > es.maxEvents {
-		droppedCount := len(es.events[sessionID]) - es.maxEvents
-		es.events[sessionID] = es.events[sessionID][droppedCount:]
+		var droppedCount int
+		es.events[sessionID], droppedCount = pruneEventsForRetention(es.events[sessionID], es.maxEvents)
 		// Update start index to reflect dropped events
 		es.sessionStartIndices[sessionID] += droppedCount
 	}

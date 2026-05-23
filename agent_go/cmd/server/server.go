@@ -1084,6 +1084,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/sessions/{session_id}/reconnect", api.handleReconnectSession).Methods("POST")
 	apiRouter.HandleFunc("/sessions/{session_id}/status", api.handleGetSessionStatus).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/execution-tree", api.handleGetSessionExecutionTree).Methods("GET")
+	apiRouter.HandleFunc("/sessions/{session_id}/activity-tree", api.handleGetSessionActivityTree).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/dismiss", api.handleDismissSession).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/terminals", api.handleListTerminals).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/terminals/{terminal_id}", api.handleGetTerminal).Methods("GET", "OPTIONS")

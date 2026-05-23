@@ -311,6 +311,21 @@ export interface ChatTabConfig {
   enableImageGeneration?: boolean  // Enable/disable image generation virtual tool
 }
 
+const stripRestoreOnlyTabConfig = (config: ChatTabConfig): ChatTabConfig => {
+  const nextConfig: ChatTabConfig = { ...config }
+  const restoredPath = nextConfig.restoredConversationPath?.trim()
+  if (restoredPath) {
+    nextConfig.fileContext = (nextConfig.fileContext || []).filter(item => item.path !== restoredPath)
+  }
+  delete nextConfig.restoredConversationPath
+  delete nextConfig.restoredConversationSummary
+  delete nextConfig.restoredConversationTitle
+  delete nextConfig.restoredConversationWorkshopModeLabel
+  delete nextConfig.restoredConversationRuntimeLabel
+  delete nextConfig.restoredConversationNativeResume
+  return nextConfig
+}
+
 // Generalized ChatTab interface (works for multi-agent and workflow modes)
 export interface ChatTab {
   tabId: string  // Unique ID: `chat_${timestamp}` or `phase_${phaseId}_${timestamp}`
@@ -1788,7 +1803,13 @@ export const useChatStore = create<ChatState>()(
           return {
             chatTabs: {
               ...s.chatTabs,
-              [tabId]: { ...tab, sessionId: newSessionId, isStreaming: false, lastStreamingStartedAt: undefined },
+              [tabId]: {
+                ...tab,
+                sessionId: newSessionId,
+                isStreaming: false,
+                lastStreamingStartedAt: undefined,
+                config: stripRestoreOnlyTabConfig(tab.config),
+              },
             },
             tabEvents: newTabEvents,
             tabEventIndices: newTabEventIndices,
@@ -2774,13 +2795,14 @@ export const useChatStore = create<ChatState>()(
                 
                 hideToolCalls: tab.hideToolCalls ?? true, // Default true — collapse tool calls by default
                 viewMode: normalizeEventViewMode(tab.viewMode), // Persist layout mode across reload
-                config: { ...tab.config }, // CRITICAL: Persist full config including:
+                config: stripRestoreOnlyTabConfig(tab.config), // Persist durable config including:
                 // - selectedServers (MCP server selections)
                 // - llmConfig (LLM provider, model_id, fallback_models, etc.)
                 // - useCodeExecutionMode (Simple vs Code Exec mode)
                 // - fileContext (selected files/folders)
                 // - inputText (chat input text)
                 // - enableContextSummarization
+                // Restore-only fields are intentionally excluded; resume must be explicit.
                 createdAt: tab.createdAt, // Persist for ordering
                 lastAccessedAt: tab.lastAccessedAt || tab.createdAt,
                 lastViewedEventCount: 0, // @deprecated - Reset on reload
@@ -2824,14 +2846,23 @@ export const useChatStore = create<ChatState>()(
           }
 
           // Migrate tabs: compute browserMode from enableBrowserAccess/useCdp if missing
+          let migratedTabConfig = false
           for (const tab of Object.values(freshTabs)) {
+            if (tab.config?.restoredConversationPath) {
+              tab.config = stripRestoreOnlyTabConfig(tab.config)
+              migratedTabConfig = true
+            }
             if (tab.config && tab.config.browserMode === undefined) {
               if (tab.config.enableBrowserAccess) {
                 tab.config.browserMode = tab.config.useCdp ? 'cdp' : 'headless'
               } else {
                 tab.config.browserMode = 'none'
               }
+              migratedTabConfig = true
             }
+          }
+          if (migratedTabConfig) {
+            useChatStore.setState({ chatTabs: { ...freshTabs } })
           }
 
           // Auto-select first tab if activeTabId is null or points to a removed tab

@@ -1746,7 +1746,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             )}
 
             {showResumeHint && workspacePath && (
-              <div className="max-h-[min(42vh,360px)] shrink-0 overflow-y-auto">
+              <div className="shrink-0">
                 <WorkflowPreviousChatsPanel
                   workspacePath={workspacePath}
                   onHasChatsChange={handleHasPreviousWorkflowChatsChange}

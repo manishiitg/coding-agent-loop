@@ -140,7 +140,7 @@ Allowed page action forms:
 {"command": "eval", "args": ["tab", "profile", "document.title"], "session": "workflow_a"}
 ```
 
-If a CDP page action omits the tab, the tool returns an error with the current tab list. The LLM is expected to choose an existing tab or create a labeled tab, then retry the command. `open` is the exception: it uses the workflow's previously selected tab and passes only the URL to agent-browser.
+If a CDP page action omits the tab, the tool returns an error with the selected-tab hint for the current workflow. The LLM is expected to reuse that selected tab or create a labeled tab, then retry the command. `open` is the exception: it uses the workflow's previously selected tab and passes only the URL to agent-browser.
 
 Tab management commands:
 
@@ -152,8 +152,8 @@ Tab management commands:
 
 Operational rules:
 
-- List tabs first and reuse an existing suitable tab by URL/title whenever possible.
-- Create one stable labeled tab only when no current tab matches the task.
+- Try the compact real tab list first and reuse a matching tab when CDP responds; if it times out, use the selected-tab fallback.
+- Create one stable labeled tab only when no tab is selected or the selected tab is unrelated.
 - Do not close user tabs unless explicitly requested.
 - Do not rely on "latest tab" or session active-tab state for page actions.
 - The wrapper serializes `select tab -> action` with a per-CDP-port mutex. Two page commands on the same CDP port do not interleave; different CDP ports are independent.
@@ -200,7 +200,7 @@ xattr -cr /path/to/Chrome-CDP.app
 
 - **Connection Refused**: Ensure Chrome is running with `--remote-debugging-port=9222`. Check no other process uses port 9222 (`lsof -i :9222`). Close all other Chrome instances first.
 - **Agent sees a blank page**: CDP only allows one connection per tab. If DevTools "Inspect" window is open for that tab, the agent's tools may be blocked.
-- **Missing tab error**: In shared CDP mode, retry with `["tab", "<tab-id-or-label>", ...]` or `["--tab", "<tab-id-or-label>", ...]` in `args`. The error includes the current tab list.
+- **Missing tab error**: In shared CDP mode, retry with `["tab", "<tab-id-or-label>", ...]` or `["--tab", "<tab-id-or-label>", ...]` in `args`. The error includes the selected-tab hint, not a full browser-wide tab dump.
 - **Wrong tab acted on**: Check for direct CDP code or shell scripts that bypass `agent_browser`. Raw CDP scripts must use `/json/list`, connect to the chosen target, and avoid navigation/actions plus `Target.createTarget` / `Target.closeTarget` unless disposable raw-CDP control is explicitly required and the user accepts that it bypasses shared-browser locking.
 
 ---

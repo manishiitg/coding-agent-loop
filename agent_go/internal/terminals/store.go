@@ -308,10 +308,6 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 	if _, forced := s.forcedInactive[terminalID]; !forced {
 		if snapshot.Active {
 			snapshot.State = terminalStateFromContent(content, true)
-			if boundedTerminalCanSelfComplete(snapshot) && terminalContentLooksIdle(content) {
-				snapshot.Active = false
-				snapshot.State = terminalStateFromContent(content, false)
-			}
 		} else if snapshot.State == "stale" {
 			snapshot.Active = terminalStateFromContent(content, true) == "running" && !terminalContentLooksIdle(content)
 			snapshot.State = terminalStateFromContent(content, snapshot.Active)
@@ -444,10 +440,6 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.ChunkIndex = chunkIndex
 	current.Active = true
 	current.State = terminalStateFromContent(content, true)
-	if !freshTurn && boundedTerminalCanSelfComplete(current) && terminalContentLooksIdle(content) {
-		current.Active = false
-		current.State = terminalStateFromContent(content, false)
-	}
 	current.ClosesAt = nil
 	current.RetentionSeconds = 0
 	previousStatus := current.Status
@@ -706,15 +698,6 @@ func (s *Store) reconcileTerminalStateLocked(terminalID string, now time.Time) (
 	snapshot, ok := s.byID[terminalID]
 	if !ok {
 		return Snapshot{}, false
-	}
-	if snapshot.Active && boundedTerminalCanSelfComplete(snapshot) && terminalContentLooksIdle(snapshot.Content) {
-		snapshot.Active = false
-		snapshot.State = terminalStateFromContent(snapshot.Content, false)
-		snapshot.ClosesAt = nil
-		snapshot.RetentionSeconds = 0
-		snapshot.UpdatedAt = now
-		s.byID[terminalID] = snapshot
-		return snapshot, true
 	}
 	if snapshot.Active &&
 		boundedTerminalCanSelfComplete(snapshot) &&
@@ -1272,27 +1255,48 @@ func isStructuredWorkflowTerminalMetadata(metadata map[string]interface{}) bool 
 }
 
 func terminalOwnerID(sessionID string, event storeevents.Event, metadata map[string]interface{}) string {
-	candidates := []string{
+	if ownerID := workflowStepOwnerCandidate(event, metadata); validTerminalOwner(ownerID, sessionID) {
+		return ownerID
+	}
+	if ownerID := firstValidTerminalOwner(sessionID,
 		stringValue(metadata, "execution_owner_id"),
 		stringValue(metadata, "owner_execution_id"),
-		workflowStepOwnerCandidate(event, metadata),
+	); ownerID != "" {
+		return ownerID
+	}
+	if ownerID := firstValidTerminalOwner(sessionID,
 		stringValue(metadata, "background_agent_id"),
 		stringValue(metadata, "delegation_id"),
 		stringValue(metadata, "agent_id"),
+	); ownerID != "" {
+		return ownerID
+	}
+	if ownerID := firstValidTerminalOwner(sessionID,
+		stringValue(metadata, "execution_id"),
+		event.ExecutionID,
+	); ownerID != "" {
+		return ownerID
+	}
+	return firstValidTerminalOwner(sessionID,
 		stringValue(metadata, "current_step_id"),
 		stringValue(metadata, "workflow_step_id"),
 		stringValue(metadata, "step_id"),
-		stringValue(metadata, "execution_id"),
-		event.ExecutionID,
 		stringValue(metadata, "correlation_id"),
-	}
+	)
+}
+
+func firstValidTerminalOwner(sessionID string, candidates ...string) string {
 	for _, candidate := range candidates {
-		candidate = strings.TrimSpace(candidate)
-		if candidate != "" && candidate != sessionID {
-			return candidate
+		if validTerminalOwner(candidate, sessionID) {
+			return strings.TrimSpace(candidate)
 		}
 	}
 	return ""
+}
+
+func validTerminalOwner(candidate, sessionID string) bool {
+	candidate = strings.TrimSpace(candidate)
+	return candidate != "" && candidate != sessionID
 }
 
 func workflowStepOwnerCandidate(event storeevents.Event, metadata map[string]interface{}) string {
@@ -1310,6 +1314,7 @@ func workflowStepOwnerCandidate(event storeevents.Event, metadata map[string]int
 	workflowID := firstNonEmpty(
 		stringValue(metadata, "workflow_execution_id"),
 		stringValue(metadata, "workflow_run_id"),
+		stringValue(metadata, "execution_owner_id"),
 		stringValue(metadata, "execution_id"),
 		event.ExecutionID,
 	)

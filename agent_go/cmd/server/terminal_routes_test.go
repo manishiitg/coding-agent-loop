@@ -117,7 +117,8 @@ func TestTerminalRoutesListCanReturnMetadataOnly(t *testing.T) {
 	sessionID := "session-terminal-metadata"
 	tmuxSession := "mlp-claude-code-exp-test"
 
-	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "large pane content", 7))
+	fullContent := strings.Repeat("╭ tool output row with enough text to be expensive if parsed repeatedly ╮\n", 20000)
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, fullContent, 7))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/terminals?session_id="+sessionID+"&content=none", nil)
 	rec := httptest.NewRecorder()
@@ -135,8 +136,14 @@ func TestTerminalRoutesListCanReturnMetadataOnly(t *testing.T) {
 	if response.Terminals[0].Content != "" {
 		t.Fatalf("metadata-only list content = %q, want empty", response.Terminals[0].Content)
 	}
+	if len(response.Terminals[0].Rows) != 0 {
+		t.Fatalf("metadata-only list rows len = %d, want 0", len(response.Terminals[0].Rows))
+	}
 	if response.Terminals[0].ChunkIndex != 7 {
 		t.Fatalf("chunk index = %d, want metadata preserved", response.Terminals[0].ChunkIndex)
+	}
+	if rec.Body.Len() > 4096 {
+		t.Fatalf("metadata-only response is too large: %d bytes", rec.Body.Len())
 	}
 }
 

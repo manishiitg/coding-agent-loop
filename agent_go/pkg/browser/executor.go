@@ -17,6 +17,8 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
+const cdpTabListTimeout = 15 * time.Second
+
 // execCmd is an alias so tests can swap it out; defaults to exec.Command.
 var execCmd = exec.Command
 
@@ -382,20 +384,19 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			if _, _, err := parseTabSelection(tabArgs); err != nil {
 				return "", err
 			}
+			if isTabListRequest(tabArgs) {
+				return e.listCDPTabsForUser(ctx, session, cdpURL, opts, cdpPort, cdpOwner), nil
+			}
 		} else {
 			tabForCommand := inlineCDPTab
 			if tabForCommand == "" && isBrowserOpenCommand(command) {
 				tabForCommand = getCDPTabSelection(cdpPort, cdpOwner)
 			}
 			if tabForCommand == "" {
-				tabsOutput, tabsErr := e.listCDPTabs(ctx, session, cdpURL, opts)
-				if tabsErr != nil {
-					return "", fmt.Errorf("CDP shared-browser mode requires a tab in args before %q, but listing tabs failed: %w", command, tabsErr)
-				}
 				if isBrowserOpenCommand(command) {
-					return "", fmt.Errorf("CDP shared-browser mode requires selecting or creating a tab before %q.\n\nExisting tabs:\n%s\n\nUse agent_browser(command=\"tab\", args=[\"<tab-id-or-label>\"]) to select an existing tab, or agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"]) to create one. Then call agent_browser(command=\"open\", args=[\"https://example.com\"]).", command, formatCDPTabListForPrompt(tabsOutput))
+					return "", fmt.Errorf("CDP shared-browser mode requires selecting or creating a tab before %q.\n\n%s\n\nUse agent_browser(command=\"tab\", args=[\"<tab-id-or-label>\"]) if you already know the tab id/label, or agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"]) to create one. Then call agent_browser(command=\"open\", args=[\"https://example.com\"]).", command, selectedCDPTabMessage(cdpPort, cdpOwner))
 				}
-				return "", missingCDPPageActionTabError(command, commandArgs, tabsOutput)
+				return "", missingCDPPageActionTabError(command, commandArgs, selectedCDPTabMessage(cdpPort, cdpOwner))
 			}
 			if getCDPActiveTab(cdpPort) == tabForCommand {
 				log.Printf("[BROWSER] CDP: tab %q already active before %q; skipping select", tabForCommand, command)
@@ -544,6 +545,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 				log.Printf("[BROWSER] CDP: selected tab %q for owner=%q port=%d", activeTab, cdpOwner, cdpPort)
 			}
 		}
+		return selectedCDPTabMessage(cdpPort, cdpOwner), nil
 	}
 
 	return output, nil
@@ -556,6 +558,24 @@ func (e *Executor) listCDPTabs(ctx context.Context, session, cdpURL string, opts
 		"--cdp", cdpURL,
 		"--json",
 	}, opts)
+}
+
+func (e *Executor) listCDPTabsForUser(ctx context.Context, session, cdpURL string, opts *ExecuteOptions, port int, ownerID string) string {
+	output, err := e.listCDPTabs(ctx, session, cdpURL, executeOptionsWithTimeout(opts, cdpTabListTimeout))
+	if err != nil {
+		log.Printf("[BROWSER] CDP tab list failed after %s; falling back to selected tab hint: %v", cdpTabListTimeout, err)
+		return fallbackCDPTabListMessage(port, ownerID, err)
+	}
+	return formatCDPTabListForPrompt(output)
+}
+
+func executeOptionsWithTimeout(opts *ExecuteOptions, timeout time.Duration) *ExecuteOptions {
+	if opts == nil {
+		return &ExecuteOptions{Timeout: timeout}
+	}
+	cloned := *opts
+	cloned.Timeout = timeout
+	return &cloned
 }
 
 func (e *Executor) selectCDPTab(ctx context.Context, session, tab, cdpURL string, opts *ExecuteOptions) (string, error) {
@@ -593,18 +613,14 @@ func (e *Executor) selectCDPTabForCommand(ctx context.Context, session, cdpURL s
 }
 
 func (e *Executor) cdpTabSelectionError(ctx context.Context, session, cdpURL string, opts *ExecuteOptions, tab, command string, selectErr error) error {
-	tabsOutput, tabsErr := e.listCDPTabs(ctx, session, cdpURL, opts)
-	if tabsErr != nil {
-		return fmt.Errorf("failed to select CDP tab %q before %q: %w; listing tabs also failed: %w", tab, command, selectErr, tabsErr)
-	}
-	return fmt.Errorf("failed to select CDP tab %q before %q: %w\n\nExisting tabs:\n%s\n\nThe tab label/id %q is not currently selectable. Do not retry page actions with this label until `tab list` shows it. First call agent_browser(command=\"tab\", args=[]), then either choose an existing tab by id/label in args like [\"tab\", \"<tab-id-or-label>\", ...commandArgs] or create a labeled tab with agent_browser(command=\"tab\", args=[\"new\", \"--label\", %q, \"<url>\"]).", tab, command, selectErr, formatCDPTabListForPrompt(tabsOutput), tab, tab)
+	return fmt.Errorf("failed to select CDP tab %q before %q: %w\n\nThe tab label/id %q is not currently selectable. Do not retry page actions with this label. Select a known tab with agent_browser(command=\"tab\", args=[\"<tab-id-or-label>\"]) or create a labeled tab with agent_browser(command=\"tab\", args=[\"new\", \"--label\", %q, \"<url>\"]).", tab, command, selectErr, tab, tab)
 }
 
-func missingCDPPageActionTabError(command string, commandArgs []string, tabsOutput string) error {
+func missingCDPPageActionTabError(command string, commandArgs []string, tabHint string) error {
 	normalizedArgs := normalizeAgentBrowserCommandArgs(command, commandArgs)
 	tabRetryArgs := append([]string{"tab", "<tab-id-or-label>"}, normalizedArgs...)
 	flagRetryArgs := append([]string{"--tab", "<tab-id-or-label>"}, normalizedArgs...)
-	return fmt.Errorf("CDP shared-browser mode requires every page action to include a tab before %q.\n\nExisting tabs:\n%s\n\nRetry the same command with the tab inline:\nagent_browser(command=%q, args=%s)\nor:\nagent_browser(command=%q, args=%s)\n\nDo not put the command name inside args. For wait, use milliseconds or native wait options, for example:\nagent_browser(command=\"wait\", args=[\"tab\", \"<tab-id-or-label>\", \"6000\"])\nagent_browser(command=\"wait\", args=[\"tab\", \"<tab-id-or-label>\", \"--load\", \"networkidle\"])\nagent_browser(command=\"wait\", args=[\"tab\", \"<tab-id-or-label>\", \"--text\", \"Submit proposals\"])\n\nIf the desired label is absent, first call agent_browser(command=\"tab\", args=[]), then select an existing tab or create a labeled one with agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"]).", command, formatCDPTabListForPrompt(tabsOutput), command, jsonStringSlice(tabRetryArgs), command, jsonStringSlice(flagRetryArgs))
+	return fmt.Errorf("CDP shared-browser mode requires every page action to include a tab before %q.\n\n%s\n\nRetry the same command with the tab inline:\nagent_browser(command=%q, args=%s)\nor:\nagent_browser(command=%q, args=%s)\n\nDo not put the command name inside args. For wait, use milliseconds or native wait options, for example:\nagent_browser(command=\"wait\", args=[\"tab\", \"<tab-id-or-label>\", \"6000\"])\nagent_browser(command=\"wait\", args=[\"tab\", \"<tab-id-or-label>\", \"--load\", \"networkidle\"])\nagent_browser(command=\"wait\", args=[\"tab\", \"<tab-id-or-label>\", \"--text\", \"Submit proposals\"])\n\nIf no tab is selected yet, create a labeled tab with agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<label>\", \"<url>\"]).", command, tabHint, command, jsonStringSlice(tabRetryArgs), command, jsonStringSlice(flagRetryArgs))
 }
 
 func jsonStringSlice(args []string) string {

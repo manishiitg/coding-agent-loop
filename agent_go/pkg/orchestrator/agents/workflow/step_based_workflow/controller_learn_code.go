@@ -1455,7 +1455,7 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 	// the learn-code prompt teaches).
 	if hasBrowser {
 		sb.WriteString("**Browser automation — execution-mode tool call examples (Python):**\n")
-		sb.WriteString("- CDP mode: every `agent_browser` page action must include an inline tab, e.g. `args=['tab', 't1', '-i']` for snapshot or `args=['tab', 't1', ref_parsed_from_snapshot]` for click. First call `agent_browser` with `command='tab', args=[]` to list tabs.\n")
+		sb.WriteString("- CDP mode: every `agent_browser` page action must include an inline tab, e.g. `args=['tab', 't1', '-i']` for snapshot or `args=['tab', 't1', ref_parsed_from_snapshot]` for click. `command='tab', args=[]` returns the selected tab hint; if none is selected, create a stable labeled tab.\n")
 		sb.WriteString("- Snapshot: `call_mcp('playwright', 'browser_snapshot', {})` or, in CDP mode, `call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['tab', 't1', '-i'], 'session': 'main'})`\n")
 		sb.WriteString("- Click (via runtime-parsed ref — the literal `'abc123'` / `'@e1'` below are PLACEHOLDERS; the actual value must be parsed from the snapshot variable each run, NEVER hardcoded): `call_mcp('playwright', 'browser_click', {'ref': ref_parsed_from_snapshot})` or, in CDP mode, `call_mcp('workspace_browser', 'agent_browser', {'command': 'click', 'args': ['tab', 't1', ref_parsed_from_snapshot], 'session': 'main'})`\n")
 		sb.WriteString("- Click (via durable selector — preferred for readability when the tool accepts it): `call_mcp('playwright', 'browser_click', {'selector': '#panAdhaarUserId'})` or, in CDP mode, `agent_browser` `args=['tab', 't1', '[aria-label=\"Sign in\"]']`\n")

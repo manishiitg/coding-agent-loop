@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -149,6 +148,14 @@ func getCDPTabAlias(port int, ownerID, alias string) string {
 	return cdpTabAliases[cdpTabAliasKey(port, ownerID, alias)]
 }
 
+func getCDPTabSelectionForPrompt(port int, ownerID string) string {
+	tab := getCDPTabSelection(port, ownerID)
+	if alias := getCDPTabAlias(port, ownerID, tab); alias != "" {
+		return alias
+	}
+	return tab
+}
+
 func setCDPTabAlias(port int, ownerID, alias, tabID string) {
 	alias = strings.TrimSpace(alias)
 	tabID = strings.TrimSpace(tabID)
@@ -245,6 +252,28 @@ func parseTabSelection(args []string) (tab string, clear bool, err error) {
 	}
 }
 
+func isTabListRequest(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	return len(args) == 1 && (args[0] == "list" || args[0] == "ls")
+}
+
+func selectedCDPTabMessage(port int, ownerID string) string {
+	if tab := getCDPTabSelectionForPrompt(port, ownerID); tab != "" {
+		return fmt.Sprintf("Selected CDP tab: %s\nUse it inline on page actions, for example: args=[\"tab\", %q, \"-i\"] for snapshot.", tab, tab)
+	}
+	return "No selected CDP tab for this workflow yet. Create a stable labeled tab instead of listing every browser tab, for example: agent_browser(command=\"tab\", args=[\"new\", \"--label\", \"<workflow-label>\", \"https://target.example\"], session=\"<session>\"). Then use that label or returned tab id inline on page actions."
+}
+
+func fallbackCDPTabListMessage(port int, ownerID string, err error) string {
+	message := "Could not refresh the real CDP tab list within the short timeout; falling back to remembered workflow tab state."
+	if err != nil {
+		message += " Last tab-list error: " + truncatePromptField(oneLine(err.Error()), 240)
+	}
+	return message + "\n\n" + selectedCDPTabMessage(port, ownerID)
+}
+
 type cdpTabListOutput struct {
 	Data struct {
 		Tabs []cdpTabInfo `json:"tabs"`
@@ -302,7 +331,7 @@ func formatCDPTabListForPrompt(output string) string {
 		return "(no tabs found)"
 	}
 
-	const maxTabs = 30
+	const maxTabs = 20
 	lines := make([]string, 0, min(len(parsed.Data.Tabs), maxTabs)+1)
 	for i, tab := range parsed.Data.Tabs {
 		if i >= maxTabs {
@@ -321,33 +350,16 @@ func formatCDPTabListForPrompt(output string) string {
 		}
 
 		line := fmt.Sprintf("- %s%s", tabID, status)
-		if label := truncatePromptField(oneLine(tab.Label), 80); label != "" {
+		if label := truncatePromptField(oneLine(tab.Label), 50); label != "" {
 			line += fmt.Sprintf(" label=%q", label)
 		}
-		if title := truncatePromptField(oneLine(tab.Title), 120); title != "" {
+		if title := truncatePromptField(oneLine(tab.Title), 90); title != "" {
 			line += fmt.Sprintf(" title=%q", title)
-		}
-		if tabURL := truncatePromptField(oneLine(shortCDPTabURL(tab.URL)), 120); tabURL != "" {
-			line += fmt.Sprintf(" url=%q", tabURL)
 		}
 		lines = append(lines, line)
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-func shortCDPTabURL(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return raw
-	}
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String()
 }
 
 func oneLine(value string) string {

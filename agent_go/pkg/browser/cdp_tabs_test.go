@@ -103,7 +103,7 @@ func TestNormalizeAgentBrowserCommandArgs(t *testing.T) {
 }
 
 func TestMissingCDPPageActionTabErrorShowsWaitRetry(t *testing.T) {
-	err := missingCDPPageActionTabError("wait", []string{"wait", "6s"}, "tabs")
+	err := missingCDPPageActionTabError("wait", []string{"wait", "6s"}, "Selected CDP tab: t12")
 	if err == nil {
 		t.Fatalf("expected error")
 	}
@@ -111,10 +111,54 @@ func TestMissingCDPPageActionTabErrorShowsWaitRetry(t *testing.T) {
 	for _, want := range []string{
 		`agent_browser(command="wait", args=["tab","<tab-id-or-label>","6000"])`,
 		"Do not put the command name inside args",
+		"Selected CDP tab: t12",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("error missing %q:\n%s", want, msg)
 		}
+	}
+}
+
+func TestSelectedCDPTabMessageUsesKnownSelection(t *testing.T) {
+	port := 22922
+	owner := "owner-for-selected-message-test"
+	clearCDPTabSelectionsForPort(port)
+	t.Cleanup(func() { clearCDPTabSelectionsForPort(port) })
+
+	if got := selectedCDPTabMessage(port, owner); !strings.Contains(got, "No selected CDP tab") {
+		t.Fatalf("selectedCDPTabMessage() without selection = %q, want no-selection guidance", got)
+	}
+
+	setCDPTabSelection(port, owner, "upwork")
+	setCDPTabAlias(port, owner, "upwork", "t23")
+	got := selectedCDPTabMessage(port, owner)
+	for _, want := range []string{"Selected CDP tab: t23", `args=["tab", "t23", "-i"]`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("selectedCDPTabMessage() missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFallbackCDPTabListMessageUsesRememberedSelection(t *testing.T) {
+	port := 23922
+	owner := "owner-for-fallback-message-test"
+	clearCDPTabSelectionsForPort(port)
+	t.Cleanup(func() { clearCDPTabSelectionsForPort(port) })
+
+	setCDPTabSelection(port, owner, "upwork")
+	setCDPTabAlias(port, owner, "upwork", "t23")
+	got := fallbackCDPTabListMessage(port, owner, errors.New("command timed out after 15s with a very long diagnostic message "+strings.Repeat("x", 400)))
+	for _, want := range []string{
+		"Could not refresh the real CDP tab list",
+		"command timed out after 15s",
+		"Selected CDP tab: t23",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("fallbackCDPTabListMessage() missing %q:\n%s", want, got)
+		}
+	}
+	if len(got) > 800 {
+		t.Fatalf("fallback message too large (%d bytes):\n%s", len(got), got)
 	}
 }
 
@@ -163,7 +207,6 @@ func TestFormatCDPTabListForPromptCompactsRawJSON(t *testing.T) {
 		"- t12 active",
 		`label="upwork_proposal"`,
 		`title="Submit a Proposal`,
-		`url="https://www.upwork.com/`,
 		"- t13",
 	} {
 		if !strings.Contains(got, want) {
@@ -178,16 +221,11 @@ func TestFormatCDPTabListForPromptCompactsRawJSON(t *testing.T) {
 	if strings.Contains(got, "filter=abcdefghij") {
 		t.Fatalf("summary should strip noisy URL query strings:\n%s", got)
 	}
-	if len(got) > 600 {
-		t.Fatalf("summary too large (%d bytes):\n%s", len(got), got)
+	if strings.Contains(got, "url=") || strings.Contains(got, "https://") {
+		t.Fatalf("summary should not include URLs:\n%s", got)
 	}
-}
-
-func TestShortCDPTabURLStripsQueryAndFragment(t *testing.T) {
-	got := shortCDPTabURL("https://example.com/path/to/page?token=secret#section")
-	want := "https://example.com/path/to/page"
-	if got != want {
-		t.Fatalf("shortCDPTabURL() = %q, want %q", got, want)
+	if len(got) > 300 {
+		t.Fatalf("summary too large (%d bytes):\n%s", len(got), got)
 	}
 }
 

@@ -3,6 +3,7 @@ import { AlertTriangle, Braces, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, 
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useChatStore } from '../stores/useChatStore'
+import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 
 interface TerminalCenterProps {
@@ -18,6 +19,8 @@ const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
 const INACTIVE_FALLBACK_SECONDS = 120
 const EMPTY_TERMINAL_RESPONSE_GRACE_POLLS = 10
 const TERMINAL_POLL_INTERVAL_MS = 1500
+const TERMINAL_FAST_POLL_INTERVAL_MS = 300
+const TERMINAL_FAST_POLL_DURATION_MS = 7000
 
 type TerminalColorScheme = 'neon' | 'mono' | 'homebrew' | 'catppuccin' | 'nord' | 'gruvbox' | 'solarized' | 'tokyo'
 
@@ -55,7 +58,7 @@ const TERMINAL_THEMES = {
     stateRunning: 'text-emerald-300',
     stateCompleted: 'text-sky-300',
     stateClosing: 'text-amber-300',
-    routeRail: 'border-l-cyan-400/70 bg-cyan-950/15 text-cyan-100',
+    routeRail: 'bg-cyan-950/15 text-cyan-100',
     routeIcon: 'bg-cyan-400/15 text-cyan-300',
     routeClose: 'text-cyan-300/50 hover:bg-cyan-900/45 hover:text-cyan-100',
     routeMeta: 'text-cyan-300/75',
@@ -99,7 +102,7 @@ const TERMINAL_THEMES = {
     stateRunning: 'text-neutral-100',
     stateCompleted: 'text-neutral-400',
     stateClosing: 'text-neutral-400',
-    routeRail: 'border-l-neutral-500 bg-neutral-900/45 text-neutral-200',
+    routeRail: 'bg-neutral-900/45 text-neutral-200',
     routeIcon: 'bg-neutral-800 text-neutral-200',
     routeClose: 'text-neutral-500 hover:bg-neutral-800 hover:text-neutral-100',
     routeMeta: 'text-neutral-500',
@@ -143,7 +146,7 @@ const TERMINAL_THEMES = {
     stateRunning: 'text-lime-200',
     stateCompleted: 'text-neutral-400',
     stateClosing: 'text-neutral-400',
-    routeRail: 'border-l-lime-300/60 bg-lime-950/10 text-neutral-200',
+    routeRail: 'bg-lime-950/10 text-neutral-200',
     routeIcon: 'bg-lime-950/45 text-lime-200/80',
     routeClose: 'text-neutral-500 hover:bg-neutral-800 hover:text-neutral-100',
     routeMeta: 'text-neutral-500',
@@ -187,7 +190,7 @@ const TERMINAL_THEMES = {
     stateRunning: 'text-[#89b4fa]',
     stateCompleted: 'text-[#a6adc8]',
     stateClosing: 'text-[#f9e2af]',
-    routeRail: 'border-l-[#cba6f7] bg-[#1e1e2e]/55 text-[#cdd6f4]',
+    routeRail: 'bg-[#1e1e2e]/55 text-[#cdd6f4]',
     routeIcon: 'bg-[#313244] text-[#cba6f7]',
     routeClose: 'text-[#a6adc8] hover:bg-[#313244] hover:text-[#f5e0dc]',
     routeMeta: 'text-[#a6adc8]',
@@ -231,7 +234,7 @@ const TERMINAL_THEMES = {
     stateRunning: 'text-[#88c0d0]',
     stateCompleted: 'text-[#81a1c1]',
     stateClosing: 'text-[#ebcb8b]',
-    routeRail: 'border-l-[#88c0d0] bg-[#2e3440]/45 text-[#d8dee9]',
+    routeRail: 'bg-[#2e3440]/45 text-[#d8dee9]',
     routeIcon: 'bg-[#3b4252] text-[#88c0d0]',
     routeClose: 'text-[#4c566a] hover:bg-[#3b4252] hover:text-[#eceff4]',
     routeMeta: 'text-[#81a1c1]',
@@ -275,7 +278,7 @@ const TERMINAL_THEMES = {
     stateRunning: 'text-[#b8bb26]',
     stateCompleted: 'text-[#a89984]',
     stateClosing: 'text-[#fabd2f]',
-    routeRail: 'border-l-[#fabd2f] bg-[#282828]/55 text-[#ebdbb2]',
+    routeRail: 'bg-[#282828]/55 text-[#ebdbb2]',
     routeIcon: 'bg-[#3c3836] text-[#fabd2f]',
     routeClose: 'text-[#928374] hover:bg-[#3c3836] hover:text-[#fbf1c7]',
     routeMeta: 'text-[#a89984]',
@@ -319,7 +322,7 @@ const TERMINAL_THEMES = {
     stateRunning: 'text-[#2aa198]',
     stateCompleted: 'text-[#268bd2]',
     stateClosing: 'text-[#b58900]',
-    routeRail: 'border-l-[#2aa198] bg-[#073642]/55 text-[#93a1a1]',
+    routeRail: 'bg-[#073642]/55 text-[#93a1a1]',
     routeIcon: 'bg-[#002b36] text-[#2aa198]',
     routeClose: 'text-[#586e75] hover:bg-[#073642] hover:text-[#eee8d5]',
     routeMeta: 'text-[#839496]',
@@ -363,7 +366,7 @@ const TERMINAL_THEMES = {
     stateRunning: 'text-[#7dcfff]',
     stateCompleted: 'text-[#7aa2f7]',
     stateClosing: 'text-[#e0af68]',
-    routeRail: 'border-l-[#7dcfff] bg-[#1a1b26]/55 text-[#c0caf5]',
+    routeRail: 'bg-[#1a1b26]/55 text-[#c0caf5]',
     routeIcon: 'bg-[#24283b] text-[#7dcfff]',
     routeClose: 'text-[#565f89] hover:bg-[#24283b] hover:text-[#c0caf5]',
     routeMeta: 'text-[#9aa5ce]',
@@ -933,6 +936,25 @@ function formatUpdatedAge(terminal: TerminalSnapshot): string {
   if (minutes < 60) return `updated ${minutes}m ago`
   const hours = Math.floor(minutes / 60)
   return `updated ${hours}h ago`
+}
+
+function formatStartedTimestamp(terminal: TerminalSnapshot): { label: string; title: string } | null {
+  const startedAt = terminalCreatedTime(terminal)
+  if (!startedAt) return null
+  const date = new Date(startedAt)
+  const now = new Date()
+  const sameDay = date.toDateString() === now.toDateString()
+  const time = date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  const label = sameDay
+    ? `start ${time}`
+    : `start ${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`
+  return {
+    label,
+    title: `Started ${date.toLocaleString()}`,
+  }
 }
 
 function formatFallbackSeconds(seconds: number): string {
@@ -1811,11 +1833,24 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const terminalManualScrollLockRef = useRef(false)
   const selectedTerminalIDRef = useRef<string | null>(null)
   const fetchInFlightRef = useRef(false)
+  const fetchInFlightScopeRef = useRef<string | null>(null)
+  const fetchRequestSeqRef = useRef(0)
   const detailRequestSeqRef = useRef(0)
   const terminalsRef = useRef<TerminalSnapshot[]>([])
   const emptyResponseCountRef = useRef(0)
   const lastFetchScopeRef = useRef<string | null>(null)
+  const fastPollUntilRef = useRef(0)
+  const fastPollIntervalRef = useRef<number | null>(null)
   const terminalTheme = TERMINAL_THEMES[terminalColorScheme]
+
+  useEffect(() => {
+    setTerminals([])
+    setSelectedID(null)
+    setUserSelectedID(null)
+    selectedTerminalIDRef.current = null
+    terminalAutoScrollRef.current = true
+    terminalManualScrollLockRef.current = false
+  }, [currentSessionId])
 
   useEffect(() => {
     terminalsRef.current = terminals
@@ -1975,9 +2010,12 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   }, [])
 
   const fetchTerminals = useCallback(async () => {
-    if (fetchInFlightRef.current) return
-    fetchInFlightRef.current = true
     const fetchScope = viewAll ? 'all' : (currentSessionId || '')
+    if (fetchInFlightRef.current && fetchInFlightScopeRef.current === fetchScope) return
+    fetchInFlightRef.current = true
+    fetchInFlightScopeRef.current = fetchScope
+    const requestSeq = fetchRequestSeqRef.current + 1
+    fetchRequestSeqRef.current = requestSeq
     if (lastFetchScopeRef.current !== fetchScope) {
       lastFetchScopeRef.current = fetchScope
       emptyResponseCountRef.current = 0
@@ -2000,6 +2038,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       }
 
       const nextTerminals = dedupeTerminalsByID(visibleTerminals)
+      if (fetchRequestSeqRef.current !== requestSeq) return
       setTerminals(current => {
         const currentMatchesScope = viewAll || !currentSessionId || current.every(terminal => terminal.session_id === currentSessionId)
         if (!viewAll && currentSessionId && nextTerminals.length === 0 && current.length > 0 && currentMatchesScope) {
@@ -2013,9 +2052,13 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       })
       setError(null)
     } catch (err) {
+      if (fetchRequestSeqRef.current !== requestSeq) return
       setError(err instanceof Error ? err.message : 'Failed to load terminals')
     } finally {
-      fetchInFlightRef.current = false
+      if (fetchRequestSeqRef.current === requestSeq) {
+        fetchInFlightRef.current = false
+        fetchInFlightScopeRef.current = null
+      }
     }
   }, [currentSessionId, dismissedTerminalIDs, viewAll])
 
@@ -2137,14 +2180,44 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   }, [fetchTerminals])
 
   useEffect(() => {
+    const stopFastPolling = () => {
+      if (fastPollIntervalRef.current !== null) {
+        window.clearInterval(fastPollIntervalRef.current)
+        fastPollIntervalRef.current = null
+      }
+    }
+
+    const startFastPolling = () => {
+      fastPollUntilRef.current = Date.now() + TERMINAL_FAST_POLL_DURATION_MS
+      void fetchTerminals()
+      if (fastPollIntervalRef.current !== null) return
+
+      fastPollIntervalRef.current = window.setInterval(() => {
+        if (Date.now() > fastPollUntilRef.current) {
+          stopFastPolling()
+          return
+        }
+        void fetchTerminals()
+      }, TERMINAL_FAST_POLL_INTERVAL_MS)
+    }
+
+    window.addEventListener(TERMINAL_REFRESH_REQUEST_EVENT, startFastPolling)
+    return () => {
+      window.removeEventListener(TERMINAL_REFRESH_REQUEST_EVENT, startFastPolling)
+      stopFastPolling()
+    }
+  }, [fetchTerminals])
+
+  useEffect(() => {
     if (groupedTerminals.orderedTerminals.length === 0) {
       setSelectedID(null)
       return
     }
     const selected = groupedTerminals.orderedTerminals.find(terminal => terminalPaneKey(terminal) === selectedID)
     const userSelected = groupedTerminals.orderedTerminals.find(terminal => terminalPaneKey(terminal) === userSelectedID)
+    const mainTerminal = groupedTerminals.currentTerminals.find(terminal => isMainAgentTerminal(terminal))
     const latestActive = groupedTerminals.activeTerminals[0]
-    const preferredTerminal = latestActive || groupedTerminals.currentTerminals[0] || groupedTerminals.orderedTerminals[0]
+    const preferredTerminal = mainTerminal || latestActive || groupedTerminals.currentTerminals[0] || groupedTerminals.orderedTerminals[0]
 
     if (userSelected) {
       const userSelectedKey = terminalPaneKey(userSelected)
@@ -2322,7 +2395,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const renderRouteRailItem = (decision: RoutingDecision, depth: number = 0) => (
     <div
       key={`route-${decision.id}`}
-      className={`group block w-full border-l-2 py-1.5 pl-2.5 pr-2.5 text-left ${terminalTheme.railText} ${terminalTheme.routeRail}`}
+      className={`group block w-full py-1.5 pl-2.5 pr-2.5 text-left ${terminalTheme.railText} ${terminalTheme.routeRail}`}
       title={routeDecisionTitle(decision)}
       style={{ paddingLeft: terminalRailPadding(depth) }}
     >
@@ -2367,6 +2440,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       const preValidationChip = terminalPreValidationChip(terminal, terminalTheme)
       const state = terminalState(terminal)
       const isRunning = state === 'running'
+      const startedTimestamp = formatStartedTimestamp(terminal)
       return (
         <div
           key={terminalPaneKey(terminal)}
@@ -2423,6 +2497,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
           </div>
           <div className={`mt-0.5 flex items-center gap-1.5 opacity-70 ${terminalTheme.railMetaText}`}>
             <span className="min-w-0 truncate">{formatTransportChip(terminal)}</span>
+            {startedTimestamp && (
+              <span className="shrink-0 text-neutral-500" title={startedTimestamp.title}>
+                · {startedTimestamp.label}
+              </span>
+            )}
             {preValidationChip && (
               <span
                 className={`shrink-0 rounded border px-1 py-0.5 font-semibold leading-none ${terminalTheme.microText} ${preValidationChip.className}`}

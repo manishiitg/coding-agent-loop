@@ -95,7 +95,7 @@ func (api *StreamingAPI) handleListTerminals(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 		if api.canAccessTerminalSession(r, snapshot.SessionID) {
-			filtered = append(filtered, compactTerminalSnapshotForList(api.enrichTerminalSnapshot(snapshot), contentMode))
+			filtered = append(filtered, api.terminalSnapshotForList(snapshot, contentMode))
 		}
 	}
 
@@ -467,6 +467,30 @@ func (api *StreamingAPI) enrichTerminalSnapshot(snapshot terminals.Snapshot) ter
 	}))
 }
 
+func (api *StreamingAPI) terminalSnapshotForList(snapshot terminals.Snapshot, contentMode string) terminals.Snapshot {
+	if isMetadataOnlyTerminalList(contentMode) {
+		return compactTerminalSnapshotForList(api.enrichTerminalSnapshotMetadata(snapshot), contentMode)
+	}
+	return compactTerminalSnapshotForList(api.enrichTerminalSnapshot(snapshot), contentMode)
+}
+
+func (api *StreamingAPI) enrichTerminalSnapshotMetadata(snapshot terminals.Snapshot) terminals.Snapshot {
+	active, exists := api.getActiveSession(snapshot.SessionID)
+	if !exists || active == nil {
+		return snapshot.WithContext(terminals.Context{})
+	}
+	enriched := api.buildActiveSessionInfoSummary(active)
+	if enriched == nil {
+		return snapshot.WithContext(terminals.Context{})
+	}
+	return snapshot.WithContext(terminals.Context{
+		WorkflowName:  enriched.WorkflowName,
+		WorkflowLabel: enriched.WorkflowLabel,
+		WorkspacePath: enriched.WorkspacePath,
+		ExecutionName: enriched.CurrentExecutionName,
+	})
+}
+
 func (api *StreamingAPI) canAccessTerminalSession(r *http.Request, sessionID string) bool {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
@@ -493,6 +517,7 @@ func compactTerminalSnapshotForList(snapshot terminals.Snapshot, contentMode str
 	case "none", "metadata":
 		snapshot.Content = ""
 		snapshot.Rows = []terminals.Row{}
+		snapshot.Status = compactTerminalStatusForList(snapshot.Status)
 	case "full":
 		snapshot = withTerminalRows(snapshot)
 		return snapshot
@@ -501,6 +526,30 @@ func compactTerminalSnapshotForList(snapshot terminals.Snapshot, contentMode str
 		snapshot = withTerminalRows(snapshot)
 	}
 	return snapshot
+}
+
+func isMetadataOnlyTerminalList(contentMode string) bool {
+	return contentMode == "none" || contentMode == "metadata"
+}
+
+func compactTerminalStatusForList(status terminals.Status) terminals.Status {
+	status.StatusText = truncateTerminalListString(status.StatusText, 240)
+	status.AssistantPreview = truncateTerminalListString(status.AssistantPreview, 800)
+	status.ToolSummary = truncateTerminalListString(status.ToolSummary, 240)
+	status.ToolName = truncateTerminalListString(status.ToolName, 180)
+	status.PreValidationSummary = truncateTerminalListString(status.PreValidationSummary, 800)
+	return status
+}
+
+func truncateTerminalListString(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(value) <= maxRunes {
+		return value
+	}
+	runes := []rune(value)
+	return strings.TrimSpace(string(runes[:maxRunes])) + "..."
 }
 
 func withTerminalRows(snapshot terminals.Snapshot) terminals.Snapshot {

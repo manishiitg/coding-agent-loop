@@ -9288,7 +9288,7 @@ time.sleep(15)  # Should poll with browser_snapshot instead
 
 Direct tool call (NOT via call_mcp). Uses command + args pattern.
 
-CDP mode: call agent_browser(command='tab', args=[], session='main') first. Choose/create a tab with the tab command. Call open with URL-only args. Then include the chosen tab inline in later page actions, e.g. args=['tab', 't1', '-i'] for snapshot and args=['tab', 't1', ref] for click. Calls without an inline tab are rejected in shared-CDP mode except open, which uses the selected tab and passes only the URL to agent-browser.
+CDP mode: call agent_browser(command='tab', args=[], session='main') to get the selected tab hint. If none is selected, create a stable labeled tab with the tab command. Call open with URL-only args. Then include the chosen tab inline in later page actions, e.g. args=['tab', 't1', '-i'] for snapshot and args=['tab', 't1', ref] for click. Calls without an inline tab are rejected in shared-CDP mode except open, which uses the selected tab and passes only the URL to agent-browser.
 
 **Correct patterns:**
 `+"```"+`python

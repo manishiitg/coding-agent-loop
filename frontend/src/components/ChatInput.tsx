@@ -26,6 +26,7 @@ import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 import { useAuthStore } from '../stores/useAuthStore'
 import { hasWorkflowWriteAccess } from '../utils/workflowPermissions'
+import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
 
 const WORKSHOP_MODE_SWITCH_CONFIRM_KEY = 'workflow_workshop_mode_switch_confirm_dismissed'
 
@@ -1720,8 +1721,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       message: trimmed,
       provider: effectiveProviderForSteer || undefined,
     })
+    requestTerminalRefreshBurst()
     try {
       const response = await agentApi.steerMessage(tabSessionId, msg)
+      requestTerminalRefreshBurst()
       setLiveMessageDelivery({
         status: response.delivery_status || 'sent_to_cli',
         message: trimmed,

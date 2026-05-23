@@ -105,12 +105,12 @@ CDP is not a background-isolated mode. Because it drives a visible, user-profile
 
 ### Required flow
 
-1. List tabs first:
+1. Try the real tab list first. The wrapper gives it 15 seconds, then falls back to remembered selected-tab state if Chrome/CDP is stuck:
    ```python
    browser("tab", [])
    ```
-2. Reuse an existing tab if its URL/title already matches the target site, workflow, or task.
-3. Create one stable labeled tab only when no existing tab is suitable:
+2. Reuse a listed or selected tab if it matches the workflow.
+3. Create one stable labeled tab when no tab is selected or the selected tab is unrelated:
    ```python
    browser("tab", ["new", "--label", "upwork-profile", "https://www.upwork.com/"])
    ```
@@ -127,7 +127,7 @@ CDP is not a background-isolated mode. Because it drives a visible, user-profile
 
 ### Enforcement
 
-The MCP wrapper rejects CDP page actions that omit a tab. The error includes the current tab list and tells the agent to retry with either `["tab", "<tab-id-or-label>", ...]` or `["--tab", "<tab-id-or-label>", ...]`. `tab` and `reset` commands are exempt because they are used to inspect or repair tab state.
+The MCP wrapper rejects CDP page actions that omit a tab. The error includes the selected-tab hint and tells the agent to retry with either `["tab", "<tab-id-or-label>", ...]` or `["--tab", "<tab-id-or-label>", ...]`. `tab` and `reset` commands are exempt because they are used to inspect or repair tab state.
 
 The wrapper translates the inline tab into native agent-browser behavior by selecting the tab immediately before the command, then running the command under a per-CDP-port mutex. This keeps `select tab -> action` atomic enough to avoid interleaving with another workflow command on the same CDP port. Commands against different CDP ports do not share that lock.
 

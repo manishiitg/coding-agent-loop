@@ -681,7 +681,7 @@ func TestStoreKeepsActiveTerminalRunningWhenScreenContainsFailureText(t *testing
 	}
 }
 
-func TestStoreMarksBoundedTerminalCompletedFromProviderIdlePromptWithoutEndEvent(t *testing.T) {
+func TestStoreDoesNotImmediatelyCompleteBoundedTerminalFromProviderIdlePromptWithoutEndEvent(t *testing.T) {
 	store := NewStore()
 	screen := `╭─────────────────────────────────────────────────────────╮
 │ >_ OpenAI Codex                                        │
@@ -709,15 +709,15 @@ func TestStoreMarksBoundedTerminalCompletedFromProviderIdlePromptWithoutEndEvent
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	if snapshot.Active {
-		t.Fatalf("bounded completed pane should not remain active without streaming_end")
+	if !snapshot.Active {
+		t.Fatalf("bounded completed-looking pane should stay active until streaming_end or stable fallback")
 	}
-	if snapshot.State != "completed" {
-		t.Fatalf("state = %q, want completed", snapshot.State)
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
 	}
 }
 
-func TestStoreMarksCodexWorkflowTerminalCompletedWithDraftPromptAfterCompletion(t *testing.T) {
+func TestStoreDoesNotImmediatelyCompleteCodexWorkflowTerminalWithDraftPromptAfterCompletion(t *testing.T) {
 	store := NewStore()
 	screen := `╭─────────────────────────────────────────────────────────╮
 │ >_ OpenAI Codex                                        │
@@ -747,15 +747,15 @@ func TestStoreMarksCodexWorkflowTerminalCompletedWithDraftPromptAfterCompletion(
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	if snapshot.Active {
-		t.Fatalf("completed Codex workflow pane with ready draft prompt should not remain active")
+	if !snapshot.Active {
+		t.Fatalf("completed-looking Codex workflow pane should stay active until streaming_end or stable fallback")
 	}
-	if snapshot.State != "completed" {
-		t.Fatalf("state = %q, want completed", snapshot.State)
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
 	}
 }
 
-func TestStoreMarksCodexWorkflowTerminalCompletedFromWorkedForMarker(t *testing.T) {
+func TestStoreDoesNotImmediatelyCompleteCodexWorkflowTerminalFromWorkedForMarker(t *testing.T) {
 	store := NewStore()
 	screen := `╭─────────────────────────────────────────────────────────╮
 │ >_ OpenAI Codex                                        │
@@ -783,11 +783,11 @@ func TestStoreMarksCodexWorkflowTerminalCompletedFromWorkedForMarker(t *testing.
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	if snapshot.Active {
-		t.Fatalf("Codex workflow pane with worked-for marker and ready prompt should not remain active")
+	if !snapshot.Active {
+		t.Fatalf("Codex workflow pane with worked-for marker should stay active until streaming_end or stable fallback")
 	}
-	if snapshot.State != "completed" {
-		t.Fatalf("state = %q, want completed", snapshot.State)
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
 	}
 }
 
@@ -855,7 +855,7 @@ func TestStoreSelfCompletesBoundedTerminalFromStalePromptStatus(t *testing.T) {
 	}
 }
 
-func TestStoreUsesPromptStatusOnlyAsIdlePromptFallback(t *testing.T) {
+func TestStoreDoesNotUsePromptStatusAsImmediateIdlePromptFallback(t *testing.T) {
 	store := NewStore()
 	screen := `╭─────────────────────────────────────────────────────────╮
 │ >_ OpenAI Codex                                        │
@@ -881,11 +881,11 @@ func TestStoreUsesPromptStatusOnlyAsIdlePromptFallback(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	if snapshot.Active {
-		t.Fatalf("prompt status may close only after provider idle prompt is visible")
+	if !snapshot.Active {
+		t.Fatalf("prompt status with idle prompt should stay active until stable fallback")
 	}
-	if snapshot.State != "completed" {
-		t.Fatalf("state = %q, want completed", snapshot.State)
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
 	}
 }
 
@@ -920,23 +920,23 @@ func TestStoreReconcilesExistingIdleBoundedTerminalOnRead(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	if snapshot.Active {
-		t.Fatalf("Get should reconcile existing idle bounded terminal to inactive")
+	if !snapshot.Active {
+		t.Fatalf("Get should not immediately reconcile an idle-looking bounded terminal to inactive")
 	}
-	if snapshot.State != "completed" {
-		t.Fatalf("state = %q, want completed", snapshot.State)
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
 	}
 
 	listed := store.List("session-1")
 	if len(listed) != 1 {
 		t.Fatalf("List returned %d snapshots, want 1", len(listed))
 	}
-	if listed[0].Active || listed[0].State != "completed" {
-		t.Fatalf("List snapshot active/state = %v/%q, want false/completed", listed[0].Active, listed[0].State)
+	if !listed[0].Active || listed[0].State != "running" {
+		t.Fatalf("List snapshot active/state = %v/%q, want true/running", listed[0].Active, listed[0].State)
 	}
 }
 
-func TestStoreSelfCompletesMainAgentFromIdlePromptStatus(t *testing.T) {
+func TestStoreDoesNotImmediatelySelfCompleteMainAgentFromIdlePromptStatus(t *testing.T) {
 	store := NewStore()
 	screen := `Claude Code v2.1.144
 
@@ -959,11 +959,11 @@ func TestStoreSelfCompletesMainAgentFromIdlePromptStatus(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected terminal snapshot")
 	}
-	if snapshot.Active {
-		t.Fatalf("main-agent terminal should self-complete from idle provider prompt")
+	if !snapshot.Active {
+		t.Fatalf("main-agent terminal should stay active until streaming_end or stable fallback")
 	}
-	if snapshot.State != "completed" {
-		t.Fatalf("state = %q, want completed", snapshot.State)
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
 	}
 }
 
@@ -1027,6 +1027,78 @@ func TestStoreTerminalOwnerPrefersWorkflowStepExecutionOverWorkflowRunID(t *test
 	snapshot, ok := store.Get(sessionID + ":" + stepOwnerID)
 	if !ok {
 		t.Fatalf("expected workflow-step terminal snapshot")
+	}
+	if snapshot.OwnerID != stepOwnerID {
+		t.Fatalf("owner id = %q, want %q", snapshot.OwnerID, stepOwnerID)
+	}
+}
+
+func TestStoreTerminalOwnerPrefersWorkflowStepExecutionOverParentExecutionOwner(t *testing.T) {
+	store := NewStore()
+	sessionID := "session-1"
+	workflowID := "workflow-full-1779518447634380000"
+	stepOwnerID := "workflow-step:" + workflowID + ":step-critic"
+
+	store.HandleEvent(sessionID, terminalEventWithMetadata(
+		stepOwnerID,
+		"$ codex exec step critic",
+		1,
+		map[string]interface{}{
+			"execution_owner_id": workflowID,
+			"execution_kind":     "workflow_step",
+			"current_step_id":    "step-critic",
+			"current_step_type":  "code_exec",
+			"provider":           "codex-cli",
+			"tmux_session":       "mlp-codex-cli-int-test",
+		},
+		time.Now(),
+	))
+
+	if _, ok := store.Get(sessionID + ":" + workflowID); ok {
+		t.Fatalf("workflow-step terminal was incorrectly owned by parent workflow execution")
+	}
+	snapshot, ok := store.Get(sessionID + ":" + stepOwnerID)
+	if !ok {
+		t.Fatalf("expected workflow-step terminal snapshot")
+	}
+	if snapshot.OwnerID != stepOwnerID {
+		t.Fatalf("owner id = %q, want %q", snapshot.OwnerID, stepOwnerID)
+	}
+	if snapshot.StepID != "step-critic" {
+		t.Fatalf("step id = %q, want step-critic", snapshot.StepID)
+	}
+}
+
+func TestStoreTerminalOwnerSynthesizesWorkflowStepFromParentExecutionOwner(t *testing.T) {
+	store := NewStore()
+	sessionID := "session-1"
+	workflowID := "workflow-full-1779518447634380000"
+	stepOwnerID := "workflow-step:" + workflowID + ":step-critic"
+
+	store.HandleEvent(sessionID, terminalEventWithMetadata(
+		"main:"+sessionID,
+		"$ codex exec step critic",
+		1,
+		map[string]interface{}{
+			"execution_owner_id": workflowID,
+			"execution_kind":     "workflow_step",
+			"current_step_id":    "step-critic",
+			"current_step_type":  "code_exec",
+			"provider":           "codex-cli",
+			"tmux_session":       "mlp-codex-cli-int-test",
+		},
+		time.Now(),
+	))
+
+	if _, ok := store.Get(sessionID + ":" + workflowID); ok {
+		t.Fatalf("workflow-step terminal was incorrectly owned by parent workflow execution")
+	}
+	if _, ok := store.Get(sessionID + ":main:" + sessionID); ok {
+		t.Fatalf("workflow-step terminal was incorrectly routed to main terminal")
+	}
+	snapshot, ok := store.Get(sessionID + ":" + stepOwnerID)
+	if !ok {
+		t.Fatalf("expected synthesized workflow-step terminal snapshot")
 	}
 	if snapshot.OwnerID != stepOwnerID {
 		t.Fatalf("owner id = %q, want %q", snapshot.OwnerID, stepOwnerID)

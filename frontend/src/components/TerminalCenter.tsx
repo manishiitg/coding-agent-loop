@@ -1079,6 +1079,31 @@ function terminalDetailCacheKey(terminal: TerminalSnapshot): string {
   return `${terminal.terminal_id}:${terminal.chunk_index}:${terminal.updated_at || terminal.created_at || ''}`
 }
 
+function latestCachedTerminalDetail(
+  terminal: TerminalSnapshot,
+  cache: Record<string, TerminalSnapshot>,
+): TerminalSnapshot | undefined {
+  let latest: TerminalSnapshot | undefined
+  let latestTime = -1
+  for (const detail of Object.values(cache)) {
+    if (detail.terminal_id !== terminal.terminal_id) continue
+    const detailTime = terminalUpdatedTime(detail)
+    if (!latest || detailTime >= latestTime) {
+      latest = detail
+      latestTime = detailTime
+    }
+  }
+  return latest
+}
+
+function terminalWithCachedBody(base: TerminalSnapshot, detail: TerminalSnapshot): TerminalSnapshot {
+  return {
+    ...base,
+    content: detail.content || base.content || '',
+    rows: Array.isArray(detail.rows) && detail.rows.length > 0 ? detail.rows : base.rows,
+  }
+}
+
 function dedupeTerminalsByID(terminals: TerminalSnapshot[]): TerminalSnapshot[] {
   const byID = new Map<string, TerminalSnapshot>()
   for (const terminal of terminals) {
@@ -2162,7 +2187,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     if (!selectedTerminal) return null
     const cachedDetail = selectedTerminalDetailCacheKey ? terminalDetailCache[selectedTerminalDetailCacheKey] : undefined
     if (cachedDetail && terminalPaneKey(cachedDetail) === selectedTerminalKey) {
-      return { ...selectedTerminal, ...cachedDetail }
+      return terminalWithCachedBody(selectedTerminal, cachedDetail)
+    }
+    const staleDetail = latestCachedTerminalDetail(selectedTerminal, terminalDetailCache)
+    if (staleDetail && terminalPaneKey(staleDetail) === selectedTerminalKey) {
+      return terminalWithCachedBody(selectedTerminal, staleDetail)
     }
     return selectedTerminal
   }, [selectedTerminal, selectedTerminalDetailCacheKey, selectedTerminalKey, terminalDetailCache])

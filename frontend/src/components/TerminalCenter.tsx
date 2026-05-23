@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Palette, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
+import { AlertTriangle, Braces, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Palette, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useChatStore } from '../stores/useChatStore'
@@ -1129,6 +1129,35 @@ function compactTerminalPreview(value: string, maxChars: number = TERMINAL_USER_
   return `${chars.slice(0, maxChars).join('')}...`
 }
 
+function tryFormatJson(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2)
+  } catch {
+    return null
+  }
+}
+
+function formatToolDetail(value: string): { text: string; isJson: boolean } {
+  const trimmed = value.trim()
+  if (!trimmed) return { text: '', isJson: false }
+  const direct = tryFormatJson(trimmed)
+  if (direct) return { text: direct, isJson: true }
+
+  const firstObject = trimmed.search(/[{\[]/)
+  if (firstObject > 0) {
+    const prefix = trimmed.slice(0, firstObject).trimEnd()
+    const formatted = tryFormatJson(trimmed.slice(firstObject))
+    if (formatted) {
+      return { text: prefix ? `${prefix}\n${formatted}` : formatted, isJson: true }
+    }
+  }
+
+  return { text: value, isJson: false }
+}
+
 function shouldCollapseUserMessage(value: string): boolean {
   return value.includes('\n') || Array.from(value.trim()).length > TERMINAL_USER_PREVIEW_CHARS
 }
@@ -1459,7 +1488,10 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
               const hasResult = row.result !== undefined
               const isError = row.resultPrefix === '✗'
               const longResult = (row.result?.length ?? 0) > 80
-              const isOpen = expanded.has(idx) || (hasResult && !longResult)
+              const isOpen = expanded.has(idx)
+              const argsDetail = row.args ? formatToolDetail(row.args) : null
+              const resultDetail = hasResult ? formatToolDetail(row.result || '') : null
+              const hasJsonDetail = !!(argsDetail?.isJson || resultDetail?.isJson)
               const statusColor = !hasResult
                 ? theme.toolPending
                 : isError
@@ -1476,16 +1508,43 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
                       {hasResult ? (isError ? '✗' : '·') : '→'}
                     </span>
                     <span className="ml-1 text-neutral-400">{row.name}</span>
+                    {hasJsonDetail && (
+                      <Braces className="ml-1 inline h-3 w-3 align-[-2px] text-neutral-500" aria-hidden />
+                    )}
                     {row.args && (
-                      <span className="ml-1 text-neutral-600" title={row.args}>
-                        ({!isOpen ? compactTerminalPreview(row.args, TERMINAL_TOOL_ARGS_PREVIEW_CHARS) : row.args})
+                      <span className="ml-1 text-neutral-600">
+                        ({compactTerminalPreview(row.args, TERMINAL_TOOL_ARGS_PREVIEW_CHARS)})
                       </span>
                     )}
-                    {hasResult && longResult && (
-                      <span className="text-neutral-600 ml-1">{isOpen ? '▾' : '▸'}</span>
-                    )}
+                    <span className="text-neutral-600 ml-1">{isOpen ? '▾' : '▸'}</span>
                   </button>
-                  {hasResult && isOpen && (
+                  {isOpen && (argsDetail || resultDetail) && (
+                    <div className="ml-3 mt-1 space-y-1 border-l border-neutral-800/80 pl-2">
+                      {argsDetail && (
+                        <div>
+                          <div className="mb-0.5 text-[10px] uppercase tracking-wide text-neutral-600">
+                            args{argsDetail.isJson ? ' · json' : ''}
+                            {argsDetail.isJson && <Braces className="ml-1 inline h-3 w-3 align-[-2px]" aria-hidden />}
+                          </div>
+                          <pre className="max-h-72 overflow-auto rounded border border-neutral-800/80 bg-black/25 p-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-neutral-300">
+                            {argsDetail.text}
+                          </pre>
+                        </div>
+                      )}
+                      {resultDetail && (
+                        <div>
+                          <div className={`mb-0.5 text-[10px] uppercase tracking-wide ${isError ? 'text-red-400/70' : 'text-neutral-600'}`}>
+                            {isError ? 'error' : 'result'}{resultDetail.isJson ? ' · json' : ''}
+                            {resultDetail.isJson && <Braces className="ml-1 inline h-3 w-3 align-[-2px]" aria-hidden />}
+                          </div>
+                          <pre className={`max-h-72 overflow-auto rounded border p-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${isError ? 'border-red-900/45 bg-red-950/15 text-red-200' : 'border-neutral-800/80 bg-black/25 text-neutral-400'}`}>
+                            {resultDetail.text}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {!isOpen && hasResult && !longResult && row.result && (
                     <div className={`ml-1 flex whitespace-pre-wrap break-words ${isError ? 'text-red-300' : 'text-neutral-500'}`}>
                       <span className="text-neutral-600 select-none mr-1">└─</span>
                       <span className="flex-1">{row.result}</span>

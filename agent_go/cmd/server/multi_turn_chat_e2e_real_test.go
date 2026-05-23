@@ -26,14 +26,15 @@ import (
 // drives claude-code, codex, and cursor — every assertion runs
 // identically; only the adapter + per-call options differ.
 type multiTurnChatE2ESpec struct {
-	providerName  string // human-friendly name for log messages
-	providerKey   string // ledger Provider field
-	envGate       string // env var that must be "1" to run this provider's test
-	extraSkipFn   func(t *testing.T)
-	newAdapter    func(t *testing.T) llmtypes.Model
-	turnOptions   func(ownerSessionID string) []llmtypes.CallOption
-	expectNonZero bool // true when this provider should produce non-zero TotalCostUSD (cursor's display-model gap leaves it 0)
-	cleanup       func(ctx context.Context)
+	providerName     string // human-friendly name for log messages
+	providerKey      string // ledger Provider field
+	envGate          string // env var that must be "1" to run this provider's test
+	extraSkipFn      func(t *testing.T)
+	newAdapter       func(t *testing.T) llmtypes.Model
+	turnOptions      func(ownerSessionID string) []llmtypes.CallOption
+	expectNonZero    bool // provider produces non-zero TotalCostUSD (false for cursor: display-model gap)
+	expectCacheReads bool // provider surfaces cache_read_input_tokens in gi.Additional (true for claude/codex; false for cursor — char-estimated tokens)
+	cleanup          func(ctx context.Context)
 }
 
 // runMultiTurnChatE2E drives the spec's adapter through N sequential
@@ -260,6 +261,20 @@ func runMultiTurnChatE2E(t *testing.T, spec multiTurnChatE2ESpec) {
 		for k, v := range gi.Additional {
 			additional[k] = v
 		}
+		// Cache token surfacing contract (see
+		// docs/COSTS_AND_CONVERSATION_HISTORY.md → "Cache token
+		// surfacing contract"): providers that report cache hits MUST
+		// write cache_read_input_tokens into gi.Additional. We can't
+		// guarantee a cache HIT on every turn (turn 1 is usually a
+		// cache miss; some providers don't cache short prompts) so
+		// we only assert the KEY is REACHABLE on turn 2+ when the
+		// provider claims to support it. If the key is missing, the
+		// ledger's extractCacheTokens will return 0 in production.
+		if spec.expectCacheReads && turn >= 2 {
+			if _, ok := additional["cache_read_input_tokens"]; !ok {
+				t.Errorf("turn %d: gi.Additional missing cache_read_input_tokens — adapter cache-key surfacing regression (provider=%s)", turn, spec.providerName)
+			}
+		}
 		effectiveModel, _ := extractCostAndEffectiveModel(additional)
 		tokenEvent := &unifiedevents.TokenUsageEvent{
 			ModelID:          effectiveModel,
@@ -306,6 +321,52 @@ func runMultiTurnChatE2E(t *testing.T, spec multiTurnChatE2ESpec) {
 	}
 	if spec.expectNonZero && summary.Total.TotalCostUSD <= 0 {
 		t.Errorf("Total.TotalCostUSD = %v, want > 0 (metered provider)", summary.Total.TotalCostUSD)
+	}
+	// Cache-read end-to-end: providers that claim cache support
+	// MUST have at least some cache-read tokens after N turns that
+	// share the same prompt prefix. If this is 0, either the
+	// adapter dropped cache_read_input_tokens from Additional OR
+	// extractCacheTokens isn't keyed off the right name.
+	if spec.expectCacheReads && summary.Total.CacheReadTokens == 0 {
+		t.Errorf("Total.CacheReadTokens = 0 across %d turns — cache-key surfacing or extractCacheTokens regression", len(prompts))
+	}
+
+	// ─── Conversation-history persistence shape ───────────────────────
+	// The live server persists the running `history` slice as
+	// chat_history JSON. We don't drive the full save path here but
+	// we DO have the same slice. Marshal-roundtrip and assert the
+	// shape so downstream consumers (resume picker, conversation
+	// log readers) can read it back.
+	convData := map[string]interface{}{
+		"session_id":           ownerSessionID,
+		"agent_mode":           "chat",
+		"conversation_history": history,
+		"updated_at":           time.Now().Format(time.RFC3339),
+	}
+	convJSON, err := json.MarshalIndent(convData, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal conversation history: %v", err)
+	}
+	var roundtrip struct {
+		ConversationHistory []llmtypes.MessageContent `json:"conversation_history"`
+	}
+	if err := json.Unmarshal(convJSON, &roundtrip); err != nil {
+		t.Fatalf("roundtrip conversation history: %v", err)
+	}
+	var humanCount, aiOrToolCount int
+	for _, m := range roundtrip.ConversationHistory {
+		switch m.Role {
+		case llmtypes.ChatMessageTypeHuman:
+			humanCount++
+		case llmtypes.ChatMessageTypeAI, llmtypes.ChatMessageTypeTool:
+			aiOrToolCount++
+		}
+	}
+	if humanCount != len(prompts) {
+		t.Errorf("persisted conversation_history: %d human entries, want %d", humanCount, len(prompts))
+	}
+	if aiOrToolCount == 0 {
+		t.Errorf("persisted conversation_history: 0 ai/tool entries — splice didn't fire end-to-end")
 	}
 
 	// Spliced history should have grown to at least 1 + N*2 entries
@@ -389,7 +450,8 @@ func TestMultiTurnChatE2E_ClaudeCode(t *testing.T) {
 			// need to pass options for persistence here.
 			return nil
 		},
-		expectNonZero: true,
+		expectNonZero:    true,
+		expectCacheReads: true, // claude prompt-caches the system prompt across turns
 		cleanup: func(ctx context.Context) {
 			_ = claudecodeadapter.CleanupClaudeCodeExperimentalSessions(ctx)
 		},
@@ -422,7 +484,8 @@ func TestMultiTurnChatE2E_Codex(t *testing.T) {
 				codexcliadapter.WithReasoningEffort("low"),
 			}
 		},
-		expectNonZero: true,
+		expectNonZero:    true,
+		expectCacheReads: true, // codex/OpenAI prompt-caches the system prompt across turns
 		cleanup: func(ctx context.Context) {
 			_ = codexcliadapter.CleanupCodexCLIInteractiveSessions(ctx)
 		},
@@ -455,6 +518,9 @@ func TestMultiTurnChatE2E_Cursor(t *testing.T) {
 		// Cursor's effective model ("Composer 2.5") is a display name
 		// not in the metadata registry — known cost-emission gap.
 		// Tokens are char-estimated; cost stays 0 until that's fixed.
-		expectNonZero: false,
+		// Cursor also doesn't expose cache info (char-estimate has no
+		// cache concept), so the cache-read assertions are skipped.
+		expectNonZero:    false,
+		expectCacheReads: false,
 	})
 }

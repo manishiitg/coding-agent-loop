@@ -59,6 +59,28 @@ const EXECUTION_CANCELED_EVENT_TYPES = new Set([
   'batch_execution_canceled',
 ]);
 
+const TREE_VISIBLE_EXECUTION_DETAIL_TYPES = new Set([
+  'batch_execution_start',
+  'batch_execution_end',
+  'batch_group_start',
+  'batch_group_end',
+  'workflow_start',
+  'workflow_progress',
+  'workflow_end',
+  'routing_evaluated',
+  'pre_validation_completed',
+  'independent_steps_selected',
+  'todo_steps_extracted',
+  'todo_task_route_selected',
+  'todo_task_item_created',
+  'todo_task_item_updated',
+  'todo_task_item_completed',
+  'todo_task_step_completed',
+  'todo_task_status_update',
+  'variables_extracted',
+  'step_token_usage',
+]);
+
 const TREE_TOOL_CALL_PREVIEW_LIMIT = 5;
 const AUTO_EXPANDED_OWNER_TOOL_EVENT_LIMIT = 2;
 const EVENT_HIERARCHY_DEBUG_STORAGE_KEY = 'debug:event-hierarchy';
@@ -150,6 +172,10 @@ function executionOwnerStatus(node: EventNode): string {
 
 function isCompletedExecutionOwnerNode(node: EventNode): boolean {
   return executionOwnerStatus(node) === 'completed';
+}
+
+function isTreeVisibleExecutionDetailEvent(event: PollingEvent): boolean {
+  return !!event.type && TREE_VISIBLE_EXECUTION_DETAIL_TYPES.has(event.type);
 }
 
 function extractAutoNotificationExecutionId(event: PollingEvent): string | undefined {
@@ -1236,6 +1262,39 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       };
 
       const allExecutionNodes = Array.from(executionNodeById.values()).filter(shouldMaterializeExecutionNode);
+      const findMatchingWorkshopStepId = (event: PollingEvent): string | undefined => {
+        const eventStepName = getWorkflowStepNameFromEvent(event);
+        if (!eventStepName) return undefined;
+
+        const normalizedEventStepName = normalizeExecutionMatchName(eventStepName);
+        if (!normalizedEventStepName) return undefined;
+
+        const eventTime = Date.parse(event.timestamp || '');
+        const candidates = allExecutionNodes
+          .filter(candidate => candidate.source === 'background_agent_registry' && candidate.kind === 'workshop_background')
+          .filter(candidate => {
+            const normalizedCandidateName = normalizeExecutionMatchName(candidate.name || '');
+            return normalizedCandidateName === normalizedEventStepName ||
+              normalizedCandidateName.endsWith(normalizedEventStepName) ||
+              normalizedEventStepName.endsWith(normalizedCandidateName);
+          })
+          .filter(candidate => {
+            const startedAt = Date.parse(candidate.started_at || '');
+            const completedAt = Date.parse(candidate.completed_at || '');
+            return Number.isNaN(eventTime) ||
+              Number.isNaN(startedAt) ||
+              eventTime >= startedAt - 1000 && (Number.isNaN(completedAt) || eventTime <= completedAt + 1000);
+          })
+          .sort((a, b) => {
+            const aStartedAt = Date.parse(a.started_at || '');
+            const bStartedAt = Date.parse(b.started_at || '');
+            if (Number.isNaN(aStartedAt) || Number.isNaN(bStartedAt)) return 0;
+            return bStartedAt - aStartedAt;
+          });
+
+        return candidates[0]?.execution_id;
+      };
+
       for (const orphan of rawExecutionRootNodes) {
         if (orphan.kind !== 'workflow_sub_agent') continue;
 
@@ -1309,8 +1368,19 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         if (ownerEventIds.has(event.id) || isExecutionOwnerEvent(event)) continue;
 
         const rawExecutionId = getExecutionId(event);
-        const executionId = rawExecutionId ? (executionAliasById.get(rawExecutionId) || rawExecutionId) : undefined;
+        const rawParentExecutionId = getEventParentExecutionId(event)?.trim();
+        const executionId = rawExecutionId
+          ? (executionAliasById.get(rawExecutionId) || rawExecutionId)
+          : rawParentExecutionId
+            ? (executionAliasById.get(rawParentExecutionId) || rawParentExecutionId)
+            : findMatchingWorkshopStepId(event);
         if (!executionId || isRootLikeExecutionId(executionId) || !executionNodeById.has(executionId)) {
+          const matchedWorkshopStepId = findMatchingWorkshopStepId(event);
+          if (!matchedWorkshopStepId || !executionNodeById.has(matchedWorkshopStepId)) continue;
+          const eventsForExecution = eventsByExecutionId.get(matchedWorkshopStepId) || [];
+          eventsForExecution.push(event);
+          eventsByExecutionId.set(matchedWorkshopStepId, eventsForExecution);
+          attachedEventIds.add(event.id);
           continue;
         }
 
@@ -1700,7 +1770,12 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         // siblings visible so the workflow reads as a run timeline, not just
         // the active tail of the trace.
         const ownerChildren = node.children.filter(child => isExecutionOwnerEvent(child.event));
-        ownerChildren.forEach((child, index) => {
+        const visibleDetailChildren = node.children.filter(child =>
+          !isExecutionOwnerEvent(child.event) && isTreeVisibleExecutionDetailEvent(child.event)
+        );
+        const visibleChildren = [...ownerChildren, ...visibleDetailChildren]
+          .sort((a, b) => compareEventsChronologically(a.event, b.event, new Map()));
+        visibleChildren.forEach((child, index) => {
           flatten(child, `${key}-owner-child-${index}`, levelOffset);
         });
         return;
@@ -2051,7 +2126,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       ? children.filter(child => !isExecutionOwnerEvent(child.event))
       : [];
     const ownedInlineChildren = ownsInternalLogPanel
-      ? dedupeOwnerInlineNodes(ownerNonExecutionChildren.filter(child => !isOwnerCollapsedDetailEvent(child.event)))
+      ? dedupeOwnerInlineNodes(ownerNonExecutionChildren.filter(child =>
+        !isOwnerCollapsedDetailEvent(child.event) && !isTreeVisibleExecutionDetailEvent(child.event)
+      ))
       : [];
     const ownedLogChildren = ownsInternalLogPanel
       ? ownerNonExecutionChildren.filter(child => isOwnerCollapsedDetailEvent(child.event))

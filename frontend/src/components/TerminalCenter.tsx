@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Braces, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Palette, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
+import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useChatStore } from '../stores/useChatStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
@@ -708,10 +709,16 @@ function formatTerminalMeta(terminal: TerminalSnapshot): string {
     parts.push(`attempt ${terminal.step_attempt}`)
   }
   if (terminal.step_execution_mode) {
-    parts.push(humanizeIdentifier(terminal.step_execution_mode))
+    parts.push(formatStepExecutionModeChip(terminal.step_execution_mode))
   }
   if (terminal.display_meta) parts.push(terminal.display_meta)
   return [...new Set(parts.filter(Boolean))].join(' · ')
+}
+
+function formatStepExecutionModeChip(mode?: string): string {
+  const normalized = (mode || '').toLowerCase().trim()
+  if (normalized === 'learn_code') return 'Api'
+  return humanizeIdentifier(mode)
 }
 
 function formatSelectedTerminalMeta(terminal: TerminalSnapshot): string {
@@ -785,6 +792,7 @@ function formatCloseCountdown(seconds: number): string {
 function terminalState(terminal: TerminalSnapshot): string {
   if (!terminal.active && terminalSecondsUntilClose(terminal) > 0) return 'closing'
   if (terminal.state === 'closing' && terminalSecondsUntilClose(terminal) <= 0) return 'completed'
+  if (terminal.active && terminal.state === 'idle') return 'running'
   if (terminal.state) return terminal.state
   return terminal.active ? 'running' : 'completed'
 }
@@ -970,7 +978,12 @@ function hasPromptCompletionFallbackText(content?: string): boolean {
   return /status:\s*complete(d)?/i.test(content)
 }
 
+function terminalUsesIdleFallback(terminal: TerminalSnapshot): boolean {
+  return Boolean(terminal.tmux_session) || (terminal.step_transport || '').toLowerCase() === 'tmux'
+}
+
 function terminalFallbackInfo(terminal: TerminalSnapshot): { label: string; title: string } | null {
+  if (!terminalUsesIdleFallback(terminal)) return null
   if (!terminal.active || terminalState(terminal) !== 'running') return null
   const updatedAt = terminalUpdatedTime(terminal)
   if (!updatedAt) return null
@@ -1367,8 +1380,6 @@ interface StructuredTerminalViewProps {
   terminal?: TerminalSnapshot | null
 }
 
-// SPINNER_FRAMES animates while a synthetic terminal is still active. Same
-// vocabulary Claude Code's TUI uses for its working-state indicator.
 const SPINNER_FRAMES = ['◐', '◓', '◑', '◒']
 
 function useSpinnerFrame(active: boolean): string {
@@ -1421,6 +1432,20 @@ function normalizeTerminalRows(rows: TerminalSnapshot['rows'] | undefined): Term
     }
   }
   return normalized
+}
+
+function normalizeTerminalWorkflowPath(path?: string | null): string {
+  return (path || '')
+    .replace(/^\/data\/docs\//, '')
+    .replace(/\/+$/, '')
+}
+
+function terminalMatchesWorkflow(terminal: TerminalSnapshot, workflowPath?: string | null): boolean {
+  const target = normalizeTerminalWorkflowPath(workflowPath)
+  if (!target) return true
+  const terminalPath = normalizeTerminalWorkflowPath(terminal.workflow_path)
+  if (!terminalPath) return false
+  return terminalPath === target || terminalPath.endsWith(`/${target}`) || target.endsWith(`/${terminalPath}`)
 }
 
 function formatTokens(n?: number): string {
@@ -1611,7 +1636,9 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
           }
         })}
         {isStreaming && (
-          <div className={`mt-1 ${theme.streaming}`}>{spinner} <span className="text-neutral-500">working…</span></div>
+          <div className={`mt-1 font-mono ${theme.streaming}`} aria-label="Running">
+            {spinner}
+          </div>
         )}
       </div>
       {terminal && (() => {
@@ -1633,7 +1660,9 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
         ].filter(Boolean)
         return (
           <div className={`flex items-center gap-2 border-t border-neutral-700/70 bg-[#101211] px-3 py-1 font-mono text-neutral-500 ${theme.footerText}`}>
-            <span className={isStreaming ? theme.streaming : 'text-neutral-600'}>{isStreaming ? spinner : '·'}</span>
+            <span className={isStreaming ? theme.streaming : 'text-neutral-600'}>
+              {isStreaming ? spinner : '·'}
+            </span>
             <span className="truncate">{segments.join('  ·  ')}</span>
           </div>
         )
@@ -1748,6 +1777,20 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [debugInput, setDebugInput] = useState('')
   const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
   const [debugPanelOpenForID, setDebugPanelOpenForID] = useState<string | null>(null)
+
+  const activeWorkflowPath = useGlobalPresetStore(state => {
+    const activeWorkflowId = state.activePresetIds.workflow
+    if (!activeWorkflowId) return null
+    return state.workflowPresets.find(preset => preset.id === activeWorkflowId)?.selectedFolder?.filepath ?? null
+  })
+  const isWorkflowTerminalContext = useChatStore(state => {
+    if (!currentSessionId) return false
+    return Object.values(state.chatTabs).some(tab =>
+      tab.sessionId === currentSessionId &&
+      tab.metadata?.mode === 'workflow'
+    )
+  })
+  const terminalWorkflowPathFilter = isWorkflowTerminalContext ? activeWorkflowPath : null
 
   const sessionEvents = useChatStore(state => (
     currentSessionId ? state.tabEvents[currentSessionId] : undefined
@@ -2010,7 +2053,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   }, [])
 
   const fetchTerminals = useCallback(async () => {
-    const fetchScope = viewAll ? 'all' : (currentSessionId || '')
+    const fetchScope = `${viewAll ? 'all' : (currentSessionId || '')}:${terminalWorkflowPathFilter || ''}`
     if (fetchInFlightRef.current && fetchInFlightScopeRef.current === fetchScope) return
     fetchInFlightRef.current = true
     fetchInFlightScopeRef.current = fetchScope
@@ -2023,24 +2066,22 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
 
     try {
       const response = await agentApi.listTerminals(viewAll ? undefined : currentSessionId, 'none')
-      let visibleTerminals = (response.terminals || []).filter(terminal => !dismissedTerminalIDs.has(terminal.terminal_id))
-
-      if (!viewAll && currentSessionId && visibleTerminals.length === 0 && terminalsRef.current.length > 0) {
-        const visibleTerminalIDs = new Set(terminalsRef.current.map(terminal => terminal.terminal_id))
-        const fallbackResponse = await agentApi.listTerminals(undefined, 'none')
-        const recoveredTerminals = (fallbackResponse.terminals || []).filter(terminal =>
-          visibleTerminalIDs.has(terminal.terminal_id) &&
-          !dismissedTerminalIDs.has(terminal.terminal_id)
-        )
-        if (recoveredTerminals.length > 0) {
-          visibleTerminals = recoveredTerminals
-        }
-      }
+      const visibleTerminals = (response.terminals || []).filter(terminal =>
+        !dismissedTerminalIDs.has(terminal.terminal_id) &&
+        terminalMatchesWorkflow(terminal, terminalWorkflowPathFilter)
+      )
 
       const nextTerminals = dedupeTerminalsByID(visibleTerminals)
       if (fetchRequestSeqRef.current !== requestSeq) return
       setTerminals(current => {
-        const currentMatchesScope = viewAll || !currentSessionId || current.every(terminal => terminal.session_id === currentSessionId)
+        const currentMatchesScope = (
+          viewAll ||
+          !currentSessionId ||
+          current.every(terminal =>
+            terminal.session_id === currentSessionId &&
+            terminalMatchesWorkflow(terminal, terminalWorkflowPathFilter)
+          )
+        )
         if (!viewAll && currentSessionId && nextTerminals.length === 0 && current.length > 0 && currentMatchesScope) {
           emptyResponseCountRef.current += 1
           if (emptyResponseCountRef.current <= EMPTY_TERMINAL_RESPONSE_GRACE_POLLS) {
@@ -2060,7 +2101,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         fetchInFlightScopeRef.current = null
       }
     }
-  }, [currentSessionId, dismissedTerminalIDs, viewAll])
+  }, [currentSessionId, dismissedTerminalIDs, terminalWorkflowPathFilter, viewAll])
 
   const dismissTerminal = useCallback(async (terminal: TerminalSnapshot) => {
     if (!canDismissTerminal(terminal)) return

@@ -1187,6 +1187,7 @@ func TestStoreMarksUnchangedBoundedTerminalCompletedAfterTwoMinutes(t *testing.T
 		ExecutionID:   "workflow-step:exec-step-old:step-old",
 		ExecutionKind: "workflow_step",
 		Scope:         "workflow_step",
+		TmuxSession:   "mlp-codex-cli-int-test",
 		Content:       "Working...\nNo provider idle prompt was ever observed.",
 		Active:        true,
 		State:         "running",
@@ -1211,6 +1212,40 @@ func TestStoreMarksUnchangedBoundedTerminalCompletedAfterTwoMinutes(t *testing.T
 	}
 }
 
+func TestStoreDoesNotIdleTimeoutStructuredWorkflowTerminal(t *testing.T) {
+	store := NewStore()
+	terminalID := "session-1:workflow-step:exec-step-old:step-old"
+	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Minute))
+	store.mu.Lock()
+	store.byID[terminalID] = Snapshot{
+		TerminalID:    terminalID,
+		SessionID:     "session-1",
+		OwnerID:       "workflow-step:exec-step-old:step-old",
+		ExecutionID:   "workflow-step:exec-step-old:step-old",
+		ExecutionKind: "workflow_step",
+		Scope:         "workflow_step",
+		StepTransport: "structured",
+		Content:       "Working...\nNo provider idle prompt was ever observed.",
+		Active:        true,
+		State:         "running",
+		CreatedAt:     oldUpdate,
+		UpdatedAt:     oldUpdate,
+	}
+	store.bySession["session-1"] = map[string]struct{}{terminalID: {}}
+	store.mu.Unlock()
+
+	snapshot, ok := store.Get(terminalID)
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if !snapshot.Active {
+		t.Fatalf("structured terminal should not be completed by idle timeout")
+	}
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
+	}
+}
+
 func TestStoreDoesNotMarkRecentBoundedTerminalInactive(t *testing.T) {
 	store := NewStore()
 	terminalID := "session-1:workflow-step:exec-step-recent:step-recent"
@@ -1223,6 +1258,7 @@ func TestStoreDoesNotMarkRecentBoundedTerminalInactive(t *testing.T) {
 		ExecutionID:   "workflow-step:exec-step-recent:step-recent",
 		ExecutionKind: "workflow_step",
 		Scope:         "workflow_step",
+		TmuxSession:   "mlp-codex-cli-int-test",
 		Content:       "Working...\nNo provider idle prompt was ever observed.",
 		Active:        true,
 		State:         "running",
@@ -1256,6 +1292,7 @@ func TestStoreMarksUnchangedMainAgentTerminalInactive(t *testing.T) {
 		ExecutionID:   "main:session-1",
 		ExecutionKind: "main_agent",
 		Scope:         "main_agent",
+		TmuxSession:   "mlp-main-agent",
 		Content:       "Ready for the next user turn.",
 		Active:        true,
 		State:         "running",
@@ -1295,7 +1332,7 @@ func TestStoreIdenticalTerminalChunksDoNotRefreshUpdatedAt(t *testing.T) {
 func TestStoreRefreshContentDoesNotRefreshUpdatedAtWhenPaneUnchanged(t *testing.T) {
 	store := NewStore()
 	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Second))
-	metadata := map[string]interface{}{"execution_kind": "workflow_step", "scope": "workflow_step"}
+	metadata := map[string]interface{}{"execution_kind": "workflow_step", "scope": "workflow_step", "tmux_session": "mlp-codex-cli-int-test"}
 	store.HandleEvent("session-1", terminalEventWithMetadata("exec-1", "same pane", 10, metadata, oldUpdate))
 
 	refreshed, ok := store.RefreshContent("session-1:exec-1", "same pane")
@@ -1322,7 +1359,7 @@ func TestStoreRepeatedIdenticalChunksBecomeCompletedAfterFiveMinutes(t *testing.
 	store := NewStore()
 	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Second))
 	now := time.Now()
-	metadata := map[string]interface{}{"execution_kind": "workflow_step", "scope": "workflow_step"}
+	metadata := map[string]interface{}{"execution_kind": "workflow_step", "scope": "workflow_step", "tmux_session": "mlp-codex-cli-int-test"}
 	store.HandleEvent("session-1", terminalEventWithMetadata("exec-1", "same pane", 10, metadata, oldUpdate))
 	store.HandleEvent("session-1", terminalEventWithMetadata("exec-1", "same pane", 40, metadata, now))
 

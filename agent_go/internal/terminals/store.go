@@ -465,6 +465,11 @@ func boundedTerminalCanSelfComplete(snapshot Snapshot) bool {
 		strings.HasPrefix(snapshot.OwnerID, "workflow-step:")
 }
 
+func terminalUsesIdleTimeout(snapshot Snapshot) bool {
+	return strings.EqualFold(strings.TrimSpace(snapshot.StepTransport), "tmux") ||
+		strings.TrimSpace(snapshot.TmuxSession) != ""
+}
+
 func (s *Store) upsertToolLine(sessionID string, event storeevents.Event, metadata map[string]interface{}) {
 	if event.Data == nil || event.Data.Data == nil {
 		return
@@ -700,6 +705,7 @@ func (s *Store) reconcileTerminalStateLocked(terminalID string, now time.Time) (
 		return Snapshot{}, false
 	}
 	if snapshot.Active &&
+		terminalUsesIdleTimeout(snapshot) &&
 		boundedTerminalCanSelfComplete(snapshot) &&
 		terminalHasPromptCompletionFallback(snapshot.Content) &&
 		terminalLooksInactiveAfter(snapshot, now, terminalPromptCompletionInactiveAfter) {
@@ -710,7 +716,10 @@ func (s *Store) reconcileTerminalStateLocked(terminalID string, now time.Time) (
 		s.byID[terminalID] = snapshot
 		return snapshot, true
 	}
-	if snapshot.Active && boundedTerminalCanSelfComplete(snapshot) && terminalLooksInactive(snapshot, now) {
+	if snapshot.Active &&
+		terminalUsesIdleTimeout(snapshot) &&
+		boundedTerminalCanSelfComplete(snapshot) &&
+		terminalLooksInactive(snapshot, now) {
 		snapshot.Active = false
 		snapshot.State = "completed"
 		snapshot.ClosesAt = nil

@@ -1094,6 +1094,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           triggeredBy?: string
           botPlatform?: string
           isScheduledRun?: boolean
+          preloadedEvents?: PollingEvent[]
+          lastProcessedIndex?: number
         }> = []
         const queuedSessionIds = new Set<string>()
 
@@ -1163,6 +1165,52 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             triggeredBy: running.triggered_by,
             isScheduledRun: running.triggered_by === 'cron',
           })
+        }
+
+        // Fresh browsers do not have the local workflow tab state that another
+        // browser may still be showing. If there is no running/live tab to
+        // restore, ask the workflow-owned builder-session endpoint for the
+        // latest live or saved Workflow Builder conversation for this preset.
+        if (queuedSessionIds.size === 0) {
+          try {
+            const builderSession = await agentApi.getWorkflowBuilderSession(activePresetId, workspacePath || undefined)
+            if (
+              builderSession.success &&
+              builderSession.source !== 'none' &&
+              builderSession.session_id &&
+              (builderSession.events?.length ?? 0) > 0
+            ) {
+              const builderStatus = (builderSession.status || '').toLowerCase().trim()
+              const builderIsActive =
+                builderStatus === 'running' ||
+                builderStatus === 'active' ||
+                builderStatus === 'in_progress' ||
+                builderStatus === 'waiting' ||
+                builderStatus === 'waiting_feedback' ||
+                builderStatus === 'waiting_for_input' ||
+                (
+                  builderSession.display_status === 'busy' &&
+                  builderStatus !== 'completed' &&
+                  builderStatus !== 'stopped' &&
+                  builderStatus !== 'error' &&
+                  builderStatus !== 'idle'
+                )
+              queuedSessionIds.add(builderSession.session_id)
+              sessionsToRestore.push({
+                sessionId: builderSession.session_id,
+                query: builderSession.workflow_name || builderSession.conversation_path,
+                title: 'Workflow Builder',
+                status: builderSession.status || 'completed',
+                isActive: builderIsActive,
+                phaseId: builderSession.phase_id || 'workflow-builder',
+                phaseName: 'Workflow Builder',
+                preloadedEvents: builderSession.events || [],
+                lastProcessedIndex: builderSession.last_processed_index,
+              })
+            }
+          } catch (error) {
+            console.warn('[WorkflowReconnect] Failed to restore workflow builder session:', error)
+          }
         }
 
         // Add the most recent DB session not already in active list
@@ -1286,13 +1334,23 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
           // Load events from in-memory EventStore (workflow events are NOT stored in DB)
           // restoreWorkflowStateFromEvents fetches from the polling API which reads EventStore
-          try {
-            await restoreWorkflowStateFromEvents(session.sessionId)
-            if (session.isActive || session.status === 'running') {
-              setTabStreaming(tabId, true)
+          if (session.preloadedEvents && session.preloadedEvents.length > 0) {
+            useChatStore.getState().setTabEvents(session.sessionId, session.preloadedEvents)
+            useChatStore.getState().setTabLastEventIndex(
+              session.sessionId,
+              session.lastProcessedIndex ?? session.preloadedEvents.length - 1,
+            )
+            setTabStreaming(tabId, session.isActive)
+            useChatStore.getState().setTabCompleted(tabId, !session.isActive)
+          } else {
+            try {
+              await restoreWorkflowStateFromEvents(session.sessionId)
+              if (session.isActive || session.status === 'running') {
+                setTabStreaming(tabId, true)
+              }
+            } catch (err) {
+              console.warn('[WorkflowReconnect] Failed to load events for', session.sessionId, err)
             }
-          } catch (err) {
-            console.warn('[WorkflowReconnect] Failed to load events for', session.sessionId, err)
           }
 
           lastTabId = tabId

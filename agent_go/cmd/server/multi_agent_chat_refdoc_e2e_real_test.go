@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	claudecodeadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 
 	"mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 )
@@ -181,4 +184,105 @@ func dumpBlocks(blocks []anthropic.ContentBlockUnion) string {
 		}
 	}
 	return sb.String()
+}
+
+// TestMultiAgentChatPromptSteersToReferenceDocs_ClaudeCode is the local-CLI
+// variant of the refdoc steering test. It uses the Claude Code CLI adapter
+// (which routes through the user's local `claude` binary and consumes the
+// user's Claude subscription — no ANTHROPIC_API_KEY needed).
+//
+// Unlike the Anthropic SDK variant, Claude Code CLI does its tool calling
+// via MCP servers configured externally; the adapter does NOT accept
+// inline tool definitions. So this test can't verify a literal tool_use
+// block was emitted. Instead it verifies the **model's stated intent** —
+// does the text response mention calling `get_reference_doc(kind="...")`
+// with the expected kind? That proves the inline cheat-sheet pointer is
+// strong enough to steer the LLM's plan, which is what we care about.
+//
+// Gating:
+//   - RUN_MULTIAGENT_REFDOC_CC_E2E=1 to run.
+//   - `claude` CLI binary must be on PATH.
+//   - CLAUDE_CODE_REFDOC_MODEL override (default: claude-haiku-4-5-20251001).
+//
+// Cost: uses the user's local Claude subscription, not API credits.
+func TestMultiAgentChatPromptSteersToReferenceDocs_ClaudeCode(t *testing.T) {
+	if os.Getenv("RUN_MULTIAGENT_REFDOC_CC_E2E") == "" {
+		t.Skip("set RUN_MULTIAGENT_REFDOC_CC_E2E=1 to run this claude-code CLI e2e")
+	}
+	if _, err := exec.LookPath("claude"); err != nil {
+		t.Skipf("claude binary not found on PATH: %v", err)
+	}
+	model := strings.TrimSpace(os.Getenv("CLAUDE_CODE_REFDOC_MODEL"))
+	if model == "" {
+		model = "claude-haiku-4-5-20251001"
+	}
+
+	systemPrompt := virtualtools.GetMultiAgentDelegationInstructionsWithUser("Chats", "default")
+	adapter := claudecodeadapter.NewClaudeCodeExperimentalAdapter(model, &e2eMockLogger{})
+	t.Cleanup(func() {
+		_ = claudecodeadapter.CleanupClaudeCodeExperimentalSessions(context.Background())
+	})
+
+	type caseSpec struct {
+		name         string
+		userMsg      string
+		expectKind   string
+		mustMention  []string // additional phrases that should appear in the response
+	}
+	cases := []caseSpec{
+		{
+			name:    "schedule_request_describes_schedule_doc_load",
+			userMsg: "I want to schedule a multi-agent task that runs every weekday at 9 AM. Walk me through exactly what tools you would call, in order, to set this up. Be specific about tool names and arguments.",
+			expectKind: "schedule-management",
+			mustMention: []string{"get_reference_doc"},
+		},
+		{
+			name:    "secret_storage_describes_secret_doc_load",
+			userMsg: "I want to save a Slack API token as SLACK_TOKEN. Walk me through exactly what tools you would call, in order, to store it correctly. Be specific about tool names and arguments.",
+			expectKind: "secret-management",
+			mustMention: []string{"get_reference_doc"},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+			defer cancel()
+
+			resp, err := adapter.GenerateContent(ctx, []llmtypes.MessageContent{
+				{Role: llmtypes.ChatMessageTypeSystem, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: systemPrompt}}},
+				{Role: llmtypes.ChatMessageTypeHuman, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: tc.userMsg}}},
+			})
+			if err != nil {
+				t.Fatalf("claude-code GenerateContent: %v", err)
+			}
+			if len(resp.Choices) == 0 {
+				t.Fatal("no choices in response")
+			}
+			text := resp.Choices[0].Content
+			t.Logf("model response (%d chars):\n%s", len(text), truncateRefdocLog(text, 1200))
+
+			// Stated-intent check: does the response mention calling
+			// get_reference_doc with the expected kind? Allow common
+			// formatting variations (kind=..., kind: ..., kind:"...").
+			lower := strings.ToLower(text)
+			kindMentioned := strings.Contains(lower, strings.ToLower(tc.expectKind))
+			refDocMentioned := strings.Contains(lower, "get_reference_doc")
+			if !refDocMentioned {
+				t.Errorf("expected response to mention get_reference_doc; got text=%s", truncateRefdocLog(text, 600))
+			}
+			if !kindMentioned {
+				t.Errorf("expected response to mention kind %q; got text=%s", tc.expectKind, truncateRefdocLog(text, 600))
+			}
+			for _, phrase := range tc.mustMention {
+				if !strings.Contains(lower, strings.ToLower(phrase)) {
+					t.Errorf("expected response to mention %q; got text=%s", phrase, truncateRefdocLog(text, 600))
+				}
+			}
+			if refDocMentioned && kindMentioned {
+				t.Logf("✅ model stated intent to call get_reference_doc(kind=%q) before action", tc.expectKind)
+			}
+		})
+	}
 }

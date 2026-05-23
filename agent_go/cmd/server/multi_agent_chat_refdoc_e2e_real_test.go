@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strings"
@@ -12,10 +14,12 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
+	unifiedevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	claudecodeadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 
 	"mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/costledger"
 )
 
 // TestMultiAgentChatPromptSteersToReferenceDocs is a real-LLM e2e test for
@@ -373,6 +377,16 @@ This workflow is ` + workflowDescription + `. It runs continuously and updates `
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 
+	// In-process workspace API + cost ledger so we can verify cost
+	// + conversation persistence end-to-end. Mirrors what the live
+	// server does after every chat turn: token_usage event → cost
+	// observer → costs.jsonl entry; full history → chat_history JSON.
+	wsServer := costledger.NewTestServer(t)
+	defer wsServer.Close()
+	api := &StreamingAPI{costLedger: costledger.NewLedger(wsServer.URL)}
+	const testSessionID = "multi-agent-chat-full-conv-e2e"
+	observer := newCostObserver(api.costLedger, testSessionID, "default", "multi-agent")
+
 	// Running conversation history. The system prompt is set on the first
 	// message; subsequent turns inherit it via the claude-code session.
 	history := []llmtypes.MessageContent{
@@ -460,6 +474,65 @@ This workflow is ` + workflowDescription + `. It runs continuously and updates `
 			text := resp.Choices[0].Content
 			t.Logf("← turn %d (%v): %s", turnNum, elapsed, truncateRefdocLog(text, 800))
 
+			// ─── Cost ledger per-turn assertions ─────────────────────
+			// Drive the costObserver the same way the real server does:
+			// build a TokenUsageEvent from the response's GenerationInfo
+			// and feed it through. Then verify the resulting ledger
+			// entry has the fields we care about populated.
+			gi := resp.Choices[0].GenerationInfo
+			if gi == nil {
+				t.Fatalf("turn %d: GenerationInfo nil — cost ledger plumbing can't fire", turnNum)
+			}
+			promptTok := derefInt(gi.PromptTokens, gi.InputTokens)
+			completionTok := derefInt(gi.CompletionTokens, gi.OutputTokens)
+			if promptTok == 0 && resp.Usage != nil && resp.Usage.InputTokens > 0 {
+				promptTok = resp.Usage.InputTokens
+			}
+			if completionTok == 0 && resp.Usage != nil && resp.Usage.OutputTokens > 0 {
+				completionTok = resp.Usage.OutputTokens
+			}
+			if promptTok == 0 {
+				t.Errorf("turn %d: PromptTokens unpopulated on gi — adapter regression", turnNum)
+			}
+			if completionTok == 0 {
+				t.Errorf("turn %d: CompletionTokens unpopulated on gi — adapter regression", turnNum)
+			}
+			additional := map[string]interface{}{}
+			for k, v := range gi.Additional {
+				additional[k] = v
+			}
+			effectiveModel, _ := extractCostAndEffectiveModel(additional)
+			if effectiveModel == "" {
+				effectiveModel = model
+			}
+			// Cache token surfacing contract (per docs/COSTS_AND_CONVERSATION_HISTORY.md):
+			// claude-code MUST populate cache_read_input_tokens in
+			// gi.Additional, not just the typed CachedContentTokens
+			// field. Turn 1 might be a cache miss; turns 2+ that
+			// reuse the system prompt should hit the cache and
+			// have the key populated.
+			if turnNum > 1 {
+				if _, ok := additional["cache_read_input_tokens"]; !ok {
+					t.Errorf("turn %d: gi.Additional missing cache_read_input_tokens — claude adapter cache-key surfacing regression", turnNum)
+				}
+			}
+			tokenEvent := &unifiedevents.TokenUsageEvent{
+				ModelID:          effectiveModel,
+				Provider:         "claudecode",
+				PromptTokens:     promptTok,
+				CompletionTokens: completionTok,
+				TotalTokens:      promptTok + completionTok,
+				GenerationInfo:   additional,
+			}
+			if err := observer.HandleEvent(context.Background(), &unifiedevents.AgentEvent{
+				Type:      unifiedevents.TokenUsage,
+				Timestamp: time.Now(),
+				Component: "test",
+				Data:      tokenEvent,
+			}); err != nil {
+				t.Errorf("turn %d HandleEvent: %v", turnNum, err)
+			}
+
 			// Append assistant response to history so subsequent turns
 			// see prior context.
 			history = append(history, llmtypes.MessageContent{
@@ -496,4 +569,96 @@ This workflow is ` + workflowDescription + `. It runs continuously and updates `
 	}
 
 	t.Logf("Final: %d/%d turns passed", successCount, len(turns))
+
+	// ─── Aggregate cost-ledger assertions ─────────────────────────────
+	// The cost-summary HTTP endpoint is what the dashboard reads. If
+	// /api/cost/summary doesn't see N entries here, the chat in
+	// production won't either. This is the assertion the per-turn
+	// loop above feeds.
+	req := httptest.NewRequest(http.MethodGet, "/api/cost/summary", nil)
+	rec := httptest.NewRecorder()
+	api.handleCostSummary(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/api/cost/summary status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var summary costledger.Summary
+	if err := json.Unmarshal(rec.Body.Bytes(), &summary); err != nil {
+		t.Fatalf("decode cost summary: %v\nbody=%s", err, rec.Body.String())
+	}
+	if summary.Total.CallCount != len(turns) {
+		t.Errorf("cost summary CallCount = %d, want %d (one entry per turn)", summary.Total.CallCount, len(turns))
+	}
+	if summary.Total.PromptTokens == 0 {
+		t.Errorf("cost summary PromptTokens = 0 — accumulateTokenUsage or extractUsageMetrics regression")
+	}
+	if summary.Total.CompletionTokens == 0 {
+		t.Errorf("cost summary CompletionTokens = 0")
+	}
+	// Cache reads should have flowed through for turns 2+ that share
+	// the long system prompt. If this is 0 across all 6 turns,
+	// either the adapter dropped cache_read_input_tokens from
+	// Additional OR the ledger pipeline isn't reading it. Either
+	// is the gap the live chat hit.
+	if summary.Total.CacheReadTokens == 0 {
+		t.Errorf("cost summary CacheReadTokens = 0 — cache-key surfacing or extractCacheTokens regression (every turn reuses the same long system prompt, so cache hits should be inevitable)")
+	}
+	// Anthropic is metered; total cost must be positive.
+	if summary.Total.TotalCostUSD <= 0 {
+		t.Errorf("cost summary TotalCostUSD = %v — cost-pricing regression (no effective_model match in metadata?)", summary.Total.TotalCostUSD)
+	}
+	if _, ok := summary.ByModel[model]; !ok {
+		keys := make([]string, 0, len(summary.ByModel))
+		for k := range summary.ByModel {
+			keys = append(keys, k)
+		}
+		t.Errorf("summary.ByModel missing %q — effective_model wiring broken; got buckets %v", model, keys)
+	}
+	t.Logf("✅ cost summary: %d entries, prompt=%d completion=%d cache_read=%d cost=$%.6f",
+		summary.Total.CallCount, summary.Total.PromptTokens, summary.Total.CompletionTokens,
+		summary.Total.CacheReadTokens, summary.Total.TotalCostUSD)
+
+	// ─── Conversation-history persistence shape check ──────────────────
+	// The live server saves to:
+	//   workspace-docs/_users/<user>/chat_history/<YYYY-MM-DD>/session-<sid>-conversation.json
+	// We don't drive the full save path here (that requires the
+	// streaming pipeline), but we DO have the same `history` slice
+	// the server would persist. Encode it the same way and assert
+	// the shape so a downstream consumer (the frontend resume picker,
+	// /api/chat_history endpoints) can read it back.
+	convData := map[string]interface{}{
+		"session_id":           testSessionID,
+		"agent_mode":           "multi-agent",
+		"conversation_history": history,
+		"updated_at":           time.Now().Format(time.RFC3339),
+	}
+	convJSON, err := json.MarshalIndent(convData, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal conversation history: %v", err)
+	}
+	// Sanity: at minimum the persisted file must include every turn's
+	// human message and every assistant response. Decode and inspect.
+	var roundtrip struct {
+		SessionID           string                     `json:"session_id"`
+		ConversationHistory []llmtypes.MessageContent  `json:"conversation_history"`
+	}
+	if err := json.Unmarshal(convJSON, &roundtrip); err != nil {
+		t.Fatalf("roundtrip conversation history: %v", err)
+	}
+	humanCount, aiCount := 0, 0
+	for _, m := range roundtrip.ConversationHistory {
+		switch m.Role {
+		case llmtypes.ChatMessageTypeHuman:
+			humanCount++
+		case llmtypes.ChatMessageTypeAI:
+			aiCount++
+		}
+	}
+	if humanCount != len(turns) {
+		t.Errorf("persisted conversation_history: %d human entries, want %d (one per turn)", humanCount, len(turns))
+	}
+	if aiCount != len(turns) {
+		t.Errorf("persisted conversation_history: %d ai entries, want %d (one per turn)", aiCount, len(turns))
+	}
+	t.Logf("✅ conversation_history persistence shape: %d entries (%d human + %d ai + 1 system)",
+		len(roundtrip.ConversationHistory), humanCount, aiCount)
 }

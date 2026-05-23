@@ -23,11 +23,11 @@ import ModalPortal from './ui/ModalPortal';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
-  fixedAgentMode?: 'simple' | 'workflow';
+  fixedAgentMode?: 'multi-agent' | 'workflow';
   agentMode: string;
   onDeleteWorkflow?: (preset: CustomPreset) => Promise<void>;
 }
@@ -51,7 +51,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
   // Per-preset global secret selection (null = all selected, [] = none, [...] = specific)
   const [selectedGlobalSecrets, setSelectedGlobalSecrets] = useState<string[] | null>([]);
-  const [internalAgentMode, setInternalAgentMode] = useState<'simple' | 'workflow'>('simple');
+  const [internalAgentMode, setInternalAgentMode] = useState<'multi-agent' | 'workflow'>('multi-agent');
   const [selectedFolder, setSelectedFolder] = useState<PlannerFile | null>(null);
   const [workflowFolderEdited, setWorkflowFolderEdited] = useState(false);
   const [showFolderDialog, setShowFolderDialog] = useState(false);
@@ -112,7 +112,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
 
   const effectiveAgentMode = useMemo(() => {
     if (fixedAgentMode) return fixedAgentMode;
-    if (propAgentMode) return propAgentMode as 'simple' | 'workflow';
+    if (propAgentMode) return propAgentMode as 'multi-agent' | 'workflow';
     return internalAgentMode;
   }, [fixedAgentMode, propAgentMode, internalAgentMode]);
 
@@ -1175,7 +1175,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             name="agentMode"
                             value={mode.value}
                             checked={internalAgentMode === mode.value}
-                            onChange={(e) => setInternalAgentMode(e.target.value as 'simple' | 'workflow')}
+                            onChange={(e) => setInternalAgentMode(e.target.value as 'multi-agent' | 'workflow')}
                             className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500"
                           />
                           <label
@@ -1217,7 +1217,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           onSelectFolder={handleFolderSelect}
           searchQuery=""
           position={folderDialogPosition}
-          agentMode={effectiveAgentMode as 'simple' | 'workflow'}
+          agentMode={effectiveAgentMode as 'multi-agent' | 'workflow'}
         />
         <ConfirmationDialog
           isOpen={showDeleteWorkflowConfirm}

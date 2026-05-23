@@ -3,14 +3,14 @@
  * This eliminates code duplication across components
  */
 
-export type AgentMode = 'simple' | 'workflow'
+export type AgentMode = 'multi-agent' | 'workflow'
 
 export const getAgentModeDescription = (agentMode: AgentMode): string => {
   switch (agentMode) {
     case 'workflow':
       return 'Todo-list-based workflow execution with human verification and sequential task completion'
-    case 'simple':
+    case 'multi-agent':
     default:
-      return 'Ask simple questions across multiple MCP servers'
+      return 'Multi-agent chat: ask questions across multiple MCP servers, delegate to specialist sub-agents'
   }
 }

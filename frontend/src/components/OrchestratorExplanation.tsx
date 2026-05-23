@@ -1,7 +1,7 @@
 import React from 'react'
 
 interface OrchestratorExplanationProps {
-  agentMode: 'simple' | 'workflow'
+  agentMode: 'multi-agent' | 'workflow'
 }
 
 export const OrchestratorExplanation: React.FC<OrchestratorExplanationProps> = () => {

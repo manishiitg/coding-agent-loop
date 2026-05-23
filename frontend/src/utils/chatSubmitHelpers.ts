@@ -35,7 +35,7 @@ export function determineModeFlag(params: {
 }): boolean | undefined {
   const { correctAgentMode, selectedModeCategory, presetValue, tabConfigValue } = params
 
-  if (correctAgentMode === 'simple') {
+  if (correctAgentMode === 'multi-agent') {
     // Multi-agent mode: preset wins, else tab config (default false)
     if (presetValue !== undefined) return presetValue
     if (selectedModeCategory === 'multi-agent') {
@@ -160,7 +160,7 @@ export function buildQueryRequestPayload(params: {
     model_id: effectiveLLMConfig.model_id,
     llm_config: llmConfigWithApiKeys as AgentQueryRequest['llm_config'],
     preset_query_id: workflowPresetId || chatPresetId || undefined,
-    use_code_execution_mode: correctAgentMode === 'simple' ? (useCodeExecutionMode ?? false) : useCodeExecutionMode,
+    use_code_execution_mode: correctAgentMode === 'multi-agent' ? (useCodeExecutionMode ?? false) : useCodeExecutionMode,
     execution_options: executionOptions as AgentQueryRequest['execution_options'],
     enable_context_summarization: isChatLikeMode ? true : undefined,
     summarize_on_max_turns: isChatLikeMode ? true : undefined,

@@ -50,7 +50,12 @@ export interface Toast {
 }
 
 // Agent Mode Types
-export type AgentMode = 'simple' | 'workflow'
+// Canonical values:
+//   - 'multi-agent' — tool-backed chat (was 'simple' before consolidation).
+//   - 'workflow' — workflow run.
+// 'simple' is accepted as a legacy alias on the backend boundary; new code
+// uses 'multi-agent' consistently.
+export type AgentMode = 'multi-agent' | 'workflow'
 
 // Workflow Types - dynamic from backend
 export type WorkflowPhase = string

@@ -177,12 +177,35 @@ func extractRootCauseError(err error) string {
 	return deepestErr.Error()
 }
 
+// isToolBackedChatMode reports whether the request is a tool-backed chat
+// session (the "multi-agent" mode that the chat UI uses) rather than a
+// workflow run or a workflow-phase chat.
+//
+// "simple" is the legacy name kept for backward compat — old clients and
+// persisted requests may still pass it. Treated as a synonym for the
+// canonical "multi-agent". Empty string defaults to the same.
 func isToolBackedChatMode(agentMode string) bool {
 	switch strings.TrimSpace(agentMode) {
-	case "", "simple", "multi-agent":
+	case "", "multi-agent", "simple":
 		return true
 	default:
 		return false
+	}
+}
+
+// normalizeAgentMode canonicalizes legacy agent-mode strings to the current
+// vocabulary. Use at every input boundary so downstream code only ever sees
+// canonical values: "multi-agent", "workflow", or "workflow_phase".
+func normalizeAgentMode(agentMode string) string {
+	switch strings.TrimSpace(agentMode) {
+	case "", "simple", "multi-agent":
+		return "multi-agent"
+	case "workflow":
+		return "workflow"
+	case "workflow_phase":
+		return "workflow_phase"
+	default:
+		return strings.TrimSpace(agentMode)
 	}
 }
 

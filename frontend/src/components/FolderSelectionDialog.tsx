@@ -12,7 +12,7 @@ interface FolderSelectionDialogProps {
   onSelectFolder: (folder: PlannerFile) => void
   searchQuery: string
   position: { top: number; left: number }
-  agentMode?: 'simple' | 'workflow' // Add agent mode to filter folders
+  agentMode?: 'multi-agent' | 'workflow' // Add agent mode to filter folders
 }
 
 export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
@@ -159,7 +159,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
 
   // Get the appropriate parent path for folder creation based on agent mode
   const getParentPathForCreation = useCallback((): string => {
-    if (!agentMode || agentMode === 'simple') {
+    if (!agentMode || agentMode === 'multi-agent') {
       return '' // Root level for simple modes
     }
     
@@ -219,7 +219,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
 
   // Filter folders based on agent mode while maintaining hierarchy
   const filterFoldersByAgentMode = useCallback((files: PlannerFile[]): PlannerFile[] => {
-    if (!agentMode || agentMode === 'simple') {
+    if (!agentMode || agentMode === 'multi-agent') {
       // For simple mode, show all folders
       return files
     }
@@ -593,7 +593,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
 
   // Get display name for folder based on agent mode
   const getDisplayName = (folder: PlannerFile): string => {
-    if (!agentMode || agentMode === 'simple') {
+    if (!agentMode || agentMode === 'multi-agent') {
       return folder.filepath
     }
     

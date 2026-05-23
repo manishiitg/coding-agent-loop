@@ -11,7 +11,7 @@ export interface CustomPreset {
   selectedSkills?: string[]; // Skill folder names for workflow
   selectedSecrets?: string[]; // Secret names for workflow injection
   selectedGlobalSecretNames?: string[] | null; // null=all global secrets, []=none, [...]=specific
-  agentMode?: 'simple' | 'workflow';
+  agentMode?: 'multi-agent' | 'workflow';
   selectedFolder?: PlannerFile; // Single folder
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset
   useCodeExecutionMode?: boolean; // MCP code execution mode
@@ -30,7 +30,7 @@ export interface PredefinedPreset {
   selectedTools?: string[]; // NEW: Array of "server:tool" strings
   selectedSkills?: string[]; // Skill folder names for workflow
   selectedGlobalSecretNames?: string[] | null; // null=all global secrets, []=none, [...]=specific
-  agentMode?: 'simple' | 'workflow';
+  agentMode?: 'multi-agent' | 'workflow';
   selectedFolder?: PlannerFile;
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset
   useCodeExecutionMode?: boolean; // MCP code execution mode

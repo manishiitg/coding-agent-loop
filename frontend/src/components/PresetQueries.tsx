@@ -11,7 +11,7 @@ interface PresetQueriesProps {
   setCurrentQuery: (query: string) => void;
   isStreaming: boolean;
   availableServers?: string[];
-  onPresetSelect?: (servers: string[], agentMode?: 'simple' | 'workflow') => void;
+  onPresetSelect?: (servers: string[], agentMode?: 'multi-agent' | 'workflow') => void;
   onPresetFolderSelect?: (folderPath?: string) => void;
   triggerAddPreset?: boolean;
   onAddPresetTriggered?: () => void;
@@ -44,7 +44,7 @@ interface PresetQueriesProps {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null);
 
-  const handlePresetClick = (query: string | undefined, selectedServers?: string[], presetQueryId?: string, agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile) => {
+  const handlePresetClick = (query: string | undefined, selectedServers?: string[], presetQueryId?: string, agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile) => {
     // Find the preset object in workflow presets
     const preset = workflowPresets.find(p => p.id === presetQueryId)
     
@@ -104,7 +104,7 @@ interface PresetQueriesProps {
     setIsModalOpen(false);
   }, []);
 
-  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => {
+  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => {
     console.log('[code_execution] [PresetQueries] handleSavePreset called with:', {
       label,
       editingPreset: editingPreset?.id,

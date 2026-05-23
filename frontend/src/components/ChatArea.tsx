@@ -2347,7 +2347,27 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Resolve or create tab
     const resolved = await resolveOrCreateTab({ freshActiveTab, selectedModeCategory })
     if (!resolved) return
-    const { tab: currentTab, sessionId: tabSessionId } = resolved
+    let { tab: currentTab, sessionId: tabSessionId } = resolved
+
+    const pendingRestoredConversationPath = currentTab.config?.restoredConversationPath?.trim() || ''
+    const hasLocalSessionEvents = chatStore.getTabEvents(tabSessionId).length > 0
+    const matchingActiveSession = chatStore.activeSessionsCache.find(session => session.session_id === tabSessionId)
+    const shouldStartFreshEmptySession =
+      !options?.isAutoNotification &&
+      !pendingRestoredConversationPath &&
+      !hasLocalSessionEvents &&
+      !matchingActiveSession
+
+    if (shouldStartFreshEmptySession) {
+      const freshSessionId = globalThis.crypto.randomUUID()
+      chatStore.updateTabSessionId(currentTab.tabId, freshSessionId)
+      currentTab = {
+        ...currentTab,
+        sessionId: freshSessionId,
+      }
+      tabSessionId = freshSessionId
+      logger.debug('ChatArea', `Rotated empty tab ${currentTab.tabId} to fresh session ${freshSessionId}`)
+    }
 
     const effectiveExecutionOptions = executionOptions ?? (
       selectedModeCategory === 'workflow' && currentTab?.metadata?.phaseId
@@ -2527,7 +2547,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     try {
       // Get active presets for the current mode
       const presetStore = useGlobalPresetStore.getState()
-      const chatPreset = correctAgentMode === 'simple' ? presetStore.getActivePreset('multi-agent') : null
+      const chatPreset = correctAgentMode === 'multi-agent' ? presetStore.getActivePreset('multi-agent') : null
       // Read workflow preset fresh from store (not from stale closure)
       // For workflow mode, always try to get the active preset regardless of selectedWorkflowPreset closure value
       const workflowPreset = (correctAgentMode === 'workflow' || selectedModeCategory === 'workflow')

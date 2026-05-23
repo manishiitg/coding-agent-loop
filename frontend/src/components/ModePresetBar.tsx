@@ -425,7 +425,7 @@ export const ModePresetBar: React.FC = () => {
     selectedServers?: string[],
     selectedTools?: string[],
     selectedSkills?: string[], // Skill folder names for workflow
-    agentMode?: 'simple' | 'workflow',
+    agentMode?: 'multi-agent' | 'workflow',
     selectedFolder?: PlannerFile,
     llmConfig?: PresetLLMConfig,
     useCodeExecutionMode?: boolean,
@@ -1079,7 +1079,7 @@ export const ModePresetBar: React.FC = () => {
         editingPreset={editingPreset}
         availableServers={availableServers}
         hideAgentModeSelection={!!editingPreset}
-        fixedAgentMode={editingPreset?.agentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'simple' | 'workflow') : undefined)}
+        fixedAgentMode={editingPreset?.agentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'multi-agent' | 'workflow') : undefined)}
         agentMode={agentMode}
         onDeleteWorkflow={handleDeleteWorkflow}
       />

@@ -54,7 +54,7 @@ export const useAppStore = create<AppState>()(
         
         return {
           // Initial state
-          agentMode: 'simple',
+          agentMode: 'multi-agent',
           requiresNewChat: false,
           currentQuery: '',
           selectedPresetId: null,

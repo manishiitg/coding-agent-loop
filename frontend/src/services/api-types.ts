@@ -126,7 +126,9 @@ export interface AgentQueryRequest {
   enabled_tools?: string[]
   enabled_servers?: string[]
   selected_tools?: string[] // Array of "server:tool" strings
-  agent_mode?: 'simple' | 'workflow' | 'workflow_phase'
+  // 'simple' is accepted as a legacy alias of 'multi-agent' on the
+  // backend; new clients should send 'multi-agent'.
+  agent_mode?: 'multi-agent' | 'simple' | 'workflow' | 'workflow_phase'
   // Workflow phase chat: specifies which phase to run as a chat session
   phase_id?: string
   // Support both legacy and new config format

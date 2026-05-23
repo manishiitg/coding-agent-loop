@@ -2156,7 +2156,7 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 		"providers":   []string{"bedrock", "openai", "anthropic"},
 		"streaming":   true,
 		"sse":         true,
-		"agent_modes": []string{"simple", "workflow"},
+		"agent_modes": []string{"multi-agent", "workflow"},
 		"tracing": map[string]interface{}{
 			"enabled":  tracingProvider != "noop",
 			"provider": tracingProvider,
@@ -2262,8 +2262,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// NOTE: For workflow mode, LLM selection follows priority: temp override → step config → preset LLM
 	// No orchestrator default fallback. req.Provider and req.ModelID are not used for workflow agents.
-	// For non-workflow agents (simple/chat mode), req.Provider and req.ModelID come from the frontend request.
-	// Environment variable fallbacks have been removed - frontend always sends these values.
+	// For non-workflow agents (multi-agent / chat mode), req.Provider and req.ModelID come from the
+	// frontend request. Environment variable fallbacks have been removed — frontend always sends these.
+
+	// Normalize legacy "simple" → "multi-agent" at the request boundary so
+	// every downstream branch sees the canonical name.
+	req.AgentMode = normalizeAgentMode(req.AgentMode)
 
 	// Default maxTurns only when omitted (0). Negative values are preserved to mean "no turn cap".
 	// Multi-agent chat and the workflow builder run uncapped by default.
@@ -2533,8 +2537,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		// Convert to simple agent mode so it falls through to the standard agent path
-		req.AgentMode = "simple"
+		// Convert to multi-agent mode so it falls through to the standard agent path
+		req.AgentMode = "multi-agent"
 	}
 
 	// Handle workflow mode - use workflow orchestrator

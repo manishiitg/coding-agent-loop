@@ -4,30 +4,34 @@ import type { WorkshopMode } from '../commands/types'
 import type { AgentConfigs } from '../utils/stepConfigMatching'
 
 // Migrate any persisted legacy workshop mode values to the current visible
-// 3-mode workshop UI set (builder / optimizer / run). Older personas fold in:
-//   'eval' / 'output'                      → 'builder'
+// 2-mode workshop UI set (workshop / run). Older personas fold in:
+//   'builder' / 'optimizer'                → 'workshop' (merged mode)
+//   'eval' / 'output'                      → 'workshop'
 //   'ask' / 'debugger' / 'runner'          → 'run'
-//   'reporting'                            → 'builder'
-//   anything else / unrecognized           → 'builder'
-// Reporting authoring is now merged into Builder to avoid session resets when
-// switching between workflow design and dashboard edits.
+//   'reporting'                            → 'workshop'
+//   anything else / unrecognized           → 'workshop'
+// Builder and Optimizer used to be separate buttons in the toggle. They are
+// now a single "Workshop" mode that handles design + hardening + replanning
+// with the agent deciding the right phase from workspace state. Legacy
+// values still type-check (WorkshopMode keeps them) but the UI never shows
+// them.
 function migrateWorkshopMode(raw: unknown): WorkshopMode {
   switch (raw) {
-    case 'builder':
-    case 'optimizer':
+    case 'workshop':
     case 'run':
       return raw
+    case 'builder':
+    case 'optimizer':
     case 'reporting':
-      return 'builder'
     case 'eval':
     case 'output':
-      return 'builder'
+      return 'workshop'
     case 'ask':
     case 'debugger':
     case 'runner':
       return 'run'
     default:
-      return 'builder'
+      return 'workshop'
   }
 }
 
@@ -572,7 +576,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // === Workflow Mode State ===
       workflowMode: 'plan',
-      workshopMode: 'builder' as const,
+      workshopMode: 'workshop' as const,
       workshopModeByPreset: (() => {
         try {
           const saved = getWorkflowStorageItem(WORKSHOP_MODE_BY_PRESET_KEY)
@@ -1468,19 +1472,20 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       // Workflow Mode Actions
-      // After 6→4 mode consolidation, workflowMode='plan' is the only meaningful value
-      // (eval and output sub-modes folded into Builder workshop mode). The 'eval' / 'output'
-      // workflowMode values are retained in the type signature for API compatibility but the
-      // setter coerces them to 'plan' and migrates the workshop mode to 'builder'.
+      // workflowMode='plan' is the only meaningful value (eval/output sub-modes
+      // folded into the merged Workshop workshop mode). The 'eval' / 'output'
+      // workflowMode values are retained in the type signature for API
+      // compatibility but the setter coerces them to 'plan' and migrates the
+      // workshop mode to 'workshop' (was 'builder' before the merge).
       setWorkflowMode: (mode: 'plan' | 'eval' | 'output') => {
         const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
         set(state => {
-          // Legacy callers passing 'eval' / 'output' get folded into 'plan' + 'builder'.
+          // Legacy callers passing 'eval' / 'output' get folded into 'plan' + 'workshop'.
           const normalizedMode = 'plan' as const
           const rememberedForPreset = presetId ? state.workshopModeByPreset[presetId] : undefined
           const resolvedWorkshopMode: WorkshopMode =
             (mode === 'eval' || mode === 'output')
-              ? 'builder'
+              ? 'workshop'
               : migrateWorkshopMode(rememberedForPreset ?? state.workshopMode)
           const updated = presetId
             ? {

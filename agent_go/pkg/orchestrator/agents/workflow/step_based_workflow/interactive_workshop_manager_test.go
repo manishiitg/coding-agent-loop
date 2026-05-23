@@ -3,6 +3,8 @@ package step_based_workflow
 import (
 	"strings"
 	"testing"
+
+	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
 )
 
 func executeInteractiveWorkshopPromptForMode(t *testing.T, mode string) string {
@@ -42,17 +44,18 @@ func executeInteractiveWorkshopPromptForMode(t *testing.T, mode string) string {
 	return prompt
 }
 
-func TestInteractiveWorkshopPromptDocumentsMessageSequenceRouteReuse(t *testing.T) {
-	prompt := executeInteractiveWorkshopPromptForMode(t, "builder")
+// After the message-sequence migration, the full pattern catalog lives in
+// templates/system/message-sequence.md (loaded via get_reference_doc). The
+// inline workshop prompt now carries only a brief mention of the seven
+// pattern names plus the pointer; the detailed pattern descriptions are
+// asserted against the rendered .md content.
 
-	requiredSnippets := []string{
-		"Route sub-agents can be `regular` for stateless one-off work, `message_sequence` for a stateful specialist conversation",
-		"Normal repeated calls reuse the route session",
-		"re-entry user message",
-		"message_sequence_restart=true",
-		"As a todo_task predefined route, a message_sequence behaves like a reusable specialist sub-agent",
-		"restart only when the prior conversation is stale, wrong, or contaminated",
-		"## MESSAGE SEQUENCE ROUTE PATTERNS",
+func TestInteractiveWorkshopPromptDocumentsMessageSequenceRouteReuse(t *testing.T) {
+	prompt := executeInteractiveWorkshopPromptForMode(t, "workshop")
+
+	// Inline prompt should mention the patterns by name and point at the doc.
+	inlineMustContain := []string{
+		"## Message sequence route patterns",
 		"**Stateful Specialist**",
 		"**Test/Fix Loop**",
 		"**Maker + Reviewer**",
@@ -60,20 +63,38 @@ func TestInteractiveWorkshopPromptDocumentsMessageSequenceRouteReuse(t *testing.
 		"**Clean-Room Retry**",
 		"**Human-in-the-Loop Re-entry**",
 		"**Top-Level Scripted Conversation**",
+		"message_sequence_restart=true",
+		"restart only when the prior conversation is stale",
+		`get_reference_doc(kind="message-sequence")`,
 	}
-	for _, snippet := range requiredSnippets {
+	for _, snippet := range inlineMustContain {
 		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("expected workshop prompt to contain %q\n\nPrompt:\n%s", snippet, prompt)
+			t.Errorf("expected workshop prompt (builder) to contain inline snippet %q", snippet)
+		}
+	}
+
+	// Detailed pattern content lives in the .md doc.
+	doc := guidance.RenderSystemDoc("message-sequence")
+	docMustContain := []string{
+		"Route sub-agents can be `regular` for stateless one-off work, `message_sequence` for a stateful specialist conversation",
+		"Normal repeated calls reuse the route session",
+		"re-entry user message",
+		"As a todo_task predefined route, a message_sequence behaves like a reusable specialist sub-agent",
+		"restart only when the prior conversation is stale, wrong, or contaminated",
+		"## MESSAGE SEQUENCE ROUTE PATTERNS",
+	}
+	for _, snippet := range docMustContain {
+		if !strings.Contains(doc, snippet) {
+			t.Errorf("expected message-sequence.md to contain snippet %q", snippet)
 		}
 	}
 }
 
 func TestOptimizerPromptDocumentsMessageSequenceRoutePatterns(t *testing.T) {
-	prompt := executeInteractiveWorkshopPromptForMode(t, "optimizer")
+	prompt := executeInteractiveWorkshopPromptForMode(t, "workshop")
 
-	requiredSnippets := []string{
-		"## MESSAGE SEQUENCE ROUTE PATTERNS",
-		"Use these patterns when designing or hardening todo_task predefined routes",
+	inlineMustContain := []string{
+		"## Message sequence route patterns",
 		"**Stateful Specialist**",
 		"**Test/Fix Loop**",
 		"**Maker + Reviewer**",
@@ -81,12 +102,24 @@ func TestOptimizerPromptDocumentsMessageSequenceRoutePatterns(t *testing.T) {
 		"**Clean-Room Retry**",
 		"**Human-in-the-Loop Re-entry**",
 		"**Top-Level Scripted Conversation**",
+		`get_reference_doc(kind="message-sequence")`,
+	}
+	for _, snippet := range inlineMustContain {
+		if !strings.Contains(prompt, snippet) {
+			t.Errorf("expected workshop prompt (optimizer) to contain inline snippet %q", snippet)
+		}
+	}
+
+	doc := guidance.RenderSystemDoc("message-sequence")
+	docMustContain := []string{
+		"## MESSAGE SEQUENCE ROUTE PATTERNS",
+		"Use these patterns when designing or hardening todo_task predefined routes",
 		"For a todo_task route, use `message_sequence` when the orchestrator should preserve specialist memory",
 		"restart only when the prior conversation is stale, wrong, or contaminated",
 	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("expected optimizer prompt to contain %q\n\nPrompt:\n%s", snippet, prompt)
+	for _, snippet := range docMustContain {
+		if !strings.Contains(doc, snippet) {
+			t.Errorf("expected message-sequence.md to contain snippet %q", snippet)
 		}
 	}
 }

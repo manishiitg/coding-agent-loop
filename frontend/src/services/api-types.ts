@@ -354,7 +354,7 @@ export interface ChannelRoute {
   workflow_id: string
   workspace_path: string
   // Override the manifest's workshop_mode for this channel. Empty = use manifest.
-  workshop_mode?: 'builder' | 'optimizer' | 'run' | 'reporting'
+  workshop_mode?: 'workshop' | 'run'
   // Opt in to detailed workflow runtime messages in the bot channel.
   send_full_details?: boolean
 }
@@ -868,7 +868,7 @@ export interface ChatHistoryConversation {
   session_id: string;
   agent_mode?: string;
   runtime?: ChatHistoryAgentRuntime;
-  workshop_mode?: 'builder' | 'optimizer' | 'run' | 'reporting' | string;
+  workshop_mode?: 'workshop' | 'run' | string;
   conversation_history: ChatHistoryMessage[];
   ui_events?: PollingEventSchema[];
   updated_at?: string;
@@ -883,7 +883,7 @@ export interface ChatHistoryAgentRuntime {
   resume_flag?: string;
   project_dir_id?: string;
   workspace_path?: string;
-  workshop_mode?: 'builder' | 'optimizer' | 'run' | 'reporting' | string;
+  workshop_mode?: 'workshop' | 'run' | string;
   captured_at?: string;
 }
 
@@ -896,7 +896,7 @@ export interface ChatHistorySession {
   session_id: string;
   agent_mode?: string;
   runtime?: ChatHistoryAgentRuntime;
-  workshop_mode?: 'builder' | 'optimizer' | 'run' | 'reporting' | string;
+  workshop_mode?: 'workshop' | 'run' | string;
   status?: string;
   query?: string;
   user_id?: string;
@@ -1201,7 +1201,7 @@ export interface ExecutionOptions {
 
   // Workshop mode override. Reporting remains accepted for backend compatibility,
   // but the visible UI maps report authoring to builder.
-  workshop_mode?: 'builder' | 'optimizer' | 'run' | 'reporting';
+  workshop_mode?: 'workshop' | 'run';
 }
 
 // Execution strategy constants (matching backend)

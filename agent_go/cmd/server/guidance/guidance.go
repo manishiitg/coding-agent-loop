@@ -33,7 +33,7 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
-//go:embed templates/builder/*.md templates/review/*.md templates/improve/*.md templates/report/*.md templates/kb/*.md templates/learning/*.md templates/db/*.md
+//go:embed templates/builder/*.md templates/review/*.md templates/improve/*.md templates/report/*.md templates/kb/*.md templates/learning/*.md templates/db/*.md templates/system/*.md
 var templatesFS embed.FS
 
 // kindMeta captures everything we know about a guided flow at registration
@@ -51,36 +51,70 @@ type kindMeta struct {
 //  2. Add an entry here with description + allowed modes.
 //  3. Update the slash command's onSubmit to call this tool with the new kind.
 //
-// Modes match interactive_workshop_manager.go's switch ("builder",
-// "optimizer", "run", "reporting"). The tool refuses kinds not allowed in
-// the caller's mode and tells the agent to suggest a mode switch.
+// Modes match interactive_workshop_manager.go's switch. "workshop" is the
+// canonical merged mode (was builder + optimizer in older releases);
+// "builder" and "optimizer" are kept as legacy aliases so persisted sessions
+// that pre-date the merge still resolve correctly. "run" is constrained
+// runtime; "reporting" is the report-only surface. The tool refuses kinds
+// not allowed in the caller's mode and tells the agent to suggest a mode
+// switch.
 var allKinds = map[string]kindMeta{
-	// Builder-mode audits
-	"design-flow":       {Group: "builder", Description: "Inspect context dependency / handoff design between steps", Modes: []string{"builder"}},
-	"ready-to-optimize": {Group: "builder", Description: "Pre-optimizer readiness checklist (objective, success criteria, runs, validation, etc.)", Modes: []string{"builder"}},
+	// Design audits (only meaningful before run evidence accumulates)
+	"design-flow":       {Group: "builder", Description: "Inspect context dependency / handoff design between steps", Modes: []string{"workshop"}},
+	"ready-to-optimize": {Group: "builder", Description: "Pre-optimizer readiness checklist (objective, success criteria, runs, validation, etc.)", Modes: []string{"workshop"}},
 
 	// Reviews — recommend, don't apply; appends to builder/review.md
-	"review-plan":           {Group: "review", Description: "Comprehensive workflow audit: plan, step descriptions, learnings, KB, db/*.json, reports, variables, and eval wiring", Modes: []string{"builder", "optimizer", "run"}},
-	"review-speed":          {Group: "review", Description: "Latency analysis with safe-speedup recommendations", Modes: []string{"optimizer"}},
-	"review-cost":           {Group: "review", Description: "Cost analysis with safe-reduction recommendations", Modes: []string{"optimizer"}},
-	"review-code":           {Group: "review", Description: "Saved main.py vs current step descriptions drift check", Modes: []string{"optimizer"}},
-	"review-artifact-drift": {Group: "review", Description: "Audit plan changelog entries against dependent artifacts: learnings, main.py, KB, db, reports, and eval wiring", Modes: []string{"builder", "optimizer"}},
+	"review-plan":           {Group: "review", Description: "Comprehensive workflow audit: plan, step descriptions, learnings, KB, db/*.json, reports, variables, and eval wiring", Modes: []string{"workshop", "run"}},
+	"review-speed":          {Group: "review", Description: "Latency analysis with safe-speedup recommendations", Modes: []string{"workshop"}},
+	"review-cost":           {Group: "review", Description: "Cost analysis with safe-reduction recommendations", Modes: []string{"workshop"}},
+	"review-code":           {Group: "review", Description: "Saved main.py vs current step descriptions drift check", Modes: []string{"workshop"}},
+	"review-artifact-drift": {Group: "review", Description: "Audit plan changelog entries against dependent artifacts: learnings, main.py, KB, db, reports, and eval wiring", Modes: []string{"workshop"}},
 
 	// Knowledgebase maintenance — applies targeted or cross-step KB cleanup
-	"improve-knowledge": {Group: "kb", Description: "Improve knowledgebase/notes with targeted cleanup or cross-step consolidation", Modes: []string{"builder", "optimizer"}},
+	"improve-knowledge": {Group: "kb", Description: "Improve knowledgebase/notes with targeted cleanup or cross-step consolidation", Modes: []string{"workshop"}},
 
 	// Learning maintenance — applies targeted/cross-step cleanup to learnings/_global
-	"improve-learnings": {Group: "learning", Description: "Improve learnings/_global with targeted cleanup or current-plan consolidation", Modes: []string{"builder", "optimizer"}},
+	"improve-learnings": {Group: "learning", Description: "Improve learnings/_global with targeted cleanup or current-plan consolidation", Modes: []string{"workshop"}},
 
 	// DB maintenance — applies guarded schema/contract cleanup to db/*.json
-	"improve-data": {Group: "db", Description: "Improve db/*.json contracts, schemas, and report compatibility", Modes: []string{"builder", "optimizer"}},
+	"improve-data": {Group: "db", Description: "Improve db/*.json contracts, schemas, and report compatibility", Modes: []string{"workshop"}},
 
 	// Improvements — metric-driven harden/replan flows
-	"define-success":     {Group: "improve", Description: "One-time bootstrap of optimization success criteria (Workflow Profile + metrics)", Modes: []string{"optimizer"}},
-	"improve-workflow":   {Group: "improve", Description: "Unified metric-driven workflow improvement: harden or replan from run/eval evidence", Modes: []string{"optimizer"}},
-	"improve-evaluation": {Group: "improve", Description: "Evaluation plan changes and metric-source health checks", Modes: []string{"optimizer"}},
-	"auto-improve":       {Group: "improve", Description: "Set up recurring run + optimizer schedules", Modes: []string{"optimizer"}},
-	"improve-report":     {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"builder", "optimizer", "reporting"}},
+	"define-success":     {Group: "improve", Description: "One-time bootstrap of optimization success criteria (Workflow Profile + metrics)", Modes: []string{"workshop"}},
+	"improve-workflow":   {Group: "improve", Description: "Unified metric-driven workflow improvement: harden or replan from run/eval evidence", Modes: []string{"workshop"}},
+	"improve-evaluation": {Group: "improve", Description: "Evaluation plan changes and metric-source health checks", Modes: []string{"workshop"}},
+	"auto-improve":       {Group: "improve", Description: "Set up recurring run + optimizer schedules", Modes: []string{"workshop"}},
+	"improve-report":     {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"workshop"}},
+}
+
+// referenceKinds is the registry of system reference docs — content that
+// used to live inline in the workshop system prompt and is now loaded on
+// demand by the agent via get_reference_doc(kind). These are not procedural
+// flows (those live in allKinds); they are gated reference material the
+// agent reads before performing certain actions (e.g. read "code-authoring"
+// before patching main.py).
+//
+// Adding a new reference doc:
+//
+//  1. Drop a markdown file in templates/system/<kind>.md.
+//  2. Add an entry here with description + allowed modes.
+//  3. Optionally wire a precondition gate on the tool that should require it.
+//
+// Modes use the same workshop mode strings as allKinds. "workshop" is the
+// merged builder+optimizer mode; "run" is constrained runtime; "reporting"
+// is the report-only surface.
+// Reference docs are content that used to be inlined in the workshop system
+// prompt and is now loaded on demand. We intentionally do NOT migrate tool
+// catalogs (TOOLS REFERENCE, Special Workspace Tools / media-tools, Browser
+// Automation) because the LLM only sees tools through the MCP bridge — the
+// prose catalog IS the agent's primary tool-discovery surface, and lazy-loading
+// would create a bootstrap problem.
+var referenceKinds = map[string]kindMeta{
+	"code-authoring":    {Group: "system", Description: "Detailed main.py authoring rules and patterns (env access, sys.argv contract, data authenticity, patching discipline)", Modes: []string{"workshop"}},
+	"stores":            {Group: "system", Description: "Persistent store design contract: skill vs knowledgebase vs db, when to write to which", Modes: []string{"workshop", "run"}},
+	"message-sequence":  {Group: "system", Description: "Message-sequence route patterns (stateful specialist, test/fix loop, maker+reviewer, panel, clean-room retry, HITL re-entry, scripted conversation)", Modes: []string{"workshop"}},
+	"optimize-playbook": {Group: "system", Description: "Optimizer deep-dive: harden vs replan decision tree, eval, metrics, auto-improvement framework", Modes: []string{"workshop"}},
+	"file-layout":       {Group: "system", Description: "Workspace file layout reference and path discipline", Modes: []string{"workshop", "run"}},
 }
 
 // tmplData is the typed context passed to every guidance template. Focus is
@@ -102,7 +136,23 @@ Use absolute workspace paths for shell commands when the prompt or env exposes t
 // params, and returns the rendered text. Returns an error if the kind isn't
 // known or its template is malformed.
 func renderKind(kind string, data tmplData) (string, error) {
-	meta, ok := allKinds[kind]
+	return renderFromRegistry(kind, data, allKinds)
+}
+
+// renderReferenceKind is the same as renderKind but resolves against the
+// reference-doc registry (templates/system/*.md). Both registries share
+// rendering internals so behavior stays consistent (path discipline header,
+// template params, trailing newline handling).
+func renderReferenceKind(kind string, data tmplData) (string, error) {
+	return renderFromRegistry(kind, data, referenceKinds)
+}
+
+// renderFromRegistry is the shared rendering core. It looks up `kind` in the
+// supplied registry, reads templates/<group>/<kind>.md from the embedded FS,
+// executes it as a Go template with the supplied data, and prepends the
+// shared path-discipline preamble.
+func renderFromRegistry(kind string, data tmplData, registry map[string]kindMeta) (string, error) {
+	meta, ok := registry[kind]
 	if !ok {
 		return "", fmt.Errorf("unknown kind %q", kind)
 	}
@@ -123,10 +173,17 @@ func renderKind(kind string, data tmplData) (string, error) {
 }
 
 // modeAllowed reports whether a kind can be invoked from a given workshop
-// mode. The caller passes their current mode (builder / optimizer / run /
-// reporting); the kind's allow-list is checked.
+// mode. The caller passes their current mode (builder / optimizer / workshop
+// / run / reporting); the kind's allow-list is checked.
 func modeAllowed(kind, mode string) bool {
-	meta, ok := allKinds[kind]
+	return modeAllowedIn(kind, mode, allKinds)
+}
+
+// modeAllowedIn is the registry-parameterized form of modeAllowed. Used by
+// both the procedural-guidance tool (allKinds) and the reference-doc tool
+// (referenceKinds).
+func modeAllowedIn(kind, mode string, registry map[string]kindMeta) bool {
+	meta, ok := registry[kind]
 	if !ok {
 		return false
 	}
@@ -141,8 +198,13 @@ func modeAllowed(kind, mode string) bool {
 // kindEnum returns sorted kind names — used to populate the tool schema's
 // enum and for diagnostic error messages.
 func kindEnum() []string {
-	out := make([]string, 0, len(allKinds))
-	for k := range allKinds {
+	return kindEnumFrom(allKinds)
+}
+
+// kindEnumFrom returns sorted kind names for any registry.
+func kindEnumFrom(registry map[string]kindMeta) []string {
+	out := make([]string, 0, len(registry))
+	for k := range registry {
 		out = append(out, k)
 	}
 	sort.Strings(out)
@@ -152,17 +214,22 @@ func kindEnum() []string {
 // kindEnumWithDescriptions formats the kind list for the tool description so
 // the agent can see, in one place, every guided flow available to it.
 func kindEnumWithDescriptions() string {
+	return kindEnumWithDescriptionsFrom(allKinds)
+}
+
+// kindEnumWithDescriptionsFrom formats the kind list for any registry.
+func kindEnumWithDescriptionsFrom(registry map[string]kindMeta) string {
 	type row struct {
 		k     string
 		d     string
 		modes []string
 	}
-	rows := make([]row, 0, len(allKinds))
-	for k, v := range allKinds {
+	rows := make([]row, 0, len(registry))
+	for k, v := range registry {
 		rows = append(rows, row{k: k, d: v.Description, modes: v.Modes})
 	}
 	sort.Slice(rows, func(i, j int) bool {
-		gi, gj := allKinds[rows[i].k].Group, allKinds[rows[j].k].Group
+		gi, gj := registry[rows[i].k].Group, registry[rows[j].k].Group
 		if gi != gj {
 			return gi < gj
 		}
@@ -254,6 +321,141 @@ func RegisterGuidanceTool(agent *mcpagent.Agent, currentMode string, logger logg
 	if err := agent.RegisterCustomTool("get_workflow_command_guidance", desc, params, handler, "auto_improvement"); err != nil {
 		if logger != nil {
 			logger.Warn(fmt.Sprintf("Failed to register get_workflow_command_guidance: %v", err))
+		}
+	}
+}
+
+// ReferenceKindNames returns the sorted list of reference-doc kinds known
+// to this package. Exported for cross-package tests that need to enumerate
+// every doc without depending on the private registry.
+func ReferenceKindNames() []string {
+	return kindEnumFrom(referenceKinds)
+}
+
+// RenderSystemDoc renders the named reference doc with no caller context,
+// stripping the path-discipline preamble. Intended for production code that
+// needs system-doc content inline (e.g. sub-agent prompts that can't call
+// get_reference_doc themselves because they're not in a chat). The returned
+// string is identical to what get_reference_doc(kind=...) would produce in
+// the `reference` field, minus the path-discipline header (which only makes
+// sense as a chat-turn preamble).
+//
+// Panics on error because the embedded FS is compile-time — if a kind is
+// declared in referenceKinds but its .md file is missing or malformed, that
+// is a build-time bug, not a runtime condition.
+func RenderSystemDoc(kind string) string {
+	meta, ok := referenceKinds[kind]
+	if !ok {
+		panic(fmt.Sprintf("guidance: RenderSystemDoc called with unknown kind %q", kind))
+	}
+	rel := path.Join("templates", meta.Group, kind+".md")
+	body, err := templatesFS.ReadFile(rel)
+	if err != nil {
+		panic(fmt.Sprintf("guidance: read %s: %v", rel, err))
+	}
+	tmpl, err := template.New(kind).Parse(string(body))
+	if err != nil {
+		panic(fmt.Sprintf("guidance: parse %s: %v", rel, err))
+	}
+	var buf strings.Builder
+	if err := tmpl.Execute(&buf, tmplData{}); err != nil {
+		panic(fmt.Sprintf("guidance: execute %s: %v", rel, err))
+	}
+	return strings.TrimRight(buf.String(), "\n") + "\n"
+}
+
+// RenderReferenceKindForTest renders the named reference doc with empty
+// caller context. Exported so step_based_workflow's prompt size/coverage
+// tests can verify every kind is renderable and reasonably sized without
+// depending on internals.
+func RenderReferenceKindForTest(kind, mode string) (string, error) {
+	return renderReferenceKind(kind, tmplData{WorkshopMode: mode})
+}
+
+// ListReferenceKindsForTest is an alias for ReferenceKindNames kept for
+// test ergonomics ("ForTest" suffix signals "use from tests only").
+func ListReferenceKindsForTest() []string {
+	return ReferenceKindNames()
+}
+
+// RegisterReferenceDocTool exposes get_reference_doc to the agent. The tool
+// returns the rendered text for any kind in referenceKinds — reference
+// documentation that used to live inline in the workshop system prompt and
+// is now loaded on demand. Same internals as RegisterGuidanceTool but
+// scoped to system-doc semantics:
+//
+//   - allKinds → procedural guided flows ("here is the procedure to follow")
+//   - referenceKinds → static reference material ("here are the rules / patterns")
+//
+// Mode is validated against the kind's allow-list; calling a kind from the
+// wrong mode returns a teaching error explaining which modes the doc lives in.
+func RegisterReferenceDocTool(agent *mcpagent.Agent, currentMode string, logger loggerv2.Logger) {
+	desc := "Get the full reference documentation for a workshop concept. " +
+		"Use this when you need detailed rules, patterns, or contracts that aren't fully covered by the system prompt's " +
+		"inline cheat sheets — for example before authoring a step's main.py, designing a message_sequence route, " +
+		"writing to db/kb/skill stores, or running harden_workflow / replan_workflow_from_results. " +
+		"The returned text is reference material; read it, then proceed with the action that required it. " +
+		"Available reference docs:\n" + kindEnumWithDescriptionsFrom(referenceKinds) +
+		"Mode validation: each doc is gated to specific workshop modes. If a doc is not available in the current mode, " +
+		"the tool returns an error naming the modes where it is available."
+
+	params := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"kind": map[string]interface{}{
+				"type":        "string",
+				"enum":        kindEnumFrom(referenceKinds),
+				"description": "The reference doc to load. See the tool description for the full list and per-mode availability.",
+			},
+			"focus": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional. A short note about why you are loading this doc — gets included in the rendered output so the agent has caller context for any conditional sections.",
+			},
+		},
+		"required": []string{"kind"},
+	}
+
+	handler := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		kind, _ := args["kind"].(string)
+		focus, _ := args["focus"].(string)
+
+		if _, ok := referenceKinds[kind]; !ok {
+			return fmt.Sprintf("error: unknown reference doc %q. Valid kinds: %s", kind, strings.Join(kindEnumFrom(referenceKinds), ", ")), nil
+		}
+		if currentMode != "" && !modeAllowedIn(kind, currentMode, referenceKinds) {
+			meta := referenceKinds[kind]
+			return fmt.Sprintf(
+				"error: reference doc %q is not available in mode %q. It is available in: %s.",
+				kind, currentMode, strings.Join(meta.Modes, ", "),
+			), nil
+		}
+
+		text, err := renderReferenceKind(kind, tmplData{
+			Focus:        strings.TrimSpace(focus),
+			WorkshopMode: strings.TrimSpace(currentMode),
+		})
+		if err != nil {
+			return fmt.Sprintf("error rendering reference doc %q: %v", kind, err), nil
+		}
+
+		// Record the load so gated tool calls (see WithDocPrecondition) can
+		// verify the agent has read the prerequisite docs. Session ID comes
+		// from ctx via common.ChatSessionIDKey — if it's missing, MarkLoaded
+		// is a no-op (tracker can't key the load to any session).
+		DefaultTracker().MarkLoaded(SessionIDFromContext(ctx), kind)
+
+		// Same envelope shape as get_workflow_command_guidance so the agent
+		// sees a consistent return contract across both tools.
+		envelope, _ := json.MarshalIndent(map[string]interface{}{
+			"kind":      kind,
+			"reference": text,
+		}, "", "  ")
+		return string(envelope), nil
+	}
+
+	if err := agent.RegisterCustomTool("get_reference_doc", desc, params, handler, "auto_improvement"); err != nil {
+		if logger != nil {
+			logger.Warn(fmt.Sprintf("Failed to register get_reference_doc: %v", err))
 		}
 	}
 }

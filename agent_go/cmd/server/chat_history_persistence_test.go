@@ -96,32 +96,35 @@ func TestShouldAttachRestoredConversationFallbackKeepsFallbackForNonCodingOrMism
 				Provider:          "codex-cli",
 				ExternalSessionID: "codex-thread-1",
 				ResumeSupported:   true,
-				WorkshopMode:      "optimizer",
+				WorkshopMode:      "workshop",
 			},
 			currentProvider: "claude-code",
-			currentMode:     "optimizer",
+			currentMode:     "workshop",
 		},
 		{
+			// Before the workshop merge, "builder" vs "optimizer" was a real
+			// mismatch. Both now normalize to "workshop", so the only true
+			// workshop-mode mismatch is workshop ↔ run.
 			name: "mode mismatch",
 			runtime: &ChatHistoryAgentRuntime{
 				Kind:              "coding_agent",
 				Provider:          "codex-cli",
 				ExternalSessionID: "codex-thread-1",
 				ResumeSupported:   true,
-				WorkshopMode:      "builder",
+				WorkshopMode:      "workshop",
 			},
 			currentProvider: "codex-cli",
-			currentMode:     "optimizer",
+			currentMode:     "run",
 		},
 		{
 			name: "coding agent missing native resume support",
 			runtime: &ChatHistoryAgentRuntime{
 				Kind:         "coding_agent",
 				Provider:     "codex-cli",
-				WorkshopMode: "optimizer",
+				WorkshopMode: "workshop",
 			},
 			currentProvider: "codex-cli",
-			currentMode:     "optimizer",
+			currentMode:     "workshop",
 		},
 	}
 
@@ -735,7 +738,8 @@ func TestReadChatHistoryRuntimeForSessionReadsWorkflowScopedRuntime(t *testing.T
 	if !ok || runtime == nil {
 		t.Fatalf("expected runtime metadata, ok=%v runtime=%#v", ok, runtime)
 	}
-	if runtime.Provider != "claude-code" || runtime.ExternalSessionID != "claude-native-workflow" || runtime.WorkshopMode != "builder" {
+	// "builder" on disk is normalized to "workshop" on read (post-merge).
+	if runtime.Provider != "claude-code" || runtime.ExternalSessionID != "claude-native-workflow" || runtime.WorkshopMode != "workshop" {
 		t.Fatalf("unexpected runtime: %#v", runtime)
 	}
 }
@@ -903,15 +907,17 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsProviderMismatch(t
 func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsWorkshopModeMismatch(t *testing.T) {
 	api := &StreamingAPI{}
 	agent := &mcpagent.Agent{}
+	// After the workshop merge, "builder" and "optimizer" both normalize to
+	// "workshop". The only real workshop-mode mismatch is workshop ↔ run.
 	runtime := &ChatHistoryAgentRuntime{
 		Kind:              "coding_agent",
 		Provider:          "claude-code",
 		ExternalSessionID: "claude-native-restored",
 		ResumeSupported:   true,
-		WorkshopMode:      "builder",
+		WorkshopMode:      "workshop",
 	}
 
-	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "claude-code", "optimizer", runtime, agent) {
+	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "claude-code", "run", runtime, agent) {
 		t.Fatal("expected workshop mode mismatch to skip native resume")
 	}
 	if agent.ClaudeCodeSessionID != "" {

@@ -28,7 +28,11 @@ import { useAuthStore } from '../stores/useAuthStore'
 import { hasWorkflowWriteAccess } from '../utils/workflowPermissions'
 
 const WORKSHOP_MODE_SWITCH_CONFIRM_KEY = 'workflow_workshop_mode_switch_confirm_dismissed'
-type VisibleWorkshopMode = 'builder' | 'optimizer' | 'run'
+
+// Visible workshop modes in the UI. The merged "workshop" mode replaced
+// the pre-merge Builder / Optimize / Report buttons. Run remains separate
+// for read-mostly bot routes.
+type VisibleWorkshopMode = 'workshop' | 'run'
 
 const removePasteMarkersFromText = (text: string, markers: string[]) => {
   return markers.reduce((next, marker) => {
@@ -164,12 +168,15 @@ function WorkshopModeToggle() {
     setPendingMode(null)
   }
 
-  const pendingModeLabel = pendingMode === 'optimizer' ? 'Optimize' : pendingMode === 'run' ? 'Run' : 'Builder'
+  const pendingModeLabel = pendingMode === 'run' ? 'Run' : 'Workshop'
 
+  // Workshop is the merged Builder+Optimizer mode: design steps, run them,
+  // evaluate, harden, replan — all in one toolset. The agent figures out
+  // from workspace state (does a plan exist? are there successful runs?)
+  // whether to bias toward design or hardening on a given turn.
   const builderModes = [
-    { id: 'builder' as const, label: 'Builder', title: 'Builder', description: 'Design the workflow plan, step config, and live report dashboard.' },
-    { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize', description: 'Harden existing steps — run, evaluate, fix, repeat until reliable.' },
-    { id: 'run' as const, label: 'Run', title: 'Run', description: 'Use the workflow without builder or optimizer write tools.' },
+    { id: 'workshop' as const, label: 'Workshop', title: 'Workshop', description: 'Design, run, evaluate, harden, and replan — full toolset. The agent picks the right action for the current phase.' },
+    { id: 'run' as const, label: 'Run', title: 'Run', description: 'Use the workflow without write tools — execute steps and read state only.' },
   ].filter(mode => canWriteWorkflow || mode.id === 'run')
 
   return (
@@ -325,8 +332,10 @@ const resumeChatRuntimeLabel = (session: ChatHistorySession): string | undefined
 const resumeChatWorkshopModeLabel = (session: ChatHistorySession): string | undefined => {
   const raw = (session.runtime?.workshop_mode || session.workshop_mode || '').trim().toLowerCase()
   if (!raw) return undefined
-  if (raw === 'optimizer') return 'Optimizer'
-  if (raw === 'builder') return 'Builder'
+  // Map legacy builder/optimizer sessions to "Workshop" so the chat history
+  // panel doesn't show the old mode names. Sessions saved before the merge
+  // still load correctly server-side; this is purely a display concern.
+  if (raw === 'workshop' || raw === 'builder' || raw === 'optimizer') return 'Workshop'
   if (raw === 'run') return 'Run'
   if (raw === 'reporting') return 'Reporting'
   return raw.replace(/_/g, ' ')

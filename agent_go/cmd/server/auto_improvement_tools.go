@@ -7,6 +7,8 @@ import (
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+
+	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
 )
 
 // =====================================================================
@@ -93,7 +95,12 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 		return string(body), nil
 	}
 
-	if err := agent.RegisterCustomTool("propose_metric", desc, params, handler, "auto_improvement"); err != nil {
+	// Gated: propose_metric mutates planning/metrics.json — the proposer must
+	// have read optimize-playbook (metric design rules: north-star vs.
+	// diagnostic, source contract for snapshot resolution, when to amend vs.
+	// retire) before defining a new metric.
+	gatedHandler := guidance.WithDocPrecondition([]string{"optimize-playbook"}, guidance.DefaultTracker(), handler)
+	if err := agent.RegisterCustomTool("propose_metric", desc, params, gatedHandler, "auto_improvement"); err != nil {
 		if logger != nil {
 			logger.Warn(fmt.Sprintf("Failed to register propose_metric: %v", err))
 		}
@@ -146,7 +153,10 @@ func RegisterRetireMetricTool(agent *mcpagent.Agent, workspacePath, triggerSourc
 		return string(body), nil
 	}
 
-	if err := agent.RegisterCustomTool("retire_metric", desc, params, handler, "auto_improvement"); err != nil {
+	// Gated: same reason as propose_metric — the optimizer must understand
+	// when retiring is the right action vs. amend_existing on the same id.
+	gatedHandler := guidance.WithDocPrecondition([]string{"optimize-playbook"}, guidance.DefaultTracker(), handler)
+	if err := agent.RegisterCustomTool("retire_metric", desc, params, gatedHandler, "auto_improvement"); err != nil {
 		if logger != nil {
 			logger.Warn(fmt.Sprintf("Failed to register retire_metric: %v", err))
 		}

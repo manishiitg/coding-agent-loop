@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	prompt "github.com/manishiitg/mcpagent/agent/prompt"
+	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
 )
 
 // BuildStepFilesListing enumerates files in a single step-associated folder (step output
@@ -139,53 +140,18 @@ func contextOutputMatchesDependency(output string, dep string) bool {
 // BuildMainPyAuthoringRules returns the canonical rules that any agent writing or
 // patching a step's main.py MUST follow. Shared by:
 //   - the execution agent in learn_code mode (via GetLearnCodeModeInstructions)
-//   - the workshop builder prompt (so manual debugging produces compliant patches)
-//   - harden_workflow (patches main.py directly during eval-driven fixes)
 //   - review_step_code (detects drift from these rules)
+//   - harden_workflow (patches main.py directly during eval-driven fixes)
 //
-// Single source of truth — if the rules change, update here and every consumer picks
-// it up after the next binary rebuild. Returns a markdown block ready to splice into
-// a larger system prompt.
+// The workshop chat agent prompt does NOT call this anymore — it gets a short
+// cheat sheet and loads the full rules on demand via
+// get_reference_doc(kind="code-authoring") when it actually needs to patch.
+//
+// Source of truth lives in cmd/server/guidance/templates/system/code-authoring.md;
+// this function is a thin wrapper so non-chat agents (which can't call tools to
+// load reference docs) still get the rules baked into their prompt.
 func BuildMainPyAuthoringRules() string {
-	var sb strings.Builder
-	sb.WriteString("## main.py authoring rules\n\n")
-	sb.WriteString("Apply these when writing or patching a step's `main.py`. Scripts must run identically for every group/user, every iteration — so the rules err toward strictness.\n\n")
-
-	sb.WriteString("**Environment access (strict)**\n")
-	sb.WriteString("- `os.environ['KEY']` ALWAYS. NEVER `os.environ.get('KEY', 'fallback')`. A missing env var must raise KeyError — silent fallbacks hide misconfig.\n")
-	sb.WriteString("- Workflow variables → `VAR_<NAME>` (config: user IDs, sheet IDs, URLs).\n")
-	sb.WriteString("- Secrets → `SECRET_<NAME>` (passwords, API keys, tokens).\n")
-	sb.WriteString("- Special vars: `STEP_OUTPUT_DIR` (write all step outputs here), `STEP_EXECUTION_DIR` (parent execution folder; use for sibling-step reads only, never as a write target), `MCP_API_URL`, `MCP_API_TOKEN`, `VAR_GROUP_NAME` (use `.get('VAR_GROUP_NAME', '')` — this one is optional).\n")
-	sb.WriteString("- NO hardcoded user IDs, account numbers, URLs, paths, or credentials. Every dynamic value flows from env or sys.argv.\n")
-	sb.WriteString("- **The step description shows RESOLVED current-run values.** Those are for context only. NEVER copy any name, ID, or literal value from the description into the script — or into any `export` you issue manually. The same script runs for every group/user; a copied value from one run breaks the others.\n\n")
-
-	sb.WriteString("**Input/output**\n")
-	sb.WriteString("- Input data arrives via `sys.argv[1]`, `sys.argv[2]`, ... — these are the resolved `context_dependencies`. Read them.\n")
-	sb.WriteString("- NEVER construct paths to sibling step folders (e.g. `execution/login-step/output.json`). The controller resolves correct per-group paths and passes them as sys.argv. If you need data not in sys.argv, add it as a `context_dependency` in `plan.json` — do not hardcode.\n")
-	sb.WriteString("- Write output files to `os.environ['STEP_OUTPUT_DIR']` with the exact filenames and structure the validation_schema requires.\n\n")
-
-	sb.WriteString("**Data authenticity — no fabrication**\n")
-	sb.WriteString("- Every value written to output files MUST trace to a real MCP tool call, API response, or input file. No hardcoded rows, no invented records.\n")
-	sb.WriteString("- If the script writes output without making any external calls or reading real input, it will be rejected.\n\n")
-
-	// Browser-automation rules live in BuildBrowserAuthoringRules() and are appended
-	// by callers only when the step has a browser MCP available (HasBrowserAccess).
-	// Non-browser steps should not pay the ~60-line prompt tax.
-
-	sb.WriteString("**Logging**\n")
-	sb.WriteString("- `VERBOSE = os.environ.get('SCRIPT_VERBOSE', '') == '1'`. Guard debug prints with `if VERBOSE:`. Log state before and after each major action. Stdout is the ONLY debugging channel available to the fix loop.\n\n")
-
-	sb.WriteString("**Robustness across groups**\n")
-	sb.WriteString("- The same script runs for every group/user with different data. Use `.get()` with safe defaults for *data* fields (not env vars), handle empty lists, `None` values, date-as-string-vs-number variants, missing optional files.\n")
-	sb.WriteString("- Print diagnostic context BEFORE raising. The error output is how the next fix pass understands what broke.\n")
-	sb.WriteString("- If the same script keeps failing for specific groups, branch on `os.environ.get('VAR_GROUP_NAME', '')` rather than forcing one code path.\n\n")
-
-	sb.WriteString("**Patching discipline**\n")
-	sb.WriteString("- Edit `learnings/{step-id}/main.py` — this is the source of truth. NEVER edit `execution/{step-id}/code/main.py`; the controller overwrites it from learnings on every run.\n")
-	sb.WriteString("- Prefer `diff_patch_workspace_file` for targeted changes — preserves working code and reduces regressions. Full rewrite (cat-heredoc) only when restructuring large portions.\n")
-	sb.WriteString("- Helper files alongside main.py also live in `learnings/{step-id}/` — patch them the same way.\n")
-	sb.WriteString("\n")
-	return sb.String()
+	return guidance.RenderSystemDoc("code-authoring") + "\n"
 }
 
 // BuildBrowserAuthoringRules returns the browser-automation-specific main.py rules.

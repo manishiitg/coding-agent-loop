@@ -29,7 +29,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <History className="w-4 h-4" />,
     modes: ['workflow', 'multi-agent'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
+    requiredWorkshopMode: ['workshop', 'run'],
     source: 'builtin',
     execute: (ctx) => {
       ctx.openResumeDialog?.()
@@ -41,7 +41,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <GitBranch className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'builder',
+    requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'design-flow')
@@ -53,7 +53,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'builder',
+    requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'ready-to-optimize')
@@ -65,7 +65,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <Search className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
+    requiredWorkshopMode: ['workshop', 'run'],
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'review-plan')
@@ -77,7 +77,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <Minimize2 className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
@@ -90,7 +90,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <Cpu className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
@@ -103,7 +103,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <RefreshCw className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer'],
+    requiredWorkshopMode: ['workshop'],
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'review-artifact-drift')
@@ -115,7 +115,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <Layers className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer'],
+    requiredWorkshopMode: ['workshop'],
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'improve-knowledge')
@@ -127,7 +127,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <BookOpen className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer'],
+    requiredWorkshopMode: ['workshop'],
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'improve-learnings')
@@ -139,7 +139,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <Server className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer'],
+    requiredWorkshopMode: ['workshop'],
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'improve-data')
@@ -151,7 +151,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'reporting'],
+    requiredWorkshopMode: ['workshop'],
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'improve-report')
@@ -163,7 +163,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
@@ -176,7 +176,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <Bot className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'auto-improve')
@@ -188,7 +188,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <RefreshCw className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'improve-workflow')
@@ -200,7 +200,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <FileText className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'review-code')
@@ -338,7 +338,7 @@ After the tool returns, tell me:
     icon: <Wrench className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
       submitGuidedWorkflowCommand(ctx, 'define-success')

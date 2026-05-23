@@ -511,14 +511,26 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 	}, true
 }
 
+// normalizeChatHistoryWorkshopMode canonicalizes a mode string from any of
+// the supported input forms into one of the two backend mode names:
+// "workshop", "run", or "" (unknown / unset).
+//
+// MERGE NOTE: "builder", "optimizer", and "reporting" are legacy input
+// names. All three map to "workshop", the unified mode introduced in Step 5
+// of the prompt-restructure migration. Persisted sessions saved before the
+// merge still arrive with the legacy names — they continue to load and
+// behave like workshop sessions because the merged tool list is a strict
+// superset of all three pre-merge surfaces.
 func normalizeChatHistoryWorkshopMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "builder", "optimizer", "run", "reporting":
-		return strings.ToLower(strings.TrimSpace(mode))
+	case "workshop", "builder", "optimizer", "reporting":
+		return "workshop"
+	case "run":
+		return "run"
 	case "ask", "debugger", "runner":
 		return "run"
 	case "eval", "output":
-		return "builder"
+		return "workshop"
 	default:
 		return ""
 	}

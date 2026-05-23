@@ -4700,18 +4700,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Pass workshop mode from frontend override (auto-detection happens after plan is loaded below).
-				// Migrate legacy values to the current 4-mode scheme
-				// (builder/optimizer/run/reporting). 'ask'/'debugger'/'runner' fold
-				// into 'run'; 'eval'/'output' fold into 'builder'. Reporting was
-				// split out of builder/optimizer in a later release. Anything else
-				// passes through so unknown future modes don't break old sessions.
+				// Migrate legacy values to the current 2-mode scheme
+				// (workshop/run). The "workshop" mode merges what used to be
+				// "builder" + "optimizer" + "reporting" — the merged tool
+				// list is a strict superset of all three, and the unified
+				// agent decides phase from workspace state (plan exists?
+				// runs exist? report work requested?).
+				// Legacy aliases: 'builder' / 'optimizer' / 'reporting' /
+				// 'eval' / 'output' all map to 'workshop';
+				// 'ask' / 'debugger' / 'runner' fold into 'run'.
 				if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
 					mode := req.ExecutionOptions.WorkshopMode
 					switch mode {
 					case "ask", "debugger", "runner":
 						mode = "run"
-					case "eval", "output":
-						mode = "builder"
+					case "builder", "optimizer", "reporting", "eval", "output":
+						mode = "workshop"
 					}
 					phaseTemplateVars["WorkshopMode"] = mode
 					log.Printf("[WORKSHOP_MODE] Using frontend override: %s (raw=%s)", mode, req.ExecutionOptions.WorkshopMode)
@@ -4784,14 +4788,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
-				// Default workshop mode if not provided by frontend. Run/Optimizer/Reporting
-				// are explicit user/frontend choices, not inferred from step flags.
+				// Default workshop mode if not provided by frontend. Run/Reporting
+				// are explicit user/frontend choices; everything else defaults
+				// to the merged Workshop mode (was previously builder/optimizer).
 				if phaseTemplateVars["WorkshopMode"] == "" && existingPlanJSON != "" && workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
-					phaseTemplateVars["WorkshopMode"] = "builder"
-					log.Printf("[WORKSHOP_MODE] Defaulted to builder")
+					phaseTemplateVars["WorkshopMode"] = "workshop"
+					log.Printf("[WORKSHOP_MODE] Defaulted to workshop")
 				}
 				if phaseTemplateVars["WorkshopMode"] == "" {
-					phaseTemplateVars["WorkshopMode"] = "builder"
+					phaseTemplateVars["WorkshopMode"] = "workshop"
 				}
 
 				// Read variable names from workspace (if any)
@@ -5137,7 +5142,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered evaluation validation tool in %s", workflowPhaseID)
 					}
 
-					if phaseTemplateVars["WorkshopMode"] == "builder" || phaseTemplateVars["WorkshopMode"] == "optimizer" || phaseTemplateVars["WorkshopMode"] == "reporting" {
+					if phaseTemplateVars["WorkshopMode"] == "workshop" || phaseTemplateVars["WorkshopMode"] == "builder" || phaseTemplateVars["WorkshopMode"] == "optimizer" || phaseTemplateVars["WorkshopMode"] == "reporting" {
 						// Reporting tools: JSON report-plan read/write tools plus validation and
 						// preview against real db/*.json / knowledgebase/*.json sources. The renderer
 						// silently drops bad widgets, so validation stays in the loop.
@@ -5244,11 +5249,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						todo_creation_human.RegisterConsolidateKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered consolidate_knowledgebase in %s", workflowPhaseID)
 						// Auto-improvement metric tools mutate metrics, so keep
-						// them in Optimizer mode. capture_context is also safe in
-						// Run mode because it requires explicit user confirmation
-						// and target metric anchoring.
+						// them in Workshop mode (was Optimizer before the merge).
+						// capture_context is also safe in Run mode because it
+						// requires explicit user confirmation and target metric
+						// anchoring. Legacy "optimizer" is also accepted for
+						// backward compat with persisted sessions that
+						// pre-date the merge.
 						switch phaseTemplateVars["WorkshopMode"] {
-						case "optimizer":
+						case "workshop", "optimizer":
 							RegisterAutoImprovementProposerTools(underlyingAgent, phaseWorkspacePath, "improve-workflow", api.logger)
 							log.Printf("[WORKFLOW_PHASE] Registered auto-improvement proposer tools in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
 						case "run":
@@ -5262,6 +5270,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						// per-kind mode validation lives in the tool itself.
 						guidance.RegisterGuidanceTool(underlyingAgent, phaseTemplateVars["WorkshopMode"], api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered get_workflow_command_guidance in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
+
+						// Reference docs for system-level content that used to live inline
+						// in the workshop prompt (main.py rules, store contracts, message
+						// sequence patterns, optimizer playbook, etc.) — returned via
+						// get_reference_doc(kind=...). Same registry pattern as guidance;
+						// per-kind mode validation lives in the tool itself.
+						guidance.RegisterReferenceDocTool(underlyingAgent, phaseTemplateVars["WorkshopMode"], api.logger)
+						log.Printf("[WORKFLOW_PHASE] Registered get_reference_doc in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
 					}
 				default:
 					// planning: plan modification tools
@@ -5335,7 +5351,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			newWorkshopMode = normalizeChatHistoryWorkshopMode(req.ExecutionOptions.WorkshopMode)
 		}
 		if newWorkshopMode == "" && isWorkflowPhase {
-			newWorkshopMode = "builder"
+			newWorkshopMode = "workshop"
 		}
 		modeChangedThisTurn := false
 		modeChangePrevMode := ""

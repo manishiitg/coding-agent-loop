@@ -13,6 +13,7 @@ import (
 	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -1027,9 +1028,12 @@ func RegisterImproveKnowledgebaseTool(
 	session *WorkshopChatSession,
 	logger loggerv2.Logger,
 ) {
+	// Gated: requires stores (the design contract for knowledgebase/context/
+	// vs knowledgebase/notes/, _index.json format, compaction rules — all of
+	// which the downstream KB-improvement agent must follow when editing).
 	if err := mcpAgent.RegisterCustomTool(
 		"improve_kb",
-		"Improve the workflow knowledgebase notes for the current plan. By default mode='auto' chooses targeted cleanup for concrete file/topic hygiene and cross-step consolidation for broad plan-level KB optimization. Use mode='targeted' for known cleanup operations like merge, rename, compact, delete stale sections, or fix _index.json. Use mode='cross_step' for holistic consolidation after multiple steps have contributed: dedupe topics across steps, surface contradictions, canonicalize drift, or write durable pattern notes. Takes 'instruction' describing the goal and optional 'focus' to narrow scope. Returns the agent's summary line.",
+		"Improve the workflow knowledgebase notes for the current plan. By default mode='auto' chooses targeted cleanup for concrete file/topic hygiene and cross-step consolidation for broad plan-level KB optimization. Use mode='targeted' for known cleanup operations like merge, rename, compact, delete stale sections, or fix _index.json. Use mode='cross_step' for holistic consolidation after multiple steps have contributed: dedupe topics across steps, surface contradictions, canonicalize drift, or write durable pattern notes. Takes 'instruction' describing the goal and optional 'focus' to narrow scope. Returns the agent's summary line. Precondition: call get_reference_doc(kind=\"stores\") first.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1049,7 +1053,7 @@ func RegisterImproveKnowledgebaseTool(
 			},
 			"required": []string{"instruction"},
 		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
+		guidance.WithDocPrecondition([]string{"stores"}, guidance.DefaultTracker(), func(ctx context.Context, args map[string]interface{}) (string, error) {
 			mode, _ := args["mode"].(string)
 			mode = strings.TrimSpace(strings.ToLower(mode))
 			if mode == "" {
@@ -1098,7 +1102,7 @@ func RegisterImproveKnowledgebaseTool(
 			default:
 				return "mode must be 'auto', 'targeted', or 'cross_step'", nil
 			}
-		},
+		}),
 		"knowledgebase_tools",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("Failed to register improve_kb tool: %v", err))

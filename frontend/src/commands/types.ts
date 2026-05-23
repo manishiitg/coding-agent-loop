@@ -11,7 +11,15 @@ import type { ExecutionOptions } from '../services/api-types'
 // still accepted for backend compatibility but the UI maps report authoring to
 // Builder. 'run' remains in the type for backend/bot routes such as Slack and
 // WhatsApp, but it is not shown in the main workshop mode toggle.
-export type WorkshopMode = 'builder' | 'optimizer' | 'run' | 'reporting'
+// WorkshopMode values (post-merge):
+//   - 'workshop' — the unified design+run+harden+replan+report mode.
+//   - 'run' — read-mostly runtime (Slack/WhatsApp/deployed use).
+//
+// Legacy modes ("builder", "optimizer", "reporting") were merged into
+// "workshop" in the prompt-restructure migration. Persisted sessions with
+// the old names are normalized on the backend; the frontend never receives
+// them as canonical values (loadtime migration in migrateWorkshopMode).
+export type WorkshopMode = 'workshop' | 'run'
 
 export interface CommandContext {
   beforeSlash: string

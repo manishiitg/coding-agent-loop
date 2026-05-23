@@ -18,11 +18,17 @@ interface BotConnectorModalProps {
 }
 
 type Section = 'slack' | 'whatsapp' | 'simulate'
-type WorkflowRouteMode = 'builder' | 'optimizer' | 'run'
+// Bot connectors (Slack/WhatsApp) are user-facing runtime surfaces.
+// They always run in "run" mode — never workshop — so plan/config/eval
+// mutations can't leak through a bot channel. Persisted route configs
+// from before this restriction (which may have "builder" / "optimizer" /
+// "workshop") are normalized to "run" at load time.
+type WorkflowRouteMode = 'run'
 
-const normalizeWorkflowRouteMode = (mode?: string): WorkflowRouteMode => {
-  if (mode === 'builder' || mode === 'optimizer' || mode === 'run') return mode
-  if (mode === 'ask') return 'run'
+const normalizeWorkflowRouteMode = (_mode?: string): WorkflowRouteMode => {
+  // Bot routes always normalize to "run". Any legacy value
+  // ("builder" / "optimizer" / "reporting" / "workshop" / "ask" / ...) is
+  // folded to "run" so bot channels never expose workshop write tools.
   return 'run'
 }
 
@@ -73,7 +79,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
   const [workflows, setWorkflows] = useState<DiscoveredWorkflow[]>([])
   const [newChannelID, setNewChannelID] = useState('')
   const [newWorkflowID, setNewWorkflowID] = useState('')
-  const [newWorkshopMode, setNewWorkshopMode] = useState<'' | 'builder' | 'optimizer' | 'run'>('')
+  const [newWorkshopMode, setNewWorkshopMode] = useState<'' | 'run'>('')
   const [newSendFullDetails, setNewSendFullDetails] = useState(false)
 
   // ── WhatsApp ──────────────────────────────────────────────────────────────
@@ -733,7 +739,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                           <select
                                             value={r.workshop_mode || ''}
                                             onChange={e => {
-                                              const mode = e.target.value as '' | 'builder' | 'optimizer' | 'run'
+                                              const mode = e.target.value as '' | 'run'
                                               const updated = { ...slackConfig.channel_routing }
                                               const nextRoute: ChannelRoute = { ...r }
                                               if (mode) nextRoute.workshop_mode = mode
@@ -742,12 +748,10 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                               setSlackConfig({ ...slackConfig, channel_routing: updated })
                                             }}
                                             className="px-1.5 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
-                                            title="Override workshop mode for this channel. 'Default' uses whatever the workflow manifest specifies."
+                                            title="Bot channels always run in Run mode. 'Default' uses the workflow manifest's setting (which is also Run for bot deployments)."
                                           >
                                             <option value="">Default</option>
                                             <option value="run">Run</option>
-                                            <option value="optimizer">Optimize</option>
-                                            <option value="builder">Builder</option>
                                           </select>
                                           <label className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0" title="Send detailed workflow step/runtime messages to this channel">
                                             <input
@@ -802,14 +806,12 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                   </select>
                                   <select
                                     value={newWorkshopMode}
-                                    onChange={e => setNewWorkshopMode(e.target.value as '' | 'builder' | 'optimizer' | 'run')}
+                                    onChange={e => setNewWorkshopMode(e.target.value as '' | 'run')}
                                     className="px-1.5 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
-                                    title="Override workshop mode for this channel. 'Default' uses the workflow manifest value."
+                                    title="Bot channels always run in Run mode. 'Default' uses the workflow manifest's setting."
                                   >
                                     <option value="">Default</option>
                                     <option value="run">Run</option>
-                                    <option value="optimizer">Optimize</option>
-                                    <option value="builder">Builder</option>
                                   </select>
                                   <label className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0" title="Send detailed workflow step/runtime messages to this channel">
                                     <input
@@ -1180,8 +1182,6 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                               className="w-24 px-2 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
                             >
                               <option value="run">Run</option>
-                              <option value="optimizer">Optimize</option>
-                              <option value="builder">Builder</option>
                             </select>
                             <label className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0" title="Send detailed workflow step/runtime messages to WhatsApp">
                               <input

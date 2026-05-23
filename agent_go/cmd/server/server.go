@@ -4459,6 +4459,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						underlyingAgent.AppendSystemPrompt(tierSection)
 					}
 				}
+				// Register get_reference_doc for the multi-agent chat path. The
+				// delegation prompt embeds cheat sheets for rare-path topics
+				// (schedule-management, secret-management) plus pointers; the
+				// agent loads the deep guide on demand instead of carrying it
+				// in every turn's context.
+				guidance.RegisterReferenceDocTool(underlyingAgent, "multi-agent", api.logger)
+				logfWithContext(queryLogCtx, "[REFERENCE_DOC] Registered get_reference_doc for multi-agent chat")
 			}
 
 			// 2. WORKSPACE MAP — compact folder listing with absolute paths and access levels.

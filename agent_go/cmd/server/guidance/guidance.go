@@ -110,11 +110,17 @@ var allKinds = map[string]kindMeta{
 // prose catalog IS the agent's primary tool-discovery surface, and lazy-loading
 // would create a bootstrap problem.
 var referenceKinds = map[string]kindMeta{
+	// Workflow-scoped reference docs (workshop / run modes).
 	"code-authoring":    {Group: "system", Description: "Detailed main.py authoring rules and patterns (env access, sys.argv contract, data authenticity, patching discipline)", Modes: []string{"workshop"}},
 	"stores":            {Group: "system", Description: "Persistent store design contract: skill vs knowledgebase vs db, when to write to which", Modes: []string{"workshop", "run"}},
 	"message-sequence":  {Group: "system", Description: "Message-sequence route patterns (stateful specialist, test/fix loop, maker+reviewer, panel, clean-room retry, HITL re-entry, scripted conversation)", Modes: []string{"workshop"}},
 	"optimize-playbook": {Group: "system", Description: "Optimizer deep-dive: harden vs replan decision tree, eval, metrics, auto-improvement framework", Modes: []string{"workshop"}},
 	"file-layout":       {Group: "system", Description: "Workspace file layout reference and path discipline", Modes: []string{"workshop", "run"}},
+
+	// Multi-agent chat reference docs (rare-path topics — schedule/secret
+	// management — that don't warrant always-loaded prompt space).
+	"schedule-management": {Group: "system", Description: "Schedule cron, edit, update, or remove multi-agent scheduled tasks via _users/<id>/multiagent-schedules.json", Modes: []string{"multi-agent"}},
+	"secret-management":   {Group: "system", Description: "Manage workflow / user / global secrets via list_secrets, set_workflow_secret, set_user_secret, delete_workflow_secret, delete_user_secret — buckets, naming rules, attach-after-store discipline", Modes: []string{"multi-agent", "workshop"}},
 }
 
 // tmplData is the typed context passed to every guidance template. Focus is

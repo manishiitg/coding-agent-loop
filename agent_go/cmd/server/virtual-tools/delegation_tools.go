@@ -645,90 +645,30 @@ func GetMultiAgentDelegationInstructionsWithUser(chatsFolder string, userID stri
 		userID = "default"
 	}
 
+	// Schedule + Secret management used to be ~80 lines of inline detail.
+	// Both are rare-path topics: most chat turns do not touch schedules or
+	// secrets at all. They moved to templates/system/{schedule-management,
+	// secret-management}.md, loaded via get_reference_doc when the user
+	// actually asks. Keep brief cheat sheets here so the agent knows the
+	// capabilities exist and which doc to load.
 	scheduleInstructions := `
-## Schedule Management
+## Schedule Management (brief)
 
-You can create scheduled tasks that run automatically on a cron schedule. Schedules are stored in ` + "`_users/" + userID + "/multiagent-schedules.json`" + `.
+You can create scheduled tasks that run on a cron schedule. Schedules live in ` + "`_users/" + userID + "/multiagent-schedules.json`" + `; the scheduler picks up file changes within 60 seconds.
 
-### File Format
+**When the user asks to schedule something:** confirm what / when / timezone, then read the file, add an entry with a generated UUID + ` + "`mode: \"multi-agent\"`" + ` + the user's instruction as ` + "`query`" + `, write back, confirm.
 
-` + "```json" + `
-{
-  "schedules": [
-    {
-      "id": "unique-uuid",
-      "name": "Human-readable name",
-      "description": "What this schedule does",
-      "cron_expression": "0 9 * * *",
-      "timezone": "America/New_York",
-      "enabled": true,
-      "mode": "multi-agent",
-      "query": "The message/instruction to execute on schedule"
-    }
-  ],
-  "capabilities": {
-    "selected_servers": [],
-    "selected_tools": [],
-    "selected_skills": [],
-    "selected_secrets": [],
-    "browser_mode": "none",
-    "use_code_execution_mode": false
-  }
-}
-` + "```" + `
+**For the full format, cron examples, update/remove flows, multi-user paths, call:**
+` + "`get_reference_doc(kind=\"schedule-management\")`" + ` — load before editing the schedule file.
 
-### How to manage schedules
+## Secret Management (brief)
 
-Use ` + "`execute_shell_command`" + ` to read and write the schedule file:
+Three buckets: **workflow** (per-user, encrypted, scoped to one workflow), **user** (per-user, reusable across workflows), **global** (operator-managed, read-only). Tools: ` + "`list_secrets`" + `, ` + "`set_workflow_secret`" + `, ` + "`delete_workflow_secret`" + `, ` + "`set_user_secret`" + `, ` + "`delete_user_secret`" + `.
 
-**List schedules:**
-` + "```" + `bash
-cat _users/` + userID + `/multiagent-schedules.json 2>/dev/null || echo '{"schedules":[],"capabilities":{}}'
-` + "```" + `
+**Hard rules:** never echo / print / log a plaintext secret value; acknowledge by name only. After storing a workflow secret, attach it to the workflow via ` + "`update_workflow_config(add_secrets=[\"NAME\"])`" + ` — storing without attaching leaves runtime ` + "`$SECRET_<NAME>`" + ` unavailable.
 
-**Create/update schedules:** Read the file, modify the JSON (add/update/remove entries), write it back. Use ` + "`python3`" + ` or ` + "`jq`" + ` for JSON manipulation. Always generate a UUID for new schedule IDs (` + "`python3 -c \"import uuid; print(uuid.uuid4())\"`" + `).
-
-**Cron expression examples:**
-- ` + "`0 9 * * *`" + ` — daily at 9:00 AM
-- ` + "`0 9 * * 1-5`" + ` — weekdays at 9:00 AM
-- ` + "`*/30 * * * *`" + ` — every 30 minutes
-- ` + "`0 0 1 * *`" + ` — first day of each month at midnight
-
-**Important:** The scheduler picks up file changes automatically. After writing the file, the schedule will be active within 60 seconds.
-
-### When users ask to schedule something
-
-1. Confirm the schedule details (what to run, when, timezone)
-2. Read the current schedule file
-3. Add the new schedule entry with a generated UUID, ` + "`mode: \"multi-agent\"`" + `, and the user's instruction as ` + "`query`" + `
-4. Write the updated file back
-5. Confirm to the user what was scheduled
-
-## Secret Management
-
-	Secrets are credentials (API keys, tokens, passwords). They may come from three buckets:
-
-	- **Workflow secrets** — per-user, AES-GCM encrypted, scoped only to one workflow. Use these by default for workflow-specific credentials when the workflow secret tools are available.
-	- **User secrets** — per-user, AES-GCM encrypted, reusable across workflows.
-	- **Global secrets** — operator-managed via ` + "`GLOBAL_SECRET_*`" + ` env vars. Read-only from chat.
-
-### Tools
-
-	- **` + "`list_secrets`" + `** — returns ` + "`global`" + ` (read-only names), ` + "`workflow`" + ` (current workflow names, when scoped), and ` + "`user`" + ` (reusable names) buckets. Values are never exposed. Call before set/delete/attach.
-	- **` + "`set_workflow_secret(name, value)`" + `** — create or update a workflow-scoped value. Available only in workflow-scoped builder/workshop chats.
-	- **` + "`delete_workflow_secret(name)`" + `** — delete a workflow-scoped value. Available only in workflow-scoped builder/workshop chats.
-	- **` + "`set_user_secret(name, value)`" + `** — create or update a reusable user secret value. Names that collide with a global are rejected. Use ` + "`UPPER_SNAKE_CASE`" + ` (e.g. ` + "`SLACK_TOKEN`" + `).
-	- **` + "`delete_user_secret(name)`" + `** — delete a reusable user secret from the store. Globals cannot be deleted.
-
-### When a user says "store / save / set this key"
-
-	1. Call ` + "`list_secrets`" + ` first to check if the name already exists and which bucket owns it.
-	2. In a workflow builder/workshop chat, prefer ` + "`set_workflow_secret(name, value)`" + ` for workflow-only credentials. Use ` + "`set_user_secret(name, value)`" + ` only when the same credential should be reusable across workflows.
-	3. If the request is for a workflow, attach the stored/existing secret to that workflow with the workflow config tool (for example ` + "`update_workflow_config(add_secrets=[\"NAME\"])`" + `). Storing without attaching leaves runtime ` + "`$SECRET_<NAME>`" + ` unavailable to steps.
-4. Confirm success. Do NOT echo the plaintext value back to the user — acknowledge by name only.
-
-Secret values must never be printed, echoed, logged, or pasted into another tool's arguments. If a user pastes a secret in chat, treat it as sensitive: store it, then acknowledge only by name.
-Do not tell the user to rotate the secret after a normal requested save. Recommend rotation only for a concrete exposure event such as logs, files, commits, or the wrong channel.
+**For full bucket semantics, naming rules, update/remove flows, safety rules, call:**
+` + "`get_reference_doc(kind=\"secret-management\")`" + ` — load before any set / delete / attach operation.
 `
 
 	return scheduleInstructions + `

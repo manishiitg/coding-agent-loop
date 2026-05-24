@@ -185,13 +185,22 @@ type WorkshopChatSession struct {
 	hasRunningAgents      func() bool               // optional: server-level check for running background agents
 	cancelAllServerAgents func()                    // optional: cancel all running agents in server registry
 	listServerAgents      func() []ServerAgentInfo  // optional: list all agents from server registry
-	workshopModeOverride  string                    // frontend-selected workshop mode
-	recoveryOnce          sync.Once                 // starts durable continuation replay once server notifiers are wired
+	workshopModeOverride      string    // frontend-selected workshop mode
+	recoveryOnce              sync.Once // starts durable continuation replay once server notifiers are wired
+	onStepCorrelationDone     func(string)
 }
 
 // GetConfig returns the workshop config (for accessing session-aware executors, etc.)
 func (s *WorkshopChatSession) GetConfig() *WorkshopConfig {
 	return s.config
+}
+
+// SetOnStepCorrelationDone registers a callback invoked when a workshop step finishes
+// its full-workflow run. The argument is the step's ForceCorrelationID
+// ("workshop-step-<stepID>-<ts>"), allowing server-side maps keyed on that ID to be
+// cleaned up when they're no longer needed.
+func (s *WorkshopChatSession) SetOnStepCorrelationDone(fn func(string)) {
+	s.onStepCorrelationDone = fn
 }
 
 // resolveGroupFolderName resolves a group name (e.g. "group-11") to the actual folder name
@@ -1310,6 +1319,21 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 	case orchestrator_events.OrchestratorAgentStart:
 		if startEvent, ok := event.Data.(*orchestrator_events.OrchestratorAgentStartEvent); ok && workflowProgressTracksAgentType(startEvent.AgentType) {
 			execID := b.workflowProgressExecIDForStart(startEvent.AgentType, startEvent.AgentName, startEvent.StepIndex)
+			// Register a running snapshot so query_step can find this step while it's active.
+			// AgentSessionID is intentionally empty: the prefix-scan in collectQueryToolCallSummaries
+			// uses the resolved stepID to find tool calls under sub-<kind>-<stepID>-* sessions.
+			if b.session != nil && b.session.StepRegistry != nil {
+				stepID := workflowProgressStepID(startEvent)
+				if stepID == "" {
+					stepID = startEvent.AgentName
+				}
+				b.session.StepRegistry.Register(&WorkshopStepExecution{
+					ID:        execID,
+					StepID:    stepID,
+					Status:    WorkshopStepRunning,
+					CreatedAt: time.Now(),
+				})
+			}
 			if b.session != nil && b.session.executionNotifier != nil {
 				b.session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
 					ID:                execID,
@@ -1323,6 +1347,12 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 			agentType := endEvent.AgentType
 			if workflowProgressTracksAgentType(agentType) {
 				stepName := endEvent.AgentName
+				// Use the plan-level step ID stamped by context_aware_bridge, falling back to
+				// the full agent name so query_step(step_id=<plan-id>) works out of the box.
+				stepID := workflowProgressStepID(endEvent)
+				if stepID == "" {
+					stepID = stepName
+				}
 				status := "completed"
 				result := endEvent.Result
 				var execErr error
@@ -1337,7 +1367,7 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 				progressID, alreadyStarted := b.workflowProgressExecIDForEnd(agentType, stepName, endEvent.StepIndex)
 				progressExec := &WorkshopStepExecution{
 					ID:     progressID,
-					StepID: fmt.Sprintf("workflow-step-%s", stepName),
+					StepID: stepID,
 					Status: WorkshopStepDone,
 					Result: fmt.Sprintf("[Step %d: %s] %s — %s", endEvent.StepIndex, stepName, status, truncateResult(result, 500)),
 				}
@@ -1346,6 +1376,10 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 					progressExec.Err = execErr
 				}
 				b.session.StepRegistry.Register(progressExec)
+
+				if b.session.onStepCorrelationDone != nil && strings.HasPrefix(endEvent.CorrelationID, "workshop-step-") {
+					b.session.onStepCorrelationDone(endEvent.CorrelationID)
+				}
 
 				if b.session != nil && b.session.executionNotifier != nil {
 					meta := map[string]string{
@@ -1446,11 +1480,30 @@ func (b *workflowProgressBridge) notifyWorkflowExecutionPhaseComplete(groupEnd *
 
 func workflowProgressTracksAgentType(agentType string) bool {
 	switch agentType {
-	case "todo_planner_execution", "conditional", "todo_task_orchestrator":
+	case "todo_planner_execution", "conditional", "todo_task_orchestrator", "generic_execution":
 		return true
 	default:
 		return false
 	}
+}
+
+// workflowProgressStepID extracts the actual workflow step ID from an orchestrator event's
+// metadata. The context_aware_bridge stamps current_step_id on every event it processes,
+// so this is the reliable way to map an execution-agent name back to its plan step ID.
+// Falls back to an empty string when no step metadata is present (e.g. the conditional
+// evaluation agent which runs outside a specific step context).
+func workflowProgressStepID(eventData interface{}) string {
+	type baseGetter interface {
+		GetBaseEventData() *baseevents.BaseEventData
+	}
+	if bg, ok := eventData.(baseGetter); ok {
+		if bd := bg.GetBaseEventData(); bd != nil {
+			if stepID, ok := bd.Metadata["current_step_id"].(string); ok {
+				return strings.TrimSpace(stepID)
+			}
+		}
+	}
+	return ""
 }
 
 func workflowProgressDisplayName(agentName string) string {

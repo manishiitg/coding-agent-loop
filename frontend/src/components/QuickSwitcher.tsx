@@ -309,17 +309,23 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     }, {})
     const visibleActiveSessions = activeSessions.filter(isVisibleActiveSession)
 
+    const builderStateSuffix = (tab?: ChatTab): string => {
+      if (!tab?.hasRunningBgAgents) return ''
+      return tab.isStreaming || tab.isSyntheticTurn ? ' · builder busy' : ' · builder idle'
+    }
+
     const chatItems: ChatTabItem[] = Object.values(chatTabs)
       .filter(tab => tab.metadata?.mode === 'multi-agent' && !tab.metadata?.isOrganizationAssistant)
       .sort((a, b) => a.createdAt - b.createdAt)
       .map(tab => {
         const eventStats = tab.sessionId ? eventStatsBySession[tab.sessionId] : undefined
         const activeSession = tab.sessionId ? visibleActiveSessions.find(session => session.session_id === tab.sessionId) : undefined
+        const streamingLabel = tab.isStreaming ? 'Streaming...' : tab.isCompleted ? 'Completed' : tab.sessionId ? 'Active' : 'New'
         return {
           type: 'chat' as const,
           id: `chat:${tab.tabId}`,
           label: tab.name,
-          subtitle: `Chat · ${tab.isStreaming ? 'Streaming...' : tab.isCompleted ? 'Completed' : tab.sessionId ? 'Active' : 'New'}${activeSessionSuffix(activeSession)}${eventStatsSuffix(eventStats)}`,
+          subtitle: `Chat · ${streamingLabel}${builderStateSuffix(tab)}${activeSessionSuffix(activeSession)}${eventStatsSuffix(eventStats)}`,
           isActive: isChatMode && tab.tabId === activeTabId,
           lastAccessedAt: tab.lastAccessedAt || tab.createdAt || 0,
           tabId: tab.tabId,
@@ -336,11 +342,12 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           .flatMap(tab => tabEvents[tab.sessionId!] || [])
         const eventStats = lightweightEventStats(presetEvents)
         const activeSession = pickWorkflowActiveSession(visibleActiveSessions, p, chatTabs)
+        const workflowTab = allTabs.find(tab => tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === p.id)
         return {
           type: 'workflow' as const,
           id: `workflow:${p.id}`,
           label: p.label,
-          subtitle: `Workflow · ${p.selectedFolder!.filepath}${activeSessionSuffix(activeSession)}${eventStatsSuffix(eventStats)}`,
+          subtitle: `Workflow · ${p.selectedFolder!.filepath}${builderStateSuffix(workflowTab)}${activeSessionSuffix(activeSession)}${eventStatsSuffix(eventStats)}`,
           isActive: isWorkflowMode && p.id === activePresetId,
           lastAccessedAt: recentPresetAccessedAt[p.id] || (() => {
             const recentIndex = recentPresetOrder.indexOf(p.id)

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -482,6 +483,72 @@ func TestTerminalRoutesKillTerminalKillsTmuxAndMarksFailed(t *testing.T) {
 	}
 	if got := strings.Join(gotArgs, " "); got != "kill-session -t "+tmuxSession {
 		t.Fatalf("tmux args = %q, want kill-session", got)
+	}
+	var response terminalActionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode kill response: %v", err)
+	}
+	if response.Terminal.Active || response.Terminal.State != "failed" {
+		t.Fatalf("terminal active/state = %v/%q, want false/failed", response.Terminal.Active, response.Terminal.State)
+	}
+}
+
+func TestTerminalRoutesKillTerminalIsIdempotentForCompletedSnapshot(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-kill-completed"
+	terminalID := sessionID + ":main:" + sessionID
+	tmuxSession := "mlp-claude-code-exp-gone"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, tmuxSession, "pane", 2))
+	store.MarkCompleted(terminalID)
+
+	var called bool
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		called = true
+		return errors.New("tmux kill-session -t mlp-claude-code-exp-gone: exit status 1: can't find pane")
+	}
+	defer func() { runTerminalTmuxCommand = oldRun }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/kill", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleKillTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("kill completed status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if called {
+		t.Fatalf("completed terminal should not call tmux kill")
+	}
+	var response terminalActionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode kill response: %v", err)
+	}
+	if response.Terminal.Active || response.Terminal.State != "completed" {
+		t.Fatalf("terminal active/state = %v/%q, want false/completed", response.Terminal.Active, response.Terminal.State)
+	}
+}
+
+func TestTerminalRoutesKillTerminalTreatsMissingTmuxAsStopped(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-kill-missing"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-claude-code-exp-missing"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "pane", 2))
+
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		return errors.New("tmux kill-session -t mlp-claude-code-exp-missing: exit status 1: can't find pane")
+	}
+	defer func() { runTerminalTmuxCommand = oldRun }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/kill", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleKillTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("kill missing status = %d body=%s, want 200", rec.Code, rec.Body.String())
 	}
 	var response terminalActionResponse
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {

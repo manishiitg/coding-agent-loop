@@ -30,10 +30,18 @@ func (api *StreamingAPI) getSessionStatusString(r *http.Request, sessionID strin
 
 func (api *StreamingAPI) canSteerSession(sessionID string) bool {
 	api.runningAgentsMux.RLock()
-	defer api.runningAgentsMux.RUnlock()
-
 	runningAgent, exists := api.runningAgents[sessionID]
-	return exists && runningAgent != nil
+	api.runningAgentsMux.RUnlock()
+	if !exists || runningAgent == nil {
+		return false
+	}
+
+	// A retained agent object is not enough to accept live input. Main-agent
+	// coding CLI sessions can keep an idle tmux pane alive long after the
+	// foreground Go turn has finished; treating that as steerable causes fresh
+	// chat input to be delivered as stale live input instead of starting the next
+	// turn. The active cancel handle is the server-owned foreground-turn proof.
+	return api.hasActiveTurnCancel(sessionID)
 }
 
 // --- POLLING API TYPES ---
@@ -138,6 +146,13 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		}
 		sessionStatus = activeSession.Status
 	}
+	canSteer := api.canSteerSession(sessionID)
+	hasRunningBackgroundAgents := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
+	if sessionStatus == "running" && !canSteer && !api.isSyntheticTurn(sessionID) && !hasRunningBackgroundAgents {
+		api.setSessionBusy(sessionID, false)
+		api.updateSessionStatus(sessionID, "completed")
+		sessionStatus = "completed"
+	}
 
 	// If the session doesn't exist in the in-memory event store, return an
 	// empty events payload. This happens when polling starts before events
@@ -149,8 +164,8 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 			SessionID:                  sessionID,
 			SessionStatus:              sessionStatus,
 			LastProcessedIndex:         -1,
-			HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
-			CanSteer:                   api.canSteerSession(sessionID),
+			HasRunningBackgroundAgents: hasRunningBackgroundAgents,
+			CanSteer:                   canSteer,
 		}
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
@@ -187,8 +202,8 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		SessionID:                  sessionID,
 		SessionStatus:              sessionStatus,
 		LastProcessedIndex:         lastProcessedIndex,
-		HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
-		CanSteer:                   api.canSteerSession(sessionID),
+		HasRunningBackgroundAgents: hasRunningBackgroundAgents,
+		CanSteer:                   canSteer,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {

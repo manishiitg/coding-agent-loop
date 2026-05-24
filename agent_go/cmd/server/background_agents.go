@@ -421,7 +421,20 @@ func (r *BackgroundAgentRegistry) Cleanup(sessionID string) {
 	}
 }
 
-// HasRunningAgents returns true if the session has any running agents
+const (
+	// hasRunningAgentsGracePeriod is how long a recently-completed agent still counts as
+	// "running". This keeps the frontend builder-idle chip visible briefly after the last
+	// step finishes so the user has time to notice before the indicator disappears.
+	hasRunningAgentsGracePeriod = 8 * time.Second
+
+	// hasRunningAgentsMaxAge is the maximum time a still-running agent counts toward
+	// has_running_background_agents. After 30 minutes the user has likely abandoned the
+	// workflow and the indicator should stop showing.
+	hasRunningAgentsMaxAge = 30 * time.Minute
+)
+
+// HasRunningAgents returns true if the session has any running agents (subject to the
+// 30-minute max-age cap), or if any agent completed within the 8-second grace period.
 func (r *BackgroundAgentRegistry) HasRunningAgents(sessionID string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -429,9 +442,20 @@ func (r *BackgroundAgentRegistry) HasRunningAgents(sessionID string) bool {
 	if !ok {
 		return false
 	}
+	now := time.Now()
 	for _, agent := range sessionAgents {
-		if agent.GetStatus() == BGAgentRunning {
-			return true
+		status := agent.GetStatus()
+		if status == BGAgentRunning {
+			if now.Sub(agent.CreatedAt) < hasRunningAgentsMaxAge {
+				return true
+			}
+			// Still running but older than 30 min — treat as stale, don't count.
+			continue
+		}
+		if (status == BGAgentCompleted || status == BGAgentFailed) && agent.CompletedAt != nil {
+			if now.Sub(*agent.CompletedAt) < hasRunningAgentsGracePeriod {
+				return true
+			}
 		}
 	}
 	return false

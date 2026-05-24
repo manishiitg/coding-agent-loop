@@ -1760,7 +1760,7 @@ The workflow has a live frontend report viewer at the top toolbar's "Report" tab
 	{{if eq .WorkshopMode "workshop"}}
 **When the user asks "create a report" / "build a reporting UI" / "show me X in a dashboard":**
 - The answer is almost always: **update `+"`reports/report_plan.json`"+` via the report-plan tools** — add, move, toggle, or remove widgets.
-- If the workflow has routing, todo_task predefined routes, orchestration routes, or route-specific outputs, prefer a tabbed report section: `+"`set_section_layout(mode=\"tabs\")`"+`, then give each route's widgets `+"`tab: \"<route name>\"`"+`. Use one tab per user-meaningful route so the dashboard does not mix unrelated path outputs in one long section.
+- If the workflow has routing routes, todo_task predefined routes, or other route-specific outputs, prefer a tabbed report section: `+"`set_section_layout(mode=\"tabs\")`"+`, then give each route's widgets `+"`tab: \"<route name>\"`"+`. Use one tab per user-meaningful route so the dashboard does not mix unrelated path outputs in one long section.
 - When creating or improving a report for a routed workflow, first inspect the route list and decide the report structure from that route map. Use tabs for route-specific evidence/results by default; use a combined table only when the user explicitly wants cross-route comparison or the route outputs share the same schema.
 - Do NOT add a step that generates HTML, markdown, or any other "rendered report" artifact.
 - Do NOT write Python that produces a dashboard file. The React frontend already does this from the report plan.
@@ -2015,13 +2015,13 @@ Read-only review commands such as `+"`/review-plan`"+` are available if the user
 {{if .StepSummary}}### Plan Steps
 {{.StepSummary}}
 {{end}}
-{{if .PlanJSON}}`+"```json\n{{.PlanJSON}}\n```"+`{{else}}Do NOT dump the full `+"`planning/plan.json`"+` by default. Read it precisely with targeted `+"`jq`"+` queries. The structure is: root `+"`steps[]`"+` for top-level steps, with nested step containers in `+"`if_true_steps`"+`, `+"`if_false_steps`"+`, `+"`todo_task_step`"+`, `+"`predefined_routes[].sub_agent_step`"+`, `+"`predefined_routes[].orphan_step_ref`"+`, `+"`orchestration_step`"+`, and `+"`orchestration_routes[].sub_agent_step`"+`. Reusable orphan definitions live under `+"`orphan_steps[]`"+` and may expose `+"`shared_with.orchestrator_ids`"+` to allow specific todo_task steps to reuse them.
+{{if .PlanJSON}}`+"```json\n{{.PlanJSON}}\n```"+`{{else}}Do NOT dump the full `+"`planning/plan.json`"+` by default. Read it precisely with targeted `+"`jq`"+` queries. The structure is: root `+"`steps[]`"+` for top-level steps, with nested step containers in `+"`if_true_steps`"+`, `+"`if_false_steps`"+`, `+"`todo_task_step`"+`, `+"`predefined_routes[].sub_agent_step`"+`, `+"`predefined_routes[].orphan_step_ref`"+`, and `+"`routes[].next_step_id`"+` (routing). Reusable orphan definitions live under `+"`orphan_steps[]`"+` and may expose `+"`shared_with.orchestrator_ids`"+` to allow specific todo_task steps to reuse them.
 
 Use `+"`execute_shell_command`"+` with focused queries like:
 - **Top-level overview only**: `+"`jq '[.steps[] | {id, title, type}]' planning/plan.json`"+`
 - **Single step by `+"`step_id`"+` anywhere in the plan**: `+"`jq --arg sid \"step-id\" '.. | objects | select(.id? == $sid)' planning/plan.json`"+`
 - **Only the fields you need from one step**: `+"`jq --arg sid \"step-id\" '.. | objects | select(.id? == $sid) | {id, title, type, description, context_dependencies, context_output}' planning/plan.json`"+`
-- **Inspect only route structure for a todo/orchestration step**: `+"`jq --arg sid \"step-id\" '.. | objects | select(.id? == $sid) | {id, type, predefined_routes, orchestration_routes}' planning/plan.json`"+`
+- **Inspect only route structure for a todo_task or routing step**: `+"`jq --arg sid \"step-id\" '.. | objects | select(.id? == $sid) | {id, type, predefined_routes, routes}' planning/plan.json`"+`
 
 Use `+"`cat planning/plan.json`"+` only when you genuinely need the entire file.{{end}}
 
@@ -2058,6 +2058,8 @@ Combine actions into one step when they share one objective and output contract,
 | Utility/debug tool available but not auto-run | **Orphan** (is_orphan: true) | Not in main flow; manual execution from workshop only |
 
 **Default to Regular** unless the task clearly needs branching, iteration, or sub-agents.
+
+**For recurring multi-step shapes** (Phase Router, Scoped Investigation, Linear Pipeline, Fan-out & Consolidate, Verification Gate, Pre-flight Probe, Human Checkpoint, Critique Loop, Persistence Tail), call `+"`get_reference_doc(kind=\"workflow-patterns\")`"+` — load when starting a new plan or restructuring an existing one.
 
 ### Step 3: Design Context Flow
 
@@ -2103,7 +2105,16 @@ Use `+"`message_sequence`"+` only when the user explicitly wants one persistent 
 - Python `+"`code`"+` items are for deterministic parsing/transforms. On success, the next user_message gets script path, output paths, and summarized logs as prepended context.
 - As a todo_task predefined route, a message_sequence behaves like a reusable specialist sub-agent: reuse the same route for critique, test feedback, validation feedback, or follow-up work that should keep prior context; restart only when the prior conversation is stale, wrong, or contaminated.
 
-### Step 6: Design Validation
+### Step 6: When to Use Routing (brief)
+
+Use `+"`routing`"+` when the next step depends on a decision that needs **LLM judgment** to pick **exactly one of N mutually exclusive paths** (e.g., "did login succeed, hit MFA, or fail?"). For deterministic checks, use validation_schema + retry, not routing. For running every sub-task, use todo_task. For a linear conversation, use message_sequence. Pair `+"`human_input`"+` → `+"`routing`"+` when the user's answer determines the path.
+
+Two modes: **pure routing** (omit `+"`description`"+`, route on prior context) or **execute-then-route** (provide `+"`description`"+`, perform a probe, then route on the result). Each `+"`routes`"+` entry needs a stable `+"`route_id`"+`, a `+"`condition`"+` the router matches against `+"`routing_question`"+`, and a `+"`next_step_id`"+` that points to another step in the plan (routing routes do **not** define inline sub-agents — they branch to existing steps); set `+"`default_route_id`"+` for the fallback.
+
+For full route structure, mode trade-offs, and anti-patterns, call:
+`+"`get_reference_doc(kind=\"routing\")`"+` — load before designing or hardening any routing step.
+
+### Step 7: Design Validation
 
 Every step MUST have a **validation_schema** — the automated gate that pass/fails the step:
 - Check file existence, required fields, value types, patterns, and lengths
@@ -2112,7 +2123,7 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 
 Step-level `+"`success_criteria`"+` is deprecated. Rely on a strong `+"`description`"+` plus `+"`validation_schema`"+` instead.
 
-### Step 7: Think About Failure Modes
+### Step 8: Think About Failure Modes
 
 - If a step might fail due to external factors (login, API), add clear error handling in the description
 - If a step's output needs semantic validation (not just structural), add a separate validation step after it
@@ -2131,12 +2142,12 @@ Step-level `+"`success_criteria`"+` is deprecated. Rely on a strong `+"`descript
 - **Regular** (type: "regular"): Standard task. Executes an agent that produces a context_output file.
 - **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes**. Each route can either define an inline **sub_agent_step** or reuse a plan-local orphan definition via **orphan_step_ref**. Route sub-agents are usually **regular** steps, can be **message_sequence** when the route needs persistent specialist memory with re-entry/restart behavior, and can be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
 - **Message Sequence** (type: "message_sequence"): Persistent single-agent conversation with ordered `+"`items`"+`. Use short user_message items, optional prevalidation items, and optional Python code items. The sequence can resume and receive a new user message without replaying the queue.
-- **Routing / Orchestration** (type: "routing"): N-way LLM-based routing. Has an **orchestration_step** and **orchestration_routes** — each route has a **sub_agent_step**.
+- **Routing** (type: "routing"): N-way LLM-based branching. Has a **routing_question** and **routes[]**, each with **route_id**, **condition**, and **next_step_id** (pointer to an existing step). Optional **default_route_id** is the fallback. Two modes: pure routing (no `+"`description`"+`, routes on prior context) or execute-then-route (with `+"`description`"+`, executes first then routes on its own output).
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports: 'text', 'yesno', 'multiple_choice'. Can route based on response.
 - **Orphan** (is_orphan: true): Not part of the main execution flow. Orphan steps are plan-local reusable definitions and manual utility agents. Use them for data checks, environment validation, one-off investigations, or shared sub-agent definitions that multiple orchestrators in the same plan may reuse. Reuse is explicit: an orphan step must declare `+"`shared_with.orchestrator_ids`"+`, and a todo_task route must point to it with `+"`orphan_step_ref`"+`. Do not assume every orphan step is shared with every orchestrator.
 
 ### Inner Steps
-Inner steps live inside routing/orchestration routes or todo_task routes. They have their own step IDs and can be individually executed and configured via **execute_step**, **update_step_config** using the inner step ID.
+Inner steps live inside todo_task `+"`predefined_routes[].sub_agent_step`"+` (and nested todo_task containers). They have their own step IDs and can be individually executed and configured via **execute_step**, **update_step_config** using the inner step ID. Routing steps do not have inner steps — their `+"`routes[].next_step_id`"+` points to existing steps elsewhere in the plan.
 
 ### Reusable Orphan Route Pattern
 When a todo_task route should reuse an orphan step:

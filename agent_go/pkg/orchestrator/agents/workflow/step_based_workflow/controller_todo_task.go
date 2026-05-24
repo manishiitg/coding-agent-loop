@@ -918,6 +918,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 			genericStep.GetTitle(),
 			orchestrator.RichStepContext{
 				StepName:     genericStep.GetTitle(),
+				StepType:     string(genericStep.StepType()),
 				StepIndex:    stepIndex + 1, // 1-based for UI
 				ParentStepID: cab.GetCurrentStepID(),
 				TriggeredBy:  "todo_task",
@@ -1219,6 +1220,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 			route.SubAgentStep.GetTitle(),
 			orchestrator.RichStepContext{
 				StepName:     route.SubAgentStep.GetTitle(),
+				StepType:     string(route.SubAgentStep.StepType()),
 				StepIndex:    stepIndex + 1,
 				ParentStepID: cab.GetCurrentStepID(),
 				TriggeredBy:  "todo_task_route",

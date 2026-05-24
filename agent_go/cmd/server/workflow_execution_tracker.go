@@ -192,6 +192,9 @@ func (api *StreamingAPI) trackExecutionStart(exec *TrackedWorkflowExecution) {
 	exec.Metadata = cloneTrackedMetadata(exec.Metadata)
 
 	api.trackedWorkflowExecutionsMux.Lock()
+	if api.trackedWorkflowExecutions == nil {
+		api.trackedWorkflowExecutions = make(map[string]*TrackedWorkflowExecution)
+	}
 	api.trackedWorkflowExecutions[exec.ExecutionID] = exec
 	api.pruneTrackedExecutionsLocked(time.Now().UTC())
 	api.trackedWorkflowExecutionsMux.Unlock()

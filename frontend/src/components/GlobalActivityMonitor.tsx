@@ -407,6 +407,12 @@ export const GlobalActivityMonitor: React.FC = () => {
     [activeSessions, currentSessionId],
   )
 
+  // Builder-idle indicator: track the current tab's streaming/bg-agent state so the
+  // header shows when the builder chat is idle and ready for a follow-up message.
+  const activeTab = activeTabId ? chatTabs[activeTabId] : null
+  const builderHasBgAgents = activeTab?.hasRunningBgAgents ?? false
+  const builderBusy = (activeTab?.isStreaming ?? false) || (activeTab?.isSyntheticTurn ?? false)
+
   const inputCount = useMemo(
     () => visibleSessions.filter(session => session.needs_user_input).length,
     [visibleSessions],
@@ -518,33 +524,64 @@ export const GlobalActivityMonitor: React.FC = () => {
     openActiveWorkInQuickSwitcher()
   }, [handleOpenSession, openActiveWorkInQuickSwitcher, primarySession, visibleSessions.length])
 
-  if (visibleSessions.length === 0) {
+  if (visibleSessions.length === 0 && !builderHasBgAgents) {
     return null
   }
 
+  const builderStateLabel = builderBusy ? 'busy' : 'idle'
+  const builderChipLabel = currentWorkflowPresetName
+    ? `${currentWorkflowPresetName} · ${builderStateLabel}`
+    : `builder · ${builderStateLabel}`
+
+  // Unified pill: when there are other sessions, the builder state is appended inside
+  // the existing clickable button. When only builder state is present, render a non-
+  // clickable chip styled identically so the header looks consistent.
+  const pillClasses = 'relative flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60'
+
   return (
     <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        data-tour="active-work-switcher"
-        data-testid="tour-active-work-switcher"
-        onClick={handleHeaderClick}
-        className="relative flex items-center gap-2 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-700/50 dark:bg-blue-900/20 dark:text-blue-200 dark:hover:bg-blue-900/35"
-        aria-label={visibleSessions.length === 1 ? 'Open active work' : 'Open active work in command center'}
-        title={visibleSessions.length === 1 ? 'Open active work' : 'Open active work in Ctrl+K'}
-      >
-        <span className={`h-2 w-2 rounded-full ${statusDotClasses(primaryTone)}`} />
-        {primaryTone === 'needs-input' ? (
-          <AlertCircle className="w-3.5 h-3.5" />
-        ) : (
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-        )}
-        <span className="whitespace-nowrap">
-          {visibleSessions.length === 1 && primarySession
-            ? compactHeaderLabel(primarySession, primaryTab, primaryWorkflow, primaryWorkflowFallbackName)
-            : headerLabel}
-        </span>
-      </button>
+      {visibleSessions.length > 0 ? (
+        <button
+          type="button"
+          data-tour="active-work-switcher"
+          data-testid="tour-active-work-switcher"
+          onClick={handleHeaderClick}
+          className={pillClasses}
+          aria-label={visibleSessions.length === 1 ? 'Open active work' : 'Open active work in command center'}
+          title={visibleSessions.length === 1 ? 'Open active work' : 'Open active work in Ctrl+K'}
+        >
+          <span className={`h-2 w-2 rounded-full ${statusDotClasses(primaryTone)}`} />
+          {primaryTone === 'needs-input' ? (
+            <AlertCircle className="w-3.5 h-3.5" />
+          ) : (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          )}
+          <span className="whitespace-nowrap">
+            {visibleSessions.length === 1 && primarySession
+              ? compactHeaderLabel(primarySession, primaryTab, primaryWorkflow, primaryWorkflowFallbackName)
+              : headerLabel}
+          </span>
+          {builderHasBgAgents && (
+            <>
+              <span className="opacity-30">·</span>
+              {builderBusy
+                ? <Loader2 className="w-3 h-3 animate-spin opacity-70" />
+                : <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 dark:bg-emerald-300 animate-pulse" />}
+              <span className="whitespace-nowrap opacity-80">{builderChipLabel}</span>
+            </>
+          )}
+        </button>
+      ) : (
+        <div
+          title={builderBusy ? 'Builder is processing — wait before sending a message' : 'Builder is idle — ready for your next message'}
+          className={pillClasses}
+        >
+          {builderBusy
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <span className="h-2 w-2 rounded-full bg-emerald-400 dark:bg-emerald-300 animate-pulse" />}
+          <span className="whitespace-nowrap">{builderChipLabel}</span>
+        </div>
+      )}
 
       {false && open && (
         <div className="absolute right-0 top-full mt-2 w-[460px] max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900 z-50 overflow-hidden">

@@ -3049,6 +3049,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			if cab, ok := bridge.(*orchestrator.ContextAwareEventBridge); ok {
 				rich := orchestrator.RichStepContext{
 					StepName:    step.GetTitle(),
+					StepType:    string(step.StepType()),
 					StepIndex:   i + 1,
 					StepTotal:   len(breakdownSteps),
 					Attempt:     1,

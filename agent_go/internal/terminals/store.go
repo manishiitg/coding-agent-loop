@@ -184,6 +184,7 @@ func (s *Store) List(sessionID string) []Snapshot {
 			}
 		}
 	}
+	out = dedupeCurrentMainAgentSnapshots(out)
 
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Active != out[j].Active {
@@ -397,7 +398,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	// step_name (from rich-context push) takes priority over the
 	// legacy step_title key; both are accepted for backward compat.
 	current.StepName = firstNonEmpty(stringValue(metadata, "step_name"), stringValue(metadata, "step_title"), stringValue(metadata, "current_step_title"))
-	current.StepType = firstNonEmpty(stringValue(metadata, "current_step_type"), stringValue(metadata, "workflow_step_type"), stringValue(metadata, "step_type"), stringValue(metadata, "plan_step_type"))
+	current.StepType = firstNonEmpty(stringValue(metadata, "plan_step_type"), stringValue(metadata, "workflow_step_type"), stringValue(metadata, "current_step_type"), stringValue(metadata, "step_type"))
 	current.StepIndex = intValue(metadata["step_index"])
 	current.StepTotal = intValue(metadata["step_total"])
 	current.ParentStepID = stringValue(metadata, "parent_step_id")
@@ -456,6 +457,9 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 		s.bySession[sessionID] = make(map[string]struct{})
 	}
 	s.bySession[sessionID][terminalID] = struct{}{}
+	if currentTerminalIsMainAgent(current) {
+		s.removeCurrentMainAgentAliasesLocked(sessionID, terminalID)
+	}
 }
 
 func boundedTerminalCanSelfComplete(snapshot Snapshot) bool {
@@ -772,6 +776,19 @@ func (s *Store) removeTmuxAliasesLocked(sessionID, terminalID, tmuxSession strin
 	}
 }
 
+func (s *Store) removeCurrentMainAgentAliasesLocked(sessionID, keepTerminalID string) {
+	for terminalID := range s.bySession[sessionID] {
+		if terminalID == keepTerminalID || strings.Contains(terminalID, ":turn-") {
+			continue
+		}
+		snapshot, ok := s.byID[terminalID]
+		if !ok || !currentTerminalIsMainAgent(snapshot) {
+			continue
+		}
+		s.removeTerminalLocked(terminalID)
+	}
+}
+
 func (s *Store) pruneExpiredLocked(now time.Time) {
 	if now.IsZero() {
 		now = time.Now()
@@ -831,6 +848,56 @@ func terminalContentExtends(existing, next string) bool {
 		return false
 	}
 	return strings.HasPrefix(next, existing)
+}
+
+func dedupeCurrentMainAgentSnapshots(snapshots []Snapshot) []Snapshot {
+	if len(snapshots) <= 1 {
+		return snapshots
+	}
+	out := make([]Snapshot, 0, len(snapshots))
+	mainBySession := map[string]int{}
+	for _, snapshot := range snapshots {
+		if !currentTerminalIsMainAgent(snapshot) {
+			out = append(out, snapshot)
+			continue
+		}
+		sessionID := strings.TrimSpace(snapshot.SessionID)
+		if sessionID == "" {
+			sessionID = strings.TrimSpace(snapshot.OwnerID)
+		}
+		if sessionID == "" {
+			sessionID = strings.TrimSpace(snapshot.TerminalID)
+		}
+		if idx, ok := mainBySession[sessionID]; ok {
+			if shouldPreferTerminalSnapshot(snapshot, out[idx]) {
+				out[idx] = snapshot
+			}
+			continue
+		}
+		mainBySession[sessionID] = len(out)
+		out = append(out, snapshot)
+	}
+	return out
+}
+
+func currentTerminalIsMainAgent(snapshot Snapshot) bool {
+	if strings.Contains(snapshot.TerminalID, ":turn-") {
+		return false
+	}
+	kind := strings.ToLower(strings.TrimSpace(firstNonEmpty(snapshot.ExecutionKind, snapshot.Scope)))
+	return kind == "main_agent" || kind == "main" || kind == "chat"
+}
+
+func shouldPreferTerminalSnapshot(candidate, existing Snapshot) bool {
+	if candidate.Active != existing.Active {
+		return candidate.Active
+	}
+	candidateRunning := candidate.State == "running"
+	existingRunning := existing.State == "running"
+	if candidateRunning != existingRunning {
+		return candidateRunning
+	}
+	return candidate.UpdatedAt.After(existing.UpdatedAt)
 }
 
 func isNewTerminalTurnAfterManualComplete(current Snapshot, eventTime time.Time, chunkIndex int, forcedAt time.Time) bool {
@@ -1264,6 +1331,9 @@ func isStructuredWorkflowTerminalMetadata(metadata map[string]interface{}) bool 
 }
 
 func terminalOwnerID(sessionID string, event storeevents.Event, metadata map[string]interface{}) string {
+	if terminalEventIsMainAgent(event, metadata) {
+		return "main:" + sessionID
+	}
 	if ownerID := workflowStepOwnerCandidate(event, metadata); validTerminalOwner(ownerID, sessionID) {
 		return ownerID
 	}
@@ -1292,6 +1362,15 @@ func terminalOwnerID(sessionID string, event storeevents.Event, metadata map[str
 		stringValue(metadata, "step_id"),
 		stringValue(metadata, "correlation_id"),
 	)
+}
+
+func terminalEventIsMainAgent(event storeevents.Event, metadata map[string]interface{}) bool {
+	kind := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		event.ExecutionKind,
+		stringValue(metadata, "execution_kind"),
+		stringValue(metadata, "scope"),
+	)))
+	return kind == "main_agent" || kind == "main" || kind == "chat"
 }
 
 func firstValidTerminalOwner(sessionID string, candidates ...string) string {

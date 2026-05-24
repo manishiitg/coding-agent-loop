@@ -114,6 +114,8 @@ var referenceKinds = map[string]kindMeta{
 	"code-authoring":    {Group: "system", Description: "Detailed main.py authoring rules and patterns (env access, sys.argv contract, data authenticity, patching discipline)", Modes: []string{"workshop"}},
 	"stores":            {Group: "system", Description: "Persistent store design contract: skill vs knowledgebase vs db, when to write to which", Modes: []string{"workshop", "run"}},
 	"message-sequence":  {Group: "system", Description: "Message-sequence route patterns (stateful specialist, test/fix loop, maker+reviewer, panel, clean-room retry, HITL re-entry, scripted conversation)", Modes: []string{"workshop"}},
+	"routing":           {Group: "system", Description: "Routing step design: when to use routing vs todo_task/message_sequence, pure vs execute-then-route modes, route structure (route_id/condition/sub_agent_step/default_route_id), human_input→routing pairing, anti-patterns", Modes: []string{"workshop"}},
+	"workflow-patterns": {Group: "system", Description: "Recurring workflow composition patterns extracted from real plans: Phase Router, Scoped Investigation, Linear Pipeline, Fan-out & Consolidate, Verification Gate, Pre-flight Probe, Human Checkpoint, Critique Loop, Persistence Tail. Load when starting a new plan or restructuring an existing one.", Modes: []string{"workshop"}},
 	"optimize-playbook": {Group: "system", Description: "Optimizer deep-dive: harden vs replan decision tree, eval, metrics, auto-improvement framework", Modes: []string{"workshop"}},
 	"file-layout":       {Group: "system", Description: "Workspace file layout reference and path discipline", Modes: []string{"workshop", "run"}},
 

@@ -37,14 +37,14 @@ type orchestratorContext struct {
 	stepType  string
 	agentName string
 	// Rich step context — see ContextAwareEventBridge fields below for semantics.
-	stepName       string
-	stepIndex      int
-	stepTotal      int
-	parentStepID   string
-	attempt        int
-	executionMode  string
-	transport      string
-	triggeredBy    string
+	stepName      string
+	stepIndex     int
+	stepTotal     int
+	parentStepID  string
+	attempt       int
+	executionMode string
+	transport     string
+	triggeredBy   string
 }
 
 // ToolCallEntry represents a captured tool call for logging purposes.
@@ -188,14 +188,15 @@ func (c *ContextAwareEventBridge) SetOrchestratorContext(phase string, step int,
 // cost ledger) render an informative header instead of just step_id.
 // Pass on PushContextRich; all fields are optional.
 type RichStepContext struct {
-	StepName       string // Human-readable title from plan.json
-	StepIndex      int    // 1-based position in the plan
-	StepTotal      int    // Total steps in the plan
-	ParentStepID   string // Triggering step id (nested workflow / sub-agent)
-	Attempt        int    // 1-based retry counter
-	ExecutionMode  string // "learn_code" | "code_exec"
-	Transport      string // "tmux" | "structured"
-	TriggeredBy    string // "workflow_executor" | "run_full_workflow" | "execute_step" | "parent_step:X"
+	StepName      string // Human-readable title from plan.json
+	StepType      string // Plan step type: regular, todo_task, routing, etc.
+	StepIndex     int    // 1-based position in the plan
+	StepTotal     int    // Total steps in the plan
+	ParentStepID  string // Triggering step id (nested workflow / sub-agent)
+	Attempt       int    // 1-based retry counter
+	ExecutionMode string // "learn_code" | "code_exec"
+	Transport     string // "tmux" | "structured"
+	TriggeredBy   string // "workflow_executor" | "run_full_workflow" | "execute_step" | "parent_step:X"
 }
 
 // SetRichStepContext attaches the richer step envelope to the current
@@ -206,6 +207,9 @@ func (c *ContextAwareEventBridge) SetRichStepContext(ctx RichStepContext) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.currentStepName = ctx.StepName
+	if ctx.StepType != "" {
+		c.currentStepType = strings.TrimSpace(ctx.StepType)
+	}
 	c.currentStepIndex = ctx.StepIndex
 	c.currentStepTotal = ctx.StepTotal
 	c.currentParentStepID = ctx.ParentStepID
@@ -225,6 +229,9 @@ func (c *ContextAwareEventBridge) MergeRichStepContext(ctx RichStepContext) {
 	defer c.mu.Unlock()
 	if ctx.StepName != "" {
 		c.currentStepName = ctx.StepName
+	}
+	if ctx.StepType != "" {
+		c.currentStepType = strings.TrimSpace(ctx.StepType)
 	}
 	if ctx.StepIndex > 0 {
 		c.currentStepIndex = ctx.StepIndex
@@ -291,7 +298,7 @@ func (c *ContextAwareEventBridge) pushContextInternal(phase string, step int, st
 	c.currentPhase = phase
 	c.currentStep = step
 	c.currentStepID = stepID
-	c.currentStepType = ""
+	c.currentStepType = strings.TrimSpace(rich.StepType)
 	c.currentAgentName = agentName
 	c.currentStepName = rich.StepName
 	c.currentStepIndex = rich.StepIndex
@@ -567,6 +574,7 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 					newMeta["current_step_id"] = currentStepID
 					if currentStepType != "" {
 						newMeta["current_step_type"] = currentStepType
+						newMeta["plan_step_type"] = currentStepType
 					}
 					// Read-only snapshots stay in the rail until the user
 					// dismisses them via the X button — no auto-prune. Tmux

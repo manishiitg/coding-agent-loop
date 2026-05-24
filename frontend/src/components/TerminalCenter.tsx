@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Braces, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Palette, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
+import { AlertTriangle, ArrowDownToLine, Braces, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Palette, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -703,7 +703,7 @@ function formatTerminalMeta(terminal: TerminalSnapshot): string {
     isArchivedTurnTerminal(terminal) ? 'Previous turn' : '',
     chip,
     modelLabel,
-    terminal.step_type ? humanizeIdentifier(terminal.step_type) : '',
+    terminal.step_type ? `type: ${humanizeIdentifier(terminal.step_type)}` : '',
   ]
   if (terminal.step_attempt && terminal.step_attempt > 1) {
     parts.push(`attempt ${terminal.step_attempt}`)
@@ -880,7 +880,7 @@ function canForceCompleteTerminal(terminal: TerminalSnapshot): boolean {
 }
 
 function canSendTerminalDebugInput(terminal: TerminalSnapshot): boolean {
-  return Boolean(terminal.tmux_session)
+  return Boolean(terminal.tmux_session) && terminalState(terminal) === 'running'
 }
 
 function hasTerminalDebugActions(terminal: TerminalSnapshot): boolean {
@@ -1110,6 +1110,36 @@ function TerminalRailBranchMarker({ depth }: { depth: number }) {
   )
 }
 
+function TerminalStepTypeIcon({ terminal }: { terminal: TerminalSnapshot }) {
+  const type = (terminal.step_type || '').toLowerCase()
+  if (!type) return null
+
+  const label = `${humanizeIdentifier(type)} step`
+  const iconClass = 'h-2.5 w-2.5'
+  let icon = <Terminal className={iconClass} />
+  if (type === 'routing') {
+    icon = <GitBranch className={iconClass} />
+  } else if (type === 'conditional') {
+    icon = <Braces className={iconClass} />
+  } else if (type === 'todo_task') {
+    icon = <Check className={iconClass} />
+  } else if (type === 'message_sequence') {
+    icon = <CornerUpLeft className={iconClass} />
+  } else if (type === 'human_input') {
+    icon = <CornerDownLeft className={iconClass} />
+  }
+
+  return (
+    <span
+      className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-neutral-700/70 bg-neutral-900/80 text-neutral-400"
+      title={label}
+      aria-label={label}
+    >
+      {icon}
+    </span>
+  )
+}
+
 function terminalDetailCacheKey(terminal: TerminalSnapshot): string {
   return `${terminal.terminal_id}:${terminal.chunk_index}:${terminal.updated_at || terminal.created_at || ''}`
 }
@@ -1157,6 +1187,32 @@ function dedupeTerminalsByID(terminals: TerminalSnapshot[]): TerminalSnapshot[] 
     }
   }
   return Array.from(byID.values())
+}
+
+function terminalStartTime(terminal: TerminalSnapshot): number {
+  return new Date(terminal.created_at || terminal.updated_at || '').getTime() || 0
+}
+
+function resolveRailParentKey(
+  terminal: TerminalSnapshot,
+  terminalsByStepID: Map<string, TerminalSnapshot[]>,
+): string {
+  const parentStepID = terminal.parent_step_id || ''
+  if (!parentStepID || (terminal.step_id && terminal.step_id === parentStepID)) return ''
+
+  const candidates = (terminalsByStepID.get(parentStepID) || [])
+    .filter(candidate => candidate.terminal_id !== terminal.terminal_id)
+  if (candidates.length === 0) return ''
+
+  const terminalTime = terminalStartTime(terminal) || terminalUpdatedTime(terminal)
+  const priorCandidates = candidates
+    .filter(candidate => {
+      const candidateTime = terminalStartTime(candidate) || terminalUpdatedTime(candidate)
+      return candidateTime <= terminalTime
+    })
+    .sort((a, b) => (terminalStartTime(b) || terminalUpdatedTime(b)) - (terminalStartTime(a) || terminalUpdatedTime(a)))
+
+  return (priorCandidates[0] || candidates[candidates.length - 1]).terminal_id
 }
 
 // ---------------------------------------------------------------------------
@@ -1700,6 +1756,7 @@ interface TerminalErrorBannerEntry {
   type: string
   message: string
   timestamp?: string
+  terminalID?: string
 }
 
 const TERMINAL_ERROR_MESSAGE_LIMIT = 220
@@ -1720,6 +1777,112 @@ function extractErrorMessage(event: unknown): string {
     if (typeof v === 'string' && v.trim()) return v
   }
   return ''
+}
+
+function eventErrorParts(event: PollingEvent): {
+  eventRecord: Record<string, unknown>
+  data?: Record<string, unknown>
+  inner?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+} {
+  const eventRecord = event as unknown as Record<string, unknown>
+  const data = asRecord(event.data)
+  const inner = asRecord(data?.data)
+  const metadata = asRecord(inner?.metadata) || asRecord(data?.metadata) || asRecord(eventRecord.metadata)
+  return { eventRecord, data, inner, metadata }
+}
+
+function collectStringFields(...values: unknown[]): string[] {
+  const out: string[] = []
+  for (const value of values) {
+    const text = stringField(value)
+    if (text) out.push(text)
+  }
+  return out
+}
+
+function normalizeTerminalOwnerCandidate(value: string): string {
+  let trimmed = value.trim()
+  for (const prefix of ['delegation:', 'workflow:', 'background:', 'agent:', 'batch:']) {
+    if (trimmed.startsWith(prefix)) {
+      trimmed = trimmed.slice(prefix.length).trim()
+      break
+    }
+  }
+  return trimmed
+}
+
+function resolveErrorTerminal(event: PollingEvent, terminals: TerminalSnapshot[]): TerminalSnapshot | undefined {
+  const { eventRecord, data, inner, metadata } = eventErrorParts(event)
+  const exactTerminalIDs = collectStringFields(
+    eventRecord.terminal_id,
+    data?.terminal_id,
+    inner?.terminal_id,
+    metadata?.terminal_id,
+  )
+  for (const terminalID of exactTerminalIDs) {
+    const matched = terminals.find(terminal => terminal.terminal_id === terminalID)
+    if (matched) return matched
+  }
+
+  const tmuxSessions = collectStringFields(
+    eventRecord.tmux_session,
+    data?.tmux_session,
+    inner?.tmux_session,
+    metadata?.tmux_session,
+    metadata?.tmux_session_name,
+    metadata?.claude_code_interactive_session,
+    metadata?.codex_interactive_session,
+    metadata?.gemini_interactive_session,
+    metadata?.cursor_interactive_session,
+  )
+  for (const tmuxSession of tmuxSessions) {
+    const matched = terminals.find(terminal => terminal.tmux_session === tmuxSession)
+    if (matched) return matched
+  }
+
+  const ownerCandidates = collectStringFields(
+    eventRecord.execution_id,
+    eventRecord.parent_execution_id,
+    eventRecord.correlation_id,
+    data?.execution_id,
+    data?.parent_execution_id,
+    data?.correlation_id,
+    data?.delegation_id,
+    data?.background_agent_id,
+    data?.agent_id,
+    inner?.execution_id,
+    inner?.parent_execution_id,
+    inner?.correlation_id,
+    inner?.delegation_id,
+    inner?.background_agent_id,
+    inner?.agent_id,
+    metadata?.execution_id,
+    metadata?.owner_execution_id,
+    metadata?.execution_owner_id,
+    metadata?.parent_execution_id,
+    metadata?.background_agent_id,
+    metadata?.delegation_id,
+    metadata?.agent_id,
+    metadata?.workshop_step_id,
+    metadata?.current_step_id,
+    metadata?.orchestrator_step_id,
+    metadata?.workflow_step_id,
+    metadata?.step_id,
+  ).map(normalizeTerminalOwnerCandidate)
+
+  for (const candidate of ownerCandidates) {
+    const matched = terminals.find(terminal =>
+      terminal.terminal_id === candidate ||
+      terminal.owner_id === candidate ||
+      terminal.execution_id === candidate ||
+      terminal.step_id === candidate ||
+      `${terminal.session_id}:${candidate}` === terminal.terminal_id ||
+      (candidate.startsWith('main:') && isMainAgentTerminal(terminal)),
+    )
+    if (matched) return matched
+  }
+  return undefined
 }
 
 const DISMISSED_TERMINAL_ERRORS_KEY_PREFIX = 'terminal-dismissed-errors:'
@@ -1848,29 +2011,51 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     return byStep
   }, [routingDecisions])
   // Surface error events (llm_generation_error, context_cancelled, etc.)
-  // as a banner above the pane. Tree view renders these as their own
-  // cards; Terminal mode would otherwise hide them entirely since the
-  // rail only carries pane content. Tracks the last few errors for the
-  // current session and stays dismissible.
+  // on the terminal that caused them when the event carries enough
+  // identity. Only unscoped errors stay in the global banner.
   //
   // CAUTION: the zustand selector returns a value compared by reference.
   // Build the list with useMemo over a narrowly-selected events array
   // so a re-derived list with the same content doesn't trigger an
   // infinite render loop (a previous version returned a fresh [] every
   // call, which Zustand saw as "changed" → re-render → repeat).
-  const sessionErrorBanner = useMemo<TerminalErrorBannerEntry[]>(() => {
-    if (!sessionEvents || sessionEvents.length === 0) return []
-    const out: TerminalErrorBannerEntry[] = []
-    for (let i = sessionEvents.length - 1; i >= 0 && out.length < 3; i--) {
+  const terminalErrorGroups = useMemo<{
+    global: TerminalErrorBannerEntry[]
+    byTerminalID: Map<string, TerminalErrorBannerEntry[]>
+  }>(() => {
+    const byTerminalID = new Map<string, TerminalErrorBannerEntry[]>()
+    const global: TerminalErrorBannerEntry[] = []
+    if (!sessionEvents || sessionEvents.length === 0) return { global, byTerminalID }
+    const seen = new Set<string>()
+    for (let i = sessionEvents.length - 1; i >= 0; i--) {
       const evt = sessionEvents[i] as unknown as { id?: string; type?: string; timestamp?: string }
       if (!evt?.type || !TERMINAL_ERROR_EVENT_TYPES.has(evt.type)) continue
       const id = evt.id || `${evt.type}-${i}`
       if (dismissedErrorIDs.has(id)) continue
       const message = extractErrorMessage(evt) || evt.type.replace(/_/g, ' ')
-      out.push({ id, type: evt.type, message, timestamp: evt.timestamp })
+      const terminal = resolveErrorTerminal(sessionEvents[i], terminals)
+      const terminalID = terminal ? terminalPaneKey(terminal) : undefined
+      const dedupeKey = `${terminalID || 'global'}:${evt.type}:${compactTerminalErrorMessage(message)}`
+      if (seen.has(dedupeKey)) continue
+      seen.add(dedupeKey)
+      const entry = { id, type: evt.type, message, timestamp: evt.timestamp, terminalID }
+      if (terminalID) {
+        const items = byTerminalID.get(terminalID) || []
+        if (items.length < 2) {
+          items.push(entry)
+          byTerminalID.set(terminalID, items)
+        }
+      } else if (global.length < 3) {
+        global.push(entry)
+      }
+      if (global.length >= 3 && byTerminalID.size >= terminals.length) {
+        break
+      }
     }
-    return out
-  }, [sessionEvents, dismissedErrorIDs])
+    return { global, byTerminalID }
+  }, [sessionEvents, dismissedErrorIDs, terminals])
+  const sessionErrorBanner = terminalErrorGroups.global
+  const terminalErrorsByID = terminalErrorGroups.byTerminalID
   const terminalOutputRef = useRef<HTMLElement | null>(null)
   const terminalAutoScrollRef = useRef(true)
   const terminalManualScrollLockRef = useRef(false)
@@ -2135,26 +2320,24 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   }, [debugPanelOpenForID, selectedID, userSelectedID])
 
   // buildTree turns a flat list of terminals into a parent → children
-  // tree using parent_step_id. Roots are terminals with no parent_step_id
-  // (or whose parent isn't in the list — those are surfaced at top level
-  // so we never hide a terminal). Each node carries its depth so the
-  // rail can indent with paddingLeft = base + depth * step.
+  // tree. parent_step_id is a logical workflow edge, but terminal_id is
+  // the actual node identity; this keeps repeated runs of the same
+  // workflow from collapsing terminals that share a step_id.
   const buildTree = (
     list: TerminalSnapshot[],
     routeByNextStepID: Map<string, RoutingDecision>,
     routeDecisions: RoutingDecision[],
   ): TerminalRailItem[] => {
     const byParent = new Map<string, TerminalSnapshot[]>()
-    const known = new Set<string>()
+    const terminalsByStepID = new Map<string, TerminalSnapshot[]>()
     for (const t of list) {
-      if (t.step_id) known.add(t.step_id)
+      if (!t.step_id) continue
+      const bucket = terminalsByStepID.get(t.step_id) || []
+      bucket.push(t)
+      terminalsByStepID.set(t.step_id, bucket)
     }
     for (const t of list) {
-      // Self-parents (step_id === parent_step_id) and cycles in the
-      // parent chain would otherwise blow the stack at render time.
-      // Treat them as roots so the terminal still surfaces.
-      const isSelfParent = !!t.step_id && t.step_id === t.parent_step_id
-      const parent = !isSelfParent && t.parent_step_id && known.has(t.parent_step_id) ? t.parent_step_id : ''
+      const parent = resolveRailParentKey(t, terminalsByStepID)
       const bucket = byParent.get(parent) || []
       bucket.push(t)
       byParent.set(parent, bucket)
@@ -2166,8 +2349,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       // Defense in depth against cycles + degenerate-deep trees.
       if (depth > 32) return
       for (const t of byParent.get(parent) || []) {
-        if (t.step_id && visited.has(t.step_id)) continue
-        if (t.step_id) visited.add(t.step_id)
+        const nodeKey = terminalPaneKey(t)
+        if (visited.has(nodeKey)) continue
+        visited.add(nodeKey)
         const routeDecision = t.step_id ? routeByNextStepID.get(t.step_id) : undefined
         const terminalDepth = routeDecision ? depth + 1 : depth
         if (routeDecision && !renderedRoutes.has(routeDecision.id)) {
@@ -2175,12 +2359,12 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
           renderedRoutes.add(routeDecision.id)
         }
         out.push({ kind: 'terminal', terminal: t, depth: terminalDepth })
-        if (t.step_id) walk(t.step_id, terminalDepth + 1)
+        walk(nodeKey, terminalDepth + 1)
       }
     }
     walk('', 0)
     for (const decision of routeDecisions) {
-      if (decision.nextStepId && known.has(decision.nextStepId)) continue
+      if (decision.nextStepId && terminalsByStepID.has(decision.nextStepId)) continue
       if (!renderedRoutes.has(decision.id)) {
         out.push({ kind: 'route', decision, depth: 0 })
       }
@@ -2208,6 +2392,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       tree: buildTree(allTerminals, routingDecisionByNextStepID, routingDecisions),
     }
   }, [terminals, routingDecisionByNextStepID, routingDecisions])
+  const currentMainTerminal = useMemo(
+    () => groupedTerminals.currentTerminals.find(terminal => isMainAgentTerminal(terminal)) || null,
+    [groupedTerminals.currentTerminals],
+  )
 
   useEffect(() => {
     // Component is now only mounted when Debug view is active (it's
@@ -2256,9 +2444,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
     const selected = groupedTerminals.orderedTerminals.find(terminal => terminalPaneKey(terminal) === selectedID)
     const userSelected = groupedTerminals.orderedTerminals.find(terminal => terminalPaneKey(terminal) === userSelectedID)
-    const mainTerminal = groupedTerminals.currentTerminals.find(terminal => isMainAgentTerminal(terminal))
     const latestActive = groupedTerminals.activeTerminals[0]
-    const preferredTerminal = mainTerminal || latestActive || groupedTerminals.currentTerminals[0] || groupedTerminals.orderedTerminals[0]
+    const preferredTerminal = currentMainTerminal || latestActive || groupedTerminals.currentTerminals[0] || groupedTerminals.orderedTerminals[0]
 
     if (userSelected) {
       const userSelectedKey = terminalPaneKey(userSelected)
@@ -2286,7 +2473,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     if (!selectedID || !selected) {
       setSelectedID(terminalPaneKey(preferredTerminal))
     }
-  }, [groupedTerminals, selectedID, userSelectedID])
+  }, [currentMainTerminal, groupedTerminals, selectedID, userSelectedID])
 
   const selectedTerminal = useMemo(
     () => {
@@ -2354,6 +2541,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const selectedRouteDecision = selectedTerminalView?.step_id
     ? routingDecisionByNextStepID.get(selectedTerminalView.step_id)
     : undefined
+  const selectedTerminalErrors = selectedTerminalView
+    ? terminalErrorsByID.get(terminalPaneKey(selectedTerminalView)) || []
+    : []
   const railSpinner = useSpinnerFrame(groupedTerminals.activeTerminals.length > 0)
 
   useEffect(() => {
@@ -2402,6 +2592,18 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       terminalAutoScrollRef.current = false
       terminalManualScrollLockRef.current = true
     }
+  }, [])
+
+  const scrollSelectedTerminalToBottom = useCallback(() => {
+    terminalAutoScrollRef.current = true
+    terminalManualScrollLockRef.current = false
+    const scroll = () => {
+      const el = terminalOutputRef.current
+      if (!el) return
+      el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+    }
+    scroll()
+    window.requestAnimationFrame(scroll)
   }, [])
 
   useEffect(() => {
@@ -2482,6 +2684,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       const state = terminalState(terminal)
       const isRunning = state === 'running'
       const startedTimestamp = formatStartedTimestamp(terminal)
+      const terminalErrors = terminalErrorsByID.get(terminalPaneKey(terminal)) || []
+      const latestTerminalError = terminalErrors[0]
       return (
         <div
           key={terminalPaneKey(terminal)}
@@ -2520,7 +2724,14 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 aria-label={terminalStateDescription(terminal)}
               />
             )}
+            <TerminalStepTypeIcon terminal={terminal} />
             <span className="min-w-0 flex-1 truncate font-medium">{formatTerminalTitle(terminal)}</span>
+            {latestTerminalError && (
+              <AlertTriangle
+                className="h-3.5 w-3.5 shrink-0 text-red-300"
+                aria-label="Terminal error"
+              />
+            )}
             {canDismissTerminal(terminal) && (
               <button
                 type="button"
@@ -2569,6 +2780,15 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               </span>
             )}
           </div>
+          {latestTerminalError && (
+            <div
+              className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] leading-4 text-red-300"
+              title={latestTerminalError.message}
+            >
+              <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden />
+              <span className="min-w-0 truncate">{compactTerminalErrorMessage(latestTerminalError.message)}</span>
+            </div>
+          )}
         </div>
       )
     })()
@@ -2699,6 +2919,15 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       )}
                       <button
                         type="button"
+                        onClick={scrollSelectedTerminalToBottom}
+                        className="inline-flex items-center justify-center rounded p-1 text-neutral-500 hover:bg-neutral-800/80 hover:text-neutral-100"
+                        title="Scroll terminal to bottom"
+                        aria-label="Scroll terminal to bottom"
+                      >
+                        <ArrowDownToLine className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => void copyTerminalDebug(selectedTerminalView)}
                         className="inline-flex items-center justify-center rounded p-1 text-neutral-500 hover:bg-neutral-800/80 hover:text-neutral-100"
                         title="Copy terminal debug IDs"
@@ -2762,6 +2991,48 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                   {terminalPreValidationSummary(selectedTerminalView) && (
                     <div className={`border-b border-neutral-700/70 bg-[#151716] px-3 py-1.5 ${terminalTheme.headerText} ${terminalPreValidationClass(selectedTerminalView, terminalTheme)}`}>
                       {terminalPreValidationSummary(selectedTerminalView)}
+                    </div>
+                  )}
+                  {selectedTerminalErrors.length > 0 && (
+                    <div className="flex flex-col gap-1 border-b border-red-900/45 bg-red-950/15 px-3 py-2">
+                      {selectedTerminalErrors.map(entry => {
+                        const isOpen = expandedErrorIDs.has(entry.id)
+                        return (
+                          <div key={entry.id} className="text-xs text-red-300">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-300" aria-hidden />
+                              <span className="shrink-0 rounded bg-red-900/35 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-red-200">
+                                {entry.type.replace(/_/g, ' ')}
+                              </span>
+                              <span className="min-w-0 flex-1 truncate leading-5" title={entry.message}>
+                                {compactTerminalErrorMessage(entry.message)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => toggleTerminalError(entry.id)}
+                                className="shrink-0 rounded border border-red-800/60 px-2 py-0.5 text-[10px] font-medium text-red-200 hover:bg-red-900/35"
+                                aria-expanded={isOpen}
+                              >
+                                {isOpen ? 'Close' : 'Open'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => dismissTerminalError(entry.id)}
+                                className="shrink-0 rounded p-0.5 text-red-400/60 hover:bg-red-900/35 hover:text-red-200"
+                                title="Dismiss"
+                                aria-label="Dismiss terminal error"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                            {isOpen && (
+                              <div className="mt-1 max-h-40 overflow-y-auto rounded border border-red-900/45 bg-red-950/25 p-2 font-mono text-[11px] leading-4 text-red-200">
+                                {entry.message}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                   {debugPanelOpenForID === terminalPaneKey(selectedTerminalView) && hasTerminalDebugActions(selectedTerminalView) && (

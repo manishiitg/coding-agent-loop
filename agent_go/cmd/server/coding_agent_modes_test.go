@@ -216,6 +216,8 @@ func TestHandleSteerMessageRoutesThroughAgentDelivery(t *testing.T) {
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
+		agentCancelMux:   sync.RWMutex{},
 	}
 
 	body := bytes.NewBufferString(`{"message":"send this through delivery"}`)
@@ -238,6 +240,62 @@ func TestHandleSteerMessageRoutesThroughAgentDelivery(t *testing.T) {
 	queued := runningAgent.DrainSteerMessages()
 	if len(queued) != 1 || queued[0] != "send this through delivery" {
 		t.Fatalf("queued messages = %#v", queued)
+	}
+}
+
+func TestHandleSteerMessageRejectsStaleStoredAgentWithoutActiveTurn(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	sessionID := "stale-claude-session"
+	runningAgent := &mcpagent.Agent{ModelID: "claude-sonnet-4-6"}
+	runningAgent.SetProvider(llm.ProviderClaudeCode)
+	api := &StreamingAPI{
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		sessionBusy:      map[string]bool{sessionID: true},
+		sessionBusySince: map[string]time.Time{sessionID: time.Now().Add(-time.Minute)},
+		sessionBusyMu:    sync.RWMutex{},
+	}
+
+	body := bytes.NewBufferString(`{"message":"this should become a new turn"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/steer", body)
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	rr := httptest.NewRecorder()
+
+	api.handleSteerMessage(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s, want 409 stale-turn conflict", rr.Code, rr.Body.String())
+	}
+	if api.isSessionBusy(sessionID) {
+		t.Fatal("stale steer rejection should clear session busy so frontend can start the next turn")
+	}
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
+		t.Fatalf("stale steer rejection recorded %d events, want none", got)
+	}
+}
+
+func TestCanSteerSessionRequiresActiveForegroundTurn(t *testing.T) {
+	sessionID := "foreground-session"
+	runningAgent := &mcpagent.Agent{ModelID: "claude-sonnet-4-6"}
+	runningAgent.SetProvider(llm.ProviderClaudeCode)
+	api := &StreamingAPI{
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{},
+		agentCancelMux:   sync.RWMutex{},
+	}
+
+	if api.canSteerSession(sessionID) {
+		t.Fatal("canSteerSession = true with only a retained agent object; want false until a foreground turn is active")
+	}
+
+	api.agentCancelMux.Lock()
+	api.agentCancelFuncs[sessionID] = func() {}
+	api.agentCancelMux.Unlock()
+	if !api.canSteerSession(sessionID) {
+		t.Fatal("canSteerSession = false with retained agent and active foreground cancel; want true")
 	}
 }
 

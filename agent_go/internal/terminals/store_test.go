@@ -967,6 +967,95 @@ func TestStoreDoesNotImmediatelySelfCompleteMainAgentFromIdlePromptStatus(t *tes
 	}
 }
 
+func TestStoreCanonicalizesCurrentMainAgentOwner(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"exec-main-a",
+		"first main pane",
+		1,
+		map[string]interface{}{
+			"execution_kind": "main_agent",
+			"tmux_session":   "mlp-main-a",
+		},
+		now,
+	))
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"exec-main-b",
+		"second main pane",
+		1,
+		map[string]interface{}{
+			"execution_kind": "main_agent",
+			"tmux_session":   "mlp-main-b",
+		},
+		now.Add(time.Second),
+	))
+
+	if _, ok := store.Get("session-1:exec-main-a"); ok {
+		t.Fatalf("main-agent alias exec-main-a should not be addressable as a terminal")
+	}
+	if _, ok := store.Get("session-1:exec-main-b"); ok {
+		t.Fatalf("main-agent alias exec-main-b should not be addressable as a terminal")
+	}
+	snapshot, ok := store.Get("session-1:main:session-1")
+	if !ok {
+		t.Fatalf("expected canonical main-agent terminal")
+	}
+	if snapshot.OwnerID != "main:session-1" {
+		t.Fatalf("owner id = %q, want main:session-1", snapshot.OwnerID)
+	}
+	if snapshot.Content != "second main pane" {
+		t.Fatalf("content = %q, want latest main pane", snapshot.Content)
+	}
+	snapshots := store.List("session-1")
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshot count = %d, want one canonical main agent: %#v", len(snapshots), snapshots)
+	}
+}
+
+func TestStoreListDedupesLegacyCurrentMainAgentAliases(t *testing.T) {
+	store := NewStore()
+	oldUpdate := time.Now().Add(-time.Minute)
+	newUpdate := time.Now()
+	canonicalID := "session-1:main:session-1"
+	aliasID := "session-1:exec-main-legacy"
+	store.byID[aliasID] = Snapshot{
+		TerminalID:    aliasID,
+		SessionID:     "session-1",
+		OwnerID:       "exec-main-legacy",
+		ExecutionKind: "main_agent",
+		Content:       "old alias",
+		Active:        true,
+		State:         "running",
+		UpdatedAt:     oldUpdate,
+		CreatedAt:     oldUpdate,
+	}
+	store.byID[canonicalID] = Snapshot{
+		TerminalID:    canonicalID,
+		SessionID:     "session-1",
+		OwnerID:       "main:session-1",
+		ExecutionKind: "main_agent",
+		Content:       "canonical",
+		Active:        true,
+		State:         "running",
+		UpdatedAt:     newUpdate,
+		CreatedAt:     newUpdate,
+	}
+	store.bySession["session-1"] = map[string]struct{}{
+		aliasID:     {},
+		canonicalID: {},
+	}
+
+	snapshots := store.List("session-1")
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshot count = %d, want one current main agent: %#v", len(snapshots), snapshots)
+	}
+	if snapshots[0].TerminalID != canonicalID {
+		t.Fatalf("terminal id = %q, want %s", snapshots[0].TerminalID, canonicalID)
+	}
+}
+
 func TestStoreTerminalOwnerPrefersMetadataExecutionOwnerOverEventExecutionID(t *testing.T) {
 	store := NewStore()
 	sessionID := "session-1"
@@ -1030,6 +1119,36 @@ func TestStoreTerminalOwnerPrefersWorkflowStepExecutionOverWorkflowRunID(t *test
 	}
 	if snapshot.OwnerID != stepOwnerID {
 		t.Fatalf("owner id = %q, want %q", snapshot.OwnerID, stepOwnerID)
+	}
+}
+
+func TestStoreTerminalStepTypePrefersPlanStepType(t *testing.T) {
+	store := NewStore()
+	sessionID := "session-1"
+	workflowID := "workflow-full-1779518447634380000"
+	stepOwnerID := "workflow-step:" + workflowID + ":route-by-mode"
+
+	store.HandleEvent(sessionID, terminalEventWithMetadata(
+		stepOwnerID,
+		"$ codex exec route by mode",
+		1,
+		map[string]interface{}{
+			"execution_kind":    "workflow_step",
+			"current_step_id":   "route-by-mode",
+			"current_step_type": "code_exec",
+			"plan_step_type":    "routing",
+			"provider":          "codex-cli",
+			"tmux_session":      "mlp-codex-cli-int-test",
+		},
+		time.Now(),
+	))
+
+	snapshot, ok := store.Get(sessionID + ":" + stepOwnerID)
+	if !ok {
+		t.Fatalf("expected workflow-step terminal snapshot")
+	}
+	if snapshot.StepType != "routing" {
+		t.Fatalf("step type = %q, want routing", snapshot.StepType)
 	}
 }
 

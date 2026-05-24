@@ -268,12 +268,18 @@ func (api *StreamingAPI) handleKillTerminal(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Terminal has no tmux session", http.StatusBadRequest)
 		return
 	}
+	if !snapshot.Active {
+		_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
 	defer cancel()
 	if err := runTerminalTmuxCommand(ctx, "", "kill-session", "-t", snapshot.TmuxSession); err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
+		if !isMissingTmuxTargetError(err) {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
 	}
 	updated, ok := api.terminalStore.MarkFailed(snapshot.TerminalID)
 	if !ok {
@@ -448,6 +454,16 @@ func sendTerminalKey(ctx context.Context, tmuxSession, key string) error {
 	default:
 		return fmt.Errorf("unsupported terminal key %q", key)
 	}
+}
+
+func isMissingTmuxTargetError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "can't find pane") ||
+		strings.Contains(message, "can't find session") ||
+		strings.Contains(message, "no server running")
 }
 
 func (api *StreamingAPI) enrichTerminalSnapshot(snapshot terminals.Snapshot) terminals.Snapshot {

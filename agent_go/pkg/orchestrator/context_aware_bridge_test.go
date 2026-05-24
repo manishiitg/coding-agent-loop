@@ -65,4 +65,55 @@ func TestContextAwareBridgeTagsTerminalStreamWithExecutionOwner(t *testing.T) {
 	if got := metadata["current_step_type"]; got != "todo_task" {
 		t.Fatalf("current_step_type = %v, want todo_task", got)
 	}
+	if got := metadata["plan_step_type"]; got != "todo_task" {
+		t.Fatalf("plan_step_type = %v, want todo_task", got)
+	}
+}
+
+func TestContextAwareBridgePushContextRichTagsTerminalStreamWithStepType(t *testing.T) {
+	listener := &captureEventListener{}
+	bridge := NewContextAwareEventBridge(listener, loggerv2.NewNoop())
+	bridge.SetCurrentStepContext("parent-orchestrator", "todo_task")
+	bridge.PushContextRich("execution", 2, "route-writer", "Route writer", RichStepContext{
+		StepName:     "Route writer",
+		StepType:     "message_sequence",
+		ParentStepID: "parent-orchestrator",
+		TriggeredBy:  "todo_task_route",
+	})
+
+	event := &mcpagent_events.AgentEvent{
+		Type:      mcpagent_events.StreamingChunk,
+		Timestamp: time.Now(),
+		Data: &mcpagent_events.StreamingChunkEvent{
+			BaseEventData: mcpagent_events.BaseEventData{
+				Timestamp: time.Now(),
+				Metadata: map[string]interface{}{
+					"kind": "terminal",
+				},
+			},
+			Content:    "route terminal snapshot",
+			ChunkIndex: 1,
+		},
+	}
+
+	if err := bridge.HandleEvent(context.Background(), event); err != nil {
+		t.Fatalf("HandleEvent returned error: %v", err)
+	}
+	chunk, ok := listener.event.Data.(*mcpagent_events.StreamingChunkEvent)
+	if !ok {
+		t.Fatalf("forwarded event data = %T, want *StreamingChunkEvent", listener.event.Data)
+	}
+	metadata := chunk.GetBaseEventData().Metadata
+	if got := metadata["current_step_id"]; got != "route-writer" {
+		t.Fatalf("current_step_id = %v, want route-writer", got)
+	}
+	if got := metadata["parent_step_id"]; got != "parent-orchestrator" {
+		t.Fatalf("parent_step_id = %v, want parent-orchestrator", got)
+	}
+	if got := metadata["current_step_type"]; got != "message_sequence" {
+		t.Fatalf("current_step_type = %v, want message_sequence", got)
+	}
+	if got := metadata["plan_step_type"]; got != "message_sequence" {
+		t.Fatalf("plan_step_type = %v, want message_sequence", got)
+	}
 }

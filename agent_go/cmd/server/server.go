@@ -79,6 +79,40 @@ var (
 	cleanupOpenCodeCLIProviderSessions = llmproviders.CleanupOpenCodeCLIInteractiveSessions
 )
 
+// stepDelegationRegistry maps a workshop step's ForceCorrelationID ("workshop-step-*") to the
+// delegation IDs spawned within that step. This lets query_step include tool calls from API-based
+// delegation sub-agents that use their own correlation ID ("delegation-<index>-<ts>") instead of
+// the parent step's correlation. CLI sub-agents share the parent's MCP session ID and are already
+// covered by the toolcalllog prefix scan, so they don't need this registry.
+var (
+	stepDelegationMu  sync.RWMutex
+	stepDelegationMap = make(map[string][]string) // workshopStepCorrelationID → []delegationID
+)
+
+func registerStepDelegation(workshopStepCorrelationID, delegationID string) {
+	stepDelegationMu.Lock()
+	defer stepDelegationMu.Unlock()
+	stepDelegationMap[workshopStepCorrelationID] = append(stepDelegationMap[workshopStepCorrelationID], delegationID)
+}
+
+func getStepDelegations(workshopStepCorrelationID string) []string {
+	stepDelegationMu.RLock()
+	defer stepDelegationMu.RUnlock()
+	ids := stepDelegationMap[workshopStepCorrelationID]
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]string, len(ids))
+	copy(out, ids)
+	return out
+}
+
+func cleanupStepDelegation(workshopStepCorrelationID string) {
+	stepDelegationMu.Lock()
+	defer stepDelegationMu.Unlock()
+	delete(stepDelegationMap, workshopStepCorrelationID)
+}
+
 // ServerCmd represents the server command
 var ServerCmd = &cobra.Command{
 	Use:   "server",
@@ -249,8 +283,9 @@ type StreamingAPI struct {
 	bgAgentRegistry *BackgroundAgentRegistry
 
 	// Session busy tracking — prevents synthetic turns from overlapping with user turns
-	sessionBusy   map[string]bool
-	sessionBusyMu sync.RWMutex
+	sessionBusy      map[string]bool
+	sessionBusySince map[string]time.Time
+	sessionBusyMu    sync.RWMutex
 
 	// Pending completions queue — background agent IDs that finished while session was busy
 	pendingCompletions map[string][]string
@@ -526,6 +561,7 @@ type SteerMessageResponse struct {
 	DeliveryStatus string `json:"delivery_status,omitempty"`
 	Provider       string `json:"provider,omitempty"`
 	MessageID      string `json:"message_id,omitempty"`
+	QueryID        string `json:"query_id,omitempty"`
 }
 
 // ControlKeyRequest carries a tmux control key (e.g. "Escape") to inject into
@@ -799,6 +835,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		// Initialize background agent infrastructure
 		bgAgentRegistry:           NewBackgroundAgentRegistry(),
 		sessionBusy:               make(map[string]bool),
+		sessionBusySince:          make(map[string]time.Time),
 		pendingCompletions:        make(map[string][]string),
 		pendingStartNotifications: make(map[string][]string),
 		lastQueryRequests:         make(map[string]QueryRequest),
@@ -3260,13 +3297,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Don't clear events - let the frontend handle event continuation
 	// The deduplication logic in the frontend will handle any duplicates
 
-	// Store last query request for synthetic turns and set session busy
-	if !isWorkflowPhase {
-		req.userID = currentUserID
-		api.lastQueryMu.Lock()
-		api.lastQueryRequests[sessionID] = req
-		api.lastQueryMu.Unlock()
+	// Store the last full query request so server-side follow-up routing can
+	// start the next turn from a lightweight /steer message when a retained
+	// coding CLI session is idle. Synthetic turns also reuse this context.
+	req.userID = currentUserID
+	api.lastQueryMu.Lock()
+	api.lastQueryRequests[sessionID] = req
+	api.lastQueryMu.Unlock()
 
+	// Set user-facing busy state for regular chat turns.
+	if !isWorkflowPhase {
 		// If a synthetic (auto-notification) turn is running, cancel it so user gets priority.
 		// The synthetic turn's auto-notification content is already in conversation history,
 		// so the agent will see it as context when processing the user's message.
@@ -5102,6 +5142,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							presetQueryID: req.PresetQueryID,
 							userID:        currentUserID,
 						})
+						workshopSession.SetOnStepCorrelationDone(cleanupStepDelegation)
 						workshopSession.SetExecutionStateChecks(
 							func() bool {
 								api.pendingMu.RLock()
@@ -6492,6 +6533,12 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	// Generate a unique delegation ID for tracking
 	delegationID := fmt.Sprintf("delegation-%d-%d", currentDepth, time.Now().UnixNano())
 
+	// When spawned inside a workshop step execution, record the step→delegation mapping so
+	// query_step can surface tool calls made by this API-based sub-agent.
+	if forcedID, ok := ctx.Value(orchEvents.ForceCorrelationIDKey).(string); ok && strings.HasPrefix(forcedID, "workshop-step-") {
+		registerStepDelegation(forcedID, delegationID)
+	}
+
 	// Build sub-agent config from parent request
 	// Get provider and model from parent request
 	provider := llm.Provider(parentReq.Provider)
@@ -7665,11 +7712,58 @@ func (api *StreamingAPI) isSessionBusy(sessionID string) bool {
 	return api.sessionBusy[sessionID]
 }
 
+const autoNotificationStaleBusyAfter = 15 * time.Second
+
 // setSessionBusy sets the busy state for a session
 func (api *StreamingAPI) setSessionBusy(sessionID string, busy bool) {
 	api.sessionBusyMu.Lock()
+	if api.sessionBusy == nil {
+		api.sessionBusy = make(map[string]bool)
+	}
+	if api.sessionBusySince == nil {
+		api.sessionBusySince = make(map[string]time.Time)
+	}
+	if busy {
+		if !api.sessionBusy[sessionID] {
+			api.sessionBusySince[sessionID] = time.Now()
+		}
+	} else {
+		delete(api.sessionBusySince, sessionID)
+	}
 	api.sessionBusy[sessionID] = busy
 	api.sessionBusyMu.Unlock()
+}
+
+func (api *StreamingAPI) hasActiveTurnCancel(sessionID string) bool {
+	api.agentCancelMux.RLock()
+	defer api.agentCancelMux.RUnlock()
+	_, ok := api.agentCancelFuncs[sessionID]
+	return ok
+}
+
+// isSessionBusyForAutoNotification is intentionally narrower than isSessionBusy.
+// Auto-notifications must be serialized behind real user/synthetic turns, but a
+// stale busy flag should not permanently strand workflow step start/completion
+// notifications. If the busy flag has no active cancel function behind it and
+// has aged out, clear it so the synthetic turn can resume the provider session.
+func (api *StreamingAPI) isSessionBusyForAutoNotification(sessionID string) bool {
+	if !api.isSessionBusy(sessionID) {
+		return false
+	}
+	if api.isSyntheticTurn(sessionID) || api.hasActiveTurnCancel(sessionID) {
+		return true
+	}
+
+	api.sessionBusyMu.RLock()
+	since := api.sessionBusySince[sessionID]
+	api.sessionBusyMu.RUnlock()
+	if since.IsZero() || time.Since(since) < autoNotificationStaleBusyAfter {
+		return true
+	}
+
+	log.Printf("[BG AGENT] Session %s busy flag looks stale; clearing so queued auto-notification can resume main agent", sessionID)
+	api.setSessionBusy(sessionID, false)
+	return false
 }
 
 // isSessionStoppedOrInactive returns true when a session has been explicitly stopped
@@ -7741,7 +7835,7 @@ func (api *StreamingAPI) notifyBackgroundAgentStarted(sessionID, agentID string)
 
 	api.autoNotificationMu.Lock()
 	defer api.autoNotificationMu.Unlock()
-	if api.isSessionBusy(sessionID) {
+	if api.isSessionBusyForAutoNotification(sessionID) {
 		api.queuePendingStartNotification(sessionID, agentID)
 		api.schedulePendingStartNotificationRetry(sessionID)
 		log.Printf("[BG AGENT] Session %s busy, queued start notification for agent %s", sessionID, agentID)
@@ -7816,7 +7910,7 @@ func (api *StreamingAPI) schedulePendingStartNotificationRetry(sessionID string)
 		if api.isSessionStoppedOrInactive(sessionID) {
 			return
 		}
-		if api.isSessionBusy(sessionID) {
+		if api.isSessionBusyForAutoNotification(sessionID) {
 			api.schedulePendingStartNotificationRetry(sessionID)
 			return
 		}
@@ -7851,6 +7945,9 @@ func (api *StreamingAPI) queuePendingCompletions(sessionID string, agentIDs []st
 	if len(agentIDs) == 0 {
 		return
 	}
+	if api.pendingCompletions == nil {
+		api.pendingCompletions = make(map[string][]string)
+	}
 	seen := make(map[string]struct{}, len(api.pendingCompletions[sessionID])+len(agentIDs))
 	for _, existing := range api.pendingCompletions[sessionID] {
 		seen[existing] = struct{}{}
@@ -7882,7 +7979,7 @@ func (api *StreamingAPI) schedulePendingCompletionRetry(sessionID string) {
 		if api.isSessionStoppedOrInactive(sessionID) {
 			return
 		}
-		if api.isSessionBusy(sessionID) {
+		if api.isSessionBusyForAutoNotification(sessionID) {
 			api.schedulePendingCompletionRetry(sessionID)
 			return
 		}
@@ -7910,7 +8007,7 @@ func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 			log.Printf("[BG AGENT] Session %s is stopped/inactive, dropping completion for agent %s", sessionID, agentID)
 			continue
 		}
-		if api.isSessionBusy(sessionID) {
+		if api.isSessionBusyForAutoNotification(sessionID) {
 			// Session is busy — queue the completion for later processing
 			api.queuePendingCompletion(sessionID, agentID)
 			log.Printf("[BG AGENT] Session %s busy, queued completion for agent %s", sessionID, agentID)
@@ -7926,7 +8023,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentStarts(sessionID string, a
 	if api.isSessionStoppedOrInactive(sessionID) {
 		return
 	}
-	if api.isSessionBusy(sessionID) {
+	if api.isSessionBusyForAutoNotification(sessionID) {
 		api.queuePendingStartNotifications(sessionID, agentIDs)
 		api.schedulePendingStartNotificationRetry(sessionID)
 		return
@@ -7986,17 +8083,11 @@ func backgroundAgentStartNotificationPart(snap BackgroundAgentSnapshot) string {
 }
 
 func buildBackgroundAgentStartSyntheticMessage(_ string, parts []string) string {
-	// The trailer below is appended to every "background started" notification.
-	// We tell the agent very explicitly NOT to call any tools because some
-	// agents (notably cursor-cli) will otherwise spend 30-60s running
-	// query_step / status-check tools to "verify" what the message already
-	// states, which (a) wastes a turn, and (b) sometimes races the completion
-	// notification, making the start ack look like a completion summary.
-	//
-	// The message is kept compact (no blank line between content and trailer,
-	// minimal newlines overall) so cursor-cli's tmux paste-compression
-	// heuristic renders it inline rather than as "[Pasted text +N lines]".
-	const trailer = "Ack briefly; completion will arrive as a separate AUTO-NOTIFICATION. Do NOT call tools."
+	// Keep the message compact so cursor-cli's tmux paste-compression heuristic
+	// renders it inline rather than as "[Pasted text +N lines]".
+	// Completion will arrive as a separate AUTO-NOTIFICATION; the agent may call
+	// query_step to inspect live progress in the meantime.
+	const trailer = "Ack briefly; completion will arrive as a separate AUTO-NOTIFICATION."
 	if len(parts) == 1 {
 		return fmt.Sprintf("[AUTO-NOTIFICATION] %s\n%s", strings.TrimPrefix(parts[0], "- "), trailer)
 	}
@@ -9057,6 +9148,19 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "No running agent for this session", http.StatusNotFound)
 		return
 	}
+	if !api.hasActiveTurnCancel(sessionID) {
+		log.Printf("[STEER] Rejecting stale live input for session %s: stored agent exists but no foreground turn is active", sessionID)
+		api.setSessionBusy(sessionID, false)
+		hasRunningBackgroundAgents := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
+		if !hasRunningBackgroundAgents && !api.isSyntheticTurn(sessionID) {
+			api.updateSessionStatus(sessionID, "completed")
+		}
+		if api.startNextTurnFromSteer(w, r, sessionID, req.Message, runningAgent) {
+			return
+		}
+		http.Error(w, "No active foreground turn for this session", http.StatusConflict)
+		return
+	}
 
 	if err := r.Context().Err(); err != nil {
 		log.Printf("[STEER] Request canceled before delivery for session %s: %v", sessionID, err)
@@ -9100,6 +9204,97 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 
 func newSteerMessageID() string {
 	return fmt.Sprintf("steer-message-%d", time.Now().UnixNano())
+}
+
+type internalResponseCapture struct {
+	header http.Header
+	status int
+	body   bytes.Buffer
+}
+
+func (c *internalResponseCapture) Header() http.Header {
+	if c.header == nil {
+		c.header = make(http.Header)
+	}
+	return c.header
+}
+
+func (c *internalResponseCapture) WriteHeader(status int) {
+	if c.status == 0 {
+		c.status = status
+	}
+}
+
+func (c *internalResponseCapture) Write(p []byte) (int, error) {
+	if c.status == 0 {
+		c.status = http.StatusOK
+	}
+	return c.body.Write(p)
+}
+
+func (api *StreamingAPI) startNextTurnFromSteer(w http.ResponseWriter, r *http.Request, sessionID, message string, runningAgent *mcpagent.Agent) bool {
+	api.lastQueryMu.RLock()
+	baseReq, ok := api.lastQueryRequests[sessionID]
+	api.lastQueryMu.RUnlock()
+	if !ok {
+		return false
+	}
+
+	baseReq.Query = message
+	baseReq.Message = message
+	baseReq.IsAutoNotification = false
+	baseReq.userID = GetUserIDFromContext(r.Context())
+
+	payload, err := json.Marshal(baseReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to prepare next turn: %v", err), http.StatusInternalServerError)
+		return true
+	}
+
+	nextReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "/api/query", bytes.NewReader(payload))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to prepare next turn request: %v", err), http.StatusInternalServerError)
+		return true
+	}
+	nextReq.Header = r.Header.Clone()
+	nextReq.Header.Set("Content-Type", "application/json")
+	nextReq.Header.Set("X-Session-ID", sessionID)
+
+	recorder := &internalResponseCapture{header: make(http.Header)}
+	api.handleQuery(recorder, nextReq)
+	status := recorder.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	if status >= http.StatusBadRequest {
+		body := strings.TrimSpace(recorder.body.String())
+		if body == "" {
+			body = http.StatusText(status)
+		}
+		http.Error(w, body, status)
+		return true
+	}
+
+	var queryResp QueryResponse
+	_ = json.Unmarshal(recorder.body.Bytes(), &queryResp)
+	provider := ""
+	if runningAgent != nil {
+		provider = string(runningAgent.GetProvider())
+	}
+	if provider == "" {
+		provider = baseReq.Provider
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(SteerMessageResponse{
+		Success:        true,
+		Message:        "Started next turn",
+		DeliveryStatus: "next_turn_started",
+		Provider:       provider,
+		MessageID:      newSteerMessageID(),
+		QueryID:        queryResp.QueryID,
+	})
+	return true
 }
 
 // handleControlKey injects a tmux control key (e.g. "Escape") into a running
@@ -10798,6 +10993,25 @@ func collectQueryToolCallSummaries(api *StreamingAPI, mainSessID, correlationID,
 				Args:       tc.Args,
 				Result:     tc.Result,
 			})
+		}
+
+		// For workshop step executions, also include tool calls from API-based delegation
+		// sub-agents. CLI sub-agents share the parent MCP session (covered by the prefix
+		// scan below), but API sub-agents emit events under their own delegation correlation ID.
+		if strings.HasPrefix(correlationID, "workshop-step-") {
+			for _, delegID := range getStepDelegations(correlationID) {
+				for _, tc := range api.eventStore.GetToolCallsByCorrelation(mainSessID, delegID) {
+					add(queryToolCallSummary{
+						ToolCallID: tc.ToolCallID,
+						ToolName:   tc.ToolName,
+						Status:     tc.Status,
+						Duration:   tc.Duration,
+						StartedAt:  tc.StartedAt,
+						Args:       tc.Args,
+						Result:     tc.Result,
+					})
+				}
+			}
 		}
 	}
 

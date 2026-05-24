@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -179,6 +180,89 @@ func TestWorkflowStartAutoNotificationPayloadAndDrain(t *testing.T) {
 	}
 }
 
+func TestWorkflowStartAutoNotificationClearsStaleBusyWithoutActiveTurn(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	const sessionID = "session-stale-busy-start"
+	const agentID = "flow-stale-busy"
+
+	api := &StreamingAPI{
+		bgAgentRegistry:           NewBackgroundAgentRegistry(),
+		eventStore:                store,
+		sessionBusy:               map[string]bool{sessionID: true},
+		sessionBusySince:          map[string]time.Time{sessionID: time.Now().Add(-autoNotificationStaleBusyAfter - time.Second)},
+		pendingStartNotifications: make(map[string][]string),
+	}
+	api.bgAgentRegistry.Register(sessionID, &BackgroundAgent{
+		ID:        agentID,
+		Name:      "Workflow step -> stale-busy-start",
+		SessionID: sessionID,
+		Kind:      "workflow_run_tool",
+		Status:    BGAgentRunning,
+		CreatedAt: time.Now(),
+	})
+
+	api.processBatchedBackgroundAgentStarts(sessionID, []string{agentID})
+
+	if api.isSessionBusy(sessionID) {
+		t.Fatal("expected stale busy flag to be cleared")
+	}
+	events := store.GetAllEventsRaw(sessionID)
+	if len(events) != 1 {
+		t.Fatalf("expected one synthetic_turn_ready event, got %d", len(events))
+	}
+	if got := events[0].Type; got != "synthetic_turn_ready" {
+		t.Fatalf("expected synthetic_turn_ready, got %q", got)
+	}
+	agent := api.bgAgentRegistry.Get(sessionID, agentID)
+	agent.mu.RLock()
+	startNotified := agent.startNotified
+	agent.mu.RUnlock()
+	if !startNotified {
+		t.Fatal("expected stale-busy start notification to be marked notified")
+	}
+}
+
+func TestWorkflowStartAutoNotificationDoesNotClearBusyWithActiveTurn(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	const sessionID = "session-active-busy-start"
+	const agentID = "flow-active-busy"
+
+	api := &StreamingAPI{
+		bgAgentRegistry:           NewBackgroundAgentRegistry(),
+		eventStore:                store,
+		sessionBusy:               map[string]bool{sessionID: true},
+		sessionBusySince:          map[string]time.Time{sessionID: time.Now().Add(-autoNotificationStaleBusyAfter - time.Second)},
+		pendingStartNotifications: make(map[string][]string),
+		agentCancelFuncs: map[string]context.CancelFunc{
+			sessionID: context.CancelFunc(func() {}),
+		},
+	}
+	api.bgAgentRegistry.Register(sessionID, &BackgroundAgent{
+		ID:        agentID,
+		Name:      "Workflow step -> active-busy-start",
+		SessionID: sessionID,
+		Kind:      "workflow_run_tool",
+		Status:    BGAgentRunning,
+		CreatedAt: time.Now(),
+	})
+
+	api.processBatchedBackgroundAgentStarts(sessionID, []string{agentID})
+
+	if !api.isSessionBusy(sessionID) {
+		t.Fatal("expected active busy flag to remain set")
+	}
+	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 1 || pending[0] != agentID {
+		t.Fatalf("expected queued start notification for active turn, got %#v", pending)
+	}
+	if events := store.GetAllEventsRaw(sessionID); len(events) != 0 {
+		t.Fatalf("expected no synthetic_turn_ready while active turn exists, got %d event(s)", len(events))
+	}
+}
+
 func TestWorkflowStepStartAndCompletionNotifyMainAgent(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
@@ -212,13 +296,26 @@ func TestWorkflowStepStartAndCompletionNotifyMainAgent(t *testing.T) {
 		"execution_type": "workflow-step",
 	}, nil)
 
-	select {
-	case got := <-ch:
-		if got != execID {
-			t.Fatalf("expected workflow-step completion notification for %q, got %q", execID, got)
+	deadline := time.After(time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case got := <-ch:
+			if got != execID {
+				t.Fatalf("expected workflow-step completion notification for %q, got %q", execID, got)
+			}
+			return
+		case <-ticker.C:
+			if pending := api.drainPendingCompletions(sessionID); len(pending) > 0 {
+				if len(pending) != 1 || pending[0] != execID {
+					t.Fatalf("expected pending workflow-step completion for %q, got %#v", execID, pending)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("expected workflow-step completion notification")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("expected workflow-step completion notification")
 	}
 }
 

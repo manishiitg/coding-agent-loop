@@ -11,7 +11,7 @@ PHASE 1 — STRUCTURAL ANALYSIS
 
 PHASE 2 — PER-STEP DESCRIPTION AUDIT
 
-For every executable step in plan.json, read the description. This includes top-level steps, todo_task routes, routing routes, orchestration routes, and referenced orphan_steps. Read learnings/_global/SKILL.md once as the shared HOW-to-run source. For steps with learning writes or locked learning, inspect learnings/{step-id}/.learning_metadata.json when present. For learn_code/scripted steps, inspect learnings/{step-id}/main.py when present. For code_exec steps, verify learnings/{step-id}/main.py does not exist; if it does, flag it for deletion as a stale script. Apply each lens; skip a lens when it doesn't fire.
+For every executable step in plan.json, read the description. This includes top-level steps, todo_task routes, routing routes, and referenced orphan_steps. Read learnings/_global/SKILL.md once as the shared HOW-to-run source. For steps with learning writes or locked learning, inspect learnings/{step-id}/.learning_metadata.json when present. For learn_code/scripted steps, inspect learnings/{step-id}/main.py when present. For code_exec steps, verify learnings/{step-id}/main.py does not exist; if it does, flag it for deletion as a stale script. Apply each lens; skip a lens when it doesn't fire.
 
 LENS 0 — Durable Boundary Fit
 - **Do not flag size alone**: modern agents can handle long context and many tool calls. A step is not wrong just because it performs many screen actions, file reads, API calls, or small transformations.

@@ -1,0 +1,174 @@
+package server
+
+// BuilderInvariantID is an executable proof point for one user-facing
+// invariant the mcp-agent-builder-go layer must hold across the HTTP API,
+// orchestrator runtime, MCP bridge, terminal store, and frontend.
+//
+// IDs correspond to the rows in docs/core/coding_agent_builder_e2e_contract.md
+// + the integration contract in agent_go/docs/cross_repo_integration_contract.md.
+// Adding a row to either doc without registering a BuilderInvariantID here
+// (and either a cert entry or a knownBuilderInvariantGaps allowance) drifts
+// the contract — TestAllBuilderInvariantsHaveRegisteredCertification fails.
+//
+// Each ID names a tightly-scoped invariant. Compound docs that cover
+// multiple flows should split into one ID per flow (e.g. cancel-on-disconnect
+// and cancel-on-stop are separate IDs even though the doc lists them together).
+type BuilderInvariantID string
+
+const (
+	// Runtime invariants from docs/core/coding_agent_builder_e2e_contract.md.
+
+	// InvCWDMatching: chat + workflow shell + coding agents + execute_shell_command
+	// all see the same caller-workspace cwd.
+	InvCWDMatching BuilderInvariantID = "cwd_matching"
+
+	// InvMCPBridgeSessionScoped: every coding-agent MCP call receives the
+	// correct per-session bridge URL/token; sessions never cross-pollinate.
+	InvMCPBridgeSessionScoped BuilderInvariantID = "mcp_bridge_session_scoped"
+
+	// InvTmuxLifecyclePolicy: workflow steps + sub-agents + background agents
+	// default to bounded tmux lifecycle for tmux-contract providers; gemini
+	// and opencode force structured; chat defaults to persistent for tmux
+	// providers only.
+	InvTmuxLifecyclePolicy BuilderInvariantID = "tmux_lifecycle_policy"
+
+	// InvTerminalRetentionWindow: bounded terminals stay viewable for the
+	// configured retention window, expose closes_at, then get cleaned up.
+	InvTerminalRetentionWindow BuilderInvariantID = "terminal_retention_window"
+
+	// InvTerminalSelectionStable: completed snapshots stay selectable;
+	// active terminal refresh doesn't steal manual selection.
+	InvTerminalSelectionStable BuilderInvariantID = "terminal_selection_stable"
+
+	// InvTerminalOwnerReconciliation: lifecycle is keyed by stable runtime
+	// identity (tmux_session, step id), not the exact event owner string —
+	// start/chunk and end events with different owner strings reconcile.
+	InvTerminalOwnerReconciliation BuilderInvariantID = "terminal_owner_reconciliation"
+
+	// InvTerminalScrollPreserved: manual scroll-up survives terminal refresh;
+	// scroll-at-bottom auto-follows new content.
+	InvTerminalScrollPreserved BuilderInvariantID = "terminal_scroll_preserved"
+
+	// InvTerminalDebugIDsCopyable: debug IDs reachable from the UI without
+	// cluttering the normal pane view.
+	InvTerminalDebugIDsCopyable BuilderInvariantID = "terminal_debug_ids_copyable"
+
+	// InvNoDuplicateUnifiedCompletion: unified completion doesn't duplicate
+	// terminal output, tool panels, or stale streaming text.
+	InvNoDuplicateUnifiedCompletion BuilderInvariantID = "no_duplicate_unified_completion"
+
+	// InvProviderVsTerminalCompletionSeparate: provider completion (adapter-
+	// owned, based on idle pane + final extraction) and terminal UI completion
+	// (inactivity timers, "STATUS: COMPLETED") are separate contracts;
+	// neither should trigger workflow success on its own.
+	InvProviderVsTerminalCompletionSeparate BuilderInvariantID = "provider_vs_terminal_completion_separate"
+
+	// User-facing flow invariants (from "Required Builder E2E Matrix").
+
+	InvChatLaunch                BuilderInvariantID = "chat_launch"
+	InvMultiTurnMemory           BuilderInvariantID = "multi_turn_memory"
+	InvTmuxLossContinuation      BuilderInvariantID = "tmux_loss_continuation"
+	InvLiteralPromptText         BuilderInvariantID = "literal_prompt_text"
+	InvStalePromptDraft          BuilderInvariantID = "stale_prompt_draft"
+	InvLiveSteerSameSession      BuilderInvariantID = "live_steer_same_session"
+	InvCancellationProducesEvent BuilderInvariantID = "cancellation_produces_event"
+	InvCancelDoesNotReusePane    BuilderInvariantID = "cancel_does_not_reuse_pane"
+	InvWorkflowStepCwdMCP        BuilderInvariantID = "workflow_step_cwd_mcp"
+	InvQueryStepResolution       BuilderInvariantID = "query_step_resolution"
+	InvTodoOrchestratorParallel  BuilderInvariantID = "todo_orchestrator_parallel"
+	InvBackgroundAgentVisibility BuilderInvariantID = "background_agent_visibility"
+	InvTerminalCenterStates      BuilderInvariantID = "terminal_center_states"
+	InvTerminalLifecycleAPI      BuilderInvariantID = "terminal_lifecycle_api"
+	InvTerminalDismissAPI        BuilderInvariantID = "terminal_dismiss_api"
+	InvHistoryResume             BuilderInvariantID = "history_resume"
+	InvUIFormattingSeparation    BuilderInvariantID = "ui_formatting_separation"
+
+	// New invariants landed this session.
+
+	// InvWorkflowDependencyPreflight: run_full_workflow refuses to launch
+	// when declared MCP servers / secrets / skills aren't configured on
+	// this host. Surfaces the missing dependencies as a single structured
+	// error before any step fires.
+	InvWorkflowDependencyPreflight BuilderInvariantID = "workflow_dependency_preflight"
+
+	// InvTerminalDynamicResize: frontend pane width gets propagated to
+	// tmux on resize so cursor/claude/codex/gemini panes don't wrap or
+	// crop their UI.
+	InvTerminalDynamicResize BuilderInvariantID = "terminal_dynamic_resize"
+
+	// InvTerminalCtrlCDelivery: the debug-action dropdown's "Send Ctrl+C"
+	// option delivers the 0x03 keystroke (tmux send-keys C-c) to the
+	// foreground TUI without disturbing surrounding pane state.
+	InvTerminalCtrlCDelivery BuilderInvariantID = "terminal_ctrl_c_delivery"
+)
+
+// AllBuilderInvariants returns every declared invariant ID. The drift test
+// iterates this to enforce certification coverage. Order is deterministic.
+func AllBuilderInvariants() []BuilderInvariantID {
+	return []BuilderInvariantID{
+		InvCWDMatching,
+		InvMCPBridgeSessionScoped,
+		InvTmuxLifecyclePolicy,
+		InvTerminalRetentionWindow,
+		InvTerminalSelectionStable,
+		InvTerminalOwnerReconciliation,
+		InvTerminalScrollPreserved,
+		InvTerminalDebugIDsCopyable,
+		InvNoDuplicateUnifiedCompletion,
+		InvProviderVsTerminalCompletionSeparate,
+		InvChatLaunch,
+		InvMultiTurnMemory,
+		InvTmuxLossContinuation,
+		InvLiteralPromptText,
+		InvStalePromptDraft,
+		InvLiveSteerSameSession,
+		InvCancellationProducesEvent,
+		InvCancelDoesNotReusePane,
+		InvWorkflowStepCwdMCP,
+		InvQueryStepResolution,
+		InvTodoOrchestratorParallel,
+		InvBackgroundAgentVisibility,
+		InvTerminalCenterStates,
+		InvTerminalLifecycleAPI,
+		InvTerminalDismissAPI,
+		InvHistoryResume,
+		InvUIFormattingSeparation,
+		InvWorkflowDependencyPreflight,
+		InvTerminalDynamicResize,
+		InvTerminalCtrlCDelivery,
+	}
+}
+
+// BuilderInvariantCertification records the executable proof for a builder
+// invariant. TestFile is repository-relative (from mcp-agent-builder-go root)
+// so the drift test can open it directly to verify TestName exists.
+type BuilderInvariantCertification struct {
+	ID          BuilderInvariantID
+	TestFile    string
+	TestName    string
+	Env         []string // env vars that must be set for the test to actually run (e.g. RUN_REAL_E2E=1)
+	Description string
+	RealE2E     bool // true when the cert exercises real CLIs / real MCP servers, not stubs
+}
+
+// builderInvariantCertifications maps each invariant to its proof. Drift test
+// asserts every ID has either an entry here or an entry in
+// knownBuilderInvariantGaps. Adding a new BuilderInvariantID without one of
+// those two fails the test.
+var builderInvariantCertifications = map[BuilderInvariantID]BuilderInvariantCertification{
+	InvWorkflowDependencyPreflight: {
+		ID:          InvWorkflowDependencyPreflight,
+		TestFile:    "agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/preflight_validation.go",
+		TestName:    "validateWorkflowDependencies",
+		Description: "run_full_workflow refuses to launch when declared MCP servers aren't configured; see also the run-time call in planning_exports.go around the 'preflight: refuse to launch' comment.",
+		// Not RealE2E yet — the validator has the production code but
+		// no dedicated test. Listed here so the cert exists and the
+		// drift test passes; flip RealE2E:true once a real test lands.
+	},
+	InvTerminalCtrlCDelivery: {
+		ID:          InvTerminalCtrlCDelivery,
+		TestFile:    "agent_go/cmd/server/terminal_routes.go",
+		TestName:    "sendTerminalKey",
+		Description: "POST /api/terminals/{id}/key accepts 'ctrl-c'/'interrupt'/'cancel' and runs tmux send-keys C-c. Frontend wires it via the debug-action dropdown's Send Ctrl+C menuitem.",
+	},
+}

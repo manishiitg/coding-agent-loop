@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/browser"
@@ -118,16 +117,6 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 	}
 
 	return executors
-}
-
-// IsGitSyncEnabled checks if GitHub sync is enabled
-func IsGitSyncEnabled() bool {
-	// Enabled if WORKSPACE_ENABLE_GITHUB_SYNC is true OR if GITHUB_TOKEN is present and not explicitly disabled
-	enabled := os.Getenv("WORKSPACE_ENABLE_GITHUB_SYNC")
-	if enabled == "false" {
-		return false
-	}
-	return enabled == "true" || os.Getenv("GITHUB_TOKEN") != ""
 }
 
 // NewAdvancedExecutor creates executors for advanced workspace tools (shell, image, pdf, diff patch)

@@ -11,7 +11,6 @@ interface CapabilitiesState {
   fetchCapabilities: () => Promise<void>
   
   // Helpers
-  isGitSyncEnabled: () => boolean
   isLocalMode: () => boolean
 }
 
@@ -33,10 +32,6 @@ export const useCapabilitiesStore = create<CapabilitiesState>()(
             loading: false 
           })
         }
-      },
-
-      isGitSyncEnabled: () => {
-        return get().capabilities?.workspace?.github_sync_enabled ?? false
       },
 
       isLocalMode: () => {

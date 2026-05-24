@@ -39,10 +39,6 @@ LANGFUSE_PUBLIC_KEY=<langfuse-public-key>
 LANGFUSE_SECRET_KEY=<langfuse-secret-key>
 LANGFUSE_HOST=<langfuse-host>
 
-# GitHub Sync (optional)
-GITHUB_TOKEN=<github-token>
-GITHUB_REPO=<owner/repo>
-
 # Frontend runtime switch (optional)
 # true: after browser login, show only the Mac app download/connect screen
 # false: allow the full browser UI

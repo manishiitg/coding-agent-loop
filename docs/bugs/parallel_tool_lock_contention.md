@@ -11,7 +11,7 @@
 ### 1. Excessive Lock Duration (The Bottleneck)
 The application uses an in-memory `LockManager` to ensure file consistency. The handlers for file modifications (`CreateDocument`, `UpdateDocument`, etc.) acquired an exclusive lock on the file/folder and held it for the **entire duration** of the request.
 
-Crucially, these handlers perform a `SyncWithGitHub` operation (commit -> pull -> push) *before* returning. This network operation can take several seconds (2-5s+). Because the file lock was deferred (`defer lockManager.ReleaseLock(lock)`), it was held during this slow network call.
+At the time, these handlers performed a repository sync operation (commit -> pull -> push) *before* returning. This network operation could take several seconds (2-5s+). Because the file lock was deferred (`defer lockManager.ReleaseLock(lock)`), it was held during this slow network call.
 
 ### 2. Lock Starvation
 Parallel tool calls (like reading a file immediately after writing it, or two tools writing to different files but triggering repository-wide locks if implemented improperly) would block waiting for these locks to be released. Since the locks were held during network I/O, the queue of waiting tools would grow, eventually leading to timeouts or deadlocks.
@@ -23,7 +23,7 @@ While write operations were locked, read operations (`GetDocument`) were initial
 ### 1. Optimized Critical Section (Reduce Scope)
 Modified all file modification handlers (`CreateDocument`, `UpdateDocument`, `MoveDocument`, `DeleteDocument`, etc.) in `workspace/handlers/documents.go`.
 - **Explicit Release:** The exclusive file lock is now explicitly released **immediately after** the filesystem operation completes.
-- **Background Sync:** The `SyncWithGitHub` operation is performed **after** the lock is released. This allows other tools to access the file immediately while the Git sync happens safely in the background of the request logic (but still blocking the HTTP response, just not the file resource).
+- **Background Sync:** The repository sync operation was moved **after** the lock release. This allowed other tools to access the file immediately while sync ran outside the file critical section.
 
 ### 2. Safer Locking Primitives
 Updated `workspace/utils/lock.go`:
@@ -34,6 +34,6 @@ Updated `workspace/utils/lock.go`:
 Updated `GetDocument` to use `AcquireReadLock` with a short timeout. This ensures readers wait for active writers to finish (preventing 0-byte reads) but don't get blocked by the subsequent long-running Git sync.
 
 ## Verification
-- Verified by inspecting `workspace/handlers/documents.go` to ensure `lockManager.ReleaseLock(lock)` is called before `utils.SyncWithGitHub`.
+- Verified by inspecting `workspace/handlers/documents.go` to ensure `lockManager.ReleaseLock(lock)` happened before any slow post-write work.
 - Confirmed that `AcquireReadLock` is used in `GetDocument`.
 - Validated that parallel execution of file writing followed by reading no longer hangs.

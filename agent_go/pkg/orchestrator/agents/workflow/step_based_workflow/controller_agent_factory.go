@@ -855,15 +855,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 
 	if stepConfig != nil && len(stepConfig.EnabledCustomTools) > 0 {
 		// Migrate old tool configs: strip deprecated categories and ensure workspace_advanced is present.
-		// workspace_basic and workspace_git are deprecated — shell_command handles all file/git ops.
+		// workspace_basic is deprecated — shell_command handles file operations.
 		var enabledTools []string
 		hasAdvanced := false
 		for _, entry := range stepConfig.EnabledCustomTools {
 			if strings.HasPrefix(entry, "workspace_basic") {
 				continue // Drop deprecated workspace_basic entries
-			}
-			if strings.HasPrefix(entry, "workspace_git") {
-				continue // Drop deprecated workspace_git entries
 			}
 			// workspace_image* entries are legacy — image tools now live inside workspace_advanced,
 			// which is auto-added below, so these entries become no-ops and are dropped.

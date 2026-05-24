@@ -6,15 +6,9 @@ services:
     ports:
       - "8081:8080"
     environment:
-      # GitHub Configuration (Viper converts GITHUB_TOKEN to github_token)
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - GITHUB_REPO=${GITHUB_REPO:-city-mall/mcp-agent-docs}
-      
       # Server Configuration
       - PORT=8080
       - DOCS_DIR=/app/workspace-docs
-      
-      - WORKSPACE_ENABLE_GITHUB_SYNC=${WORKSPACE_ENABLE_GITHUB_SYNC:-true}
       
       # Optional: Debug mode
       - DEBUG=${DEBUG:-false}

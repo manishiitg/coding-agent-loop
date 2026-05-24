@@ -4368,14 +4368,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"workspace_advanced": true,
 				"human_tools":        true,
 				"workspace_browser":  true,
-				"workspace_git":      true,
 			}
 			if len(targetConfig.AgentConfigs.EnabledCustomTools) > 0 {
 				for _, t := range targetConfig.AgentConfigs.EnabledCustomTools {
 					if idx := strings.Index(t, ":"); idx >= 0 {
 						cat := t[:idx]
 						if !validCustomCategories[cat] {
-							errors = append(errors, fmt.Sprintf("Custom tool %q uses unknown category %q. Valid categories: workspace_advanced, human_tools, workspace_browser, workspace_git.", t, cat))
+							errors = append(errors, fmt.Sprintf("Custom tool %q uses unknown category %q. Valid categories: workspace_advanced, human_tools, workspace_browser.", t, cat))
 						}
 					} else {
 						errors = append(errors, fmt.Sprintf("Custom tool %q is missing category prefix. Expected format: 'category:tool_name' or 'category:*'.", t))

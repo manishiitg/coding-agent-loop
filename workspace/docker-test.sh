@@ -14,9 +14,7 @@ fi
 if [ ! -f .env ]; then
     echo "📝 Creating .env file from example..."
     cp env.example .env
-    echo "⚠️  Please edit .env file with your GitHub token and repository"
-    echo "   GITHUB_TOKEN=ghp_your_token_here"
-    echo "   GITHUB_REPO=your-username/your-repo"
+    echo "⚠️  Please review .env before running the Docker test"
     exit 1
 fi
 
@@ -53,10 +51,6 @@ curl -s "http://localhost:8080/api/documents/search?query=docker&search_type=all
 # Test structure analysis
 echo "📊 Testing structure analysis..."
 curl -s "http://localhost:8080/api/documents/docker-test-document/structure" | jq .
-
-# Test GitHub sync status
-echo "🔄 Testing GitHub sync status..."
-curl -s "http://localhost:8080/api/sync/status" | jq .
 
 # Show container logs
 echo "📋 Container logs:"

@@ -1316,38 +1316,6 @@ export const agentApi = {
     return response.data
   },
 
-  // Git Sync API
-  getGitSyncStatus: async () => {
-    const response = await workspaceApi.get('/api/sync/status')
-    return response.data
-  },
-
-  syncWithGitHub: async (force: boolean = false, commitMessage?: string) => {
-    const response = await workspaceApi.post('/api/sync/github', {
-      force,
-      commit_message: commitMessage,
-      operation: 'sync'
-    })
-    return response.data
-  },
-
-  forcePushLocal: async (commitMessage?: string) => {
-    const response = await workspaceApi.post('/api/sync/github', {
-      force: true,
-      commit_message: commitMessage,
-      operation: 'force_push_local'
-    })
-    return response.data
-  },
-
-  forcePullRemote: async () => {
-    const response = await workspaceApi.post('/api/sync/github', {
-      force: true,
-      operation: 'force_pull_remote'
-    })
-    return response.data
-  },
-
   searchDocuments: async (params: { query: string; search_type?: string; folder?: string; limit?: number }) => {
     const response = await workspaceApi.get('/api/search', { params })
     return response.data

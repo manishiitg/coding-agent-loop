@@ -336,10 +336,6 @@ if [ -f "$ENV_FILE" ]; then
     LANGFUSE_SECRET_KEY=$(extract_env_value "LANGFUSE_SECRET_KEY" "$ENV_FILE")
     LANGFUSE_HOST=$(extract_env_value "LANGFUSE_HOST" "$ENV_FILE")
 
-    # GitHub Sync
-    GITHUB_TOKEN=$(extract_env_value "GITHUB_TOKEN" "$ENV_FILE")
-    GITHUB_REPO=$(extract_env_value "GITHUB_REPO" "$ENV_FILE")
-
     # Authentication (required for MULTI_USER_MODE=true)
     AUTH_SECRET=$(extract_env_value "AUTH_SECRET" "$ENV_FILE")
 
@@ -371,8 +367,6 @@ if [ -f "$ENV_FILE" ]; then
     [ -n "$LANGFUSE_PUBLIC_KEY" ] && printf '%s=%s\n' "LANGFUSE_PUBLIC_KEY" "$LANGFUSE_PUBLIC_KEY" >> "$SECRET_ENV_FILE"
     [ -n "$LANGFUSE_SECRET_KEY" ] && printf '%s=%s\n' "LANGFUSE_SECRET_KEY" "$LANGFUSE_SECRET_KEY" >> "$SECRET_ENV_FILE"
     [ -n "$LANGFUSE_HOST" ] && printf '%s=%s\n' "LANGFUSE_HOST" "$LANGFUSE_HOST" >> "$SECRET_ENV_FILE"
-    [ -n "$GITHUB_TOKEN" ] && printf '%s=%s\n' "GITHUB_TOKEN" "$GITHUB_TOKEN" >> "$SECRET_ENV_FILE"
-    [ -n "$GITHUB_REPO" ] && printf '%s=%s\n' "GITHUB_REPO" "$GITHUB_REPO" >> "$SECRET_ENV_FILE"
     [ -n "$AUTH_SECRET" ] && printf '%s=%s\n' "AUTH_SECRET" "$AUTH_SECRET" >> "$SECRET_ENV_FILE"
     [ -n "$GLOBAL_SECRET_GRAFANA" ] && printf '%s=%s\n' "GLOBAL_SECRET_GRAFANA" "$GLOBAL_SECRET_GRAFANA" >> "$SECRET_ENV_FILE"
     [ -n "$GLOBAL_SECRET_AWS_KEYS" ] && printf '%s=%s\n' "GLOBAL_SECRET_AWS_KEYS" "$GLOBAL_SECRET_AWS_KEYS" >> "$SECRET_ENV_FILE"

@@ -1,6 +1,6 @@
 # Planner REST API - Document & File Management
 
-A comprehensive REST API for managing markdown documents and text-based files with advanced features including structure analysis, search capabilities, version management, file uploads, and GitHub integration. **Now featuring a filepath-based system for transparent document management with complete frontend integration, centralized path handling, and MCP agent integration for AI-powered workspace management.**
+A comprehensive REST API for managing markdown documents and text-based files with advanced features including structure analysis, search capabilities, version management, and file uploads. **Now featuring a filepath-based system for transparent document management with complete frontend integration, centralized path handling, and MCP agent integration for AI-powered workspace management.**
 
 ## 📋 **API Endpoints Summary**
 
@@ -20,7 +20,6 @@ A comprehensive REST API for managing markdown documents and text-based files wi
 | `POST` | `/api/upload` | Upload files (any non-executable) | ✅ Input/Output sanitized |
 | `DELETE` | `/api/folders/*folderpath` | Delete folder | ✅ Input sanitized |
 | `GET` | `/api/search` | Search documents | - |
-| `POST` | `/api/sync/github` | Sync with GitHub | - |
 
 **Path Handling Legend:**
 - ✅ **Input/Output sanitized**: Both request and response paths are sanitized
@@ -40,7 +39,6 @@ The Planner API is fully integrated with a modern React frontend that provides a
 - **Search**: Real-time search across all documents
 - **File Highlighting**: Visual highlighting of files during operations
 - **Send to Chat**: Add files to chat context for AI processing
-- **Git Sync Status**: Real-time Git synchronization status with manual sync capabilities
 - **Responsive Design**: Works on desktop and mobile devices
 
 ### **Frontend Architecture**
@@ -64,9 +62,6 @@ uploadPlannerFile(file: File, folderPath: string, commitMessage?: string)
 // File Revisions API
 getFileVersions(filepath: string, limit?: number)
 
-// Git Sync API
-getGitSyncStatus()
-syncWithGitHub(commitMessage?: string)
 ```
 
 ## 🤖 **MCP Agent Integration** ✅ **NEW**
@@ -137,18 +132,6 @@ AI agents can now interact with the workspace using the `list_workspace_files` t
   - `commit_message` (optional): Git commit message for version control
 - **Response**: Confirmation with move operation details and new file location
 - **Use Cases**: Move files between folders, rename files, reorganize workspace structure
-
-**`sync_workspace_to_github`**: Sync all workspace files to GitHub repository
-- **Parameters**:
-  - `force` (optional): Force sync even if there are conflicts (default: false)
-  - `resolve_conflicts` (optional): Automatically resolve conflicts if possible (default: false)
-- **Response**: Sync status with repository information, commit details, and operation results
-
-**`get_workspace_github_status`**: Get current GitHub sync status
-- **Parameters**:
-  - `show_pending` (optional): Show pending changes (default: true)
-  - `show_conflicts` (optional): Show conflicts if any (default: true)
-- **Response**: Detailed sync status including connection status, pending changes, file statuses, and conflicts
 
 #### **File Operations for Frontend Integration**
 
@@ -222,14 +205,6 @@ Agent: Uses move_workspace_file with source_filepath="docs/old-document.md" and 
 User: "What's in the docs/example.md file?"
 Agent: Uses read_workspace_file with filepath="docs/example.md"
 
-User: "Sync all changes to GitHub"
-Agent: Uses sync_workspace_to_github to commit and push all changes
-
-User: "Check GitHub sync status"
-Agent: Uses get_workspace_github_status to see pending changes and conflicts
-
-User: "Force sync to GitHub with conflict resolution"
-Agent: Uses sync_workspace_to_github with force=true and resolve_conflicts=true
 ```
 
 #### **Response Format**
@@ -286,30 +261,6 @@ Agent: Uses sync_workspace_to_github with force=true and resolve_conflicts=true
 - **Commit Message**: If provided for version control
 - **Status**: Confirmation of successful move operation
 - **Operation**: Success confirmation with new file location
-
-**`sync_workspace_to_github`** returns:
-- **🔄 GitHub Sync Completed** header
-- **Status**: Sync operation status (synced, etc.)
-- **Message**: Success or error message
-- **Repository**: GitHub repository name
-- **Branch**: Target branch name
-- **Force Sync**: Whether force sync was enabled
-- **Auto-resolve Conflicts**: Whether conflict resolution was enabled
-- **Commit Hash**: Git commit hash of the sync
-- **Commit Message**: Commit message used for the sync
-- **Operation**: Confirmation of successful sync
-
-**`get_workspace_github_status`** returns:
-- **📊 GitHub Sync Status** header
-- **Status**: Connection status (🟢 Connected / 🔴 Not connected)
-- **Repository**: GitHub repository name
-- **Branch**: Current branch name
-- **Last Sync**: Timestamp of last successful sync
-- **Pending Changes**: Number of uncommitted changes
-- **Pending Files**: List of files with pending changes
-- **File Statuses**: Detailed Git status for each file (staged/unstaged)
-- **Conflicts**: List of any merge conflicts (if show_conflicts=true)
-- **Tip**: Guidance on using sync_workspace_to_github to sync changes
 
 #### **Integration Benefits**
 - **AI-Powered File Management**: Agents can understand workspace structure
@@ -395,7 +346,7 @@ The system uses a **centralized path handling approach** for maximum security an
 ```bash
 cd planner
 cp env.example .env
-# Edit .env with your GitHub token and repository
+# Review .env for local settings
 ```
 
 2. **Run with Docker:**
@@ -446,10 +397,6 @@ go build -o planner .
 ```bash
 # Basic usage
 ./planner server --port 8080 --docs-dir ./workspace-docs
-
-# With GitHub integration
-./planner server --port 8080 --docs-dir ./workspace-docs --github-repo city-mall/mcp-agent-docs --github-token ghp_your_token_here
-
 ```
 
 ### 3. Test the API
@@ -532,50 +479,10 @@ curl -X DELETE "http://localhost:8081/api/folders/examples?confirm=true&commit_m
 ### Command Line Flags
 - `--port`: HTTP server port (default: 8080)
 - `--docs-dir`: Documents directory (default: ./workspace-docs)
-- `--github-token`: GitHub personal access token
-- `--github-repo`: GitHub repository (username/repo-name)
 ### Environment Variables
 ```bash
 export PLANNER_PORT=8080
 export PLANNER_DOCS_DIR=./workspace-docs
-export PLANNER_GITHUB_TOKEN=ghp_your_token_here
-export PLANNER_GITHUB_REPO=username/workspace-docs
-```
-
-**Note**: GitHub branch is always set to "main" for now.
-
-### GitHub Repository Setup
-
-#### **Prerequisites:**
-1. **Create GitHub Repository**: The repository must exist on GitHub before first sync
-2. **Personal Access Token**: Generate a token with `repo` permissions
-3. **Repository Format**: Use `username/repo-name` format
-
-#### **First-Time Setup:**
-When you first sync, the API will:
-1. **Initialize Git Repo**: Create `.git` directory in docs folder
-2. **Set Git Config**: Configure user name and email
-3. **Add Remote**: Connect to your GitHub repository
-4. **Create README**: Add initial README.md if directory is empty
-5. **Initial Commit**: Make first commit with setup files
-6. **Push to GitHub**: Push with upstream tracking
-
-#### **Repository Requirements:**
-- **Must exist on GitHub** before first sync
-- **Must be accessible** with your token
-- **Can be empty** - API will create initial content
-- **Branch**: Defaults to `main` (configurable)
-
-#### **Example Setup:**
-```bash
-# 1. Create repo on GitHub (manually)
-# 2. Set environment variables
-export GITHUB_TOKEN=ghp_your_token_here
-export GITHUB_REPO=city-mall/mcp-agent-docs
-
-# 3. Start API and sync
-./planner server --github-repo city-mall/mcp-agent-docs --github-token ghp_your_token_here
-# Then call: POST /api/sync/github
 ```
 
 ## API Endpoints
@@ -777,7 +684,6 @@ curl "http://localhost:8081/api/search?query=test&search_type=content&limit=10"
 ### **Docker Features:**
 - **Multi-stage Build**: Optimized image size
 - **Ripgrep Included**: Fast search capabilities
-- **Git Integration**: GitHub sync support
 - **Health Checks**: Automatic container health monitoring
 - **Volume Persistence**: Documents survive container restarts
 
@@ -817,10 +723,6 @@ Ensure you are logged in first: `docker login -u manishiitg`.
 
 ### **Environment Variables:**
 ```bash
-# Required
-GITHUB_TOKEN=ghp_your_token_here
-GITHUB_REPO=city-mall/mcp-agent-docs
-
 # Optional
 PLANNER_DEBUG=false
 PLANNER_PORT=8081
@@ -949,7 +851,6 @@ GET /api/documents?max_depth=-1
 - **Search Interface**: Real-time search with instant results
 - **File Highlighting**: Visual feedback during file operations
 - **Send to Chat**: Seamless integration with AI chat systems
-- **Git Sync Status**: Real-time Git synchronization status with manual sync capabilities
 - **Responsive Design**: Works perfectly on desktop and mobile devices
 
 ### **📄 Document Management**
@@ -974,8 +875,7 @@ GET /api/documents?max_depth=-1
 - **Version Restoration**: Restore files to specific versions with commit tracking
 - **File Revisions UI**: Complete frontend interface for browsing version history
 - **Diff Viewer**: Syntax-highlighted diff display with color-coded changes
-- **Git Integration**: Optional commit messages and automatic git operations
-- **GitHub Sync**: Automatic repository synchronization with GitHub
+- **Version Metadata**: Optional commit messages for operations that create revisions
 
 ### **🔒 Security & Concurrency**
 - **File Locking**: In-memory mutex-based locking for concurrent operation safety
@@ -1046,7 +946,6 @@ The frontend now features **improved file management** with better user experien
 - **Folder Upload Icons**: Upload icons on each folder for direct folder uploads
 - **Simplified Upload Dialog**: Clean upload interface without manual path input
 - **File Revisions**: Complete version history interface with diff viewing capabilities
-- **Git Sync Status**: Real-time Git synchronization status with manual sync capabilities
 - **Default Root Upload**: Main upload button defaults to root folder
 - **Visual Git Status**: Color-coded Git status indicators in the workspace header
 

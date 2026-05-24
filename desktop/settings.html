@@ -85,21 +85,6 @@
     <div class="note">Leave blank to use the development default. Must match the secret originally used to encrypt your provider API keys.</div>
   </div>
 
-  <div class="section">
-    <label>GitHub Backup (Workspace)</label>
-    <label>GitHub Token (PAT)</label>
-    <input type="password" id="ghToken" placeholder="ghp_..." />
-    
-    <label>Repository (username/repo)</label>
-    <input type="text" id="ghRepo" placeholder="username/repo" />
-    <div class="note">
-      <strong>Why connect GitHub?</strong><br>
-      • <strong>Backup:</strong> Automatically syncs your workspace documents (plans, notes) to a private repository.<br>
-      • <strong>Version Control:</strong> Track changes and revert to previous versions of your files.<br>
-      • <strong>Collaboration:</strong> Share your workspace across machines by syncing to the same repo.
-    </div>
-  </div>
-
   <div class="buttons">
     <button class="btn-secondary" onclick="window.close()">Cancel</button>
     <button class="btn-primary" onclick="saveSettings()">Save & Restart Servers</button>
@@ -110,8 +95,6 @@
 
     // Load initial settings
     ipcRenderer.invoke('get-settings').then(settings => {
-      document.getElementById('ghToken').value = settings.ghToken || '';
-      document.getElementById('ghRepo').value = settings.ghRepo || '';
       document.getElementById('docsDir').value = settings.docsDir || '';
       document.getElementById('authSecret').value = settings.authSecret || '';
       document.getElementById('schedulerEnabled').checked = settings.schedulerEnabled !== false;
@@ -126,8 +109,6 @@
 
     function saveSettings() {
       const settings = {
-        ghToken: document.getElementById('ghToken').value,
-        ghRepo: document.getElementById('ghRepo').value,
         docsDir: document.getElementById('docsDir').value,
         authSecret: document.getElementById('authSecret').value,
         schedulerEnabled: document.getElementById('schedulerEnabled').checked,

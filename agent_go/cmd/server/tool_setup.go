@@ -218,8 +218,7 @@ func normalizeAgentMode(agentMode string) string {
 // Workspace registry tools get category "workspace_advanced"
 // All tools from CreateHumanTools() get category "human_tools"
 //
-// Note: workspace_basic and workspace_git are internal/deprecated and are not
-// exposed to LLMs as workspace tool categories.
+// Note: workspace_basic is internal and is not exposed to LLMs as a workspace tool category.
 func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
 	// sessionInfo: optional [userID, sessionID] for session-aware workspace executors
 	var userID, sessionID string
@@ -271,14 +270,6 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 // enhanceToolDescriptionForChatMode enhances a tool description with chat-mode-specific directory access information.
 // chatsFolder is the full per-user path (e.g. "_users/default/Chats").
 func enhanceToolDescriptionForChatMode(toolName, originalDescription, chatsFolder string) string {
-	specialTools := map[string]bool{
-		"sync_workspace_to_github":    true,
-		"get_workspace_github_status": true,
-	}
-	if specialTools[toolName] {
-		return originalDescription
-	}
-
 	writeTools := map[string]bool{
 		"diff_patch_workspace_file": true,
 		"execute_shell_command":     true,
@@ -301,14 +292,6 @@ func enhanceToolDescriptionForChatMode(toolName, originalDescription, chatsFolde
 // workflow-builder/run/optimizer sessions. Workflow phase is not normal chat output:
 // durable artifacts belong under the active workflow folder, not _users/.../Chats.
 func enhanceToolDescriptionForWorkflowPhase(toolName, originalDescription, workflowFolder string) string {
-	specialTools := map[string]bool{
-		"sync_workspace_to_github":    true,
-		"get_workspace_github_status": true,
-	}
-	if specialTools[toolName] {
-		return originalDescription
-	}
-
 	workflowFolder = filepath.Clean(strings.TrimSpace(workflowFolder))
 	if workflowFolder == "" || workflowFolder == "." {
 		workflowFolder = "the active Workflow/<name> folder"
@@ -337,14 +320,6 @@ func enhanceToolDescriptionForWorkflowPhase(toolName, originalDescription, workf
 // enhanceToolDescriptionForMultiAgentMode augments workspace tool descriptions for multi-agent plan mode.
 // chatsFolder is the full per-user path (e.g. "_users/default/Chats").
 func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription, chatsFolder string) string {
-	specialTools := map[string]bool{
-		"sync_workspace_to_github":    true,
-		"get_workspace_github_status": true,
-	}
-	if specialTools[toolName] {
-		return originalDescription
-	}
-
 	writeTools := map[string]bool{
 		"diff_patch_workspace_file": true,
 		"execute_shell_command":     true,

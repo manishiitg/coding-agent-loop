@@ -40,7 +40,6 @@ data:
   # Workspace Projects API (lightweight, code-prototype operations only)
   WORKSPACE_PROJECTS_API_URL: "http://mcpagent-workspace-projects-api-cs"
   WORKSPACE_PROJECTS_HOST_PATH: "/app/workspace-projects-host"
-  WORKSPACE_ENABLE_GITHUB_SYNC: "false"
   # Multi-User Authentication Mode
   # Set to "true" to require user registration/login
   # Set to "false" (default) for single-user mode (no login required)

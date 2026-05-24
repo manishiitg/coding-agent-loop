@@ -714,25 +714,6 @@ export interface CopyFolderResponse {
   dirs_created: number;
 }
 
-// Git Sync types
-export interface GitSyncStatus {
-  is_connected: boolean;
-  last_sync?: string;
-  pending_changes: number;
-  unpushed_commits: number;
-  pending_files: string[];
-  file_statuses: FileStatus[];
-  conflicts: GitConflict[];
-  repository: string;
-  branch: string;
-}
-
-export interface FileStatus {
-  file: string;
-  status: string;
-  staged: boolean;
-}
-
 // File Version types
 export interface FileVersion {
   commit_hash: string;
@@ -746,30 +727,6 @@ export interface FileVersion {
 export interface FileVersionHistoryRequest {
   limit?: number;
 }
-
-export interface GitConflict {
-  file: string;
-  message: string;
-  type: 'merge' | 'push' | 'pull';
-}
-
-export interface GitSyncRequest {
-  force: boolean;
-  resolve_conflicts: boolean;
-}
-
-export interface GitSyncResponse {
-  success: boolean;
-  message: string;
-  data: {
-    status: 'synced' | 'up_to_date' | 'error';
-    commit_message?: string;
-    repository?: string;
-    branch?: string;
-    timestamp?: string;
-  };
-}
-
 
 // Workflow metadata for background/minimized workflows
 // Stored in session config to enable querying and restoring background workflows
@@ -1136,9 +1093,7 @@ export interface CapabilitiesResponse {
     enabled: boolean;
     provider: string;
   };
-  workspace: {
-    github_sync_enabled: boolean;
-  };
+  workspace: Record<string, never>;
   servers: string[];
   local_mode?: boolean;
 }

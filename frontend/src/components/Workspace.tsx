@@ -4,7 +4,6 @@ import { agentApi, workspaceApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
 import { isValidJSON } from '../utils/event-helpers'
-import GitSyncStatus from './workspace/GitSyncStatus'
 import BrowserProcesses from './workspace/BrowserProcesses'
 import CreateFolderDialog from './workspace/CreateFolderDialog'
 import MoveFileDialog from './workspace/MoveFileDialog'
@@ -159,7 +158,6 @@ export default function Workspace({
     setNeedsRefresh
   } = useWorkspaceStore()
 
-  const isGitSyncEnabled = useCapabilitiesStore(s => s.capabilities?.workspace?.github_sync_enabled ?? false)
   const fetchCapabilities = useCapabilitiesStore(s => s.fetchCapabilities)
 
   // Note: moveDialog from store is shadowed by local state below
@@ -2022,13 +2020,6 @@ export default function Workspace({
               {!isSelectionMode && (
                 <div className="relative">
                   <BrowserProcesses />
-                </div>
-              )}
-
-              {/* Git Sync Status - Hidden in selection mode */}
-              {!isSelectionMode && isGitSyncEnabled && (
-                <div className="relative">
-                  <GitSyncStatus onSync={() => fetchFiles(activeFolder, { force: true })} isVisible={!minimized} />
                 </div>
               )}
 

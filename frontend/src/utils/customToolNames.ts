@@ -1,6 +1,6 @@
 // Custom tool names by category.
-// These should match the LLM-visible backend categories. Deprecated/internal-only
-// workspace_basic and workspace_git executors are intentionally omitted here.
+// These should match the LLM-visible backend categories. Internal-only
+// workspace_basic executors are intentionally omitted here.
 
 // workspace_advanced: advanced tools (shell, image/video generation, PDF, text generation, web search, diff patch)
 // Maps to backend "workspace_advanced" category
@@ -50,7 +50,7 @@ export type CustomToolName = WorkspaceToolName | HumanToolName;
 
 // Helper to get all tools for a category
 // Supports: workspace_tools (all visible workspace tools), workspace_advanced, workspace_image, workspace_browser, human_tools
-export function getToolsByCategory(category: string, capabilities?: { github_sync_enabled?: boolean }): string[] {
+export function getToolsByCategory(category: string, capabilities?: unknown): string[] {
   void capabilities
 
   switch (category) {
@@ -72,7 +72,7 @@ export function getToolsByCategory(category: string, capabilities?: { github_syn
 }
 
 // Helper to get all available custom tools
-export function getAllCustomTools(capabilities?: { github_sync_enabled?: boolean }): string[] {
+export function getAllCustomTools(capabilities?: unknown): string[] {
   void capabilities;
 
   return [

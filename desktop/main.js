@@ -99,7 +99,7 @@ function loadSettings() {
   } catch (e) {
     console.error('Failed to load settings:', e);
   }
-  return { ghToken: '', ghRepo: '', docsDir: '', authSecret: '', schedulerEnabled: true, schedulerAllowedWorkflows: '', logAgentPrompts: false };
+  return { docsDir: '', authSecret: '', schedulerEnabled: true, schedulerAllowedWorkflows: '', logAgentPrompts: false };
 }
 
 // Show a modal asking the user for the AUTH_SECRET used to encrypt provider keys.
@@ -597,15 +597,11 @@ function spawnWorkspace(userDataPath) {
       ...process.env, 
       DOCS_DIR: docsDir, 
       DATA_DIR: dataDir,
-      WORKSPACE_ENABLE_GITHUB_SYNC: 'true',
       // workspace-server executes /api/execute shell commands. Mark it native so
       // the safe shell env preserves the imported login-shell PATH/HOME instead
       // of using the Docker-style minimal PATH.
       NATIVE_WORKSPACE: 'true'
     };
-
-    if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;
-    if (settings.ghRepo) env.GITHUB_REPO = settings.ghRepo;
 
     // Prefer fixed port 45679 so frontend localStorage stays stable across launches.
     // detect() returns the preferred port if free, otherwise the next available one.
@@ -755,7 +751,6 @@ function spawnAgent(userDataPath) {
       WORKSPACE_DOCS_PATH: docsDir,
       DOCS_DIR: docsDir,
       LOG_FILE: logFile,
-      WORKSPACE_ENABLE_GITHUB_SYNC: 'true',
       // Both servers run as native binaries on the host (no Docker). Without
       // this, the agent assumes the workspace is in Docker and emits
       // host.docker.internal URLs in MCP_API_URL — which the LLM-generated
@@ -763,8 +758,6 @@ function spawnAgent(userDataPath) {
       // resolvable on macOS without Docker Desktop running).
       NATIVE_WORKSPACE: 'true'
     };
-
-    if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;
 
     // Per-machine scheduler toggle. When the user disables this in Settings,
     // automatic cron execution stops on this machine; manual runs still work.

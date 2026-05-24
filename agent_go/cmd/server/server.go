@@ -994,7 +994,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// categories and redirects to the correct handler (custom or virtual).
 	customToolCategories := map[string]bool{
 		"workspace": true, "workspace_basic": true, "workspace_browser": true,
-		"workspace_advanced": true, "workspace_git": true, "workspace_image": true,
+		"workspace_advanced": true, "workspace_image": true,
 		"workspace_image_gen": true, "workspace_image_edit": true, "human": true,
 		"workflow": true, "workflow_creator": true,
 		"llm_config_tools": true, "secret_tools": true, "skill_tools": true,
@@ -2198,9 +2198,7 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 			"enabled":  tracingProvider != "noop",
 			"provider": tracingProvider,
 		},
-		"workspace": map[string]interface{}{
-			"github_sync_enabled": workspace.IsGitSyncEnabled(),
-		},
+		"workspace":  map[string]interface{}{},
 		"servers":    []string{},
 		"local_mode": IsLocalMode(),
 	})

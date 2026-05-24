@@ -485,6 +485,45 @@ func TestStoreKeepsRestartedTurnRunningEvenIfFirstPaneLooksIdle(t *testing.T) {
 	}
 }
 
+func TestStoreDoesNotArchiveMainAgentTmuxTurnOnContinuation(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+	metadata := map[string]interface{}{
+		"tmux_session":   "main-pane",
+		"execution_kind": "main_agent",
+	}
+
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		"first user turn",
+		8,
+		metadata,
+		now,
+	))
+	store.HandleEvent("session-1", terminalEndEvent("main:session-1", metadata))
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		"second user turn",
+		1,
+		metadata,
+		now.Add(time.Second),
+	))
+
+	snapshots := store.List("session-1")
+	if len(snapshots) != 1 {
+		t.Fatalf("expected only canonical main-agent snapshot, got %d: %#v", len(snapshots), snapshots)
+	}
+	if strings.Contains(snapshots[0].TerminalID, ":turn-") {
+		t.Fatalf("expected canonical terminal id, got archived id: %s", snapshots[0].TerminalID)
+	}
+	if snapshots[0].TerminalID != "session-1:main:session-1" {
+		t.Fatalf("terminal id = %q, want canonical", snapshots[0].TerminalID)
+	}
+	if snapshots[0].Content != "second user turn" {
+		t.Fatalf("content = %q, want second user turn", snapshots[0].Content)
+	}
+}
+
 func TestStoreKeepsArchivedTurnWhenRestartReusesTmuxSession(t *testing.T) {
 	store := NewStore()
 	now := time.Now()

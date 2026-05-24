@@ -358,7 +358,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	// canonical terminalID for the new live turn. Skips when the
 	// current entry is empty (no real content yet) — that's just a
 	// pre-stream placeholder, not a finished run worth archiving.
-	if exists && freshTurn && strings.TrimSpace(current.Content) != "" {
+	if exists && freshTurn && strings.TrimSpace(current.Content) != "" && shouldArchiveTerminalTurn(current) {
 		archived := current
 		archived.TerminalID = fmt.Sprintf("%s:turn-%d", terminalID, current.CreatedAt.UnixNano())
 		archived.Active = false
@@ -836,6 +836,13 @@ func isChunkIndexResetTerminalTurn(current Snapshot, content string, chunkIndex 
 		return false
 	}
 	if strings.TrimSpace(content) == "" || content == current.Content {
+		return false
+	}
+	return true
+}
+
+func shouldArchiveTerminalTurn(current Snapshot) bool {
+	if currentTerminalIsMainAgent(current) && strings.TrimSpace(current.TmuxSession) != "" {
 		return false
 	}
 	return true

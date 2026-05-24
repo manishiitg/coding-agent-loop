@@ -68,6 +68,11 @@ type sendTerminalKeyRequest struct {
 	Key string `json:"key"`
 }
 
+type resizeTerminalRequest struct {
+	Cols int `json:"cols"`
+	Rows int `json:"rows"`
+}
+
 type terminalActionResponse struct {
 	OK       bool               `json:"ok"`
 	Terminal terminals.Snapshot `json:"terminal,omitempty"`
@@ -365,6 +370,49 @@ func (api *StreamingAPI) handleSendTerminalKey(w http.ResponseWriter, r *http.Re
 	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
 }
 
+// handleResizeTerminal resizes the backing tmux window and records the size
+// as the process-wide preferred size so subsequent coding-agent tmux launches
+// match the operator's viewport.
+// POST /api/terminals/{terminal_id}/resize  body: {"cols": int, "rows": int}
+func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	snapshot, ok := api.requireAccessibleTerminal(w, r)
+	if !ok {
+		return
+	}
+
+	var req resizeTerminalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid resize request", http.StatusBadRequest)
+		return
+	}
+	if req.Cols <= 0 || req.Rows <= 0 {
+		http.Error(w, "cols and rows must be positive", http.StatusBadRequest)
+		return
+	}
+	// Always update the preferred size so newly-launched sessions adopt the
+	// operator's viewport even if THIS terminal has no live tmux window.
+	llmproviders.SetCodingAgentTmuxSize(req.Cols, req.Rows)
+
+	if strings.TrimSpace(snapshot.TmuxSession) == "" {
+		// No live pane to resize, but the preferred size was still recorded.
+		_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
+	defer cancel()
+	if err := runTerminalTmuxCommand(ctx, "", "resize-window", "-t", snapshot.TmuxSession, "-x", strconv.Itoa(req.Cols), "-y", strconv.Itoa(req.Rows)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
+}
+
 func (api *StreamingAPI) requireAccessibleTerminal(w http.ResponseWriter, r *http.Request) (terminals.Snapshot, bool) {
 	if api.terminalStore == nil {
 		http.Error(w, "Terminal not found", http.StatusNotFound)
@@ -451,6 +499,8 @@ func sendTerminalKey(ctx context.Context, tmuxSession, key string) error {
 		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "C-m")
 	case "esc", "escape":
 		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "Escape")
+	case "ctrl-c", "ctrl_c", "interrupt", "cancel":
+		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "C-c")
 	default:
 		return fmt.Errorf("unsupported terminal key %q", key)
 	}

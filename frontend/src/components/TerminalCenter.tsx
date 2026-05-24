@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowDownToLine, Braces, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Palette, Power, RefreshCw, Send, Terminal, X } from 'lucide-react'
+import { AlertTriangle, ArrowDownToLine, Braces, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Palette, Power, RefreshCw, Square, Terminal, X } from 'lucide-react'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -1937,9 +1937,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [expandedErrorIDs, setExpandedErrorIDs] = useState<Set<string>>(() => new Set())
   const [terminalColorScheme, setTerminalColorScheme] = useState<TerminalColorScheme>(() => readStoredTerminalColorScheme())
   const [error, setError] = useState<string | null>(null)
-  const [debugInput, setDebugInput] = useState('')
   const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
   const [debugPanelOpenForID, setDebugPanelOpenForID] = useState<string | null>(null)
+  const debugMenuRef = useRef<HTMLDivElement | null>(null)
 
   const activeWorkflowPath = useGlobalPresetStore(state => {
     const activeWorkflowId = state.activePresetIds.workflow
@@ -2192,22 +2192,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     window.setTimeout(() => setCopiedTerminalID(current => current === terminal.terminal_id ? null : current), 1500)
   }, [])
 
-  const sendTerminalDebugInput = useCallback(async (terminal: TerminalSnapshot, submit: boolean) => {
-    const text = debugInput
-    if (!canSendTerminalDebugInput(terminal) || text.length === 0) return
-    setTerminalActionBusy(submit ? 'paste-enter' : 'paste')
-    try {
-      await agentApi.sendTerminalInput(terminal.terminal_id, text, submit)
-      setDebugInput('')
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send terminal input')
-    } finally {
-      setTerminalActionBusy(current => current === (submit ? 'paste-enter' : 'paste') ? null : current)
-    }
-  }, [debugInput])
-
-  const sendTerminalDebugKey = useCallback(async (terminal: TerminalSnapshot, key: 'enter' | 'esc') => {
+  const sendTerminalDebugKey = useCallback(async (terminal: TerminalSnapshot, key: 'enter' | 'esc' | 'ctrl-c') => {
     if (!canSendTerminalDebugInput(terminal)) return
     setTerminalActionBusy(key)
     try {
@@ -2228,6 +2213,24 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     terminalManualScrollLockRef.current = false
     setDebugPanelOpenForID(current => current === key ? null : key)
   }, [])
+
+  // Dismiss the debug action menu on outside click / Escape.
+  useEffect(() => {
+    if (!debugPanelOpenForID) return
+    const handleMouseDown = (event: MouseEvent) => {
+      if (debugMenuRef.current?.contains(event.target as Node)) return
+      setDebugPanelOpenForID(null)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDebugPanelOpenForID(null)
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [debugPanelOpenForID])
 
   const selectTerminalFromRail = useCallback((terminal: TerminalSnapshot) => {
     const key = terminalPaneKey(terminal)
@@ -2629,6 +2632,67 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     return () => window.cancelAnimationFrame(frame)
   }, [selectedTerminalKey, selectedTerminalDisplayContent])
 
+  // Dynamic tmux resize: measure the terminal viewport in monospace chars and
+  // POST the dimensions to /api/terminals/{id}/resize. The backend runs
+  // `tmux resize-window` on the live pane AND records the size as the
+  // process-wide preferred size, so the next CLI-agent tmux session launches
+  // at the operator's actual viewport instead of the 160×48 default. Only
+  // fires for terminals backed by a tmux session.
+  const lastResizeSentRef = useRef<{ terminalId: string; cols: number; rows: number } | null>(null)
+  useEffect(() => {
+    const el = terminalOutputRef.current as HTMLElement | null
+    const tmuxBacked = selectedTerminalView && Boolean(selectedTerminalView.tmux_session)
+    if (!el || !selectedTerminalView || !tmuxBacked || isSyntheticTerminal(selectedTerminalView)) return
+    const terminalId = selectedTerminalView.terminal_id
+
+    const ruler = document.createElement('span')
+    ruler.textContent = '0'.repeat(100)
+    ruler.setAttribute('aria-hidden', 'true')
+    ruler.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;top:0;left:0;pointer-events:none;'
+    el.appendChild(ruler)
+
+    let timer: number | undefined
+    const measureAndSend = () => {
+      const rulerRect = ruler.getBoundingClientRect()
+      const charWidth = rulerRect.width / 100
+      const lineHeight = rulerRect.height || parseFloat(window.getComputedStyle(ruler).lineHeight) || 16
+      if (!charWidth || !lineHeight) return
+      const style = window.getComputedStyle(el)
+      const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
+      const padY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
+      const innerWidth = el.clientWidth - padX
+      const innerHeight = el.clientHeight - padY
+      // -1 col guard so cursor's right-edge box-drawing doesn't wrap mid-char.
+      const cols = Math.max(40, Math.floor(innerWidth / charWidth) - 1)
+      const rows = Math.max(10, Math.floor(innerHeight / lineHeight))
+      const last = lastResizeSentRef.current
+      if (last && last.terminalId === terminalId && last.cols === cols && last.rows === rows) return
+      lastResizeSentRef.current = { terminalId, cols, rows }
+      void agentApi.resizeTerminal(terminalId, cols, rows).catch(() => {
+        // Resize is best-effort: tmux pane may have been killed, terminal may
+        // have transitioned. Don't surface as a user error.
+        lastResizeSentRef.current = null
+      })
+    }
+
+    const schedule = () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+      timer = window.setTimeout(measureAndSend, 200)
+    }
+
+    schedule()
+    const observer = new ResizeObserver(schedule)
+    observer.observe(el)
+    window.addEventListener('resize', schedule)
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', schedule)
+      if (timer !== undefined) window.clearTimeout(timer)
+      ruler.remove()
+    }
+  }, [selectedTerminalView])
+
 
   // Rail item — one row in the left rail. Compact vertical layout:
   // dot + step title (top line), transport chip + closing countdown
@@ -2940,19 +3004,141 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                         )}
                       </button>
                       {hasTerminalDebugActions(selectedTerminalView) && (
-                        <button
-                          type="button"
-                          onClick={() => toggleDebugPanel(selectedTerminalView)}
-                          className={`inline-flex items-center justify-center rounded border p-1 hover:bg-neutral-800/80 hover:text-neutral-100 ${
-                            debugPanelOpenForID === terminalPaneKey(selectedTerminalView)
-                              ? terminalTheme.debugActive
-                              : 'border-neutral-700/90 text-neutral-300'
-                          }`}
-                          title="Debug terminal actions"
-                          aria-label="Debug terminal actions"
-                        >
-                          <Bug className="h-3.5 w-3.5" />
-                        </button>
+                        <div ref={debugMenuRef} className="relative inline-flex">
+                          <button
+                            type="button"
+                            onMouseDown={event => event.preventDefault()}
+                            onClick={() => toggleDebugPanel(selectedTerminalView)}
+                            className={`inline-flex items-center justify-center rounded border p-1 hover:bg-neutral-800/80 hover:text-neutral-100 ${
+                              debugPanelOpenForID === terminalPaneKey(selectedTerminalView)
+                                ? terminalTheme.debugActive
+                                : 'border-neutral-700/90 text-neutral-300'
+                            }`}
+                            title="Debug terminal actions"
+                            aria-label="Debug terminal actions"
+                            aria-haspopup="menu"
+                            aria-expanded={debugPanelOpenForID === terminalPaneKey(selectedTerminalView)}
+                          >
+                            <Bug className="h-3.5 w-3.5" />
+                          </button>
+                          {debugPanelOpenForID === terminalPaneKey(selectedTerminalView) && (
+                            <div
+                              role="menu"
+                              className="absolute right-0 top-full z-[60] mt-1 min-w-[200px] rounded-md border border-neutral-700/90 bg-[#151716] p-1 text-xs text-neutral-200 shadow-lg"
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onMouseDown={event => event.preventDefault()}
+                                onClick={() => { setDebugPanelOpenForID(null); void copyTerminalPaneText(selectedTerminalView) }}
+                                disabled={!selectedTerminalView.content}
+                                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                <Copy className="h-3.5 w-3.5 shrink-0" />
+                                <span>Copy pane text</span>
+                              </button>
+                              {selectedTerminalView.tmux_session && (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onMouseDown={event => event.preventDefault()}
+                                  onClick={() => { setDebugPanelOpenForID(null); void copyTmuxAttachCommand(selectedTerminalView) }}
+                                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80"
+                                >
+                                  <Terminal className="h-3.5 w-3.5 shrink-0" />
+                                  <span>Copy tmux attach</span>
+                                </button>
+                              )}
+                              {canSendTerminalDebugInput(selectedTerminalView) && (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onMouseDown={event => event.preventDefault()}
+                                  onClick={() => { setDebugPanelOpenForID(null); void refreshTerminalSnapshot(selectedTerminalView) }}
+                                  disabled={terminalActionBusy === 'refresh'}
+                                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80 disabled:cursor-wait disabled:opacity-50"
+                                >
+                                  <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+                                  <span>Capture deeper history</span>
+                                </button>
+                              )}
+                              {canForceCompleteTerminal(selectedTerminalView) && (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onMouseDown={event => event.preventDefault()}
+                                  onClick={() => { setDebugPanelOpenForID(null); void forceCompleteTerminal(selectedTerminalView) }}
+                                  disabled={terminalActionBusy === 'complete'}
+                                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80 disabled:cursor-wait disabled:opacity-50"
+                                >
+                                  <Check className="h-3.5 w-3.5 shrink-0" />
+                                  <span>Mark complete</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onMouseDown={event => event.preventDefault()}
+                                onClick={() => { setDebugPanelOpenForID(null); void forceFailTerminal(selectedTerminalView) }}
+                                disabled={terminalActionBusy === 'fail'}
+                                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80 disabled:cursor-wait disabled:opacity-50"
+                              >
+                                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                <span>Mark failed</span>
+                              </button>
+                              {canSendTerminalDebugInput(selectedTerminalView) && (
+                                <>
+                                  <div className="my-1 h-px bg-neutral-800/80" role="none" />
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onMouseDown={event => event.preventDefault()}
+                                    onClick={() => { setDebugPanelOpenForID(null); void sendTerminalDebugKey(selectedTerminalView, 'enter') }}
+                                    disabled={terminalActionBusy === 'enter'}
+                                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80 disabled:cursor-wait disabled:opacity-50"
+                                  >
+                                    <CornerDownLeft className="h-3.5 w-3.5 shrink-0" />
+                                    <span>Send Enter</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onMouseDown={event => event.preventDefault()}
+                                    onClick={() => { setDebugPanelOpenForID(null); void sendTerminalDebugKey(selectedTerminalView, 'esc') }}
+                                    disabled={terminalActionBusy === 'esc'}
+                                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80 disabled:cursor-wait disabled:opacity-50"
+                                  >
+                                    <CornerUpLeft className="h-3.5 w-3.5 shrink-0" />
+                                    <span>Send Esc</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onMouseDown={event => event.preventDefault()}
+                                    onClick={() => { setDebugPanelOpenForID(null); void sendTerminalDebugKey(selectedTerminalView, 'ctrl-c') }}
+                                    disabled={terminalActionBusy === 'ctrl-c'}
+                                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80 disabled:cursor-wait disabled:opacity-50"
+                                  >
+                                    <Square className="h-3.5 w-3.5 shrink-0" />
+                                    <span>Send Ctrl+C (interrupt)</span>
+                                  </button>
+                                  <div className="my-1 h-px bg-neutral-800/80" role="none" />
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onMouseDown={event => event.preventDefault()}
+                                    onClick={() => { setDebugPanelOpenForID(null); void killTerminalSession(selectedTerminalView) }}
+                                    disabled={terminalActionBusy === 'kill'}
+                                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-red-300 hover:bg-red-950/35 hover:text-red-100 disabled:cursor-wait disabled:opacity-50"
+                                  >
+                                    <Power className="h-3.5 w-3.5 shrink-0" />
+                                    <span>Kill tmux session</span>
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       )}
                       <label
                         className={`relative inline-flex h-6 w-7 items-center justify-center rounded border border-neutral-700/90 bg-[#101211] text-neutral-500 hover:bg-neutral-800/80 hover:text-neutral-100 focus-within:text-neutral-100 ${terminalTheme.inputFocus}`}
@@ -3033,129 +3219,6 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                           </div>
                         )
                       })}
-                    </div>
-                  )}
-                  {debugPanelOpenForID === terminalPaneKey(selectedTerminalView) && hasTerminalDebugActions(selectedTerminalView) && (
-                    <div className={`flex flex-wrap items-center gap-1.5 border-b border-neutral-700/70 bg-[#151716] px-3 py-2 ${terminalTheme.headerText}`}>
-                      <button
-                        type="button"
-                        onClick={() => void copyTerminalPaneText(selectedTerminalView)}
-                        disabled={!selectedTerminalView.content}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700/90 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
-                        title="Copy current pane text"
-                        aria-label="Copy current pane text"
-                      >
-                        <Copy className="h-3.5 w-3.5" />
-                      </button>
-                      {selectedTerminalView.tmux_session && (
-                        <button
-                          type="button"
-                          onClick={() => void copyTmuxAttachCommand(selectedTerminalView)}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700/90 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100"
-                          title="Copy tmux attach command"
-                          aria-label="Copy tmux attach command"
-                        >
-                          <Terminal className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      {canSendTerminalDebugInput(selectedTerminalView) && (
-                        <button
-                          type="button"
-                          onClick={() => void refreshTerminalSnapshot(selectedTerminalView)}
-                          disabled={terminalActionBusy === 'refresh'}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700/90 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
-                          title="Capture deeper tmux history now"
-                          aria-label="Capture deeper tmux history now"
-                        >
-                          <RefreshCw className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      {canForceCompleteTerminal(selectedTerminalView) && (
-                        <button
-                          type="button"
-                          onClick={() => void forceCompleteTerminal(selectedTerminalView)}
-                          disabled={terminalActionBusy === 'complete'}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700/90 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
-                          title="Mark terminal complete in UI"
-                          aria-label="Mark terminal complete in UI"
-                        >
-                          <Check className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => void forceFailTerminal(selectedTerminalView)}
-                        disabled={terminalActionBusy === 'fail'}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700/90 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
-                        title="Mark terminal failed in UI"
-                        aria-label="Mark terminal failed in UI"
-                      >
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                      </button>
-                      {canSendTerminalDebugInput(selectedTerminalView) && (
-                        <button
-                          type="button"
-                          onClick={() => void killTerminalSession(selectedTerminalView)}
-                          disabled={terminalActionBusy === 'kill'}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-900/65 text-red-300 hover:bg-red-950/35 hover:text-red-100 disabled:cursor-wait disabled:opacity-50"
-                          title="Kill backing tmux session"
-                          aria-label="Kill backing tmux session"
-                        >
-                          <Power className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      {canSendTerminalDebugInput(selectedTerminalView) && (
-                        <>
-                          <input
-                            value={debugInput}
-                            onChange={event => setDebugInput(event.target.value)}
-                            onKeyDown={event => {
-                              if (event.key === 'Enter' && !event.shiftKey) {
-                                event.preventDefault()
-                                void sendTerminalDebugInput(selectedTerminalView, true)
-                              }
-                            }}
-                            placeholder="Debug paste to this tmux terminal"
-                            className={`min-w-[220px] flex-1 rounded border border-neutral-700/90 bg-[#101211] px-2 py-1.5 text-neutral-100 placeholder:text-neutral-600 focus:outline-none ${terminalTheme.inputFocus}`}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => void sendTerminalDebugInput(selectedTerminalView, false)}
-                            disabled={debugInput.length === 0 || terminalActionBusy === 'paste'}
-                            className="inline-flex items-center justify-center rounded border border-neutral-700/90 p-1.5 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
-                            title="Paste text into tmux"
-                            aria-label="Paste text into tmux"
-                          >
-                            <Send className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (debugInput.length > 0) {
-                                void sendTerminalDebugInput(selectedTerminalView, true)
-                              } else {
-                                void sendTerminalDebugKey(selectedTerminalView, 'enter')
-                              }
-                            }}
-                            disabled={debugInput.length > 0 ? terminalActionBusy === 'paste-enter' : terminalActionBusy === 'enter'}
-                            className="inline-flex items-center justify-center rounded border border-neutral-700/90 p-1.5 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
-                            title={debugInput.length > 0 ? 'Paste text and press Enter' : 'Press Enter in tmux'}
-                            aria-label={debugInput.length > 0 ? 'Paste text and press Enter' : 'Press Enter in tmux'}
-                          >
-                            <CornerDownLeft className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void sendTerminalDebugKey(selectedTerminalView, 'esc')}
-                            disabled={terminalActionBusy === 'esc'}
-                            className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-700/90 text-neutral-300 hover:bg-neutral-800/80 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-50"
-                          title="Press Esc in tmux"
-                          aria-label="Press Esc in tmux"
-                        >
-                          <CornerUpLeft className="h-3.5 w-3.5" />
-                        </button>
-                        </>
-                      )}
                     </div>
                   )}
                   {isSyntheticTerminal(selectedTerminalView) ? (

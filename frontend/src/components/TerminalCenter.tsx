@@ -2936,7 +2936,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   return (
     <div className={`flex min-h-0 min-w-0 flex-col bg-[#191a18] text-neutral-100 ${compact ? '' : 'flex-1 overflow-hidden'}`}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {!hasConversationActivity ? (
+        {(!hasConversationActivity && groupedTerminals.orderedTerminals.length === 0) ? (
+          // Blank only when there's neither live conversation activity nor any
+          // terminal to show. A resumed/completed session has no "activity" but
+          // does have a terminal snapshot — keep showing it instead of a blank pane.
           <div className="flex flex-1" />
         ) : (
           <>

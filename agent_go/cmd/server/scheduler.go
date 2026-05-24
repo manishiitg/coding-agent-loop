@@ -1161,6 +1161,10 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 		return s.executeMultiAgentJob(ctx, sctx, runID)
 	}
 
+	// Deprecated: headless workflow execution (running a workflow without the
+	// Workflow Builder chat). The supported path is the Workflow Builder chat
+	// (workshop mode → agent_mode "workflow_phase"); this orchestrator-only
+	// run-without-chat branch is kept for backward compatibility.
 	query := sctx.WorkflowLabel
 	if query == "" {
 		query = "Execute workflow"
@@ -1168,7 +1172,7 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 
 	reqMap := map[string]interface{}{
 		"query":                   query,
-		"agent_mode":              "workflow",
+		"agent_mode":              "workflow", // deprecated: headless run; use "workflow_phase" (builder chat)
 		"selected_folder":         sctx.WorkspacePath,
 		"triggered_by":            "cron",
 		"servers":                 sctx.Capabilities.SelectedServers,

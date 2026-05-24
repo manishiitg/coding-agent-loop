@@ -289,10 +289,13 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 		query = fmt.Sprintf("Execute workflow: %s\n\nInstructions: %s", workflowLabel, instructions)
 	}
 
-	// Build the request map (same format as scheduler uses)
+	// Build the request map (same format as scheduler uses).
+	// Deprecated: agent_mode "workflow" runs the workflow headlessly without the
+	// Workflow Builder chat; the supported path is the builder chat
+	// ("workflow_phase"). Kept for backward compatibility.
 	reqMap := map[string]interface{}{
 		"query":                   query,
-		"agent_mode":              "workflow",
+		"agent_mode":              "workflow", // deprecated: headless run; use "workflow_phase" (builder chat)
 		"selected_folder":         workflowPath,
 		"triggered_by":            "chat_tool",
 		"servers":                 caps.SelectedServers,

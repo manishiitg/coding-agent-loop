@@ -237,7 +237,12 @@ const WorkflowPreviousChatsPanel: React.FC<{
       restoredConversationRuntimeLabel: chatHistoryRuntimeLabel(session),
       restoredConversationNativeResume: useTerminalRestore || useNativeResume,
     })
-    if (useTerminalRestore) {
+    // Both tmux terminal-restore and native-resume sessions reattach into a
+    // coding-agent tmux terminal on the backend, so open the terminal view and
+    // kick the restore for either — not just transport === "tmux". (Previously
+    // native-resume showed the "Resuming coding session" banner but never
+    // surfaced the terminal.)
+    if (useTerminalRestore || useNativeResume) {
       chatStore.setTabViewMode(targetTabId, 'terminal')
       chatStore.switchTab(targetTabId)
       setShowChatArea(true)
@@ -1205,57 +1210,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           })
         }
 
-        // Fresh browsers do not have the local workflow tab state that another
-        // browser may still be showing. If there is no running/live tab to
-        // restore, ask the workflow-owned builder-session endpoint for the
-        // latest live or saved Workflow Builder conversation for this preset.
-        if (queuedSessionIds.size === 0) {
-          try {
-            const builderSession = await agentApi.getWorkflowBuilderSession(activePresetId, workspacePath || undefined)
-            if (
-              builderSession.success &&
-              builderSession.source !== 'none' &&
-              builderSession.session_id &&
-              (builderSession.events?.length ?? 0) > 0
-            ) {
-              const builderStatus = (builderSession.status || '').toLowerCase().trim()
-              const builderIsActive =
-                builderStatus === 'running' ||
-                builderStatus === 'active' ||
-                builderStatus === 'in_progress' ||
-                builderStatus === 'waiting' ||
-                builderStatus === 'waiting_feedback' ||
-                builderStatus === 'waiting_for_input' ||
-                (
-                  builderSession.display_status === 'busy' &&
-                  builderStatus !== 'completed' &&
-                  builderStatus !== 'stopped' &&
-                  builderStatus !== 'error' &&
-                  builderStatus !== 'idle'
-                )
-              queuedSessionIds.add(builderSession.session_id)
-              sessionsToRestore.push({
-                sessionId: builderSession.session_id,
-                query: builderSession.workflow_name || builderSession.conversation_path,
-                title: 'Workflow Builder',
-                status: builderSession.status || 'completed',
-                isActive: builderIsActive,
-                phaseId: builderSession.phase_id || 'workflow-builder',
-                phaseName: 'Workflow Builder',
-                preloadedEvents: builderSession.events || [],
-                lastProcessedIndex: builderSession.last_processed_index,
-              })
-              // Eagerly restore the coding-agent tmux terminal so it's ready
-              // whether or not this session's tab already exists in localStorage.
-              // The backend returns started=false silently for non-tmux sessions.
-              if (builderSession.conversation_path) {
-                startRestoredTransportTerminal(builderSession.session_id, builderSession.conversation_path)
-              }
-            }
-          } catch (error) {
-            console.warn('[WorkflowReconnect] Failed to restore workflow builder session:', error)
-          }
-        }
+        // Auto-restore is limited to sessions the backend reports as
+        // active/running (handled above) plus tabs already persisted in this
+        // browser. Finished/saved conversations — of any origin (builder,
+        // schedule, bot) — are never auto-opened; the user reopens them
+        // explicitly via Resume from the history list.
 
         // Add the most recent DB session not already in active list
         // Only show completed/running/error sessions (skip dismissed/inactive)

@@ -2605,7 +2605,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		req.AgentMode = "multi-agent"
 	}
 
-	// Handle workflow mode - use workflow orchestrator
+	// Handle workflow mode - use workflow orchestrator.
+	// Deprecated: agent_mode "workflow" is the headless run-without-chat path.
+	// The supported path is the Workflow Builder chat (agent_mode
+	// "workflow_phase"). Retained for backward compatibility with existing
+	// schedules/tools that still dispatch this mode.
 	if req.AgentMode == "workflow" {
 
 		// Check if preset_id is provided and workflow is approved (in-memory runtime state)

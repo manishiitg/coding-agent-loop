@@ -100,6 +100,31 @@ const (
 	// option delivers the 0x03 keystroke (tmux send-keys C-c) to the
 	// foreground TUI without disturbing surrounding pane state.
 	InvTerminalCtrlCDelivery BuilderInvariantID = "terminal_ctrl_c_delivery"
+
+	// InvCostTrackingPipeline: real LLM token usage flows adapter →
+	// orchestrator → cost ledger, with the right model id and bucketing,
+	// for both API providers and CLI providers. The HTTP /api/cost endpoint
+	// surfaces the captured turn so the UI cost dashboard sees real numbers.
+	InvCostTrackingPipeline BuilderInvariantID = "cost_tracking_pipeline"
+
+	// InvInspectorDebugVisibility: the /api/inspector debug endpoints
+	// capture real conversation events for a live session (system prompt,
+	// LLM calls, tool calls, streaming chunks, token usage). Unknown
+	// session ids return 404 cleanly.
+	InvInspectorDebugVisibility BuilderInvariantID = "inspector_debug_visibility"
+
+	// InvProviderAPIKeyValidation: /api/validate-key endpoints accept a
+	// valid API key for the requested provider (Anthropic, OpenAI, Vertex)
+	// and cleanly reject bogus keys without surfacing implementation
+	// internals or leaking the secret on the wire.
+	InvProviderAPIKeyValidation BuilderInvariantID = "provider_api_key_validation"
+
+	// InvChatPromptSteering: builder-level system prompts (cheat-sheet +
+	// reference-doc pointer pattern) successfully steer LLMs toward the
+	// canonical workflow tools — for example calling
+	// get_reference_doc(kind="...") before performing rare-path actions
+	// instead of inventing tool semantics from training memory.
+	InvChatPromptSteering BuilderInvariantID = "chat_prompt_steering"
 )
 
 // AllBuilderInvariants returns every declared invariant ID. The drift test
@@ -136,6 +161,10 @@ func AllBuilderInvariants() []BuilderInvariantID {
 		InvWorkflowDependencyPreflight,
 		InvTerminalDynamicResize,
 		InvTerminalCtrlCDelivery,
+		InvCostTrackingPipeline,
+		InvInspectorDebugVisibility,
+		InvProviderAPIKeyValidation,
+		InvChatPromptSteering,
 	}
 }
 
@@ -200,5 +229,37 @@ var builderInvariantCertifications = map[BuilderInvariantID]BuilderInvariantCert
 		TestFile:    "agent_go/cmd/testing/coding_agent_chat_e2e_test.go",
 		TestName:    "TestExtractUnifiedCompletionFinalUsesDocumentedShape",
 		Description: "Pure-Go extractor test that proves the unified-completion shape pulls ONLY the newest assistant text — no tool panels, no terminal box characters, no prompt echoes. Cheap to run (no real CLI needed) but pins down the assertion the doc demands for the unified-completion contract.",
+	},
+	InvCostTrackingPipeline: {
+		ID:          InvCostTrackingPipeline,
+		TestFile:    "agent_go/cmd/server/cost_ledger_e2e_real_test.go",
+		TestName:    "TestCostLedgerCapturesRealAnthropicTurn",
+		Env:         []string{"RUN_ANTHROPIC_REAL_E2E=1", "ANTHROPIC_API_KEY"},
+		Description: "Real Anthropic API call → adapter GenerationInfo → orchestrator token event → cost ledger persist → /api/cost HTTP surface. Per-CLI variants exist (cost_http_e2e_codex/cursor/opencode_real_test.go) that prove the same pipeline for each CLI provider; cost_http_e2e_real_test.go covers the API-provider HTTP path.",
+		RealE2E:     true,
+	},
+	InvInspectorDebugVisibility: {
+		ID:          InvInspectorDebugVisibility,
+		TestFile:    "agent_go/cmd/server/inspector_e2e_real_test.go",
+		TestName:    "TestInspectorHTTPCapturesRealAnthropicEvents",
+		Env:         []string{"RUN_ANTHROPIC_REAL_E2E=1", "ANTHROPIC_API_KEY"},
+		Description: "Drives a real Anthropic turn through the orchestrator and asserts /api/inspector returns the full event chain (system prompt, LLM generation, streaming chunks, token usage) for the live session. Per-CLI variants (inspector_e2e_cursor/opencode_real_test.go) prove the same surface for CLI providers. Companion TestInspectorHTTPUnknownSessionReturns404 covers the empty-session branch.",
+		RealE2E:     true,
+	},
+	InvProviderAPIKeyValidation: {
+		ID:          InvProviderAPIKeyValidation,
+		TestFile:    "agent_go/cmd/server/validate_anthropic_real_test.go",
+		TestName:    "TestValidateAPIKeyAnthropicRealAccepts",
+		Env:         []string{"RUN_ANTHROPIC_REAL_E2E=1", "ANTHROPIC_API_KEY"},
+		Description: "POST /api/validate-key with a real working ANTHROPIC_API_KEY returns ok=true; companion TestValidateAPIKeyAnthropicRealRejectsBadKey returns ok=false for a fabricated key. Per-provider variants (validate_openai_real_test.go, validate_vertex_real_test.go) follow the same shape for OpenAI + Vertex.",
+		RealE2E:     true,
+	},
+	InvChatPromptSteering: {
+		ID:          InvChatPromptSteering,
+		TestFile:    "agent_go/cmd/server/multi_agent_chat_refdoc_e2e_real_test.go",
+		TestName:    "TestMultiAgentChatPromptSteersToReferenceDocs",
+		Env:         []string{"RUN_MULTIAGENT_REFDOC_E2E=1"},
+		Description: "Real-LLM test: the builder's cheat-sheet + reference-doc pointer system prompt steers the model to call get_reference_doc(kind=...) before invoking rare-path tools, instead of fabricating tool semantics from memory. Claude-Code variant TestMultiAgentChatPromptSteersToReferenceDocs_ClaudeCode under RUN_MULTIAGENT_REFDOC_CC_E2E.",
+		RealE2E:     true,
 	},
 }

@@ -133,7 +133,15 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
 	}
-	if wantsDeepTerminalContent(r) && strings.TrimSpace(snapshot.TmuxSession) != "" {
+	// Capture live tmux content when: explicitly requested via content=deep/tmux,
+	// OR when the terminal is inactive (active=false) and has a tmux session.
+	// Inactive tmux terminals receive no event-stream updates, so every GET acts
+	// as a lightweight refresh — if the pane content changed (e.g. after Claude
+	// Code context compaction), ChunkIndex increments, the list-poll returns the
+	// new value, and the frontend re-fetches automatically.
+	shouldCaptureTmux := strings.TrimSpace(snapshot.TmuxSession) != "" &&
+		(wantsDeepTerminalContent(r) || !snapshot.Active)
+	if shouldCaptureTmux {
 		lines := terminalCaptureLinesFromRequest(r, terminalDefaultDetailHistoryLines)
 		ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
 		content, err := captureTerminalPaneLines(ctx, snapshot.TmuxSession, lines)

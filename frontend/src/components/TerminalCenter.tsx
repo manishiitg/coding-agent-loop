@@ -1008,11 +1008,19 @@ function terminalFallbackInfo(terminal: TerminalSnapshot): { label: string; titl
 // to Debug view.
 function isMainAgentTerminal(terminal: TerminalSnapshot): boolean {
   const kind = (terminal.execution_kind || '').toLowerCase()
-  return kind === 'main_agent' || kind === 'main' || kind === 'chat'
+  const ownerID = (terminal.owner_id || '').toLowerCase()
+  const terminalID = (terminal.terminal_id || '').toLowerCase()
+  return kind === 'main_agent' || kind === 'main' || kind === 'chat' ||
+    ownerID.startsWith('main:') ||
+    terminalID.includes(':main:')
 }
 
 function isArchivedTurnTerminal(terminal: TerminalSnapshot): boolean {
   return terminal.terminal_id.includes(':turn-')
+}
+
+function isRailVisibleTerminal(terminal: TerminalSnapshot): boolean {
+  return !(isArchivedTurnTerminal(terminal) && isMainAgentTerminal(terminal))
 }
 
 // turnIndexFromTerminalID parses ":turn-N" out of an archived-turn terminal_id.
@@ -2377,16 +2385,17 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
 
   const groupedTerminals = useMemo(() => {
     const uniqueTerminals = dedupeTerminalsByID(terminals)
+    const railTerminals = uniqueTerminals.filter(isRailVisibleTerminal)
     // Build a single tree from ALL terminals (active + finished).
     // Splitting them was breaking the parent→child relationship when
     // a child step finished while its parent was still running — the
     // child got displaced into the "Finished" group, losing its
     // visual nesting under the parent. One tree keeps lineage intact;
     // the colored dot on each rail row already conveys per-row state.
-    const allTerminals = sortTerminalsForRail(uniqueTerminals)
-    const activeTerminals = uniqueTerminals.filter(terminal => terminalState(terminal) === 'running')
-    const finishedTerminals = uniqueTerminals.filter(terminal => terminalState(terminal) !== 'running')
-    const currentTerminals = sortTerminalsNewestFirst(uniqueTerminals.filter(terminal => !isArchivedTurnTerminal(terminal)))
+    const allTerminals = sortTerminalsForRail(railTerminals)
+    const activeTerminals = railTerminals.filter(terminal => terminalState(terminal) === 'running')
+    const finishedTerminals = railTerminals.filter(terminal => terminalState(terminal) !== 'running')
+    const currentTerminals = sortTerminalsNewestFirst(railTerminals.filter(terminal => !isArchivedTurnTerminal(terminal)))
     return {
       activeTerminals,
       finishedTerminals,
@@ -2581,6 +2590,37 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       cancelled = true
     }
   }, [selectedTerminal?.terminal_id, selectedTerminal?.chunk_index, selectedTerminal?.updated_at, selectedTerminalKey, terminalDetailCache])
+
+  // For inactive tmux terminals (e.g. after Claude Code context compaction), there
+  // are no streaming events to bump chunk_index, so the detail cache never expires
+  // and the UI shows stale content. Probe the backend every 3s — the GET endpoint
+  // captures a live tmux snapshot for inactive terminals, which increments chunk_index
+  // if content changed. The updated chunk_index flows back through the list poll and
+  // re-triggers the detail fetch above, creating a self-sustaining refresh loop until
+  // the content stabilises.
+  useEffect(() => {
+    const terminalId = selectedTerminalView?.terminal_id
+    const tmuxSession = selectedTerminalView?.tmux_session
+    const isInactiveTmux = !selectedTerminalView?.active && !!tmuxSession
+    if (!terminalId || !isInactiveTmux) return
+
+    const probe = () => {
+      void agentApi.getTerminal(terminalId, { content: 'tmux' }).then(detail => {
+        setTerminalDetailCache(current => {
+          const key = terminalDetailCacheKey(detail)
+          if (current[key]) return current
+          const next = { ...current, [key]: detail }
+          const entries = Object.entries(next)
+          if (entries.length <= TERMINAL_DETAIL_CACHE_LIMIT) return next
+          return Object.fromEntries(entries.slice(entries.length - TERMINAL_DETAIL_CACHE_LIMIT)) as Record<string, typeof detail>
+        })
+        void fetchTerminals()
+      }).catch(() => { /* stale or closed session — ignore */ })
+    }
+
+    const interval = window.setInterval(probe, 3000)
+    return () => window.clearInterval(interval)
+  }, [selectedTerminalView?.terminal_id, selectedTerminalView?.tmux_session, selectedTerminalView?.active, fetchTerminals])
 
   const handleTerminalScroll = useCallback(() => {
     const el = terminalOutputRef.current

@@ -312,6 +312,13 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 		} else if snapshot.State == "stale" {
 			snapshot.Active = terminalStateFromContent(content, true) == "running" && !terminalContentLooksIdle(content)
 			snapshot.State = terminalStateFromContent(content, snapshot.Active)
+		} else if contentChanged && snapshot.State == "completed" && terminalContentLooksBusy(content) {
+			// tmux session restarted inside the same terminal (e.g. Claude Code
+			// context compaction: /exit then a fresh process in the same pane).
+			// The content changed and now looks busy — re-activate so the UI
+			// picks up the live output again.
+			snapshot.Active = true
+			snapshot.State = "running"
 		} else if terminalStateFromContent(content, false) == "failed" {
 			snapshot.State = "failed"
 		}
@@ -386,7 +393,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.WorkflowPath = firstNonEmpty(stringValue(metadata, "workflow_path"), stringValue(metadata, "workspace_path"), stringValue(metadata, "working_directory"))
 	current.WorkflowName = firstNonEmpty(stringValue(metadata, "workflow_name"), stringValue(metadata, "workflow_id"), workflowNameFromPath(current.WorkflowPath))
 	current.WorkflowLabel = firstNonEmpty(stringValue(metadata, "workflow_label"), stringValue(metadata, "preset_name"), current.WorkflowName)
-	current.StepID = firstNonEmpty(workflowStepIDFromOwner(ownerID), stringValue(metadata, "current_step_id"), stringValue(metadata, "workflow_step_id"), stringValue(metadata, "step_id"))
+	current.StepID = firstNonEmpty(workflowStepIDFromOwner(ownerID), stringValue(metadata, "current_step_id"), stringValue(metadata, "workflow_step_id"), stringValue(metadata, "step_id"), current.StepID)
 	// Main-agent terminals have no natural step_id, but the rail tree
 	// needs a stable identifier so child terminals (workshop backgrounds
 	// spawned by the main agent via run_full_workflow / run_step / etc.)
@@ -397,11 +404,15 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	}
 	// step_name (from rich-context push) takes priority over the
 	// legacy step_title key; both are accepted for backward compat.
-	current.StepName = firstNonEmpty(stringValue(metadata, "step_name"), stringValue(metadata, "step_title"), stringValue(metadata, "current_step_title"))
-	current.StepType = firstNonEmpty(stringValue(metadata, "plan_step_type"), stringValue(metadata, "workflow_step_type"), stringValue(metadata, "current_step_type"), stringValue(metadata, "step_type"))
-	current.StepIndex = intValue(metadata["step_index"])
-	current.StepTotal = intValue(metadata["step_total"])
-	current.ParentStepID = stringValue(metadata, "parent_step_id")
+	current.StepName = firstNonEmpty(stringValue(metadata, "step_name"), stringValue(metadata, "step_title"), stringValue(metadata, "current_step_title"), current.StepName)
+	current.StepType = firstNonEmpty(stringValue(metadata, "plan_step_type"), stringValue(metadata, "workflow_step_type"), stringValue(metadata, "current_step_type"), stringValue(metadata, "step_type"), current.StepType)
+	if stepIndex := intValue(metadata["step_index"]); stepIndex > 0 {
+		current.StepIndex = stepIndex
+	}
+	if stepTotal := intValue(metadata["step_total"]); stepTotal > 0 {
+		current.StepTotal = stepTotal
+	}
+	current.ParentStepID = firstNonEmpty(stringValue(metadata, "parent_step_id"), current.ParentStepID)
 	// Default rooting: a terminal with no parent_step_id and not itself
 	// the main agent gets implicitly parented to the main-agent
 	// terminal of this session. The rail's buildTree only nests when
@@ -414,11 +425,13 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	if current.ParentStepID == "" && current.ExecutionKind != "main_agent" {
 		current.ParentStepID = "main_agent:" + sessionID
 	}
-	current.StepAttempt = intValue(metadata["step_attempt"])
-	current.StepExecutionMode = stringValue(metadata, "step_execution_mode")
-	current.StepTransport = stringValue(metadata, "step_transport")
-	current.StepTriggeredBy = stringValue(metadata, "step_triggered_by")
-	current.AgentName = firstNonEmpty(stringValue(metadata, "agent_name"), stringValue(metadata, "orchestrator_agent_name"))
+	if stepAttempt := intValue(metadata["step_attempt"]); stepAttempt > 0 {
+		current.StepAttempt = stepAttempt
+	}
+	current.StepExecutionMode = firstNonEmpty(stringValue(metadata, "step_execution_mode"), current.StepExecutionMode)
+	current.StepTransport = firstNonEmpty(stringValue(metadata, "step_transport"), current.StepTransport)
+	current.StepTriggeredBy = firstNonEmpty(stringValue(metadata, "step_triggered_by"), current.StepTriggeredBy)
+	current.AgentName = firstNonEmpty(stringValue(metadata, "agent_name"), stringValue(metadata, "orchestrator_agent_name"), current.AgentName)
 	current.TmuxSession = firstNonEmpty(
 		stringValue(metadata, "tmux_session"),
 		stringValue(metadata, "tmux_session_name"),
@@ -426,6 +439,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 		stringValue(metadata, "codex_interactive_session"),
 		stringValue(metadata, "gemini_interactive_session"),
 		stringValue(metadata, "cursor_interactive_session"),
+		current.TmuxSession,
 	)
 	content = s.contentWithToolLinesLocked(terminalID, content)
 	contentChanged := !exists || current.Content != content

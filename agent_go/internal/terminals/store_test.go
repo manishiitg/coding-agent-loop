@@ -1191,6 +1191,67 @@ func TestStoreTerminalStepTypePrefersPlanStepType(t *testing.T) {
 	}
 }
 
+func TestStoreTerminalStepContextSurvivesMetadataSparseChunks(t *testing.T) {
+	store := NewStore()
+	sessionID := "session-1"
+	workflowID := "workflow-full-1779518447634380000"
+	stepOwnerID := "workflow-step:" + workflowID + ":route-by-mode"
+	now := time.Now()
+
+	store.HandleEvent(sessionID, terminalEventWithMetadata(
+		stepOwnerID,
+		"$ codex exec route by mode",
+		1,
+		map[string]interface{}{
+			"execution_kind":      "workflow_step",
+			"current_step_id":     "route-by-mode",
+			"step_name":           "Route by mode",
+			"current_step_type":   "code_exec",
+			"plan_step_type":      "routing",
+			"step_index":          3,
+			"step_total":          8,
+			"step_execution_mode": "code_exec",
+			"step_transport":      "tmux",
+			"step_triggered_by":   "workflow_executor",
+			"tmux_session":        "mlp-codex-cli-int-test",
+		},
+		now,
+	))
+
+	store.HandleEvent(sessionID, terminalEventWithMetadata(
+		stepOwnerID,
+		"$ codex exec route by mode\nstreamed pane text",
+		2,
+		map[string]interface{}{
+			"execution_kind": "workflow_step",
+		},
+		now.Add(time.Second),
+	))
+
+	snapshot, ok := store.Get(sessionID + ":" + stepOwnerID)
+	if !ok {
+		t.Fatalf("expected workflow-step terminal snapshot")
+	}
+	if snapshot.StepType != "routing" {
+		t.Fatalf("step type = %q, want routing", snapshot.StepType)
+	}
+	if snapshot.StepName != "Route by mode" {
+		t.Fatalf("step name = %q, want Route by mode", snapshot.StepName)
+	}
+	if snapshot.StepIndex != 3 || snapshot.StepTotal != 8 {
+		t.Fatalf("step position = %d/%d, want 3/8", snapshot.StepIndex, snapshot.StepTotal)
+	}
+	if snapshot.StepTransport != "tmux" {
+		t.Fatalf("step transport = %q, want tmux", snapshot.StepTransport)
+	}
+	if snapshot.StepTriggeredBy != "workflow_executor" {
+		t.Fatalf("step triggered by = %q, want workflow_executor", snapshot.StepTriggeredBy)
+	}
+	if snapshot.TmuxSession != "mlp-codex-cli-int-test" {
+		t.Fatalf("tmux session = %q, want mlp-codex-cli-int-test", snapshot.TmuxSession)
+	}
+}
+
 func TestStoreTerminalOwnerPrefersWorkflowStepExecutionOverParentExecutionOwner(t *testing.T) {
 	store := NewStore()
 	sessionID := "session-1"

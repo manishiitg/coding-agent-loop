@@ -269,6 +269,7 @@ type activeBotSession struct {
 	eventFilter       *BotEventFilter
 	awaitingUserInput bool      // set by event filter on any blocking event
 	blockingEventType string    // "blocking_human_feedback"
+	blockingRequestID string    // feedback request_id for blocking_human_feedback
 	ackChannelID      string    // channel of the message the bot reacted to (for removal)
 	ackMessageTS      string    // timestamp of the message the bot reacted to
 	LastActivity      time.Time // updated on any send/receive; used to prune stale completed sessions
@@ -380,6 +381,7 @@ func (m *BotConversationManager) RegisterConnector(connector BotConnector) {
 
 	name := connector.Name()
 	m.connectors[name] = connector
+	GetNotificationManager().RegisterConnector(connector)
 	if receiver, ok := connector.(botThreadStatusReceiver); ok {
 		receiver.SetBotThreadStatusProvider(m.BotThreadStatus)
 	}
@@ -921,7 +923,11 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 	go func() {
 		followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer followCancel()
-		err := m.followUpSession(followCtx, m.buildQueryRequest(m.withBotRuntimeState(active, msg.Text), userID, "", nil, ""), sessionID, userID)
+		active.mu.Lock()
+		threadID := active.ThreadID
+		platform := active.Platform
+		active.mu.Unlock()
+		err := m.followUpSession(followCtx, m.buildQueryRequest(m.withBotRuntimeState(active, msg.Text), userID, "", nil, platform, threadID), sessionID, userID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
 		}
@@ -1003,8 +1009,11 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 
 	active.mu.Lock()
 	blockingEvt := active.blockingEventType
+	blockingRequestID := active.blockingRequestID
 	sid := active.SessionID
 	uid := active.UserID
+	threadID := active.ThreadID
+	platform := active.Platform
 	active.mu.Unlock()
 
 	switch blockingEvt {
@@ -1016,7 +1025,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 				go func() {
 					followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer followCancel()
-					err := m.followUpSession(followCtx, m.buildQueryRequest("Approved. Execute the plan.", uid, "", nil, ""), sid, uid)
+					err := m.followUpSession(followCtx, m.buildQueryRequest("Approved. Execute the plan.", uid, "", nil, platform, threadID), sid, uid)
 					if err != nil {
 						log.Printf("[BOT_MANAGER] Plan approval follow-up failed: %v", err)
 					}
@@ -1034,7 +1043,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
+				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, platform, threadID), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Plan feedback follow-up failed: %v", err)
 				}
@@ -1042,14 +1051,18 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 		}
 
 	default:
-		// blocking_human_feedback or unknown — forward as follow-up
+		if blockingEvt == "blocking_human_feedback" && m.submitBlockingHumanFeedbackResponse(active, msg, blockingRequestID) {
+			return
+		}
+		// Unknown blocking event, or an older human-feedback event without a
+		// request ID — preserve the prior follow-up behavior as a fallback.
 		log.Printf("[BOT_MANAGER] Responding to %s for session %s: %s", blockingEvt, sid, botTruncate(msg.Text, 80))
 		m.clearBlockingState(active)
 		if m.followUpSession != nil && sid != "" {
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
+				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, platform, threadID), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Blocking response follow-up failed: %v", err)
 				}
@@ -1058,14 +1071,40 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 	}
 }
 
+func (m *BotConversationManager) submitBlockingHumanFeedbackResponse(active *activeBotSession, msg BotIncomingMessage, requestID string) bool {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return false
+	}
+	platform := strings.TrimSpace(msg.Platform)
+	if platform == "" {
+		active.mu.Lock()
+		platform = active.Platform
+		active.mu.Unlock()
+	}
+	if platform == "" {
+		platform = "bot"
+	}
+	if err := GetNotificationManager().ReceiveNotification(requestID, msg.Text, platform); err != nil {
+		log.Printf("[BOT_MANAGER] Failed to submit blocking human feedback request %s via %s: %v", requestID, platform, err)
+		return false
+	}
+	log.Printf("[BOT_MANAGER] Submitted blocking human feedback request %s via %s", requestID, platform)
+	m.clearBlockingState(active)
+	return true
+}
+
 // handleBlockingResponseSync handles a user response to a blocking event synchronously (web simulator)
 func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context, active *activeBotSession, msg BotIncomingMessage, threadID ThreadID) (*SyncMessageResult, error) {
 	text := botNormalizeText(msg.Text)
 
 	active.mu.Lock()
 	blockingEvt := active.blockingEventType
+	blockingRequestID := active.blockingRequestID
 	sid := active.SessionID
 	uid := active.UserID
+	activeThreadID := active.ThreadID
+	platform := active.Platform
 	active.mu.Unlock()
 
 	switch blockingEvt {
@@ -1074,7 +1113,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 			log.Printf("[BOT_MANAGER] HandleMessageSync: plan approved for session %s", sid)
 			m.clearBlockingState(active)
 			if m.followUpSession != nil {
-				err := m.followUpSession(ctx, m.buildQueryRequest("Approved. Execute the plan.", uid, "", nil, ""), sid, uid)
+				err := m.followUpSession(ctx, m.buildQueryRequest("Approved. Execute the plan.", uid, "", nil, platform, activeThreadID), sid, uid)
 				if err != nil {
 					return nil, fmt.Errorf("plan approval follow-up failed: %w", err)
 				}
@@ -1098,7 +1137,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		}
 		// Not a clear approve/reject — send as feedback
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
+			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, platform, activeThreadID), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("plan feedback follow-up failed: %w", err)
 			}
@@ -1111,11 +1150,20 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		}, nil
 
 	default:
-		// blocking_human_feedback — forward as follow-up
+		if blockingEvt == "blocking_human_feedback" && m.submitBlockingHumanFeedbackResponse(active, msg, blockingRequestID) {
+			return &SyncMessageResult{
+				Type:         "follow_up",
+				ThreadID:     threadID.ThreadTS,
+				SessionID:    sid,
+				ThreadOffset: m.getThreadOffset(threadID),
+			}, nil
+		}
+		// Unknown blocking event, or an older human-feedback event without a
+		// request ID — preserve the prior follow-up behavior as a fallback.
 		log.Printf("[BOT_MANAGER] HandleMessageSync: responding to %s for session %s", blockingEvt, sid)
 		m.clearBlockingState(active)
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
+			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, platform, activeThreadID), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("blocking response follow-up failed: %w", err)
 			}
@@ -1134,6 +1182,7 @@ func (m *BotConversationManager) clearBlockingState(active *activeBotSession) {
 	active.mu.Lock()
 	active.awaitingUserInput = false
 	active.blockingEventType = ""
+	active.blockingRequestID = ""
 	active.Status = chathistory.BotSessionStatusRunning
 	ef := active.eventFilter
 	active.mu.Unlock()
@@ -1333,7 +1382,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		if m.followUpSession != nil {
 			log.Printf("[BOT_MANAGER] HandleMessageSync: injecting follow-up into session %s: %s", sessionID, botTruncate(msg.Text, 80))
 			m.resetActiveForNewTurn(active)
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sessionID, uid)
+			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, msg.Platform, threadID), sessionID, uid)
 			if err != nil {
 				return nil, fmt.Errorf("follow-up failed: %w", err)
 			}
@@ -1361,7 +1410,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
-	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform)
+	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, threadID)
 	addRestoredConversationSessionID(queryReq, restoredConversationSessionID)
 	sendFullDetails := botFullDetailsFromRequest(queryReq)
 
@@ -1413,7 +1462,7 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
-	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform)
+	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, threadID)
 	addRestoredConversationSessionID(queryReq, restoredConversationSessionID)
 	sendFullDetails := botFullDetailsFromRequest(queryReq)
 
@@ -1484,11 +1533,12 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	active.mu.Unlock()
 
 	// Wire up blocking event callback — any blocking event (human feedback, etc.)
-	active.eventFilter.SetBlockingEventCallback(func(eventType string) {
+	active.eventFilter.SetBlockingEventCallback(func(eventType, requestID string) {
 		active.mu.Lock()
-		log.Printf("[BOT_MANAGER] Blocking event %s for session %s", eventType, active.SessionID)
+		log.Printf("[BOT_MANAGER] Blocking event %s for session %s request_id=%s", eventType, active.SessionID, requestID)
 		active.awaitingUserInput = true
 		active.blockingEventType = eventType
+		active.blockingRequestID = requestID
 		active.mu.Unlock()
 	})
 
@@ -1940,15 +1990,24 @@ func (m *BotConversationManager) readManifestWorkshopMode(workspacePath string) 
 // WhatsApp's @<slug> prefix parser to pick a workflow from in-message text.
 // platform is the bot channel ("slack", "whatsapp", …) so the server can
 // inject channel-specific formatting rules into the agent's system prompt.
-// Pass "" for non-bot callers and follow-ups (platform doesn't change
-// mid-session).
-func (m *BotConversationManager) buildQueryRequest(query string, userID string, channelID string, presetRoute *ChannelRoute, platform string) map[string]interface{} {
+// Pass "" for non-bot callers. For follow-ups, keep passing the platform and
+// threadID so human tools can notify the same bot conversation.
+func (m *BotConversationManager) buildQueryRequest(query string, userID string, channelID string, presetRoute *ChannelRoute, platform string, threadIDs ...ThreadID) map[string]interface{} {
 	req := map[string]interface{}{
 		"query": query,
 	}
 	if platform != "" {
 		req["bot_platform"] = platform
 		req["triggered_by"] = "bot:" + platform
+	}
+	if len(threadIDs) > 0 {
+		threadID := threadIDs[0]
+		if threadID.ChannelID != "" {
+			req["bot_channel_id"] = threadID.ChannelID
+		}
+		if threadID.ThreadTS != "" {
+			req["bot_thread_ts"] = threadID.ThreadTS
+		}
 	}
 
 	// Resolve the workflow route: an explicit preset wins over channel lookup,

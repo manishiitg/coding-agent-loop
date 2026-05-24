@@ -27,6 +27,7 @@ import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 import { useAuthStore } from '../stores/useAuthStore'
 import { hasWorkflowWriteAccess } from '../utils/workflowPermissions'
 import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
+import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 
 const WORKSHOP_MODE_SWITCH_CONFIRM_KEY = 'workflow_workshop_mode_switch_confirm_dismissed'
 
@@ -325,7 +326,7 @@ import { useModeStore } from '../stores/useModeStore'
 import { agentApi, getApiBaseUrl } from '../services/api'
 import { skillsApi } from '../api/skills'
 import type { Skill } from '../types/skills'
-import { chatHistorySupportsNativeResume, chatHistoryUsesCliRestore } from './PreviousChatHistoryPanel'
+import { chatHistorySupportsNativeResume, chatHistoryUsesTerminalRestore } from './PreviousChatHistoryPanel'
 
 // MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown.
 const DEDICATED_MCP_SERVERS = new Set(['playwright'])
@@ -1468,7 +1469,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const restoredResumeUsesNative = useMemo(() => {
     if (typeof tabConfig?.restoredConversationNativeResume === 'boolean') return tabConfig.restoredConversationNativeResume
     return restoredResumeSession
-      ? chatHistoryUsesCliRestore(restoredResumeSession) || chatHistorySupportsNativeResume(restoredResumeSession)
+      ? chatHistoryUsesTerminalRestore(restoredResumeSession) || chatHistorySupportsNativeResume(restoredResumeSession)
       : false
   }, [restoredResumeSession, tabConfig?.restoredConversationNativeResume])
 
@@ -2805,10 +2806,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!session) return
 
     const path = resumeChatConversationPath(session)
-    const useCliRestore = chatHistoryUsesCliRestore(session)
+    const useTerminalRestore = chatHistoryUsesTerminalRestore(session)
     const useNativeResume = chatHistorySupportsNativeResume(session)
     const existingContext = useChatStore.getState().getTabConfig(activeTabId)?.fileContext || chatFileContext
-    const shouldAttachFileFallback = !useCliRestore && !useNativeResume
+    const shouldAttachFileFallback = !useTerminalRestore && !useNativeResume
     const nextFileContext = shouldAttachFileFallback
       ? existingContext.some((item: { path: string }) => item.path === path)
         ? existingContext
@@ -2829,8 +2830,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       restoredConversationTitle: resumeChatTitle(session),
       restoredConversationWorkshopModeLabel: resumeChatWorkshopModeLabel(session),
       restoredConversationRuntimeLabel: resumeChatRuntimeLabel(session),
-      restoredConversationNativeResume: useCliRestore || useNativeResume,
+      restoredConversationNativeResume: useTerminalRestore || useNativeResume,
     })
+    if (useTerminalRestore) {
+      const latestStore = useChatStore.getState()
+      latestStore.setTabViewMode(activeTabId, 'terminal')
+      const restoredTab = latestStore.chatTabs[activeTabId]
+      startRestoredTransportTerminal(restoredTab?.sessionId, path)
+    }
     setShowResumeDialog(false)
     setTimeout(() => textareaRef.current?.focus(), 0)
   }, [activeTabId, chatFileContext, resumeSessions, setTabConfig])

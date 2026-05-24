@@ -150,6 +150,57 @@ func TestWorkspaceAdvancedToolBundleIncludesProviderMediaTools(t *testing.T) {
 	}
 }
 
+func TestCustomToolBundleIncludesHumanTools(t *testing.T) {
+	tools, executors, categories := createCustomTools(false, "default", "tool-bundle-test-session")
+	chatToolDefs := map[string]bool{}
+	for _, tool := range tools {
+		if tool.Function != nil {
+			chatToolDefs[tool.Function.Name] = true
+		}
+	}
+	if !chatToolDefs["submit_human_answer"] {
+		t.Fatal("chat/workflow-builder bundle missing submit_human_answer resolver")
+	}
+	if _, ok := executors["submit_human_answer"]; !ok {
+		t.Fatal("chat/workflow-builder bundle missing submit_human_answer executor")
+	}
+	if got := categories["submit_human_answer"]; got != "human_tools" {
+		t.Fatalf("submit_human_answer category = %q, want human_tools", got)
+	}
+	if chatToolDefs["human_feedback"] {
+		t.Fatal("chat/workflow-builder bundle should not expose blocking human_feedback")
+	}
+	if _, ok := executors["human_feedback"]; ok {
+		t.Fatal("chat/workflow-builder bundle should not include blocking human_feedback executor")
+	}
+	if chatToolDefs["notify_via_bot"] {
+		t.Fatal("chat/workflow-builder bundle should not expose notify_via_bot")
+	}
+	if _, ok := executors["notify_via_bot"]; ok {
+		t.Fatal("chat/workflow-builder bundle should not include notify_via_bot executor")
+	}
+
+	workflowTools, workflowExecutors, workflowCategories := createCustomTools(true, "default", "tool-bundle-test-session")
+	workflowToolDefs := map[string]bool{}
+	for _, tool := range workflowTools {
+		if tool.Function != nil {
+			workflowToolDefs[tool.Function.Name] = true
+		}
+	}
+
+	for _, name := range []string{"human_feedback", "notify_via_bot", "submit_human_answer"} {
+		if !workflowToolDefs[name] {
+			t.Fatalf("workflow bundle tool definitions missing %q", name)
+		}
+		if _, ok := workflowExecutors[name]; !ok {
+			t.Fatalf("workflow bundle executors missing %q", name)
+		}
+		if got := workflowCategories[name]; got != "human_tools" {
+			t.Fatalf("workflow bundle category for %q = %q, want human_tools", name, got)
+		}
+	}
+}
+
 // TestChatModeFolderGuardBlockedWrite verifies that wrapExecutorsWithChatModeFolderGuard
 // denies writes to paths under blockedWriteFolders even when the path is under an allowed
 // write prefix. Regression guard for the "option 2" design — this is the prefix+blocklist

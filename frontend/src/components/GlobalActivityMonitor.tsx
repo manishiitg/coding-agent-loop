@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, Clock, Loader2 } from 'lucide-react'
+import { AlertCircle, Clock, Loader2, Pause } from 'lucide-react'
 import type { ActiveSessionInfo, RunningWorkflowInfo, SessionExecutionTreeNode } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
@@ -27,7 +27,7 @@ function isWorkflowSession(session: ActiveSessionInfo): boolean {
 
 function isActiveSession(session: ActiveSessionInfo): boolean {
   const status = normalizedStatus(session.status)
-  return (
+  if (
     session.needs_user_input === true ||
     session.has_running_background_agents === true ||
     (session.running_background_agent_count ?? 0) > 0 ||
@@ -36,7 +36,15 @@ function isActiveSession(session: ActiveSessionInfo): boolean {
     status === 'idle' ||
     status === 'waiting' ||
     status === 'waiting_feedback'
-  )
+  ) return true
+
+  // A completed workflow session is still "waiting for the user's next builder command".
+  // Show it for up to 30 minutes after last activity — same cap as bg-agent max-age.
+  if (status === 'completed' && isWorkflowSession(session) && session.last_activity) {
+    const lastMs = new Date(session.last_activity).getTime()
+    if (!Number.isNaN(lastMs) && Date.now() - lastMs < 30 * 60 * 1000) return true
+  }
+  return false
 }
 
 function sessionTitle(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo, fallbackWorkflowName?: string | null): string {
@@ -109,6 +117,7 @@ function headerStatusLabel(session: ActiveSessionInfo, workflow?: RunningWorkflo
   if ((status === 'waiting' || status === 'waiting_feedback') && hasBackgroundAgents) return 'waiting for background agents'
   if (status === 'waiting' || status === 'waiting_feedback') return 'waiting'
   if ((status === 'completed' || status === 'idle') && hasBackgroundAgents) return 'background running'
+  if (status === 'completed' && isWorkflowSession(session)) return 'idle'
   return status || 'running'
 }
 
@@ -407,11 +416,16 @@ export const GlobalActivityMonitor: React.FC = () => {
     [activeSessions, currentSessionId],
   )
 
-  // Builder-idle indicator: track the current tab's streaming/bg-agent state so the
-  // header shows when the builder chat is idle and ready for a follow-up message.
-  const activeTab = activeTabId ? chatTabs[activeTabId] : null
-  const builderHasBgAgents = activeTab?.hasRunningBgAgents ?? false
-  const builderBusy = (activeTab?.isStreaming ?? false) || (activeTab?.isSyntheticTurn ?? false)
+  // Builder-idle indicator: find any tab OTHER than the currently active one that has
+  // running background agents. We intentionally exclude the active tab because the user
+  // can already see that tab's chat directly — the indicator is only useful when the
+  // builder is running in the background while the user is looking at a different tab.
+  const builderTab = useMemo(
+    () => Object.values(chatTabs).find(tab => tab.tabId !== activeTabId && tab.hasRunningBgAgents),
+    [chatTabs, activeTabId],
+  )
+  const builderHasBgAgents = !!builderTab
+  const builderBusy = (builderTab?.isStreaming ?? false) || (builderTab?.isSyntheticTurn ?? false)
 
   const inputCount = useMemo(
     () => visibleSessions.filter(session => session.needs_user_input).length,
@@ -516,71 +530,71 @@ export const GlobalActivityMonitor: React.FC = () => {
     setOpen(false)
   }, [currentWorkflowPresetName, runningWorkflowsBySession])
 
-  const handleHeaderClick = useCallback(() => {
-    if (visibleSessions.length === 1 && primarySession) {
-      void handleOpenSession(primarySession)
-      return
-    }
-    openActiveWorkInQuickSwitcher()
-  }, [handleOpenSession, openActiveWorkInQuickSwitcher, primarySession, visibleSessions.length])
-
   if (visibleSessions.length === 0 && !builderHasBgAgents) {
     return null
   }
 
   const builderStateLabel = builderBusy ? 'busy' : 'idle'
-  const builderChipLabel = currentWorkflowPresetName
-    ? `${currentWorkflowPresetName} · ${builderStateLabel}`
+  const builderWorkflowName = (builderTab?.name && builderTab.name !== 'Workflow Builder')
+    ? builderTab.name
+    : currentWorkflowPresetName
+  const builderChipLabel = builderWorkflowName
+    ? `${builderWorkflowName} · ${builderStateLabel}`
     : `builder · ${builderStateLabel}`
 
-  // Unified pill: when there are other sessions, the builder state is appended inside
-  // the existing clickable button. When only builder state is present, render a non-
-  // clickable chip styled identically so the header looks consistent.
-  const pillClasses = 'relative flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60'
+  // Each session + the builder tab gets its own pill. Name length shrinks as pill count grows.
+  const totalPillCount = visibleSessions.length + (builderHasBgAgents ? 1 : 0)
+  const nameCharLimit = totalPillCount >= 3 ? 5 : totalPillCount === 2 ? 8 : 12
+  const pillClasses = 'flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium transition-colors border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60'
 
   return (
-    <div ref={containerRef} className="relative">
-      {visibleSessions.length > 0 ? (
-        <button
-          type="button"
-          data-tour="active-work-switcher"
-          data-testid="tour-active-work-switcher"
-          onClick={handleHeaderClick}
-          className={pillClasses}
-          aria-label={visibleSessions.length === 1 ? 'Open active work' : 'Open active work in command center'}
-          title={visibleSessions.length === 1 ? 'Open active work' : 'Open active work in Ctrl+K'}
-        >
-          <span className={`h-2 w-2 rounded-full ${statusDotClasses(primaryTone)}`} />
-          {primaryTone === 'needs-input' ? (
-            <AlertCircle className="w-3.5 h-3.5" />
-          ) : (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          )}
-          <span className="whitespace-nowrap">
-            {visibleSessions.length === 1 && primarySession
-              ? compactHeaderLabel(primarySession, primaryTab, primaryWorkflow, primaryWorkflowFallbackName)
-              : headerLabel}
-          </span>
-          {builderHasBgAgents && (
-            <>
-              <span className="opacity-30">·</span>
-              {builderBusy
-                ? <Loader2 className="w-3 h-3 animate-spin opacity-70" />
-                : <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 dark:bg-emerald-300 animate-pulse" />}
-              <span className="whitespace-nowrap opacity-80">{builderChipLabel}</span>
-            </>
-          )}
-        </button>
-      ) : (
-        <div
-          title={builderBusy ? 'Builder is processing — wait before sending a message' : 'Builder is idle — ready for your next message'}
-          className={pillClasses}
-        >
-          {builderBusy
-            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            : <span className="h-2 w-2 rounded-full bg-emerald-400 dark:bg-emerald-300 animate-pulse" />}
-          <span className="whitespace-nowrap">{builderChipLabel}</span>
-        </div>
+    <div ref={containerRef} className="relative flex items-center gap-1">
+      {sortedSessions.map((session, i) => {
+        const tab = Object.values(chatTabs).find(t => t.sessionId === session.session_id)
+        const workflowInfo = runningWorkflowsBySession[session.session_id]
+        const fallbackName = selectedModeCategory === 'workflow' && !workflowInfo ? currentWorkflowPresetName : null
+        const tone = statusTone(session, workflowInfo)
+        const name = shortText(displaySessionTitle(session, tab, workflowInfo, fallbackName), nameCharLimit)
+        const statusLabel = headerStatusLabel(session, workflowInfo)
+        const showStatus = statusLabel !== 'running'
+        return (
+          <React.Fragment key={session.session_id}>
+            {i > 0 && <span className="text-gray-400 dark:text-gray-600 select-none text-xs">/</span>}
+            <button
+              type="button"
+              data-tour={i === 0 ? 'active-work-switcher' : undefined}
+              data-testid={i === 0 ? 'tour-active-work-switcher' : undefined}
+              onClick={() => void handleOpenSession(session)}
+              className={pillClasses}
+              title={`${displaySessionTitle(session, tab, workflowInfo, fallbackName)} · ${statusLabel}`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${statusDotClasses(tone)}`} />
+              <span className="whitespace-nowrap">{name}</span>
+              {tone === 'needs-input' && <AlertCircle className="w-3 h-3 text-amber-500 dark:text-amber-400" />}
+              {tone === 'idle' && <Clock className="w-3 h-3 opacity-50" />}
+              {tone === 'paused' && <Pause className="w-3 h-3 opacity-50" />}
+              {tone === 'background' && <Loader2 className="w-3 h-3 animate-spin opacity-60" />}
+            </button>
+          </React.Fragment>
+        )
+      })}
+      {builderHasBgAgents && (
+        <>
+          {visibleSessions.length > 0 && <span className="text-gray-400 dark:text-gray-600 select-none text-xs">/</span>}
+          <button
+            type="button"
+            onClick={() => builderTab && useChatStore.getState().switchTab(builderTab.tabId)}
+            className={pillClasses}
+            title={builderBusy ? 'Builder is processing — wait before sending a message' : 'Builder is idle — ready for your next message'}
+          >
+            {builderBusy
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 dark:bg-emerald-300 animate-pulse" />}
+            <span className="whitespace-nowrap">
+              {shortText(builderWorkflowName || 'builder', nameCharLimit)}
+            </span>
+          </button>
+        </>
       )}
 
       {false && open && (

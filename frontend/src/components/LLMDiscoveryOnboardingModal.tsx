@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, CheckCircle, Loader2, RefreshCw, Settings, Terminal, X, KeyRound, ChevronDown } from 'lucide-react'
+import { AlertCircle, CheckCircle, Copy, Loader2, RefreshCw, Settings, Terminal, X, KeyRound } from 'lucide-react'
 import { Button } from './ui/Button'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
-import type { LLMDiscoveryCandidate, LLMModel, SavedLLM, TierModel } from '../services/api-types'
+import type { LLMDiscoveryCandidate, LLMModel, LLMProvider, SavedLLM, TierModel } from '../services/api-types'
 import { useLLMStore } from '../stores'
 import ModalPortal from './ui/ModalPortal'
-import { getProviderIntegrationKind } from '../utils/llmDisplay'
 
 interface LLMDiscoveryOnboardingModalProps {
   isOpen: boolean
@@ -19,6 +18,69 @@ type CandidateTestState = {
 }
 
 type ReadinessLevel = 'ready' | 'needs_setup' | 'not_detected'
+
+const CODING_CLI_ORDER = ['codex-cli', 'claude-code', 'cursor-cli', 'opencode-cli', 'gemini-cli'] as const
+
+const CODING_CLI_INFO: Record<typeof CODING_CLI_ORDER[number], {
+  label: string
+  binary: string
+  setupCommand: string
+  installHint: string
+}> = {
+  'codex-cli': {
+    label: 'OpenAI Codex CLI',
+    binary: 'codex',
+    setupCommand: 'codex login',
+    installHint: 'Install Codex CLI so the codex command is available on the backend PATH.',
+  },
+  'claude-code': {
+    label: 'Claude Code',
+    binary: 'claude',
+    setupCommand: 'claude',
+    installHint: 'Install Claude Code so the claude command is available on the backend PATH.',
+  },
+  'cursor-cli': {
+    label: 'Cursor CLI',
+    binary: 'cursor-agent',
+    setupCommand: 'cursor-agent login',
+    installHint: 'Install Cursor CLI so the cursor-agent command is available on the backend PATH.',
+  },
+  'opencode-cli': {
+    label: 'OpenCode CLI',
+    binary: 'opencode',
+    setupCommand: 'opencode auth login',
+    installHint: 'Install OpenCode CLI so the opencode command is available on the backend PATH, or set OPENCODE_BIN.',
+  },
+  'gemini-cli': {
+    label: 'Gemini CLI',
+    binary: 'gemini',
+    setupCommand: 'gemini',
+    installHint: 'Install Gemini CLI so the gemini command is available on the backend PATH.',
+  },
+}
+
+const isCodingCLIProvider = (provider: string): provider is typeof CODING_CLI_ORDER[number] =>
+  (CODING_CLI_ORDER as readonly string[]).includes(provider)
+
+function fallbackCodingCandidate(provider: typeof CODING_CLI_ORDER[number]): LLMDiscoveryCandidate {
+  const info = CODING_CLI_INFO[provider]
+  return {
+    id: `${provider}:${provider}`,
+    provider: provider as LLMProvider,
+    model_id: provider,
+    model_name: 'Default',
+    label: info.label,
+    kind: 'local_cli',
+    detection_source: 'Supported coding CLI',
+    auth_configured: false,
+    runtime_command: info.binary,
+    runtime_available: false,
+    usable: false,
+    recommended: false,
+    reason: 'CLI runtime was not detected.',
+    setup_hint: info.installHint,
+  }
+}
 
 function candidateReadiness(candidate: LLMDiscoveryCandidate): ReadinessLevel {
   if (candidate.kind === 'local_cli' && candidate.runtime_available === false) return 'not_detected'
@@ -67,30 +129,35 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
   const [success, setSuccess] = useState<string | null>(null)
   const [testStates, setTestStates] = useState<Record<string, CandidateTestState>>({})
   const [enablingId, setEnablingId] = useState<string | null>(null)
-  const [showNotDetected, setShowNotDetected] = useState(false)
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null)
   const [metadata, setMetadata] = useState<ModelMetadata[]>([])
 
-  const isCodingAgent = (c: LLMDiscoveryCandidate) =>
-    getProviderIntegrationKind(c.provider, c.model_id) === 'coding_agent'
-
-  const grouped = useMemo(() => {
-    const readyCLI: LLMDiscoveryCandidate[] = []
-    const readyAPI: LLMDiscoveryCandidate[] = []
-    const needsSetup: LLMDiscoveryCandidate[] = []
-    const notDetected: LLMDiscoveryCandidate[] = []
-    for (const c of candidates) {
-      const level = candidateReadiness(c)
-      if (level === 'ready') {
-        if (isCodingAgent(c)) readyCLI.push(c)
-        else readyAPI.push(c)
-      } else if (level === 'needs_setup') {
-        needsSetup.push(c)
-      } else {
-        notDetected.push(c)
+  const codingCliCandidates = useMemo(() => {
+    const byProvider = new Map<string, LLMDiscoveryCandidate>()
+    for (const candidate of candidates) {
+      if (isCodingCLIProvider(candidate.provider) && !byProvider.has(candidate.provider)) {
+        byProvider.set(candidate.provider, candidate)
       }
     }
-    return { readyCLI, readyAPI, needsSetup, notDetected }
+    return CODING_CLI_ORDER.map(provider => byProvider.get(provider) || fallbackCodingCandidate(provider))
   }, [candidates])
+
+  const grouped = useMemo(() => {
+    const readyAPI: LLMDiscoveryCandidate[] = []
+    const apiNeedsSetup: LLMDiscoveryCandidate[] = []
+    for (const c of candidates) {
+      if (isCodingCLIProvider(c.provider)) continue
+      const level = candidateReadiness(c)
+      if (level === 'ready') {
+        readyAPI.push(c)
+      } else if (level === 'needs_setup') {
+        apiNeedsSetup.push(c)
+      }
+    }
+    return { readyAPI, apiNeedsSetup }
+  }, [candidates])
+
+  const hasReadyCodingCLI = codingCliCandidates.some(candidate => candidateReadiness(candidate) === 'ready')
 
   const loadDiscovery = async () => {
     setIsLoading(true)
@@ -106,6 +173,7 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
       setCandidates(response.candidates || [])
       setMetadata(metaResponse.models || [])
       setTestStates({})
+      setCopiedCommand(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to discover local LLM setup.')
     } finally {
@@ -118,6 +186,132 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
   }, [isOpen])
 
   if (!isOpen) return null
+
+  const copyCommand = async (command: string) => {
+    try {
+      await navigator.clipboard.writeText(command)
+      setCopiedCommand(command)
+      setTimeout(() => setCopiedCommand(current => current === command ? null : current), 1600)
+    } catch {
+      setCopiedCommand(null)
+    }
+  }
+
+  const renderCodingCliCard = (candidate: LLMDiscoveryCandidate) => {
+    const readiness = candidateReadiness(candidate)
+    const testState = testStates[candidate.id] || { status: 'idle' as const }
+    const isEnabling = enablingId === candidate.id
+    const providerInfo = isCodingCLIProvider(candidate.provider)
+      ? CODING_CLI_INFO[candidate.provider]
+      : undefined
+    const binary = candidate.runtime_command || providerInfo?.binary || candidate.provider
+    const setupCommand = providerInfo?.setupCommand
+    const modelMeta = metadata.find(m => m.provider === candidate.provider && m.model_id === candidate.model_id)
+    const statusClasses = readiness === 'ready'
+      ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+      : readiness === 'needs_setup'
+        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+        : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+    const statusLabel = readiness === 'ready'
+      ? 'Ready'
+      : readiness === 'needs_setup'
+        ? 'Login needed'
+        : 'Install'
+
+    return (
+      <div
+        key={candidate.id}
+        className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Terminal className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-300" />
+              <h4 className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">{candidate.label}</h4>
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+              <code className="rounded bg-gray-100 px-1.5 py-0.5 font-mono dark:bg-slate-700">{binary}</code>
+              <span>{candidate.detection_source}</span>
+            </div>
+          </div>
+          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${statusClasses}`}>
+            {statusLabel}
+          </span>
+        </div>
+
+        <div className="mt-3 min-h-[42px] text-xs text-gray-600 dark:text-gray-300">
+          {readiness === 'ready' ? (
+            <div className="space-y-1">
+              <div>
+                Default model: <span className="font-medium text-gray-900 dark:text-gray-100">{modelMeta?.model_name || candidate.model_name || candidate.model_id}</span>
+              </div>
+              <div className="text-gray-500 dark:text-gray-400">
+                Auth: {candidate.auth_source || candidate.reason}
+              </div>
+            </div>
+          ) : (
+            <p>{candidate.setup_hint || candidate.reason}</p>
+          )}
+        </div>
+
+        <div className="mt-4 flex items-center justify-between gap-2">
+          {readiness === 'ready' ? (
+            <>
+              {testState.status === 'invalid' ? (
+                <span className="truncate text-xs text-red-500" title={testState.message}>{testState.message || 'Validation failed'}</span>
+              ) : (
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  {testState.status === 'valid' ? 'Validated' : 'One-click setup'}
+                </span>
+              )}
+              <Button
+                size="sm"
+                onClick={() => enableCandidate(candidate)}
+                disabled={isEnabling || enablingId !== null}
+                className="h-8"
+              >
+                {isEnabling ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : testState.status === 'valid' ? (
+                  <CheckCircle className="h-3.5 w-3.5" />
+                ) : (
+                  'Enable'
+                )}
+              </Button>
+            </>
+          ) : readiness === 'needs_setup' && setupCommand ? (
+            <>
+              <code className="truncate rounded bg-gray-100 px-2 py-1 text-xs dark:bg-slate-700">{setupCommand}</code>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0"
+                onClick={() => { void copyCommand(setupCommand) }}
+              >
+                <Copy className="mr-1.5 h-3.5 w-3.5" />
+                {copiedCommand === setupCommand ? 'Copied' : 'Copy'}
+              </Button>
+            </>
+          ) : (
+            <>
+              <span className="text-xs text-gray-500 dark:text-gray-400">Install, then rescan.</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0"
+                onClick={loadDiscovery}
+              >
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                Rescan
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   const enableCandidate = async (candidate: LLMDiscoveryCandidate) => {
     setEnablingId(candidate.id)
@@ -187,9 +381,9 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-5 border-b border-gray-200 dark:border-slate-700 shrink-0">
             <div>
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Set Up Models</h2>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Connect a Coding CLI</h2>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                Pick a provider and model to get started. We detected what's available on this machine.
+                Start with a local coding agent. If none are installed yet, these are the CLIs we support.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -219,65 +413,43 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
               </div>
             )}
 
-            {!isLoading && candidates.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-16 text-center">
-                <AlertCircle className="w-10 h-10 text-amber-400 mb-3" />
-                <h3 className="font-medium text-gray-900 dark:text-gray-100 mb-1">No providers detected</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md">
-                  Install a coding CLI (Codex, Cursor, Claude Code, Gemini, OpenCode) or configure an API provider key.
-                </p>
-              </div>
-            )}
-
-            {!isLoading && candidates.length > 0 && (
+            {!isLoading && (
               <div className="space-y-5">
-                {/* Coding Agents — ready */}
-                {grouped.readyCLI.length > 0 && (
-                  <section>
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2 flex items-center gap-1.5">
-                      <Terminal className="w-3.5 h-3.5" />
-                      Coding Agents
-                    </h3>
-                    <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                      {grouped.readyCLI.map(candidate => {
-                        const testState = testStates[candidate.id] || { status: 'idle' as const }
-                        const isEnabling = enablingId === candidate.id
-                        return (
-                          <div
-                            key={candidate.id}
-                            className="flex items-center justify-between gap-2 border border-gray-200 dark:border-slate-600 rounded px-3 py-1.5 bg-white dark:bg-slate-800 hover:border-blue-300 dark:hover:border-blue-500 transition-colors"
-                          >
-                            <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{candidate.label}</span>
-                            {testState.status === 'invalid' ? (
-                              <span className="text-[10px] text-red-500 shrink-0" title={testState.message}>Failed</span>
-                            ) : (
-                              <button
-                                onClick={() => enableCandidate(candidate)}
-                                disabled={isEnabling || enablingId !== null}
-                                className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50 shrink-0"
-                              >
-                                {isEnabling ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : testState.status === 'valid' ? (
-                                  <CheckCircle className="w-3.5 h-3.5 text-green-500" />
-                                ) : (
-                                  'Enable'
-                                )}
-                              </button>
-                            )}
-                          </div>
-                        )
-                      })}
+                <section>
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                        <Terminal className="h-3.5 w-3.5" />
+                        Supported Coding CLIs
+                      </h3>
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                        {hasReadyCodingCLI
+                          ? 'Detected CLIs are ready to enable. Other supported CLIs stay visible for later.'
+                          : 'No supported coding CLI is ready yet. Install one of these, sign in, then rescan.'}
+                      </p>
                     </div>
-                  </section>
-                )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 shrink-0"
+                      onClick={loadDiscovery}
+                    >
+                      <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                      Rescan
+                    </Button>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {codingCliCandidates.map(renderCodingCliCard)}
+                  </div>
+                </section>
 
                 {/* API Providers — ready */}
                 {grouped.readyAPI.length > 0 && (
                   <section>
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2 flex items-center gap-1.5">
                       <KeyRound className="w-3.5 h-3.5" />
-                      API Providers
+                      Also Detected API Providers
                     </h3>
                     <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
                       {grouped.readyAPI.map(candidate => {
@@ -313,25 +485,20 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
                   </section>
                 )}
 
-                {/* Needs setup */}
-                {grouped.needsSetup.length > 0 && (
+                {grouped.apiNeedsSetup.length > 0 && (
                   <section>
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2 flex items-center gap-1.5">
                       <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
-                      Needs Setup
+                      API Providers Needing Setup
                     </h3>
                     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {grouped.needsSetup.map(candidate => (
+                      {grouped.apiNeedsSetup.map(candidate => (
                         <div
                           key={candidate.id}
                           className="border border-gray-200 dark:border-slate-700 rounded px-2.5 py-2 bg-gray-50 dark:bg-slate-800/50"
                         >
                           <div className="flex items-center gap-2">
-                            {isCodingAgent(candidate) ? (
-                              <Terminal className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                            ) : (
-                              <KeyRound className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                            )}
+                            <KeyRound className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                             <h4 className="text-xs font-medium text-gray-900 dark:text-gray-100 truncate">{candidate.label}</h4>
                           </div>
                           {(candidate.setup_hint || candidate.reason) && (
@@ -342,32 +509,6 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
                         </div>
                       ))}
                     </div>
-                  </section>
-                )}
-
-                {/* Not detected — collapsed */}
-                {grouped.notDetected.length > 0 && (
-                  <section>
-                    <button
-                      onClick={() => setShowNotDetected(!showNotDetected)}
-                      className="text-sm font-semibold text-gray-500 dark:text-gray-400 flex items-center gap-2 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
-                    >
-                      <ChevronDown className={`w-4 h-4 transition-transform ${showNotDetected ? '' : '-rotate-90'}`} />
-                      Not detected ({grouped.notDetected.length})
-                    </button>
-                    {showNotDetected && (
-                      <div className="mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                        {grouped.notDetected.map(candidate => (
-                          <div
-                            key={candidate.id}
-                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-400 dark:text-slate-500 rounded border border-dashed border-gray-200 dark:border-slate-700"
-                          >
-                            <Terminal className="w-3 h-3 shrink-0" />
-                            <span className="truncate">{candidate.label}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </section>
                 )}
               </div>

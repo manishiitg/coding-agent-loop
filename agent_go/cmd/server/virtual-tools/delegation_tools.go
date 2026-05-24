@@ -41,6 +41,9 @@ const (
 	AgentTemplateKey delegationContextKey = "agent_template"
 	// SessionEventEmitterKey is the context key for the session event emitter (used for human feedback UI)
 	SessionEventEmitterKey delegationContextKey = "session_event_emitter"
+	// BotNotificationDestinationKey carries the originating bot thread/channel
+	// so human tools can notify the same connector conversation.
+	BotNotificationDestinationKey delegationContextKey = "bot_notification_destination"
 	// DelegationServersKey is the context key for sub-agent specific MCP server selection
 	DelegationServersKey delegationContextKey = "delegation_servers"
 	// ChatsFolderPath is the fallback per-user Chats folder when session context is unavailable.

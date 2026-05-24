@@ -298,3 +298,14 @@ func (m *WhatsAppServiceManager) SendNotification(ctx context.Context, uniqueID,
 	}
 	return svc.SendNotification(ctx, uniqueID, message, contextMsg, opts, dest)
 }
+
+func (m *WhatsAppServiceManager) SendUserNotification(ctx context.Context, message, contextMsg string, dest *NotificationDestination) (string, error) {
+	if dest == nil || strings.TrimSpace(dest.UserID) == "" {
+		return "", nil
+	}
+	svc, err := m.ServiceForUser(ctx, dest.UserID, "", "")
+	if err != nil {
+		return "", err
+	}
+	return svc.SendUserNotification(ctx, message, contextMsg, dest)
+}

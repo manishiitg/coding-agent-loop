@@ -212,7 +212,7 @@ func normalizeAgentMode(agentMode string) string {
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
 // workflowMode: if true, includes advanced + human + todo tools for workflow mode
 //
-//	if false, only workspace_advanced tools for chat mode (shell, image, web fetch, PDF)
+//	if false, workspace_advanced + human tools for chat mode (shell, image, web fetch, PDF, feedback/notify)
 //
 // Returns: tools, executors, and a map of tool names to their categories
 // Workspace registry tools get category "workspace_advanced"
@@ -242,6 +242,29 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 	}
 	for name, category := range workspaceCategories {
 		toolCategories[name] = category
+	}
+
+	humanToolAllowed := map[string]bool{}
+	if workflowMode {
+		for _, tool := range virtualtools.CreateHumanTools() {
+			if tool.Function != nil {
+				humanToolAllowed[tool.Function.Name] = true
+			}
+		}
+	} else {
+		humanToolAllowed["submit_human_answer"] = true
+	}
+	for _, tool := range virtualtools.CreateHumanTools() {
+		if tool.Function != nil && humanToolAllowed[tool.Function.Name] {
+			allTools = append(allTools, tool)
+		}
+	}
+	for name, executor := range virtualtools.CreateHumanToolExecutors() {
+		if !humanToolAllowed[name] {
+			continue
+		}
+		allExecutors[name] = executor
+		toolCategories[name] = "human_tools"
 	}
 
 	// Workflow mode: include human + todo tools + workspace_basic executors (for internal Go operations)

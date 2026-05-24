@@ -613,6 +613,9 @@ func TestCaptureChatHistoryAgentRuntimePersistsAgentSessionHandle(t *testing.T) 
 	if runtime.ExternalSessionID != "codex-thread-typed" || runtime.ProjectDirID != "Workflow/example" {
 		t.Fatalf("legacy fields not mirrored from handle: %#v", runtime)
 	}
+	if runtime.Transport != llmtypes.CodingProviderTransportTmux {
+		t.Fatalf("runtime transport = %q, want tmux", runtime.Transport)
+	}
 }
 
 func TestCaptureChatHistoryAgentRuntimeInfersProviderFromSessionHandle(t *testing.T) {

@@ -48,6 +48,25 @@ func CreateHumanTools() []llmtypes.Tool {
 	}
 	humanTools = append(humanTools, humanFeedbackTool)
 
+	notifyUserTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "notify_via_bot",
+			Description: "Send a non-blocking notification to the human through configured bot connectors such as Slack or WhatsApp. Use this for FYIs, progress updates, alerts, and completion notices when you do not need to wait for a reply. If you need the human to answer before continuing, use human_feedback instead.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"message_for_user": map[string]interface{}{
+						"type":        "string",
+						"description": "Message to send to the user",
+					},
+				},
+				"required": []string{"message_for_user"},
+			}),
+		},
+	}
+	humanTools = append(humanTools, notifyUserTool)
+
 	// submit_human_answer — used by a builder agent to resolve a human_input
 	// step that was routed into this chat session (via run_workflow). The chat
 	// message from the workflow will include the request_id to pass here.
@@ -87,6 +106,7 @@ func CreateHumanToolExecutors() map[string]func(ctx context.Context, args map[st
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
 
 	executors["human_feedback"] = handleHumanFeedback
+	executors["notify_via_bot"] = handleNotifyUser
 	executors["submit_human_answer"] = handleSubmitHumanAnswer
 
 	return executors
@@ -110,6 +130,28 @@ func handleSubmitHumanAnswer(ctx context.Context, args map[string]interface{}) (
 	result := map[string]interface{}{
 		"status":     "submitted",
 		"request_id": requestID,
+	}
+	b, _ := json.Marshal(result)
+	return string(b), nil
+}
+
+func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string, error) {
+	messageForUser, _ := args["message_for_user"].(string)
+	messageForUser = strings.TrimSpace(messageForUser)
+	if messageForUser == "" {
+		return "", fmt.Errorf("message_for_user is required")
+	}
+
+	notificationManager := services.GetNotificationManager()
+	if notificationManager == nil {
+		return "", fmt.Errorf("notification manager not available")
+	}
+	if err := notificationManager.SendUserNotification(ctx, messageForUser, "", NotificationDestinationFromContext(ctx)); err != nil {
+		return "", fmt.Errorf("failed to notify user: %w", err)
+	}
+
+	result := map[string]interface{}{
+		"status": "sent",
 	}
 	b, _ := json.Marshal(result)
 	return string(b), nil
@@ -196,18 +238,10 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 		}
 	}
 
-	// Build a destination hint so connector resolvers can consult per-user
-	// preferences. The userID is set on the context by the server when it
-	// dispatches an agent or workflow run. Origin auto-detection (e.g.
-	// route back to the originating Slack thread) is a follow-up — for now
-	// we only carry the userID, which is enough for per-user prefs.
-	var dest *services.NotificationDestination
-	if uid, ok := ctx.Value(common.UserIDKey).(string); ok && uid != "" {
-		dest = &services.NotificationDestination{UserID: uid}
-	}
+	dest := NotificationDestinationFromContext(ctx)
 
 	// Create feedback request (automatically sends notifications via notification manager)
-	if err := feedbackStore.CreateRequestWithSlack(ctx, uniqueID, messageForUser, "", buttonOptions, dest); err != nil {
+	if err := feedbackStore.CreateRequestWithNotification(ctx, uniqueID, messageForUser, "", buttonOptions, dest); err != nil {
 		return "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
 
@@ -218,4 +252,56 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 	}
 
 	return response, nil
+}
+
+// NotificationDestinationFromContext returns the best notification destination
+// hint available for the current tool execution context.
+func NotificationDestinationFromContext(ctx context.Context) *services.NotificationDestination {
+	var dest *services.NotificationDestination
+	if explicit, ok := ctx.Value(BotNotificationDestinationKey).(*services.NotificationDestination); ok && explicit != nil {
+		dest = cloneNotificationDestination(explicit)
+	}
+	if uid, ok := ctx.Value(common.UserIDKey).(string); ok && uid != "" {
+		if dest == nil {
+			dest = &services.NotificationDestination{}
+		}
+		if dest.UserID == "" {
+			dest.UserID = uid
+		}
+	}
+	if notificationDestinationEmpty(dest) {
+		return nil
+	}
+	return dest
+}
+
+func ScheduleHumanFeedbackNotification(ctx context.Context, requestID, message, contextMsg string, buttonOptions *services.ButtonOptions) {
+	GetHumanFeedbackStore().ScheduleNotification(ctx, requestID, message, contextMsg, buttonOptions, NotificationDestinationFromContext(ctx))
+}
+
+func cloneNotificationDestination(dest *services.NotificationDestination) *services.NotificationDestination {
+	if dest == nil {
+		return nil
+	}
+	clone := &services.NotificationDestination{UserID: dest.UserID}
+	if dest.Slack != nil {
+		clone.Slack = &services.SlackDest{
+			ChannelID: dest.Slack.ChannelID,
+			ThreadTS:  dest.Slack.ThreadTS,
+		}
+	}
+	if dest.WhatsApp != nil {
+		clone.WhatsApp = &services.WhatsAppDest{
+			ChannelID: dest.WhatsApp.ChannelID,
+			PhoneE164: dest.WhatsApp.PhoneE164,
+		}
+	}
+	return clone
+}
+
+func notificationDestinationEmpty(dest *services.NotificationDestination) bool {
+	return dest == nil ||
+		(dest.UserID == "" &&
+			(dest.Slack == nil || dest.Slack.ChannelID == "") &&
+			(dest.WhatsApp == nil || (dest.WhatsApp.ChannelID == "" && dest.WhatsApp.PhoneE164 == "")))
 }

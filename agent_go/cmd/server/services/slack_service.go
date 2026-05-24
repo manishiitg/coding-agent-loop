@@ -207,6 +207,47 @@ func (s *SlackService) SendNotification(ctx context.Context, uniqueID string, me
 	return s.SendFeedbackNotification(ctx, uniqueID, message, contextMsg, buttonOptions, dest)
 }
 
+// SendUserNotification sends a non-blocking informational message through
+// Slack. Unlike SendNotification, this does not create request metadata or
+// buttons; replies remain normal bot-thread messages.
+func (s *SlackService) SendUserNotification(ctx context.Context, message string, contextMsg string, dest *NotificationDestination) (string, error) {
+	if !s.enabled || s.client == nil {
+		return "", fmt.Errorf("slack service is not enabled")
+	}
+
+	channelID, threadTS := s.pickUserNotificationDestination(dest)
+	if channelID == "" {
+		return "", nil
+	}
+
+	body := strings.TrimSpace(message)
+	if body == "" {
+		return "", nil
+	}
+	if contextMsg = strings.TrimSpace(contextMsg); contextMsg != "" {
+		body += "\n\n" + contextMsg
+	}
+
+	blocks := []slack.Block{
+		slack.NewSectionBlock(
+			slack.NewTextBlockObject("mrkdwn", convertMarkdownToSlackMrkdwn(body), false, false),
+			nil,
+			nil,
+		),
+	}
+	postOpts := []slack.MsgOption{slack.MsgOptionBlocks(blocks...)}
+	if threadTS != "" {
+		postOpts = append(postOpts, slack.MsgOptionTS(threadTS))
+	}
+
+	logBotOutboundMessage("slack", ThreadID{Platform: "slack", ChannelID: channelID, ThreadTS: threadTS}, "user_notification", body, 1, len(blocks))
+	_, timestamp, err := s.client.PostMessageContext(ctx, channelID, postOpts...)
+	if err != nil {
+		return "", fmt.Errorf("failed to post Slack user notification: %w", err)
+	}
+	return timestamp, nil
+}
+
 var (
 	globalSlackService *SlackService
 	slackServiceMux    sync.RWMutex
@@ -323,6 +364,18 @@ func (s *SlackService) pickDestination(dest *NotificationDestination) (channelID
 		}
 	}
 	return s.channelID, ""
+}
+
+func (s *SlackService) pickUserNotificationDestination(dest *NotificationDestination) (channelID, threadTS string) {
+	if dest != nil && dest.Slack != nil && dest.Slack.ChannelID != "" {
+		return dest.Slack.ChannelID, dest.Slack.ThreadTS
+	}
+	if dest != nil && dest.UserID != "" {
+		if pref := getNotificationPreferences(dest.UserID); pref != nil && pref.SlackChannelID != "" && !pref.SlackDisabled {
+			return pref.SlackChannelID, ""
+		}
+	}
+	return "", ""
 }
 
 // SendFeedbackNotification sends a feedback request to Slack

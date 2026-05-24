@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
+	baseevents "github.com/manishiitg/mcpagent/events"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	baseevents "github.com/manishiitg/mcpagent/events"
 )
 
 // routeFeedbackToParentChat checks if the given workflow session was invoked
@@ -95,6 +96,9 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 	// If this workflow was invoked from a builder chat session, route the
 	// question into that chat instead of emitting the blocking popup UI.
 	routedToParent := bo.routeFeedbackToParentChat(ctx, sessionID, requestID, question, "text", nil, "Approve & Continue", "Reject")
+	if !routedToParent {
+		virtualtools.ScheduleHumanFeedbackNotification(ctx, requestID, question, context, nil)
+	}
 
 	feedbackEvent := &events.BlockingHumanFeedbackEvent{
 		BaseEventData:      baseevents.BaseEventData{Timestamp: time.Now()},
@@ -177,6 +181,13 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 
 	// Route to parent chat if this workflow was invoked from a builder session.
 	routedToParentYN := bo.routeFeedbackToParentChat(ctx, sessionID, requestID, question, "yesno", nil, yesLabel, noLabel)
+	if !routedToParentYN {
+		virtualtools.ScheduleHumanFeedbackNotification(ctx, requestID, question, context, &services.ButtonOptions{
+			YesNoOnly: true,
+			YesLabel:  yesLabel,
+			NoLabel:   noLabel,
+		})
+	}
 
 	feedbackEventYN := &events.BlockingHumanFeedbackEvent{
 		BaseEventData:      baseevents.BaseEventData{Timestamp: time.Now()},
@@ -249,6 +260,11 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 
 	// Route to parent chat if this workflow was invoked from a builder session.
 	routedToParentMC := bo.routeFeedbackToParentChat(ctx, sessionID, requestID, question, "multiple_choice", options, "", "")
+	if !routedToParentMC {
+		virtualtools.ScheduleHumanFeedbackNotification(ctx, requestID, question, context, &services.ButtonOptions{
+			Options: options,
+		})
+	}
 
 	feedbackEventMC := &events.BlockingHumanFeedbackEvent{
 		BaseEventData:      baseevents.BaseEventData{Timestamp: time.Now()},
@@ -289,6 +305,15 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 		index, err := strconv.Atoi(indexStr)
 		if err == nil && index >= 0 && index < len(options) {
 			return response, nil
+		}
+	}
+
+	if index, err := strconv.Atoi(response); err == nil {
+		if index > 0 && index <= len(options) {
+			return fmt.Sprintf("option%d", index-1), nil
+		}
+		if index == 0 && len(options) > 0 {
+			return "option0", nil
 		}
 	}
 

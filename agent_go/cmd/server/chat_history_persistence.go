@@ -12,6 +12,7 @@ import (
 	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	internalevents "mcp-agent-builder-go/agent_go/internal/events"
 	"mcp-agent-builder-go/agent_go/pkg/fsutil"
@@ -40,6 +41,7 @@ type ChatHistoryAgentRuntime struct {
 	Kind               string                       `json:"kind,omitempty"`
 	Provider           string                       `json:"provider,omitempty"`
 	ModelID            string                       `json:"model_id,omitempty"`
+	Transport          string                       `json:"transport,omitempty"`
 	ExternalSessionID  string                       `json:"external_session_id,omitempty"`
 	ResumeSupported    bool                         `json:"resume_supported"`
 	ResumeFlag         string                       `json:"resume_flag,omitempty"`
@@ -489,6 +491,7 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 	if raw.Runtime != nil && raw.Runtime.WorkshopMode == "" {
 		raw.Runtime.WorkshopMode = raw.Mode
 	}
+	normalizeChatHistoryRuntime(raw.Runtime)
 
 	query := firstHumanText(raw.History)
 	if len(query) > 200 {
@@ -910,7 +913,43 @@ func chatHistoryRuntimeFromJSON(data []byte) (*ChatHistoryAgentRuntime, error) {
 	if raw.Runtime.WorkshopMode == "" {
 		raw.Runtime.WorkshopMode = normalizeChatHistoryWorkshopMode(raw.Mode)
 	}
+	normalizeChatHistoryRuntime(raw.Runtime)
 	return raw.Runtime, nil
+}
+
+func normalizeChatHistoryRuntime(runtime *ChatHistoryAgentRuntime) {
+	if runtime == nil {
+		return
+	}
+	runtime.Provider = strings.ToLower(strings.TrimSpace(runtime.Provider))
+	runtime.ModelID = strings.TrimSpace(runtime.ModelID)
+	runtime.Transport = strings.ToLower(strings.TrimSpace(runtime.Transport))
+	if runtime.AgentSessionHandle != nil && !runtime.AgentSessionHandle.Empty() {
+		handle := runtime.AgentSessionHandle.Provider
+		if runtime.Provider == "" {
+			runtime.Provider = strings.ToLower(strings.TrimSpace(handle.Provider))
+		}
+		if runtime.ModelID == "" {
+			runtime.ModelID = strings.TrimSpace(handle.Model)
+		}
+		if runtime.Transport == "" {
+			runtime.Transport = strings.ToLower(strings.TrimSpace(handle.Transport))
+		}
+		if runtime.ExternalSessionID == "" {
+			runtime.ExternalSessionID = strings.TrimSpace(handle.NativeSessionID)
+		}
+		if runtime.ProjectDirID == "" {
+			runtime.ProjectDirID = strings.TrimSpace(handle.ProjectDirID)
+		}
+		if runtime.ExternalSessionID != "" || runtime.ProjectDirID != "" {
+			runtime.ResumeSupported = true
+		}
+	}
+	if runtime.Transport == "" && runtime.Provider != "" {
+		if contract, ok := llmproviders.GetCodingAgentProviderContract(llmproviders.Provider(runtime.Provider), runtime.ModelID); ok {
+			runtime.Transport = strings.ToLower(string(contract.Transport))
+		}
+	}
 }
 
 func normalizeRestoredChatHistoryConversationPath(userID, conversationPath string) (string, bool) {

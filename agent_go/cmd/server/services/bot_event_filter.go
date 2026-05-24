@@ -17,7 +17,8 @@ import (
 
 // BlockingEventCallback is called when a blocking event is received.
 // The eventType is "plan_approval" or "blocking_human_feedback".
-type BlockingEventCallback func(eventType string)
+// requestID is set for blocking_human_feedback events when available.
+type BlockingEventCallback func(eventType string, requestID string)
 
 // SessionDoneCallback is called when the event filter determines the session is truly complete.
 // This fires when: a main-level completion arrives, no delegations are pending, and no blocking events are active.
@@ -376,7 +377,7 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 		return sent
 
 	case "plan_approval":
-		f.setBlocking("plan_approval")
+		f.setBlocking("plan_approval", "")
 		if kind := f.classifyBotNotification(event); kind != BotNotifyHumanInput {
 			log.Printf("[BOT_FILTER] plan_approval: skipped by policy (kind=%q)", kind)
 			return false
@@ -388,7 +389,7 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 		}
 
 	case "blocking_human_feedback":
-		f.setBlocking("blocking_human_feedback")
+		f.setBlocking("blocking_human_feedback", blockingFeedbackRequestID(event))
 		if kind := f.classifyBotNotification(event); kind != BotNotifyHumanInput {
 			log.Printf("[BOT_FILTER] blocking_human_feedback: skipped by policy (kind=%q)", kind)
 			return false
@@ -609,15 +610,15 @@ func workflowStepGroup(inputData map[string]string) string {
 }
 
 // setBlocking sets the blocking state and notifies the callback
-func (f *BotEventFilter) setBlocking(eventType string) {
+func (f *BotEventFilter) setBlocking(eventType, requestID string) {
 	f.mu.Lock()
 	f.awaitingInput = true
 	cb := f.onBlockingEvent
 	f.mu.Unlock()
 
-	log.Printf("[BOT_FILTER] Blocking event: %s", eventType)
+	log.Printf("[BOT_FILTER] Blocking event: %s request_id=%s", eventType, requestID)
 	if cb != nil {
-		cb(eventType)
+		cb(eventType, requestID)
 	}
 }
 
@@ -903,16 +904,8 @@ func (f *BotEventFilter) formatBlockingFeedback(event BotEventData) string {
 		return "The agent needs your input to continue."
 	}
 
-	raw, err := json.Marshal(event.Data.Data)
-	if err != nil {
-		return "The agent needs your input to continue."
-	}
-	var parsed struct {
-		Question string `json:"question"`
-		Message  string `json:"message"`
-		Prompt   string `json:"prompt"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
+	parsed, ok := parseBlockingFeedbackPayload(event)
+	if !ok {
 		return "The agent needs your input to continue."
 	}
 
@@ -923,10 +916,73 @@ func (f *BotEventFilter) formatBlockingFeedback(event BotEventData) string {
 	if question == "" {
 		question = parsed.Prompt
 	}
-	if question != "" {
-		return fmt.Sprintf("**Waiting for input:**\n%s", question)
+	if question == "" {
+		return "The agent needs your input to continue."
 	}
-	return "The agent needs your input to continue."
+
+	var sb strings.Builder
+	sb.WriteString("**Waiting for input:**\n")
+	sb.WriteString(question)
+	if parsed.Context != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(parsed.Context)
+	}
+	if parsed.YesNoOnly {
+		yes := strings.TrimSpace(parsed.YesLabel)
+		if yes == "" {
+			yes = "Approve"
+		}
+		no := strings.TrimSpace(parsed.NoLabel)
+		if no == "" {
+			no = "Reject"
+		}
+		sb.WriteString(fmt.Sprintf("\n\nReply with **%s** or **%s**.", yes, no))
+	} else if len(parsed.Options) > 0 {
+		sb.WriteString("\n\nOptions:")
+		for i, opt := range parsed.Options {
+			sb.WriteString(fmt.Sprintf("\n%d. %s", i+1, opt))
+		}
+		sb.WriteString("\n\nReply with the option text or `option0`, `option1`, etc.")
+	} else {
+		sb.WriteString("\n\nReply with your answer.")
+	}
+	return sb.String()
+}
+
+type blockingFeedbackPayload struct {
+	RequestID          string   `json:"request_id"`
+	Question           string   `json:"question"`
+	Message            string   `json:"message"`
+	Prompt             string   `json:"prompt"`
+	Context            string   `json:"context"`
+	YesNoOnly          bool     `json:"yes_no_only"`
+	YesLabel           string   `json:"yes_label"`
+	NoLabel            string   `json:"no_label"`
+	Options            []string `json:"options"`
+	RoutedToParentChat bool     `json:"routed_to_parent_chat"`
+}
+
+func parseBlockingFeedbackPayload(event BotEventData) (blockingFeedbackPayload, bool) {
+	if event.Data == nil || event.Data.Data == nil {
+		return blockingFeedbackPayload{}, false
+	}
+	raw, err := json.Marshal(event.Data.Data)
+	if err != nil {
+		return blockingFeedbackPayload{}, false
+	}
+	var parsed blockingFeedbackPayload
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return blockingFeedbackPayload{}, false
+	}
+	return parsed, true
+}
+
+func blockingFeedbackRequestID(event BotEventData) string {
+	parsed, ok := parseBlockingFeedbackPayload(event)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(parsed.RequestID)
 }
 
 // getDelegationName extracts the sub-agent name from a delegation event (must hold lock or call before lock).

@@ -953,7 +953,7 @@ cleanup_on_exit() {
 }
 
 trap cleanup_on_exit EXIT
-trap "exit 130" INT TERM
+trap "echo ''; echo '🛑 Shutting down (Ctrl+C)...'; exit 130" INT TERM
 echo "🔄 Log rotation started (keeping last $LOG_ROTATE_LINES lines, PID: $LOG_ROTATE_PID)"
 
 wait_for_workspace_health() {
@@ -1414,7 +1414,9 @@ elif [ "$WITH_FRONTEND" = true ]; then
     echo ""
     wait "$SERVER_PID"
 else
-    # Foreground mode: run in foreground with output visible
+    # Foreground mode: run server in background so the INT trap fires immediately
+    # on Ctrl+C. Without &, bash cannot process the trap until the foreground
+    # command returns, causing Ctrl+C to appear stuck with no output.
     echo "🔄 Starting server in foreground mode..."
     echo "   (Press Ctrl+C to stop)"
     echo "   Agent API URL: $MCP_AGENT_SERVER_URL"
@@ -1428,10 +1430,12 @@ else
         --model "$DEEP_SEARCH_MAIN_LLM_MODEL" \
         --temperature "$DEEP_SEARCH_MAIN_LLM_TEMPERATURE" \
         --max-turns 500 \
-        --mcp-config "configs/mcp_servers_clean.json" >> "$LOG_PATH" 2>&1
-    
+        --mcp-config "configs/mcp_servers_clean.json" >> "$LOG_PATH" 2>&1 &
+
+    SERVER_PID=$!
+    wait "$SERVER_PID"
     EXIT_CODE=$?
-    if [ $EXIT_CODE -ne 0 ]; then
+    if [ $EXIT_CODE -ne 0 ] && [ $EXIT_CODE -ne 130 ]; then
         echo ""
         echo "❌ Error: Server exited with code $EXIT_CODE"
         echo "📝 Check logs for details: $LOG_PATH"

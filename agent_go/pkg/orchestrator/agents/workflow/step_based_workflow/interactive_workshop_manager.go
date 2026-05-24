@@ -3925,7 +3925,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"enabled_custom_tools": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Workspace/custom tools to enable (format: 'category:tool' or 'category:*'). Categories: workspace_advanced (execute_shell_command, diff_patch_workspace_file, read_image, read_video, read_pdf, generate_text_llm, search_web_llm), human_tools (human_feedback), workspace_browser (agent_browser). Example: ['workspace_advanced:execute_shell_command', 'workspace_advanced:diff_patch_workspace_file']",
+					"description": "Workspace/custom tools to enable (format: 'category:tool' or 'category:*'). Categories: workspace_advanced (execute_shell_command, diff_patch_workspace_file, read_image, read_video, read_pdf, generate_text_llm, search_web_llm), human_tools (human_feedback, notify_via_bot), workspace_browser (agent_browser). Example: ['workspace_advanced:execute_shell_command', 'workspace_advanced:diff_patch_workspace_file']",
 				},
 				"enabled_skills": map[string]interface{}{
 					"type":        "array",
@@ -5097,7 +5097,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						suggestions++
 						result.WriteString("⚠️ No `enabled_custom_tools` set — default includes **all** workspace_advanced + human_tools:\n")
 						result.WriteString("   - `workspace_advanced:*` → execute_shell_command, diff_patch_workspace_file, read_image, read_video, read_pdf, generate_text_llm, search_web_llm, generate_video, text_to_speech, speech_to_text, generate_music\n")
-						result.WriteString("   - `human_tools:*` → human_feedback\n")
+						result.WriteString("   - `human_tools:*` → human_feedback, notify_via_bot\n")
 						result.WriteString("   Consider: does this step need `read_image`? `read_video`? `read_pdf`? `generate_text_llm`? `search_web_llm`? `human_feedback`?\n")
 						result.WriteString("   If not, set `enabled_custom_tools` to only what's needed, e.g.:\n")
 						result.WriteString("   `[\"workspace_advanced:execute_shell_command\", \"workspace_advanced:diff_patch_workspace_file\"]`\n")
@@ -8258,6 +8258,60 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 }
 
+func workshopLLMOptionsSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "object",
+		"description": description,
+		"properties": map[string]interface{}{
+			"reasoning_effort": map[string]interface{}{
+				"type":        "string",
+				"description": "Reasoning/effort level for providers that support it. For Codex CLI this becomes model_reasoning_effort; for Claude Code this becomes --effort. Prefer values from list_provider_models.reasoning_effort_levels for the selected model.",
+				"enum":        []string{"none", "minimal", "low", "medium", "high", "max", "xhigh"},
+			},
+			"verbosity": map[string]interface{}{
+				"type":        "string",
+				"description": "Response verbosity for providers that support it.",
+				"enum":        []string{"low", "medium", "high"},
+			},
+			"thinking_level": map[string]interface{}{
+				"type":        "string",
+				"description": "Thinking level for providers that support a named thinking setting.",
+				"enum":        []string{"low", "medium", "high"},
+			},
+			"thinking_budget": map[string]interface{}{
+				"type":        "integer",
+				"description": "Thinking budget in tokens for providers that support token-budgeted thinking.",
+			},
+			"top_p": map[string]interface{}{
+				"type":        "number",
+				"description": "Optional nucleus sampling value for providers that support it.",
+			},
+			"top_k": map[string]interface{}{
+				"type":        "integer",
+				"description": "Optional top-k sampling value for providers that support it.",
+			},
+			"stop_sequences": map[string]interface{}{
+				"type":        "array",
+				"description": "Optional stop sequences for providers that support them.",
+				"items":       map[string]interface{}{"type": "string"},
+			},
+			"endpoint": map[string]interface{}{
+				"type":        "string",
+				"description": "Azure endpoint override when validating an Azure model.",
+			},
+			"region": map[string]interface{}{
+				"type":        "string",
+				"description": "Azure or Bedrock region override.",
+			},
+			"api_version": map[string]interface{}{
+				"type":        "string",
+				"description": "Azure API version override.",
+			},
+		},
+		"additionalProperties": true,
+	}
+}
+
 // registerWorkshopLLMTools registers list_published_llms, list_provider_models,
 // test_llm, and set_workflow_llm_config on the workshop agent.
 func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagent.Agent, logger loggerv2.Logger) {
@@ -8282,7 +8336,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 	// list_provider_models
 	if err := mcpAgent.RegisterCustomTool(
 		"list_provider_models",
-		"List the available models for a provider from the shared model metadata catalog.",
+		"List the frontend-visible models for a provider. Fixed providers use shared metadata; dynamic providers use the same dynamic picker source as the UI.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8328,11 +8382,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 					"type":        "number",
 					"description": "Optional temperature for the validation request.",
 				},
-				"options": map[string]interface{}{
-					"type":                 "object",
-					"description":          "Optional model-specific options such as reasoning_effort or thinking_level.",
-					"additionalProperties": true,
-				},
+				"options": workshopLLMOptionsSchema("Optional model-specific options. Use reasoning_effort for Codex CLI and Claude Code effort control, and use list_provider_models to discover supported levels."),
 				"endpoint": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional Azure endpoint override.",

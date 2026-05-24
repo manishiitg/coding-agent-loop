@@ -411,6 +411,10 @@ type QueryRequest struct {
 	// session; empty for chat-UI sessions. Drives channel-specific system
 	// prompt additions (formatting rules), so bot replies render correctly.
 	BotPlatform string `json:"bot_platform,omitempty"`
+	// BotChannelID and BotThreadTS identify the originating connector
+	// conversation so human tools can notify the same Slack/WhatsApp thread.
+	BotChannelID string `json:"bot_channel_id,omitempty"`
+	BotThreadTS  string `json:"bot_thread_ts,omitempty"`
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
 	DelegationTierConfig *virtualtools.DelegationTierConfig `json:"delegation_tier_config,omitempty"`
 	// Decrypted secrets to inject into agent system prompt
@@ -443,6 +447,30 @@ type QueryRequest struct {
 	IsAutoNotification bool `json:"is_auto_notification,omitempty"`
 	// Internal: user ID for synthetic turn reconstruction (not from JSON)
 	userID string `json:"-"`
+}
+
+func notificationDestinationFromQuery(req QueryRequest, userID string) *slackservice.NotificationDestination {
+	platform := strings.ToLower(strings.TrimSpace(req.BotPlatform))
+	dest := &slackservice.NotificationDestination{UserID: userID}
+	switch platform {
+	case "slack":
+		if req.BotChannelID != "" {
+			dest.Slack = &slackservice.SlackDest{
+				ChannelID: req.BotChannelID,
+				ThreadTS:  req.BotThreadTS,
+			}
+		}
+	case "whatsapp":
+		if req.BotChannelID != "" {
+			dest.WhatsApp = &slackservice.WhatsAppDest{
+				ChannelID: req.BotChannelID,
+			}
+		}
+	}
+	if dest.UserID == "" && dest.Slack == nil && dest.WhatsApp == nil {
+		return nil
+	}
+	return dest
 }
 
 // ImageGenConfig holds image generation provider configuration
@@ -762,7 +790,21 @@ func runServer(cmd *cobra.Command, args []string) {
 	costLedger := costledger.NewLedger(getWorkspaceAPIURL())
 	fmt.Printf("💾 Operator store: workspace API (%s)\n", getWorkspaceAPIURL())
 
-	// Initialize Slack service for human feedback
+	notificationManager := slackservice.GetNotificationManager()
+	if notificationManager != nil {
+		notificationManager.SetFeedbackResponseFunc(
+			func(uniqueID string, response string) error {
+				store := virtualtools.GetHumanFeedbackStore()
+				if store != nil {
+					return store.SubmitResponse(uniqueID, response)
+				}
+				return nil
+			},
+		)
+	}
+
+	// Initialize Slack service. Notification delivery is registered through
+	// BotConversationManager.RegisterConnector when Slack bot mode is enabled.
 	slackSvc, err := slackservice.InitSlackService()
 	if err != nil {
 		log.Printf("⚠️  Failed to initialize Slack service: %v (Slack integration will be disabled)", err)
@@ -779,22 +821,6 @@ func runServer(cmd *cobra.Command, args []string) {
 				return nil
 			},
 		)
-		// Register Slack service with notification manager
-		notificationManager := slackservice.GetNotificationManager()
-		if notificationManager != nil && slackSvc != nil {
-			notificationManager.RegisterConnector(slackSvc)
-			// Set feedback store function so notification manager can update feedback store
-			notificationManager.SetFeedbackResponseFunc(
-				func(uniqueID string, response string) error {
-					store := virtualtools.GetHumanFeedbackStore()
-					if store != nil {
-						return store.SubmitResponse(uniqueID, response)
-					}
-					return nil
-				},
-			)
-			log.Printf("✅ Slack service registered with notification manager")
-		}
 	}
 
 	api := &StreamingAPI{
@@ -2886,6 +2912,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// working directory and folder guard config from the global session map.
 		// Without this, execution agents always get workspace root as their shell cwd.
 		workflowCtx = context.WithValue(workflowCtx, common.ChatSessionIDKey, sessionID)
+		if dest := notificationDestinationFromQuery(req, currentUserID); dest != nil {
+			workflowCtx = context.WithValue(workflowCtx, virtualtools.BotNotificationDestinationKey, dest)
+		}
 
 		// Store the cancel function for potential cancellation (keyed by queryID for independent executions)
 		api.workflowOrchestratorContextMux.Lock()
@@ -5487,6 +5516,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Inject user ID into the agent context
 		agentCtx = context.WithValue(agentCtx, common.UserIDKey, currentUserID)
 		agentCtx = context.WithValue(agentCtx, common.ChatSessionIDKey, sessionID)
+		if dest := notificationDestinationFromQuery(req, currentUserID); dest != nil {
+			agentCtx = context.WithValue(agentCtx, virtualtools.BotNotificationDestinationKey, dest)
+		}
 		logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] Main agent: injected UserIDKey=%q, ChatSessionIDKey=%q into agentCtx", currentUserID, sessionID)
 
 		// Store the cancel function for potential cancellation
@@ -5554,6 +5586,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromCurrentConversation(sessionID, currentUserID, finalProvider, newWorkshopMode, workflowPhaseFolder, underlyingAgent)
 			}
 			if restoredNativeCodingResume {
+				if restoredRuntimeUsesLaunchableTerminalTransport(restoredRuntime) {
+					if _, err := underlyingAgent.StartCodingAgentTransportSession(agentCtx); err != nil {
+						logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to prelaunch restored coding-agent transport session: %v", err)
+					}
+				}
 				cleanedChatQuery := cleanChatHistoryQuery(chatQuery)
 				if cleanedChatQuery != chatQuery {
 					chatQuery = cleanedChatQuery
@@ -6233,6 +6270,9 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 			if handle.Provider.Model != "" && runtime.ModelID == "" {
 				runtime.ModelID = strings.TrimSpace(handle.Provider.Model)
 			}
+			if handle.Provider.Transport != "" && runtime.Transport == "" {
+				runtime.Transport = strings.ToLower(strings.TrimSpace(handle.Provider.Transport))
+			}
 			if common.IsCLIProvider(runtime.Provider) {
 				runtime.Kind = "coding_agent"
 			}
@@ -6293,6 +6333,7 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 			}
 		}
 	}
+	normalizeChatHistoryRuntime(runtime)
 
 	return runtime
 }
@@ -7559,6 +7600,9 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 		bgCtx = context.WithValue(bgCtx, common.UserIDKey, userID)
 		log.Printf("[USER_ID_DEBUGGING] Background agent: copied UserIDKey=%q to bgCtx", userID)
 	}
+	if dest, ok := ctx.Value(virtualtools.BotNotificationDestinationKey).(*slackservice.NotificationDestination); ok && dest != nil {
+		bgCtx = context.WithValue(bgCtx, virtualtools.BotNotificationDestinationKey, dest)
+	}
 
 	bgAgent := &BackgroundAgent{
 		ID:                agentID,
@@ -8487,6 +8531,11 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 	// Inject user ID into context
 	if hasReq && req.userID != "" {
 		agentCtx = context.WithValue(agentCtx, common.UserIDKey, req.userID)
+	}
+	if hasReq {
+		if dest := notificationDestinationFromQuery(req, req.userID); dest != nil {
+			agentCtx = context.WithValue(agentCtx, virtualtools.BotNotificationDestinationKey, dest)
+		}
 	}
 
 	// Store cancel function so handleStopSession can cancel this turn

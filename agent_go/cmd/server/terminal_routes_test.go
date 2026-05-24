@@ -148,6 +148,71 @@ func TestTerminalRoutesListCanReturnMetadataOnly(t *testing.T) {
 	}
 }
 
+func TestTerminalRoutesPreserveStepTypeInListAndDetail(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-step-type"
+	terminalID := sessionID + ":workflow-step:workflow-full-1:route-by-mode"
+
+	store.HandleEvent(sessionID, storeevents.Event{
+		Type:          "streaming_chunk",
+		Timestamp:     time.Now(),
+		SessionID:     sessionID,
+		ExecutionID:   "workflow-step:workflow-full-1:route-by-mode",
+		ExecutionKind: "workflow_step",
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.StreamingChunk,
+			Data: &agentevents.StreamingChunkEvent{
+				BaseEventData: agentevents.BaseEventData{
+					Metadata: map[string]interface{}{
+						"kind":              "terminal",
+						"tmux_session":      "mlp-codex-step-type",
+						"current_step_id":   "route-by-mode",
+						"current_step_type": "code_exec",
+						"plan_step_type":    "routing",
+						"execution_kind":    "workflow_step",
+						"scope":             "workflow_step",
+					},
+				},
+				Content:    "routing step running",
+				ChunkIndex: 1,
+			},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals?session_id="+sessionID+"&content=none", nil)
+	rec := httptest.NewRecorder()
+	api.handleListTerminals(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var listResponse listTerminalsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&listResponse); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(listResponse.Terminals) != 1 {
+		t.Fatalf("terminal count = %d, want 1", len(listResponse.Terminals))
+	}
+	if listResponse.Terminals[0].StepType != "routing" {
+		t.Fatalf("list step_type = %q, want routing", listResponse.Terminals[0].StepType)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID, nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec = httptest.NewRecorder()
+	api.handleGetTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var detailResponse terminals.Snapshot
+	if err := json.NewDecoder(rec.Body).Decode(&detailResponse); err != nil {
+		t.Fatalf("decode detail response: %v", err)
+	}
+	if detailResponse.StepType != "routing" {
+		t.Fatalf("detail step_type = %q, want routing", detailResponse.StepType)
+	}
+}
+
 func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}

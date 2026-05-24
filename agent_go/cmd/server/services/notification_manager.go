@@ -37,6 +37,12 @@ type NotificationConnector interface {
 	SendNotification(ctx context.Context, uniqueID string, message string, contextMsg string, buttonOptions *ButtonOptions, dest *NotificationDestination) (string, error)
 }
 
+// UserNotificationConnector is an optional extension for connectors that can
+// send a non-blocking message to a human without creating a feedback request.
+type UserNotificationConnector interface {
+	SendUserNotification(ctx context.Context, message string, contextMsg string, dest *NotificationDestination) (string, error)
+}
+
 // FeedbackResponseFunc is a function type for submitting feedback responses (to avoid import cycle)
 type FeedbackResponseFunc func(uniqueID string, response string) error
 
@@ -113,6 +119,41 @@ func (nm *NotificationManager) SendNotification(ctx context.Context, uniqueID st
 				log.Printf("[NOTIFICATION_MANAGER] ✅ Notification sent via %s (msgID: %s)", conn.Name(), msgID)
 			}
 		}(connector)
+	}
+
+	return nil
+}
+
+// SendUserNotification sends a non-blocking user notification to all enabled
+// connectors that support the optional UserNotificationConnector extension.
+func (nm *NotificationManager) SendUserNotification(ctx context.Context, message string, contextMsg string, dest *NotificationDestination) error {
+	nm.mu.RLock()
+	connectors := make([]NotificationConnector, 0, len(nm.connectors))
+	for _, connector := range nm.connectors {
+		if connector.IsEnabled() {
+			connectors = append(connectors, connector)
+		}
+	}
+	nm.mu.RUnlock()
+
+	if len(connectors) == 0 {
+		log.Printf("[NOTIFICATION_MANAGER] No enabled connectors available for user notification")
+		return nil
+	}
+
+	for _, connector := range connectors {
+		userNotifier, ok := connector.(UserNotificationConnector)
+		if !ok {
+			continue
+		}
+		go func(conn NotificationConnector, notifier UserNotificationConnector) {
+			msgID, err := notifier.SendUserNotification(ctx, message, contextMsg, dest)
+			if err != nil {
+				log.Printf("[NOTIFICATION_MANAGER] Failed to send user notification via %s: %v", conn.Name(), err)
+			} else if msgID != "" {
+				log.Printf("[NOTIFICATION_MANAGER] ✅ User notification sent via %s (msgID: %s)", conn.Name(), msgID)
+			}
+		}(connector, userNotifier)
 	}
 
 	return nil

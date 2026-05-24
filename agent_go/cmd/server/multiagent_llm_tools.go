@@ -15,8 +15,9 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/utils"
 )
 
-// listProviderModelsJSON returns a JSON string of all models for the given provider
-// from the shared model metadata catalog. Used by both multi-agent and workshop LLM tools.
+// listProviderModelsJSON returns a JSON string of all frontend-visible models for the given
+// provider. Dynamic providers use the same live/fallback model source as the frontend picker;
+// fixed providers use the shared model metadata catalog.
 func listProviderModelsJSON(provider string) string {
 	provider = normalizeManagedProvider(provider)
 	if !isPublishedLLMProviderAllowed(provider) {
@@ -26,6 +27,11 @@ func listProviderModelsJSON(provider string) string {
 			"models":   []interface{}{},
 			"note":     "This provider is not available as a published chat LLM provider.",
 		})
+	}
+
+	if providerModelSelectionMode(provider) == "dynamic" {
+		resp := getDynamicModels(provider)
+		return prettyJSON(resp)
 	}
 
 	allModels := utils.GetAllModelMetadata()
@@ -40,10 +46,11 @@ func listProviderModelsJSON(provider string) string {
 		filtered = append(filtered, m)
 	}
 	return prettyJSON(map[string]interface{}{
-		"provider": provider,
-		"count":    len(filtered),
-		"models":   filtered,
-		"source":   "/api/llm-config/models/metadata",
+		"provider":             provider,
+		"model_selection_mode": "fixed_tier",
+		"count":                len(filtered),
+		"models":               filtered,
+		"source":               "/api/llm-config/models/metadata",
 	})
 }
 
@@ -69,6 +76,60 @@ func cloneOptionsMap(options map[string]interface{}) map[string]interface{} {
 		cloned[k] = v
 	}
 	return cloned
+}
+
+func llmToolOptionsSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "object",
+		"description": description,
+		"properties": map[string]interface{}{
+			"reasoning_effort": map[string]interface{}{
+				"type":        "string",
+				"description": "Reasoning/effort level for providers that support it. For Codex CLI this becomes model_reasoning_effort; for Claude Code this becomes --effort. Prefer values from list_provider_models.reasoning_effort_levels for the selected model.",
+				"enum":        []string{"none", "minimal", "low", "medium", "high", "max", "xhigh"},
+			},
+			"verbosity": map[string]interface{}{
+				"type":        "string",
+				"description": "Response verbosity for providers that support it.",
+				"enum":        []string{"low", "medium", "high"},
+			},
+			"thinking_level": map[string]interface{}{
+				"type":        "string",
+				"description": "Thinking level for providers that support a named thinking setting.",
+				"enum":        []string{"low", "medium", "high"},
+			},
+			"thinking_budget": map[string]interface{}{
+				"type":        "integer",
+				"description": "Thinking budget in tokens for providers that support token-budgeted thinking.",
+			},
+			"top_p": map[string]interface{}{
+				"type":        "number",
+				"description": "Optional nucleus sampling value for providers that support it.",
+			},
+			"top_k": map[string]interface{}{
+				"type":        "integer",
+				"description": "Optional top-k sampling value for providers that support it.",
+			},
+			"stop_sequences": map[string]interface{}{
+				"type":        "array",
+				"description": "Optional stop sequences for providers that support them.",
+				"items":       map[string]interface{}{"type": "string"},
+			},
+			"endpoint": map[string]interface{}{
+				"type":        "string",
+				"description": "Azure endpoint override when validating or publishing an Azure model.",
+			},
+			"region": map[string]interface{}{
+				"type":        "string",
+				"description": "Azure or Bedrock region override.",
+			},
+			"api_version": map[string]interface{}{
+				"type":        "string",
+				"description": "Azure API version override.",
+			},
+		},
+		"additionalProperties": true,
+	}
 }
 
 func getStoredProviderAPIKey(keys *StoredProviderKeys, provider string) string {
@@ -1231,7 +1292,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 
 	if err := registerTool(
 		"list_provider_models",
-		"List the available models for a provider using the same shared metadata catalog the frontend uses from /api/llm-config/models/metadata.",
+		"List the frontend-visible models for a provider. Fixed providers use /api/llm-config/models/metadata; dynamic providers use /api/llm-config/providers/{provider}/models.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1275,11 +1336,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 					"type":        "number",
 					"description": "Optional temperature to merge into validation options.",
 				},
-				"options": map[string]interface{}{
-					"type":                 "object",
-					"description":          "Optional model-specific options object, such as reasoning_effort, thinking_level, or Azure endpoint settings.",
-					"additionalProperties": true,
-				},
+				"options": llmToolOptionsSchema("Optional model-specific options object. Use reasoning_effort for Codex CLI and Claude Code effort control, and use list_provider_models to discover supported levels."),
 				"endpoint": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional Azure endpoint override. If omitted, the tool uses the workspace-backed Azure endpoint when available.",
@@ -1455,11 +1512,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 					"type":        "number",
 					"description": "Optional temperature override for the published LLM.",
 				},
-				"options": map[string]interface{}{
-					"type":                 "object",
-					"description":          "Optional model-specific options object, for example reasoning_effort or thinking_level.",
-					"additionalProperties": true,
-				},
+				"options": llmToolOptionsSchema("Optional model-specific options to persist with this published LLM. Include reasoning_effort for Codex CLI or Claude Code when you want the published entry to run at a specific effort level."),
 			},
 			"required": []string{"name", "provider", "model_id"},
 		},

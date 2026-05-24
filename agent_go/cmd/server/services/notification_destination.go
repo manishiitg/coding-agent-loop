@@ -21,8 +21,11 @@ type SlackDest struct {
 	ThreadTS  string
 }
 
-// WhatsAppDest is the WhatsApp-specific destination hint. PhoneE164 is the
-// recipient phone number in E.164 format (e.g. "+919000000000").
+// WhatsAppDest is the WhatsApp-specific destination hint. ChannelID is a
+// WhatsApp JID (e.g. "919000000000@s.whatsapp.net" or a group JID) used when
+// replying to an active bot chat. PhoneE164 is the recipient phone number in
+// E.164 format (e.g. "+919000000000").
 type WhatsAppDest struct {
+	ChannelID string
 	PhoneE164 string
 }

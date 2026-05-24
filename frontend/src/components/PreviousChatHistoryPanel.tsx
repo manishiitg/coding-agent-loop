@@ -41,18 +41,30 @@ export function chatHistoryRuntimeLabel(session: ChatHistorySession): string | u
   return provider
 }
 
-export function chatHistorySupportsNativeResume(session: ChatHistorySession): boolean {
+function chatHistoryRuntimeTransport(session: ChatHistorySession): string {
   const runtime = session.runtime
-  if (!runtime || runtime.kind !== 'coding_agent' || !runtime.resume_supported) return false
-  return !!(runtime.external_session_id?.trim() || runtime.project_dir_id?.trim())
+  const transport = runtime?.transport?.trim().toLowerCase()
+  if (transport) return transport
+  return runtime?.agent_session_handle?.provider?.transport?.trim().toLowerCase() || ''
 }
 
-export function chatHistoryUsesCliRestore(session: ChatHistorySession): boolean {
+export function chatHistorySupportsNativeResume(session: ChatHistorySession): boolean {
   const runtime = session.runtime
   if (!runtime || runtime.kind !== 'coding_agent') return false
+  const handle = runtime.agent_session_handle?.provider
+  return Boolean(
+    runtime.resume_supported ||
+    runtime.external_session_id?.trim() ||
+    runtime.project_dir_id?.trim() ||
+    handle?.native_session_id?.trim() ||
+    handle?.project_dir_id?.trim()
+  )
+}
 
-  const provider = runtime.provider?.trim().toLowerCase()
-  return provider === 'claude-code' || provider === 'gemini-cli' || provider === 'codex-cli' || provider === 'cursor-cli'
+export function chatHistoryUsesTerminalRestore(session: ChatHistorySession): boolean {
+  const runtime = session.runtime
+  if (!runtime || runtime.kind !== 'coding_agent') return false
+  return chatHistoryRuntimeTransport(session) === 'tmux'
 }
 
 export function chatHistoryWorkshopModeLabel(session: ChatHistorySession): string | undefined {

@@ -69,6 +69,8 @@ import type {
   WorkflowBuilderSessionResponse,
   ListTerminalsResponse,
   TerminalSnapshot,
+  StartRestoredTerminalRequest,
+  StartRestoredTerminalResponse,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -761,6 +763,11 @@ export const agentApi = {
     const params: Record<string, string> = {}
     if (workspacePath) params.workspace_path = workspacePath
     const response = await api.delete(`/api/chat-history/sessions/${sessionId}`, { params })
+    return response.data
+  },
+
+  startRestoredTerminal: async (request: StartRestoredTerminalRequest): Promise<StartRestoredTerminalResponse> => {
+    const response = await api.post('/api/chat-history/restored-terminal', request, { timeout: 95000 })
     return response.data
   },
 

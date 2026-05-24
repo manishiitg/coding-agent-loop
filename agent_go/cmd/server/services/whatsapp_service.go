@@ -2352,27 +2352,93 @@ func (w *WhatsAppService) GetFormatter() MessageFormatter {
 }
 
 // SendNotification satisfies NotificationConnector. A notification becomes a
-// DM to the paired account's own number; any button options are flattened
-// into numbered choices the user replies with.
-//
-// dest is currently ignored — destination resolution from per-user prefs is
-// a follow-up. The receiver is always the paired account's own JID for now.
+// WhatsApp message to the explicit chat hint, the user's notification
+// preference, or the paired account's own number; any button options are
+// flattened into numbered choices the user replies with.
 func (w *WhatsAppService) SendNotification(ctx context.Context, uniqueID, message, contextMsg string, opts *ButtonOptions, dest *NotificationDestination) (string, error) {
-	_ = dest
-	ownJID := w.OwnJID()
-	if ownJID.IsEmpty() {
-		return "", fmt.Errorf("whatsapp: not paired — cannot send notification")
-	}
 	body := message
 	if contextMsg != "" {
 		body = body + "\n\n" + contextMsg
 	}
 	if opts != nil {
+		if opts.YesNoOnly {
+			yes := strings.TrimSpace(opts.YesLabel)
+			if yes == "" {
+				yes = "Approve"
+			}
+			no := strings.TrimSpace(opts.NoLabel)
+			if no == "" {
+				no = "Reject"
+			}
+			body += fmt.Sprintf("\n\nReply with: %s or %s", yes, no)
+		}
 		for i, label := range opts.Options {
 			body += fmt.Sprintf("\n%d) %s", i+1, label)
 		}
 	}
-	return w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: ownJID.String()}, body)
+	body += fmt.Sprintf("\n\nRequest ID: %s", uniqueID)
+
+	threadID, ok, err := w.notificationThreadID(dest)
+	if err != nil || !ok {
+		return "", err
+	}
+	return w.SendThreadMessage(ctx, threadID, body)
+}
+
+func (w *WhatsAppService) SendUserNotification(ctx context.Context, message, contextMsg string, dest *NotificationDestination) (string, error) {
+	body := strings.TrimSpace(message)
+	if body == "" {
+		return "", nil
+	}
+	if contextMsg = strings.TrimSpace(contextMsg); contextMsg != "" {
+		body += "\n\n" + contextMsg
+	}
+	threadID, ok, err := w.notificationThreadID(dest)
+	if err != nil || !ok {
+		return "", nil
+	}
+	return w.SendThreadMessage(ctx, threadID, body)
+}
+
+func (w *WhatsAppService) notificationThreadID(dest *NotificationDestination) (ThreadID, bool, error) {
+	if dest != nil && dest.WhatsApp != nil {
+		if channelID := strings.TrimSpace(dest.WhatsApp.ChannelID); channelID != "" {
+			return ThreadID{Platform: "whatsapp", ChannelID: channelID}, true, nil
+		}
+		if phoneJID := whatsappJIDFromPhone(dest.WhatsApp.PhoneE164); phoneJID != "" {
+			return ThreadID{Platform: "whatsapp", ChannelID: phoneJID}, true, nil
+		}
+	}
+	if dest != nil && strings.TrimSpace(dest.UserID) != "" {
+		if pref := getNotificationPreferences(dest.UserID); pref != nil {
+			if pref.WhatsAppDisabled {
+				return ThreadID{}, false, nil
+			}
+			if phoneJID := whatsappJIDFromPhone(pref.WhatsAppPhone); phoneJID != "" {
+				return ThreadID{Platform: "whatsapp", ChannelID: phoneJID}, true, nil
+			}
+		}
+	}
+
+	ownJID := w.OwnJID()
+	if ownJID.IsEmpty() {
+		return ThreadID{}, false, fmt.Errorf("whatsapp: not paired — cannot send notification")
+	}
+	return ThreadID{Platform: "whatsapp", ChannelID: ownJID.String()}, true, nil
+}
+
+func whatsappJIDFromPhone(phone string) string {
+	var b strings.Builder
+	for _, r := range phone {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	digits := b.String()
+	if digits == "" {
+		return ""
+	}
+	return digits + "@" + types.DefaultUserServer
 }
 
 // WhatsAppFormatter converts standard markdown into WhatsApp's formatting

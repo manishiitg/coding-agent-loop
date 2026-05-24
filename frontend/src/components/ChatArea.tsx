@@ -15,7 +15,7 @@ import { WorkflowExplanation } from './WorkflowExplanation'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore, useGlobalPresetStore } from '../stores'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { ModeEmptyState } from './ModeEmptyState'
-import { PreviousChatHistoryPanel, chatHistoryConversationPath, chatHistoryRuntimeLabel, chatHistorySessionTitle, chatHistorySupportsNativeResume, chatHistoryUsesCliRestore, chatHistoryWorkshopModeLabel } from './PreviousChatHistoryPanel'
+import { PreviousChatHistoryPanel, chatHistoryConversationPath, chatHistoryRuntimeLabel, chatHistorySessionTitle, chatHistorySupportsNativeResume, chatHistoryUsesTerminalRestore, chatHistoryWorkshopModeLabel } from './PreviousChatHistoryPanel'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { normalizeEventViewMode, type ChatTab } from '../stores/useChatStore'
@@ -26,6 +26,7 @@ import { summarizeEventForDebug } from '../utils/eventOrdering'
 import { secretsApi } from '../api/secrets'
 import { useSecretsStore } from '../stores'
 import { useSessionExecutionTree } from '../hooks/useSessionExecutionTree'
+import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 import {
   determineModeFlag,
   buildLLMConfigWithApiKeys,
@@ -872,11 +873,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     const path = chatHistoryConversationPath(session)
     const title = chatHistorySessionTitle(session)
-    const useCliRestore = chatHistoryUsesCliRestore(session)
+    const useTerminalRestore = chatHistoryUsesTerminalRestore(session)
     const useNativeResume = chatHistorySupportsNativeResume(session)
     const latestStore = useChatStore.getState()
     const existingContext = latestStore.getTabConfig(targetTabId)?.fileContext || []
-    const shouldAttachFileFallback = !useCliRestore && !useNativeResume
+    const shouldAttachFileFallback = !useTerminalRestore && !useNativeResume
     const nextFileContext = shouldAttachFileFallback
       ? existingContext.some(item => item.path === path)
         ? existingContext
@@ -890,8 +891,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       restoredConversationTitle: title,
       restoredConversationWorkshopModeLabel: chatHistoryWorkshopModeLabel(session),
       restoredConversationRuntimeLabel: chatHistoryRuntimeLabel(session),
-      restoredConversationNativeResume: useCliRestore || useNativeResume,
+      restoredConversationNativeResume: useTerminalRestore || useNativeResume,
     })
+    if (useTerminalRestore) {
+      latestStore.setTabViewMode(targetTabId, 'terminal')
+      startRestoredTransportTerminal(targetTab.sessionId, path)
+    }
     switchTab(targetTabId)
   }, [addToast, switchTab])
 
@@ -2416,6 +2421,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       ? currentTab?.config?.restoredConversationPath?.trim()
       : ''
     const restoredConversationPath = storedRestoredConversationPath || ''
+    const restoredConversationUsesNative = restoredConversationPath
+      ? currentTab?.config?.restoredConversationNativeResume === true
+      : false
     const restoredConversationSummary = currentTab?.config?.restoredConversationSummary?.trim()
     const restoredConversationHasVisibleFallback = restoredConversationPath
       ? effectiveFileContext.some((file) => file.path === restoredConversationPath)
@@ -2432,6 +2440,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       : query.trim()
     const displayQueryWithContext = queryBaseWithContext
     const queryWithContext = `${displayQueryWithContext}${restoredConversationContext}`
+
+    if (restoredConversationUsesNative) {
+      chatStore.setTabViewMode(currentTab.tabId, 'terminal')
+    }
 
     // Decrypt selected secrets for payload (passed separately, never in query text)
       // Merge secrets from tab config (multi-agent) and workflow preset

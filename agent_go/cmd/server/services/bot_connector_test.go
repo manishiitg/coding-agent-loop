@@ -113,6 +113,62 @@ func TestAddRestoredConversationSessionID(t *testing.T) {
 	}
 }
 
+func TestBlockingHumanFeedbackResponseSubmitsNotification(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	manager.SetFollowUpFunc(func(context.Context, map[string]interface{}, string, string) error {
+		t.Fatal("human feedback response should submit to feedback store, not start a follow-up")
+		return nil
+	})
+
+	submitted := make(chan struct {
+		id       string
+		response string
+	}, 1)
+	GetNotificationManager().SetFeedbackResponseFunc(func(uniqueID, response string) error {
+		submitted <- struct {
+			id       string
+			response string
+		}{id: uniqueID, response: response}
+		return nil
+	})
+	t.Cleanup(func() {
+		GetNotificationManager().SetFeedbackResponseFunc(nil)
+	})
+
+	active := &activeBotSession{
+		SessionID:         "session-1",
+		UserID:            "user-1",
+		Status:            chathistory.BotSessionStatusRunning,
+		Platform:          "whatsapp",
+		ThreadID:          ThreadID{Platform: "whatsapp", ChannelID: "dm", ThreadTS: "dm"},
+		awaitingUserInput: true,
+		blockingEventType: "blocking_human_feedback",
+		blockingRequestID: "req-1",
+	}
+
+	manager.handleBlockingResponse(active, BotIncomingMessage{
+		Platform: "whatsapp",
+		Text:     "approve",
+	})
+
+	select {
+	case got := <-submitted:
+		if got.id != "req-1" || got.response != "approve" {
+			t.Fatalf("submitted = %#v, want req-1/approve", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected feedback response submission")
+	}
+
+	active.mu.Lock()
+	awaiting := active.awaitingUserInput
+	requestID := active.blockingRequestID
+	active.mu.Unlock()
+	if awaiting || requestID != "" {
+		t.Fatalf("blocking state not cleared: awaiting=%v requestID=%q", awaiting, requestID)
+	}
+}
+
 func TestThreadedCompletedSessionStartsFreshWithRestoreSessionID(t *testing.T) {
 	manager := NewBotConversationManager(nil, "", "")
 	connector := &testBotConnector{name: "slack", supportsThreads: true}

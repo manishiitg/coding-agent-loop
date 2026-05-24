@@ -837,6 +837,7 @@ export interface ChatHistoryAgentRuntime {
   kind?: string;
   provider?: string;
   model_id?: string;
+  transport?: string;
   external_session_id?: string;
   resume_supported: boolean;
   resume_flag?: string;
@@ -844,6 +845,41 @@ export interface ChatHistoryAgentRuntime {
   workspace_path?: string;
   workshop_mode?: 'workshop' | 'run' | string;
   captured_at?: string;
+  agent_session_handle?: ChatHistoryAgentSessionHandle;
+}
+
+export interface ChatHistoryAgentSessionHandle {
+  agent_id?: string;
+  session_id?: string;
+  owner_id?: string;
+  scope?: string;
+  correlation_id?: string;
+  provider?: ChatHistoryCodingProviderSessionHandle;
+}
+
+export interface ChatHistoryCodingProviderSessionHandle {
+  provider?: string;
+  transport?: string;
+  native_session_id?: string;
+  tmux_session?: string;
+  working_dir?: string;
+  project_dir_id?: string;
+  model?: string;
+  status?: string;
+}
+
+export interface StartRestoredTerminalRequest {
+  session_id: string;
+  restored_conversation_path?: string;
+  restored_conversation_session_id?: string;
+  workspace_path?: string;
+}
+
+export interface StartRestoredTerminalResponse {
+  ok: boolean;
+  started: boolean;
+  reason?: string;
+  terminal?: TerminalSnapshot;
 }
 
 export interface ChatHistoryPreviewMessage {

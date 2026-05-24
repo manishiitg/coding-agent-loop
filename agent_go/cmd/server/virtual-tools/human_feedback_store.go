@@ -55,7 +55,7 @@ func GetHumanFeedbackStore() *HumanFeedbackStore {
 
 // CreateRequest creates a new feedback request
 func (s *HumanFeedbackStore) CreateRequest(uniqueID, message string) error {
-	return s.CreateRequestWithSlack(context.Background(), uniqueID, message, "", nil, nil)
+	return s.CreateRequestWithNotification(context.Background(), uniqueID, message, "", nil, nil)
 }
 
 // CreateRequestWithoutNotification creates a new feedback request without sending any notifications
@@ -92,17 +92,30 @@ func (s *HumanFeedbackStore) CreateRequestWithoutNotification(uniqueID, message 
 	return nil
 }
 
-// CreateRequestWithSlack creates a new feedback request and sends a notification
+// CreateRequestWithNotification creates a new feedback request and sends a notification
 // after 2 minutes if no response arrives via the in-app UI first.
 //
 // dest is an optional destination hint passed through to the notification
 // fanout — connectors use it to override their workspace-wide default
 // (per-user prefs and per-request hints both flow through this). Pass nil
 // for the legacy "use whatever the connectors are configured for" behavior.
-func (s *HumanFeedbackStore) CreateRequestWithSlack(ctx context.Context, uniqueID, message, contextMsg string, buttonOptions *services.ButtonOptions, dest *services.NotificationDestination) error {
+func (s *HumanFeedbackStore) CreateRequestWithNotification(ctx context.Context, uniqueID, message, contextMsg string, buttonOptions *services.ButtonOptions, dest *services.NotificationDestination) error {
 	// First register the request (without notifications)
 	if err := s.CreateRequestWithoutNotification(uniqueID, message); err != nil {
 		return err
+	}
+
+	s.ScheduleNotification(ctx, uniqueID, message, contextMsg, buttonOptions, dest)
+	return nil
+}
+
+// ScheduleNotification sends a delayed connector notification for an existing
+// pending request. It is useful when the caller first decides whether the
+// request was routed to a parent chat and only wants external fanout as the
+// fallback path.
+func (s *HumanFeedbackStore) ScheduleNotification(ctx context.Context, uniqueID, message, contextMsg string, buttonOptions *services.ButtonOptions, dest *services.NotificationDestination) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	// Start delayed notification: wait 2 minutes, then check if user responded
@@ -135,12 +148,12 @@ func (s *HumanFeedbackStore) CreateRequestWithSlack(ctx context.Context, uniqueI
 		}
 
 		if hasResponded {
-			log.Printf("[HUMAN_FEEDBACK_STORE] User already responded to %s, skipping delayed Slack notification", uniqueID)
+			log.Printf("[HUMAN_FEEDBACK_STORE] User already responded to %s, skipping delayed connector notification", uniqueID)
 			return
 		}
 
-		// User hasn't responded after 2 minutes, send Slack notification
-		log.Printf("[HUMAN_FEEDBACK_STORE] No response after 2 minutes for %s, sending Slack notification", uniqueID)
+		// User hasn't responded after 2 minutes, send connector notification
+		log.Printf("[HUMAN_FEEDBACK_STORE] No response after 2 minutes for %s, sending connector notification", uniqueID)
 		notificationManager := services.GetNotificationManager()
 		if notificationManager == nil {
 			log.Printf("[HUMAN_FEEDBACK_STORE] Notification manager not available")
@@ -154,15 +167,13 @@ func (s *HumanFeedbackStore) CreateRequestWithSlack(ctx context.Context, uniqueI
 
 		// Send notification via notification manager (async, non-blocking)
 		// This will send to all enabled connectors (Slack, WhatsApp)
-		if err := notificationManager.SendNotification(context.Background(), uniqueID, message, contextMsg, buttonOptions, dest); err != nil {
+		if err := notificationManager.SendNotification(ctx, uniqueID, message, contextMsg, buttonOptions, dest); err != nil {
 			// Log error but don't fail - this is a reminder notification
 			log.Printf("[HUMAN_FEEDBACK_STORE] Failed to send delayed notification: %v", err)
 		} else {
-			log.Printf("[HUMAN_FEEDBACK_STORE] ✅ Delayed Slack notification sent for %s", uniqueID)
+			log.Printf("[HUMAN_FEEDBACK_STORE] ✅ Delayed connector notification sent for %s", uniqueID)
 		}
 	}()
-
-	return nil
 }
 
 // GetResponse gets a user response for a feedback request (if available)

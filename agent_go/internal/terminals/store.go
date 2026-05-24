@@ -195,6 +195,27 @@ func (s *Store) List(sessionID string) []Snapshot {
 	return out
 }
 
+// SessionHasBusyCodingTmux reports whether the session has a coding-agent tmux
+// terminal whose pane currently looks busy (actively processing). This lets a
+// resumed/launch-only coding agent — which has no server-managed foreground
+// turn — still accept live "steer" input while it's mid-task. Content is the
+// last-refreshed pane snapshot (the frontend probe refreshes inactive tmux
+// terminals every few seconds), so this is an in-memory read, no tmux capture.
+func (s *Store) SessionHasBusyCodingTmux(sessionID string) bool {
+	if s == nil {
+		return false
+	}
+	for _, snapshot := range s.List(sessionID) {
+		if strings.TrimSpace(snapshot.TmuxSession) == "" {
+			continue
+		}
+		if terminalContentLooksBusy(snapshot.Content) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Store) Get(terminalID string) (Snapshot, bool) {
 	terminalID = strings.TrimSpace(terminalID)
 	s.mu.Lock()

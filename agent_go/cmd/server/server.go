@@ -6346,6 +6346,10 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 				log.Printf("[OPENCODE CLI] Saved session ID %s for session %s", sid, sessionID)
 			}
 		}
+		// Persist the agent's MCP server+tool selection so a restore can replay
+		// the same bridge catalog instead of re-deriving it (or coming up empty).
+		runtime.ServerName = strings.TrimSpace(underlyingAgent.GetConfiguredServerName())
+		runtime.SelectedTools = underlyingAgent.GetSelectedTools()
 	}
 	normalizeChatHistoryRuntime(runtime)
 
@@ -9252,17 +9256,26 @@ func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !api.hasActiveTurnCancel(sessionID) {
-		log.Printf("[STEER] Rejecting stale live input for session %s: stored agent exists but no foreground turn is active", sessionID)
-		api.setSessionBusy(sessionID, false)
-		hasRunningBackgroundAgents := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
-		if !hasRunningBackgroundAgents && !api.isSyntheticTurn(sessionID) {
-			api.updateSessionStatus(sessionID, "completed")
-		}
-		if api.startNextTurnFromSteer(w, r, sessionID, req.Message, runningAgent) {
+		// No server-managed foreground turn. A resumed/launch-only coding agent
+		// can still be actively working in its tmux pane; when the pane looks
+		// busy, deliver this as live input to the running CLI rather than
+		// treating the turn as finished. Otherwise it's genuinely idle — mark it
+		// completed and start the next turn from the message.
+		tmuxBusy := api.terminalStore != nil && api.terminalStore.SessionHasBusyCodingTmux(sessionID)
+		if !tmuxBusy {
+			log.Printf("[STEER] Rejecting stale live input for session %s: stored agent exists but no foreground turn is active", sessionID)
+			api.setSessionBusy(sessionID, false)
+			hasRunningBackgroundAgents := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
+			if !hasRunningBackgroundAgents && !api.isSyntheticTurn(sessionID) {
+				api.updateSessionStatus(sessionID, "completed")
+			}
+			if api.startNextTurnFromSteer(w, r, sessionID, req.Message, runningAgent) {
+				return
+			}
+			http.Error(w, "No active foreground turn for this session", http.StatusConflict)
 			return
 		}
-		http.Error(w, "No active foreground turn for this session", http.StatusConflict)
-		return
+		log.Printf("[STEER] No foreground turn for session %s but tmux pane is busy — delivering as live input to the running CLI", sessionID)
 	}
 
 	if err := r.Context().Err(); err != nil {

@@ -41,7 +41,15 @@ func (api *StreamingAPI) canSteerSession(sessionID string) bool {
 	// foreground Go turn has finished; treating that as steerable causes fresh
 	// chat input to be delivered as stale live input instead of starting the next
 	// turn. The active cancel handle is the server-owned foreground-turn proof.
-	return api.hasActiveTurnCancel(sessionID)
+	if api.hasActiveTurnCancel(sessionID) {
+		return true
+	}
+	// A resumed/launch-only coding agent has no server-managed foreground turn,
+	// but its tmux pane can still be actively working. Allow steering when the
+	// pane currently looks busy — the busy-content heuristic stands in for the
+	// missing turn-cancel proof, so live input goes to a working agent rather
+	// than queuing behind a turn that will never complete.
+	return api.terminalStore != nil && api.terminalStore.SessionHasBusyCodingTmux(sessionID)
 }
 
 // --- POLLING API TYPES ---

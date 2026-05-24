@@ -223,7 +223,7 @@ func (api *StreamingAPI) attachRestoredExistingTmuxTerminal(ctx context.Context,
 	}
 	api.upsertRestoredTmuxTerminal(sessionID, runtime, tmuxSession, content)
 	if snapshot, ok := api.findRestoredTerminalSnapshot(sessionID, tmuxSession); ok {
-		enriched := api.enrichTerminalSnapshot(snapshot)
+		enriched := api.enrichTerminalSnapshot(ctx, newTerminalPlanTypeResolver(ctx), snapshot)
 		return &enriched, true, ""
 	}
 	return nil, false, "terminal_snapshot_not_created"
@@ -297,14 +297,14 @@ func (api *StreamingAPI) materializeRestoredTmuxTerminal(ctx context.Context, se
 		// A capture failure shouldn't fail the whole restore if a usable
 		// snapshot already exists — fall back to it rather than erroring out.
 		if snapshot, ok := api.findRestoredTerminalSnapshot(sessionID, tmuxSession); ok {
-			enriched := api.enrichTerminalSnapshot(snapshot)
+			enriched := api.enrichTerminalSnapshot(ctx, newTerminalPlanTypeResolver(ctx), snapshot)
 			return &enriched, true, ""
 		}
 		return nil, false, "tmux_unavailable"
 	}
 	api.upsertRestoredTmuxTerminal(sessionID, runtime, tmuxSession, content)
 	if snapshot, ok := api.findRestoredTerminalSnapshot(sessionID, tmuxSession); ok {
-		enriched := api.enrichTerminalSnapshot(snapshot)
+		enriched := api.enrichTerminalSnapshot(ctx, newTerminalPlanTypeResolver(ctx), snapshot)
 		return &enriched, true, ""
 	}
 	return nil, false, "terminal_snapshot_not_created"
@@ -344,10 +344,33 @@ func (api *StreamingAPI) startRestoredTerminalFromNewAgent(ctx context.Context, 
 		workingDir = codingAgentWorkspaceWorkingDir(workspaceFolder)
 	}
 
+	// Replay the original session's MCP server+tool selection so the coding-agent
+	// bridge exposes the same catalog. A restored agent built with NoServers
+	// leaves get_api_spec empty ("server not available"), so the resumed CLI loses
+	// all its tools. Prefer the selection persisted in the runtime (the exact set
+	// the original agent ran with). For sessions saved before that was persisted
+	// (empty ServerName), fall back to the workflow manifest for this workspace,
+	// then to the full configured set so the bridge catalog is never empty.
+	restoredServerName := strings.TrimSpace(runtime.ServerName)
+	restoredSelectedTools := runtime.SelectedTools
+	if restoredServerName == "" {
+		restoredServerName = mcpclient.AllServers
+		restoredSelectedTools = nil
+		if wsPath := strings.TrimSpace(runtime.WorkspacePath); wsPath != "" {
+			if manifest, found, mErr := ReadWorkflowManifest(ctx, wsPath); mErr == nil && found {
+				if len(manifest.Capabilities.SelectedServers) > 0 {
+					restoredServerName = strings.Join(manifest.Capabilities.SelectedServers, ",")
+				}
+				restoredSelectedTools = manifest.Capabilities.SelectedTools
+			}
+		}
+	}
+
 	claudeCodePersistent, codexPersistent, geminiPersistent, cursorPersistent, agyPersistent, openCodePersistent := codingAgentPersistentInteractiveFlags(provider)
 	cfg := agent.LLMAgentConfig{
 		Name:                                   "restored-terminal-agent",
-		ServerName:                             mcpclient.NoServers,
+		ServerName:                             restoredServerName,
+		SelectedTools:                          restoredSelectedTools,
 		ConfigPath:                             api.mcpConfigPath,
 		Provider:                               llm.Provider(provider),
 		ModelID:                                modelID,

@@ -35,6 +35,7 @@ type multiTurnChatE2ESpec struct {
 	turnOptions      func(ownerSessionID string) []llmtypes.CallOption
 	expectNonZero    bool // provider produces non-zero TotalCostUSD (false for cursor: display-model gap)
 	expectCacheReads bool // provider surfaces cache_read_input_tokens in gi.Additional (true for claude/codex; false for cursor — char-estimated tokens)
+	strictMemory     bool // when true, mustContainAll misses are hard failures, not logged warnings. Enable for providers whose persistent-session contract requires full cross-turn recall (cursor's TUI is supposed to remember its own conversation by definition, so memory loss is a regression). Leave false for providers like codex that legitimately re-invoke fresh per turn.
 	cleanup          func(ctx context.Context)
 }
 
@@ -169,13 +170,20 @@ func runMultiTurnChatE2E(t *testing.T, spec multiTurnChatE2ESpec) {
 		// on the CLI maintaining cross-turn memory in its persistent
 		// session. claude-code's --resume path does; codex exec
 		// reinvokes per turn and is fresher per call; cursor varies
-		// by composer mode. Downgrade these to a logged warning so
-		// memory-shape differences across providers don't fail this
-		// test — what we care about here is the splice/token/cost
-		// plumbing, not the provider's recall quality.
+		// by composer mode. By default downgrade these to a logged
+		// warning so memory-shape differences across providers don't
+		// fail the cross-provider plumbing test. Providers that opt
+		// into spec.strictMemory (cursor today) treat recall misses
+		// as a hard failure — cursor's persistent TUI is supposed to
+		// remember the full conversation by definition, so a missing
+		// earlier token is a real regression, not a provider variance.
 		for _, token := range p.mustContainAll {
 			if !strings.Contains(strings.ToUpper(content), strings.ToUpper(token)) {
-				t.Logf("   ⚠ turn %d: context-recall miss — response missing %q (provider memory may not include earlier turns)\n      content=%q", turn, token, content)
+				if spec.strictMemory {
+					t.Errorf("turn %d: %s persistent-session memory regression — response missing %q from an earlier turn\n   content=%q", turn, spec.providerName, token, content)
+				} else {
+					t.Logf("   ⚠ turn %d: context-recall miss — response missing %q (provider memory may not include earlier turns)\n      content=%q", turn, token, content)
+				}
 			}
 		}
 		// "mustContainAny" is the per-turn-echo check: the model was
@@ -523,6 +531,13 @@ func TestMultiTurnChatE2E_Cursor(t *testing.T) {
 		// cache concept), so the cache-read assertions are skipped.
 		expectNonZero:    false,
 		expectCacheReads: false,
+		// Cursor's persistent tmux TUI is supposed to remember every
+		// turn of the live session — there's no token-budget reason
+		// to drop earlier turns when the convo is <200 tokens total.
+		// Hard-fail recall misses so the truncation bug observed in
+		// production (see task #19) stays visible until the root
+		// cause in the cursor adapter or TUI is fixed.
+		strictMemory: true,
 	})
 }
 

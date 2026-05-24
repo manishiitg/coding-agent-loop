@@ -27,28 +27,26 @@ var knownBuilderInvariantGaps = map[BuilderInvariantID]struct{}{
 	InvTerminalOwnerReconciliation:          {},
 	InvTerminalScrollPreserved:              {},
 	InvTerminalDebugIDsCopyable:             {},
-	InvNoDuplicateUnifiedCompletion:         {},
 	InvProviderVsTerminalCompletionSeparate: {},
 	InvChatLaunch:                           {},
-	InvMultiTurnMemory:                      {},
 	InvTmuxLossContinuation:                 {},
 	InvLiteralPromptText:                    {},
 	InvStalePromptDraft:                     {},
 	InvLiveSteerSameSession:                 {},
 	InvCancellationProducesEvent:            {},
 	InvCancelDoesNotReusePane:               {},
-	InvWorkflowStepCwdMCP:                   {},
 	InvQueryStepResolution:                  {},
 	InvTodoOrchestratorParallel:             {},
 	InvBackgroundAgentVisibility:            {},
 	InvTerminalCenterStates:                 {},
-	InvTerminalLifecycleAPI:                 {},
 	InvTerminalDismissAPI:                   {},
 	InvHistoryResume:                        {},
 	InvUIFormattingSeparation:               {},
 	InvTerminalDynamicResize:                {},
-	// Already certified (have entries in builderInvariantCertifications):
-	//   InvWorkflowDependencyPreflight, InvTerminalCtrlCDelivery
+	// Now certified (have entries in builderInvariantCertifications):
+	//   InvWorkflowDependencyPreflight, InvTerminalCtrlCDelivery,
+	//   InvMultiTurnMemory, InvTerminalLifecycleAPI,
+	//   InvWorkflowStepCwdMCP, InvNoDuplicateUnifiedCompletion
 }
 
 // TestAllBuilderInvariantsHaveRegisteredCertification mirrors the provider-

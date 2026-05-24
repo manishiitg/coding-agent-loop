@@ -20,26 +20,26 @@ import (
 
 // providerManifestEntry is the per-provider metadata returned by the manifest endpoint.
 type providerManifestEntry struct {
-	ID                    string                   `json:"id"`
-	DisplayName           string                   `json:"display_name"`
-	Description           string                   `json:"description"`
-	Kind                  string                   `json:"kind"`
-	IntegrationKind       string                   `json:"integration_kind"`
-	ModelSelectionMode    string                   `json:"model_selection_mode"`
-	AuthDescription       string                   `json:"auth_description"`
-	RuntimeCommand        string                   `json:"runtime_command,omitempty"`
-	RuntimeAvailable      *bool                    `json:"runtime_available,omitempty"`
-	AuthConfigured        bool                     `json:"auth_configured"`
-	AuthSource            string                   `json:"auth_source,omitempty"`
-	Usable                bool                     `json:"usable"`
-	SetupHint             string                   `json:"setup_hint,omitempty"`
-	RequiresAPIKey        bool                     `json:"requires_api_key"`
-	SupportsDynamicModels bool                     `json:"supports_dynamic_models"`
-	DefaultModelID        string                   `json:"default_model_id"`
+	ID                    string                    `json:"id"`
+	DisplayName           string                    `json:"display_name"`
+	Description           string                    `json:"description"`
+	Kind                  string                    `json:"kind"`
+	IntegrationKind       string                    `json:"integration_kind"`
+	ModelSelectionMode    string                    `json:"model_selection_mode"`
+	AuthDescription       string                    `json:"auth_description"`
+	RuntimeCommand        string                    `json:"runtime_command,omitempty"`
+	RuntimeAvailable      *bool                     `json:"runtime_available,omitempty"`
+	AuthConfigured        bool                      `json:"auth_configured"`
+	AuthSource            string                    `json:"auth_source,omitempty"`
+	Usable                bool                      `json:"usable"`
+	SetupHint             string                    `json:"setup_hint,omitempty"`
+	RequiresAPIKey        bool                      `json:"requires_api_key"`
+	SupportsDynamicModels bool                      `json:"supports_dynamic_models"`
+	DefaultModelID        string                    `json:"default_model_id"`
 	Models                []*llmtypes.ModelMetadata `json:"models"`
-	Capabilities          []string                 `json:"capabilities"`
-	APIKeyEnv             string                   `json:"api_key_env,omitempty"`
-	APIKeyURL             string                   `json:"api_key_url,omitempty"`
+	Capabilities          []string                  `json:"capabilities"`
+	APIKeyEnv             string                    `json:"api_key_env,omitempty"`
+	APIKeyURL             string                    `json:"api_key_url,omitempty"`
 }
 
 type integrationKindInfo struct {
@@ -443,7 +443,7 @@ func fetchCursorCLIModels() *dynamicModelsResponse {
 		CustomModelHint:    "Enter a model ID (e.g., gpt-5.5-high)",
 		Source:             "cli_dynamic",
 		CacheTTLSeconds:    300,
-		CachedAt:          time.Now().UTC().Format(time.RFC3339),
+		CachedAt:           time.Now().UTC().Format(time.RFC3339),
 	}
 
 	binPath, err := runtimeAvailableForProvider("cursor-cli")
@@ -586,7 +586,7 @@ func fetchOpenCodeCLIModels() *dynamicModelsResponse {
 		CustomModelHint:    "Enter as provider/model (e.g., openai/gpt-5.1)",
 		Source:             "cli_dynamic",
 		CacheTTLSeconds:    300,
-		CachedAt:          time.Now().UTC().Format(time.RFC3339),
+		CachedAt:           time.Now().UTC().Format(time.RFC3339),
 	}
 
 	binPath, err := runtimeAvailableForProvider("opencode-cli")
@@ -619,11 +619,11 @@ func fetchOpenCodeCLIModels() *dynamicModelsResponse {
 }
 
 type openCodeModelJSON struct {
-	ID           string `json:"id"`
-	ProviderID   string `json:"providerID"`
-	Name         string `json:"name"`
-	Status       string `json:"status"`
-	Cost         struct {
+	ID         string `json:"id"`
+	ProviderID string `json:"providerID"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Cost       struct {
 		Input  float64 `json:"input"`
 		Output float64 `json:"output"`
 	} `json:"cost"`

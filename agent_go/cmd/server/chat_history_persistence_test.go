@@ -585,6 +585,24 @@ func TestCaptureChatHistoryAgentRuntimeStoresCodexThreadID(t *testing.T) {
 	}
 }
 
+func TestCaptureChatHistoryAgentRuntimeStoresAgyConversationID(t *testing.T) {
+	api := &StreamingAPI{}
+
+	runtime := api.captureChatHistoryAgentRuntime("agy-session", "agy-cli", "agy-cli", "Workflow/example", &mcpagent.Agent{
+		AgySessionID: "agy-conversation-1",
+	})
+
+	if runtime == nil {
+		t.Fatal("expected runtime metadata")
+	}
+	if runtime.Kind != "coding_agent" || runtime.Provider != "agy-cli" {
+		t.Fatalf("unexpected runtime identity: %#v", runtime)
+	}
+	if runtime.ExternalSessionID != "agy-conversation-1" || !runtime.ResumeSupported || runtime.ResumeFlag != "--conversation" {
+		t.Fatalf("unexpected Agy resume metadata: %#v", runtime)
+	}
+}
+
 func TestCaptureChatHistoryAgentRuntimePersistsAgentSessionHandle(t *testing.T) {
 	api := &StreamingAPI{}
 
@@ -852,6 +870,25 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresCodex(t *testing.
 	}
 	if agent.CodexProjectDirID != "Workflow/example" {
 		t.Fatalf("agent CodexProjectDirID = %q", agent.CodexProjectDirID)
+	}
+}
+
+func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresAgy(t *testing.T) {
+	api := &StreamingAPI{}
+	agent := &mcpagent.Agent{}
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:              "coding_agent",
+		Provider:          "agy-cli",
+		ExternalSessionID: "agy-conversation-restored",
+		ResumeSupported:   true,
+	}
+
+	if !api.seedCodingAgentRuntimeFromRestoredConversation("agy-ui-session", "agy-cli", "", runtime, agent) {
+		t.Fatal("expected Agy resume state to be seeded")
+	}
+
+	if agent.AgySessionID != "agy-conversation-restored" {
+		t.Fatalf("agent AgySessionID = %q", agent.AgySessionID)
 	}
 }
 

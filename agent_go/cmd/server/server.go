@@ -76,6 +76,7 @@ var (
 	cleanupCodexCLIProviderSessions    = llmproviders.CleanupCodexCLIInteractiveSessions
 	cleanupGeminiCLIProviderSessions   = llmproviders.CleanupGeminiCLIInteractiveSessions
 	cleanupCursorCLIProviderSessions   = llmproviders.CleanupCursorCLIInteractiveSessions
+	cleanupAgyCLIProviderSessions      = llmproviders.CleanupAgyCLIInteractiveSessions
 	cleanupOpenCodeCLIProviderSessions = llmproviders.CleanupOpenCodeCLIInteractiveSessions
 )
 
@@ -1622,6 +1623,7 @@ func cleanupCodingAgentInteractiveSessions(phase string) {
 	cleanupProvider("CODEX-CLI", cleanupCodexCLIProviderSessions)
 	cleanupProvider("GEMINI-CLI", cleanupGeminiCLIProviderSessions)
 	cleanupProvider("CURSOR-CLI", cleanupCursorCLIProviderSessions)
+	cleanupProvider("AGY-CLI", cleanupAgyCLIProviderSessions)
 	cleanupProvider("OPENCODE-CLI", cleanupOpenCodeCLIProviderSessions)
 }
 
@@ -3522,7 +3524,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create new agent with streamCtx instead of r.Context()
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
-		claudeCodePersistentInteractive, codexPersistentInteractive, geminiPersistentInteractive, cursorPersistentInteractive, openCodePersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
+		claudeCodePersistentInteractive, codexPersistentInteractive, geminiPersistentInteractive, cursorPersistentInteractive, agyPersistentInteractive, openCodePersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
 		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
 		chatWorkingFolder := perUserChatsFolder
 		if isWorkflowPhase && workflowPhaseFolder != "" && workflowPhaseFolder != "default_workspace" {
@@ -3563,6 +3565,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			CodexPersistentInteractiveSession:      codexPersistentInteractive,
 			GeminiPersistentInteractiveSession:     geminiPersistentInteractive,
 			CursorPersistentInteractiveSession:     cursorPersistentInteractive,
+			AgyPersistentInteractiveSession:        agyPersistentInteractive,
 			CursorBridgeToolsMode:                  cursorPersistentInteractive,
 			OpenCodePersistentInteractiveSession:   openCodePersistentInteractive,
 			ClaudeCodeTransport:                    claudeCodeTransport,
@@ -6324,6 +6327,13 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 				runtime.ResumeFlag = "--resume"
 				log.Printf("[CURSOR CLI] Saved session ID %s for session %s", sid, sessionID)
 			}
+		case "agy-cli":
+			if sid := strings.TrimSpace(underlyingAgent.AgySessionID); sid != "" {
+				runtime.ExternalSessionID = sid
+				runtime.ResumeSupported = true
+				runtime.ResumeFlag = "--conversation"
+				log.Printf("[AGY CLI] Saved conversation ID %s for session %s", sid, sessionID)
+			}
 		case "opencode-cli":
 			if sid := strings.TrimSpace(underlyingAgent.OpenCodeSessionID); sid != "" {
 				runtime.ExternalSessionID = sid
@@ -6370,6 +6380,8 @@ func codingAgentHasNativeResume(provider string, underlyingAgent *mcpagent.Agent
 		return strings.TrimSpace(underlyingAgent.CodexSessionID) != "" || strings.TrimSpace(underlyingAgent.CodexProjectDirID) != ""
 	case "cursor-cli":
 		return strings.TrimSpace(underlyingAgent.CursorSessionID) != ""
+	case "agy-cli":
+		return strings.TrimSpace(underlyingAgent.AgySessionID) != ""
 	case "opencode-cli":
 		return strings.TrimSpace(underlyingAgent.OpenCodeSessionID) != ""
 	default:
@@ -6457,6 +6469,13 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 		}
 		underlyingAgent.CursorSessionID = externalSessionID
 		log.Printf("[CURSOR CLI] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
+		return true
+	case "agy-cli":
+		if externalSessionID == "" {
+			return false
+		}
+		underlyingAgent.AgySessionID = externalSessionID
+		log.Printf("[AGY CLI] Restored native conversation %s from chat history for session %s", externalSessionID, sessionID)
 		return true
 	case "opencode-cli":
 		if externalSessionID == "" {

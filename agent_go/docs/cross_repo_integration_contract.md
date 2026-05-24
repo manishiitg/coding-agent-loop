@@ -67,6 +67,7 @@ The agent's `executeLLM()` builds provider-specific options and calls
 | gemini-cli | `WithGeminiProjectSettings`, `WithGeminiAdminPolicyPath`, `WithGeminiWorkingDir`, `WithGeminiProjectDirID`, `WithGeminiResumeSessionID` |
 | codex-cli | `WithCodexDisableShellTool`, `WithCodexApprovalPolicy`, `WithCodexConfigOverrides`, `WithCodexResumeSessionID` |
 | cursor-cli | `WithCursorMCPConfig`, `WithCursorApproveMCPs`, `WithCursorForce` |
+| agy-cli | `WithAgyMCPConfig`, `WithAgyDangerouslySkipPermissions`, `WithAgyWorkingDir`, `WithAgyResumeSessionID`, persistent tmux session options |
 | opencode-cli | `WithOpenCodeMCPConfig`, `WithOpenCodeAgent` |
 
 **Universal options (all providers):**
@@ -157,7 +158,7 @@ subsequent turns to resume the conversation.
 
 **Provider-specific session-id keys** (in `GenerationInfo.Additional`):
 - `claude_code_session_id`, `gemini_session_id`, `codex_thread_id`,
-  `cursor_session_id`, `opencode_session_id`
+  `cursor_session_id`, `agy_session_id`, `opencode_session_id`
 
 **Risk:** key drift → mcpagent reads wrong key → resume silently starts a
 fresh session.
@@ -206,6 +207,8 @@ history for subsequent turns. CLI providers receive tool context as text
 
 `WithMCPConfig(json)` → Claude Code `--mcp-config <file>`
 `WithCursorMCPConfig(json)` → Cursor `.cursor/mcp.json`
+`WithAgyMCPConfig(json)` → Antigravity `.agents/mcp_config.json`
+`WithAgyResumeSessionID(id)` → Antigravity `agy --conversation <id>`
 `WithOpenCodeMCPConfig(json)` → OpenCode `opencode.jsonc`
 MCP tool calls work through the bridge end-to-end.
 
@@ -238,9 +241,10 @@ real provider call
 | OpenAI API | Computed | `cost_usd_estimated` |
 | Vertex (Gemini API) | Computed | `cost_usd_estimated` |
 | Codex CLI (structured + tmux) | Computed | `cost_usd_estimated` |
-| Gemini CLI (structured + tmux) | Computed | `cost_usd_estimated` |
+| Gemini CLI (structured) | Computed | `cost_usd_estimated` |
 | Cursor CLI (structured) | Computed | `cost_usd_estimated` |
 | Cursor CLI (tmux) | **No tokens available** (transcript lacks usage) | — |
+| Antigravity CLI (tmux) | Estimated tokens only | `cost_usd_estimated` when rates are available |
 | Bedrock / Azure / Z.AI / Kimi / MiniMax | Computed | `cost_usd_estimated` |
 
 ### IC-area test coverage (cross-stack)
@@ -408,8 +412,13 @@ matrix test fails loudly with which provider broke.
 
 Each contract area should be verified for all supported providers.
 
+**Coding agents (tmux transport):**
+- claude-code, codex-cli, cursor-cli
+- agy-cli is implemented for explicit local/contract runs, but remains hidden
+  from published provider lists until its MCP bridge E2E is certified.
+
 **Coding agents (structured JSON transport):**
-- claude-code, codex-cli, cursor-cli, gemini-cli, opencode-cli
+- gemini-cli, opencode-cli
 
 **API providers (direct HTTP):**
 - anthropic, openai, vertex (Gemini API), bedrock, azure, z-ai, kimi, minimax, openrouter
@@ -448,7 +457,7 @@ Each contract area should be verified for all supported providers.
 | openai | 11 | ⏳ pending |
 | vertex | 10 | ⏳ pending |
 | kimi | 1 (skips without direct moonshot key) | — |
-| claudecode / codexcli / geminicli / cursorcli | structured + tmux transcript tests | ⏳ pending |
+| claudecode / codexcli / geminicli / cursorcli / agycli | structured + tmux transcript/contract tests as supported by each provider | ⏳ pending |
 | bedrock / azure / minimax / zai | code-only, no creds | — |
 
 Cross-adapter matrix test: `inspector_contract_matrix_test.go` (currently anthropic only).

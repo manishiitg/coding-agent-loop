@@ -396,6 +396,8 @@ func providerRuntime(provider string) string {
 		return "gemini"
 	case string(llm.ProviderCursorCLI):
 		return "cursor-agent"
+	case string(llm.ProviderAgyCLI):
+		return "agy"
 	case string(llm.ProviderOpenCodeCLI):
 		return "opencode"
 	}
@@ -439,6 +441,8 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 		return true, "Codex CLI login or CODEX_API_KEY/workspace provider auth"
 	case string(llm.ProviderCursorCLI):
 		return true, "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
+	case string(llm.ProviderAgyCLI):
+		return true, "Antigravity CLI login or AGY_API_KEY/workspace provider auth"
 	case string(llm.ProviderOpenCodeCLI):
 		return true, "OpenCode CLI provider auth or OPENCODE_API_KEY/workspace provider auth"
 	case "opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
@@ -505,6 +509,7 @@ func buildChatLLMCapabilities(keys *llm.ProviderAPIKeys, includeModels bool) []l
 	providers := []string{
 		string(llm.ProviderCodexCLI),
 		string(llm.ProviderCursorCLI),
+		string(llm.ProviderAgyCLI),
 		string(llm.ProviderOpenCodeCLI),
 		string(llm.ProviderClaudeCode),
 		string(llm.ProviderGeminiCLI),

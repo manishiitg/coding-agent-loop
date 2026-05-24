@@ -344,7 +344,7 @@ func (api *StreamingAPI) startRestoredTerminalFromNewAgent(ctx context.Context, 
 		workingDir = codingAgentWorkspaceWorkingDir(workspaceFolder)
 	}
 
-	claudeCodePersistent, codexPersistent, geminiPersistent, cursorPersistent, openCodePersistent := codingAgentPersistentInteractiveFlags(provider)
+	claudeCodePersistent, codexPersistent, geminiPersistent, cursorPersistent, agyPersistent, openCodePersistent := codingAgentPersistentInteractiveFlags(provider)
 	cfg := agent.LLMAgentConfig{
 		Name:                                   "restored-terminal-agent",
 		ServerName:                             mcpclient.NoServers,
@@ -358,6 +358,7 @@ func (api *StreamingAPI) startRestoredTerminalFromNewAgent(ctx context.Context, 
 		CodexPersistentInteractiveSession:      codexPersistent,
 		GeminiPersistentInteractiveSession:     geminiPersistent,
 		CursorPersistentInteractiveSession:     cursorPersistent,
+		AgyPersistentInteractiveSession:        agyPersistent,
 		CursorBridgeToolsMode:                  cursorPersistent,
 		OpenCodePersistentInteractiveSession:   openCodePersistent,
 		ClaudeCodeTransport:                    codingAgentClaudeCodeChatTransport(provider),

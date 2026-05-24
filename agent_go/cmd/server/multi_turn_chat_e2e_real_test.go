@@ -14,6 +14,7 @@ import (
 
 	unifiedevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	agycliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	claudecodeadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	codexcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	cursorcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
@@ -86,9 +87,9 @@ func runMultiTurnChatE2E(t *testing.T, spec multiTurnChatE2ESpec) {
 		tokenC = "WIDGET_C91"
 	)
 	type turnSpec struct {
-		prompt          string
-		mustContainAny  []string // turn must contain at least one of these (case-insensitive); empty = no content assertion
-		mustContainAll  []string // turn must contain ALL of these
+		prompt         string
+		mustContainAny []string // turn must contain at least one of these (case-insensitive); empty = no content assertion
+		mustContainAll []string // turn must contain ALL of these
 	}
 	prompts := []turnSpec{
 		{
@@ -522,5 +523,42 @@ func TestMultiTurnChatE2E_Cursor(t *testing.T) {
 		// cache concept), so the cache-read assertions are skipped.
 		expectNonZero:    false,
 		expectCacheReads: false,
+	})
+}
+
+func TestMultiTurnChatE2E_Agy(t *testing.T) {
+	model := strings.TrimSpace(os.Getenv("AGY_CLI_REAL_E2E_MODEL"))
+	if model == "" {
+		model = "agy-cli"
+	}
+	runMultiTurnChatE2E(t, multiTurnChatE2ESpec{
+		providerName: "agy",
+		providerKey:  "agy-cli",
+		envGate:      "RUN_AGY_CLI_REAL_E2E",
+		extraSkipFn: func(t *testing.T) {
+			if _, err := exec.LookPath("agy"); err != nil {
+				t.Skipf("agy binary not found: %v", err)
+			}
+			if _, err := exec.LookPath("tmux"); err != nil {
+				t.Skipf("tmux binary not found: %v", err)
+			}
+		},
+		newAdapter: func(t *testing.T) llmtypes.Model {
+			return agycliadapter.NewAgyCLIAdapter("", model, &e2eMockLogger{})
+		},
+		turnOptions: func(ownerSessionID string) []llmtypes.CallOption {
+			return []llmtypes.CallOption{
+				agycliadapter.WithInteractiveSessionID(ownerSessionID),
+				agycliadapter.WithPersistentInteractiveSession(true),
+				agycliadapter.WithDangerouslySkipPermissions(true),
+			}
+		},
+		// Antigravity tmux currently uses char-estimated token usage and has no
+		// cache accounting, so keep the cost/cache assertions disabled.
+		expectNonZero:    false,
+		expectCacheReads: false,
+		cleanup: func(ctx context.Context) {
+			_ = agycliadapter.CleanupAgyCLIInteractiveSessions(ctx)
+		},
 	})
 }

@@ -303,6 +303,7 @@ func NewBaseAgent(
 			mcpagent.WithCodexPersistentInteractiveSession(true),
 			mcpagent.WithGeminiPersistentInteractiveSession(true),
 			mcpagent.WithCursorPersistentInteractiveSession(true),
+			mcpagent.WithAgyPersistentInteractiveSession(true),
 		)
 		logger.Info("🔗 Keeping tmux-backed coding-agent session alive after completion",
 			loggerv2.String("agent_name", name))

@@ -63,6 +63,9 @@ func TestProviderManifestExposesOpenCodeSubProviders(t *testing.T) {
 	byID := map[string]bool{}
 	for _, p := range resp.Providers {
 		byID[p.ID] = true
+		if p.ID == "agy-cli" {
+			t.Fatalf("manifest should not publish experimental agy-cli before MCP bridge certification")
+		}
 		if wantEnv, ok := wantEnvVars[p.ID]; ok {
 			if p.APIKeyEnv != wantEnv {
 				t.Errorf("%s: api_key_env = %q, want %q", p.ID, p.APIKeyEnv, wantEnv)
@@ -93,6 +96,9 @@ func TestProviderManifestExposesOpenCodeSubProviders(t *testing.T) {
 	orderJoined := strings.Join(resp.ProviderOrder, ",")
 	if !strings.Contains(orderJoined, "opencode-cli,opencode-cli-kimi") {
 		t.Errorf("provider_order missing or misordered: %v", resp.ProviderOrder)
+	}
+	if strings.Contains(orderJoined, "agy-cli") {
+		t.Errorf("provider_order should not publish experimental agy-cli: %v", resp.ProviderOrder)
 	}
 }
 

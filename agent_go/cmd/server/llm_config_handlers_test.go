@@ -76,3 +76,22 @@ func TestBuildLLMDiscoveryHidesMissingAPIProvider(t *testing.T) {
 		t.Fatalf("candidate count = %d, want 0: %+v", len(response.Candidates), response.Candidates)
 	}
 }
+
+func TestAgyCLIIsNotPublishedByDefault(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+
+	if isPublishedLLMProviderAllowed("agy-cli") {
+		t.Fatal("agy-cli should stay hidden from published provider lists until MCP bridge certification lands")
+	}
+	for _, provider := range getSupportedProviders() {
+		if provider == "agy-cli" {
+			t.Fatalf("supported providers include unpublished agy-cli: %v", getSupportedProviders())
+		}
+	}
+	response := buildLLMDiscovery(context.Background())
+	for _, candidate := range response.Candidates {
+		if candidate.Provider == "agy-cli" {
+			t.Fatalf("discovery candidate includes unpublished agy-cli: %+v", candidate)
+		}
+	}
+}

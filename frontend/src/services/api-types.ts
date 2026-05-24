@@ -16,6 +16,7 @@ export type LLMProvider =
   | 'gemini-cli'
   | 'codex-cli'
   | 'cursor-cli'
+  | 'agy-cli'
   | 'opencode-cli'
   // OpenCode CLI sub-provider tiles. Each routes through the `opencode`
   // binary with sub-provider-scoped credentials and a curated model
@@ -77,7 +78,7 @@ export interface LLMConfiguration {
   model_id: string
   fallback_models: string[]
   cross_provider_fallback?: {
-    provider: 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'cursor-cli' | 'opencode-cli'
+    provider: 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'cursor-cli' | 'agy-cli' | 'opencode-cli'
     models: string[]
   }
   // API keys for each provider

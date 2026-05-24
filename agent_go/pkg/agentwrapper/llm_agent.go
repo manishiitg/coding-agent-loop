@@ -199,6 +199,7 @@ type LLMAgentConfig struct {
 	CodexPersistentInteractiveSession      bool
 	GeminiPersistentInteractiveSession     bool
 	CursorPersistentInteractiveSession     bool
+	AgyPersistentInteractiveSession        bool
 	CursorBridgeToolsMode                  bool
 	OpenCodePersistentInteractiveSession   bool
 	ClaudeCodeTransport                    string
@@ -447,6 +448,10 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.CursorPersistentInteractiveSession {
 		agentOptions = append(agentOptions, mcpagent.WithCursorPersistentInteractiveSession(true))
 		logger.Info("🔗 Cursor CLI persistent interactive tmux session enabled")
+	}
+	if config.AgyPersistentInteractiveSession {
+		agentOptions = append(agentOptions, mcpagent.WithAgyPersistentInteractiveSession(true))
+		logger.Info("🔗 Antigravity CLI persistent interactive tmux session enabled")
 	}
 	if config.CursorBridgeToolsMode {
 		agentOptions = append(agentOptions, mcpagent.WithCursorBridgeToolsMode(true))

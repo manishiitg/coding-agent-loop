@@ -26,11 +26,13 @@ var cliProviders = map[string]struct{}{
 	"gemini-cli":   {},
 	"codex-cli":    {},
 	"cursor-cli":   {},
+	"agy-cli":      {},
 	"opencode-cli": {},
 }
 
 // IsCLIProvider reports whether the given provider ID is a CLI agent
-// runtime (claude-code, gemini-cli, codex-cli, cursor-cli, opencode-cli). The lookup is
+// runtime (claude-code, gemini-cli, codex-cli, cursor-cli, agy-cli,
+// opencode-cli). The lookup is
 // case-insensitive and whitespace-trimmed for resilience against config
 // drift.
 func IsCLIProvider(provider string) bool {

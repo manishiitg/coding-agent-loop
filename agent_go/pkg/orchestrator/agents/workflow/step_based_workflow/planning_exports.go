@@ -1641,6 +1641,20 @@ func RegisterRunFullWorkflowTool(
 			if err := session.controller.LoadPlanForWorkshop(ctx); err != nil {
 				return fmt.Sprintf("Failed to load plan: %v", err), nil
 			}
+			// Preflight: refuse to launch when the workflow declares MCP
+			// servers that the host config doesn't actually provide.
+			// Without this the run silently fails later — locked scripts hit
+			// "SCOPE DENIED" and the cursor fallback returns 0 tokens after
+			// minutes of waiting. Fail-fast with one clear punch list instead.
+			if missing, err := validateWorkflowDependencies(ctx, session, cfg.MCPConfigPath, logger); err != nil {
+				logger.Warn(fmt.Sprintf("preflight: dependency check skipped (%v) — proceeding without it", err))
+			} else if len(missing) > 0 {
+				workflowLabel := ""
+				if cfg.WorkspacePath != "" {
+					workflowLabel = cfg.WorkspacePath
+				}
+				return formatMissingDependencies(workflowLabel, missing, cfg.MCPConfigPath), nil
+			}
 			if session.controller.approvedPlan != nil {
 				var missingSteps []string
 				var routingStepHints []string

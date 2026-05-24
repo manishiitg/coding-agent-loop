@@ -6277,6 +6277,20 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 			if dirID := strings.TrimSpace(underlyingAgent.CodexProjectDirID); dirID != "" {
 				runtime.ProjectDirID = dirID
 			}
+		case "cursor-cli":
+			if sid := strings.TrimSpace(underlyingAgent.CursorSessionID); sid != "" {
+				runtime.ExternalSessionID = sid
+				runtime.ResumeSupported = true
+				runtime.ResumeFlag = "--resume"
+				log.Printf("[CURSOR CLI] Saved session ID %s for session %s", sid, sessionID)
+			}
+		case "opencode-cli":
+			if sid := strings.TrimSpace(underlyingAgent.OpenCodeSessionID); sid != "" {
+				runtime.ExternalSessionID = sid
+				runtime.ResumeSupported = true
+				runtime.ResumeFlag = "--session"
+				log.Printf("[OPENCODE CLI] Saved session ID %s for session %s", sid, sessionID)
+			}
 		}
 	}
 
@@ -6313,6 +6327,10 @@ func codingAgentHasNativeResume(provider string, underlyingAgent *mcpagent.Agent
 		return strings.TrimSpace(underlyingAgent.GeminiSessionID) != "" || strings.TrimSpace(underlyingAgent.GeminiProjectDirID) != ""
 	case "codex-cli":
 		return strings.TrimSpace(underlyingAgent.CodexSessionID) != "" || strings.TrimSpace(underlyingAgent.CodexProjectDirID) != ""
+	case "cursor-cli":
+		return strings.TrimSpace(underlyingAgent.CursorSessionID) != ""
+	case "opencode-cli":
+		return strings.TrimSpace(underlyingAgent.OpenCodeSessionID) != ""
 	default:
 		return false
 	}
@@ -6392,6 +6410,20 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 			underlyingAgent.CodexProjectDirID = projectDirID
 		}
 		return externalSessionID != "" || projectDirID != ""
+	case "cursor-cli":
+		if externalSessionID == "" {
+			return false
+		}
+		underlyingAgent.CursorSessionID = externalSessionID
+		log.Printf("[CURSOR CLI] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
+		return true
+	case "opencode-cli":
+		if externalSessionID == "" {
+			return false
+		}
+		underlyingAgent.OpenCodeSessionID = externalSessionID
+		log.Printf("[OPENCODE CLI] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
+		return true
 	}
 	return false
 }

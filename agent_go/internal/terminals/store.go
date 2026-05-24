@@ -251,6 +251,33 @@ func (s *Store) MarkFailed(terminalID string) (Snapshot, bool) {
 	return s.markTerminalState(terminalID, "failed")
 }
 
+// MarkStale flags a terminal whose backing tmux session has disappeared without
+// a lifecycle completion event. Unlike MarkCompleted/MarkFailed it does not set
+// a forcedInactive override, so a later successful capture can still reclassify
+// the pane through RefreshContent's stale-recovery path. It is idempotent so the
+// frontend's inactive-terminal probe can stop once the snapshot reads stale.
+func (s *Store) MarkStale(terminalID string) (Snapshot, bool) {
+	terminalID = strings.TrimSpace(terminalID)
+	if s == nil || terminalID == "" {
+		return Snapshot{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return Snapshot{}, false
+	}
+	if snapshot.State == "stale" && !snapshot.Active {
+		return snapshot, true
+	}
+	now := time.Now()
+	snapshot.Active = false
+	snapshot.State = "stale"
+	snapshot.UpdatedAt = now
+	s.byID[terminalID] = snapshot
+	return snapshot, true
+}
+
 func (s *Store) markTerminalState(terminalID, state string) (Snapshot, bool) {
 	terminalID = strings.TrimSpace(terminalID)
 	if s == nil || terminalID == "" {
@@ -322,6 +349,13 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 		} else if terminalStateFromContent(content, false) == "failed" {
 			snapshot.State = "failed"
 		}
+	} else if contentChanged && snapshot.State == "completed" && terminalContentLooksBusy(content) {
+		// Even force-completed terminals should restart when the tmux pane shows a
+		// new process running (e.g. after Claude Code compaction). Clear the
+		// forcedInactive entry so the terminal can participate in normal lifecycle.
+		delete(s.forcedInactive, terminalID)
+		snapshot.Active = true
+		snapshot.State = "running"
 	}
 	if contentChanged || snapshot.UpdatedAt.IsZero() {
 		snapshot.UpdatedAt = now

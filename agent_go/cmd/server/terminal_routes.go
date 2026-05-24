@@ -150,6 +150,13 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 			if refreshed, ok := api.terminalStore.RefreshContent(snapshot.TerminalID, content); ok {
 				snapshot = refreshed
 			}
+		} else if isMissingTmuxTargetError(err) && !snapshot.Active {
+			// The backing tmux session is gone and no lifecycle event will
+			// arrive to close it. Mark the snapshot stale so the frontend's
+			// inactive-terminal probe stops capturing a dead session every 3s.
+			if stale, ok := api.terminalStore.MarkStale(snapshot.TerminalID); ok {
+				snapshot = stale
+			}
 		}
 	}
 

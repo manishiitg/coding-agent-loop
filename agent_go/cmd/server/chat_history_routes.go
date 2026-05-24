@@ -280,20 +280,12 @@ func (api *StreamingAPI) materializeRestoredTmuxTerminal(ctx context.Context, se
 	if tmuxSession == "" {
 		return nil, false, "tmux_session_missing"
 	}
-	if snapshot, ok := api.findRestoredTerminalSnapshot(sessionID, tmuxSession); ok {
-		if snapshot.WorkflowPath == "" && strings.TrimSpace(runtime.WorkspacePath) != "" {
-			// Terminal exists but is missing workflow_path — update it so the workflow-mode
-			// filter (terminalMatchesWorkflow) can show it. Pass empty content to avoid
-			// an unnecessary tmux capture.
-			api.upsertRestoredTmuxTerminal(sessionID, runtime, tmuxSession, snapshot.Content)
-			if updated, ok := api.findRestoredTerminalSnapshot(sessionID, tmuxSession); ok {
-				snapshot = updated
-			}
-		}
-		enriched := api.enrichTerminalSnapshot(snapshot)
-		return &enriched, true, ""
-	}
 
+	// Always capture the live pane and upsert, regardless of whether a bare
+	// snapshot already exists. The agent's own event stream may have created a
+	// snapshot without workflow_path / provider metadata (which the
+	// workflow-mode filter would hide), and the captured content is the most
+	// current view of the restored session.
 	captureCtx, cancel := context.WithTimeout(ctx, terminalTmuxActionTimeout)
 	defer cancel()
 	content, err := captureTerminalPane(captureCtx, tmuxSession)
@@ -302,6 +294,12 @@ func (api *StreamingAPI) materializeRestoredTmuxTerminal(ctx context.Context, se
 			return nil, false, "tmux_session_not_running"
 		}
 		api.logRestoredTerminalf("Failed to capture restored tmux session %s for chat session %s: %v", tmuxSession, sessionID, err)
+		// A capture failure shouldn't fail the whole restore if a usable
+		// snapshot already exists — fall back to it rather than erroring out.
+		if snapshot, ok := api.findRestoredTerminalSnapshot(sessionID, tmuxSession); ok {
+			enriched := api.enrichTerminalSnapshot(snapshot)
+			return &enriched, true, ""
+		}
 		return nil, false, "tmux_unavailable"
 	}
 	api.upsertRestoredTmuxTerminal(sessionID, runtime, tmuxSession, content)
@@ -440,7 +438,7 @@ func (api *StreamingAPI) upsertRestoredTmuxTerminal(sessionID string, runtime *C
 					},
 				},
 				Content:    content,
-				ChunkIndex: int(now.Unix()),
+				ChunkIndex: 0,
 			},
 		},
 	})

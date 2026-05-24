@@ -621,11 +621,10 @@ func isTerminalBusyLine(line string) bool {
 		return true
 	}
 	if strings.Contains(lower, "esc to cancel") || strings.Contains(lower, "esc to interrupt") {
-		return strings.Contains(lower, "thinking") ||
-			strings.Contains(lower, "working") ||
-			strings.Contains(lower, "processing") ||
-			strings.Contains(lower, "running") ||
-			strings.Contains(lower, "executing")
+		// Bare "esc to interrupt" always means the agent is active — no secondary
+		// keyword required. The idle-prompt detector short-circuits on looksBusy,
+		// so a false positive here only delays a "completed" transition.
+		return true
 	}
 	if strings.HasPrefix(trimmed, "⊷") || strings.HasPrefix(trimmed, "⠇") {
 		return strings.Contains(lower, "thinking") ||

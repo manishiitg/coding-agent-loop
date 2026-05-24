@@ -2073,6 +2073,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const fetchRequestSeqRef = useRef(0)
   const detailRequestSeqRef = useRef(0)
   const terminalsRef = useRef<TerminalSnapshot[]>([])
+  const terminalDetailCacheRef = useRef<Record<string, TerminalSnapshot>>({})
+  const probeInFlightRef = useRef(false)
   const emptyResponseCountRef = useRef(0)
   const lastFetchScopeRef = useRef<string | null>(null)
   const fastPollUntilRef = useRef(0)
@@ -2091,6 +2093,24 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   useEffect(() => {
     terminalsRef.current = terminals
   }, [terminals])
+
+  useEffect(() => {
+    terminalDetailCacheRef.current = terminalDetailCache
+  }, [terminalDetailCache])
+
+  // Insert a freshly-fetched terminal detail into the LRU cache. Keyed by
+  // terminalDetailCacheKey (id:chunk_index:updated_at), so an identical key is a
+  // no-op — the body is already current.
+  const cacheTerminalDetail = useCallback((detail: TerminalSnapshot) => {
+    setTerminalDetailCache(current => {
+      const key = terminalDetailCacheKey(detail)
+      if (current[key]) return current
+      const next: Record<string, TerminalSnapshot> = { ...current, [key]: detail }
+      const entries = Object.entries(next)
+      if (entries.length <= TERMINAL_DETAIL_CACHE_LIMIT) return next
+      return Object.fromEntries(entries.slice(entries.length - TERMINAL_DETAIL_CACHE_LIMIT)) as Record<string, TerminalSnapshot>
+    })
+  }, [])
 
   const copyTerminalDebug = useCallback(async (terminal: TerminalSnapshot) => {
     await navigator.clipboard.writeText(terminalDebugText(terminal))
@@ -2562,23 +2582,19 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     if (!selectedTerminal) {
       return
     }
+    // Read the cache through a ref so this effect doesn't re-run on every
+    // cache write (the rail poll churns the cache ~27x/sec); it should only
+    // re-fire when the selected terminal's identity or chunk_index changes.
     const detailCacheKey = terminalDetailCacheKey(selectedTerminal)
-    if (terminalDetailCache[detailCacheKey]) return
+    if (terminalDetailCacheRef.current[detailCacheKey]) return
     const requestSeq = detailRequestSeqRef.current + 1
     detailRequestSeqRef.current = requestSeq
     let cancelled = false
+    probeInFlightRef.current = true
     agentApi.getTerminal(selectedTerminal.terminal_id)
       .then(detail => {
         if (!cancelled && detailRequestSeqRef.current === requestSeq && terminalPaneKey(detail) === selectedTerminalKey) {
-          setTerminalDetailCache(current => {
-            const next: Record<string, TerminalSnapshot> = {
-              ...current,
-              [terminalDetailCacheKey(detail)]: detail,
-            }
-            const entries = Object.entries(next)
-            if (entries.length <= TERMINAL_DETAIL_CACHE_LIMIT) return next
-            return Object.fromEntries(entries.slice(entries.length - TERMINAL_DETAIL_CACHE_LIMIT)) as Record<string, TerminalSnapshot>
-          })
+          cacheTerminalDetail(detail)
         }
       })
       .catch(err => {
@@ -2586,10 +2602,13 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
           console.warn('Failed to load terminal detail', err)
         }
       })
+      .finally(() => {
+        probeInFlightRef.current = false
+      })
     return () => {
       cancelled = true
     }
-  }, [selectedTerminal?.terminal_id, selectedTerminal?.chunk_index, selectedTerminal?.updated_at, selectedTerminalKey, terminalDetailCache])
+  }, [selectedTerminal?.terminal_id, selectedTerminal?.chunk_index, selectedTerminal?.updated_at, selectedTerminalKey, cacheTerminalDetail])
 
   // For inactive tmux terminals (e.g. after Claude Code context compaction), there
   // are no streaming events to bump chunk_index, so the detail cache never expires
@@ -2601,26 +2620,42 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   useEffect(() => {
     const terminalId = selectedTerminalView?.terminal_id
     const tmuxSession = selectedTerminalView?.tmux_session
-    const isInactiveTmux = !selectedTerminalView?.active && !!tmuxSession
+    const state = selectedTerminalView ? terminalState(selectedTerminalView) : ''
+    // Stale/failed terminals have no live tmux pane to recapture; probing them
+    // just loops over a dead session (the backend now marks such GETs stale).
+    const isInactiveTmux = !selectedTerminalView?.active && !!tmuxSession && state !== 'stale' && state !== 'failed'
     if (!terminalId || !isInactiveTmux) return
 
-    const probe = () => {
-      void agentApi.getTerminal(terminalId, { content: 'tmux' }).then(detail => {
-        setTerminalDetailCache(current => {
-          const key = terminalDetailCacheKey(detail)
-          if (current[key]) return current
-          const next = { ...current, [key]: detail }
-          const entries = Object.entries(next)
-          if (entries.length <= TERMINAL_DETAIL_CACHE_LIMIT) return next
-          return Object.fromEntries(entries.slice(entries.length - TERMINAL_DETAIL_CACHE_LIMIT)) as Record<string, typeof detail>
-        })
-        void fetchTerminals()
-      }).catch(() => { /* stale or closed session — ignore */ })
+    let stopped = false
+    let interval = 0
+    const stop = () => {
+      if (stopped) return
+      stopped = true
+      window.clearInterval(interval)
     }
 
-    const interval = window.setInterval(probe, 3000)
-    return () => window.clearInterval(interval)
-  }, [selectedTerminalView?.terminal_id, selectedTerminalView?.tmux_session, selectedTerminalView?.active, fetchTerminals])
+    const probe = () => {
+      // Skip if a capture (probe or detail fetch) is still in flight — two
+      // concurrent capture-pane calls on the same tmux session race.
+      if (probeInFlightRef.current) return
+      probeInFlightRef.current = true
+      void agentApi.getTerminal(terminalId, { content: 'tmux' }).then(detail => {
+        cacheTerminalDetail(detail)
+        // The detail carries the freshest active/state — react to it directly
+        // instead of waiting a full list-poll cycle for selectedTerminalView to
+        // catch up. Re-activated (compaction resumed) or dead (stale) ⇒ stop.
+        const detailState = terminalState(detail)
+        if (detail.active || detailState === 'stale' || detailState === 'failed') {
+          stop()
+        }
+        void fetchTerminals()
+      }).catch(() => { /* stale or closed session — ignore */ })
+        .finally(() => { probeInFlightRef.current = false })
+    }
+
+    interval = window.setInterval(probe, 3000)
+    return () => stop()
+  }, [selectedTerminalView?.terminal_id, selectedTerminalView?.tmux_session, selectedTerminalView?.active, cacheTerminalDetail, fetchTerminals])
 
   const handleTerminalScroll = useCallback(() => {
     const el = terminalOutputRef.current

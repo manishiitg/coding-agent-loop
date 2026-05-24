@@ -11,13 +11,14 @@ import { useRunningWorkflowsStore, useShowRunningDrawer } from '../../stores/use
 import { useAppStore } from '../../stores/useAppStore'
 import { sanitizeDisplayNameForFolder } from '../../utils/workflowUtils'
 import { logger } from '../../utils/logger'
+import { startRestoredTransportTerminal } from '../../utils/restoredTerminal'
 import {
   PreviousChatHistoryPanel,
   chatHistoryConversationPath,
   chatHistoryRuntimeLabel,
   chatHistorySessionTitle,
   chatHistorySupportsNativeResume,
-  chatHistoryUsesCliRestore,
+  chatHistoryUsesTerminalRestore,
   chatHistoryWorkshopModeLabel,
 } from '../PreviousChatHistoryPanel'
 import {
@@ -156,6 +157,8 @@ const WorkflowPreviousChatsPanel: React.FC<{
   onHasChatsChange?: (hasChats: boolean) => void
 }> = ({ workspacePath, onHasChatsChange }) => {
   const activeTabId = useChatStore(state => state.activeTabId)
+  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
+  const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
   const activeSessionId = useChatStore(state => {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : undefined
@@ -173,17 +176,45 @@ const WorkflowPreviousChatsPanel: React.FC<{
 
     let targetTabId = activeTabId
     const chatStore = useChatStore.getState()
-    const targetTab = chatStore.chatTabs[targetTabId]
+    let targetTab = chatStore.chatTabs[targetTabId]
+    const targetPresetId = targetTab?.metadata?.presetQueryId
+
+    if (
+      !targetTab ||
+      targetTab.metadata?.mode !== 'workflow' ||
+      (activePresetId && targetPresetId && targetPresetId !== activePresetId)
+    ) {
+      targetTabId = await chatStore.createChatTab('Workflow Builder', {
+        mode: 'workflow',
+        phaseId: 'workflow-builder',
+        phaseName: 'Workflow Builder',
+        presetQueryId: activePresetId || undefined,
+      })
+      targetTab = useChatStore.getState().chatTabs[targetTabId]
+    }
+
+    if (!targetTab) {
+      addToast('Failed to resume previous chat', 'error')
+      return
+    }
+
+    if (activePresetId && targetTab.metadata?.presetQueryId !== activePresetId) {
+      chatStore.setTabMetadata(targetTabId, {
+        phaseId: targetTab.metadata?.phaseId || 'workflow-builder',
+        phaseName: targetTab.metadata?.phaseName || 'Workflow Builder',
+        presetQueryId: activePresetId,
+      })
+    }
 
     if (targetTab?.sessionId === session.session_id) {
       chatStore.resetTabChat(targetTabId)
     }
 
     const path = chatHistoryConversationPath(session)
-    const useCliRestore = chatHistoryUsesCliRestore(session)
+    const useTerminalRestore = chatHistoryUsesTerminalRestore(session)
     const useNativeResume = chatHistorySupportsNativeResume(session)
     const existingContext = useChatStore.getState().getTabConfig(targetTabId)?.fileContext || []
-    const shouldAttachFileFallback = !useCliRestore && !useNativeResume
+    const shouldAttachFileFallback = !useTerminalRestore && !useNativeResume
     const nextFileContext = shouldAttachFileFallback
       ? existingContext.some(item => item.path === path)
         ? existingContext
@@ -204,9 +235,16 @@ const WorkflowPreviousChatsPanel: React.FC<{
       restoredConversationTitle: chatHistorySessionTitle(session),
       restoredConversationWorkshopModeLabel: chatHistoryWorkshopModeLabel(session),
       restoredConversationRuntimeLabel: chatHistoryRuntimeLabel(session),
-      restoredConversationNativeResume: useCliRestore || useNativeResume,
+      restoredConversationNativeResume: useTerminalRestore || useNativeResume,
     })
-  }, [activeTabId, addToast, setTabConfig])
+    if (useTerminalRestore) {
+      chatStore.setTabViewMode(targetTabId, 'terminal')
+      chatStore.switchTab(targetTabId)
+      setShowChatArea(true)
+      const restoredTab = useChatStore.getState().chatTabs[targetTabId]
+      startRestoredTransportTerminal(restoredTab?.sessionId, path)
+    }
+  }, [activePresetId, activeTabId, addToast, setShowChatArea, setTabConfig])
 
   return (
     <PreviousChatHistoryPanel
@@ -1207,6 +1245,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 preloadedEvents: builderSession.events || [],
                 lastProcessedIndex: builderSession.last_processed_index,
               })
+              // Eagerly restore the coding-agent tmux terminal so it's ready
+              // whether or not this session's tab already exists in localStorage.
+              // The backend returns started=false silently for non-tmux sessions.
+              if (builderSession.conversation_path) {
+                startRestoredTransportTerminal(builderSession.session_id, builderSession.conversation_path)
+              }
             }
           } catch (error) {
             console.warn('[WorkflowReconnect] Failed to restore workflow builder session:', error)

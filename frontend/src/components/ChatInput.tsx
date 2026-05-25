@@ -1892,6 +1892,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [isMultiAgentMode, showWorkflowsOverview, addToast])
 
+  // Select a multi-agent tab on mode entry, not just on input focus. After a
+  // reload or mode switch, activeTabId can be null or point to a non-multi-agent
+  // tab, leaving an existing tab (e.g. "Agent Chat 1") visible but unselected —
+  // so the chat input renders but typing does nothing. Select-only here (never
+  // create) to avoid racing store rehydration / making duplicate tabs.
+  useEffect(() => {
+    if (!isMultiAgentMode || showWorkflowsOverview || isOrganizationAssistant) return
+    const store = useChatStore.getState()
+    const active = store.activeTabId ? store.chatTabs[store.activeTabId] : null
+    const activeIsVisibleMultiAgent =
+      active?.metadata?.mode === 'multi-agent' && active.metadata?.isOrganizationAssistant !== true
+    if (activeIsVisibleMultiAgent) return
+    const modeTabs = Object.values(store.chatTabs)
+      .filter(tab => tab.metadata?.mode === 'multi-agent' && tab.metadata?.isOrganizationAssistant !== true)
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+    if (modeTabs.length > 0) {
+      store.switchTab(modeTabs[0].tabId)
+    }
+  }, [isMultiAgentMode, showWorkflowsOverview, isOrganizationAssistant, activeTabId])
+
   // If the user has already typed surrounding text, keep pasted content out of
   // the textarea and insert a stable marker the message can refer to.
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -2832,7 +2852,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       restoredConversationRuntimeLabel: resumeChatRuntimeLabel(session),
       restoredConversationNativeResume: useTerminalRestore || useNativeResume,
     })
-    if (useTerminalRestore) {
+    if (useTerminalRestore || useNativeResume) {
       const latestStore = useChatStore.getState()
       latestStore.setTabViewMode(activeTabId, 'terminal')
       const restoredTab = latestStore.chatTabs[activeTabId]

@@ -893,7 +893,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       restoredConversationRuntimeLabel: chatHistoryRuntimeLabel(session),
       restoredConversationNativeResume: useTerminalRestore || useNativeResume,
     })
-    if (useTerminalRestore) {
+    // Both tmux terminal-restore and native-resume coding sessions reattach into
+    // a tmux terminal on the backend, so open the terminal view for either —
+    // otherwise native-resume shows the banner but never surfaces the terminal.
+    if (useTerminalRestore || useNativeResume) {
       latestStore.setTabViewMode(targetTabId, 'terminal')
       startRestoredTransportTerminal(targetTab.sessionId, path)
     }

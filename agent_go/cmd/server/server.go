@@ -4027,56 +4027,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for %s", len(workspaceTools), workspaceToolModeLabel)
 
-			// Register browser tool if browser access is enabled
+			// Register browser tool if browser access is enabled. Shared with the
+			// restore path via registerCodingBrowserTools; the folder guard is
+			// supplied as a closure so this path's rich grant-based guard is applied
+			// verbatim (the shared helper never computes guards itself).
 			if enableBrowserAccess {
-				browserTools := virtualtools.CreateWorkspaceBrowserTools()
-				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(req))
-				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
-
-				// Apply same folder guard as workspace tools (reuse fileContextWriteFolders/workflowReadOnlyFolders from above)
-				if !isWorkflowPhase {
-					additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
-					additionalFolders = append(additionalFolders, fileContextWriteFolders...)
-					browserExecutors = wrapExecutorsWithPlanFolderGuard(browserExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
-				} else {
+				browserGuard := func(execs codingAgentToolExecutors) codingAgentToolExecutors {
+					if !isWorkflowPhase {
+						additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
+						additionalFolders = append(additionalFolders, fileContextWriteFolders...)
+						return wrapExecutorsWithPlanFolderGuard(execs, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
+					}
 					browserExtraFolders := append([]string{}, resolvedGrants.WriteFolders...)
 					browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
-					browserExecutors = wrapExecutorsWithWorkflowPhaseFolderGuard(browserExecutors, workflowPhaseFolder, workflowReadOnlyFolders, fileContextBlockedWriteFolders, browserExtraFolders...)
+					return wrapExecutorsWithWorkflowPhaseFolderGuard(execs, workflowPhaseFolder, workflowReadOnlyFolders, fileContextBlockedWriteFolders, browserExtraFolders...)
 				}
-				log.Printf("[BROWSER TOOLS] Applied folder guard to browser tools")
-
-				for _, tool := range browserTools {
-					if tool.Function == nil {
-						continue
-					}
-					toolName := tool.Function.Name
-					if executor, exists := browserExecutors[toolName]; exists {
-						var params map[string]interface{}
-						if tool.Function.Parameters != nil {
-							paramsBytes, err := json.Marshal(tool.Function.Parameters)
-							if err == nil {
-								json.Unmarshal(paramsBytes, &params)
-							}
-						}
-						if params == nil {
-							log.Printf("[BROWSER TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
-							continue
-						}
-
-						if err := underlyingAgent.RegisterCustomTool(
-							toolName,
-							tool.Function.Description,
-							params,
-							executor,
-							browserCategory,
-						); err != nil {
-							log.Printf("[BROWSER TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
-							continue
-						}
-						log.Printf("[BROWSER TOOLS] Registered browser tool: %s (category: %s)", toolName, browserCategory)
-					}
+				if err := registerCodingBrowserTools(underlyingAgent, sessionID, getCdpPort(req), browserGuard); err != nil {
+					log.Printf("[BROWSER TOOLS ERROR] %v", err)
+				} else {
+					log.Printf("[BROWSER TOOLS] Successfully registered browser tools for %s", workspaceToolModeLabel)
 				}
-				log.Printf("[BROWSER TOOLS] Successfully registered %d browser tools for %s", len(browserTools), workspaceToolModeLabel)
 			}
 
 			// Register delegation tool for multi-agent chat (all non-workflow-phase simple sessions).

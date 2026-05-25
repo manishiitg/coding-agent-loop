@@ -457,25 +457,14 @@ func (api *StreamingAPI) registerRestoredCodingAgentTools(ctx context.Context, a
 	if ag == nil {
 		return
 	}
-	guardFolder := strings.Trim(strings.TrimSpace(workspacePath), "/")
-	guard := func(execs map[string]func(ctx context.Context, args map[string]interface{}) (string, error)) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
-		if guardFolder == "" {
-			return execs
-		}
-		return wrapExecutorsWithPlanFolderGuard(execs, guardFolder, nil)
-	}
-	registerTool := func(name, description string, parameters interface{}, exec func(ctx context.Context, args map[string]interface{}) (string, error), category string) {
-		var params map[string]interface{}
-		if parameters != nil {
-			if b, err := json.Marshal(parameters); err == nil {
-				_ = json.Unmarshal(b, &params)
-			}
-		}
-		if params == nil {
-			params = map[string]interface{}{}
-		}
-		if err := ag.RegisterCustomTool(name, description, params, exec, category); err != nil {
-			api.logRestoredTerminalf("failed to register restored tool %s: %v", name, err)
+	// Conservative folder guard: the session's workspace folder is writable,
+	// everything else read-only (restore doesn't persist the original
+	// fine-grained grants). Supplied as a closure so the shared registrars apply
+	// it without owning guard policy.
+	var guard codingToolGuard
+	if guardFolder := strings.Trim(strings.TrimSpace(workspacePath), "/"); guardFolder != "" {
+		guard = func(execs codingAgentToolExecutors) codingAgentToolExecutors {
+			return wrapExecutorsWithPlanFolderGuard(execs, guardFolder, nil)
 		}
 	}
 
@@ -486,32 +475,22 @@ func (api *StreamingAPI) registerRestoredCodingAgentTools(ctx context.Context, a
 		secretEnvVars["SECRET_"+s.Name] = s.Value
 	}
 	wsExecutors, _ := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(userID, sessionID, secretEnvVars)
-	wsGuarded := guard(wsExecutors)
+	if guard != nil {
+		wsExecutors = guard(wsExecutors)
+	}
 	wsCategory := virtualtools.GetWorkspaceAdvancedToolCategory()
-	for _, tool := range virtualtools.CreateWorkspaceAdvancedTools() {
-		if tool.Function == nil {
-			continue
-		}
-		if exec, ok := wsGuarded[tool.Function.Name]; ok {
-			registerTool(tool.Function.Name, tool.Function.Description, tool.Function.Parameters, exec, wsCategory)
-		}
+	if err := registerCodingToolGroup(ag.RegisterCustomTool, virtualtools.CreateWorkspaceAdvancedTools(), wsExecutors, func(string) string { return wsCategory }, nil); err != nil {
+		api.logRestoredTerminalf("restore workspace tool registration: %v", err)
 	}
 
-	// Browser tools when a browser mode is active.
+	// Browser tools when a browser mode is active (shared with the fresh path).
 	if browserMode == "headless" || browserMode == "cdp" {
 		cdpPort := 0
 		if browserMode == "cdp" {
 			cdpPort = 9222
 		}
-		brGuarded := guard(virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, cdpPort))
-		brCategory := virtualtools.GetWorkspaceBrowserToolCategory()
-		for _, tool := range virtualtools.CreateWorkspaceBrowserTools() {
-			if tool.Function == nil {
-				continue
-			}
-			if exec, ok := brGuarded[tool.Function.Name]; ok {
-				registerTool(tool.Function.Name, tool.Function.Description, tool.Function.Parameters, exec, brCategory)
-			}
+		if err := registerCodingBrowserTools(ag, sessionID, cdpPort, guard); err != nil {
+			api.logRestoredTerminalf("restore browser tool registration: %v", err)
 		}
 	}
 }

@@ -29,6 +29,12 @@ const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
   'codex-cli',
   'cursor-cli',
   'opencode-cli',
+  'opencode-cli-kimi',
+  'opencode-cli-deepseek',
+  'opencode-cli-qwen',
+  'opencode-cli-minimax',
+  'opencode-cli-glm',
+  'opencode-cli-free',
   'minimax',
   'elevenlabs',
   'deepgram',
@@ -44,6 +50,12 @@ const PUBLISHED_LLM_ALLOWED_PROVIDERS = new Set<LLMProvider>([
   'codex-cli',
   'cursor-cli',
   'opencode-cli',
+  'opencode-cli-kimi',
+  'opencode-cli-deepseek',
+  'opencode-cli-qwen',
+  'opencode-cli-minimax',
+  'opencode-cli-glm',
+  'opencode-cli-free',
 ])
 
 function isPublishedLLMProviderAllowed(provider?: string): provider is LLMProvider {

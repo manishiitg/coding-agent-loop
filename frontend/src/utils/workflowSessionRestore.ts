@@ -268,6 +268,8 @@ async function restoreReadOnlyWorkflowRunChat(
   const presetId = resolvedPreset?.id || session.preset_query_id || options.runningWorkflow?.preset_query_id
   const restoreViewMode = currentWorkflowViewMode()
 
+  useRunningWorkflowsStore.getState().setIsRestoringWorkflow(true)
+  try {
   useAppStore.getState().setShowWorkflowsOverview(false)
   useModeStore.getState().setModeCategory('workflow')
   if (resolvedPreset) {
@@ -352,4 +354,7 @@ async function restoreReadOnlyWorkflowRunChat(
   }))
   if (options.scrollToBottom !== false) requestChatScrollToBottom()
   return tabId
+  } finally {
+    useRunningWorkflowsStore.getState().setIsRestoringWorkflow(false)
+  }
 }

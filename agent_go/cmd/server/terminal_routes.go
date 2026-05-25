@@ -94,13 +94,14 @@ func (api *StreamingAPI) handleListTerminals(w http.ResponseWriter, r *http.Requ
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 	contentMode := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("content")))
 	snapshots := api.terminalStore.List(sessionID)
+	planTypes := newTerminalPlanTypeResolver(r.Context())
 	filtered := make([]terminals.Snapshot, 0, len(snapshots))
 	for _, snapshot := range snapshots {
 		if snapshot.SessionID == "" {
 			continue
 		}
 		if api.canAccessTerminalSession(r, snapshot.SessionID) {
-			filtered = append(filtered, api.terminalSnapshotForList(snapshot, contentMode))
+			filtered = append(filtered, api.terminalSnapshotForList(r.Context(), planTypes, snapshot, contentMode))
 		}
 	}
 
@@ -160,7 +161,7 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	_ = json.NewEncoder(w).Encode(api.enrichTerminalSnapshot(snapshot))
+	_ = json.NewEncoder(w).Encode(api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot))
 }
 
 // handleDismissTerminal removes one terminal snapshot from the UI.
@@ -216,7 +217,7 @@ func (api *StreamingAPI) handleCompleteTerminal(w http.ResponseWriter, r *http.R
 	if before.Active && strings.TrimSpace(before.TmuxSession) != "" {
 		forceCompleteCodingAgentTmuxSession(before.TmuxSession)
 	}
-	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
+	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 }
 
 // handleFailTerminal marks one view-only terminal snapshot failed.
@@ -236,7 +237,7 @@ func (api *StreamingAPI) handleFailTerminal(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
+	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 }
 
 // handleRefreshTerminal captures the current tmux pane and updates the snapshot.
@@ -269,7 +270,7 @@ func (api *StreamingAPI) handleRefreshTerminal(w http.ResponseWriter, r *http.Re
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(updated)})
+	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), updated)})
 }
 
 // handleKillTerminal kills the backing tmux session and marks the UI snapshot failed.
@@ -289,7 +290,7 @@ func (api *StreamingAPI) handleKillTerminal(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !snapshot.Active {
-		_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
+		_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 		return
 	}
 
@@ -306,7 +307,7 @@ func (api *StreamingAPI) handleKillTerminal(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(updated)})
+	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), updated)})
 }
 
 // handleSendTerminalInput pastes text into the terminal's tmux pane.
@@ -350,7 +351,7 @@ func (api *StreamingAPI) handleSendTerminalInput(w http.ResponseWriter, r *http.
 			return
 		}
 	}
-	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
+	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 }
 
 // handleSendTerminalKey sends a small allowlisted key to the terminal's tmux pane.
@@ -382,7 +383,7 @@ func (api *StreamingAPI) handleSendTerminalKey(w http.ResponseWriter, r *http.Re
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
+	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 }
 
 // handleResizeTerminal resizes the backing tmux window and records the size
@@ -415,7 +416,7 @@ func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Req
 
 	if strings.TrimSpace(snapshot.TmuxSession) == "" {
 		// No live pane to resize, but the preferred size was still recorded.
-		_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
+		_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 		return
 	}
 
@@ -425,7 +426,7 @@ func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Req
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(snapshot)})
+	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 }
 
 func (api *StreamingAPI) requireAccessibleTerminal(w http.ResponseWriter, r *http.Request) (terminals.Snapshot, bool) {
@@ -531,45 +532,153 @@ func isMissingTmuxTargetError(err error) bool {
 		strings.Contains(message, "no server running")
 }
 
-func (api *StreamingAPI) enrichTerminalSnapshot(snapshot terminals.Snapshot) terminals.Snapshot {
+func (api *StreamingAPI) enrichTerminalSnapshot(ctx context.Context, planTypes *terminalPlanTypeResolver, snapshot terminals.Snapshot) terminals.Snapshot {
 	active, exists := api.getActiveSession(snapshot.SessionID)
 	if !exists || active == nil {
-		return withTerminalRows(snapshot.WithContext(terminals.Context{}))
+		enrichedSnapshot := snapshot.WithContext(terminals.Context{})
+		enrichedSnapshot = withTerminalPlanStepType(ctx, planTypes, enrichedSnapshot)
+		return withTerminalRows(enrichedSnapshot.WithContext(terminals.Context{}))
 	}
 	enriched := api.buildActiveSessionInfoSummary(active)
 	if enriched == nil {
-		return withTerminalRows(snapshot.WithContext(terminals.Context{}))
+		enrichedSnapshot := snapshot.WithContext(terminals.Context{})
+		enrichedSnapshot = withTerminalPlanStepType(ctx, planTypes, enrichedSnapshot)
+		return withTerminalRows(enrichedSnapshot.WithContext(terminals.Context{}))
 	}
-	return withTerminalRows(snapshot.WithContext(terminals.Context{
-		WorkflowName:  enriched.WorkflowName,
-		WorkflowLabel: enriched.WorkflowLabel,
-		WorkspacePath: enriched.WorkspacePath,
-		ExecutionName: enriched.CurrentExecutionName,
-	}))
-}
-
-func (api *StreamingAPI) terminalSnapshotForList(snapshot terminals.Snapshot, contentMode string) terminals.Snapshot {
-	if isMetadataOnlyTerminalList(contentMode) {
-		return compactTerminalSnapshotForList(api.enrichTerminalSnapshotMetadata(snapshot), contentMode)
-	}
-	return compactTerminalSnapshotForList(api.enrichTerminalSnapshot(snapshot), contentMode)
-}
-
-func (api *StreamingAPI) enrichTerminalSnapshotMetadata(snapshot terminals.Snapshot) terminals.Snapshot {
-	active, exists := api.getActiveSession(snapshot.SessionID)
-	if !exists || active == nil {
-		return snapshot.WithContext(terminals.Context{})
-	}
-	enriched := api.buildActiveSessionInfoSummary(active)
-	if enriched == nil {
-		return snapshot.WithContext(terminals.Context{})
-	}
-	return snapshot.WithContext(terminals.Context{
+	enrichedSnapshot := snapshot.WithContext(terminals.Context{
 		WorkflowName:  enriched.WorkflowName,
 		WorkflowLabel: enriched.WorkflowLabel,
 		WorkspacePath: enriched.WorkspacePath,
 		ExecutionName: enriched.CurrentExecutionName,
 	})
+	enrichedSnapshot = withTerminalPlanStepType(ctx, planTypes, enrichedSnapshot)
+	return withTerminalRows(enrichedSnapshot.WithContext(terminals.Context{}))
+}
+
+func (api *StreamingAPI) terminalSnapshotForList(ctx context.Context, planTypes *terminalPlanTypeResolver, snapshot terminals.Snapshot, contentMode string) terminals.Snapshot {
+	if isMetadataOnlyTerminalList(contentMode) {
+		return compactTerminalSnapshotForList(api.enrichTerminalSnapshotMetadata(ctx, planTypes, snapshot), contentMode)
+	}
+	return compactTerminalSnapshotForList(api.enrichTerminalSnapshot(ctx, planTypes, snapshot), contentMode)
+}
+
+func (api *StreamingAPI) enrichTerminalSnapshotMetadata(ctx context.Context, planTypes *terminalPlanTypeResolver, snapshot terminals.Snapshot) terminals.Snapshot {
+	active, exists := api.getActiveSession(snapshot.SessionID)
+	if !exists || active == nil {
+		enrichedSnapshot := snapshot.WithContext(terminals.Context{})
+		enrichedSnapshot = withTerminalPlanStepType(ctx, planTypes, enrichedSnapshot)
+		return enrichedSnapshot.WithContext(terminals.Context{})
+	}
+	enriched := api.buildActiveSessionInfoSummary(active)
+	if enriched == nil {
+		enrichedSnapshot := snapshot.WithContext(terminals.Context{})
+		enrichedSnapshot = withTerminalPlanStepType(ctx, planTypes, enrichedSnapshot)
+		return enrichedSnapshot.WithContext(terminals.Context{})
+	}
+	enrichedSnapshot := snapshot.WithContext(terminals.Context{
+		WorkflowName:  enriched.WorkflowName,
+		WorkflowLabel: enriched.WorkflowLabel,
+		WorkspacePath: enriched.WorkspacePath,
+		ExecutionName: enriched.CurrentExecutionName,
+	})
+	enrichedSnapshot = withTerminalPlanStepType(ctx, planTypes, enrichedSnapshot)
+	return enrichedSnapshot.WithContext(terminals.Context{})
+}
+
+type terminalPlanTypeResolver struct {
+	ctx        context.Context
+	byWorkflow map[string]map[string]string
+}
+
+func newTerminalPlanTypeResolver(ctx context.Context) *terminalPlanTypeResolver {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return &terminalPlanTypeResolver{
+		ctx:        ctx,
+		byWorkflow: make(map[string]map[string]string),
+	}
+}
+
+func withTerminalPlanStepType(ctx context.Context, resolver *terminalPlanTypeResolver, snapshot terminals.Snapshot) terminals.Snapshot {
+	if strings.TrimSpace(snapshot.StepType) != "" {
+		return snapshot
+	}
+	stepID := strings.TrimSpace(snapshot.StepID)
+	if stepID == "" || strings.HasPrefix(stepID, "main_agent:") {
+		return snapshot
+	}
+	workflowPath := strings.Trim(strings.TrimSpace(snapshot.WorkflowPath), "/")
+	if workflowPath == "" {
+		return snapshot
+	}
+	if resolver == nil {
+		resolver = newTerminalPlanTypeResolver(ctx)
+	}
+	if stepType := resolver.stepType(workflowPath, stepID); stepType != "" {
+		snapshot.StepType = stepType
+	}
+	return snapshot
+}
+
+func (r *terminalPlanTypeResolver) stepType(workflowPath, stepID string) string {
+	workflowPath = strings.Trim(strings.TrimSpace(workflowPath), "/")
+	stepID = strings.TrimSpace(stepID)
+	if workflowPath == "" || stepID == "" {
+		return ""
+	}
+	if r.byWorkflow == nil {
+		r.byWorkflow = make(map[string]map[string]string)
+	}
+	stepTypes, ok := r.byWorkflow[workflowPath]
+	if !ok {
+		stepTypes = loadTerminalPlanStepTypes(r.ctx, workflowPath)
+		r.byWorkflow[workflowPath] = stepTypes
+	}
+	return stepTypes[stepID]
+}
+
+func loadTerminalPlanStepTypes(ctx context.Context, workflowPath string) map[string]string {
+	stepTypes := make(map[string]string)
+	content, exists, err := readFileFromWorkspace(ctx, strings.Trim(workflowPath, "/")+"/planning/plan.json")
+	if err != nil || !exists || strings.TrimSpace(content) == "" {
+		return stepTypes
+	}
+	var raw any
+	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+		return stepTypes
+	}
+	collectTerminalPlanStepTypes(raw, stepTypes)
+	return stepTypes
+}
+
+func collectTerminalPlanStepTypes(value any, stepTypes map[string]string) {
+	switch typed := value.(type) {
+	case map[string]any:
+		id, hasID := typed["id"].(string)
+		stepType, hasType := typed["type"].(string)
+		if hasID && hasType && isWorkflowPlanStepType(stepType) {
+			if _, exists := stepTypes[id]; !exists {
+				stepTypes[id] = stepType
+			}
+		}
+		for _, child := range typed {
+			collectTerminalPlanStepTypes(child, stepTypes)
+		}
+	case []any:
+		for _, child := range typed {
+			collectTerminalPlanStepTypes(child, stepTypes)
+		}
+	}
+}
+
+func isWorkflowPlanStepType(stepType string) bool {
+	switch strings.TrimSpace(stepType) {
+	case "regular", "conditional", "human_input", "todo_task", "routing", "message_sequence":
+		return true
+	default:
+		return false
+	}
 }
 
 func (api *StreamingAPI) canAccessTerminalSession(r *http.Request, sessionID string) bool {

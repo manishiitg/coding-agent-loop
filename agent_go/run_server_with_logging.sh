@@ -107,6 +107,19 @@ print_stop_target() {
     fi
 }
 
+kill_process_on_port() {
+    local port="$1"
+    local label="${2:-process on port $port}"
+    local grace_attempts="${3:-50}"
+
+    local pid
+    pid="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1)"
+    if [ -n "$pid" ]; then
+        echo "⚠️  $label still listening on port $port (PID: $pid); killing..."
+        kill_process_tree "$pid" "$label" "$grace_attempts"
+    fi
+}
+
 kill_process_tree() {
     local root_pid="$1"
     local label="${2:-process}"
@@ -576,6 +589,14 @@ is_csv_value() {
     return 1
 }
 
+# Kill any orphaned agent server from a previous run on the default port so we can
+# reuse it (avoids accumulating background servers on different random ports).
+if [ -z "${AGENT_PORT:-}" ] && port_in_use "$DEFAULT_AGENT_PORT"; then
+    echo "⚠️  Port $DEFAULT_AGENT_PORT busy — killing orphaned server from previous run..."
+    kill_process_on_port "$DEFAULT_AGENT_PORT" "orphaned agent server" 50
+    sleep 0.5
+fi
+
 if [ -n "${AGENT_PORT:-}" ]; then
     echo "🔎 Using requested agent server port: $AGENT_PORT"
     if port_in_use "$AGENT_PORT"; then
@@ -665,6 +686,13 @@ if [ -f "${SCRIPT_DIR}/../go.work" ]; then
 fi
 
 if [ "$WITH_WORKSPACE" = true ]; then
+    # Kill any orphaned workspace server from a previous run on the default port.
+    if [ -z "${WORKSPACE_PORT:-}" ] && port_in_use "$DEFAULT_WORKSPACE_PORT"; then
+        echo "⚠️  Port $DEFAULT_WORKSPACE_PORT busy — killing orphaned workspace server from previous run..."
+        kill_process_on_port "$DEFAULT_WORKSPACE_PORT" "orphaned workspace server" 50
+        sleep 0.5
+    fi
+
     if [ -n "${WORKSPACE_PORT:-}" ]; then
         echo "🔎 Using requested workspace server port: $WORKSPACE_PORT"
         if port_in_use "$WORKSPACE_PORT"; then
@@ -909,6 +937,12 @@ stop_native_workspace() {
         wait "$WORKSPACE_PID" 2>/dev/null
         print_port_status "$WORKSPACE_PORT" "workspace"
     fi
+    # Fallback: go run exits on SIGINT before our cleanup runs, leaving the compiled
+    # binary orphaned (re-parented to PID 1). Kill anything still on the port.
+    if [ -n "$WORKSPACE_PORT" ]; then
+        kill_process_on_port "$WORKSPACE_PORT" "orphaned workspace server" 50
+        print_port_status "$WORKSPACE_PORT" "workspace"
+    fi
 }
 
 stop_electron() {
@@ -936,6 +970,13 @@ stop_agent_server() {
         # fast SIGKILL can leave them orphaned.
         kill_process_tree "$SERVER_PID" "agent server" 200
         wait "$SERVER_PID" 2>/dev/null
+        print_port_status "$AGENT_PORT" "agent"
+    fi
+    # Fallback: go run exits on SIGINT before our cleanup runs, leaving the compiled
+    # binary orphaned (re-parented to PID 1, invisible via pgrep -P SERVER_PID).
+    # Kill anything still listening on the agent port.
+    if [ -n "$AGENT_PORT" ]; then
+        kill_process_on_port "$AGENT_PORT" "orphaned agent server" 50
         print_port_status "$AGENT_PORT" "agent"
     fi
     cleanup_coding_agent_tmux_sessions

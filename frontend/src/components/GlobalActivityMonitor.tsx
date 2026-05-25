@@ -27,6 +27,20 @@ function isWorkflowSession(session: ActiveSessionInfo): boolean {
 
 function isActiveSession(session: ActiveSessionInfo): boolean {
   const status = normalizedStatus(session.status)
+
+  // Scheduled/cron sessions: show only while actively running (so user can observe),
+  // hide once completed — they don't need user attention after finishing.
+  if (isScheduledWorkflowSession(session)) {
+    return (
+      status === 'running' ||
+      status === 'paused' ||
+      status === 'waiting' ||
+      status === 'waiting_feedback' ||
+      session.has_running_background_agents === true ||
+      (session.running_background_agent_count ?? 0) > 0
+    )
+  }
+
   if (
     session.needs_user_input === true ||
     session.has_running_background_agents === true ||
@@ -38,8 +52,8 @@ function isActiveSession(session: ActiveSessionInfo): boolean {
     status === 'waiting_feedback'
   ) return true
 
-  // A completed workflow session is still "waiting for the user's next builder command".
-  // Show it for up to 30 minutes after last activity — same cap as bg-agent max-age.
+  // A completed workflow session the user initiated via the builder is still "waiting for
+  // the user's next command". Show it for up to 30 min after last activity.
   if (status === 'completed' && isWorkflowSession(session) && session.last_activity) {
     const lastMs = new Date(session.last_activity).getTime()
     if (!Number.isNaN(lastMs) && Date.now() - lastMs < 30 * 60 * 1000) return true
@@ -82,7 +96,9 @@ function displaySessionTitle(
   fallbackWorkflowName?: string | null,
 ): string {
   if (isWorkflowSession(session)) {
-    if (tab?.name && tab.name !== 'Workflow Builder') {
+    // For view-only (schedule/bot) tabs, tab.name is a type label ("Schedule", "WhatsApp"),
+    // not the actual workflow name — skip it and resolve the real workflow title instead.
+    if (tab?.name && tab.name !== 'Workflow Builder' && !tab.metadata?.isViewOnly) {
       return tab.name
     }
     return sessionTitle(session, workflow, fallbackWorkflowName)
@@ -411,10 +427,38 @@ export const GlobalActivityMonitor: React.FC = () => {
   }, [activeSessionsCache, runningWorkflowsBySession])
 
   const currentSessionId = activeTabId ? chatTabs[activeTabId]?.sessionId ?? null : null
-  const visibleSessions = useMemo(
-    () => activeSessions.filter(session => session.session_id !== currentSessionId),
-    [activeSessions, currentSessionId],
-  )
+  const visibleSessions = useMemo(() => {
+    const filtered = activeSessions.filter(session => session.session_id !== currentSessionId)
+
+    // De-duplicate by workflow: if multiple sessions share the same workflow name/path,
+    // keep only the most active one (running > completed-with-bg-agents > idle).
+    const workflowKey = (s: ActiveSessionInfo) => s.workflow_name || s.workflow_label || s.workspace_path || ''
+    const byWorkflow = new Map<string, ActiveSessionInfo>()
+    const nonWorkflow: ActiveSessionInfo[] = []
+
+    for (const session of filtered) {
+      const key = isWorkflowSession(session) ? workflowKey(session) : ''
+      if (!key) {
+        nonWorkflow.push(session)
+        continue
+      }
+      const existing = byWorkflow.get(key)
+      if (!existing) {
+        byWorkflow.set(key, session)
+        continue
+      }
+      // Prefer running over completed; prefer more recent background-agent activity
+      const rank = (s: ActiveSessionInfo) => {
+        const st = normalizedStatus(s.status)
+        if (st === 'running') return 3
+        if (s.has_running_background_agents || (s.running_background_agent_count ?? 0) > 0) return 2
+        return 1
+      }
+      if (rank(session) > rank(existing)) byWorkflow.set(key, session)
+    }
+
+    return [...byWorkflow.values(), ...nonWorkflow]
+  }, [activeSessions, currentSessionId])
 
   // Builder-idle indicator: find any tab OTHER than the currently active one that has
   // running background agents. We intentionally exclude the active tab because the user

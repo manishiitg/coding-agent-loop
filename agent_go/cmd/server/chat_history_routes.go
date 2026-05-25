@@ -225,7 +225,7 @@ func (api *StreamingAPI) attachRestoredExistingTmuxTerminal(ctx context.Context,
 	}
 	api.upsertRestoredTmuxTerminal(sessionID, runtime, tmuxSession, content)
 	if snapshot, ok := api.findRestoredTerminalSnapshot(sessionID, tmuxSession); ok {
-		enriched := api.enrichTerminalSnapshot(ctx, newTerminalPlanTypeResolver(ctx), snapshot)
+		enriched := api.enrichTerminalSnapshot(snapshot)
 		return &enriched, true, ""
 	}
 	return nil, false, "terminal_snapshot_not_created"
@@ -299,14 +299,14 @@ func (api *StreamingAPI) materializeRestoredTmuxTerminal(ctx context.Context, se
 		// A capture failure shouldn't fail the whole restore if a usable
 		// snapshot already exists — fall back to it rather than erroring out.
 		if snapshot, ok := api.findRestoredTerminalSnapshot(sessionID, tmuxSession); ok {
-			enriched := api.enrichTerminalSnapshot(ctx, newTerminalPlanTypeResolver(ctx), snapshot)
+			enriched := api.enrichTerminalSnapshot(snapshot)
 			return &enriched, true, ""
 		}
 		return nil, false, "tmux_unavailable"
 	}
 	api.upsertRestoredTmuxTerminal(sessionID, runtime, tmuxSession, content)
 	if snapshot, ok := api.findRestoredTerminalSnapshot(sessionID, tmuxSession); ok {
-		enriched := api.enrichTerminalSnapshot(ctx, newTerminalPlanTypeResolver(ctx), snapshot)
+		enriched := api.enrichTerminalSnapshot(snapshot)
 		return &enriched, true, ""
 	}
 	return nil, false, "terminal_snapshot_not_created"

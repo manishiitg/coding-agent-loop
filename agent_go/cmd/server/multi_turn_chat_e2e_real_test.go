@@ -18,6 +18,7 @@ import (
 	claudecodeadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	codexcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	cursorcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
+	geminicliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli"
 	opencodecliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
 
 	"mcp-agent-builder-go/agent_go/pkg/costledger"
@@ -803,6 +804,261 @@ func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
 
 	t.Logf("✅ opencode multi-turn e2e: %d turns, session=%s, history=%d entries, prompt_tokens=%d completion_tokens=%d",
 		len(prompts), openCodeSessionID, len(history), summary.Total.PromptTokens, summary.Total.CompletionTokens)
+}
+
+// TestMultiTurnChatE2E_Gemini is the structured-transport peer of
+// TestMultiTurnChatE2E_OpenCode for Gemini CLI. Like opencode, gemini
+// uses native session resume (--resume <id>) rather than a persistent
+// tmux session, and its tokens come from a transcript-file sidecar
+// (~/.gemini/tmp/gemini-cli-project-<projectDirID>/chats/session-*.jsonl)
+// rather than stream-json events.
+//
+// Cross-turn memory is the security-critical claim: turn 3 is asked
+// to recall both earlier tokens. If gemini's --resume is broken or the
+// adapter dropped gemini_session_id / gemini_project_dir_id from
+// GenerationInfo on turn 1, the model has no memory of earlier turns
+// and turn 3 will not contain WIDGET_A47 / WIDGET_B23.
+//
+// Token tracking is also a hard assertion: the gemini adapter is
+// supposed to populate prompt/completion from the transcript-file
+// reader after each call. Zero tokens across all turns indicates a
+// regression in readGeminiTranscriptUsage's path resolution or its
+// JSONL parser.
+//
+// Gated on RUN_GEMINI_CLI_REAL_E2E=1 + GEMINI_API_KEY + gemini binary.
+// Cost is NOT asserted > 0 because gemini's adapter does not currently
+// emit cost_usd_estimated (same known gap as opencode and tracked in
+// cost_http_e2e_gemini_real_test.go).
+func TestMultiTurnChatE2E_Gemini(t *testing.T) {
+	if os.Getenv("RUN_GEMINI_CLI_REAL_E2E") == "" && os.Getenv("RUN_GEMINI_CLI_INTERACTIVE_E2E") == "" {
+		t.Skip("set RUN_GEMINI_CLI_REAL_E2E=1 to run gemini multi-turn chat e2e")
+	}
+	if _, err := exec.LookPath("gemini"); err != nil {
+		t.Skipf("gemini binary not found: %v", err)
+	}
+	apiKey := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
+	if apiKey == "" {
+		t.Skip("GEMINI_API_KEY required for gemini multi-turn e2e")
+	}
+
+	model := strings.TrimSpace(os.Getenv("GEMINI_CLI_REAL_E2E_MODEL"))
+	if model == "" {
+		model = "low" // resolves to gemini-3.5-flash via the tier resolver
+	}
+
+	adapter := geminicliadapter.NewGeminiCLIAdapter(apiKey, model, &e2eMockLogger{})
+	ownerSessionID := fmt.Sprintf("multi-turn-e2e-gemini-%s", time.Now().Format("150405"))
+	t.Cleanup(func() { _ = geminicliadapter.CleanupGeminiCLIInteractiveSessions(context.Background()) })
+
+	const (
+		tokenA = "WIDGET_A47"
+		tokenB = "WIDGET_B23"
+	)
+	type turnSpec struct {
+		prompt         string
+		mustContainAny []string
+		mustContainAll []string
+	}
+	prompts := []turnSpec{
+		{
+			prompt:         fmt.Sprintf("Remember this token: %s. Reply with ONLY the word ACK.", tokenA),
+			mustContainAny: []string{tokenA, "ACK"},
+		},
+		{
+			prompt:         fmt.Sprintf("Remember this second token: %s. Reply with ONLY the word ACK.", tokenB),
+			mustContainAny: []string{tokenB, "ACK"},
+		},
+		{
+			prompt:         "Which two tokens did I give you so far? Reply with both, comma-separated.",
+			mustContainAll: []string{tokenA, tokenB},
+		},
+	}
+
+	wsServer := costledger.NewTestServer(t)
+	defer wsServer.Close()
+	ledger := costledger.NewLedger(wsServer.URL)
+	api := &StreamingAPI{costLedger: ledger}
+	observer := newCostObserver(api.costLedger, ownerSessionID, "test-user", "chat")
+
+	workspaceDir := t.TempDir()
+
+	var history []llmtypes.MessageContent
+	var geminiSessionID string
+	var geminiProjectDirID string
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	for i, p := range prompts {
+		turn := i + 1
+		history = append(history, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: p.prompt}},
+		})
+
+		opts := []llmtypes.CallOption{
+			geminicliadapter.WithProjectSettings(`{}`),
+			geminicliadapter.WithApprovalMode("yolo"),
+			geminicliadapter.WithWorkingDir(workspaceDir),
+		}
+		if geminiSessionID != "" && geminiProjectDirID != "" {
+			// Turn 2+: continue the gemini conversation. Both the
+			// session ID AND the project dir ID are required —
+			// gemini's --resume looks up the session JSONL at
+			// ~/.gemini/tmp/gemini-cli-project-<projectDirID>/chats/<sessionID>.jsonl,
+			// so without WithGeminiProjectDirID the resume call lands
+			// in the wrong project dir and finds no session.
+			opts = append(opts,
+				geminicliadapter.WithResumeSessionID(geminiSessionID),
+				geminicliadapter.WithProjectDirID(geminiProjectDirID),
+			)
+		}
+
+		t.Logf("→ turn %d (session=%q project=%q): %s", turn, geminiSessionID, geminiProjectDirID, p.prompt)
+		t0 := time.Now()
+		resp, err := adapter.GenerateContent(ctx, history, opts...)
+		elapsed := time.Since(t0)
+		if err != nil {
+			t.Fatalf("turn %d GenerateContent: %v", turn, err)
+		}
+		if len(resp.Choices) == 0 || resp.Choices[0] == nil {
+			t.Fatalf("turn %d: empty choices", turn)
+		}
+		choice := resp.Choices[0]
+		gi := choice.GenerationInfo
+		if gi == nil {
+			t.Fatalf("turn %d: missing GenerationInfo", turn)
+		}
+
+		// gemini turns include MCP discovery + transcript-reader
+		// sidecar, so a longer bound than tmux providers is reasonable.
+		if elapsed > 180*time.Second {
+			t.Errorf("turn %d took %v, want <180s (completion-detection regression?)", turn, elapsed)
+		}
+
+		content := strings.TrimSpace(choice.Content)
+		if content == "" {
+			t.Fatalf("turn %d: empty Content. GI.Additional=%v", turn, gi.Additional)
+		}
+
+		for _, token := range p.mustContainAll {
+			if !strings.Contains(strings.ToUpper(content), strings.ToUpper(token)) {
+				t.Errorf("turn %d: gemini --resume memory regression — response missing %q from earlier turn\n   content=%q", turn, token, content)
+			}
+		}
+		if len(p.mustContainAny) > 0 {
+			hit := false
+			for _, token := range p.mustContainAny {
+				if strings.Contains(strings.ToUpper(content), strings.ToUpper(token)) {
+					hit = true
+					break
+				}
+			}
+			if !hit {
+				t.Errorf("turn %d: response missing any of %v\nfull content: %q", turn, p.mustContainAny, content)
+			}
+		}
+
+		// Capture session ID + project dir ID on turn 1 — both are
+		// required for resume on subsequent turns.
+		if geminiSessionID == "" {
+			if id, ok := gi.Additional["gemini_session_id"].(string); ok && strings.TrimSpace(id) != "" {
+				geminiSessionID = strings.TrimSpace(id)
+				t.Logf("   ✓ captured gemini_session_id=%s", geminiSessionID)
+			} else {
+				t.Errorf("turn 1 GenerationInfo missing gemini_session_id — native resume cannot be wired without it. GI.Additional=%v", gi.Additional)
+			}
+		}
+		if geminiProjectDirID == "" {
+			if id, ok := gi.Additional["gemini_project_dir_id"].(string); ok && strings.TrimSpace(id) != "" {
+				geminiProjectDirID = strings.TrimSpace(id)
+				t.Logf("   ✓ captured gemini_project_dir_id=%s", geminiProjectDirID)
+			} else {
+				t.Errorf("turn 1 GenerationInfo missing gemini_project_dir_id — resume JSONL lookup will fail. GI.Additional=%v", gi.Additional)
+			}
+		}
+
+		prompt := derefInt(gi.PromptTokens, gi.InputTokens)
+		completion := derefInt(gi.CompletionTokens, gi.OutputTokens)
+		if prompt == 0 && resp.Usage != nil && resp.Usage.InputTokens > 0 {
+			prompt = resp.Usage.InputTokens
+		}
+		if completion == 0 && resp.Usage != nil && resp.Usage.OutputTokens > 0 {
+			completion = resp.Usage.OutputTokens
+		}
+		// Tokens come from the transcript-file sidecar
+		// (readGeminiTranscriptUsage). Hard-fail if both are zero —
+		// that means either the sidecar didn't find the transcript,
+		// or the JSONL parser regressed.
+		if prompt == 0 && completion == 0 {
+			t.Errorf("turn %d: token usage absent (prompt=%d completion=%d). Gemini adapter is supposed to read tokens from ~/.gemini/tmp/gemini-cli-project-<projectDirID>/chats/*.jsonl. GI=%+v Usage=%+v", turn, prompt, completion, gi, resp.Usage)
+		}
+
+		// Splice intermediate messages into history when the
+		// transcript reader populates them. Falls back to choice.Content
+		// otherwise.
+		if intermediate, ok := llmtypes.ExtractCodingProviderIntermediateMessages(gi); ok && len(intermediate.Messages) > 0 {
+			if intermediate.Transport != llmtypes.CodingProviderTransportStructured {
+				t.Errorf("turn %d: intermediate.Transport=%q, want %q", turn, intermediate.Transport, llmtypes.CodingProviderTransportStructured)
+			}
+			t.Logf("   ✓ turn %d intermediate.Messages=%d (provider=%s)", turn, len(intermediate.Messages), intermediate.Provider)
+			history = append(history, intermediate.Messages...)
+		} else {
+			t.Logf("   ⚠ turn %d: no intermediate messages from gemini transcript — falling back to choice.Content", turn)
+			history = append(history, llmtypes.MessageContent{
+				Role:  llmtypes.ChatMessageTypeAI,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: content}},
+			})
+		}
+
+		additional := map[string]interface{}{}
+		for k, v := range gi.Additional {
+			additional[k] = v
+		}
+		effectiveModel, _ := extractCostAndEffectiveModel(additional)
+		if strings.TrimSpace(effectiveModel) == "" {
+			effectiveModel = model
+		}
+		tokenEvent := &unifiedevents.TokenUsageEvent{
+			ModelID:          effectiveModel,
+			Provider:         "geminicli",
+			PromptTokens:     prompt,
+			CompletionTokens: completion,
+			TotalTokens:      prompt + completion,
+			GenerationInfo:   additional,
+		}
+		if err := observer.HandleEvent(context.Background(), &unifiedevents.AgentEvent{
+			Type:      unifiedevents.TokenUsage,
+			Timestamp: time.Now(),
+			Component: "test",
+			Data:      tokenEvent,
+		}); err != nil {
+			t.Errorf("turn %d HandleEvent: %v", turn, err)
+		}
+
+		t.Logf("   ✓ turn %d ok (elapsed=%v, prompt=%d, completion=%d, content_len=%d)",
+			turn, elapsed.Round(100*time.Millisecond), prompt, completion, len(content))
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/cost/summary", nil)
+	rec := httptest.NewRecorder()
+	api.handleCostSummary(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/api/cost/summary status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var summary costledger.Summary
+	if err := json.Unmarshal(rec.Body.Bytes(), &summary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if summary.Total.CallCount != len(prompts) {
+		t.Errorf("Total.CallCount = %d, want %d (one per turn)", summary.Total.CallCount, len(prompts))
+	}
+	if summary.Total.PromptTokens == 0 {
+		t.Errorf("Total.PromptTokens = 0 across %d turns — gemini transcript-reader sidecar regression (model=%q)", len(prompts), model)
+	}
+
+	t.Logf("✅ gemini multi-turn e2e: %d turns, session=%s project=%s, history=%d entries, prompt_tokens=%d completion_tokens=%d",
+		len(prompts), geminiSessionID, geminiProjectDirID, len(history), summary.Total.PromptTokens, summary.Total.CompletionTokens)
 }
 
 func TestMultiTurnChatE2E_Agy(t *testing.T) {

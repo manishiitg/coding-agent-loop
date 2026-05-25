@@ -87,6 +87,19 @@ func TestNormalizeImageAnalysisProviderAndModelOpenCodeDefault(t *testing.T) {
 	}
 }
 
+func TestNormalizeImageAnalysisProviderAndModelAgyDefault(t *testing.T) {
+	provider, modelID, err := normalizeImageAnalysisProviderAndModel("agy-cli", "")
+	if err != nil {
+		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
+	}
+	if provider != "agy-cli" {
+		t.Fatalf("provider = %q, want agy-cli", provider)
+	}
+	if modelID != "agy-cli" {
+		t.Fatalf("modelID = %q, want agy-cli", modelID)
+	}
+}
+
 func TestNormalizeImageAnalysisProviderAndModelInfersCodexFromModel(t *testing.T) {
 	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "gpt-5.4-mini")
 	if err != nil {
@@ -126,6 +139,19 @@ func TestNormalizeImageAnalysisProviderAndModelInfersOpenCodeFromModel(t *testin
 	}
 }
 
+func TestNormalizeImageAnalysisProviderAndModelInfersAgyFromModel(t *testing.T) {
+	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "agy-cli")
+	if err != nil {
+		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
+	}
+	if provider != "agy-cli" {
+		t.Fatalf("provider = %q, want agy-cli", provider)
+	}
+	if modelID != "agy-cli" {
+		t.Fatalf("modelID = %q, want agy-cli", modelID)
+	}
+}
+
 func TestNormalizeImageAnalysisProviderAndModelInfersKimiFromVisionModel(t *testing.T) {
 	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "kimi-k2.6")
 	if err != nil {
@@ -136,5 +162,16 @@ func TestNormalizeImageAnalysisProviderAndModelInfersKimiFromVisionModel(t *test
 	}
 	if modelID != "kimi-k2.6" {
 		t.Fatalf("modelID = %q, want kimi-k2.6", modelID)
+	}
+}
+
+func TestPathBasedImageAnalysisProviderIncludesAgy(t *testing.T) {
+	for _, provider := range []string{"codex-cli", "cursor-cli", "opencode-cli", "agy-cli", "claude-code"} {
+		if !pathBasedImageAnalysisProvider(provider) {
+			t.Fatalf("pathBasedImageAnalysisProvider(%q) = false, want true", provider)
+		}
+	}
+	if pathBasedImageAnalysisProvider("vertex") {
+		t.Fatal("pathBasedImageAnalysisProvider(vertex) = true, want false")
 	}
 }

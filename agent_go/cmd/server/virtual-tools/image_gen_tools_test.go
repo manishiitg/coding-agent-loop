@@ -24,6 +24,12 @@ func TestNormalizeImageProviderAndModelProviderAliasDefaultsModel(t *testing.T) 
 			modelID:   "codex-cli",
 			wantModel: "codex-cli",
 		},
+		{
+			name:      "agy alias",
+			provider:  "agy-cli",
+			modelID:   "agy-cli",
+			wantModel: "agy-cli",
+		},
 	}
 
 	for _, tt := range tests {
@@ -67,5 +73,31 @@ func TestNormalizeImageProviderAndModelRejectsTierLabelsAsImageModels(t *testing
 				t.Fatalf("error = %v, want unsupported model", err)
 			}
 		})
+	}
+}
+
+func TestNormalizeImageProviderAndModelInfersAgyFromModel(t *testing.T) {
+	provider, modelID, err := normalizeImageProviderAndModel("", "agy-cli")
+	if err != nil {
+		t.Fatalf("normalizeImageProviderAndModel returned error: %v", err)
+	}
+	if provider != "agy-cli" {
+		t.Fatalf("provider = %q, want agy-cli", provider)
+	}
+	if modelID != "agy-cli" {
+		t.Fatalf("modelID = %q, want agy-cli", modelID)
+	}
+}
+
+func TestAgyImageGenerationAuthAndCostMetadata(t *testing.T) {
+	if !hasImageProviderAuth("agy-cli", nil) {
+		t.Fatal("hasImageProviderAuth(agy-cli) = false, want true for local CLI auth")
+	}
+	cost, note := imageGenerationCostMetadata("agy-cli", "agy-cli")
+	if cost != nil {
+		t.Fatalf("cost = %v, want nil fixed per-image cost", *cost)
+	}
+	if !strings.Contains(note, "Antigravity CLI") || !strings.Contains(note, "not free") {
+		t.Fatalf("note = %q, want Antigravity non-free cost note", note)
 	}
 }

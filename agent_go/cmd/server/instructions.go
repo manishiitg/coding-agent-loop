@@ -206,6 +206,7 @@ Image generation defaults live in ` + "`" + absConfig + `/image-generation-confi
 - Do not infer image-generation support from ` + "`list_provider_models`" + ` or the normal LLM model catalog. Those lists are for chat/text models, not image models.
 - Vertex image generation is supported via provider ` + "`vertex`" + ` with models such as ` + "`gemini-3.1-flash-image-preview`" + ` and ` + "`gemini-3-pro-image-preview`" + `.
 - Codex CLI image generation is supported via provider ` + "`codex-cli`" + ` with models such as ` + "`gpt-5.4-mini`" + `.
+- Antigravity CLI image generation is supported as alpha via provider ` + "`agy-cli`" + ` and model ` + "`agy-cli`" + `; it requires local ` + "`agy`" + ` sign-in.
 - For one-off ` + "`image_gen`" + ` or ` + "`image_edit`" + ` calls, use ` + "`list_llm_capabilities(capability=\"generate_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
 
 ## Image Analysis Defaults

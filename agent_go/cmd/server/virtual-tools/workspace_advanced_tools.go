@@ -1496,8 +1496,8 @@ func wrapReadImageWithLLM(
 
 		// Step 4: Make the LLM call with the image + query.
 		// CLI providers can inspect local files when given the workspace path
-		// directly. Codex/Cursor tmux transports do not consume ImageContent
-		// through the adapter today, so keep CLI image analysis path-based.
+		// directly. Their adapters do not consume base64 ImageContent through
+		// these transports today, so keep CLI image analysis path-based.
 		parts := []llmtypes.ContentPart{
 			llmtypes.TextContent{Text: imageData.Query},
 			llmtypes.ImageContent{
@@ -1506,7 +1506,7 @@ func wrapReadImageWithLLM(
 				Data:       imageData.Data,
 			},
 		}
-		if strings.EqualFold(provider, string(llm.ProviderCodexCLI)) || strings.EqualFold(provider, string(llm.ProviderCursorCLI)) || strings.EqualFold(provider, string(llm.ProviderOpenCodeCLI)) || strings.EqualFold(provider, string(llm.ProviderClaudeCode)) {
+		if pathBasedImageAnalysisProvider(provider) {
 			absoluteImagePath := workspaceAbsolutePath(normalizeWorkspaceDocumentPath(imageData.Filepath))
 			if _, statErr := os.Stat(absoluteImagePath); statErr != nil {
 				return "", fmt.Errorf("%s image analysis requires a readable local workspace file at %q: %w", provider, absoluteImagePath, statErr)
@@ -1728,6 +1728,9 @@ func hasWorkspaceDefaultImageAnalysisAuth(provider string, apiKeys *llm.Provider
 	case string(llm.ProviderCursorCLI):
 		_, err := exec.LookPath("cursor-agent")
 		return err == nil
+	case string(llm.ProviderAgyCLI):
+		_, err := exec.LookPath("agy")
+		return err == nil
 	case string(llm.ProviderOpenCodeCLI):
 		return opencodeAvailable()
 	}
@@ -1771,6 +1774,8 @@ func createLLMFromConfig(ctx context.Context, config mcpagent.LLMModel) (llmtype
 			apiKeys.CodexCLI = config.APIKey
 		case llm.ProviderCursorCLI:
 			apiKeys.CursorCLI = config.APIKey
+		case llm.ProviderAgyCLI:
+			apiKeys.AgyCLI = config.APIKey
 		case llm.ProviderOpenCodeCLI:
 			apiKeys.OpenCodeCLI = config.APIKey
 		case llm.ProviderMiniMax:

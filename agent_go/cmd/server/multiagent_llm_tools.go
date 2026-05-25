@@ -442,7 +442,7 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 	case string(llm.ProviderCursorCLI):
 		return true, "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
 	case string(llm.ProviderAgyCLI):
-		return true, "Antigravity CLI login or AGY_API_KEY/workspace provider auth"
+		return true, "Antigravity CLI local sign-in"
 	case string(llm.ProviderOpenCodeCLI):
 		return true, "OpenCode CLI provider auth or OPENCODE_API_KEY/workspace provider auth"
 	case "opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
@@ -556,6 +556,7 @@ func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, configFile string,
 		string(llm.ProviderMiniMax),
 		string(llm.ProviderCodexCLI),
 		string(llm.ProviderCursorCLI),
+		string(llm.ProviderAgyCLI),
 		string(llm.ProviderOpenCodeCLI),
 		string(llm.ProviderClaudeCode),
 		string(llm.ProviderGeminiCLI),
@@ -674,6 +675,7 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 					string(llm.ProviderVertex):      {"gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"},
 					string(llm.ProviderCodexCLI):    {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
 					string(llm.ProviderCursorCLI):   {"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
+					string(llm.ProviderAgyCLI):      {"agy-cli"},
 					string(llm.ProviderOpenCodeCLI): {"opencode-cli", "openai/gpt-5.1", "anthropic/claude-sonnet-4-5"},
 					string(llm.ProviderClaudeCode):  {"claude-code"},
 				},
@@ -681,12 +683,14 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 					string(llm.ProviderVertex):      "gemini-3-pro-preview",
 					string(llm.ProviderCodexCLI):    "gpt-5.4-mini",
 					string(llm.ProviderCursorCLI):   "cursor-cli",
+					string(llm.ProviderAgyCLI):      "agy-cli",
 					string(llm.ProviderOpenCodeCLI): "opencode-cli",
 					string(llm.ProviderClaudeCode):  "claude-code",
 				},
 				map[string][]string{
 					string(llm.ProviderCodexCLI):    {"Uses the local workspace image path because Codex CLI does not consume base64 ImageContent through the adapter."},
 					string(llm.ProviderCursorCLI):   {"Uses the local workspace image path because Cursor CLI tmux transport does not consume base64 ImageContent through the adapter."},
+					string(llm.ProviderAgyCLI):      {"Uses the local workspace image path through Antigravity CLI; requires local Agy sign-in."},
 					string(llm.ProviderOpenCodeCLI): {"Uses the local workspace image path because OpenCode CLI tmux transport does not consume base64 ImageContent through the adapter."},
 					string(llm.ProviderClaudeCode):  {"Uses the local workspace image path through Claude Code CLI."},
 				},
@@ -711,12 +715,16 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 				map[string][]string{
 					string(llm.ProviderVertex):   {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"},
 					string(llm.ProviderCodexCLI): {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
+					string(llm.ProviderAgyCLI):   {"agy-cli"},
 				},
 				map[string]string{
 					string(llm.ProviderVertex):   "gemini-3.1-flash-image-preview",
 					string(llm.ProviderCodexCLI): "gpt-5.4-mini",
+					string(llm.ProviderAgyCLI):   "agy-cli",
 				},
-				map[string][]string{},
+				map[string][]string{
+					string(llm.ProviderAgyCLI): {"Alpha; uses Antigravity CLI native image generation and local Agy sign-in."},
+				},
 			),
 		}
 	}

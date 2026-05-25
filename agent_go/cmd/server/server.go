@@ -6346,10 +6346,12 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 				log.Printf("[OPENCODE CLI] Saved session ID %s for session %s", sid, sessionID)
 			}
 		}
-		// Persist the agent's MCP server+tool selection so a restore can replay
-		// the same bridge catalog instead of re-deriving it (or coming up empty).
+		// Persist the agent's MCP server+tool selection and browser capability so
+		// a restore can replay the same bridge catalog (incl. agent_browser)
+		// instead of re-deriving it (or coming up empty).
 		runtime.ServerName = strings.TrimSpace(underlyingAgent.GetConfiguredServerName())
 		runtime.SelectedTools = underlyingAgent.GetSelectedTools()
+		runtime.BrowserMode = strings.TrimSpace(common.GetSessionBrowserMode(sessionID))
 	}
 	normalizeChatHistoryRuntime(runtime)
 

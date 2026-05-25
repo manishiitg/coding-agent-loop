@@ -154,6 +154,18 @@ func SetSessionBrowserMode(sessionID, mode string) {
 	log.Printf("[SHELL] Set browser mode for session %s: %s", sessionID, mode)
 }
 
+// GetSessionBrowserMode returns the resolved browser mode for a session, or "" if
+// none was set. Used to persist a session's runtime so a restore can replay the
+// same browser capability (and re-register agent_browser).
+func GetSessionBrowserMode(sessionID string) string {
+	sessionShellConfigsMu.RLock()
+	defer sessionShellConfigsMu.RUnlock()
+	if cfg := sessionShellConfigs[sessionID]; cfg != nil {
+		return cfg.BrowserMode
+	}
+	return ""
+}
+
 // SetSessionBrowserSessionID stores the shared browser session identity for a tool/chat session.
 // Browser tools can use this to converge on a stable browser state while keeping tool routing
 // scoped to the original chat/workflow session.

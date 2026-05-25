@@ -50,12 +50,14 @@ type ChatHistoryAgentRuntime struct {
 	WorkshopMode       string                       `json:"workshop_mode,omitempty"`
 	CapturedAt         string                       `json:"captured_at,omitempty"`
 	AgentSessionHandle *mcpagent.AgentSessionHandle `json:"agent_session_handle,omitempty"`
-	// ServerName / SelectedTools capture the agent's MCP server+tool selection so
-	// a restore can replay the same bridge catalog instead of re-deriving it.
-	// Empty on sessions saved before this was persisted — restore falls back to
-	// the workflow manifest for those.
+	// ServerName / SelectedTools / BrowserMode capture the agent's MCP server+tool
+	// selection and browser capability so a restore can replay the same bridge
+	// catalog (incl. agent_browser) instead of re-deriving it. Empty on sessions
+	// saved before this was persisted — restore falls back to the workflow
+	// manifest for those.
 	ServerName    string   `json:"server_name,omitempty"`
 	SelectedTools []string `json:"selected_tools,omitempty"`
+	BrowserMode   string   `json:"browser_mode,omitempty"`
 }
 
 type ChatHistoryPreviewMessage struct {

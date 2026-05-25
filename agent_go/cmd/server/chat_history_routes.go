@@ -16,9 +16,11 @@ import (
 	"github.com/manishiitg/mcpagent/mcpclient"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	storeevents "mcp-agent-builder-go/agent_go/internal/events"
 	"mcp-agent-builder-go/agent_go/internal/terminals"
 	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 // ChatHistoryRoutes registers chat history endpoints.
@@ -353,17 +355,35 @@ func (api *StreamingAPI) startRestoredTerminalFromNewAgent(ctx context.Context, 
 	// then to the full configured set so the bridge catalog is never empty.
 	restoredServerName := strings.TrimSpace(runtime.ServerName)
 	restoredSelectedTools := runtime.SelectedTools
-	if restoredServerName == "" {
-		restoredServerName = mcpclient.AllServers
-		restoredSelectedTools = nil
-		if wsPath := strings.TrimSpace(runtime.WorkspacePath); wsPath != "" {
-			if manifest, found, mErr := ReadWorkflowManifest(ctx, wsPath); mErr == nil && found {
-				if len(manifest.Capabilities.SelectedServers) > 0 {
-					restoredServerName = strings.Join(manifest.Capabilities.SelectedServers, ",")
+	restoredBrowserMode := strings.TrimSpace(runtime.BrowserMode)
+	var restoredSecretNames []string
+	restoredWorkspacePath := strings.TrimSpace(runtime.WorkspacePath)
+	// Always consult the workflow manifest: it's the source of truth for
+	// workflow-scoped secrets, and the fallback for server/tool/browser
+	// selection on sessions saved before those were persisted in the runtime.
+	if restoredWorkspacePath != "" {
+		if manifest, found, mErr := ReadWorkflowManifest(ctx, restoredWorkspacePath); mErr == nil && found {
+			caps := manifest.Capabilities
+			restoredSecretNames = caps.SelectedSecrets
+			if restoredServerName == "" {
+				if len(caps.SelectedServers) > 0 {
+					restoredServerName = strings.Join(caps.SelectedServers, ",")
 				}
-				restoredSelectedTools = manifest.Capabilities.SelectedTools
+				restoredSelectedTools = caps.SelectedTools
+			}
+			if restoredBrowserMode == "" {
+				restoredBrowserMode = strings.TrimSpace(caps.BrowserMode)
 			}
 		}
+	}
+	if restoredServerName == "" {
+		restoredServerName = mcpclient.AllServers
+	}
+	// Replay the session's browser capability so browser-backed tools work and
+	// context-aware shell blocking knows a browser is available (mirrors the
+	// fresh-session SetSessionBrowserMode call in the query handler).
+	if restoredBrowserMode != "" && restoredBrowserMode != "none" {
+		common.SetSessionBrowserMode(sessionID, restoredBrowserMode)
 	}
 
 	claudeCodePersistent, codexPersistent, geminiPersistent, cursorPersistent, agyPersistent, openCodePersistent := codingAgentPersistentInteractiveFlags(provider)
@@ -413,12 +433,87 @@ func (api *StreamingAPI) startRestoredTerminalFromNewAgent(ctx context.Context, 
 	}
 	api.sessionAgentsMux.Unlock()
 
+	// Re-register the session-scoped virtual tools a fresh session would have
+	// (secret-aware workspace tools + browser tools) so the resumed agent's
+	// bridge catalog matches. Must happen before the transport session launches.
+	api.registerRestoredCodingAgentTools(ctx, underlyingAgent, sessionID, userID, restoredWorkspacePath, restoredBrowserMode, restoredSecretNames)
+
 	if terminal, started, reason := api.startRestoredTerminalFromAgent(ctx, sessionID, runtime, underlyingAgent); started {
 		return terminal, true, ""
 	} else if reason != "" {
 		return nil, false, reason
 	}
 	return nil, false, "tmux_start_failed"
+}
+
+// registerRestoredCodingAgentTools re-registers the session-scoped virtual tools
+// a fresh coding-agent session would have, so a restored agent's bridge exposes
+// the same catalog: secret-aware workspace tools (so shell commands see SECRET_*
+// env) and, when a browser mode is active, the workspace browser tools. Executors
+// are wrapped in a conservative folder guard (the session's workspace folder is
+// writable, everything else read-only) since restore doesn't persist the original
+// fine-grained grants. Skills are applied separately via the system prompt.
+func (api *StreamingAPI) registerRestoredCodingAgentTools(ctx context.Context, ag *mcpagent.Agent, sessionID, userID, workspacePath, browserMode string, secretNames []string) {
+	if ag == nil {
+		return
+	}
+	guardFolder := strings.Trim(strings.TrimSpace(workspacePath), "/")
+	guard := func(execs map[string]func(ctx context.Context, args map[string]interface{}) (string, error)) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+		if guardFolder == "" {
+			return execs
+		}
+		return wrapExecutorsWithPlanFolderGuard(execs, guardFolder, nil)
+	}
+	registerTool := func(name, description string, parameters interface{}, exec func(ctx context.Context, args map[string]interface{}) (string, error), category string) {
+		var params map[string]interface{}
+		if parameters != nil {
+			if b, err := json.Marshal(parameters); err == nil {
+				_ = json.Unmarshal(b, &params)
+			}
+		}
+		if params == nil {
+			params = map[string]interface{}{}
+		}
+		if err := ag.RegisterCustomTool(name, description, params, exec, category); err != nil {
+			api.logRestoredTerminalf("failed to register restored tool %s: %v", name, err)
+		}
+	}
+
+	// Secret-aware workspace tools — bake the workflow's secrets in as SECRET_*
+	// env so the resumed agent's shell commands have them.
+	secretEnvVars := map[string]string{}
+	for _, s := range api.loadSelectedSecrets(ctx, userID, workspacePath, secretNames) {
+		secretEnvVars["SECRET_"+s.Name] = s.Value
+	}
+	wsExecutors, _ := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(userID, sessionID, secretEnvVars)
+	wsGuarded := guard(wsExecutors)
+	wsCategory := virtualtools.GetWorkspaceAdvancedToolCategory()
+	for _, tool := range virtualtools.CreateWorkspaceAdvancedTools() {
+		if tool.Function == nil {
+			continue
+		}
+		if exec, ok := wsGuarded[tool.Function.Name]; ok {
+			registerTool(tool.Function.Name, tool.Function.Description, tool.Function.Parameters, exec, wsCategory)
+		}
+	}
+
+	// Browser tools when a browser mode is active.
+	if browserMode == "headless" || browserMode == "cdp" {
+		cdpPort := 0
+		if browserMode == "cdp" {
+			cdpPort = 9222
+		}
+		brGuarded := guard(virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, cdpPort))
+		brCategory := virtualtools.GetWorkspaceBrowserToolCategory()
+		for _, tool := range virtualtools.CreateWorkspaceBrowserTools() {
+			if tool.Function == nil {
+				continue
+			}
+			if exec, ok := brGuarded[tool.Function.Name]; ok {
+				registerTool(tool.Function.Name, tool.Function.Description, tool.Function.Parameters, exec, brCategory)
+			}
+		}
+	}
 }
 
 func (api *StreamingAPI) logRestoredTerminalf(format string, args ...interface{}) {

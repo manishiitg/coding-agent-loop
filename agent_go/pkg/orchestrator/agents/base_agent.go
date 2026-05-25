@@ -147,6 +147,7 @@ func NewBaseAgent(
 	codingAgentWorkingDir string, // CLI coding-agent process working directory
 	codingAgentKeepAlive bool, // Keep tmux-backed coding-agent sessions alive after this agent completes
 	forceStructuredCodingAgent bool, // Force structured JSON transport for coding-agent CLIs (overrides tmux default)
+	isolateCodingAgentWorkspace bool, // Run the coding-CLI session in a fresh tmp dir (workflow steps only; chat keeps user dir)
 	runtimeOverrides mcpclient.RuntimeOverrides, // Runtime config overrides for MCP servers (e.g., output directories)
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
@@ -306,6 +307,11 @@ func NewBaseAgent(
 			mcpagent.WithAgyPersistentInteractiveSession(true),
 		)
 		logger.Info("🔗 Keeping tmux-backed coding-agent session alive after completion",
+			loggerv2.String("agent_name", name))
+	}
+	if isolateCodingAgentWorkspace {
+		options = append(options, mcpagent.WithIsolatedSessionWorkspace(true))
+		logger.Info("🔒 Isolating coding-agent session in a fresh tmp dir (workflow-step isolation)",
 			loggerv2.String("agent_name", name))
 	}
 	if forceStructuredCodingAgent {

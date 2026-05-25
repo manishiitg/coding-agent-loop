@@ -146,9 +146,10 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.APIKeys,                     // Pass API keys
 		boa.config.MCPSessionID,                // MCP session ID for connection sharing
 		boa.config.CodingAgentWorkingDir,       // CLI coding-agent working directory
-		boa.config.CodingAgentKeepAlive,        // Keep tmux-backed coding sessions alive after completion
-		boa.config.ForceStructuredCodingAgent,  // Force structured JSON transport (step-level)
-		boa.config.RuntimeOverrides,            // Runtime config overrides for MCP servers
+		boa.config.CodingAgentKeepAlive,         // Keep tmux-backed coding sessions alive after completion
+		boa.config.ForceStructuredCodingAgent,   // Force structured JSON transport (step-level)
+		boa.config.IsolateCodingAgentWorkspace,  // Run coding-CLI in a fresh tmp dir (workflow steps only)
+		boa.config.RuntimeOverrides,             // Runtime config overrides for MCP servers
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create base agent: %w", err)

@@ -826,6 +826,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		}
 	}
 
+	// Workflow steps run their coding-CLI session in a fresh os.MkdirTemp
+	// dir instead of CodingAgentWorkingDir. This eliminates file-collision
+	// risk between concurrent steps and protects the user's workflow dir
+	// from accidental writes via the model's built-in tools. The MCP
+	// bridge (configured separately) remains the orchestration path for
+	// any file changes the model wants to make to the user's actual
+	// workspace. See multi-llm-provider-go/docs/WORKFLOW_STEP_ISOLATION.md
+	// for the full design rationale.
+	//
+	// Chat code paths (multi-agent + builder chat in
+	// pkg/agentwrapper/llm_agent.go) deliberately do NOT set this flag —
+	// they need the agent to operate directly on the user's chosen
+	// workspace dir for the "agent edits my files" UX and to support
+	// CLI-native session resume tied to dir.
+	config.IsolateCodingAgentWorkspace = true
+
 	effectiveTransport := hcpo.applyWorkflowTransportToAgentConfig(config, stepConfig, "workflow step")
 	hcpo.publishWorkflowTransportContext(effectiveTransport, stepConfig)
 

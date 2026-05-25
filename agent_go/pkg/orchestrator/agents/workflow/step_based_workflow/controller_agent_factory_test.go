@@ -85,6 +85,33 @@ func TestApplyStepConfigToAgentConfigSupportsCodingAgentTmuxKeepAlive(t *testing
 	}
 }
 
+// TestApplyStepConfigToAgentConfigEnablesWorkspaceIsolation locks in
+// the Phase C contract: applying step config to a workflow-step agent
+// flips IsolateCodingAgentWorkspace=true. This is what makes the
+// coding-CLI session run in a fresh os.MkdirTemp dir instead of
+// CodingAgentWorkingDir, protecting the user's workflow files from
+// concurrent-step collisions and accidental model writes.
+//
+// Chat code paths (pkg/agentwrapper/llm_agent.go) do NOT call
+// applyStepConfigToAgentConfig, so this flag stays false there —
+// chat sessions continue to operate directly on the user's chosen
+// workspace dir for the "agent edits my files" UX.
+func TestApplyStepConfigToAgentConfigEnablesWorkspaceIsolation(t *testing.T) {
+	hcpo := newAgentFactoryTestOrchestrator(t)
+	config := agents.NewOrchestratorAgentConfig("step-agent")
+	config.LLMConfig.Primary.Provider = string(mcpllm.ProviderCodexCLI)
+
+	if config.IsolateCodingAgentWorkspace {
+		t.Fatal("OrchestratorAgentConfig must default IsolateCodingAgentWorkspace=false; chat code paths depend on the zero value being safe")
+	}
+
+	hcpo.applyStepConfigToAgentConfig(config, &AgentConfigs{}, true)
+
+	if !config.IsolateCodingAgentWorkspace {
+		t.Fatal("expected workflow step to enable IsolateCodingAgentWorkspace; without it, concurrent steps collide on CodingAgentWorkingDir and the model's built-in tools can mutate operator files")
+	}
+}
+
 func TestApplyStepConfigToAgentConfigForcesGeminiWorkflowStepsToStructuredTransport(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -39,27 +39,8 @@ const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
   'elevenlabs',
   'deepgram',
 ]
-const PUBLISHED_LLM_ALLOWED_PROVIDERS = new Set<LLMProvider>([
-  'bedrock',
-  'openai',
-  'vertex',
-  'anthropic',
-  'azure',
-  'claude-code',
-  'gemini-cli',
-  'codex-cli',
-  'cursor-cli',
-  'opencode-cli',
-  'opencode-cli-kimi',
-  'opencode-cli-deepseek',
-  'opencode-cli-qwen',
-  'opencode-cli-minimax',
-  'opencode-cli-glm',
-  'opencode-cli-free',
-])
-
-function isPublishedLLMProviderAllowed(provider?: string): provider is LLMProvider {
-  return PUBLISHED_LLM_ALLOWED_PROVIDERS.has(provider as LLMProvider)
+function hasUsableLLMIdentity(model?: { provider?: string; model_id?: string }): model is { provider: LLMProvider; model_id: string } {
+  return !!model?.provider?.trim() && !!model?.model_id?.trim()
 }
 
 function defaultLLMConfiguration(): LLMConfiguration {
@@ -72,13 +53,13 @@ function defaultLLMConfiguration(): LLMConfiguration {
 }
 
 function normalizePrimaryConfig(config?: LLMConfiguration): LLMConfiguration {
-  if (!config || !isPublishedLLMProviderAllowed(config.provider) || !config.model_id?.trim()) {
+  if (!config || !hasUsableLLMIdentity(config)) {
     return defaultLLMConfiguration()
   }
   return {
     ...config,
     fallback_models: config.fallback_models || [],
-    cross_provider_fallback: config.cross_provider_fallback && isPublishedLLMProviderAllowed(config.cross_provider_fallback.provider)
+    cross_provider_fallback: config.cross_provider_fallback && hasUsableLLMIdentity(config.cross_provider_fallback)
       ? config.cross_provider_fallback
       : undefined,
   }
@@ -95,7 +76,7 @@ function sanitizeLLMModel(model: LLMModel): LLMModel {
 }
 
 function normalizeLLMModel(model?: LLMModel): LLMModel {
-  if (!model || !isPublishedLLMProviderAllowed(model.provider) || !model.model_id?.trim()) {
+  if (!model || !hasUsableLLMIdentity(model)) {
     return {
       provider: DEFAULT_CHAT_PROVIDER,
       model_id: DEFAULT_CHAT_MODEL,
@@ -122,14 +103,14 @@ function sanitizeSavedLLM(llm: SavedLLM): SavedLLM {
 }
 
 function filterPublishedLLMs(llms: SavedLLM[]): SavedLLM[] {
-  return llms.filter(llm => isPublishedLLMProviderAllowed(llm.provider) && !!llm.model_id?.trim())
+  return llms.filter(llm => hasUsableLLMIdentity(llm))
 }
 
 function sanitizeAgentConfig(config: AgentLLMConfiguration | null): AgentLLMConfiguration | null {
   if (!config) return null
   return {
     primary: normalizeLLMModel(config.primary),
-    fallbacks: config.fallbacks.filter(model => isPublishedLLMProviderAllowed(model.provider)).map(sanitizeLLMModel),
+    fallbacks: config.fallbacks.filter(hasUsableLLMIdentity).map(sanitizeLLMModel),
   }
 }
 
@@ -768,8 +749,11 @@ export const useLLMStore = create<LLMState>()(
 
         // Library management
         saveLLM: async (llm, name, modelName, authMethod, metadata) => {
-          const { refreshAvailableLLMs } = get()
-          if (!isPublishedLLMProviderAllowed(llm.provider)) {
+          const { refreshAvailableLLMs, supportedProviders, providerManifest } = get()
+          const knownProvider =
+            supportedProviders.includes(llm.provider) ||
+            providerManifest.some(provider => provider.id === llm.provider)
+          if (!knownProvider) {
             throw new Error(`Provider ${llm.provider} is not available as a published chat LLM`)
           }
           // Always fetch the current list from backend to avoid overwriting
@@ -1345,9 +1329,6 @@ export const useLLMStore = create<LLMState>()(
             // This replaces the old provider-specific model lists
             const supportedProviders = currentState.supportedProviders || []
             currentState.savedLLMs.forEach(savedLLM => {
-              if (!isPublishedLLMProviderAllowed(savedLLM.provider)) {
-                return
-              }
               // Skip if provider is not supported
               if (supportedProviders.length > 0 && !supportedProviders.includes(savedLLM.provider)) {
                 return

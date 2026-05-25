@@ -3,13 +3,13 @@ import { X, Settings, Lock, WandSparkles } from 'lucide-react'
 import { Button } from './ui/Button'
 import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore, useAppStore } from '../stores'
-import type { LLMConfiguration, ExtendedLLMConfiguration, AgentLLMConfiguration } from '../services/api-types'
+import type { LLMConfiguration, ExtendedLLMConfiguration, AgentLLMConfiguration, LLMProvider } from '../services/api-types'
 import { CodingAgentSection } from './llm/CodingAgentSection'
 import { APIProviderSection } from './llm/APIProviderSection'
 import { APIKeyProviderSection } from './APIKeyProviderSection'
 import { llmConfigService, type ModelMetadata, type ProviderManifestEntry } from '../services/llm-config-api'
 import { LibraryTab } from './llm/LibraryTab'
-import { CODING_AGENT_PROVIDERS, PROVIDER_ORDER, getProviderDisplayInfo, getProviderIntegrationKind, type ProviderType } from '../utils/llmDisplay'
+import { getProviderDisplayInfo } from '../utils/llmDisplay'
 import ModalPortal from './ui/ModalPortal'
 
 interface LLMConfigurationModalProps {
@@ -29,15 +29,16 @@ type APIKeyError = Record<APIKeyProviderType, string | null>
 
 type AudioProviderTab = 'audio-gemini' | 'audio-minimax'
 
-type TabType = 'library' | ProviderType | AudioProviderTab
+type TabType = 'library' | LLMProvider | AudioProviderTab
 
 const CHAT_CAPABILITIES = new Set(['chat', 'text'])
 const AUDIO_CAPABILITIES = new Set(['text_to_speech', 'speech_to_text', 'generate_music', 'audio_generation', 'audio_transcription', 'music_generation'])
-const HIDDEN_CHAT_PROVIDER_TABS = new Set<ProviderType>(['openrouter', 'z-ai', 'kimi', 'minimax', 'minimax-coding-plan'])
+const HIDDEN_CHAT_PROVIDER_TABS = new Set<string>(['openrouter', 'z-ai', 'kimi', 'minimax', 'minimax-coding-plan'])
 const isMiniMaxAudioModel = (modelId: string) => /^(speech|music|audio|voice)[-_]/i.test(modelId)
+const API_KEY_PROVIDER_IDS = new Set<string>(['bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'minimax', 'elevenlabs', 'deepgram'])
 
 const FALLBACK_AUDIO_PROVIDER_ITEMS: Array<{
-  tab: ProviderType | AudioProviderTab
+  tab: LLMProvider | AudioProviderTab
   provider: APIKeyProviderType
   name: string
   placeholder: string
@@ -110,7 +111,6 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
     loadDefaultsFromBackend,
     // Supported providers filter
     isProviderSupported,
-    providerCapabilities,
     llmConfigLocked,
     lockedProviders,
     providerManifest,
@@ -118,60 +118,63 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
     loadProviderManifest,
   } = useLLMStore()
 
-  const isProviderLocked = (provider: ProviderType) =>
+  const isProviderLocked = (provider: string) =>
     lockedProviders.includes('all') || lockedProviders.includes(provider)
 
   const getProviderForTab = (tab: TabType): APIKeyProviderType | null => {
     if (tab === 'audio-gemini') return 'vertex'
     if (tab === 'audio-minimax') return 'minimax'
-    if (tab === 'library' || CODING_AGENT_PROVIDERS.has(tab)) return null
-    if (HIDDEN_CHAT_PROVIDER_TABS.has(tab as ProviderType)) return null
+    if (tab === 'library') return null
+    const entry = providerManifest.find(provider => provider.id === tab)
+    if (entry?.integration_kind === 'coding_agent') return null
+    if (HIDDEN_CHAT_PROVIDER_TABS.has(tab)) return null
+    if (!API_KEY_PROVIDER_IDS.has(tab)) return null
     return tab as APIKeyProviderType
   }
 
-  const hasCapability = useCallback((provider: ProviderType, capabilities: Set<string>) => {
-    const providerCaps = providerCapabilities[provider] || []
-    return providerCaps.some(capability => capabilities.has(capability))
-  }, [providerCapabilities])
+  const entryHasCapability = useCallback((entry: ProviderManifestEntry, capabilities: Set<string>) => {
+    return (entry.capabilities || []).some(capability => capabilities.has(capability))
+  }, [])
 
-  const hasProviderCapabilityData = Object.keys(providerCapabilities).length > 0
-
-  const llmProviderTabs = useMemo(() => (
-    PROVIDER_ORDER.filter(provider => {
-      if (HIDDEN_CHAT_PROVIDER_TABS.has(provider)) return false
-      if (!isProviderSupported(provider)) return false
-      if (!hasProviderCapabilityData) return provider !== 'elevenlabs' && provider !== 'deepgram'
-      return hasCapability(provider, CHAT_CAPABILITIES)
+  const manifestProviderEntries = useMemo(() => (
+    providerManifest.filter(entry => {
+      if (HIDDEN_CHAT_PROVIDER_TABS.has(entry.id)) return false
+      return isProviderSupported(entry.id as LLMProvider)
     })
-  ), [hasCapability, hasProviderCapabilityData, isProviderSupported])
+  ), [isProviderSupported, providerManifest])
 
-  const apiProviderTabs = useMemo(
-    () => llmProviderTabs.filter(provider => getProviderIntegrationKind(provider) === 'api_model'),
-    [llmProviderTabs]
+  const apiProviderEntries = useMemo(
+    () => manifestProviderEntries.filter(entry =>
+      entry.integration_kind === 'api_model' &&
+      API_KEY_PROVIDER_IDS.has(entry.id) &&
+      entryHasCapability(entry, CHAT_CAPABILITIES)
+    ),
+    [entryHasCapability, manifestProviderEntries]
   )
 
-  const codingAgentProviderTabs = useMemo(
-    () => llmProviderTabs.filter(provider => getProviderIntegrationKind(provider) === 'coding_agent'),
-    [llmProviderTabs]
+  const codingAgentProviderEntries = useMemo(
+    () => manifestProviderEntries.filter(entry => entry.integration_kind === 'coding_agent'),
+    [manifestProviderEntries]
   )
 
   const audioProviderItems = useMemo(() => {
-    if (!hasProviderCapabilityData) {
+    if (providerManifest.length === 0) {
       return FALLBACK_AUDIO_PROVIDER_ITEMS.filter(item => isProviderSupported(item.provider))
     }
-    return PROVIDER_ORDER
-      .filter(provider => isProviderSupported(provider) && hasCapability(provider, AUDIO_CAPABILITIES))
-      .map(provider => ({
-        tab: provider === 'vertex' ? 'audio-gemini' as const : provider === 'minimax' ? 'audio-minimax' as const : provider,
-        provider: provider as APIKeyProviderType,
-        name: provider === 'vertex' ? 'Gemini' : getProviderDisplayInfo(provider).name,
-        placeholder: provider === 'vertex'
+    const items = manifestProviderEntries
+      .filter(entry => API_KEY_PROVIDER_IDS.has(entry.id) && entryHasCapability(entry, AUDIO_CAPABILITIES))
+      .map(entry => ({
+        tab: entry.id === 'vertex' ? 'audio-gemini' as const : entry.id === 'minimax' ? 'audio-minimax' as const : entry.id as LLMProvider,
+        provider: entry.id as APIKeyProviderType,
+        name: entry.id === 'vertex' ? 'Gemini' : entry.display_name,
+        placeholder: entry.id === 'vertex'
           ? 'Select a Gemini audio model'
-          : provider === 'minimax'
+          : entry.id === 'minimax'
             ? 'Select a MiniMax audio model'
-            : `Select a ${getProviderDisplayInfo(provider).name} media model`,
+            : `Select a ${entry.display_name} media model`,
       }))
-  }, [hasCapability, hasProviderCapabilityData, isProviderSupported])
+    return items.length > 0 ? items : FALLBACK_AUDIO_PROVIDER_ITEMS.filter(item => isProviderSupported(item.provider))
+  }, [entryHasCapability, isProviderSupported, manifestProviderEntries, providerManifest.length])
 
   // Get mode-specific configs
   const modeConfig = getConfigForMode(currentMode)
@@ -358,7 +361,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
   }, [isOpen, onClose])
 
   // Sync primary config when provider config changes (mode-specific)
-  const syncPrimaryConfig = useCallback((provider: ProviderType, config: ExtendedLLMConfiguration) => {
+  const syncPrimaryConfig = useCallback((provider: LLMProvider, config: ExtendedLLMConfiguration) => {
     // Also sync agentConfig primary (mode-specific)
     if (modeAgentConfig && modeAgentConfig.primary.provider === provider) {
       setModeAgentConfig({
@@ -474,61 +477,49 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
                   <Settings className="w-4 h-4" />
                 </button>
 
-                {codingAgentProviderTabs.length > 0 && (
+                {codingAgentProviderEntries.length > 0 && (
                   <>
                     <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">Coding Agents</h3>
-                    {codingAgentProviderTabs
-                      .map((provider) => (
-                  (() => {
-                    const providerInfo = getProviderDisplayInfo(provider)
-                    return (
-                  <button
-                    key={provider}
-                    onClick={() => setActiveTab(provider as typeof activeTab)}
-                    className={`w-full flex items-center gap-3 p-3 rounded-md text-left transition-colors ${
-                      activeTab === provider ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'
-                    }`}
-                  >
-                    <div className="flex-1">
-                      <div className="font-medium">{providerInfo.name}</div>
-                      <div className="text-xs opacity-75">
-                        {isProviderLocked(provider) ? 'Configured by admin' : providerInfo.authDescription}
-                      </div>
-                    </div>
-                    {isProviderLocked(provider) && <Lock className="w-4 h-4 opacity-60" />}
-                  </button>
-                    )
-                  })()
-                ))}
+                    {codingAgentProviderEntries.map((entry) => (
+                      <button
+                        key={entry.id}
+                        onClick={() => setActiveTab(entry.id as typeof activeTab)}
+                        className={`w-full flex items-center gap-3 p-3 rounded-md text-left transition-colors ${
+                          activeTab === entry.id ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'
+                        }`}
+                      >
+                        <div className="flex-1">
+                          <div className="font-medium">{entry.display_name}</div>
+                          <div className="text-xs opacity-75">
+                            {isProviderLocked(entry.id) ? 'Configured by admin' : entry.auth_description}
+                          </div>
+                        </div>
+                        {isProviderLocked(entry.id) && <Lock className="w-4 h-4 opacity-60" />}
+                      </button>
+                    ))}
                   </>
                 )}
 
-                {apiProviderTabs.length > 0 && (
+                {apiProviderEntries.length > 0 && (
                   <>
                     <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">API Providers</h3>
-                    {apiProviderTabs
-                      .map((provider) => (
-                  (() => {
-                    const providerInfo = getProviderDisplayInfo(provider)
-                    return (
-                  <button
-                    key={provider}
-                    onClick={() => setActiveTab(provider as typeof activeTab)}
-                    className={`w-full flex items-center gap-3 p-3 rounded-md text-left transition-colors ${
-                      activeTab === provider ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'
-                    }`}
-                  >
-                    <div className="flex-1">
-                      <div className="font-medium">{providerInfo.name}</div>
-                      <div className="text-xs opacity-75">
-                        {isProviderLocked(provider) ? 'Configured by admin' : providerInfo.authDescription}
-                      </div>
-                    </div>
-                    {isProviderLocked(provider) && <Lock className="w-4 h-4 opacity-60" />}
-                  </button>
-                    )
-                  })()
-                ))}
+                    {apiProviderEntries.map((entry) => (
+                      <button
+                        key={entry.id}
+                        onClick={() => setActiveTab(entry.id as typeof activeTab)}
+                        className={`w-full flex items-center gap-3 p-3 rounded-md text-left transition-colors ${
+                          activeTab === entry.id ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'
+                        }`}
+                      >
+                        <div className="flex-1">
+                          <div className="font-medium">{entry.display_name}</div>
+                          <div className="text-xs opacity-75">
+                            {isProviderLocked(entry.id) ? 'Configured by admin' : entry.auth_description}
+                          </div>
+                        </div>
+                        {isProviderLocked(entry.id) && <Lock className="w-4 h-4 opacity-60" />}
+                      </button>
+                    ))}
                   </>
                 )}
 
@@ -590,7 +581,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
 
               {/* Editable provider sections (only when not locked) */}
               {/* API provider sections — unified component driven by manifest */}
-              {apiProviderTabs.includes(activeTab as ProviderType) && !isProviderLocked(activeTab as ProviderType) && (() => {
+              {apiProviderEntries.some(entry => entry.id === activeTab) && !isProviderLocked(activeTab) && (() => {
                 const entry = getManifestEntry(activeTab as string)
                 const providerKey = activeTab as APIKeyProviderType
                 const configEntry = providerConfigMap[providerKey]
@@ -700,7 +691,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
               )}
 
               {/* Coding agent sections — unified component driven by manifest */}
-              {codingAgentProviderTabs.includes(activeTab as ProviderType) && (() => {
+              {codingAgentProviderEntries.some(entry => entry.id === activeTab) && (() => {
                 const entry = getManifestEntry(activeTab as string)
                 if (!entry) return <div className="text-sm text-muted-foreground py-8 text-center">Loading provider info...</div>
                 return <CodingAgentSection provider={entry} />

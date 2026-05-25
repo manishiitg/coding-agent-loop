@@ -77,21 +77,45 @@ func TestBuildLLMDiscoveryHidesMissingAPIProvider(t *testing.T) {
 	}
 }
 
-func TestAgyCLIIsNotPublishedByDefault(t *testing.T) {
+func TestAgyCLIIsPublishedAsAlpha(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+	t.Setenv("SUPPORTED_LLM_PROVIDERS", "agy-cli")
+	t.Setenv("PATH", t.TempDir())
 
-	if isPublishedLLMProviderAllowed("agy-cli") {
-		t.Fatal("agy-cli should stay hidden from published provider lists until MCP bridge certification lands")
+	if !isPublishedLLMProviderAllowed("agy-cli") {
+		t.Fatal("agy-cli should be allowed in published provider lists as an alpha local CLI")
 	}
+	foundSupported := false
 	for _, provider := range getSupportedProviders() {
 		if provider == "agy-cli" {
-			t.Fatalf("supported providers include unpublished agy-cli: %v", getSupportedProviders())
+			foundSupported = true
 		}
 	}
+	if !foundSupported {
+		t.Fatalf("supported providers missing agy-cli: %v", getSupportedProviders())
+	}
+
 	response := buildLLMDiscovery(context.Background())
-	for _, candidate := range response.Candidates {
-		if candidate.Provider == "agy-cli" {
-			t.Fatalf("discovery candidate includes unpublished agy-cli: %+v", candidate)
-		}
+	if len(response.Candidates) != 1 {
+		t.Fatalf("candidate count = %d, want 1: %+v", len(response.Candidates), response.Candidates)
+	}
+	candidate := response.Candidates[0]
+	if candidate.Provider != "agy-cli" {
+		t.Fatalf("provider = %q, want agy-cli", candidate.Provider)
+	}
+	if candidate.Label != "Antigravity CLI (Alpha)" {
+		t.Fatalf("label = %q, want alpha label", candidate.Label)
+	}
+	if candidate.RuntimeCommand != "agy" {
+		t.Fatalf("runtime_command = %q, want agy", candidate.RuntimeCommand)
+	}
+	if candidate.RuntimeAvailable == nil || *candidate.RuntimeAvailable {
+		t.Fatalf("runtime_available = %v, want false for missing agy binary", candidate.RuntimeAvailable)
+	}
+	if candidate.Usable {
+		t.Fatal("usable = true, want false when agy binary is missing")
+	}
+	if len(candidate.Options) != 1 || candidate.Options[0] != "agy-cli" {
+		t.Fatalf("options = %v, want [agy-cli]", candidate.Options)
 	}
 }

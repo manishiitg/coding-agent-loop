@@ -35,6 +35,7 @@ var supportedLLMProviders = []string{
 	"gemini-cli",
 	"codex-cli",
 	"cursor-cli",
+	"agy-cli",
 	"opencode-cli",
 	// OpenCode CLI sub-provider tiles. Each routes back to the same
 	// `opencode` binary but with sub-provider-scoped credentials and a
@@ -52,7 +53,7 @@ const claudeCodeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
 func isPublishedLLMProviderAllowed(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "gemini-cli", "codex-cli", "cursor-cli", "opencode-cli",
+		"claude-code", "gemini-cli", "codex-cli", "cursor-cli", "agy-cli", "opencode-cli",
 		"opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
 		"opencode-cli-minimax", "opencode-cli-glm", "opencode-cli-free":
 		return true
@@ -355,7 +356,7 @@ func providerDisplayLabel(provider string) string {
 	case "cursor-cli":
 		return "Cursor CLI"
 	case "agy-cli":
-		return "Antigravity CLI"
+		return "Antigravity CLI (Alpha)"
 	case "opencode-cli":
 		return "OpenCode CLI"
 	case "claude-code":
@@ -408,6 +409,8 @@ func discoveryModelOptions(provider string) []string {
 		return []string{"codex-cli", "high", "medium", "low"}
 	case "cursor-cli":
 		return []string{"cursor-cli", "gpt-5", "sonnet-4-thinking", "sonnet-4"}
+	case "agy-cli":
+		return []string{"agy-cli"}
 	case "opencode-cli":
 		return []string{"opencode-cli", "openai/gpt-5.1", "anthropic/claude-sonnet-4-5"}
 	case "claude-code":
@@ -445,7 +448,7 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 	case "cursor-cli":
 		return "Run cursor-agent login or set CURSOR_API_KEY, then test again."
 	case "agy-cli":
-		return "Run agy login/setup or set AGY_API_KEY, then test again."
+		return "Run agy locally and complete Antigravity sign-in, then test again."
 	case "opencode-cli":
 		return "Run opencode auth/login or set OPENCODE_API_KEY, then test again."
 	case "claude-code":
@@ -468,6 +471,7 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 	providerOrder := []string{
 		"codex-cli",
 		"cursor-cli",
+		"agy-cli",
 		"opencode-cli",
 		"claude-code",
 		"gemini-cli",
@@ -610,7 +614,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	// 3) Auto-generate defaults from AvailableModels for locked providers
 	var entries []map[string]interface{}
 	defaults := llm.GetLLMDefaults()
-	providers := []string{"codex-cli", "cursor-cli", "opencode-cli", "claude-code", "gemini-cli", "azure", "bedrock", "openai", "anthropic", "vertex"}
+	providers := []string{"codex-cli", "cursor-cli", "agy-cli", "opencode-cli", "claude-code", "gemini-cli", "azure", "bedrock", "openai", "anthropic", "vertex"}
 
 	for _, p := range providers {
 		// If provider is locked (or global lock is on), include its available models

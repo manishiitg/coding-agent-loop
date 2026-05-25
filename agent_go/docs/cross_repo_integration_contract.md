@@ -417,9 +417,10 @@ matrix test fails loudly with which provider broke.
 Each contract area should be verified for all supported providers.
 
 **Coding agents (tmux transport):**
-- claude-code, codex-cli, cursor-cli
-- agy-cli is implemented for explicit local/contract runs, but remains hidden
-  from published provider lists until its MCP bridge E2E is certified.
+- claude-code, codex-cli, cursor-cli, agy-cli
+- agy-cli is published as an alpha local provider. It is tmux-only and requires
+  local Antigravity sign-in; structured JSON transport is not part of the alpha
+  contract.
 
 **Coding agents (structured JSON transport):**
 - gemini-cli, opencode-cli

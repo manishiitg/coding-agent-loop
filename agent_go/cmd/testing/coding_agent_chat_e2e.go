@@ -61,6 +61,12 @@ Example:
     --server-url http://localhost:18743 \
     --provider cursor-cli \
     --model cursor-cli \
+    --selected-folder _users/default/Chats
+
+  mcp-agent test coding-agent-chat-e2e \
+    --server-url http://localhost:18743 \
+    --provider agy-cli \
+    --model agy-cli \
     --selected-folder _users/default/Chats`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), codingAgentChatE2EFlags.timeout)
@@ -115,7 +121,7 @@ Example:
 
 		if codingAgentChatE2EFlags.runTmuxLossResume {
 			if !providerSupportsTmuxLossResumeE2E(provider) {
-				return fmt.Errorf("--run-tmux-loss-resume is only certified for claude-code and codex-cli, got %q", provider)
+				return fmt.Errorf("--run-tmux-loss-resume is only certified for claude-code, codex-cli, and agy-cli, got %q", provider)
 			}
 			killedTmux, err := client.killLatestTerminalTmux(ctx, sessionID)
 			if err != nil {
@@ -203,7 +209,7 @@ Example:
 
 func init() {
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.serverURL, "server-url", "http://localhost:18743", "mcp-agent-builder-go server URL")
-	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.provider, "provider", "gemini-cli", "coding CLI provider: gemini-cli, codex-cli, cursor-cli, or claude-code")
+	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.provider, "provider", "gemini-cli", "coding CLI provider: gemini-cli, codex-cli, cursor-cli, agy-cli, opencode-cli, or claude-code")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.model, "model", "", "model ID; defaults to the provider-specific E2E model")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.sessionID, "session-id", "", "session ID to reuse; generated when omitted")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.selectedFolder, "selected-folder", "_users/default/Chats", "workspace-relative folder for the chat session")
@@ -215,7 +221,7 @@ func init() {
 	codingAgentChatE2ECmd.Flags().DurationVar(&codingAgentChatE2EFlags.timeout, "timeout", 6*time.Minute, "overall test timeout")
 	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.skipLiveSteer, "skip-live-steer", false, "skip the in-flight /steer regression test")
 	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.skipCompletionProbe, "skip-completion-probe", false, "skip the tool-backed completion detection regression test")
-	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.runTmuxLossResume, "run-tmux-loss-resume", false, "kill the latest tmux pane after turn 2 and require provider-native continuation recovery; certified for claude-code and codex-cli")
+	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.runTmuxLossResume, "run-tmux-loss-resume", false, "kill the latest tmux pane after turn 2 and require provider-native continuation recovery; certified for claude-code, codex-cli, and agy-cli")
 }
 
 type codingAgentChatE2EClient struct {
@@ -239,6 +245,8 @@ func defaultCodingAgentE2EModel(provider string) string {
 		return "gpt-5.3-codex-spark"
 	case "cursor-cli":
 		return "cursor-cli"
+	case "agy-cli":
+		return "agy-cli"
 	case "claude-code":
 		return "claude-code"
 	case "opencode-cli":
@@ -462,7 +470,7 @@ func (c *codingAgentChatE2EClient) getTerminals(ctx context.Context, sessionID s
 
 func providerSupportsTmuxLossResumeE2E(provider string) bool {
 	switch strings.TrimSpace(provider) {
-	case "claude-code", "codex-cli":
+	case "claude-code", "codex-cli", "agy-cli":
 		return true
 	default:
 		return false

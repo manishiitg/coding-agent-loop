@@ -102,6 +102,13 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		authDescription: "Local CLI (API key optional)",
 		requiresAPIKey:  false,
 	},
+	"agy-cli": {
+		displayName:     "Antigravity CLI (Alpha)",
+		description:     "Alpha local coding agent through agy and tmux. Requires local Antigravity sign-in; structured JSON transport is not supported.",
+		integrationKind: "coding_agent",
+		authDescription: "Local CLI (Agy sign-in)",
+		requiresAPIKey:  false,
+	},
 	"opencode-cli": {
 		displayName:     "OpenCode CLI",
 		description:     "Uses the locally installed opencode CLI through tmux. Supports multiple model providers.",
@@ -229,7 +236,7 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 	capabilitiesByProvider := buildProviderCapabilities(ctx)
 
 	providerOrder := []string{
-		"codex-cli", "cursor-cli", "opencode-cli",
+		"codex-cli", "cursor-cli", "agy-cli", "opencode-cli",
 		"opencode-cli-kimi", "opencode-cli-deepseek", "opencode-cli-qwen",
 		"opencode-cli-minimax", "opencode-cli-glm", "opencode-cli-free",
 		"claude-code", "gemini-cli",

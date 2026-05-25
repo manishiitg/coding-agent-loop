@@ -20,7 +20,7 @@ type CandidateTestState = {
 type ReadinessLevel = 'ready' | 'needs_setup' | 'not_detected'
 type TierKey = 'main' | 'high' | 'medium' | 'low'
 
-const CODING_CLI_ORDER = ['codex-cli', 'claude-code', 'cursor-cli', 'opencode-cli', 'gemini-cli'] as const
+const FALLBACK_CODING_CLI_ORDER = ['codex-cli', 'claude-code', 'cursor-cli', 'opencode-cli', 'gemini-cli'] as const
 const TIER_LABELS: Record<TierKey, string> = {
   main: 'Main',
   high: 'High',
@@ -61,7 +61,7 @@ const TIER_MODEL_OVERRIDES: Partial<Record<LLMProvider, Partial<Record<TierKey, 
   },
 }
 
-const CODING_CLI_INFO: Record<typeof CODING_CLI_ORDER[number], {
+const CODING_CLI_INFO: Record<typeof FALLBACK_CODING_CLI_ORDER[number], {
   label: string
   binary: string
   setupCommand: string
@@ -99,10 +99,10 @@ const CODING_CLI_INFO: Record<typeof CODING_CLI_ORDER[number], {
   },
 }
 
-const isCodingCLIProvider = (provider: string): provider is typeof CODING_CLI_ORDER[number] =>
-  (CODING_CLI_ORDER as readonly string[]).includes(provider)
+const isFallbackCodingCLIProvider = (provider: string): provider is typeof FALLBACK_CODING_CLI_ORDER[number] =>
+  (FALLBACK_CODING_CLI_ORDER as readonly string[]).includes(provider)
 
-function fallbackCodingCandidate(provider: typeof CODING_CLI_ORDER[number]): LLMDiscoveryCandidate {
+function fallbackCodingCandidate(provider: typeof FALLBACK_CODING_CLI_ORDER[number]): LLMDiscoveryCandidate {
   const info = CODING_CLI_INFO[provider]
   return {
     id: `${provider}:${provider}`,
@@ -262,19 +262,49 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
 
   const codingCliCandidates = useMemo(() => {
     const byProvider = new Map<string, LLMDiscoveryCandidate>()
+    const byRuntime = new Map<string, LLMDiscoveryCandidate>()
     for (const candidate of candidates) {
-      if (isCodingCLIProvider(candidate.provider) && !byProvider.has(candidate.provider)) {
+      if (candidate.kind === 'local_cli' && !byProvider.has(candidate.provider)) {
         byProvider.set(candidate.provider, candidate)
+        const runtimeKey = candidate.runtime_command || candidate.provider
+        if (!byRuntime.has(runtimeKey)) byRuntime.set(runtimeKey, candidate)
       }
     }
-    return CODING_CLI_ORDER.map(provider => byProvider.get(provider) || fallbackCodingCandidate(provider))
-  }, [candidates])
+
+    const seenRuntimeKeys = new Set<string>()
+    const manifestCodingProviders = providerManifest.filter(provider => {
+      if (provider.integration_kind !== 'coding_agent') return false
+      const runtimeKey = provider.runtime_command || provider.id
+      if (seenRuntimeKeys.has(runtimeKey)) return false
+      seenRuntimeKeys.add(runtimeKey)
+      return true
+    })
+    if (manifestCodingProviders.length > 0) {
+      const seen = new Set<string>()
+      const ordered: LLMDiscoveryCandidate[] = []
+      for (const provider of manifestCodingProviders) {
+        const runtimeKey = provider.runtime_command || provider.id
+        const candidate = byProvider.get(provider.id) || byRuntime.get(runtimeKey) || manifestProviderCandidate(provider)
+        if (candidate) {
+          ordered.push(candidate)
+          seen.add(provider.id)
+        }
+      }
+      for (const candidate of byProvider.values()) {
+        const runtimeKey = candidate.runtime_command || candidate.provider
+        if (!seen.has(candidate.provider) && !seenRuntimeKeys.has(runtimeKey)) ordered.push(candidate)
+      }
+      return ordered
+    }
+
+    return FALLBACK_CODING_CLI_ORDER.map(provider => byProvider.get(provider) || fallbackCodingCandidate(provider))
+  }, [candidates, providerManifest])
 
   const grouped = useMemo(() => {
     const readyAPI: LLMDiscoveryCandidate[] = []
     const apiNeedsSetup: LLMDiscoveryCandidate[] = []
     for (const c of candidates) {
-      if (isCodingCLIProvider(c.provider)) continue
+      if (c.kind === 'local_cli') continue
       const level = candidateReadiness(c)
       if (level === 'ready') {
         readyAPI.push(c)
@@ -335,11 +365,11 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
     const readiness = candidateReadiness(candidate)
     const testState = testStates[candidate.id] || { status: 'idle' as const }
     const isEnabling = enablingId === candidate.id
-    const providerInfo = isCodingCLIProvider(candidate.provider)
+    const providerInfo = isFallbackCodingCLIProvider(candidate.provider)
       ? CODING_CLI_INFO[candidate.provider]
       : undefined
     const binary = candidate.runtime_command || providerInfo?.binary || candidate.provider
-    const setupCommand = providerInfo?.setupCommand
+    const setupCommand = providerInfo?.setupCommand || (readiness === 'needs_setup' ? binary : undefined)
     const tiers = tierEntries(candidate, metadata, providerManifest)
     const popularOpenCodeProviders = candidate.provider === 'opencode-cli'
       ? ['Kimi', 'GLM', 'MiniMax', 'DeepSeek', 'Qwen']

@@ -118,9 +118,8 @@ environment supports. At minimum:
 
 - Claude Code tmux transport.
 - Codex CLI tmux transport.
-- Antigravity CLI tmux transport only in explicit local/contract runs until its
-  MCP bridge E2E is certified; it must stay hidden from published provider
-  lists meanwhile.
+- Antigravity CLI tmux transport in explicit local/contract runs; it remains
+  hidden from default published provider lists until rollout is approved.
 - Gemini CLI structured stream-json transport.
 - Cursor CLI tmux transport when installed.
 - OpenCode structured JSON transport when enabled.

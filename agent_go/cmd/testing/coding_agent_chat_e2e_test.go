@@ -2,11 +2,12 @@ package testing
 
 import stdtesting "testing"
 
-func TestDefaultCodingAgentE2EModelIncludesCursorCLI(st *stdtesting.T) {
+func TestDefaultCodingAgentE2EModelIncludesCodingCLIProviders(st *stdtesting.T) {
 	tests := map[string]string{
 		"gemini-cli":   "gemini-3.1-flash-lite",
 		"codex-cli":    "gpt-5.3-codex-spark",
 		"cursor-cli":   "cursor-cli",
+		"agy-cli":      "agy-cli",
 		"claude-code":  "claude-code",
 		"opencode-cli": "opencode-cli",
 	}
@@ -15,6 +16,25 @@ func TestDefaultCodingAgentE2EModelIncludesCursorCLI(st *stdtesting.T) {
 		st.Run(provider, func(st *stdtesting.T) {
 			if got := defaultCodingAgentE2EModel(provider); got != want {
 				st.Fatalf("defaultCodingAgentE2EModel(%q) = %q, want %q", provider, got, want)
+			}
+		})
+	}
+}
+
+func TestProviderSupportsTmuxLossResumeE2EIncludesNativeResumeProviders(st *stdtesting.T) {
+	cases := map[string]bool{
+		"claude-code":  true,
+		"codex-cli":    true,
+		"agy-cli":      true,
+		"cursor-cli":   false,
+		"gemini-cli":   false,
+		"opencode-cli": false,
+	}
+
+	for provider, want := range cases {
+		st.Run(provider, func(st *stdtesting.T) {
+			if got := providerSupportsTmuxLossResumeE2E(provider); got != want {
+				st.Fatalf("providerSupportsTmuxLossResumeE2E(%q) = %v, want %v", provider, got, want)
 			}
 		})
 	}

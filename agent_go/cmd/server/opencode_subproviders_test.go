@@ -64,7 +64,18 @@ func TestProviderManifestExposesOpenCodeSubProviders(t *testing.T) {
 	for _, p := range resp.Providers {
 		byID[p.ID] = true
 		if p.ID == "agy-cli" {
-			t.Fatalf("manifest should not publish experimental agy-cli before MCP bridge certification")
+			if p.DisplayName != "Antigravity CLI (Alpha)" {
+				t.Fatalf("agy-cli display_name = %q, want alpha label", p.DisplayName)
+			}
+			if p.IntegrationKind != "coding_agent" {
+				t.Fatalf("agy-cli IntegrationKind = %q, want coding_agent", p.IntegrationKind)
+			}
+			if p.RequiresAPIKey {
+				t.Fatal("agy-cli RequiresAPIKey = true, want false for local sign-in")
+			}
+			if len(p.Models) == 0 || p.Models[0].ModelID != "agy-cli" {
+				t.Fatalf("agy-cli models = %+v, want agy-cli model metadata", p.Models)
+			}
 		}
 		if wantEnv, ok := wantEnvVars[p.ID]; ok {
 			if p.APIKeyEnv != wantEnv {
@@ -90,6 +101,9 @@ func TestProviderManifestExposesOpenCodeSubProviders(t *testing.T) {
 			t.Errorf("manifest missing OpenCode sub-provider tile %q", id)
 		}
 	}
+	if !byID["agy-cli"] {
+		t.Error("manifest missing agy-cli alpha provider")
+	}
 
 	// provider_order should advertise the sub-providers between
 	// opencode-cli and claude-code so the UI groups them together.
@@ -97,8 +111,8 @@ func TestProviderManifestExposesOpenCodeSubProviders(t *testing.T) {
 	if !strings.Contains(orderJoined, "opencode-cli,opencode-cli-kimi") {
 		t.Errorf("provider_order missing or misordered: %v", resp.ProviderOrder)
 	}
-	if strings.Contains(orderJoined, "agy-cli") {
-		t.Errorf("provider_order should not publish experimental agy-cli: %v", resp.ProviderOrder)
+	if !strings.Contains(orderJoined, "cursor-cli,agy-cli,opencode-cli") {
+		t.Errorf("provider_order should publish agy-cli alpha between cursor-cli and opencode-cli: %v", resp.ProviderOrder)
 	}
 }
 

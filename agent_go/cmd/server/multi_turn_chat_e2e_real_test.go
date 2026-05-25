@@ -18,6 +18,7 @@ import (
 	claudecodeadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	codexcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	cursorcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
+	opencodecliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
 
 	"mcp-agent-builder-go/agent_go/pkg/costledger"
 )
@@ -539,6 +540,269 @@ func TestMultiTurnChatE2E_Cursor(t *testing.T) {
 		// cause in the cursor adapter or TUI is fixed.
 		strictMemory: true,
 	})
+}
+
+// TestMultiTurnChatE2E_OpenCode is the structured-transport peer of the
+// tmux-provider tests above. OpenCode does not run a persistent tmux
+// session — it resumes via its native --session <id> flag instead, so
+// the test extracts the opencode_session_id from turn 1's
+// GenerationInfo and threads it through via WithResumeSessionID on
+// every later turn.
+//
+// The test pins the model to opencode's hosted free tier
+// (deepseek-v4-flash-free) so no API key is required: any workstation
+// with the opencode binary on PATH can run this with
+// RUN_OPENCODE_CLI_REAL_E2E=1. Free-tier sessions have shorter
+// response budgets, so we use 3 turns instead of the 5 the tmux
+// providers run, and we don't assert intermediate-message splices or
+// cache reads — opencode emits stream-json events directly rather
+// than a transcript-file replay, and the free models don't expose
+// cache_read_input_tokens.
+//
+// Cross-turn memory is the security-critical claim: turn 3 is asked
+// to recall both earlier tokens. If opencode's --session resume is
+// broken (or the adapter dropped the sessionID through the metadata
+// channel), turn 3 will return without WIDGET_A47 / WIDGET_B23 and
+// the test fails loudly.
+func TestMultiTurnChatE2E_OpenCode(t *testing.T) {
+	if os.Getenv("RUN_OPENCODE_CLI_REAL_E2E") == "" {
+		t.Skip("set RUN_OPENCODE_CLI_REAL_E2E=1 to run opencode multi-turn chat e2e")
+	}
+	if _, err := exec.LookPath("opencode"); err != nil {
+		t.Skipf("opencode binary not found: %v", err)
+	}
+
+	model := strings.TrimSpace(os.Getenv("OPENCODE_CLI_REAL_E2E_MODEL"))
+	if model == "" {
+		// Hosted free tier — no auth needed, supports tool use, fast
+		// enough for short multi-turn sessions.
+		model = "opencode/deepseek-v4-flash-free"
+	}
+
+	adapter := opencodecliadapter.NewOpenCodeCLIAdapter("", model, &e2eMockLogger{})
+	ownerSessionID := fmt.Sprintf("multi-turn-e2e-opencode-%s", time.Now().Format("150405"))
+
+	const (
+		tokenA = "WIDGET_A47"
+		tokenB = "WIDGET_B23"
+	)
+	type turnSpec struct {
+		prompt         string
+		mustContainAny []string
+		mustContainAll []string
+	}
+	prompts := []turnSpec{
+		{
+			prompt:         fmt.Sprintf("Remember this token: %s. Reply with ONLY the word ACK.", tokenA),
+			mustContainAny: []string{tokenA, "ACK"},
+		},
+		{
+			prompt:         fmt.Sprintf("Remember this second token: %s. Reply with ONLY the word ACK.", tokenB),
+			mustContainAny: []string{tokenB, "ACK"},
+		},
+		{
+			prompt:         "Which two tokens did I give you so far? Reply with both, comma-separated.",
+			mustContainAll: []string{tokenA, tokenB},
+		},
+	}
+
+	wsServer := costledger.NewTestServer(t)
+	defer wsServer.Close()
+	ledger := costledger.NewLedger(wsServer.URL)
+	api := &StreamingAPI{costLedger: ledger}
+	observer := newCostObserver(api.costLedger, ownerSessionID, "test-user", "chat")
+
+	// Workspace dir for opencode to anchor its session — same path
+	// across turns so --session resolves against the same workspace.
+	workspaceDir := t.TempDir()
+
+	var history []llmtypes.MessageContent
+	var openCodeSessionID string
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	for i, p := range prompts {
+		turn := i + 1
+		history = append(history, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: p.prompt}},
+		})
+
+		opts := []llmtypes.CallOption{
+			opencodecliadapter.WithWorkingDir(workspaceDir),
+		}
+		if openCodeSessionID != "" {
+			// Turn 2+: continue the conversation opencode started in
+			// turn 1. This is the contract claim — without --session
+			// the model has no memory of earlier turns.
+			opts = append(opts, opencodecliadapter.WithResumeSessionID(openCodeSessionID))
+		}
+
+		t.Logf("→ turn %d (session=%q): %s", turn, openCodeSessionID, p.prompt)
+		t0 := time.Now()
+		resp, err := adapter.GenerateContent(ctx, history, opts...)
+		elapsed := time.Since(t0)
+		if err != nil {
+			t.Fatalf("turn %d GenerateContent: %v", turn, err)
+		}
+		if len(resp.Choices) == 0 || resp.Choices[0] == nil {
+			t.Fatalf("turn %d: empty choices", turn)
+		}
+		choice := resp.Choices[0]
+		gi := choice.GenerationInfo
+		if gi == nil {
+			t.Fatalf("turn %d: missing GenerationInfo", turn)
+		}
+
+		// Free-tier turns are typically <30s; a longer bound gives the
+		// hosted endpoint room to breathe without masking real
+		// completion-detection regressions.
+		if elapsed > 120*time.Second {
+			t.Errorf("turn %d took %v, want <120s (completion-detection regression?)", turn, elapsed)
+		}
+
+		content := strings.TrimSpace(choice.Content)
+		if content == "" {
+			t.Fatalf("turn %d: empty Content. GI.Additional=%v", turn, gi.Additional)
+		}
+
+		for _, token := range p.mustContainAll {
+			if !strings.Contains(strings.ToUpper(content), strings.ToUpper(token)) {
+				t.Errorf("turn %d: opencode --session memory regression — response missing %q from earlier turn\n   content=%q", turn, token, content)
+			}
+		}
+		if len(p.mustContainAny) > 0 {
+			hit := false
+			for _, token := range p.mustContainAny {
+				if strings.Contains(strings.ToUpper(content), strings.ToUpper(token)) {
+					hit = true
+					break
+				}
+			}
+			if !hit {
+				t.Errorf("turn %d: response missing any of %v\nfull content: %q", turn, p.mustContainAny, content)
+			}
+		}
+
+		// Capture the opencode session id on turn 1 so subsequent
+		// turns can resume it. Without this, the contract claim
+		// SupportsNativeResume:true in CodingAgentProviderContract is
+		// untested at the builder layer.
+		if openCodeSessionID == "" {
+			if id, ok := gi.Additional["opencode_session_id"].(string); ok && strings.TrimSpace(id) != "" {
+				openCodeSessionID = strings.TrimSpace(id)
+				t.Logf("   ✓ captured opencode_session_id=%s", openCodeSessionID)
+			} else {
+				t.Errorf("turn 1 GenerationInfo missing opencode_session_id — native resume cannot be wired without it. GI.Additional=%v", gi.Additional)
+			}
+		}
+
+		// Model-name surface check: adapter must put the effective
+		// model in GenerationInfo so the cost ledger, inspector views,
+		// and resume picker can label the turn correctly. Free-tier
+		// stream-json events don't carry a model field upstream, so
+		// without this the caller has no way to know which model
+		// produced the response — the adapter synthesizes it from the
+		// --model flag we passed in.
+		if effective, ok := gi.Additional["opencode_effective_model"].(string); !ok || strings.TrimSpace(effective) == "" {
+			t.Errorf("turn %d: GenerationInfo.Additional[\"opencode_effective_model\"] missing — adapter must surface the model name (we passed %q via --model). Additional=%v", turn, model, gi.Additional)
+		} else if turn == 1 {
+			t.Logf("   ✓ opencode_effective_model=%s", effective)
+		}
+
+		prompt := derefInt(gi.PromptTokens, gi.InputTokens)
+		completion := derefInt(gi.CompletionTokens, gi.OutputTokens)
+		if prompt == 0 && resp.Usage != nil && resp.Usage.InputTokens > 0 {
+			prompt = resp.Usage.InputTokens
+		}
+		if completion == 0 && resp.Usage != nil && resp.Usage.OutputTokens > 0 {
+			completion = resp.Usage.OutputTokens
+		}
+		// Token tracking: the adapter now backstops missing
+		// stream-json step_finish events by shelling out to
+		// `opencode export <sessionID>` after each call, so tokens
+		// land in resp.Usage even on free-tier short responses.
+		// Hard-fail if both come back zero — that's a regression in
+		// the transcript-reader sidecar.
+		if prompt == 0 && completion == 0 {
+			t.Errorf("turn %d: token usage absent (prompt=%d completion=%d). The opencodecli adapter is supposed to fall back to `opencode export` when stream-json events don't carry tokens. GI=%+v Usage=%+v", turn, prompt, completion, gi, resp.Usage)
+		}
+
+		// Splice intermediate messages into history when present (the
+		// transcript-reader populates these from `opencode export`).
+		// Fall back to choice.Content only if the splice is empty —
+		// previously the structured adapter never surfaced
+		// intermediates and this branch was unreachable.
+		if intermediate, ok := llmtypes.ExtractCodingProviderIntermediateMessages(gi); ok && len(intermediate.Messages) > 0 {
+			if intermediate.Transport != llmtypes.CodingProviderTransportStructured {
+				t.Errorf("turn %d: intermediate.Transport=%q, want %q", turn, intermediate.Transport, llmtypes.CodingProviderTransportStructured)
+			}
+			t.Logf("   ✓ turn %d intermediate.Messages=%d (provider=%s)", turn, len(intermediate.Messages), intermediate.Provider)
+			history = append(history, intermediate.Messages...)
+		} else {
+			t.Logf("   ⚠ turn %d: no intermediate messages from opencode export — falling back to choice.Content (transcript reader may have failed)", turn)
+			history = append(history, llmtypes.MessageContent{
+				Role:  llmtypes.ChatMessageTypeAI,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: content}},
+			})
+		}
+
+		additional := map[string]interface{}{}
+		for k, v := range gi.Additional {
+			additional[k] = v
+		}
+		effectiveModel, _ := extractCostAndEffectiveModel(additional)
+		if strings.TrimSpace(effectiveModel) == "" {
+			effectiveModel = model
+		}
+		tokenEvent := &unifiedevents.TokenUsageEvent{
+			ModelID:          effectiveModel,
+			Provider:         "opencodecli",
+			PromptTokens:     prompt,
+			CompletionTokens: completion,
+			TotalTokens:      prompt + completion,
+			GenerationInfo:   additional,
+		}
+		if err := observer.HandleEvent(context.Background(), &unifiedevents.AgentEvent{
+			Type:      unifiedevents.TokenUsage,
+			Timestamp: time.Now(),
+			Component: "test",
+			Data:      tokenEvent,
+		}); err != nil {
+			t.Errorf("turn %d HandleEvent: %v", turn, err)
+		}
+
+		t.Logf("   ✓ turn %d ok (elapsed=%v, prompt=%d, completion=%d, content_len=%d)",
+			turn, elapsed.Round(100*time.Millisecond), prompt, completion, len(content))
+	}
+
+	// Cost ledger should have N entries for this session — same
+	// summary-shape assertion as the tmux providers, but we don't
+	// expect TotalCostUSD > 0 (free-tier models report zero cost).
+	req := httptest.NewRequest(http.MethodGet, "/api/cost/summary", nil)
+	rec := httptest.NewRecorder()
+	api.handleCostSummary(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/api/cost/summary status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var summary costledger.Summary
+	if err := json.Unmarshal(rec.Body.Bytes(), &summary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if summary.Total.CallCount != len(prompts) {
+		t.Errorf("Total.CallCount = %d, want %d (one per turn)", summary.Total.CallCount, len(prompts))
+	}
+	// Token aggregates are now a hard assertion: the transcript
+	// reader's `opencode export` backstop fills tokens even when the
+	// stream-json omits step_finish, so a zero aggregate means the
+	// sidecar enrichment is broken end-to-end.
+	if summary.Total.PromptTokens == 0 {
+		t.Errorf("Total.PromptTokens = 0 across %d turns — transcript-reader sidecar regression (model=%q)", len(prompts), model)
+	}
+
+	t.Logf("✅ opencode multi-turn e2e: %d turns, session=%s, history=%d entries, prompt_tokens=%d completion_tokens=%d",
+		len(prompts), openCodeSessionID, len(history), summary.Total.PromptTokens, summary.Total.CompletionTokens)
 }
 
 func TestMultiTurnChatE2E_Agy(t *testing.T) {

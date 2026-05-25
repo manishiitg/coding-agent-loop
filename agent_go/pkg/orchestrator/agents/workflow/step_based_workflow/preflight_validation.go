@@ -8,6 +8,8 @@ import (
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
+
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 // MissingDependency describes one workflow-required resource that isn't
@@ -48,6 +50,13 @@ func validateWorkflowDependencies(ctx context.Context, session *WorkshopChatSess
 	addRequired := func(server, by string) {
 		server = strings.TrimSpace(server)
 		if server == "" {
+			return
+		}
+		// Built-in custom/virtual tool categories (workspace_advanced,
+		// workspace_browser, human, workflow, …) appear in workflow
+		// selected_servers but are provided by the app, not the MCP config — so
+		// they're always available and must not be validated as MCP servers.
+		if common.IsBuiltinToolCategory(server) {
 			return
 		}
 		if _, ok := required[server]; !ok {

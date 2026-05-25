@@ -48,6 +48,11 @@ export interface ProviderManifestEntry {
   default_model_id: string
   models: ModelMetadata[]
   capabilities: string[]
+  coding_agent?: {
+    transport: 'tmux' | 'structured' | string
+    supports_live_input: boolean
+    supports_interrupt: boolean
+  }
   api_key_env?: string
   api_key_url?: string
 }

@@ -38,8 +38,15 @@ type providerManifestEntry struct {
 	DefaultModelID        string                    `json:"default_model_id"`
 	Models                []*llmtypes.ModelMetadata `json:"models"`
 	Capabilities          []string                  `json:"capabilities"`
+	CodingAgent           *providerCodingAgentInfo  `json:"coding_agent,omitempty"`
 	APIKeyEnv             string                    `json:"api_key_env,omitempty"`
 	APIKeyURL             string                    `json:"api_key_url,omitempty"`
+}
+
+type providerCodingAgentInfo struct {
+	Transport         string `json:"transport"`
+	SupportsLiveInput bool   `json:"supports_live_input"`
+	SupportsInterrupt bool   `json:"supports_interrupt"`
 }
 
 type integrationKindInfo struct {
@@ -219,6 +226,22 @@ func providerKind(provider string) string {
 	return "api"
 }
 
+func providerCodingAgentManifestInfo(provider, modelID string) *providerCodingAgentInfo {
+	contractProvider := provider
+	if strings.HasPrefix(provider, "opencode-cli-") {
+		contractProvider = "opencode-cli"
+	}
+	contract, ok := llm.GetCodingAgentProviderContract(llm.Provider(contractProvider), modelID)
+	if !ok {
+		return nil
+	}
+	return &providerCodingAgentInfo{
+		Transport:         string(contract.Transport),
+		SupportsLiveInput: contract.SupportsLiveInput,
+		SupportsInterrupt: contract.SupportsInterrupt,
+	}
+}
+
 // handleGetProviderManifest returns the full provider manifest for the frontend.
 func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -328,6 +351,7 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 			DefaultModelID:        defaultModel,
 			Models:                models,
 			Capabilities:          caps,
+			CodingAgent:           providerCodingAgentManifestInfo(provider, defaultModel),
 			APIKeyEnv:             info.apiKeyEnv,
 			APIKeyURL:             info.apiKeyURL,
 		}

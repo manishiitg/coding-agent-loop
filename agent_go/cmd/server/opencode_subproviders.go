@@ -92,6 +92,7 @@ func openCodeSubProviderManifestEntries(runtimeAvailable bool, mergedSubKeys map
 			DefaultModelID:        defaultModelID,
 			Models:                models,
 			Capabilities:          []string{"chat", "read_image"},
+			CodingAgent:           providerCodingAgentManifestInfo(sp.ID, defaultModelID),
 			APIKeyEnv:             sp.APIKeyEnvVar,
 			APIKeyURL:             sp.APIKeyURL,
 		})

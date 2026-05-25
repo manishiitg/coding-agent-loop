@@ -33,7 +33,12 @@ func TestProviderManifestExposesOpenCodeSubProviders(t *testing.T) {
 			ModelSelectionMode string `json:"model_selection_mode"`
 			RequiresAPIKey     bool   `json:"requires_api_key"`
 			APIKeyEnv          string `json:"api_key_env"`
-			Models             []struct {
+			CodingAgent        *struct {
+				Transport         string `json:"transport"`
+				SupportsLiveInput bool   `json:"supports_live_input"`
+				SupportsInterrupt bool   `json:"supports_interrupt"`
+			} `json:"coding_agent"`
+			Models []struct {
 				ModelID string `json:"model_id"`
 			} `json:"models"`
 		} `json:"providers"`
@@ -76,6 +81,12 @@ func TestProviderManifestExposesOpenCodeSubProviders(t *testing.T) {
 			if len(p.Models) == 0 || p.Models[0].ModelID != "agy-cli" {
 				t.Fatalf("agy-cli models = %+v, want agy-cli model metadata", p.Models)
 			}
+			if p.CodingAgent == nil {
+				t.Fatalf("agy-cli coding_agent metadata missing")
+			}
+			if p.CodingAgent.Transport != "tmux" || !p.CodingAgent.SupportsLiveInput || !p.CodingAgent.SupportsInterrupt {
+				t.Fatalf("agy-cli coding_agent = %+v, want tmux live input + interrupt", p.CodingAgent)
+			}
 		}
 		if wantEnv, ok := wantEnvVars[p.ID]; ok {
 			if p.APIKeyEnv != wantEnv {
@@ -93,6 +104,11 @@ func TestProviderManifestExposesOpenCodeSubProviders(t *testing.T) {
 			}
 			if len(p.Models) == 0 {
 				t.Errorf("%s: returned zero models", p.ID)
+			}
+			if p.CodingAgent == nil {
+				t.Errorf("%s: coding_agent metadata missing", p.ID)
+			} else if p.CodingAgent.Transport != "structured" || p.CodingAgent.SupportsLiveInput || p.CodingAgent.SupportsInterrupt {
+				t.Errorf("%s: coding_agent = %+v, want structured without live input/interrupt", p.ID, p.CodingAgent)
 			}
 		}
 	}

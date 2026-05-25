@@ -331,6 +331,8 @@ import { chatHistorySupportsNativeResume, chatHistoryUsesTerminalRestore } from 
 // MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown.
 const DEDICATED_MCP_SERVERS = new Set(['playwright'])
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
+const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'agy-cli', 'opencode-cli'])
+const FALLBACK_LIVE_INPUT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'agy-cli'])
 
 const formatResumeChatTime = (value?: string): string => {
   if (!value) return 'Unknown time'
@@ -790,17 +792,34 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     workflowPhasePreset?.llmConfig?.phase_llm?.provider,
     workflowPhasePreset?.llmConfig?.provider,
   ])
-  // All CLI agent runtimes (use tmux or structured transport)
-  const isCLIProvider = useMemo(
-    () => effectiveProviderForSteer === 'claude-code' || effectiveProviderForSteer === 'gemini-cli' || effectiveProviderForSteer === 'codex-cli' || effectiveProviderForSteer === 'cursor-cli' || effectiveProviderForSteer === 'opencode-cli',
-    [effectiveProviderForSteer]
+  const {
+    providerManifest,
+    providerManifestLoaded,
+    loadProviderManifest,
+  } = useLLMStore()
+  useEffect(() => {
+    if (!providerManifestLoaded) {
+      void loadProviderManifest()
+    }
+  }, [loadProviderManifest, providerManifestLoaded])
+
+  const selectedProviderManifestEntry = useMemo(
+    () => providerManifest.find(provider => provider.id === effectiveProviderForSteer),
+    [effectiveProviderForSteer, providerManifest]
   )
-  // Only tmux-based CLI providers support live keyboard input during a running turn.
-  // opencode-cli uses structured (--print) transport, so SupportsLiveInput=false in the
-  // backend contract — exclude it here to match.
+  // All coding-agent runtimes, driven by the backend provider contract.
+  const isCLIProvider = useMemo(
+    () => selectedProviderManifestEntry?.integration_kind === 'coding_agent'
+      || FALLBACK_CODING_AGENT_PROVIDERS.has(effectiveProviderForSteer || ''),
+    [effectiveProviderForSteer, selectedProviderManifestEntry?.integration_kind]
+  )
+  // Only providers whose backend contract supports live input should bypass
+  // the normal queued-message path. This lets new coding CLIs work without
+  // adding another frontend provider list.
   const supportsLiveCodingAgentInput = useMemo(
-    () => effectiveProviderForSteer === 'claude-code' || effectiveProviderForSteer === 'gemini-cli' || effectiveProviderForSteer === 'codex-cli' || effectiveProviderForSteer === 'cursor-cli',
-    [effectiveProviderForSteer]
+    () => selectedProviderManifestEntry?.coding_agent?.supports_live_input === true
+      || (!selectedProviderManifestEntry && FALLBACK_LIVE_INPUT_PROVIDERS.has(effectiveProviderForSteer || '')),
+    [effectiveProviderForSteer, selectedProviderManifestEntry]
   )
   const canShowSteer = useMemo(() => canSteer && !isCLIProvider, [canSteer, isCLIProvider])
   // CLI providers always require code execution mode

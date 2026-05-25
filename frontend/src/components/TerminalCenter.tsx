@@ -1504,12 +1504,26 @@ function normalizeTerminalWorkflowPath(path?: string | null): string {
     .replace(/\/+$/, '')
 }
 
+// workflowMatchKey reduces a path to its workflow identity — the segment after
+// "Workflow/" (lowercased), or the last path segment as a fallback. Matching on
+// this is robust to the many forms the same workflow's path takes (relative vs
+// absolute, "/data/docs/..." vs "...workspace-docs/...", trailing slashes, case),
+// which the previous full-path endsWith comparison was not — that fragility hid
+// a resumed session's terminals when the active preset path and the terminal's
+// workflow_path described the same workflow in different forms.
+function workflowMatchKey(path?: string | null): string {
+  const parts = normalizeTerminalWorkflowPath(path).replace(/\\/g, '/').split('/').filter(Boolean)
+  const wfIdx = parts.findIndex(p => p.toLowerCase() === 'workflow')
+  const name = wfIdx >= 0 && parts[wfIdx + 1] ? parts[wfIdx + 1] : parts[parts.length - 1]
+  return (name || '').toLowerCase()
+}
+
 function terminalMatchesWorkflow(terminal: TerminalSnapshot, workflowPath?: string | null): boolean {
-  const target = normalizeTerminalWorkflowPath(workflowPath)
+  const target = workflowMatchKey(workflowPath)
   if (!target) return true
-  const terminalPath = normalizeTerminalWorkflowPath(terminal.workflow_path)
-  if (!terminalPath) return false
-  return terminalPath === target || terminalPath.endsWith(`/${target}`) || target.endsWith(`/${terminalPath}`)
+  const terminalKey = workflowMatchKey(terminal.workflow_path)
+  if (!terminalKey) return false
+  return terminalKey === target
 }
 
 function formatTokens(n?: number): string {

@@ -115,35 +115,55 @@ func startRestoredTerminalHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 		if !ok || runtime == nil {
+			api.logRestoredTerminalInfof("restore session=%s user=%s path=%q result=fail reason=runtime_not_found", req.SessionID, userID, req.RestoredConversationPath)
 			_ = json.NewEncoder(w).Encode(startRestoredTerminalResponse{OK: true, Started: false, Reason: "runtime_not_found"})
 			return
 		}
 
+		// Single structured entry describing what we're about to try.
+		// Captures the data the 3-tier fallback actually keys off so a
+		// failed restore can be diagnosed without re-running.
+		recordedTmuxSession, _, _ := restoredRuntimeTmuxSession(runtime)
+		api.logRestoredTerminalInfof("restore session=%s user=%s kind=%s provider=%s transport=%s external_session_id=%q tmux_session=%q workspace=%q",
+			req.SessionID, userID, runtime.Kind, runtime.Provider,
+			restoredRuntimeCodingAgentTransport(runtime),
+			strings.TrimSpace(runtime.ExternalSessionID),
+			recordedTmuxSession,
+			runtime.WorkspacePath,
+		)
+
 		var fallbackReason string
 		if terminal, started, reason := api.attachRestoredExistingTmuxTerminal(r.Context(), req.SessionID, runtime); started {
+			api.logRestoredTerminalInfof("restore session=%s tier=attach_existing result=started", req.SessionID)
 			_ = json.NewEncoder(w).Encode(startRestoredTerminalResponse{OK: true, Started: true, Terminal: terminal})
 			return
 		} else if reason != "" {
+			api.logRestoredTerminalInfof("restore session=%s tier=attach_existing result=skip reason=%s", req.SessionID, reason)
 			fallbackReason = reason
 		}
 
 		if terminal, started, reason := api.startRestoredTerminalFromInMemoryAgent(r.Context(), req.SessionID, runtime); started {
+			api.logRestoredTerminalInfof("restore session=%s tier=in_memory_agent result=started", req.SessionID)
 			_ = json.NewEncoder(w).Encode(startRestoredTerminalResponse{OK: true, Started: true, Terminal: terminal})
 			return
 		} else if reason != "" {
+			api.logRestoredTerminalInfof("restore session=%s tier=in_memory_agent result=skip reason=%s", req.SessionID, reason)
 			fallbackReason = reason
 		}
 
 		if terminal, started, reason := api.startRestoredTerminalFromNewAgent(r.Context(), req.SessionID, userID, runtime); started {
+			api.logRestoredTerminalInfof("restore session=%s tier=new_agent result=started", req.SessionID)
 			_ = json.NewEncoder(w).Encode(startRestoredTerminalResponse{OK: true, Started: true, Terminal: terminal})
 			return
 		} else if reason != "" {
+			api.logRestoredTerminalInfof("restore session=%s tier=new_agent result=skip reason=%s", req.SessionID, reason)
 			fallbackReason = reason
 		}
 
 		if fallbackReason == "" {
 			fallbackReason = "terminal_transport_unavailable"
 		}
+		api.logRestoredTerminalInfof("restore session=%s result=fail final_reason=%s", req.SessionID, fallbackReason)
 		_ = json.NewEncoder(w).Encode(startRestoredTerminalResponse{OK: true, Started: false, Reason: fallbackReason})
 	}
 }
@@ -500,6 +520,19 @@ func (api *StreamingAPI) logRestoredTerminalf(format string, args ...interface{}
 		return
 	}
 	api.logger.Warn(fmt.Sprintf("[CHAT_HISTORY] "+format, args...))
+}
+
+// logRestoredTerminalInfof is the info-level sibling of
+// logRestoredTerminalf. Used to trace the 3-tier resume-terminal
+// fallback (attach existing → in-memory agent → fresh agent) so a
+// failed restore can be diagnosed from the server log without
+// rebuilding. Keep these one-liners structured (key=value) so grep
+// for a session ID surfaces the full decision trail.
+func (api *StreamingAPI) logRestoredTerminalInfof(format string, args ...interface{}) {
+	if api == nil || api.logger == nil {
+		return
+	}
+	api.logger.Info(fmt.Sprintf("[CHAT_HISTORY] "+format, args...))
 }
 
 func (api *StreamingAPI) upsertRestoredTmuxTerminal(sessionID string, runtime *ChatHistoryAgentRuntime, tmuxSession, content string) {

@@ -23,20 +23,30 @@ export function startRestoredTransportTerminal(sessionId: string | null | undefi
   if (restoreInFlight.has(key)) return
   restoreInFlight.add(key)
 
+  console.info('[RestoredTerminal] POST /chat-history/restored-terminal', {
+    sessionId: targetSessionId,
+    path,
+  })
   requestRestoredTerminalRefreshes()
   void agentApi.startRestoredTerminal({
     session_id: targetSessionId,
     restored_conversation_path: path,
   }).then((response) => {
     requestRestoredTerminalRefreshes()
-    if (!response.started) {
+    if (response.started) {
+      console.info('[RestoredTerminal] terminal restore started', {
+        sessionId: targetSessionId,
+        hasTerminalSnapshot: Boolean(response.terminal),
+      })
+    } else {
       console.warn('[RestoredTerminal] Terminal restore did not start', {
         sessionId: targetSessionId,
         reason: response.reason,
+        response,
       })
     }
   }).catch((error) => {
-    console.warn('[RestoredTerminal] Failed to start restored terminal', error)
+    console.warn('[RestoredTerminal] Failed to start restored terminal', { sessionId: targetSessionId, error })
     // Restore should not block on a stale or already-closed terminal transport.
     // The next submitted turn will still recreate the provider session when needed.
   }).finally(() => {

@@ -896,6 +896,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Both tmux terminal-restore and native-resume coding sessions reattach into
     // a tmux terminal on the backend, so open the terminal view for either —
     // otherwise native-resume shows the banner but never surfaces the terminal.
+    // Trace the gating decision so a missing terminal can be diagnosed from the
+    // browser console without re-running the resume.
+    console.info('[Resume] gating decision', {
+      sessionId: targetTab.sessionId,
+      path,
+      useTerminalRestore,
+      useNativeResume,
+      willOpenTerminal: useTerminalRestore || useNativeResume,
+      provider: session.runtime?.provider,
+      transport: session.runtime?.transport ?? session.runtime?.agent_session_handle?.provider?.transport,
+      externalSessionId: session.runtime?.external_session_id,
+    })
     if (useTerminalRestore || useNativeResume) {
       latestStore.setTabViewMode(targetTabId, 'terminal')
       startRestoredTransportTerminal(targetTab.sessionId, path)

@@ -621,6 +621,13 @@ function formatTransportChip(terminal: TerminalSnapshot): string {
   return provider ? `${provider} · ${transportLabel}` : transportLabel
 }
 
+function formatRailTransportChip(terminal: TerminalSnapshot): string {
+  return formatTransportChip(terminal)
+    .replace(/^Claude Code\b/, 'Claude')
+    .replace(/^Codex CLI\b/, 'Codex')
+    .replace(/^Gemini CLI\b/, 'Gemini')
+}
+
 // extractDoneStats parses the synthetic terminal's "[done · 1240ms · 412 in
 // · 28 out · $0.000089]" trailer out of the pane content, so we can
 // surface duration / tokens / cost in the meta row without needing
@@ -696,14 +703,38 @@ function formatTerminalModelLabel(terminal: TerminalSnapshot): string {
   return ''
 }
 
+function terminalStepTypeLabel(terminal: TerminalSnapshot): string {
+  const type = (terminal.step_type || '').trim()
+  return type ? `${humanizeIdentifier(type)} step` : ''
+}
+
+function terminalRailStepTypeLabel(terminal: TerminalSnapshot): string {
+  const type = (terminal.step_type || '').trim().toLowerCase()
+  if (!type || type === 'regular') return ''
+  return terminalStepTypeLabel(terminal)
+}
+
+function displayMetaWithoutStepType(terminal: TerminalSnapshot): string {
+  const meta = terminal.display_meta || ''
+  const stepType = (terminal.step_type || '').trim()
+  if (!meta || !stepType) return meta
+  const stepTypeLabel = humanizeIdentifier(stepType)
+  return meta
+    .split('·')
+    .map(part => part.trim())
+    .filter(part => part && part !== stepTypeLabel)
+    .join(' · ')
+}
+
 function formatTerminalMeta(terminal: TerminalSnapshot): string {
   const chip = formatTransportChip(terminal)
   const modelLabel = formatTerminalModelLabel(terminal)
+  const stepTypeLabel = terminalStepTypeLabel(terminal)
   const parts: string[] = [
     isArchivedTurnTerminal(terminal) ? 'Previous turn' : '',
     chip,
+    stepTypeLabel,
     modelLabel,
-    terminal.step_type ? `type: ${humanizeIdentifier(terminal.step_type)}` : '',
   ]
   if (terminal.step_attempt && terminal.step_attempt > 1) {
     parts.push(`attempt ${terminal.step_attempt}`)
@@ -711,7 +742,8 @@ function formatTerminalMeta(terminal: TerminalSnapshot): string {
   if (terminal.step_execution_mode) {
     parts.push(formatStepExecutionModeChip(terminal.step_execution_mode))
   }
-  if (terminal.display_meta) parts.push(terminal.display_meta)
+  const displayMeta = displayMetaWithoutStepType(terminal)
+  if (displayMeta) parts.push(displayMeta)
   return [...new Set(parts.filter(Boolean))].join(' · ')
 }
 
@@ -1122,7 +1154,7 @@ function TerminalStepTypeIcon({ terminal }: { terminal: TerminalSnapshot }) {
   const type = (terminal.step_type || '').toLowerCase()
   if (!type) return null
 
-  const label = `${humanizeIdentifier(type)} step`
+  const label = terminalStepTypeLabel(terminal)
   const iconClass = 'h-2.5 w-2.5'
   let icon = <Terminal className={iconClass} />
   if (type === 'routing') {
@@ -2837,6 +2869,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       const state = terminalState(terminal)
       const isRunning = state === 'running'
       const startedTimestamp = formatStartedTimestamp(terminal)
+      const stepTypeLabel = terminalRailStepTypeLabel(terminal)
+      const railTransport = formatRailTransportChip(terminal)
       const terminalErrors = terminalErrorsByID.get(terminalPaneKey(terminal)) || []
       const latestTerminalError = terminalErrors[0]
       return (
@@ -2901,7 +2935,14 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
             )}
           </div>
           <div className={`mt-0.5 flex items-center gap-1.5 opacity-70 ${terminalTheme.railMetaText}`}>
-            <span className="min-w-0 truncate">{formatTransportChip(terminal)}</span>
+            {stepTypeLabel && (
+              <span className="shrink-0 text-neutral-400">{stepTypeLabel}</span>
+            )}
+            {railTransport && (
+              <span className="min-w-0 truncate text-neutral-500" title={formatTransportChip(terminal)}>
+                {stepTypeLabel ? `· ${railTransport}` : railTransport}
+              </span>
+            )}
             {startedTimestamp && (
               <span className="shrink-0 text-neutral-500" title={startedTimestamp.title}>
                 · {startedTimestamp.label}

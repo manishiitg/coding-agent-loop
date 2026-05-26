@@ -774,70 +774,15 @@ Use this access to create and update custom skills. You can read other folders t
 	return instructions
 }
 
-// buildSkillPrompt builds the system prompt section for selected skills.
-// isOrchestrator=true means the agent delegates all tool use — skill reading
-// instructions are phrased as "include in your delegate() instructions" instead
-// of "read the file directly", resolving the contradiction between the orchestrator's
-// "do not use tools" policy and the requirement to read skills before acting.
-// docsRoot is the shell-visible workspace root for absolute paths.
-func buildSkillPrompt(selectedSkills []string, workspaceAPIURL, docsRoot string, isOrchestrator bool) string {
-	selectedSkills = filesystemSelectedSkills(selectedSkills)
-	if len(selectedSkills) == 0 {
-		return ""
-	}
-
-	absSkills := docsRoot + "/skills"
-
-	var promptParts []string
-
-	// Mode-appropriate skill reading instructions
-	if isOrchestrator {
-		promptParts = append(promptParts, `
-## Available Skills
-
-The following skills are available for this conversation. When delegating tasks, include the relevant skill path in your delegate() instruction so the sub-agent can read and apply it.
-
-### Available Skills:
-`)
-	} else {
-		promptParts = append(promptParts, `
-## Available Skills
-
-The following skills are available for this conversation. Each skill extends your capabilities with specialized instructions and tools.
-
-**Important:** Before taking any significant action (executing multi-step work or performing analysis), read the SKILL.md files for relevant skills so you understand what capabilities are available. For simple conversational messages, you do not need to read skills first.
-
-### Available Skills:
-`)
-	}
-
-	for _, folderName := range selectedSkills {
-		skill, err := skills.GetSkill(workspaceAPIURL, folderName)
-		absPath := fmt.Sprintf("%s/%s/SKILL.md", absSkills, folderName)
-		if err != nil {
-			log.Printf("[SKILLS] Warning: Failed to load skill metadata %s: %v", folderName, err)
-			promptParts = append(promptParts, fmt.Sprintf("- **%s**: Read instructions from `%s`", folderName, absPath))
-			continue
-		}
-		promptParts = append(promptParts, fmt.Sprintf("- **%s**: %s\n  - Path: `%s`",
-			skill.Frontmatter.Name,
-			skill.Frontmatter.Description,
-			absPath))
-	}
-
-	if isOrchestrator {
-		promptParts = append(promptParts, fmt.Sprintf(`
-Include the skill path in your delegate() instruction, e.g.: "Read %s/<name>/SKILL.md first, then follow its instructions to..."
-`, absSkills))
-	} else {
-		promptParts = append(promptParts, fmt.Sprintf(`
-Read each relevant skill in full: execute_shell_command(command: "cat %s/<name>/SKILL.md")
-Then read any supporting files (scripts, templates, examples) referenced in the SKILL.md.
-`, absSkills))
-	}
-
-	return strings.Join(promptParts, "\n")
-}
+// buildSkillPrompt is gone. Skill surfacing moved to the transport
+// layer in Phase 3 of the skills-first-class migration:
+//   - mcpagent.Agent.AttachSkill(...) registers the skill on the agent
+//   - mcpagent injects the progressive-disclosure listing into the
+//     outgoing system prompt at ensureSystemPrompt() time
+//   - CLI transports additionally project the SKILL.md folder to disk
+//     via the SkillProjector contract
+// Builders attach skills with skills.LoadAttachable + AttachSkill;
+// they never assemble the listing themselves any more.
 
 func filesystemSelectedSkills(selectedSkills []string) []string {
 	filtered := make([]string, 0, len(selectedSkills))

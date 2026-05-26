@@ -3557,9 +3557,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}(),
 			SelectedTools: selectedTools, // NEW: Pass selected tools
 
-			// Smart routing disabled - always use all available tools
-			EnableSmartRouting: false,
-
 			// Detailed LLM configuration from frontend (unified fallback structure)
 			Fallbacks: fallbacks,
 			// Code execution mode: When enabled, only virtual tools are added to LLM
@@ -3731,8 +3728,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Set agent mode based on request
 		agentConfig.AgentMode = mcpagent.SimpleAgent
 		log.Printf("[AGENT DEBUG] Creating agent with mode: %s, servers: %s", agentConfig.AgentMode, serverList)
-		log.Printf("[SMART ROUTING DEBUG] Smart routing enabled - MaxTools: %d, MaxServers: %d (using defaults for temperature/tokens)",
-			agentConfig.SmartRoutingMaxTools, agentConfig.SmartRoutingMaxServers)
 		logfWithContext(queryLogCtx, "[LATENCY_DEBUG] T+%dms | Agent config built, creating agent wrapper | provider=%s model=%s", time.Since(startTime).Milliseconds(), finalProvider, finalModelID)
 		// Create LLM agent wrapper with trace using streamCtx
 		llmAgent, err := agent.NewLLMAgentWrapperWithTrace(streamCtx, agentConfig, tracer, traceID, api.logger)
@@ -4511,6 +4506,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// in every turn's context.
 				guidance.RegisterReferenceDocTool(underlyingAgent, "multi-agent", api.logger)
 				logfWithContext(queryLogCtx, "[REFERENCE_DOC] Registered get_reference_doc for multi-agent chat")
+
+				// Attach the system-tools meta-skill so the agent has a
+				// concise pointer to the discovery surface (get_api_spec,
+				// get_reference_doc, get_workflow_command_guidance, MCP
+				// bridge usage) without duplicating each ref doc body as
+				// its own skill folder.
+				if metaSkill := guidance.BuildSystemToolsSkill("multi-agent"); metaSkill != nil {
+					underlyingAgent.AttachSkill(metaSkill)
+				}
 			}
 
 			// 2. WORKSPACE MAP — compact folder listing with absolute paths and access levels.
@@ -4538,9 +4542,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if len(req.SelectedSkills) > 0 {
-				if skillPrompt := buildSkillPrompt(req.SelectedSkills, getWorkspaceAPIURL(), shellRoot, isMultiAgentChat); skillPrompt != "" {
-					underlyingAgent.AppendSystemPrompt(skillPrompt)
-					log.Printf("[SKILLS] Added skill instructions to system prompt (%d skills)", len(req.SelectedSkills))
+				// Phase 3 rewire: skills are now first-class on the agent.
+				// mcpagent's ensureSystemPrompt auto-injects the progressive-
+				// disclosure listing (name + description); CLI transports
+				// additionally project SKILL.md folders to disk in Phase 3b.
+				// The legacy buildSkillPrompt path is gone.
+				if attached := skills.LoadAttachable(getWorkspaceAPIURL(), req.SelectedSkills); len(attached) > 0 {
+					for _, s := range attached {
+						underlyingAgent.AttachSkill(s)
+					}
+					log.Printf("[SKILLS] Attached %d skill(s) to agent", len(attached))
 				}
 			}
 
@@ -4706,6 +4717,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					)
 					if len(workflowReadOnlyFolders) > 0 {
 						log.Printf("[WORKFLOW_PHASE] Added read-only access for #workflow references: %v", workflowReadOnlyFolders)
+					}
+
+					// Phase 4 carry-over to the workshop chat: auto-attach
+					// the workflow's accumulated learnings as a first-class
+					// skill so the builder agent sees what the workflow has
+					// learned across runs. Mirrors the step-time attach in
+					// step_based_workflow.appendSupplementaryPrompts.
+					if globalSkill := skills.LoadGlobalSkill(getWorkspaceAPIURL(), phaseWorkspacePath); globalSkill != nil {
+						underlyingAgent.AttachSkill(globalSkill)
+						log.Printf("[SKILLS] Auto-attached workflow global skill (_global) from learnings/_global/SKILL.md")
 					}
 				}
 
@@ -5749,6 +5770,27 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// Kill headless browser processes for this session
 	api.cleanupBrowserSessions(sessionID)
 
+	// Close any tmux-backed coding-CLI session for this chat. Without this,
+	// canceling the Go context above tears down the streaming connection
+	// server-side but the CLI process inside the tmux pane keeps running
+	// its current turn (LLM calls, shell commands) until it finishes
+	// naturally — the user pressed stop but agy/codex/etc. ran for another
+	// 30-60 seconds.
+	//
+	// Each adapter's CloseXxxInteractiveSessionForOwner implements that
+	// CLI's graceful-then-force shutdown sequence (agy: tmux send-keys
+	// "/exit" → tmux kill-session; codex/cursor/gemini/claude-code:
+	// adapter-specific exit → tmux kill-session). All are no-ops when no
+	// session is registered for the owner, so calling all five is safe
+	// and provider-agnostic.
+	closeReason := "user pressed stop"
+	llmproviders.CloseAgyCLIInteractiveSessionForOwner(sessionID, closeReason)
+	llmproviders.CloseCursorCLIInteractiveSessionForOwner(sessionID, closeReason)
+	llmproviders.CloseGeminiCLIInteractiveSessionForOwner(sessionID, closeReason)
+	llmproviders.CloseCodexCLIInteractiveSessionForOwner(sessionID, closeReason)
+	llmproviders.CloseClaudeCodeInteractiveSessionForOwner(sessionID, closeReason)
+	log.Printf("[SESSION DEBUG] Closed any tmux-backed coding-CLI session for stopped session %s", sessionID)
+
 	// Note: Conversation history and orchestrator state are preserved to allow resuming the conversation
 	// Use /api/session/clear if you want to clear conversation history
 
@@ -6596,12 +6638,16 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		underlyingAgent.AddEventListener(newCostObserver(api.costLedger, sessionID, parentUserID, parentReq.AgentMode))
 		log.Printf("[DELEGATION] Added event observers for sub-agent at depth %d", currentDepth)
 
-		// Add skill instructions to sub-agent system prompt (mirrors parent agent setup)
-		if len(parentReq.SelectedSkills) > 0 {
-			skillPrompt := buildSkillPrompt(parentReq.SelectedSkills, getWorkspaceAPIURL(), fsutil.WorkspaceShellRoot(), false)
-			if skillPrompt != "" {
-				underlyingAgent.AppendSystemPrompt(skillPrompt)
-				log.Printf("[DELEGATION] Added skill instructions to sub-agent (%d skills)", len(parentReq.SelectedSkills))
+		// Phase 6 explicit-pass: sub-agents inherit NO skills from the
+		// parent. The parent must enumerate skills the sub-agent needs
+		// in its delegate() call (skills=[...]). delegation_tools.go
+		// threads those names through context via DelegationSkillsKey.
+		if delegationSkills, ok := ctx.Value(virtualtools.DelegationSkillsKey).([]string); ok && len(delegationSkills) > 0 {
+			if attached := skills.LoadAttachable(getWorkspaceAPIURL(), delegationSkills); len(attached) > 0 {
+				for _, s := range attached {
+					underlyingAgent.AttachSkill(s)
+				}
+				log.Printf("[DELEGATION] Attached %d skill(s) to sub-agent (explicit pass)", len(attached))
 			}
 		}
 
@@ -7302,6 +7348,9 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 	}
 	if ds, ok := ctx.Value(virtualtools.DelegationServersKey).([]string); ok {
 		bgCtx = context.WithValue(bgCtx, virtualtools.DelegationServersKey, ds)
+	}
+	if dsk, ok := ctx.Value(virtualtools.DelegationSkillsKey).([]string); ok {
+		bgCtx = context.WithValue(bgCtx, virtualtools.DelegationSkillsKey, dsk)
 	}
 	if sb, ok := ctx.Value(virtualtools.ShareBrowserKey).(bool); ok && !sb {
 		bgCtx = context.WithValue(bgCtx, virtualtools.ShareBrowserKey, false)

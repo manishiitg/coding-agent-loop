@@ -5,8 +5,10 @@ import (
 	"fmt"
 
 	browserinstructions "mcp-agent-builder-go/agent_go/pkg/instructions"
+	"mcp-agent-builder-go/agent_go/pkg/skills"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
+
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 )
 
@@ -21,13 +23,34 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 	effectiveSkills []string,
 	isolatedSessionID string,
 ) {
-	// 1. Skills
+	// 1. Skills — Phase 3 rewire. Load the step's selected skills as
+	// first-class llmtypes.Skill values and attach to the agent.
+	// mcpagent.ensureSystemPrompt injects the listing into the system
+	// prompt; CLI adapters additionally project SKILL.md folders to
+	// disk via the SkillProjector contract. No more manual
+	// BuildWorkflowSkillPrompt + AppendSystemPrompt.
 	if len(effectiveSkills) > 0 {
-		skillPrompt := BuildWorkflowSkillPrompt(ctx, effectiveSkills, hcpo.BaseOrchestrator, GetPromptDocsRoot())
-		if skillPrompt != "" {
-			mcpAgent.AppendSystemPrompt(skillPrompt)
-			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill prompt to agent (%d skills): %v", len(effectiveSkills), effectiveSkills))
+		if attached := skills.LoadAttachable(getWorkspaceAPIURL(), effectiveSkills); len(attached) > 0 {
+			for _, s := range attached {
+				mcpAgent.AttachSkill(s)
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Attached %d step skill(s) to agent: %v", len(attached), effectiveSkills))
 		}
+	}
+
+	// 1b. Workflow global skill (Phase 4): attach a small pointer
+	// skill telling the agent to read learnings/_global/ in the
+	// workflow folder when it needs the workflow's accumulated
+	// know-how. We attach a pointer (not the full body + references/)
+	// so the workspace files stay the single source of truth and the
+	// projected skill doesn't drift from what the workflow has
+	// learned mid-session.
+	//
+	// Same helper the workshop chat uses (server.go workshop-phase
+	// setup) — both paths land the identical pointer skill.
+	if globalSkill := skills.LoadGlobalSkill(getWorkspaceAPIURL(), hcpo.GetWorkspacePath()); globalSkill != nil {
+		mcpAgent.AttachSkill(globalSkill)
+		hcpo.GetLogger().Info("🌐 Attached workflow global skill pointer (_global → learnings/_global/)")
 	}
 
 	// 2. Browser isolation (agent-browser session override)

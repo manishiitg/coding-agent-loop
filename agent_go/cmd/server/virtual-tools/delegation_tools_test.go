@@ -123,6 +123,76 @@ func TestHandleDelegatePrefersAsyncBackgroundDelegate(t *testing.T) {
 	}
 }
 
+// TestHandleDelegateExtractsExplicitSkillsList verifies that
+// delegate(skills=["pdf-extract", "agent-browser"]) extracts those
+// skill names from the tool args and threads them through context
+// via DelegationSkillsKey — the explicit-pass semantics from Phase 6.
+//
+// The sub-agent creation block in server.go reads
+// ctx.Value(DelegationSkillsKey) and AttachSkill's exactly that list.
+// If this propagation breaks, sub-agents silently get zero skills with
+// no diagnostic — this test catches it at the boundary.
+func TestHandleDelegateExtractsExplicitSkillsList(t *testing.T) {
+	var capturedSkills []string
+
+	// The async background-delegate path captures the ctx that the
+	// handler builds. That ctx is where DelegationSkillsKey lives.
+	bgDelegate := BackgroundDelegateFunc(func(ctx context.Context, name, instruction string) (string, error) {
+		if s, ok := ctx.Value(DelegationSkillsKey).([]string); ok {
+			capturedSkills = s
+		}
+		return "agent-xyz", nil
+	})
+
+	ctx := context.WithValue(context.Background(), BackgroundDelegateKey, bgDelegate)
+
+	_, err := handleDelegate(ctx, map[string]interface{}{
+		"name":            "test-skill-pass",
+		"instruction":     "do the thing",
+		"reasoning_level": "low",
+		"skills":          []interface{}{"pdf-extract", "agent-browser"},
+	})
+	if err != nil {
+		t.Fatalf("handleDelegate returned error: %v", err)
+	}
+
+	if len(capturedSkills) != 2 {
+		t.Fatalf("expected 2 skills threaded via context, got %d: %v", len(capturedSkills), capturedSkills)
+	}
+	if capturedSkills[0] != "pdf-extract" || capturedSkills[1] != "agent-browser" {
+		t.Errorf("expected [pdf-extract agent-browser], got %v", capturedSkills)
+	}
+}
+
+// TestHandleDelegateNoSkillsArgMeansNoInheritance is the corollary:
+// when the parent omits skills=[...], the sub-agent's context must
+// NOT contain DelegationSkillsKey (so server.go's attach loop is a
+// no-op and the sub-agent starts clean). Phase 6 explicit-pass.
+func TestHandleDelegateNoSkillsArgMeansNoInheritance(t *testing.T) {
+	var seenKey bool
+
+	bgDelegate := BackgroundDelegateFunc(func(ctx context.Context, _, _ string) (string, error) {
+		_, seenKey = ctx.Value(DelegationSkillsKey).([]string)
+		return "agent-xyz", nil
+	})
+
+	ctx := context.WithValue(context.Background(), BackgroundDelegateKey, bgDelegate)
+
+	_, err := handleDelegate(ctx, map[string]interface{}{
+		"name":            "no-skills",
+		"instruction":     "do the thing",
+		"reasoning_level": "low",
+		// no "skills" key
+	})
+	if err != nil {
+		t.Fatalf("handleDelegate returned error: %v", err)
+	}
+
+	if seenKey {
+		t.Errorf("expected DelegationSkillsKey to be absent when args has no skills; got it set")
+	}
+}
+
 // TestGetMultiAgentDelegationInstructionsLazyLoadsScheduleAndSecret locks in
 // the prompt refactor that moved Schedule and Secret management deep docs
 // into templates/system/{schedule-management,secret-management}.md. The

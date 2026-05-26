@@ -185,11 +185,6 @@ type LLMAgentConfig struct {
 	AgentMode          mcpagent.AgentMode // Agent mode (Simple or ReAct)
 	SelectedTools      []string           // Selected tools in "server:tool" format
 
-	// Smart routing configuration
-	EnableSmartRouting     bool // Enable smart routing for tool filtering
-	SmartRoutingMaxTools   int  // Threshold for max tools before enabling smart routing
-	SmartRoutingMaxServers int  // Threshold for max servers before enabling smart routing
-
 	// Unified fallback configuration (replaces FallbackModels and CrossProviderFallback)
 	Fallbacks []FallbackModel // Fallback models with optional provider override
 	// Code execution mode: When enabled, only virtual tools are added to LLM
@@ -528,31 +523,6 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.LargeOutputThreshold > 0 {
 		agentOptions = append(agentOptions, mcpagent.WithLargeOutputThreshold(config.LargeOutputThreshold))
 		logger.Info(fmt.Sprintf("📦 Large output threshold set to %d tokens", config.LargeOutputThreshold))
-	}
-
-	// Add smart routing options if enabled
-	if config.EnableSmartRouting {
-		// Set smart routing thresholds (use defaults if not specified)
-		maxTools := config.SmartRoutingMaxTools
-		if maxTools == 0 {
-			maxTools = 20 // Default threshold
-		}
-		maxServers := config.SmartRoutingMaxServers
-		if maxServers == 0 {
-			maxServers = 4 // Default threshold
-		}
-
-		agentOptions = append(agentOptions,
-			mcpagent.WithSmartRouting(true),
-			mcpagent.WithSmartRoutingThresholds(maxTools, maxServers),
-			// Use default smart routing config (temperature: 0.1, maxTokens: 5000, etc.)
-			mcpagent.WithSmartRoutingConfig(0.1, 5000, 8, 200, 300),
-		)
-
-		logger.Info(fmt.Sprintf("🎯 Smart routing enabled - MaxTools: %d, MaxServers: %d (using defaults for temperature/tokens)",
-			maxTools, maxServers))
-	} else {
-		logger.Info("🔧 Smart routing disabled - using all available tools")
 	}
 
 	// Use logger directly (already loggerv2.Logger)

@@ -398,8 +398,18 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 			// sequence patterns, optimizer playbook, etc.) — returned via
 			// get_reference_doc(kind=...). Same registry pattern as guidance;
 			// per-kind mode validation lives in the tool itself.
-			guidance.RegisterReferenceDocTool(underlyingAgent, phaseTemplateVars["WorkshopMode"], api.logger)
-			log.Printf("[WORKFLOW_PHASE] Registered get_reference_doc in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
+			workshopMode := phaseTemplateVars["WorkshopMode"]
+			guidance.RegisterReferenceDocTool(underlyingAgent, workshopMode, api.logger)
+			log.Printf("[WORKFLOW_PHASE] Registered get_reference_doc in %s (mode=%s)", workflowPhaseID, workshopMode)
+
+			// Attach the system-tools meta-skill so the agent has a
+			// concise pointer to the discovery surface (get_api_spec,
+			// get_reference_doc, get_workflow_command_guidance, MCP
+			// bridge usage). Lighter than projecting every ref doc body
+			// as its own skill folder.
+			if metaSkill := guidance.BuildSystemToolsSkill(workshopMode); metaSkill != nil {
+				underlyingAgent.AttachSkill(metaSkill)
+			}
 		}
 	default:
 		// planning: plan modification tools

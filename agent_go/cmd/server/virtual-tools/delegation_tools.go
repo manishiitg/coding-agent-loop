@@ -46,6 +46,14 @@ const (
 	BotNotificationDestinationKey delegationContextKey = "bot_notification_destination"
 	// DelegationServersKey is the context key for sub-agent specific MCP server selection
 	DelegationServersKey delegationContextKey = "delegation_servers"
+
+	// DelegationSkillsKey is the context key for the explicit skill list
+	// passed by a parent agent to a sub-agent via delegate(skills=[...]).
+	// Sub-agents start with no attached skills by default; the parent
+	// must pass any skills the sub-agent needs. This is the "explicit
+	// pass" semantics — there is no inheritance from the parent's own
+	// SelectedSkills.
+	DelegationSkillsKey delegationContextKey = "delegation_skills"
 	// ChatsFolderPath is the fallback per-user Chats folder when session context is unavailable.
 	// Always prefer GetChatsFolder(ctx) which reads the session-scoped per-user path.
 	ChatsFolderPath = "_users/default/Chats"
@@ -279,6 +287,13 @@ func CreateDelegationTools(tierConfig *DelegationTierConfig, requireReasoningLev
 						"type":        "boolean",
 						"description": "Whether the sub-agent shares the parent's browser session (Playwright) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
 					},
+					"skills": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "string",
+						},
+						"description": "Optional list of skill folder names to attach to this sub-agent. Sub-agents start with NO skills by default — if the sub-agent needs a skill, the parent must pass it explicitly here. Use this when the sub-agent's task benefits from a specific skill's instructions (e.g. skills=[\"pdf-extract\"] for a sub-agent that processes PDFs). Do not pass skills the sub-agent does not need; each adds tokens to the sub-agent's system prompt.",
+					},
 				},
 				"required": func() []string {
 					if requireReasoningLevel {
@@ -410,6 +425,18 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 		shareBrowser = sb
 	}
 
+	// Extract optional skills array — explicit-pass semantics for
+	// sub-agents. Parent must list every skill the sub-agent needs;
+	// no inheritance from the parent's own attached skills.
+	var delegationSkills []string
+	if skillsRaw, ok := args["skills"].([]interface{}); ok {
+		for _, s := range skillsRaw {
+			if str, ok := s.(string); ok && str != "" {
+				delegationSkills = append(delegationSkills, str)
+			}
+		}
+	}
+
 	// Check delegation depth to prevent infinite recursion
 	currentDepth := 0
 	if depth, ok := ctx.Value(DelegationDepthKey).(int); ok {
@@ -436,6 +463,9 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 		}
 		if len(delegationServers) > 0 {
 			bgCtx = context.WithValue(bgCtx, DelegationServersKey, delegationServers)
+		}
+		if len(delegationSkills) > 0 {
+			bgCtx = context.WithValue(bgCtx, DelegationSkillsKey, delegationSkills)
 		}
 		if !shareBrowser {
 			bgCtx = context.WithValue(bgCtx, ShareBrowserKey, false)
@@ -481,6 +511,9 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	}
 	if len(delegationServers) > 0 {
 		subCtx = context.WithValue(subCtx, DelegationServersKey, delegationServers)
+	}
+	if len(delegationSkills) > 0 {
+		subCtx = context.WithValue(subCtx, DelegationSkillsKey, delegationSkills)
 	}
 	if !shareBrowser {
 		subCtx = context.WithValue(subCtx, ShareBrowserKey, false)

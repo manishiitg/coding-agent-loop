@@ -31,6 +31,7 @@ import (
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 //go:embed templates/builder/*.md templates/review/*.md templates/improve/*.md templates/report/*.md templates/kb/*.md templates/learning/*.md templates/db/*.md templates/system/*.md
@@ -341,6 +342,83 @@ func RegisterGuidanceTool(agent *mcpagent.Agent, currentMode string, logger logg
 // every doc without depending on the private registry.
 func ReferenceKindNames() []string {
 	return kindEnumFrom(referenceKinds)
+}
+
+// BuildSystemToolsSkill returns a single small "meta" skill whose body
+// teaches the agent the system-tool surface available in this session:
+// the MCP bridge, get_api_spec for tool discovery, get_reference_doc
+// for deeper system docs, and get_workflow_command_guidance for
+// procedural flows. The skill enumerates the reference-doc kinds that
+// are allowed in the given mode so the agent knows which kinds it can
+// actually ask for via get_reference_doc.
+//
+// Why a meta-skill rather than one skill per reference doc: copying
+// every reference-doc body into a skill folder per session duplicates
+// content and risks drift. Instead this small skill points at the
+// existing tools so the agent loads detail on demand, with progressive
+// disclosure handled by the provider when it surfaces the meta-skill
+// itself.
+//
+// An empty mode returns nil (no skill to attach).
+func BuildSystemToolsSkill(mode string) *llmtypes.Skill {
+	if strings.TrimSpace(mode) == "" {
+		return nil
+	}
+
+	var kindLines strings.Builder
+	for _, kind := range kindEnumFrom(referenceKinds) {
+		if !modeAllowedIn(kind, mode, referenceKinds) {
+			continue
+		}
+		meta := referenceKinds[kind]
+		fmt.Fprintf(&kindLines, "- `%s` — %s\n", kind, meta.Description)
+	}
+	kindList := kindLines.String()
+	if kindList == "" {
+		kindList = "(no reference docs are available in this mode)\n"
+	}
+
+	body := `This skill is a quick guide to the system tools available in this session. Use it as your map for discovery and deep documentation.
+
+## Tool / API discovery
+
+- ` + "`get_api_spec(server_name, tool_name)`" + ` — when you do not know an MCP tool's parameters or response shape, call this first.
+- ` + "`get_reference_doc(kind, focus?)`" + ` — system reference docs. Load the matching doc before any deep action (e.g. read ` + "`optimize-playbook`" + ` before ` + "`harden_workflow`" + ` or ` + "`replan_workflow_from_results`" + `; read ` + "`code-authoring`" + ` before authoring ` + "`main.py`" + `). Some tools refuse to run until their precondition doc has been loaded — the error will name the kind.
+- ` + "`get_workflow_command_guidance(kind, focus?)`" + ` — canonical procedural flows (improve-workflow, review-plan, auto-improve, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.
+
+### Reference doc kinds available in this mode
+
+` + kindList + `
+## MCP bridge — only in code-execution mode
+
+When you are running scripts via ` + "`execute_shell_command`" + ` (code-execution mode), call MCP tools through HTTP:
+
+` + "```bash" + `
+curl -sS -X POST "$MCP_API_URL/tools/mcp/{server_name}/{tool_name}" \
+  -H "Authorization: Bearer $MCP_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"arg":"value"}' | jq
+` + "```" + `
+
+Pre-set environment for scripts:
+- ` + "`$MCP_API_URL`" + ` + ` + "`$MCP_API_TOKEN`" + ` — bridge endpoint + bearer
+- ` + "`$STEP_OUTPUT_DIR`" + `, ` + "`$STEP_EXECUTION_DIR`" + ` — write outputs here
+- ` + "`$VAR_<NAME>`" + ` — workflow config (e.g. ` + "`$VAR_USER_ID`" + `); reference, never hardcode
+- ` + "`$SECRET_<NAME>`" + ` — credentials; never echo to stdout, never write to files
+
+In non-code-execution mode you call tools directly via the LLM tool-call API; the bridge curl pattern is not needed.
+
+## When in doubt
+
+Call the right discovery tool above before guessing. Hallucinated tool names or parameter shapes will fail at the bridge; reading the spec or the reference doc is cheap.
+`
+
+	return &llmtypes.Skill{
+		Name:        "system-tools",
+		Description: "How to use the MCP bridge, tool discovery (get_api_spec), reference docs (get_reference_doc), and workflow command guidance in this session.",
+		Content:     body,
+		Source:      llmtypes.SkillSource{Origin: "builtin"},
+	}
 }
 
 // RenderSystemDoc renders the named reference doc with no caller context,

@@ -203,11 +203,6 @@ func NewBaseAgent(
 		agentOptions = append(agentOptions, mcpagent.WithCodeExecutionMode(true))
 	}
 
-	// Smart routing disabled - always use all available tools
-	agentOptions = append(agentOptions,
-		mcpagent.WithSmartRouting(false),
-	)
-
 	// Add context offloading option if specified
 	// Default to true if nil (backward compatible)
 	contextOffloadingEnabled := true

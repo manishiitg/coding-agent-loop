@@ -27,6 +27,7 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	"mcp-agent-builder-go/agent_go/pkg/skills"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
@@ -11152,10 +11153,26 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 	}
 
 	// Build supplementary prompts
+	//
+	// Phase 3 rewire: skills attach to the agent directly; the listing
+	// goes into the system prompt via mcpagent.ensureSystemPrompt, and
+	// CLI adapters project SKILL.md folders to disk. The legacy
+	// {{.SkillPrompt}} template variable stays empty — kept for
+	// template backward compatibility but no longer carries content.
+	//
+	// Note: after Phase 5 hard cut, GetEffectiveSkills(nil, ...) returns
+	// nil (no fallback to orchestrator.SelectedSkills), so the workshop
+	// background-task agent inherits no skills from the workflow-level
+	// selection. If a background task needs a specific skill, declare
+	// it on the step config it's spawned from.
 	skillPrompt := ""
 	effectiveSkills := GetEffectiveSkills(nil, iwm.controller.BaseOrchestrator)
 	if len(effectiveSkills) > 0 {
-		skillPrompt = BuildWorkflowSkillPrompt(ctx, effectiveSkills, iwm.controller.BaseOrchestrator, GetPromptDocsRoot())
+		if attached := skills.LoadAttachable(getWorkspaceAPIURL(), effectiveSkills); len(attached) > 0 {
+			for _, s := range attached {
+				mcpAgent.AttachSkill(s)
+			}
+		}
 	}
 
 	secretPrompt := ""

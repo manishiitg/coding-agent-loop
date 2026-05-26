@@ -871,13 +871,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 
 	if stepConfig != nil && len(stepConfig.EnabledCustomTools) > 0 {
 		// Migrate old tool configs: strip deprecated categories and ensure workspace_advanced is present.
-		// workspace_basic is deprecated — shell_command handles file operations.
 		var enabledTools []string
 		hasAdvanced := false
 		for _, entry := range stepConfig.EnabledCustomTools {
-			if strings.HasPrefix(entry, "workspace_basic") {
-				continue // Drop deprecated workspace_basic entries
-			}
 			// workspace_image* entries are legacy — image tools now live inside workspace_advanced,
 			// which is auto-added below, so these entries become no-ops and are dropped.
 			if entry == "workspace_image:*" || strings.HasPrefix(entry, "workspace_image:") ||
@@ -892,7 +888,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 		}
 		if !hasAdvanced {
 			enabledTools = append(enabledTools, "workspace_advanced:*")
-			hcpo.GetLogger().Info("🔧 Auto-including workspace_advanced:* (migrated from old workspace_basic config)")
+			hcpo.GetLogger().Info("🔧 Auto-including workspace_advanced:*")
 		}
 
 		// Auto-include workspace_browser:* if agent_browser exists in the workspace tools pool

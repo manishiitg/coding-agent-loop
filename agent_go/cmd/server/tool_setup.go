@@ -217,8 +217,6 @@ func normalizeAgentMode(agentMode string) string {
 // Returns: tools, executors, and a map of tool names to their categories
 // Workspace registry tools get category "workspace_advanced"
 // All tools from CreateHumanTools() get category "human_tools"
-//
-// Note: workspace_basic is internal and is not exposed to LLMs as a workspace tool category.
 func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
 	// sessionInfo: optional [userID, sessionID] for session-aware workspace executors
 	var userID, sessionID string
@@ -267,25 +265,12 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 		toolCategories[name] = "human_tools"
 	}
 
-	// Workflow mode: include human + todo tools + workspace_basic executors (for internal Go operations)
-	if workflowMode {
-		// Add workspace_basic executors ONLY (not tool definitions) — needed for internal
-		// Go operations (ReadWorkspaceFile, WriteWorkspaceFile, ListWorkspaceFiles, etc.)
-		// These are NOT exposed to LLMs as tools; shell_command handles all LLM file operations.
-		workspaceBasicCategory := virtualtools.GetWorkspaceBasicToolCategory()
-		workspaceBasicExecutors := virtualtools.CreateWorkspaceBasicToolExecutors()
-		for name, executor := range workspaceBasicExecutors {
-			allExecutors[name] = executor
-			toolCategories[name] = workspaceBasicCategory
-		}
-
-		// Note: Todo tools (create_todo, complete_todo, etc.) have been removed.
-		// The todo task orchestrator manages tasks directly via shell commands.
-
-		// Note: Browser tools are NOT added unconditionally here.
-		// They are added conditionally based on preset.EnableBrowserAccess in workflow initialization.
-		// See the workflow initialization section where browser tools are added if enabled.
-	}
+	// Note: Todo tools (create_todo, complete_todo, etc.) have been removed.
+	// The todo task orchestrator manages tasks directly via shell commands.
+	//
+	// Note: Browser tools are NOT added unconditionally here.
+	// They are added conditionally based on preset.EnableBrowserAccess in workflow initialization.
+	// See the workflow initialization section where browser tools are added if enabled.
 
 	return allTools, allExecutors, toolCategories
 }

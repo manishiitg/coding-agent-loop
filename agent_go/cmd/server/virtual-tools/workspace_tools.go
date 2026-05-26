@@ -8,6 +8,7 @@ import (
 
 	"github.com/manishiitg/mcpagent/events"
 	"mcp-agent-builder-go/agent_go/pkg/common"
+	"mcp-agent-builder-go/agent_go/pkg/workspace"
 )
 
 // getWorkspaceAPIURL returns the workspace API base URL from environment or default
@@ -16,6 +17,12 @@ func getWorkspaceAPIURL() string {
 		return url
 	}
 	return "http://127.0.0.1:8081"
+}
+
+// getDefaultFolderGuard returns the default FolderGuard config used by
+// every workspace.Client constructed inside this package.
+func getDefaultFolderGuard() *workspace.FolderGuardConfig {
+	return &workspace.FolderGuardConfig{Enabled: true}
 }
 
 // WorkspaceFileContent is the response shape for read_workspace_file (used by orchestrator and server)
@@ -121,9 +128,15 @@ const (
 	FolderGuardAllowedWriteFolderKey = common.FolderGuardAllowedWriteFolderKey
 )
 
-// CreateWorkspaceToolExecutors creates the execution functions for all workspace tools (basic + advanced)
+// CreateWorkspaceToolExecutors creates the execution functions for all workspace tools.
+// Returns the executor map produced by NewBasicExecutor (low-level file CRUD wrappers)
+// merged with CreateWorkspaceAdvancedToolExecutors (shell, diff-patch, web_fetch, etc.).
 func CreateWorkspaceToolExecutors() map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
-	executors := CreateWorkspaceBasicToolExecutors()
+	client := workspace.NewClient(
+		getWorkspaceAPIURL(),
+		workspace.WithFolderGuard(getDefaultFolderGuard()),
+	)
+	executors := workspace.NewBasicExecutor(client)
 	for k, v := range CreateWorkspaceAdvancedToolExecutors() {
 		executors[k] = v
 	}

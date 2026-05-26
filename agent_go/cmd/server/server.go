@@ -1020,7 +1020,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// call them all via /tools/mcp/{server}/{tool}. The routeMCPRequest helper detects these
 	// categories and redirects to the correct handler (custom or virtual).
 	customToolCategories := map[string]bool{
-		"workspace": true, "workspace_basic": true, "workspace_browser": true,
+		"workspace": true, "workspace_browser": true,
 		"workspace_advanced": true, "workspace_image": true,
 		"workspace_image_gen": true, "workspace_image_edit": true, "human": true,
 		"workflow": true, "workflow_creator": true,

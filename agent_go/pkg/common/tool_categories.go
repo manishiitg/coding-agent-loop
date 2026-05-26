@@ -11,7 +11,6 @@ import "strings"
 var builtinToolCategories = map[string]bool{
 	"workspace":            true,
 	"workspace_tools":      true,
-	"workspace_basic":      true,
 	"workspace_advanced":   true,
 	"workspace_browser":    true,
 	"workspace_image":      true,

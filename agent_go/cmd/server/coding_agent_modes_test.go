@@ -43,9 +43,9 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 			wantCodexCLI: true,
 		},
 		{
-			name:          "gemini chat follows structured contract",
+			name:          "gemini chat gets persistent tmux",
 			provider:      string(llm.ProviderGeminiCLI),
-			wantGeminiCLI: false,
+			wantGeminiCLI: true,
 		},
 		{
 			name:          "cursor chat gets persistent tmux",

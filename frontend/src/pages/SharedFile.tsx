@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Loader2, FileText, ArrowLeft, LogIn } from 'lucide-react'
 import { MarkdownRenderer } from '../components/ui/MarkdownRenderer'
+import { RenderedContentSearchBar, RenderedContentSearchButton, useRenderedContentSearch } from '../components/ui/RenderedContentSearch'
 import { CsvRenderer } from '../components/ui/CsvRenderer'
 import { DiffRenderer } from '../components/ui/DiffRenderer'
 import { getApiBaseUrl, getAuthToken } from '../services/api'
@@ -32,6 +33,7 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [needsAuth, setNeedsAuth] = useState(false)
+  const renderedContentRef = useRef<HTMLDivElement>(null)
 
   // Decode the base64 path
   const filePath = (() => {
@@ -47,6 +49,23 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
   const isVideoFile = lowerPath.endsWith('.mp4') || lowerPath.endsWith('.webm') || lowerPath.endsWith('.mov')
   const isAudioFile = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.flac', '.opus'].some(ext => lowerPath.endsWith(ext))
   const isImageFile = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico'].some(ext => lowerPath.endsWith(ext))
+  const language = getCodeFileLanguage(filePath || '')
+  const isRenderedSearchAvailable = (
+    !loading &&
+    !error &&
+    !needsAuth &&
+    content !== null &&
+    !lowerPath.endsWith('.csv') &&
+    !lowerPath.endsWith('.json') &&
+    !isValidJSON(content) &&
+    !isDiffFilePath(filePath || '') &&
+    !looksLikeDiffContent(content)
+  )
+  const renderedContentSearch = useRenderedContentSearch({
+    targetRef: renderedContentRef,
+    contentKey: `${filePath || ''}:${content?.length || 0}`,
+    enabled: isRenderedSearchAvailable,
+  })
 
   useEffect(() => {
     if (!filePath) {
@@ -153,8 +172,6 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
 
   if (content === null && binaryUrl === null) return null
 
-  const language = getCodeFileLanguage(filePath || '')
-
   const renderContent = () => {
     if (isVideoFile && binaryUrl) {
       return (
@@ -203,7 +220,7 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
     if (language) {
       const codeBlockContent = `\`\`\`${language}\n${content}\n\`\`\``
       return (
-        <div className="prose prose-sm max-w-none dark:prose-invert">
+        <div ref={renderedContentRef} className="prose prose-sm max-w-none dark:prose-invert">
           <MarkdownRenderer content={codeBlockContent} className="max-w-none" showScrollbar={true} />
         </div>
       )
@@ -211,7 +228,7 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
 
     // Default: render as markdown
     return (
-      <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-headings:text-gray-900 dark:prose-headings:text-gray-100 prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline prose-code:text-blue-600 dark:prose-code:text-blue-400 prose-pre:bg-gray-50 dark:prose-pre:bg-gray-900">
+      <div ref={renderedContentRef} className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-headings:text-gray-900 dark:prose-headings:text-gray-100 prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline prose-code:text-blue-600 dark:prose-code:text-blue-400 prose-pre:bg-gray-50 dark:prose-pre:bg-gray-900">
         <MarkdownRenderer content={content} className="max-w-none" showScrollbar={true} />
       </div>
     )
@@ -239,11 +256,19 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
                 <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{filePath}</p>
               </div>
             </div>
-            <span className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 px-2 py-0.5 rounded text-xs font-medium flex-shrink-0">
-              Read-only
-            </span>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {isRenderedSearchAvailable && (
+                <RenderedContentSearchButton search={renderedContentSearch} />
+              )}
+              <span className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 px-2 py-0.5 rounded text-xs font-medium">
+                Read-only
+              </span>
+            </div>
           </div>
         </div>
+        {isRenderedSearchAvailable && (
+          <RenderedContentSearchBar search={renderedContentSearch} />
+        )}
       </div>
 
       {/* Content */}

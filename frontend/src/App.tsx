@@ -12,6 +12,7 @@ import { PdfRenderer } from "./components/ui/PdfRenderer";
 import { HtmlRenderer } from "./components/ui/HtmlRenderer";
 import { ConversationRenderer, isConversationJSON } from "./components/ui/ConversationRenderer";
 import { DiffRenderer } from "./components/ui/DiffRenderer";
+import { RenderedContentSearchBar, RenderedContentSearchButton, useRenderedContentSearch } from "./components/ui/RenderedContentSearch";
 import { resetSessionId, agentApi } from "./services/api";
 import { AuthWrapper } from "./components/AuthWrapper";
 import type { FileVersion } from "./services/api-types";
@@ -618,6 +619,28 @@ function App() {
   const [showQuickSwitcher, setShowQuickSwitcher] = useState(false)
   const [quickSwitcherInitialQuery, setQuickSwitcherInitialQuery] = useState('')
   const markdownContentRef = useRef<HTMLDivElement>(null)
+  const selectedFilePathLower = selectedFile?.path?.toLowerCase() || ''
+  const isRenderedMarkdownSearchAvailable = (
+    showFileContent &&
+    !loadingFileContent &&
+    !isEditMode &&
+    !!fileContent &&
+    !fileContent.startsWith('data:image/') &&
+    !isCodeFile(selectedFile?.path || '') &&
+    !binaryFileData &&
+    !selectedFilePathLower.endsWith('.csv') &&
+    !selectedFilePathLower.endsWith('.html') &&
+    !selectedFilePathLower.endsWith('.htm') &&
+    !selectedFilePathLower.endsWith('.mmd') &&
+    !selectedFilePathLower.endsWith('.mermaid') &&
+    !isValidJSON(fileContent) &&
+    !looksLikeDiffContent(fileContent)
+  )
+  const renderedContentSearch = useRenderedContentSearch({
+    targetRef: markdownContentRef,
+    contentKey: `${selectedFile?.path || ''}:${fileContent.length}`,
+    enabled: isRenderedMarkdownSearchAvailable,
+  })
   
   // Ref to prevent duplicate default tab creation (React StrictMode runs effects twice)
   const hasCreatedDefaultTabRef = useRef<string | null>(null)
@@ -1477,6 +1500,12 @@ function App() {
                         >
                           <Download className="w-4 h-4" />
                         </button>
+                        {isRenderedMarkdownSearchAvailable && (
+                          <RenderedContentSearchButton
+                            search={renderedContentSearch}
+                            className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                          />
+                        )}
                         <button
                           onClick={async () => {
                             if (!fileContent) return
@@ -1610,6 +1639,10 @@ function App() {
                   )}
                 </div>
               </div>
+
+              {isRenderedMarkdownSearchAvailable && (
+                <RenderedContentSearchBar search={renderedContentSearch} />
+              )}
               
               {/* Save Error Message */}
               {saveError && (

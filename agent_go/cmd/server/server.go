@@ -5467,6 +5467,37 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: contextPointer}},
 			}}
 			api.conversationMux.Unlock()
+
+			// Force the running coding-CLI session to relaunch so it picks up
+			// the new mode's system prompt. The agent's in-memory prompt is
+			// updated below (the phase-prompt assembly block at line ~4885
+			// calls SetSystemPrompt with the new template), and
+			// captureChatHistoryAgentRuntime will persist it, but the running
+			// CLI process loaded its prompt at launch time and won't notice
+			// the in-memory change — and the rule file on disk
+			// (.agents/rules/mlp-system.md / .cursor/rules/mlp-system.mdc /
+			// AGENTS.md / GEMINI.md) isn't rewritten on subsequent turns
+			// either. Closing the persistent session here triggers the
+			// adapter's cleanup (os.RemoveAll on the provider dir from the
+			// earlier RemoveAll patch) and lets the next turn relaunch with
+			// the new prompt, producing the correct rule file content.
+			//
+			// Symmetric across all five tmux-backed coding-CLI providers;
+			// opencode is structured (no persistent tmux session) so it
+			// re-reads project files per turn and needs no close.
+			reason := fmt.Sprintf("workshop mode changed %q -> %q", modeChangePrevMode, newWorkshopMode)
+			switch strings.ToLower(strings.TrimSpace(finalProvider)) {
+			case "agy-cli":
+				llmproviders.CloseAgyCLIInteractiveSessionForOwner(sessionID, reason)
+			case "cursor-cli":
+				llmproviders.CloseCursorCLIInteractiveSessionForOwner(sessionID, reason)
+			case "gemini-cli":
+				llmproviders.CloseGeminiCLIInteractiveSessionForOwner(sessionID, reason)
+			case "codex-cli":
+				llmproviders.CloseCodexCLIInteractiveSessionForOwner(sessionID, reason)
+			case "claude-code":
+				llmproviders.CloseClaudeCodeInteractiveSessionForOwner(sessionID, reason)
+			}
 		}
 
 		// Load conversation history for this session from the in-memory

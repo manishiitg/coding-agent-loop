@@ -14,6 +14,8 @@ type testBotConnector struct {
 	name            string
 	supportsThreads bool
 	sent            []string
+	sendStarted     chan struct{}
+	releaseSend     chan struct{}
 }
 
 func (c *testBotConnector) Name() string {
@@ -34,6 +36,16 @@ func (c *testBotConnector) StartListening(context.Context) error {
 }
 func (c *testBotConnector) StopListening() {}
 func (c *testBotConnector) SendThreadMessage(_ context.Context, _ ThreadID, message string) (string, error) {
+	if c.sendStarted != nil {
+		select {
+		case <-c.sendStarted:
+		default:
+			close(c.sendStarted)
+		}
+	}
+	if c.releaseSend != nil {
+		<-c.releaseSend
+	}
 	c.sent = append(c.sent, message)
 	return "msg", nil
 }

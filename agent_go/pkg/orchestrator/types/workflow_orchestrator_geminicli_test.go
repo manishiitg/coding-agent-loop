@@ -110,9 +110,9 @@ func TestWorkflowE2ESingleRegularStepGeminiCLI(t *testing.T) {
 	}
 	agentLLM := &workflowtypes.AgentLLMConfig{Provider: "gemini-cli", ModelID: model}
 	presetCfg := &workflowtypes.PresetLLMConfig{
-		Provider: "gemini-cli",
-		ModelID:  model,
-		PhaseLLM: agentLLM,
+		Provider:     "gemini-cli",
+		ModelID:      model,
+		PhaseLLM:     agentLLM,
 		TieredConfig: &workflowtypes.TieredLLMConfig{Tier1: agentLLM, Tier2: agentLLM, Tier3: agentLLM},
 	}
 
@@ -149,18 +149,16 @@ func TestWorkflowE2ESingleRegularStepGeminiCLI(t *testing.T) {
 		t.Fatalf("Execute returned empty result (after %s)", dur)
 	}
 
-	// Engine completed: assert step_done.json was written.
-	stepDoneGlob := filepath.Join(workspaceDisk, "runs", "*", "*", "execution", stepID, "step_done.json")
-	matches, _ := filepath.Glob(stepDoneGlob)
-	if len(matches) == 0 {
-		t.Fatalf("step_done.json not written under %s — engine did not reach completion", stepDoneGlob)
+	execLog := filepath.Join(workspaceDisk, "runs", "*", "*", "logs", stepID, "execution", "execution-attempt-*-iteration-*.json")
+	logMatches, _ := filepath.Glob(execLog)
+	if len(logMatches) == 0 {
+		t.Fatalf("execution log not written under %s — engine did not reach completion", execLog)
 	}
 
 	// Surface the LLM-side captured output so we can compare it
 	// against vertex's behavior (does gemini-cli reply with literal
 	// text or write a Python script the way vertex did?).
-	execLog := filepath.Join(workspaceDisk, "runs", "*", "*", "logs", stepID, "execution", "execution-attempt-*-iteration-*.json")
-	if logMatches, _ := filepath.Glob(execLog); len(logMatches) > 0 {
+	if len(logMatches) > 0 {
 		body, _ := os.ReadFile(logMatches[0])
 		var entry struct {
 			ExecutionResult string `json:"execution_result"`

@@ -264,21 +264,21 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 	}
 
 	wo, err := NewWorkflowOrchestrator(
-		"",                  // mcpConfigPath — empty: no MCP servers
-		0.7,                 // temperature
-		"workflow",          // agentMode
-		loggerv2.NewNoop(),  // logger
-		nil,                 // eventBridge — no-op
-		nil,                 // tracer
-		[]string{},          // selectedServers
-		[]string{},          // selectedTools
-		false,               // useCodeExecutionMode
-		nil,                 // customTools
+		"",                       // mcpConfigPath — empty: no MCP servers
+		0.7,                      // temperature
+		"workflow",               // agentMode
+		loggerv2.NewNoop(),       // logger
+		nil,                      // eventBridge — no-op
+		nil,                      // tracer
+		[]string{},               // selectedServers
+		[]string{},               // selectedTools
+		false,                    // useCodeExecutionMode
+		nil,                      // customTools
 		map[string]interface{}{}, // customToolExecutors
-		llmCfg,              // llmConfig
-		10,                  // maxTurns
-		map[string]string{}, // toolCategories
-		presetCfg,           // presetLLMConfig
+		llmCfg,                   // llmConfig
+		10,                       // maxTurns
+		map[string]string{},      // toolCategories
+		presetCfg,                // presetLLMConfig
 	)
 	if err != nil {
 		t.Fatalf("NewWorkflowOrchestrator: %v", err)
@@ -333,20 +333,20 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 // THREE different on-disk shapes depending on step type, so this
 // helper tries them in order:
 //
-//	1. Regular / top-level step:
-//	   logs/<stepID>/execution/execution-attempt-*-iteration-*.json
-//	   → JSON "execution_result" field
-//	2. Todo-task sub-agent:
-//	   logs/step-*-sub-<stepID>-todo-*/execution/execution-attempt-*.json
-//	   → JSON "execution_result" field. The "step-N-sub-<id>-todo-M"
-//	   path is built by the engine when it materializes a predefined
-//	   route into a concrete sub-agent execution; the route_id is
-//	   embedded in the folder name.
-//	3. Message-sequence step:
-//	   execution/message_sequences/*/<stepID>/session.json
-//	   → token may appear anywhere in the serialized
-//	   conversation_history (the engine archives the full chat, not a
-//	   single "result" field). A substring scan suffices.
+//  1. Regular / top-level step:
+//     logs/<stepID>/execution/execution-attempt-*-iteration-*.json
+//     → JSON "execution_result" field
+//  2. Todo-task sub-agent:
+//     logs/step-*-sub-<stepID>-todo-*/execution/execution-attempt-*.json
+//     → JSON "execution_result" field. The "step-N-sub-<id>-todo-M"
+//     path is built by the engine when it materializes a predefined
+//     route into a concrete sub-agent execution; the route_id is
+//     embedded in the folder name.
+//  3. Message-sequence step:
+//     execution/message_sequences/*/<stepID>/session.json
+//     → token may appear anywhere in the serialized
+//     conversation_history (the engine archives the full chat, not a
+//     single "result" field). A substring scan suffices.
 //
 // Catches: prompt not delivered (empty result), prompt reused (wrong
 // token), LLM completed-with-wrong-content (token missing), sub-agent
@@ -447,29 +447,26 @@ func writeJSON(path string, v interface{}) error {
 }
 
 // assertAllStepsExecutedAndDecisionsMatch is the Tier-1 assertion: for
-// each step type it confirms (a) the engine wrote the per-type
-// completion marker AND (b) where the marker carries the LLM's
-// decision (routing, conditional), the decision matches the
-// deterministic value our prompts steered the LLM toward. Catches
-// silent-skip bugs (smoke-pass with no execution) and LLM/prompt
-// drift that previously would have passed the lower-bar "did it
-// produce a file" check.
+// each step type it confirms (a) the engine wrote per-type execution
+// evidence AND (b) where the evidence carries the LLM's decision
+// (routing, conditional), the decision matches the deterministic value
+// our prompts steered the LLM toward. Catches silent-skip bugs
+// (smoke-pass with no execution) and LLM/prompt drift that previously
+// would have passed the lower-bar "did it produce a file" check.
 func assertAllStepsExecutedAndDecisionsMatch(t *testing.T, walkRoot string, stepIDs []string) {
 	t.Helper()
-	type marker struct {
+	type evidence struct {
 		// globs lists candidate file paths; first match wins.
 		globs []string
-		// assertField is optional: when set, the marker JSON must
+		// assertField is optional: when set, the evidence JSON must
 		// decode and the field must equal wantValue. Used to verify
 		// LLM decisions, not just file presence.
 		assertField string
 		wantValue   interface{}
 	}
-	markers := map[string]marker{
-		// regular and conditional both write step_done.json on completion
-		// (controller_execution.go:2792 and controller_conditional.go:484).
-		"step-compute":     {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "execution", "step-compute", "step_done.json")}},
-		"step-verify-even": {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "execution", "step-verify-even", "step_done.json")}},
+	evidenceByStep := map[string]evidence{
+		"step-compute":     {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "logs", "step-compute", "execution", "execution-attempt-*-iteration-*.json")}},
+		"step-verify-even": {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "logs", "step-verify-even", "conditional-evaluation.json")}},
 		// routing-evaluation.json records the LLM's selected_route_id.
 		// The prompt instructs "Is 42 even? Pick route_even"; the engine
 		// must actually pick route_even or either the routing path is
@@ -497,7 +494,7 @@ func assertAllStepsExecutedAndDecisionsMatch(t *testing.T, walkRoot string, step
 
 	var completed, missing []string
 	for _, id := range stepIDs {
-		m := markers[id]
+		m := evidenceByStep[id]
 		var match string
 		for _, g := range m.globs {
 			matches, _ := filepath.Glob(g)
@@ -542,7 +539,7 @@ func assertAllStepsExecutedAndDecisionsMatch(t *testing.T, walkRoot string, step
 	}
 
 	if len(missing) > 0 {
-		t.Errorf("completion marker missing for steps: %v (completed: %v)", missing, completed)
+		t.Errorf("execution evidence missing for steps: %v (completed: %v)", missing, completed)
 	}
 	t.Logf("completed steps: %v", completed)
 }

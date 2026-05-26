@@ -1,8 +1,10 @@
 package services
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/manishiitg/mcpagent/events"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
@@ -68,6 +70,56 @@ func TestShouldSendSyntheticFinalSuppressesDuplicateText(t *testing.T) {
 
 	if filter.ShouldSendSyntheticFinal("  Run completed successfully. Here's the plain-English summary.\n") {
 		t.Fatal("expected duplicate synthetic final text to be suppressed")
+	}
+}
+
+func TestShouldSendSyntheticFinalSuppressesMarkdownEquivalentText(t *testing.T) {
+	filter := NewBotEventFilter(nil, ThreadID{Platform: "whatsapp"}, "session-1", "", "user-1")
+	filter.MarkMainTextSent("Step update (Sentry Latency Evidence): completed - found severe /sessionhub bottleneck.")
+
+	if filter.ShouldSendSyntheticFinal("Step update (Sentry Latency Evidence): completed - found severe `/sessionhub` bottleneck.") {
+		t.Fatal("expected markdown-equivalent synthetic final text to be suppressed")
+	}
+}
+
+func TestSyntheticFinalSuppressedWhileMainTextSendInFlight(t *testing.T) {
+	const msg = "Daily latency report is running - pulling CloudWatch data for both prod and dev."
+	sendStarted := make(chan struct{})
+	releaseSend := make(chan struct{})
+	connector := &testBotConnector{sendStarted: sendStarted, releaseSend: releaseSend}
+	filter := NewBotEventFilter(connector, ThreadID{Platform: "whatsapp", ChannelID: "dm", ThreadTS: "dm"}, "session-1", "", "user-1")
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- filter.processEvent(context.Background(), BotEventData{
+			Type: "llm_generation_end",
+			Data: &events.AgentEvent{
+				HierarchyLevel: 3,
+				Data: &events.LLMGenerationEndEvent{
+					Content: msg,
+				},
+			},
+		})
+	}()
+
+	select {
+	case <-sendStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for connector send to start")
+	}
+
+	if filter.ShouldSendSyntheticFinal(" " + msg + "\n") {
+		t.Fatal("expected duplicate synthetic final to be suppressed while main text send is in flight")
+	}
+
+	close(releaseSend)
+	select {
+	case sent := <-done:
+		if !sent {
+			t.Fatal("expected processEvent to report a sent message")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for event processing to finish")
 	}
 }
 

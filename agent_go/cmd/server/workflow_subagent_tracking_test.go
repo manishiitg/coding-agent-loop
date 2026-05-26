@@ -362,3 +362,24 @@ func TestWorkflowStartAutoNotificationTrailerForbidsToolCalls(t *testing.T) {
 		})
 	}
 }
+
+func TestBotAutoNotificationProgressDirectiveIsChannelSpecific(t *testing.T) {
+	slack := botAutoNotificationProgressDirective("bot-slack--abc123", false)
+	if !strings.Contains(slack, "Slack progress update") || !strings.Contains(slack, "mrkdwn") {
+		t.Fatalf("expected Slack-specific directive, got:\n%s", slack)
+	}
+
+	whatsapp := botAutoNotificationProgressDirective("bot-whatsapp--abc123", false)
+	if !strings.Contains(whatsapp, "WhatsApp progress update") || !strings.Contains(whatsapp, "plain-text") {
+		t.Fatalf("expected WhatsApp-specific directive, got:\n%s", whatsapp)
+	}
+
+	generic := botAutoNotificationProgressDirective("bot-discord--abc123", false)
+	if !strings.Contains(generic, "Bot progress update") {
+		t.Fatalf("expected generic bot directive, got:\n%s", generic)
+	}
+
+	if got := botAutoNotificationProgressDirective("bot-whatsapp--abc123", true); got != "" {
+		t.Fatalf("final bot notification should not include progress directive, got %q", got)
+	}
+}

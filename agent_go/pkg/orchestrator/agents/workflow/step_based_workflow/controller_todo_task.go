@@ -29,35 +29,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) getTodoTaskStepExecutionPath(stepID, 
 	return getExecutionFolderPath(hcpo.getTodoTaskExecutionWorkspacePath(), stepID, stepPath)
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) writeTodoTaskStepDoneMarker(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath, nextStepID, completionReason string) {
-	stepID := step.GetID()
-	if stepID == "" {
-		stepID = fmt.Sprintf("step-%d", stepIndex+1)
-	}
-	if stepPath == "" {
-		stepPath = fmt.Sprintf("step-%d", stepIndex+1)
-	}
-
-	stepDonePath := filepath.Join(hcpo.getTodoTaskStepExecutionPath(stepID, stepPath), "step_done.json")
-	stepDoneData := map[string]interface{}{
-		"completed_at":      time.Now().UTC().Format(time.RFC3339),
-		"step_index":        stepIndex,
-		"step_path":         stepPath,
-		"step_id":           stepID,
-		"next_step_id":      nextStepID,
-		"type":              string(StepTypeTodoTask),
-		"completion_reason": completionReason,
-	}
-	jsonBytes, err := json.MarshalIndent(stepDoneData, "", "  ")
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal todo task step_done.json: %v", err))
-		return
-	}
-	if err := hcpo.WriteWorkspaceFile(ctx, stepDonePath, string(jsonBytes)); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write todo task step_done.json: %v", err))
-	}
-}
-
 // executeTodoTaskStep executes a todo task step by:
 //  1. The orchestrator LLM delegates to sub-agents and/or executes directly
 //  2. Processing tool calls:
@@ -246,7 +217,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 		if fastResult.RanScript && fastResult.Success {
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ [orchestrator_learn_code] Fast path succeeded for step %d — 0 LLM tokens", stepIndex+1))
-			hcpo.writeTodoTaskStepDoneMarker(ctx, step, stepIndex, todoTaskStepPath, todoTaskStep.NextStepID, "learn_code: builder-authored script executed and validated")
 			hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "learn_code: builder-authored script executed and validated", todoTaskStep.NextStepID)
 			hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 			return true, todoTaskStep.NextStepID, nil
@@ -403,7 +373,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 			if preValidationPassed {
 				hcpo.GetLogger().Info("✅ Todo task step complete (pre-validation passed)")
-				hcpo.writeTodoTaskStepDoneMarker(ctx, step, stepIndex, todoTaskStepPath, todoTaskStep.NextStepID, "Pre-validation passed")
 				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Pre-validation passed", todoTaskStep.NextStepID)
 				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 				return true, todoTaskStep.NextStepID, nil
@@ -432,7 +401,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 		// No validation schema — execution completion is the signal
 		hcpo.GetLogger().Info("✅ Todo task step complete (execution finished)")
-		hcpo.writeTodoTaskStepDoneMarker(ctx, step, stepIndex, todoTaskStepPath, todoTaskStep.NextStepID, "Execution completed")
 		hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Execution completed", todoTaskStep.NextStepID)
 		hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 		return true, todoTaskStep.NextStepID, nil

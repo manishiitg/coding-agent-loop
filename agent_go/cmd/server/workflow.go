@@ -3533,7 +3533,6 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 				"knowledgebase_access":       knowledgebaseAccess,
 				"knowledgebase_write_method": knowledgebaseWriteMethod,
 				"knowledgebase_contribution": knowledgebaseContribution,
-				"is_completed":               false,
 				"output_content":             nil, // Will be populated if output file exists
 				"artifacts":                  []map[string]interface{}{},
 				"validations":                []map[string]interface{}{},
@@ -3563,17 +3562,6 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 					for _, child := range item.Children {
 						childName := filepath.Base(child.FilePath)
 						childIsDir := child.Type == "folder"
-
-						if !childIsDir && childName == "step_done.json" {
-							logPath := child.FilePath
-							if processedPaths[logPath] {
-								continue
-							}
-							processedPaths[logPath] = true
-
-							entry := getStepEntry(stepId)
-							entry["is_completed"] = true
-						}
 
 						if !childIsDir && strings.HasPrefix(childName, "validation") && strings.HasSuffix(childName, ".json") {
 							logPath := child.FilePath

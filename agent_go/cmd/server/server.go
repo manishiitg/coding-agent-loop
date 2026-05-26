@@ -8161,7 +8161,7 @@ func buildBackgroundAgentStartSyntheticMessage(_ string, parts []string) string 
 	// renders it inline rather than as "[Pasted text +N lines]".
 	// Completion will arrive as a separate AUTO-NOTIFICATION; the agent may call
 	// query_step to inspect live progress in the meantime.
-	const trailer = "Ack briefly; completion will arrive as a separate AUTO-NOTIFICATION."
+	const trailer = "Ack briefly. Do NOT call tools; completion will arrive as a separate AUTO-NOTIFICATION."
 	if len(parts) == 1 {
 		return fmt.Sprintf("[AUTO-NOTIFICATION] %s\n%s", strings.TrimPrefix(parts[0], "- "), trailer)
 	}
@@ -8295,7 +8295,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 
 	syntheticMsg := fmt.Sprintf("[AUTO-NOTIFICATION] Multiple step completions:\n%s", strings.Join(parts, "\n"))
 	if strings.HasPrefix(sessionID, "bot-") {
-		syntheticMsg += botAutoNotificationProgressDirective(api.isFinalBotAutoNotification(sessionID))
+		syntheticMsg += botAutoNotificationProgressDirective(sessionID, api.isFinalBotAutoNotification(sessionID))
 	}
 
 	// Emit synthetic_turn_ready event for each agent
@@ -8444,7 +8444,7 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	// update — that long reply renders fine in a side panel, not in chat.
 	// Session ID format is `bot-<platform>--<uuid>` (see newBotSessionID).
 	if strings.HasPrefix(sessionID, "bot-") {
-		syntheticMsg += botAutoNotificationProgressDirective(api.isFinalBotAutoNotification(sessionID))
+		syntheticMsg += botAutoNotificationProgressDirective(sessionID, api.isFinalBotAutoNotification(sessionID))
 	}
 
 	// NOTE: Don't inject syntheticMsg into conversation history here.
@@ -8479,11 +8479,30 @@ func (api *StreamingAPI) isFinalBotAutoNotification(sessionID string) bool {
 	return api.botManager.PendingWorkflowCount(sessionID) <= 1
 }
 
-func botAutoNotificationProgressDirective(final bool) string {
+func botAutoNotificationProgressDirective(sessionID string, final bool) string {
 	if final {
 		return ""
 	}
-	return "\n\n---\nYou are operating inside a chat thread on a bot connector. The user must be able to tell this is a workflow sub-agent progress update, not a normal workflow-builder chat reply. Reply with ONE short status line (target <=150 characters) using this exact prefix format: \"Step update (<sub-agent name>): <status headline>\". Use the Agent name or completion entry name from above as the sub-agent name. Do NOT start with only \"Status: completed\". Do NOT restate, quote, or summarize the full Result block above. Examples: \"Step update (search-score-jobs): completed - 15 jobs shortlisted from 56; enriching client data next.\" / \"Step update (route-query-logs): failed - rate limit hit; retrying with backoff.\""
+	switch botPlatformFromSessionID(sessionID) {
+	case "slack":
+		return "\n\n---\nSlack progress update. Reply with one <=150-char mrkdwn line: \"Step update (<name>): <status>\". Use the agent/completion name. Do not start with \"Status: completed\" or quote/summarize Result."
+	case "whatsapp":
+		return "\n\n---\nWhatsApp progress update. Reply with one <=150-char plain-text line: \"Step update (<name>): <status>\". Use the agent/completion name. Do not start with \"Status: completed\" or quote/summarize Result."
+	default:
+		return "\n\n---\nBot progress update. Reply with one <=150-char line: \"Step update (<name>): <status>\". Use the agent/completion name. Do not start with \"Status: completed\" or quote/summarize Result."
+	}
+}
+
+func botPlatformFromSessionID(sessionID string) string {
+	rest := strings.TrimPrefix(strings.TrimSpace(sessionID), "bot-")
+	if rest == sessionID {
+		return ""
+	}
+	platform, _, ok := strings.Cut(rest, "--")
+	if !ok {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(platform))
 }
 
 // executeSyntheticTurn drives the stored agent directly with a synthetic message.

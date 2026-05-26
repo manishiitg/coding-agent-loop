@@ -192,7 +192,6 @@ The main log families are:
 - conditional evaluation JSON
 - orchestration execution JSONL
 - todo-task execution JSONL
-- `step_done.json` markers
 
 ## Log File Layout
 

@@ -31,8 +31,8 @@ import (
 
 // TestWorkflowEdgeDuplicateStepIDsRejected proves the engine refuses
 // a plan with two steps sharing the same ID. Duplicate IDs silently
-// collide on step_done.json paths and learnings/ folders, which is a
-// data-corruption class bug.
+// collide on execution artifact paths and learnings/ folders, which is
+// a data-corruption class bug.
 func TestWorkflowEdgeDuplicateStepIDsRejected(t *testing.T) {
 	wo, cleanup, ok := buildEdgeCaseOrchestrator(t)
 	if !ok {

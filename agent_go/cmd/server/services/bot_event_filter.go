@@ -138,7 +138,9 @@ func (f *BotEventFilter) ShouldSendSyntheticFinal(message string) bool {
 	return !sameBotMainText(message, f.lastMainText)
 }
 
-// MarkMainTextSent marks the current turn as having forwarded builder text.
+// MarkMainTextSent marks the current turn as forwarding builder text. It may
+// be called just before the connector send starts so fallback delivery can see
+// the in-flight send and avoid duplicating it.
 func (f *BotEventFilter) MarkMainTextSent(message string) {
 	f.mu.Lock()
 	f.mainTextSent = true
@@ -168,7 +170,9 @@ func sameBotMainText(a, b string) bool {
 }
 
 func normalizeBotMainText(s string) string {
-	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
+	s = strings.TrimSpace(s)
+	s = strings.NewReplacer("`", "", "*", "", "_", "", "~", "").Replace(s)
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // Start begins listening to events for a session and forwarding filtered updates to the thread
@@ -311,9 +315,7 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 		if kind == BotNotifyBuilderText {
 			msg := f.formatGenerationEnd(event)
 			log.Printf("[BOT_FILTER] llm_generation_end: sending %d chars (level=%d)", len(msg), event.Data.HierarchyLevel)
-			f.sendMessage(ctx, msg)
-			f.MarkMainTextSent(msg)
-			return true
+			return f.sendMainText(ctx, msg)
 		} else {
 			log.Printf("[BOT_FILTER] llm_generation_end: skipped by policy (kind=%q mainLevel=%v workflowScoped=%v level=%d)", kind, f.isMainLevel(event), f.isWorkflowScopedEvent(event), event.Data.HierarchyLevel)
 		}
@@ -359,9 +361,7 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 				msg := f.formatUnifiedCompletion(event)
 				if msg != "" {
 					log.Printf("[BOT_FILTER] unified_completion: sending main-level result (no prior text sent)")
-					f.sendMessage(ctx, msg)
-					f.MarkMainTextSent(msg)
-					sent = true
+					sent = f.sendMainText(ctx, msg)
 				}
 			} else {
 				log.Printf("[BOT_FILTER] unified_completion: skipping main-level (text already sent via generation_end)")
@@ -1161,13 +1161,23 @@ func (f *BotEventFilter) formatGenerationEnd(event BotEventData) string {
 	return content
 }
 
-func (f *BotEventFilter) sendMessage(ctx context.Context, content string) {
+func (f *BotEventFilter) sendMainText(ctx context.Context, content string) bool {
+	// Mark before the connector call starts. WhatsApp sends can take long enough
+	// that the synthetic-final fallback may run while this goroutine is still
+	// inside SendThreadMessage; marking afterward lets the fallback send the
+	// exact same assistant text a second time.
+	f.MarkMainTextSent(content)
+	return f.sendMessage(ctx, content)
+}
+
+func (f *BotEventFilter) sendMessage(ctx context.Context, content string) bool {
 	content = f.replaceWorkspacePaths(content)
 	_, err := f.connector.SendThreadMessage(ctx, f.threadID, content)
 	if err != nil {
 		log.Printf("[BOT_FILTER] Failed to send message: %v", err)
-		return
+		return false
 	}
+	return true
 }
 
 // workspacePathPattern is the core pattern for workspace file paths.

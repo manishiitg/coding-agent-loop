@@ -1962,7 +1962,6 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 .sort(sortStepEntriesByExecution)
                 .map(([stepId, stepLogs]) => {
                   const isExpanded = expandedSteps.has(stepId)
-                  // Determine overall status based on step_done.json, validations, or other activity
                   const title = stepLogs.title || stepId
                   const description = stepLogs.description || ''
                   const nestingLevel = getStepNestingLevel(stepId)

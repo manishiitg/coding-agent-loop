@@ -2895,7 +2895,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const sessionIdToClear = activeTab?.sessionId || currentSessionId
     if (sessionIdToClear) {
       try {
-        await agentApi.clearSession(sessionIdToClear)
+        const activeSessions = await getActiveSessions(true)
+        const backendKnowsSession = activeSessions.some(session => session.session_id === sessionIdToClear)
+        if (backendKnowsSession) {
+          await agentApi.clearSession(sessionIdToClear)
+        }
       } catch (error) {
         logger.error('ChatArea', 'Failed to clear session:', error)
         // Continue with frontend reset even if backend clear fails
@@ -2933,7 +2937,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     processedCompletionEventsRef.current.clear()
     
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clearWorkflowState, resetChatState, onNewChat, activeTab?.sessionId, activeTab?.tabId, selectedModeCategory, selectedWorkflowPreset, setCurrentWorkflowPhase, setLastEventIndex])
+  }, [clearWorkflowState, resetChatState, onNewChat, activeTab?.sessionId, activeTab?.tabId, selectedModeCategory, selectedWorkflowPreset, setCurrentWorkflowPhase, setLastEventIndex, getActiveSessions])
 
   // Refresh workflow presets function
   const refreshWorkflowPresets = useCallback(async () => {

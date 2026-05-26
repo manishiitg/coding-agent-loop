@@ -29,8 +29,6 @@ import { hasWorkflowWriteAccess } from '../utils/workflowPermissions'
 import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
 import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 
-const WORKSHOP_MODE_SWITCH_CONFIRM_KEY = 'workflow_workshop_mode_switch_confirm_dismissed'
-
 // Visible workshop modes in the UI. The merged "workshop" mode replaced
 // the pre-merge Builder / Optimize / Report buttons. Run remains separate
 // for read-mostly bot routes.
@@ -175,8 +173,6 @@ function WorkshopModeToggle() {
     return (activePresetId && state.workshopModeByPreset[activePresetId]) || state.workshopMode
   })
   const setWorkshopMode = useWorkflowStore(state => state.setWorkshopMode)
-  const [pendingMode, setPendingMode] = useState<VisibleWorkshopMode | null>(null)
-  const [dontAskAgain, setDontAskAgain] = useState(false)
 
   useEffect(() => {
     if (!canWriteWorkflow && workshopMode !== 'run') {
@@ -204,34 +200,8 @@ function WorkshopModeToggle() {
 
   const requestWorkshopMode = (mode: VisibleWorkshopMode) => {
     if (workshopMode === mode) return
-    let skipConfirm = false
-    try {
-      skipConfirm = localStorage.getItem(WORKSHOP_MODE_SWITCH_CONFIRM_KEY) === 'true'
-    } catch {
-      skipConfirm = false
-    }
-    if (skipConfirm) {
-      applyWorkshopMode(mode)
-      return
-    }
-    setDontAskAgain(false)
-    setPendingMode(mode)
+    applyWorkshopMode(mode)
   }
-
-  const confirmModeSwitch = () => {
-    if (!pendingMode) return
-    if (dontAskAgain) {
-      try {
-        localStorage.setItem(WORKSHOP_MODE_SWITCH_CONFIRM_KEY, 'true')
-      } catch {
-        // ignore storage failures; the switch itself should still work
-      }
-    }
-    applyWorkshopMode(pendingMode)
-    setPendingMode(null)
-  }
-
-  const pendingModeLabel = pendingMode === 'run' ? 'Run' : 'Workshop'
 
   // Workshop is the merged Builder+Optimizer mode: design steps, run them,
   // evaluate, harden, replan — all in one toolset. The agent figures out
@@ -270,41 +240,6 @@ function WorkshopModeToggle() {
             </Tooltip>
           ))}
         </div>
-        {pendingMode && (
-          <div className="absolute bottom-full left-0 z-50 mb-2 w-[20rem] rounded-md border border-gray-200 bg-white p-3 text-xs shadow-lg dark:border-gray-700 dark:bg-gray-900">
-            <div className="font-semibold text-gray-900 dark:text-gray-100">
-              Switch to {pendingModeLabel}?
-            </div>
-            <div className="mt-1 leading-5 text-gray-600 dark:text-gray-300">
-              Full chat history is not passed between Builder and Optimize. The next mode receives a compact summary.
-            </div>
-            <label className="mt-2 flex items-center gap-2 text-gray-600 dark:text-gray-300">
-              <input
-                type="checkbox"
-                checked={dontAskAgain}
-                onChange={(event) => setDontAskAgain(event.target.checked)}
-                className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              Do not ask again
-            </label>
-            <div className="mt-3 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPendingMode(null)}
-                className="rounded px-2 py-1 font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmModeSwitch}
-                className="rounded bg-blue-600 px-2 py-1 font-medium text-white hover:bg-blue-700"
-              >
-                Switch
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     </TooltipProvider>
   )

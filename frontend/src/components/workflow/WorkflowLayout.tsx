@@ -103,6 +103,7 @@ import {
   type ExecutionOptions,
   type PollingEvent,
   type RunningWorkflowInfo,
+  type TerminalSnapshot,
 } from '../../services/api-types'
 import { getRawEventData } from '../../generated/event-types'
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
@@ -284,6 +285,14 @@ function isLiveWorkflowSessionForPreset(session: ActiveSessionInfo, presetId: st
 
   const targetWorkspace = normalizeWorkflowPath(workspacePath)
   return !!targetWorkspace && normalizeWorkflowPath(session.workspace_path) === targetWorkspace
+}
+
+function isLiveWorkflowTerminalForPath(terminal: TerminalSnapshot, workspacePath?: string | null): boolean {
+  const targetWorkspace = normalizeWorkflowPath(workspacePath)
+  if (!targetWorkspace || normalizeWorkflowPath(terminal.workflow_path) !== targetWorkspace) return false
+
+  const state = (terminal.state || '').toLowerCase().trim()
+  return state === 'running'
 }
 
 function withWorkflowRestoreTimeout<T>(promise: Promise<T>, label: string, timeoutMs = WORKFLOW_RESTORE_TIMEOUT_MS): Promise<T> {
@@ -482,6 +491,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Narrow selectors: bare useChatStore() re-renders on every store update (10x/sec with 2 parallel sessions)
   const currentWorkflowPhase = useChatStore(state => state.currentWorkflowPhase)
   const setCurrentWorkflowPhase = useChatStore(state => state.setCurrentWorkflowPhase)
+  const addToast = useChatStore(state => state.addToast)
   const activeSessionId = useChatStore(state => {
     const tab = state.activeTabId ? state.chatTabs[state.activeTabId] : undefined
     return tab?.metadata?.mode === 'workflow' ? tab.sessionId : undefined
@@ -1741,9 +1751,44 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [showRunningDrawer, setShowChatArea])
 
-  const handleWorkflowNewChat = useCallback(() => {
+  const handleWorkflowNewChat = useCallback(async () => {
+    if (activePresetId) {
+      const [sessionsResult, terminalsResult] = await Promise.allSettled([
+        useChatStore.getState().getActiveSessions(true),
+        agentApi.listTerminals(undefined, 'none'),
+      ])
+
+      if (sessionsResult.status === 'fulfilled') {
+        const runningSession = sessionsResult.value.find(session =>
+          isLiveWorkflowSessionForPreset(session, activePresetId, workspacePath)
+        )
+        if (runningSession) {
+          addToast('Cannot start a new chat because another session is already running for this workflow.', 'error')
+          return
+        }
+      } else {
+        logger.warn('WorkflowLayout', 'Failed to check active sessions before starting new workflow chat:', sessionsResult.reason)
+      }
+
+      if (terminalsResult.status === 'fulfilled') {
+        const runningTerminal = terminalsResult.value.terminals?.find(terminal =>
+          terminal.session_id !== activeSessionId &&
+          isLiveWorkflowTerminalForPath(terminal, workspacePath)
+        )
+        if (runningTerminal) {
+          addToast('Cannot start a new chat because another terminal session is already running for this workflow.', 'error')
+          return
+        }
+      } else {
+        logger.warn('WorkflowLayout', 'Failed to check active terminals before starting new workflow chat:', terminalsResult.reason)
+      }
+
+      await createFreshWorkflowBuilderTab(activePresetId)
+      return
+    }
+
     chatAreaRef.current?.handleNewChat()
-  }, [])
+  }, [activePresetId, activeSessionId, addToast, createFreshWorkflowBuilderTab, workspacePath])
 
   // No preset selected state
   if (!activeWorkflowPreset && !workspacePath) {

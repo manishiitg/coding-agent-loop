@@ -71,17 +71,6 @@ type ChatHistoryAgentRuntime struct {
 	ServerName    string   `json:"server_name,omitempty"`
 	SelectedTools []string `json:"selected_tools,omitempty"`
 	BrowserMode   string   `json:"browser_mode,omitempty"`
-	// PhaseID records the workflow phase the chat was running under at
-	// save time (e.g. "workflow-builder", "planning"). Empty on
-	// non-phase chats. Used by setupWorkflowPhaseToolsForRestore to
-	// decide whether to register phase-specific tools (run_full_workflow,
-	// execute_step, query_step, ...) BEFORE the CLI process is launched
-	// during auto-restore; without those tools registered in time, the
-	// CLI caches an empty catalog at get_api_spec time and never sees
-	// the phase tools until the next restart. Sessions saved before
-	// this field existed fall back to inferring "workflow-builder"
-	// from WorkspacePath + WorkshopMode being set.
-	PhaseID string `json:"phase_id,omitempty"`
 }
 
 type ChatHistoryPreviewMessage struct {

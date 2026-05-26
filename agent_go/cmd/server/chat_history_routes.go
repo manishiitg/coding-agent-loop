@@ -143,7 +143,7 @@ func startRestoredTerminalHandler(api *StreamingAPI) http.HandlerFunc {
 			fallbackReason = reason
 		}
 
-		if terminal, started, reason := api.startRestoredTerminalFromInMemoryAgent(r.Context(), req.SessionID, userID, runtime); started {
+		if terminal, started, reason := api.startRestoredTerminalFromInMemoryAgent(r.Context(), req.SessionID, runtime); started {
 			api.logRestoredTerminalInfof("restore session=%s tier=in_memory_agent result=started", req.SessionID)
 			_ = json.NewEncoder(w).Encode(startRestoredTerminalResponse{OK: true, Started: true, Terminal: terminal})
 			return
@@ -252,7 +252,7 @@ func (api *StreamingAPI) attachRestoredExistingTmuxTerminal(ctx context.Context,
 	return nil, false, "terminal_snapshot_not_created"
 }
 
-func (api *StreamingAPI) startRestoredTerminalFromInMemoryAgent(ctx context.Context, sessionID, userID string, runtime *ChatHistoryAgentRuntime) (*terminals.Snapshot, bool, string) {
+func (api *StreamingAPI) startRestoredTerminalFromInMemoryAgent(ctx context.Context, sessionID string, runtime *ChatHistoryAgentRuntime) (*terminals.Snapshot, bool, string) {
 	if api == nil || runtime == nil {
 		return nil, false, "api_unavailable"
 	}
@@ -265,10 +265,10 @@ func (api *StreamingAPI) startRestoredTerminalFromInMemoryAgent(ctx context.Cont
 	if llmAgent == nil || llmAgent.GetUnderlyingAgent() == nil {
 		return nil, false, "agent_not_in_memory"
 	}
-	return api.startRestoredTerminalFromAgent(ctx, sessionID, userID, runtime, llmAgent.GetUnderlyingAgent())
+	return api.startRestoredTerminalFromAgent(ctx, sessionID, runtime, llmAgent.GetUnderlyingAgent())
 }
 
-func (api *StreamingAPI) startRestoredTerminalFromAgent(ctx context.Context, sessionID, userID string, runtime *ChatHistoryAgentRuntime, underlyingAgent *mcpagent.Agent) (*terminals.Snapshot, bool, string) {
+func (api *StreamingAPI) startRestoredTerminalFromAgent(ctx context.Context, sessionID string, runtime *ChatHistoryAgentRuntime, underlyingAgent *mcpagent.Agent) (*terminals.Snapshot, bool, string) {
 	if api == nil || runtime == nil || underlyingAgent == nil {
 		return nil, false, "underlying_agent_missing"
 	}
@@ -280,25 +280,15 @@ func (api *StreamingAPI) startRestoredTerminalFromAgent(ctx context.Context, ses
 		return nil, false, "seed_failed"
 	}
 
-	// PHASE_TOOL_RACE FIX: register workflow-phase tools BEFORE launching
-	// the CLI process so its get_api_spec catalog includes
-	// run_full_workflow / execute_step / query_step / debug_step /
-	// list_executions / stop_step / etc. Without this, the CLI launches
-	// against a sparse catalog and never sees the phase tools until the
-	// next launch after /api/query has registered them. See PHASE_TOOL_RACE
-	// log breadcrumbs and workflow_phase_tools.go for the helper.
-	if strings.TrimSpace(runtime.WorkspacePath) != "" &&
-		(strings.TrimSpace(runtime.PhaseID) != "" || strings.TrimSpace(runtime.WorkshopMode) != "") {
-		uid := strings.TrimSpace(userID)
-		if uid == "" {
-			uid = "default"
-		}
-		if err := api.setupWorkflowPhaseToolsForRestore(ctx, sessionID, uid, runtime, underlyingAgent); err != nil {
-			log.Printf("[PHASE_TOOL_RACE] restore phase-tool setup failed for session=%s: %v — launching anyway", sessionID, err)
-		}
-	}
-
-	log.Printf("[PHASE_TOOL_RACE] AUTO_RESTORE_LAUNCH starting for session=%s provider=%s — phase-specific tool registration ran (if eligible) just above",
+	// PHASE_TOOL_RACE_DIAGNOSTIC: This restore path launches the CLI process
+	// before any /api/query runs. The workflow-phase tool registrations
+	// (RegisterRunFullWorkflowTool, RegisterWorkshopChatTools, etc., over in
+	// server.go's workflow-builder case) only fire inside /api/query. If the
+	// CLI caches its tool catalog at launch via get_api_spec, it won't see
+	// run_full_workflow / execute_step until the next launch AFTER a real
+	// /api/query has registered them. See PHASE_TOOL_REGISTER_* logs in
+	// server.go to compare timing.
+	log.Printf("[PHASE_TOOL_RACE] AUTO_RESTORE_LAUNCH starting for session=%s provider=%s — no phase-specific tool registration runs before this",
 		sessionID, provider)
 	launchCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
@@ -482,7 +472,7 @@ func (api *StreamingAPI) startRestoredTerminalFromNewAgent(ctx context.Context, 
 	// bridge catalog matches. Must happen before the transport session launches.
 	api.registerRestoredCodingAgentTools(ctx, underlyingAgent, sessionID, userID, restoredWorkspacePath, restoredBrowserMode, restoredSecretNames)
 
-	if terminal, started, reason := api.startRestoredTerminalFromAgent(ctx, sessionID, userID, runtime, underlyingAgent); started {
+	if terminal, started, reason := api.startRestoredTerminalFromAgent(ctx, sessionID, runtime, underlyingAgent); started {
 		return terminal, true, ""
 	} else if reason != "" {
 		return nil, false, reason

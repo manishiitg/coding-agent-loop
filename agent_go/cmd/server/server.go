@@ -5387,7 +5387,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		var chatRuntime *ChatHistoryAgentRuntime
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-			chatRuntime = api.captureChatHistoryAgentRuntime(sessionID, finalProvider, finalModelID, runtimeWorkspacePath, underlyingAgent)
+			chatRuntime = api.captureChatHistoryAgentRuntime(sessionID, finalProvider, finalModelID, runtimeWorkspacePath, workflowPhaseID, underlyingAgent)
 			if chatRuntime != nil {
 				chatRuntime.WorkshopMode = newWorkshopMode
 			}
@@ -5899,10 +5899,11 @@ func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID,
 	)
 }
 
-func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, modelID, workspacePath string, underlyingAgent *mcpagent.Agent) *ChatHistoryAgentRuntime {
+func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, modelID, workspacePath, phaseID string, underlyingAgent *mcpagent.Agent) *ChatHistoryAgentRuntime {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	modelID = strings.TrimSpace(modelID)
 	workspacePath = strings.TrimSpace(workspacePath)
+	phaseID = strings.TrimSpace(phaseID)
 	if provider == "" && modelID == "" && workspacePath == "" && underlyingAgent == nil {
 		return nil
 	}
@@ -5912,6 +5913,7 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 		Provider:      provider,
 		ModelID:       modelID,
 		WorkspacePath: workspacePath,
+		PhaseID:       phaseID,
 		CapturedAt:    time.Now().Format(time.RFC3339),
 	}
 	if common.IsCLIProvider(provider) {
@@ -8365,7 +8367,7 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 			chatRuntime := existing.Runtime
 			if chatRuntime == nil {
 				if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-					chatRuntime = api.captureChatHistoryAgentRuntime(sessionID, "", "", workflowPhaseFolder, underlyingAgent)
+					chatRuntime = api.captureChatHistoryAgentRuntime(sessionID, "", "", workflowPhaseFolder, phaseID, underlyingAgent)
 				}
 			}
 			workshopMode := strings.TrimSpace(existing.WorkshopMode)

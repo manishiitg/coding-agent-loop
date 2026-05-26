@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
+	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
@@ -448,5 +450,170 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 		log.Printf("[WORKFLOW_PHASE] Warning: Failed to update code execution registry: %v", err)
 	}
 
+	return nil
+}
+
+// setupWorkflowPhaseToolsForRestore registers the workflow-phase tool set on an
+// agent before its CLI transport session is launched, using a runtime captured
+// at chat-save time plus the workflow manifest as inputs.
+//
+// Why this exists: chat auto-restore launches the coding CLI (agy / cursor /
+// codex / claude-code) via StartCodingAgentTransportSession to recover the tmux
+// pane. The CLI caches its tool catalog at launch time by calling get_api_spec
+// against the api-bridge. Phase-specific tools (run_full_workflow, execute_step,
+// query_step, debug_step, list_executions, stop_step, etc.) used to only be
+// registered inside /api/query, which doesn't run until the user types the next
+// message — usually 18+ seconds after the CLI has already cached the catalog.
+// The CLI then never sees the phase tools and falls back to shelling out via
+// execute_shell_command (e.g. agy emits "tool(s) [run_full_workflow] not found"
+// and runs python3 main.py instead of run_full_workflow).
+//
+// This helper resolves the same arguments the /api/query path would supply,
+// then invokes installWorkflowPhaseTools with applyAllowList=false so the
+// restored CLI sees the SUPERSET of mode-allowed tools. The next /api/query
+// turn (with the real WorkshopMode in hand) narrows it via SetToolAllowList.
+//
+// Skipped for non-workflow chats (no WorkspacePath AND no WorkshopMode) and
+// non-workflow runtimes where PhaseID can't be inferred.
+func (api *StreamingAPI) setupWorkflowPhaseToolsForRestore(
+	ctx context.Context,
+	sessionID, userID string,
+	runtime *ChatHistoryAgentRuntime,
+	underlyingAgent *mcpagent.Agent,
+) error {
+	if api == nil || runtime == nil || underlyingAgent == nil {
+		return nil
+	}
+
+	// Phase resolution: prefer the explicitly persisted PhaseID. For legacy
+	// saves (pre-PhaseID), infer workflow-builder if both WorkspacePath and
+	// WorkshopMode are present — that's the only phase that auto-restores
+	// via the tmux launch path today.
+	phaseID := strings.TrimSpace(runtime.PhaseID)
+	workspacePath := strings.TrimSpace(runtime.WorkspacePath)
+	workshopMode := strings.TrimSpace(runtime.WorkshopMode)
+	if phaseID == "" && workspacePath != "" && workshopMode != "" {
+		phaseID = workflowtypes.WorkflowStatusWorkflowBuilder
+	}
+	if phaseID == "" || workspacePath == "" {
+		return nil
+	}
+
+	// Bounded manifest read — auto-restore must not stall the user's chat
+	// load if the manifest endpoint is slow or hung.
+	manifestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	manifest, manifestFound, manifestErr := ReadWorkflowManifest(manifestCtx, workspacePath)
+	if manifestErr != nil {
+		return fmt.Errorf("read workflow manifest: %w", manifestErr)
+	}
+
+	var (
+		selectedServers           []string
+		selectedSecretNames       *[]string
+		manifestLLMConfig         *orchestrator.LLMConfig
+		manifestEnabledGroupNames []string
+		kbShape                   = workflowtypes.KBShapeGraphNotes
+	)
+	if manifestFound {
+		caps := manifest.Capabilities
+		selectedServers = caps.SelectedServers
+		selectedSecretNames = caps.SelectedGlobalSecretNames
+		if caps.LLMConfig != nil {
+			if caps.LLMConfig.KBShape != "" {
+				kbShape = workflowtypes.ResolveKBShape(caps.LLMConfig.KBShape)
+			}
+			// Build a minimal orchestrator.LLMConfig from the manifest's
+			// PhaseLLM (or legacy Provider/ModelID). buildWorkshopConfig
+			// reads .Primary so we copy that across.
+			if caps.LLMConfig.PhaseLLM != nil && caps.LLMConfig.PhaseLLM.Provider != "" {
+				manifestLLMConfig = &orchestrator.LLMConfig{
+					Primary: orchestrator.LLMModel{
+						Provider: caps.LLMConfig.PhaseLLM.Provider,
+						ModelID:  caps.LLMConfig.PhaseLLM.ModelID,
+					},
+				}
+			} else if caps.LLMConfig.Provider != "" {
+				manifestLLMConfig = &orchestrator.LLMConfig{
+					Primary: orchestrator.LLMModel{
+						Provider: caps.LLMConfig.Provider,
+						ModelID:  caps.LLMConfig.ModelID,
+					},
+				}
+			}
+		}
+	}
+	// Restore has no group-toolbar selection — buildWorkshopConfig handles
+	// the empty case by falling back to manifest variables.
+
+	// Workspace I/O closures — same shape as /api/query's setup. Reads/writes
+	// route through the workspace API with the restoring user's identity.
+	wsClient := workspace.NewClient(
+		getWorkspaceAPIURL(),
+		workspace.WithUserID(userID),
+	)
+	readFile := func(ctx context.Context, filePath string) (string, error) {
+		result, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: filePath})
+		if err != nil {
+			return "", err
+		}
+		return result.Content, nil
+	}
+	writeFile := func(ctx context.Context, filePath, content string) error {
+		_, err := wsClient.UpdateWorkspaceFile(ctx, workspace.UpdateWorkspaceFileParams{Filepath: filePath, Content: content})
+		return err
+	}
+	moveFile := func(ctx context.Context, src, dst string) error {
+		_, err := wsClient.MoveWorkspaceFile(ctx, workspace.MoveWorkspaceFileParams{SourceFilepath: src, DestinationFilepath: dst})
+		return err
+	}
+
+	// Template vars the helper inspects to gate report-tool registration and
+	// auto-improvement proposer wiring. KBShape only feeds the inline system
+	// prompt builder (which has already run by chat-save time and isn't
+	// rebuilt here), but pass it along for consistency.
+	if workshopMode == "" {
+		workshopMode = "workshop"
+	}
+	phaseTemplateVars := map[string]string{
+		"WorkshopMode": workshopMode,
+		"RunFolder":    "iteration-0",
+		"KBShape":      kbShape,
+	}
+
+	// Synthetic request: only the fields installWorkflowPhaseTools actually
+	// consumes (LLMConfig + ExecutionOptions + secret names + preset ID).
+	// DecryptedSecrets is intentionally omitted — the secret values are
+	// re-injected by the next /api/query turn when the user types; the
+	// restore path only needs the catalog wired up.
+	syntheticReq := QueryRequest{
+		LLMConfig: manifestLLMConfig,
+		ExecutionOptions: &ExecutionOptions{
+			EnabledGroupNames: manifestEnabledGroupNames,
+			WorkshopMode:      workshopMode,
+		},
+		SelectedGlobalSecrets: selectedSecretNames,
+		PresetQueryID:         "", // restore has no preset query
+	}
+
+	mergedAPIKeys := MergedProviderAPIKeys(ctx)
+
+	// Mirror /api/query's session shell-dir setup so any shell command
+	// the restored CLI fires resolves to the workflow folder.
+	workspace.SetSessionWorkingDir(sessionID, workspacePath)
+
+	log.Printf("[PHASE_TOOL_RACE] restore phase-tool setup starting for session=%s phase=%s workspace=%s mode=%s",
+		sessionID, phaseID, workspacePath, workshopMode)
+	if err := api.installWorkflowPhaseTools(
+		ctx, underlyingAgent, sessionID, userID,
+		phaseID, workspacePath, "iteration-0",
+		phaseTemplateVars, selectedServers, mergedAPIKeys,
+		readFile, writeFile, moveFile,
+		syntheticReq, false, // applyAllowList=false: restore uses the superset
+	); err != nil {
+		return fmt.Errorf("install workflow phase tools at restore: %w", err)
+	}
+	log.Printf("[PHASE_TOOL_RACE] restore phase-tool setup complete for session=%s phase=%s",
+		sessionID, phaseID)
 	return nil
 }

@@ -518,7 +518,7 @@ func TestParseLocalChatHistorySessionSkipsLowSignalTitle(t *testing.T) {
 func TestCaptureChatHistoryAgentRuntimeStoresCLIResumeID(t *testing.T) {
 	api := &StreamingAPI{}
 
-	runtime := api.captureChatHistoryAgentRuntime("session-1", "claude-code", "claude-code", "Workflow/example", &mcpagent.Agent{
+	runtime := api.captureChatHistoryAgentRuntime("session-1", "claude-code", "claude-code", "Workflow/example", "", &mcpagent.Agent{
 		ClaudeCodeSessionID: "claude-session-1",
 	})
 
@@ -540,7 +540,7 @@ func TestCaptureChatHistoryAgentRuntimeStoresGeminiSessionAndProjectDir(t *testi
 
 	api := &StreamingAPI{}
 
-	runtime := api.captureChatHistoryAgentRuntime(sessionID, "gemini-cli", "auto", "_users/default/Chats", &mcpagent.Agent{
+	runtime := api.captureChatHistoryAgentRuntime(sessionID, "gemini-cli", "auto", "_users/default/Chats", "", &mcpagent.Agent{
 		GeminiSessionID:       "gemini-native-session-1",
 		GeminiProjectDirID:    "session-gemini-chat-session",
 		CodingAgentWorkingDir: "/tmp/user-chat",
@@ -566,7 +566,7 @@ func TestCaptureChatHistoryAgentRuntimeStoresGeminiSessionAndProjectDir(t *testi
 func TestCaptureChatHistoryAgentRuntimeStoresCodexThreadID(t *testing.T) {
 	api := &StreamingAPI{}
 
-	runtime := api.captureChatHistoryAgentRuntime("codex-session", "codex-cli", "gpt-5.4", "Workflow/example", &mcpagent.Agent{
+	runtime := api.captureChatHistoryAgentRuntime("codex-session", "codex-cli", "gpt-5.4", "Workflow/example", "", &mcpagent.Agent{
 		CodexSessionID:    "codex-thread-1",
 		CodexProjectDirID: "Workflow/example",
 	})
@@ -588,7 +588,7 @@ func TestCaptureChatHistoryAgentRuntimeStoresCodexThreadID(t *testing.T) {
 func TestCaptureChatHistoryAgentRuntimeStoresAgyConversationID(t *testing.T) {
 	api := &StreamingAPI{}
 
-	runtime := api.captureChatHistoryAgentRuntime("agy-session", "agy-cli", "agy-cli", "Workflow/example", &mcpagent.Agent{
+	runtime := api.captureChatHistoryAgentRuntime("agy-session", "agy-cli", "agy-cli", "Workflow/example", "", &mcpagent.Agent{
 		AgySessionID: "agy-conversation-1",
 	})
 
@@ -620,7 +620,7 @@ func TestCaptureChatHistoryAgentRuntimePersistsAgentSessionHandle(t *testing.T) 
 		},
 	}
 
-	runtime := api.captureChatHistoryAgentRuntime("chat-session-1", "codex-cli", "gpt-5.4", "Workflow/example", agent)
+	runtime := api.captureChatHistoryAgentRuntime("chat-session-1", "codex-cli", "gpt-5.4", "Workflow/example", "", agent)
 
 	if runtime == nil || runtime.AgentSessionHandle == nil {
 		t.Fatalf("expected persisted agent session handle, got %#v", runtime)
@@ -650,7 +650,7 @@ func TestCaptureChatHistoryAgentRuntimeInfersProviderFromSessionHandle(t *testin
 		},
 	}
 
-	runtime := api.captureChatHistoryAgentRuntime("chat-session-1", "", "", "Workflow/example", agent)
+	runtime := api.captureChatHistoryAgentRuntime("chat-session-1", "", "", "Workflow/example", "", agent)
 
 	if runtime == nil {
 		t.Fatal("expected runtime metadata")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -279,9 +280,22 @@ func (api *StreamingAPI) startRestoredTerminalFromAgent(ctx context.Context, ses
 		return nil, false, "seed_failed"
 	}
 
+	// PHASE_TOOL_RACE_DIAGNOSTIC: This restore path launches the CLI process
+	// before any /api/query runs. The workflow-phase tool registrations
+	// (RegisterRunFullWorkflowTool, RegisterWorkshopChatTools, etc., over in
+	// server.go's workflow-builder case) only fire inside /api/query. If the
+	// CLI caches its tool catalog at launch via get_api_spec, it won't see
+	// run_full_workflow / execute_step until the next launch AFTER a real
+	// /api/query has registered them. See PHASE_TOOL_REGISTER_* logs in
+	// server.go to compare timing.
+	log.Printf("[PHASE_TOOL_RACE] AUTO_RESTORE_LAUNCH starting for session=%s provider=%s — no phase-specific tool registration runs before this",
+		sessionID, provider)
 	launchCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+	launchStart := time.Now()
 	handle, err := underlyingAgent.StartCodingAgentTransportSession(launchCtx)
+	log.Printf("[PHASE_TOOL_RACE] AUTO_RESTORE_LAUNCH completed for session=%s in %s (err=%v)",
+		sessionID, time.Since(launchStart), err)
 	if err != nil || handle == nil {
 		if err != nil {
 			api.logRestoredTerminalf("Failed to start restored coding-agent tmux transport for session %s: %v", sessionID, err)

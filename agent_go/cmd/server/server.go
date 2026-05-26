@@ -4993,6 +4993,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Register phase-appropriate tools
+				// PHASE_TOOL_RACE_DIAGNOSTIC: these are the registrations that
+				// the auto-restore path in chat_history_routes.go has NOT seen
+				// yet — see [PHASE_TOOL_RACE] AUTO_RESTORE_LAUNCH log. If
+				// AUTO_RESTORE_LAUNCH fired before PHASE_TOOL_REGISTER_START
+				// for the same session, the CLI's tool catalog at launch is
+				// missing run_full_workflow / execute_step / etc.
+				log.Printf("[PHASE_TOOL_RACE] PHASE_TOOL_REGISTER_START for session=%s phase=%s",
+					sessionID, workflowPhaseID)
+				phaseRegisterStart := time.Now()
 				switch workflowPhaseID {
 				case workflowtypes.WorkflowStatusWorkflowBuilder:
 					// Plan modification tools + workshop execution tools (execute_step, query_step, stop_step, etc.)
@@ -5352,6 +5361,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					log.Printf("[WORKFLOW_PHASE] Registered plan modification tools for phase=%s", workflowPhaseID)
 				}
+
+				log.Printf("[PHASE_TOOL_RACE] PHASE_TOOL_REGISTER_END for session=%s phase=%s elapsed=%s",
+					sessionID, workflowPhaseID, time.Since(phaseRegisterStart))
 
 				// Apply per-turn tool allow list based on current workshop mode.
 				// This restricts which tools the LLM can see/call, enforcing mode boundaries

@@ -6239,6 +6239,18 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	}
 
 	if underlyingAgent != nil {
+		// Capture the assembled phase system prompt + appended supplementary
+		// prompts so chat restore can SetSystemPrompt the right content
+		// before any launch — otherwise the coding-CLI rule file is written
+		// from the agent's default mcpagent base prompt instead of the
+		// workflow-builder workshop template. See ChatHistoryAgentRuntime
+		// SystemPrompt field docs in chat_history_persistence.go.
+		if sp := strings.TrimSpace(underlyingAgent.GetSystemPrompt()); sp != "" {
+			runtime.SystemPrompt = sp
+		}
+		if appended := underlyingAgent.GetAppendedSystemPrompts(); len(appended) > 0 {
+			runtime.AppendedSystemPrompts = append([]string(nil), appended...)
+		}
 		if handle := underlyingAgent.CurrentAgentSessionHandle(); handle != nil && !handle.Empty() {
 			runtime.AgentSessionHandle = handle
 			if handle.Provider.Provider != "" && runtime.Provider == "" {
@@ -6413,6 +6425,26 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 	}
 	if externalSessionID == "" && projectDirID == "" {
 		return false
+	}
+
+	// Re-apply the assembled phase system prompt + appended supplementary
+	// prompts captured at chat-save time. Without this, the auto-restore
+	// path (which doesn't go through /api/query before launching the tmux
+	// pane) leaves the agent on its default mcpagent base prompt, and
+	// coding-CLI adapters then project that base prompt into
+	// .agents/rules/mlp-system.md / .cursor/rules/mlp-system.mdc /
+	// AGENTS.md / GEMINI.md instead of the workflow-builder workshop
+	// template — visible to the user as "wrong content" in the rules
+	// file after a restart.
+	if sp := strings.TrimSpace(runtime.SystemPrompt); sp != "" {
+		underlyingAgent.ClearAppendedSystemPrompts()
+		underlyingAgent.SetSystemPrompt(sp)
+		for _, appended := range runtime.AppendedSystemPrompts {
+			if strings.TrimSpace(appended) != "" {
+				underlyingAgent.AppendSystemPrompt(appended)
+			}
+		}
+		log.Printf("[CHAT_HISTORY] Restored system prompt (%d chars + %d appended) for session %s provider=%s", len(sp), len(runtime.AppendedSystemPrompts), sessionID, provider)
 	}
 
 	switch provider {

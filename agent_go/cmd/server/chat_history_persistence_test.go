@@ -892,6 +892,78 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresAgy(t *testing.T)
 	}
 }
 
+// TestSeedCodingAgentRuntimeFromRestoredConversationAppliesPersistedSystemPrompt
+// locks in the fix for the "rules file shows wrong content after restart"
+// bug. Without this, the chat-restore path leaves the agent on its default
+// mcpagent base prompt and the coding-CLI adapter then projects that base
+// prompt into <workflow>/.agents/rules/mlp-system.md (etc.) instead of the
+// workflow-builder workshop template that was active at chat-save time.
+func TestSeedCodingAgentRuntimeFromRestoredConversationAppliesPersistedSystemPrompt(t *testing.T) {
+	api := &StreamingAPI{}
+	agent := &mcpagent.Agent{}
+	// Workshop template stand-in. The real one is 10K+ chars; this sentinel
+	// is enough to verify the restored prompt routes through SetSystemPrompt.
+	workshopPrompt := "<workshop-template>workflow-builder system prompt</workshop-template>"
+	capability := "<capability>browser available</capability>"
+	secretBlock := "<secrets>SECRET_FOO=$SECRET_FOO</secrets>"
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:                  "coding_agent",
+		Provider:              "agy-cli",
+		ExternalSessionID:     "agy-conversation-restored",
+		ResumeSupported:       true,
+		SystemPrompt:          workshopPrompt,
+		AppendedSystemPrompts: []string{capability, secretBlock},
+	}
+
+	if !api.seedCodingAgentRuntimeFromRestoredConversation("agy-ui-session", "agy-cli", "", runtime, agent) {
+		t.Fatal("expected Agy resume state to be seeded")
+	}
+
+	// AppendSystemPrompt mutates systemPrompt into the concatenated form, so
+	// GetSystemPrompt() now returns base + "\n\n" + each appended section.
+	// Verify all three pieces survived the restore.
+	got := agent.GetSystemPrompt()
+	if !strings.Contains(got, workshopPrompt) {
+		t.Fatalf("restored composite prompt must contain the workshop template\n  got:  %q\n  want substring: %q", got, workshopPrompt)
+	}
+	if !strings.Contains(got, capability) {
+		t.Fatalf("restored composite prompt must contain the capability append\n  got:  %q\n  want substring: %q", got, capability)
+	}
+	if !strings.Contains(got, secretBlock) {
+		t.Fatalf("restored composite prompt must contain the secret-block append\n  got:  %q\n  want substring: %q", got, secretBlock)
+	}
+	appended := agent.GetAppendedSystemPrompts()
+	if len(appended) != 2 || appended[0] != capability || appended[1] != secretBlock {
+		t.Fatalf("agent appended prompts = %q, want [%q %q]", appended, capability, secretBlock)
+	}
+}
+
+// TestSeedCodingAgentRuntimeFromRestoredConversationSkipsEmptySystemPrompt
+// guards against a runtime saved before the SystemPrompt field existed:
+// a missing system prompt must NOT wipe the agent's existing prompt
+// (which may have been set by a parallel /api/query path).
+func TestSeedCodingAgentRuntimeFromRestoredConversationSkipsEmptySystemPrompt(t *testing.T) {
+	api := &StreamingAPI{}
+	agent := &mcpagent.Agent{}
+	preExisting := "default agent prompt set elsewhere"
+	agent.SetSystemPrompt(preExisting)
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:              "coding_agent",
+		Provider:          "agy-cli",
+		ExternalSessionID: "agy-conversation-restored",
+		ResumeSupported:   true,
+		// SystemPrompt intentionally empty (legacy runtime)
+	}
+
+	if !api.seedCodingAgentRuntimeFromRestoredConversation("agy-ui-session", "agy-cli", "", runtime, agent) {
+		t.Fatal("expected Agy resume state to be seeded")
+	}
+
+	if got := agent.GetSystemPrompt(); got != preExisting {
+		t.Fatalf("agent.GetSystemPrompt() = %q, want %q unchanged — empty runtime SystemPrompt must NOT clobber a prompt set elsewhere", got, preExisting)
+	}
+}
+
 func TestSeedCodingAgentRuntimeFromRestoredConversationAppliesAgentSessionHandle(t *testing.T) {
 	api := &StreamingAPI{}
 	agent := &mcpagent.Agent{}

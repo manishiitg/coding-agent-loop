@@ -1770,6 +1770,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const canSubmit = canSubmitImmediately || canQueueWhileStreaming
 
+  // tmux-transport coding CLIs keep a live, persistent session, so input should
+  // always go through /steer rather than the local queue. The backend
+  // disambiguates: it injects as live input when the pane is busy and starts the
+  // next turn when idle (handleSteerMessage/startNextTurnFromSteer). The local
+  // queue is only for non-live providers that genuinely can't accept input mid-
+  // turn. We intentionally do NOT gate on canSteer here — a stale canSteer=false
+  // would otherwise force queueing even though the CLI can take the input.
+  const routeLiveInputToCLI = useMemo(
+    () => supportsLiveCodingAgentInput && Boolean(tabSessionId),
+    [supportsLiveCodingAgentInput, tabSessionId]
+  )
+
   // Ref for debounced file removal check
   const fileRemovalTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -1795,7 +1807,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const sendLiveCodingAgentMessage = useCallback(async (msg: string): Promise<boolean> => {
     const trimmed = msg.trim()
-    if (!trimmed || !isStreaming || !supportsLiveCodingAgentInput || !canSteer || !tabSessionId) return false
+    if (!trimmed || !isStreaming || !supportsLiveCodingAgentInput || !tabSessionId) return false
 
     clearInputState()
     setLiveMessageDelivery({
@@ -1852,7 +1864,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
     return true
-  }, [activeTabId, addToast, canSteer, clearInputState, effectiveProviderForSteer, isStreaming, queueStreamingMessage, scheduleLiveMessageDeliveryClear, supportsLiveCodingAgentInput, tabSessionId])
+  }, [activeTabId, addToast, clearInputState, effectiveProviderForSteer, isStreaming, queueStreamingMessage, scheduleLiveMessageDeliveryClear, supportsLiveCodingAgentInput, tabSessionId])
 
   // Route ESC to the tmux pane when a live coding-agent CLI is running.
   // Returns true if the key was delivered to the CLI; false (or thrown) means
@@ -2465,7 +2477,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const trimmed = query?.trim()
       if (!trimmed) return
       if (isStreaming) {
-        if (supportsLiveCodingAgentInput && canSteer && tabSessionId) {
+        if (routeLiveInputToCLI) {
           void sendLiveCodingAgentMessage(trimmed)
           return
         }
@@ -2502,7 +2514,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       workshopMode: effectiveModes.workshopMode,
       workflowPhaseId
     }
-  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentMessage, onSubmit, openDialog, openResumeDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
+  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, routeLiveInputToCLI, sendLiveCodingAgentMessage, onSubmit, openDialog, openResumeDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
 
   const getCommandValidationError = useCallback((cmd: CommandDefinition, beforeSlash: string) => {
     if (!cmd.validate) return null
@@ -2610,7 +2622,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         clearInputState()
         onSubmit(queryToSubmit)
       } else if (canSubmit && isStreaming) {
-        if (supportsLiveCodingAgentInput && canSteer && tabSessionId) {
+        if (routeLiveInputToCLI) {
           void sendLiveCodingAgentMessage(queryToSubmit)
         } else {
           clearInputState()
@@ -2638,7 +2650,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentMessage, sendLiveCodingAgentControlKey, queueStreamingMessage, getSubmitBlockReason, addToast])
+  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showResumeDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, routeLiveInputToCLI, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentMessage, sendLiveCodingAgentControlKey, queueStreamingMessage, getSubmitBlockReason, addToast])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -2663,7 +2675,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       clearInputState()
       onSubmit(queryToSubmit)
     } else if (canSubmit && isStreaming) {
-      if (supportsLiveCodingAgentInput && canSteer && tabSessionId) {
+      if (routeLiveInputToCLI) {
         void sendLiveCodingAgentMessage(queryToSubmit)
       } else {
         clearInputState()
@@ -2675,7 +2687,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         addToast(submitBlockReason, 'info')
       }
     }
-  }, [queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, clearInputState, canSubmitImmediately, onSubmit, canSubmit, supportsLiveCodingAgentInput, canSteer, sendLiveCodingAgentMessage, queueStreamingMessage, getSubmitBlockReason, addToast])
+  }, [queryToSubmit, executeSlashCommandFromQuery, isSummarizing, isStreaming, handleSummarize, handleCompact, clearInputState, canSubmitImmediately, onSubmit, canSubmit, routeLiveInputToCLI, sendLiveCodingAgentMessage, queueStreamingMessage, getSubmitBlockReason, addToast])
 
   // Command selection handler - executes commands directly
   const handleCommandSelect = useCallback((command: string) => {

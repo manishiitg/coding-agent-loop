@@ -277,6 +277,14 @@ func (s *Store) MarkFailed(terminalID string) (Snapshot, bool) {
 // a forcedInactive override, so a later successful capture can still reclassify
 // the pane through RefreshContent's stale-recovery path. It is idempotent so the
 // frontend's inactive-terminal probe can stop once the snapshot reads stale.
+//
+// The backing TmuxSession is also cleared so downstream handlers that act on
+// the live pane (resize-window, send-keys, paste-buffer) short-circuit at their
+// "no live pane" branch and return OK instead of hitting tmux and bubbling up a
+// "can't find session" failure as a 502. The trade-off: a transient tmux hiccup
+// that would previously self-heal via the recovery path now requires the
+// terminal to be re-attached. In practice a dead session name does not come
+// back, so this is the right default.
 func (s *Store) MarkStale(terminalID string) (Snapshot, bool) {
 	terminalID = strings.TrimSpace(terminalID)
 	if s == nil || terminalID == "" {
@@ -288,12 +296,13 @@ func (s *Store) MarkStale(terminalID string) (Snapshot, bool) {
 	if !ok {
 		return Snapshot{}, false
 	}
-	if snapshot.State == "stale" && !snapshot.Active {
+	if snapshot.State == "stale" && !snapshot.Active && strings.TrimSpace(snapshot.TmuxSession) == "" {
 		return snapshot, true
 	}
 	now := time.Now()
 	snapshot.Active = false
 	snapshot.State = "stale"
+	snapshot.TmuxSession = ""
 	snapshot.UpdatedAt = now
 	s.byID[terminalID] = snapshot
 	return snapshot, true

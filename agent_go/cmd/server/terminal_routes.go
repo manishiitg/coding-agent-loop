@@ -423,6 +423,18 @@ func (api *StreamingAPI) handleResizeTerminal(w http.ResponseWriter, r *http.Req
 	ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
 	defer cancel()
 	if err := runTerminalTmuxCommand(ctx, "", "resize-window", "-t", snapshot.TmuxSession, "-x", strconv.Itoa(req.Cols), "-y", strconv.Itoa(req.Rows)); err != nil {
+		// If the backing tmux session is gone, mark the terminal stale (which
+		// also clears TmuxSession) and report success — the preferred-size
+		// update already landed, and there is no live pane to resize. Without
+		// this branch, every subsequent frontend resize POST returns 502 until
+		// the next pane refresh re-detects staleness.
+		if isMissingTmuxTargetError(err) {
+			if stale, ok := api.terminalStore.MarkStale(snapshot.TerminalID); ok {
+				snapshot = stale
+			}
+			_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -517,6 +529,8 @@ func sendTerminalKey(ctx context.Context, tmuxSession, key string) error {
 		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "Escape")
 	case "ctrl-c", "ctrl_c", "interrupt", "cancel":
 		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "C-c")
+	case "ctrl-o", "ctrl_o", "expand":
+		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "C-o")
 	default:
 		return fmt.Errorf("unsupported terminal key %q", key)
 	}

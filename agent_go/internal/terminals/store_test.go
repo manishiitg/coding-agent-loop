@@ -2383,3 +2383,57 @@ func TestDeriveStatusExtractsCursorAssistantPreview(t *testing.T) {
 		}
 	}
 }
+
+// TestStoreMarkStaleClearsTmuxSession locks in the resize-502 fix: once the
+// store has detected the backing tmux session is gone, downstream handlers
+// (resize-window, send-keys, paste-buffer) should see an empty TmuxSession on
+// the snapshot and short-circuit to their "no live pane" branch instead of
+// invoking tmux and bubbling up "can't find session" as a 502 Bad Gateway.
+func TestStoreMarkStaleClearsTmuxSession(t *testing.T) {
+	store := NewStore()
+	now := time.Now()
+
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:wf-1:step-1",
+		"agy chat screen",
+		1,
+		map[string]interface{}{
+			"tmux_session":    "mlp-agy-cli-int-9999-deadbeef",
+			"current_step_id": "step-1",
+			"execution_kind":  "workflow_step",
+			"scope":           "workflow_step",
+			"workflow_path":   "Workflow/test",
+		},
+		now,
+	))
+
+	snapshots := store.List("session-1")
+	if len(snapshots) != 1 {
+		t.Fatalf("expected one terminal snapshot, got %d", len(snapshots))
+	}
+	before := snapshots[0]
+	if strings.TrimSpace(before.TmuxSession) == "" {
+		t.Fatalf("seed snapshot must carry tmux session; got %q", before.TmuxSession)
+	}
+
+	stale, ok := store.MarkStale(before.TerminalID)
+	if !ok {
+		t.Fatalf("MarkStale must succeed for an existing terminal")
+	}
+	if stale.State != "stale" || stale.Active {
+		t.Fatalf("MarkStale must mark state=stale + Active=false; got state=%q active=%v", stale.State, stale.Active)
+	}
+	if strings.TrimSpace(stale.TmuxSession) != "" {
+		t.Fatalf("MarkStale must clear TmuxSession so the resize handler short-circuits; got %q", stale.TmuxSession)
+	}
+
+	// Idempotent: a second MarkStale call must not flap the snapshot back into
+	// having a tmux session, and must keep state=stale.
+	stale2, ok := store.MarkStale(before.TerminalID)
+	if !ok {
+		t.Fatalf("MarkStale must remain idempotent for already-stale terminal")
+	}
+	if strings.TrimSpace(stale2.TmuxSession) != "" || stale2.State != "stale" {
+		t.Fatalf("repeat MarkStale must remain stale + tmux-cleared; got state=%q tmux=%q", stale2.State, stale2.TmuxSession)
+	}
+}

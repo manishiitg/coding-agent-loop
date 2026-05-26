@@ -133,6 +133,19 @@ func startRestoredTerminalHandler(api *StreamingAPI) http.HandlerFunc {
 			runtime.WorkspacePath,
 		)
 
+		// Only the attach-existing tier is safe to run at restore: it reuses
+		// a live tmux pane without launching a new CLI process. The two launch
+		// tiers (startRestoredTerminalFromInMemoryAgent / FromNewAgent) used
+		// to fire here as a fallback, but they hit a tool-registration race —
+		// the CLI caches its tool catalog via get_api_spec at launch, before
+		// /api/query has registered phase-specific tools like run_full_workflow
+		// or execute_step. The CLI then never sees those tools and falls back
+		// to shelling out (e.g. agy emits "tool(s) [run_full_workflow] not
+		// found" and runs python3 main.py instead).
+		//
+		// If the tmux pane is gone, defer the launch to the user's next
+		// /api/query, which registers the phase tools first and then launches
+		// the CLI — same path a fresh chat takes, no race.
 		var fallbackReason string
 		if terminal, started, reason := api.attachRestoredExistingTmuxTerminal(r.Context(), req.SessionID, runtime); started {
 			api.logRestoredTerminalInfof("restore session=%s tier=attach_existing result=started", req.SessionID)
@@ -143,28 +156,10 @@ func startRestoredTerminalHandler(api *StreamingAPI) http.HandlerFunc {
 			fallbackReason = reason
 		}
 
-		if terminal, started, reason := api.startRestoredTerminalFromInMemoryAgent(r.Context(), req.SessionID, runtime); started {
-			api.logRestoredTerminalInfof("restore session=%s tier=in_memory_agent result=started", req.SessionID)
-			_ = json.NewEncoder(w).Encode(startRestoredTerminalResponse{OK: true, Started: true, Terminal: terminal})
-			return
-		} else if reason != "" {
-			api.logRestoredTerminalInfof("restore session=%s tier=in_memory_agent result=skip reason=%s", req.SessionID, reason)
-			fallbackReason = reason
-		}
-
-		if terminal, started, reason := api.startRestoredTerminalFromNewAgent(r.Context(), req.SessionID, userID, runtime); started {
-			api.logRestoredTerminalInfof("restore session=%s tier=new_agent result=started", req.SessionID)
-			_ = json.NewEncoder(w).Encode(startRestoredTerminalResponse{OK: true, Started: true, Terminal: terminal})
-			return
-		} else if reason != "" {
-			api.logRestoredTerminalInfof("restore session=%s tier=new_agent result=skip reason=%s", req.SessionID, reason)
-			fallbackReason = reason
-		}
-
 		if fallbackReason == "" {
-			fallbackReason = "terminal_transport_unavailable"
+			fallbackReason = "tmux_session_not_running"
 		}
-		api.logRestoredTerminalInfof("restore session=%s result=fail final_reason=%s", req.SessionID, fallbackReason)
+		api.logRestoredTerminalInfof("restore session=%s result=defer_to_query final_reason=%s (launch tiers skipped to avoid tool-registration race)", req.SessionID, fallbackReason)
 		_ = json.NewEncoder(w).Encode(startRestoredTerminalResponse{OK: true, Started: false, Reason: fallbackReason})
 	}
 }

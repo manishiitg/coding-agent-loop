@@ -1510,7 +1510,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
 
     void reconcileRunningWorkflowTab()
-    const interval = window.setInterval(reconcileRunningWorkflowTab, 3000)
+    // Reconcile only ensures the active tab matches the latest running workflow
+    // after a tab switch / app boot — it doesn't need sub-second cadence.
+    // useRunningWorkflowsStore polls at 2–10s for live status; this slower tick
+    // just catches occasional drift.
+    const interval = window.setInterval(reconcileRunningWorkflowTab, 10000)
     return () => {
       cancelled = true
       window.clearInterval(interval)

@@ -337,6 +337,10 @@ export const GlobalActivityMonitor: React.FC = () => {
   const [runningWorkflowsBySession, setRunningWorkflowsBySession] = useState<Record<string, RunningWorkflowInfo>>({})
   const [currentExecutionBySession, setCurrentExecutionBySession] = useState<Record<string, RuntimeExecutionDetail>>({})
   const containerRef = useRef<HTMLDivElement | null>(null)
+  // Session IDs the server has 404'd on for execution-tree (ghosts from a previous
+  // process). Tracked per-mount so we stop polling them every 30s and avoid the
+  // forever-404 churn that lit up the network tab after a server restart.
+  const ghostSessionIdsRef = useRef<Set<string>>(new Set())
   const activeSessionsCache = useChatStore(state => state.activeSessionsCache)
   const getActiveSessions = useChatStore(state => state.getActiveSessions)
   const activeTabId = useChatStore(state => state.activeTabId)
@@ -362,19 +366,30 @@ export const GlobalActivityMonitor: React.FC = () => {
         const sessionIds = Array.from(new Set([
           ...runningSessionIds,
           ...running.map(workflow => workflow.session_id),
-        ])).filter(Boolean).slice(0, 20)
+        ]))
+          .filter(Boolean)
+          .filter(sessionId => !ghostSessionIdsRef.current.has(sessionId))
+          .slice(0, 20)
         const treeResults = await Promise.allSettled(
           sessionIds.map(async sessionId => {
-            const tree = await agentApi.getSessionExecutionTree(sessionId)
-            const current = findCurrentExecutionNode(tree.root) || findLatestExecutionNode(tree.root)
-            return current
-              ? [sessionId, {
-                label: current.name,
-                kind: current.kind,
-                status: current.status,
-                startedAt: current.started_at,
-              }] as const
-              : null
+            try {
+              const tree = await agentApi.getSessionExecutionTree(sessionId)
+              const current = findCurrentExecutionNode(tree.root) || findLatestExecutionNode(tree.root)
+              return current
+                ? [sessionId, {
+                  label: current.name,
+                  kind: current.kind,
+                  status: current.status,
+                  startedAt: current.started_at,
+                }] as const
+                : null
+            } catch (err) {
+              const status = (err as { response?: { status?: number } })?.response?.status
+              if (status === 404) {
+                ghostSessionIdsRef.current.add(sessionId)
+              }
+              throw err
+            }
           }),
         )
         setCurrentExecutionBySession(Object.fromEntries(

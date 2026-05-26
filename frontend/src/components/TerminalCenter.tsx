@@ -19,7 +19,7 @@ const MAX_PRIOR_ARCHIVED_TURNS_TO_INLINE = 3
 const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
 const INACTIVE_FALLBACK_SECONDS = 120
 const EMPTY_TERMINAL_RESPONSE_GRACE_POLLS = 10
-const TERMINAL_POLL_INTERVAL_MS = 1500
+const TERMINAL_POLL_INTERVAL_MS = 3000
 const TERMINAL_FAST_POLL_INTERVAL_MS = 300
 const TERMINAL_FAST_POLL_DURATION_MS = 7000
 
@@ -903,6 +903,7 @@ function terminalStateTextClass(terminal: TerminalSnapshot, theme: TerminalTheme
 }
 
 function canDismissTerminal(terminal: TerminalSnapshot): boolean {
+  if (isMainAgentTerminal(terminal)) return false
   const state = terminalState(terminal)
   return state === 'completed' || state === 'closing' || state === 'failed' || state === 'stale'
 }

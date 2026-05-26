@@ -118,6 +118,9 @@ var referenceKinds = map[string]kindMeta{
 	"workflow-patterns": {Group: "system", Description: "Recurring workflow composition patterns extracted from real plans: Phase Router, Scoped Investigation, Linear Pipeline, Fan-out & Consolidate, Verification Gate, Pre-flight Probe, Human Checkpoint, Critique Loop, Persistence Tail. Load when starting a new plan or restructuring an existing one.", Modes: []string{"workshop"}},
 	"optimize-playbook": {Group: "system", Description: "Optimizer deep-dive: harden vs replan decision tree, eval, metrics, auto-improvement framework", Modes: []string{"workshop"}},
 	"file-layout":       {Group: "system", Description: "Workspace file layout reference and path discipline", Modes: []string{"workshop", "run"}},
+	"plan-design":       {Group: "system", Description: "Plan-design playbook: step boundaries, step-type selection, context flow, validation/failure design, anti-patterns, step-types reference. Load when designing a new plan or restructuring an existing one in DESIGN phase.", Modes: []string{"workshop"}},
+	"report-plan":       {Group: "system", Description: "Report plan toolchain: get/upsert/move/toggle/remove widgets, JSONata multi-source binding, section layouts and tabs, per-report themes, validate/preview, populating missing db sources. Load before authoring or editing reports/report_plan.json.", Modes: []string{"workshop"}},
+	"evaluation-plan":   {Group: "system", Description: "Evaluation plan rules: required fields, route gating, ID collision discipline, TARGET_RUN_PATH placeholder, step config (declared_execution_mode + execution_tier), validate/run workflow. Load before editing evaluation/evaluation_plan.json.", Modes: []string{"workshop"}},
 
 	// Multi-agent chat reference docs (rare-path topics — schedule/secret
 	// management — that don't warrant always-loaded prompt space).

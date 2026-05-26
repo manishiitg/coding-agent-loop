@@ -64,7 +64,7 @@ func TestInteractiveWorkshopPromptDocumentsMessageSequenceRouteReuse(t *testing.
 		"**Human-in-the-Loop Re-entry**",
 		"**Top-Level Scripted Conversation**",
 		"message_sequence_restart=true",
-		"restart only when the prior conversation is stale",
+		"only when the prior conversation is stale",
 		`get_reference_doc(kind="message-sequence")`,
 	}
 	for _, snippet := range inlineMustContain {

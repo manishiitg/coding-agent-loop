@@ -695,7 +695,7 @@ export const agentApi = {
     await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/input`, { text, submit })
   },
 
-  sendTerminalKey: async (terminalId: string, key: 'enter' | 'esc' | 'ctrl-c'): Promise<void> => {
+  sendTerminalKey: async (terminalId: string, key: 'enter' | 'esc' | 'ctrl-c' | 'ctrl-o'): Promise<void> => {
     await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/key`, { key })
   },
 

@@ -198,7 +198,7 @@ var builderInvariantCertifications = map[BuilderInvariantID]BuilderInvariantCert
 		ID:          InvTerminalCtrlCDelivery,
 		TestFile:    "agent_go/cmd/server/terminal_routes.go",
 		TestName:    "sendTerminalKey",
-		Description: "POST /api/terminals/{id}/key accepts 'ctrl-c'/'interrupt'/'cancel' and runs tmux send-keys C-c. Frontend wires it via the debug-action dropdown's Send Ctrl+C menuitem.",
+		Description: "POST /api/terminals/{id}/key accepts debug control keys including 'ctrl-c' and 'ctrl-o' and runs the matching tmux send-keys sequence. Frontend wires them via the debug-action dropdown.",
 	},
 	InvMultiTurnMemory: {
 		ID:          InvMultiTurnMemory,

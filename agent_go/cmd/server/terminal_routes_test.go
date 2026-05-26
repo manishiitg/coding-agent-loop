@@ -768,6 +768,34 @@ func TestTerminalRoutesSendEscKeyUsesTmuxSendKeys(t *testing.T) {
 	}
 }
 
+func TestTerminalRoutesSendCtrlOKeyUsesTmuxSendKeys(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-ctrl-o"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-agy-cli-int-test"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "pane", 2))
+
+	var gotArgs []string
+	oldRun := runTerminalTmuxCommand
+	runTerminalTmuxCommand = func(ctx context.Context, stdin string, args ...string) error {
+		gotArgs = append([]string(nil), args...)
+		return nil
+	}
+	defer func() { runTerminalTmuxCommand = oldRun }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/terminals/"+terminalID+"/key", strings.NewReader(`{"key":"ctrl-o"}`))
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleSendTerminalKey(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("send key status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := strings.Join(gotArgs, " "); got != "send-keys -t "+tmuxSession+" C-o" {
+		t.Fatalf("tmux args = %q, want ctrl-o", got)
+	}
+}
+
 func containsString(values []string, needle string) bool {
 	for _, value := range values {
 		if value == needle {

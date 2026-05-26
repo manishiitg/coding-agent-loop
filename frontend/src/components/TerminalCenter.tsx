@@ -24,6 +24,7 @@ const TERMINAL_FAST_POLL_INTERVAL_MS = 300
 const TERMINAL_FAST_POLL_DURATION_MS = 7000
 
 type TerminalColorScheme = 'neon' | 'mono' | 'homebrew' | 'catppuccin' | 'nord' | 'gruvbox' | 'solarized' | 'tokyo'
+type TerminalDebugKey = 'enter' | 'esc' | 'ctrl-c' | 'ctrl-o'
 
 const DEFAULT_TERMINAL_COLOR_SCHEME: TerminalColorScheme = 'homebrew'
 const TERMINAL_COLOR_SCHEME_STORAGE_KEY = 'terminal-color-scheme'
@@ -2266,7 +2267,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     window.setTimeout(() => setCopiedTerminalID(current => current === terminal.terminal_id ? null : current), 1500)
   }, [])
 
-  const sendTerminalDebugKey = useCallback(async (terminal: TerminalSnapshot, key: 'enter' | 'esc' | 'ctrl-c') => {
+  const sendTerminalDebugKey = useCallback(async (terminal: TerminalSnapshot, key: TerminalDebugKey) => {
     if (!canSendTerminalDebugInput(terminal)) return
     setTerminalActionBusy(key)
     try {
@@ -3254,6 +3255,17 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                                   >
                                     <Square className="h-3.5 w-3.5 shrink-0" />
                                     <span>Send Ctrl+C (interrupt)</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onMouseDown={event => event.preventDefault()}
+                                    onClick={() => { setDebugPanelOpenForID(null); void sendTerminalDebugKey(selectedTerminalView, 'ctrl-o') }}
+                                    disabled={terminalActionBusy === 'ctrl-o'}
+                                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80 disabled:cursor-wait disabled:opacity-50"
+                                  >
+                                    <Braces className="h-3.5 w-3.5 shrink-0" />
+                                    <span>Send Ctrl+O (expand)</span>
                                   </button>
                                   <div className="my-1 h-px bg-neutral-800/80" role="none" />
                                   <button

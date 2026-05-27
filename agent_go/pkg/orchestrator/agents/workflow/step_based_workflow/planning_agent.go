@@ -239,7 +239,7 @@ type AgentConfigs struct {
 	Transport                   string `json:"transport,omitempty"`
 	DisableTierOptimization     *bool  `json:"disable_tier_optimization,omitempty"`      // If true, execution and conditional agents always use Tier 1 (high reasoning)
 	SuccessfulRuns              *int   `json:"successful_runs,omitempty"`                // System-managed counter. Written by syncSuccessfulRunsToStepConfig after each successful validation; mirrors the authoritative count in learning metadata. Read by the readiness checklist to gauge optimization progress (3+ = ready). Agents must NOT set this directly.
-	LearnCodeMaxFixIter         *int   `json:"learn_code_max_fix_iterations,omitempty"`  // Max LLM fix iterations when main.py execution fails (default: 5)
+	ScriptedMaxFixIter         *int   `json:"learn_code_max_fix_iterations,omitempty"`  // Max LLM fix iterations when main.py execution fails (default: 5)
 	DeclaredExecutionMode       string `json:"declared_execution_mode,omitempty"`        // Required mode decision for the step: "scripted" or "agentic" (legacy values "learn_code" / "code_exec" are still accepted on read)
 	DeclaredExecutionModeReason string `json:"declared_execution_mode_reason,omitempty"` // Audit trail: why the declared mode is the best fit. Not consumed by Go runtime, but preserved so future LLM reviewers (harden, replan) reading raw step_config.json see the original decision rationale.
 	DescriptionReviewed         *bool  `json:"description_reviewed,omitempty"`           // True when the step description has been reviewed — clarity AND secrets/hardcoded values.

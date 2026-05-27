@@ -5330,7 +5330,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Store the fully configured agent before streaming starts so ultra-fast background
-		// completions (for example learn_code fast-path runs) can trigger a synthetic turn
+		// completions (for example scripted fast-path runs) can trigger a synthetic turn
 		// immediately. Waiting until the end of the first streamed turn creates a race where
 		// the completion loop sees no stored agent and drops the auto-notification.
 		{

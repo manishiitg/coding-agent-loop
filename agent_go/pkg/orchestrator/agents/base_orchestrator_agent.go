@@ -595,7 +595,7 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		ServersCount:         len(boa.config.ServerNames),
 		MaxTurns:             boa.config.MaxTurns,
 		UseCodeExecutionMode: boa.config.UseCodeExecutionMode,
-		UseLearnCodeMode:     strings.EqualFold(strings.TrimSpace(templateVars["IsLearnCodeMode"]), "true"),
+		UseScriptedMode:     strings.EqualFold(strings.TrimSpace(templateVars["IsScriptedMode"]), "true"),
 		SystemPrompt:         emitSystemPrompt,
 		UserMessage:          emitUserMessage,
 	}

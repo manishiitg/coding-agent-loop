@@ -23,7 +23,7 @@ func TestExecutionOnlyPromptIncludesCodeExecutionInstructions(t *testing.T) {
 		"FolderGuardWritePaths": "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample",
 		"IsEvaluationMode":      "false",
 		"IsCodeExecutionMode":   "true",
-		"IsLearnCodeMode":       "false",
+		"IsScriptedMode":       "false",
 	})
 
 	requiredSnippets := []string{
@@ -48,7 +48,7 @@ func TestExecutionOnlyUserPromptIncludesWorkshopHumanInput(t *testing.T) {
 		"WorkspacePath":           "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution",
 		"StepExecutionPath":       "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-writeback",
 		"IsCodeExecutionMode":     "true",
-		"IsLearnCodeMode":         "false",
+		"IsScriptedMode":         "false",
 		"WorkshopHumanInput":      "post RCA q-20260509T124321-rslat as wiki page",
 	})
 
@@ -79,7 +79,7 @@ func TestExecutionOnlyPromptsTreatSkillAsAdvisory(t *testing.T) {
 		"FolderGuardWritePaths": "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample",
 		"IsEvaluationMode":      "false",
 		"IsCodeExecutionMode":   "false",
-		"IsLearnCodeMode":       "false",
+		"IsScriptedMode":       "false",
 	})
 	systemSnippets := []string{
 		"Treat learnings/skill content as advisory guidance from previous runs",
@@ -98,7 +98,7 @@ func TestExecutionOnlyPromptsTreatSkillAsAdvisory(t *testing.T) {
 		"StepContextOutput":   "output.json",
 		"StepExecutionPath":   "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-fetch",
 		"IsCodeExecutionMode": "false",
-		"IsLearnCodeMode":     "false",
+		"IsScriptedMode":     "false",
 		"LearningHistory":     "Use the legacy selector.",
 	})
 	if !strings.Contains(userPrompt, "Read **Skill files** as guidance only") ||

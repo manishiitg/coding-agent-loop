@@ -267,7 +267,7 @@ func collectInnerSteps(step PlanStepInterface) []WorkshopStepInfo {
 
 // StepModeAgentic is the canonical mode name for steps where the LLM acts
 // each turn with tools available (the default). Previously called
-// "code_exec" — the old name biased agents toward writing Python scripts
+// "agentic" — the old name biased agents toward writing Python scripts
 // when a tool call would do. "Agentic" describes the actual behavior:
 // the LLM decides each turn what to call. Old name is still accepted on
 // read for backward compatibility with persisted configs.
@@ -275,14 +275,14 @@ const StepModeAgentic = "agentic"
 
 // StepModeScripted is the canonical mode name for steps that author a
 // reusable main.py saved at learnings/{step-id}/main.py, replayed
-// deterministically on future runs. Previously called "learn_code".
+// deterministically on future runs. Previously called "scripted".
 // The on-disk directory name remains "learnings/" — the mode label and
 // the directory are decoupled. Old name is still accepted on read.
 const StepModeScripted = "scripted"
 
 // canonicalDeclaredExecutionMode normalizes the declared execution mode
 // string. It accepts both the new canonical names ("agentic", "scripted")
-// and the legacy names ("code_exec", "learn_code") on input, always
+// and the legacy names ("agentic", "scripted") on input, always
 // returning the canonical form. Empty input returns empty.
 func canonicalDeclaredExecutionMode(mode string) string {
 	switch strings.TrimSpace(mode) {
@@ -295,10 +295,10 @@ func canonicalDeclaredExecutionMode(mode string) string {
 	}
 }
 
-// isScriptedExecutionModeConfig returns true when the step is in learn_code mode
+// isScriptedExecutionModeConfig returns true when the step is in scripted mode
 // (persistent scripted code path where main.py is saved and reused across runs).
-// code_exec steps also use code execution but do NOT write persistent scripts;
-// any leftover learnings/{step-id}/main.py for a code_exec step is stale artifact
+// agentic steps also use code execution but do NOT write persistent scripts;
+// any leftover learnings/{step-id}/main.py for a agentic step is stale artifact
 // debt and should be deleted.
 func isScriptedExecutionModeConfig(cfg *AgentConfigs) bool {
 	if cfg == nil {
@@ -307,14 +307,14 @@ func isScriptedExecutionModeConfig(cfg *AgentConfigs) bool {
 	return canonicalDeclaredExecutionMode(cfg.DeclaredExecutionMode) == StepModeScripted
 }
 
-// isOrchestratorLearnCodeEligible gates the todo_task fast path: the builder-authored
-// main.py is only run when the step declares learn_code and has at least one
+// isOrchestratorScriptedEligible gates the todo_task fast path: the builder-authored
+// main.py is only run when the step declares scripted and has at least one
 // predefined route for the script to call. If either check fails the step runs as a
 // normal LLM orchestrator — the script is never attempted.
-// The orchestrator learn_code path is read-only at runtime: the builder writes
+// The orchestrator scripted path is read-only at runtime: the builder writes
 // main.py at design time, the runtime only runs it. There is no repair loop and no
 // save-back; any script failure falls back to the LLM orchestrator with a fresh start.
-func isOrchestratorLearnCodeEligible(step *TodoTaskPlanStep, cfg *AgentConfigs) bool {
+func isOrchestratorScriptedEligible(step *TodoTaskPlanStep, cfg *AgentConfigs) bool {
 	if step == nil || !isScriptedExecutionModeConfig(cfg) {
 		return false
 	}
@@ -2865,19 +2865,19 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			stepID = resolvedID
 
-			isLearnCodeStep := false
+			isScriptedStep := false
 			if iwm.controller.approvedPlan != nil {
 				if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
 					if cfg := getAgentConfigs(stepInfo.Step); isScriptedExecutionModeConfig(cfg) {
-						isLearnCodeStep = true
+						isScriptedStep = true
 					}
 				}
 			}
-			if !isLearnCodeStep {
+			if !isScriptedStep {
 				if configs, err := iwm.controller.ReadStepConfigs(ctx); err == nil {
 					for _, sc := range configs {
 						if sc.ID == stepID && isScriptedExecutionModeConfig(sc.AgentConfigs) {
-							isLearnCodeStep = true
+							isScriptedStep = true
 							break
 						}
 					}
@@ -3022,9 +3022,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							inputData["run_folder"] = execOpts.RunFolder
 						}
 					}
-					if isLearnCodeStep {
+					if isScriptedStep {
 						inputData["workshop_mode"] = "scripted"
-						inputData["IsLearnCodeMode"] = "true"
+						inputData["IsScriptedMode"] = "true"
 					}
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData:        baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -3033,7 +3033,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						InputData:            inputData,
 						Iteration:            parseWorkshopIterationNumber(execOpts.Iteration),
 						UseCodeExecutionMode: true,
-						UseLearnCodeMode:     isLearnCodeStep,
+						UseScriptedMode:     isScriptedStep,
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -3067,7 +3067,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				// notification can flag a "this frozen script keeps failing" pattern to the
 				// builder rather than letting it accumulate silently in script_metadata.json.
 				if isLockCode {
-					if meta := iwm.controller.readLearnCodeMetadataAPI(execCtx, stepID); meta != nil && meta.LockCodeStats != nil {
+					if meta := iwm.controller.readScriptedMetadataAPI(execCtx, stepID); meta != nil && meta.LockCodeStats != nil {
 						lockCodeConsecutiveFailures = meta.LockCodeStats.ConsecutiveFailures
 						lockCodeNeedsReview = meta.LockCodeStats.NeedsReview
 					}
@@ -3079,7 +3079,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				groupInfo = fmt.Sprintf(", group=%q", groupName)
 			}
 			learningInfo := "Post-step learning follows the step's persistent config (`learnings_access`, `learning_objective`, `lock_learnings`). When writes are enabled, SKILL.md updates run as the step agent's direct post-completion continuation before the step is fully finalized."
-			if isLearnCodeStep {
+			if isScriptedStep {
 				learningInfo = "Code exec scripted mode: this step does not use a separate post-step SKILL learning phase. The saved Python script is the learning artifact, and the run may create/update that script directly."
 			}
 			logger.Info(fmt.Sprintf("🚀 Workshop: step %q started in background, execution_id=%q%s, fast_path_only=%v", stepID, execID, groupInfo, fastPathOnly))

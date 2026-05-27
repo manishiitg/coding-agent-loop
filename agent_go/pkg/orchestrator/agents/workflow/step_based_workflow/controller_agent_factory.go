@@ -795,15 +795,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		}
 	}
 
-	// Determine execution mode: CLI providers and learn_code steps always use code execution mode.
-	// learn_code steps need code execution mode so the agent gets the tool index and get_api_spec
+	// Determine execution mode: CLI providers and scripted steps always use code execution mode.
+	// scripted steps need code execution mode so the agent gets the tool index and get_api_spec
 	// virtual tool — without these, the LLM has to guess MCP server/tool names when writing main.py.
 	actualProvider := config.LLMConfig.Primary.Provider
-	isLearnCode := isScriptedExecutionModeConfig(stepConfig)
+	isScripted := isScriptedExecutionModeConfig(stepConfig)
 	if common.IsCLIProvider(actualProvider) {
 		config.UseCodeExecutionMode = true
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for CLI provider '%s' - MCP tools accessed via HTTP bridge", actualProvider))
-	} else if isLearnCode {
+	} else if isScripted {
 		config.UseCodeExecutionMode = true
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for learn_code step — LLM needs tool index and get_api_spec to write main.py"))
 	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
@@ -1527,7 +1527,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 5. Prepare custom tools (filtered by step config)
 	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
-	// Inject STEP_OUTPUT_DIR and STEP_EXECUTION_DIR for all execution-only agents (both learn_code and code_exec).
+	// Inject STEP_OUTPUT_DIR and STEP_EXECUTION_DIR for all execution-only agents (both scripted and agentic).
 	// Any script run via execute_shell_command may need STEP_OUTPUT_DIR to know where to write output
 	// and STEP_EXECUTION_DIR to read sibling step outputs.
 	{

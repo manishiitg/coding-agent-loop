@@ -93,7 +93,7 @@ const (
 	PreValidationCompleted events.EventType = "pre_validation_completed"
 
 	// Learn code mode events
-	LearnCodeScriptExecution events.EventType = "learn_code_script_execution" // When controller runs python3 main.py
+	ScriptedScriptExecution events.EventType = "learn_code_script_execution" // When controller runs python3 main.py
 
 	// Todo task orchestration events
 	TodoTaskRouteSelected events.EventType = "todo_task_route_selected" // When orchestrator selects a route/sub-agent

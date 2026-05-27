@@ -139,7 +139,7 @@ func contextOutputMatchesDependency(output string, dep string) bool {
 
 // BuildMainPyAuthoringRules returns the canonical rules that any agent writing or
 // patching a step's main.py MUST follow. Shared by:
-//   - the execution agent in learn_code mode (via GetLearnCodeModeInstructions)
+//   - the execution agent in scripted mode (via GetScriptedModeInstructions)
 //   - review_step_code (detects drift from these rules)
 //   - harden_workflow (patches main.py directly during eval-driven fixes)
 //

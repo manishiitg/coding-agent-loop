@@ -37,7 +37,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningFiles(ctx context.Con
 
 	// Read root-level learning files from the step folder.
 	// Only the shared _global folder is allowed to surface SKILL.md as a reusable
-	// index. Step-local SKILL.md is deprecated; learn_code steps should persist
+	// index. Step-local SKILL.md is deprecated; scripted steps should persist
 	// code artifacts (main.py, helpers) here instead.
 	// Exclude metadata files and temporary files used for internal tracking only.
 	for _, file := range files {
@@ -62,7 +62,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningFiles(ctx context.Con
 			learningFiles[file] = content
 			continue
 		}
-		// learn_code saves main.py and helper files directly in the learnings root, not in code/.
+		// scripted saves main.py and helper files directly in the learnings root, not in code/.
 		// Count common script/helper extensions here so empty-checks and prompt learnings work.
 		if strings.HasSuffix(file, ".py") || strings.HasSuffix(file, ".sh") {
 			filePath := filepath.Join(stepLearningsPath, file)

@@ -3817,7 +3817,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 									} else if execName == "learn_code_fast_path.json" {
 										// Learn-code fast-path run: saved main.py executed directly without
 										// invoking the LLM. Content shape is documented in
-										// controller_learn_code.go:saveLearnCodeFastPathLog — includes
+										// controller_learn_code.go:saveScriptedFastPathLog — includes
 										// success/exit_code/output/error + mode marker "learn_code_fast_path".
 										// Surface as a synthetic execution entry so the UI can render it
 										// alongside LLM attempts; fast_path flag lets the frontend pick a

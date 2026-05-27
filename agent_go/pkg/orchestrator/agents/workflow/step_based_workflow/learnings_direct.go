@@ -34,7 +34,7 @@ var learningsGlobalFileMutex sync.Mutex
 //
 // Learn-code note: the step's main.py is copied to learnings/<stepID>/code/
 // automatically by Go code (controller_execution.go:2672 via
-// saveLearnCodeScriptToLearnings), independent of both the post-step learning
+// saveScriptedScriptToLearnings), independent of both the post-step learning
 // agent and this direct-mode turn. The step agent is NOT asked to do that copy
 // here — that would double-write a shared file and open needless write access
 // to learnings/<stepID>/. Direct-mode learnings only targets _global/ for
@@ -42,8 +42,8 @@ var learningsGlobalFileMutex sync.Mutex
 //
 // Returns empty when the step shouldn't enter direct-learnings — callers decide
 // via shouldDirectWriteLearnings before invoking this.
-func BuildLearningsContributionTurn(stepID, stepDescription, learningObjective string, isLearnCodeMode bool) string {
-	_ = isLearnCodeMode // retained in the signature in case future behavior diverges by mode; not currently referenced
+func BuildLearningsContributionTurn(stepID, stepDescription, learningObjective string, isScriptedMode bool) string {
+	_ = isScriptedMode // retained in the signature in case future behavior diverges by mode; not currently referenced
 	description := strings.TrimSpace(stepDescription)
 	objective := strings.TrimSpace(learningObjective)
 	if stepID == "" || objective == "" {

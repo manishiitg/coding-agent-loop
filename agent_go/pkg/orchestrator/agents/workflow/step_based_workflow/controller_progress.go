@@ -848,8 +848,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) ResetValidationFailureCount(ctx conte
 	return nil
 }
 
-// emitLearnCodeScriptExecutionEvent emits a learn_code_script_execution event to the UI.
-func (hcpo *StepBasedWorkflowOrchestrator) emitLearnCodeScriptExecutionEvent(
+// emitScriptedScriptExecutionEvent emits a learn_code_script_execution event to the UI.
+func (hcpo *StepBasedWorkflowOrchestrator) emitScriptedScriptExecutionEvent(
 	ctx context.Context,
 	step PlanStepInterface,
 	stepIndex int,
@@ -889,7 +889,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitLearnCodeScriptExecutionEvent(
 		}
 	}
 
-	ev := &events.LearnCodeScriptExecutionEvent{
+	ev := &events.ScriptedScriptExecutionEvent{
 		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 			Component: "learn_code",
@@ -914,7 +914,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitLearnCodeScriptExecutionEvent(
 		stepID, stepTitle, isSavedScript, fixIteration, success, exitCode, len(output), len(errMsg), len(scriptContent), hcpo.selectedRunFolder,
 	))
 	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
-		Type:      events.LearnCodeScriptExecution,
+		Type:      events.ScriptedScriptExecution,
 		Timestamp: time.Now(),
 		Data:      ev,
 	})
@@ -922,16 +922,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitLearnCodeScriptExecutionEvent(
 	// Also emit a synthetic terminal snapshot so this step shows up
 	// in Terminal view (no LLM call means no WithObservability →
 	// otherwise the step would be invisible there).
-	hcpo.emitLearnCodeTerminalSnapshot(ctx, stepID, stepTitle, scriptPath, scriptContent, output, errMsg, exitCode, success, isSavedScript, fixIteration)
+	hcpo.emitScriptedTerminalSnapshot(ctx, stepID, stepTitle, scriptPath, scriptContent, output, errMsg, exitCode, success, isSavedScript, fixIteration)
 }
 
-// emitLearnCodeTerminalSnapshot builds a synthetic terminal pane
+// emitScriptedTerminalSnapshot builds a synthetic terminal pane
 // snapshot for a learn-code step run and emits it as a
 // StreamingChunkEvent with kind=terminal. The orchestrator's terminal
 // store picks it up exactly the same way an adapter-emitted terminal
 // chunk would, so the step appears in the Terminal view alongside
 // LLM-driven steps.
-func (hcpo *StepBasedWorkflowOrchestrator) emitLearnCodeTerminalSnapshot(
+func (hcpo *StepBasedWorkflowOrchestrator) emitScriptedTerminalSnapshot(
 	ctx context.Context,
 	stepID, stepTitle, scriptPath, scriptContent, output, errMsg string,
 	exitCode int,

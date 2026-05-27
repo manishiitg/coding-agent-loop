@@ -252,10 +252,10 @@ func TestWorkflowMessageSequenceItemTypeInvalidRejected(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────
 // learn_code mode (tightened from the original broken version)
 
-// TestWorkflowLearnCodeFastPathRunsPreSeededScript proves the engine's
+// TestWorkflowScriptedFastPathRunsPreSeededScript proves the engine's
 // learn_code FAST PATH actually runs a pre-existing main.py — which
 // is the entire point of the mode (controller_learn_code.go:838,
-// tryRunSavedLearnCodeScript). We:
+// tryRunSavedScriptedScript). We:
 //
 //	(1) pre-seed learnings/<step-id>/main.py with a known Python script
 //	    that prints a deterministic token to stdout.
@@ -274,7 +274,7 @@ func TestWorkflowMessageSequenceItemTypeInvalidRejected(t *testing.T) {
 // learn_code step regardless of whether main.py was authored). The
 // looser test was therefore a false positive; this version proves
 // real script execution.
-func TestWorkflowLearnCodeFastPathRunsPreSeededScript(t *testing.T) {
+func TestWorkflowScriptedFastPathRunsPreSeededScript(t *testing.T) {
 	wo, cleanup, ok := buildEdgeCaseOrchestrator(t)
 	if !ok {
 		return
@@ -400,7 +400,7 @@ with open(os.path.join(out_dir, "computed.txt"), "w") as f:
 	t.Logf("✅ learn_code fast path: exit_code=0, success=true, output=%q", strings.TrimSpace(fp.Output))
 }
 
-// TestWorkflowLearnCodeControlNoModeWritesNoScript is the control
+// TestWorkflowScriptedControlNoModeWritesNoScript is the control
 // counterpart of the test above: run the same step with the SAME
 // plan.json but NO step_config.json (so declared_execution_mode is
 // absent). The engine must NOT enter the learn_code path and must
@@ -409,7 +409,7 @@ with open(os.path.join(out_dir, "computed.txt"), "w") as f:
 // Together with the positive test, this pair proves the learn_code
 // behavior is gated on declared_execution_mode rather than the
 // engine writing main.py for every regular step.
-func TestWorkflowLearnCodeControlNoModeWritesNoScript(t *testing.T) {
+func TestWorkflowScriptedControlNoModeWritesNoScript(t *testing.T) {
 	wo, cleanup, ok := buildEdgeCaseOrchestrator(t)
 	if !ok {
 		return
@@ -447,12 +447,12 @@ func TestWorkflowLearnCodeControlNoModeWritesNoScript(t *testing.T) {
 	t.Logf("✅ control: no learn_code mode → no main.py written")
 }
 
-// TestWorkflowLearnCodeStepConfigIDMismatchNotApplied proves that a
+// TestWorkflowScriptedStepConfigIDMismatchNotApplied proves that a
 // step_config.json entry whose `id` doesn't match any plan.json step
 // is harmlessly ignored — declared_execution_mode is NOT silently
 // applied to a step it wasn't intended for, and no spurious learn_code
 // artifacts get written.
-func TestWorkflowLearnCodeStepConfigIDMismatchNotApplied(t *testing.T) {
+func TestWorkflowScriptedStepConfigIDMismatchNotApplied(t *testing.T) {
 	wo, cleanup, ok := buildEdgeCaseOrchestrator(t)
 	if !ok {
 		return

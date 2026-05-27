@@ -64,7 +64,7 @@ type OrchestratorAgentStartEvent struct {
 	StepIndex            int               `json:"step_index,omitempty"`              // which step in the plan
 	Iteration            int               `json:"iteration,omitempty"`               // which iteration of the loop
 	UseCodeExecutionMode bool              `json:"use_code_execution_mode,omitempty"` // code execution mode enabled
-	UseLearnCodeMode     bool              `json:"use_learn_code_mode,omitempty"`     // persistent scripted learn_code mode enabled
+	UseScriptedMode     bool              `json:"use_learn_code_mode,omitempty"`     // persistent scripted scripted mode enabled
 	UseToolSearchMode    bool              `json:"use_tool_search_mode,omitempty"`    // tool search mode enabled
 	SystemPrompt         string            `json:"system_prompt,omitempty"`           // full system prompt sent to LLM
 	UserMessage          string            `json:"user_message,omitempty"`            // user message sent to LLM
@@ -464,8 +464,8 @@ func NewBatchExecutionCanceledEvent(totalGroups, completedGroups int, canceledGr
 	}
 }
 
-// LearnCodeScriptExecutionEvent is emitted when the controller runs python3 main.py in learn_code mode.
-type LearnCodeScriptExecutionEvent struct {
+// ScriptedScriptExecutionEvent is emitted when the controller runs python3 main.py in scripted mode.
+type ScriptedScriptExecutionEvent struct {
 	events.BaseEventData
 	StepID        string `json:"step_id"`
 	StepIndex     int    `json:"step_index"`
@@ -483,6 +483,6 @@ type LearnCodeScriptExecutionEvent struct {
 	IsSavedScript bool   `json:"is_saved_script"` // true if running saved script from learnings, false if LLM-phase
 }
 
-func (e *LearnCodeScriptExecutionEvent) GetEventType() events.EventType {
-	return LearnCodeScriptExecution
+func (e *ScriptedScriptExecutionEvent) GetEventType() events.EventType {
+	return ScriptedScriptExecution
 }

@@ -135,16 +135,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 	stepConfig := getAgentConfigs(todoTaskStep)
 
-	// Orchestrator learn_code fast path — builder-authored main.py runs before any LLM work.
-	// Runs only when the step is learn_code-eligible (declared_execution_mode=learn_code plus
+	// Orchestrator scripted fast path — builder-authored main.py runs before any LLM work.
+	// Runs only when the step is scripted-eligible (declared_execution_mode=scripted plus
 	// at least one predefined route) AND learnings/{stepID}/main.py exists.
 	// Success → step done with zero LLM tokens. Any failure → fall through to normal LLM
-	// orchestrator path with a fresh start (no state carryover). Unlike regular-step learn_code,
+	// orchestrator path with a fresh start (no state carryover). Unlike regular-step scripted,
 	// there is no repair loop and no save-back: the builder owns main.py, runtime just runs it.
 	//
 	// declared_execution_mode often lives only in step_config.json (not in plan.json's embedded
 	// AgentConfigs). Mirror controller_execution.go's fallback: if the embedded config doesn't
-	// declare learn_code, scan step_config.json for a matching step ID before deciding.
+	// declare scripted, scan step_config.json for a matching step ID before deciding.
 	fastPathConfig := stepConfig
 	embeddedMode := ""
 	if stepConfig != nil {
@@ -182,7 +182,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	scriptExists := hcpo.hasValidLearnedScriptAPI(ctx, stepID)
 	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [orchestrator_learn_code] eligibility check for %s: embedded_mode=%q merged_mode=%q routes=%d script_exists=%v",
 		stepID, embeddedMode, mergedMode, len(todoTaskStep.PredefinedRoutes), scriptExists))
-	if isOrchestratorLearnCodeEligible(todoTaskStep, fastPathConfig) && scriptExists {
+	if isOrchestratorScriptedEligible(todoTaskStep, fastPathConfig) && scriptExists {
 		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [orchestrator_learn_code] Attempting builder-authored main.py for step %d (%s)", stepIndex+1, stepID))
 
 		// Register sub-agent executors in the session-scoped tool registry so main.py
@@ -205,14 +205,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		hcpo.restoreSubAgentToolExecutors(fastPathExecCtx)
 
 		stepExecutionRelPath := hcpo.getTodoTaskStepExecutionPath(stepID, todoTaskStepPath)
-		fastResult := hcpo.tryRunSavedLearnCodeScript(ctx, step, stepIndex, todoTaskStepPath, allSteps,
+		fastResult := hcpo.tryRunSavedScriptedScript(ctx, step, stepIndex, todoTaskStepPath, allSteps,
 			stepExecutionRelPath, executionWorkspacePath)
 
 		if fastResult.RanScript {
-			savedScriptPath := getLearnCodeScriptAbsPath(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), stepID, hcpo.isEvaluationMode)
-			hcpo.emitLearnCodeScriptExecutionEvent(ctx, step, stepIndex, todoTaskStepPath,
+			savedScriptPath := getScriptedScriptAbsPath(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), stepID, hcpo.isEvaluationMode)
+			hcpo.emitScriptedScriptExecutionEvent(ctx, step, stepIndex, todoTaskStepPath,
 				savedScriptPath, fastResult.Success, fastResult.ExitCode, fastResult.Output, fastResult.Error, 0, true)
-			hcpo.saveLearnCodeFastPathLog(ctx, stepIndex, stepID, todoTaskStepPath, savedScriptPath, fastResult)
+			hcpo.saveScriptedFastPathLog(ctx, stepIndex, stepID, todoTaskStepPath, savedScriptPath, fastResult)
 		}
 
 		if fastResult.RanScript && fastResult.Success {
@@ -233,7 +233,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		}
 
 		// fast_path_only=true (SavedScriptOnly) — workshop-level debug mode that forbids any
-		// LLM fallback. Mirror controller_execution.go's behavior for regular learn_code steps.
+		// LLM fallback. Mirror controller_execution.go's behavior for regular scripted steps.
 		if execCtx != nil && execCtx.SavedScriptOnly {
 			if fastResult.RanScript {
 				return false, "", fmt.Errorf("saved main.py failed for orchestrator step %q:\n%s", stepID, fastResult.Error)
@@ -241,7 +241,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			return false, "", fmt.Errorf("no saved main.py found for orchestrator step %q in learnings/%s/main.py", stepID, stepID)
 		}
 	} else if execCtx != nil && execCtx.SavedScriptOnly {
-		// fast_path_only was requested but this step isn't learn_code-eligible — fail loudly
+		// fast_path_only was requested but this step isn't scripted-eligible — fail loudly
 		// rather than silently running the LLM orchestrator (caller expected zero-LLM execution).
 		return false, "", fmt.Errorf("orchestrator step %q is not in learn_code mode (requires declared_execution_mode=\"learn_code\" and ≥1 predefined route)", stepID)
 	}

@@ -106,7 +106,7 @@ Skill content is guidance from previous runs, not a replacement for the current 
 {{.LearningHistory}}
 {{end}}
 
-{{if and .ValidationSchema (ne .IsLearnCodeMode "true")}}
+{{if and .ValidationSchema (ne .IsScriptedMode "true")}}
 ## Validation Schema (Output Requirement)
 Your '{{.StepContextOutput}}' MUST match this structure:
 {{printf "%s" .ValidationSchema}}
@@ -133,7 +133,7 @@ End your response with exactly one of:
 var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
 {{.OrchestratorInstructions}}
 {{else}}**DESCRIPTION**: {{.BaseDescription}}
-{{end}}{{if eq .IsLearnCodeMode "true"}}**MODE NOTE (scripted)**: Implement the task below as reusable Python code saved to `+"`"+`learnings/{step-id}/main.py`+"`"+`. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
+{{end}}{{if eq .IsScriptedMode "true"}}**MODE NOTE (scripted)**: Implement the task below as reusable Python code saved to `+"`"+`learnings/{step-id}/main.py`+"`"+`. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
 {{else}}**MODE NOTE (agentic)**: This step is running in normal `+"`"+`agentic`+"`"+` mode, not `+"`"+`scripted`+"`"+`. **Tool calls come first.** Call the available tools and APIs directly to inspect state, fetch data, and produce outputs. Do **not** try to write one large reusable Python script for the whole task — that is what `+"`"+`scripted`+"`"+` mode is for, which this step is not in. Use short one-off shell or Python snippets via `+"`"+`execute_shell_command`+"`"+` only when consolidating several tool calls into one materially helps a specific subtask (e.g. batching API calls, parsing JSON with `+"`"+`jq`+"`"+`). A single tool call is a perfectly valid step.
 {{end}}**LOCATION**: {{.StepExecutionPath}}/ (Workspace: {{.WorkspacePath}})
 
@@ -166,7 +166,7 @@ You MUST incorporate it into this run. It takes priority over the default step d
 ### Output
 - **Output File**: {{.StepContextOutput}} (Create in '{{.StepExecutionPath}}/')
 
-{{if .LearnCodePriorContext}}{{.LearnCodePriorContext}}
+{{if .ScriptedPriorContext}}{{.ScriptedPriorContext}}
 {{end}}### Execution Checklist
 1. Review all **Inputs** above. Inlined files are ready to use. For any marked "read via tool", read them first.
 {{if .HasSkill}}2. Read **Skill files** as guidance only. The current step description is the main source of truth; use or ignore skill guidance depending on whether it matches this step.
@@ -198,8 +198,8 @@ type WorkflowExecutionOnlyTemplate struct {
 	BaseDescription          string // Step description without orchestrator instructions
 	OrchestratorInstructions string // Orchestrator instructions (split from description)
 	HasSkill                 string // "true" if skill files are available
-	IsLearnCodeMode          string // "true" when learn_code mode is enabled
-	LearnCodePriorContext    string // Prior script context (failed script + error, or existing script for update)
+	IsScriptedMode          string // "true" when scripted mode is enabled
+	ScriptedPriorContext    string // Prior script context (failed script + error, or existing script for update)
 }
 
 // WorkflowExecutionOnlyAgent executes steps using pre-discovered learning context
@@ -244,11 +244,11 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) Execute(ctx context.Context, template
 // it doesn't need the 35-line Python helper and should avoid pinning agents to
 // any one language.
 func buildCodeExecBestPractices(isCodeExec bool, templateVars map[string]string) string {
-	if !isCodeExec || templateVars["IsLearnCodeMode"] != "true" {
+	if !isCodeExec || templateVars["IsScriptedMode"] != "true" {
 		return ""
 	}
 	var varMappingLines []string
-	if raw := templateVars["LearnCodeVarMapping"]; raw != "" {
+	if raw := templateVars["ScriptedVarMapping"]; raw != "" {
 		varMappingLines = strings.Split(raw, "\n")
 	}
 	hasInputArgs := templateVars["StepContextDependencies"] != ""
@@ -257,7 +257,7 @@ func buildCodeExecBestPractices(isCodeExec bool, templateVars map[string]string)
 
 var hardcodedStepPathCmdRegex = regexp.MustCompile(`(?i)cat\s+'?\{WORKSPACE_PATH\}/step-\d+/[^'\s]+`)
 
-func sanitizeLearnCodeDescription(desc string) string {
+func sanitizeScriptedDescription(desc string) string {
 	if desc == "" {
 		return desc
 	}
@@ -307,35 +307,35 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	codeExecutionSection := BuildCodeExecutionSection(isCodeExecutionMode, workspacePath)
 
 	// Learn code mode: append instructions to write main.py (added on top of code execution section)
-	isLearnCodeMode := templateVars["IsLearnCodeMode"] == "true"
-	if isLearnCodeMode {
+	isScriptedMode := templateVars["IsScriptedMode"] == "true"
+	if isScriptedMode {
 		isRelearnMode := templateVars["IsRelearnMode"] == "true"
-		priorScript := templateVars["LearnCodePriorScript"]
-		priorError := templateVars["LearnCodePriorError"]
+		priorScript := templateVars["ScriptedPriorScript"]
+		priorError := templateVars["ScriptedPriorError"]
 		codeDirAbsPath := filepath.Join(stepExecutionPath, "code")
 
 		// Parse input arg paths from templateVars (newline-separated)
 		var inputArgPaths []string
-		if raw := templateVars["LearnCodeInputArgs"]; raw != "" {
+		if raw := templateVars["ScriptedInputArgs"]; raw != "" {
 			inputArgPaths = strings.Split(raw, "\n")
 		}
 
 		// Parse env var names from templateVars (newline-separated)
 		var envVarNames []string
-		if raw := templateVars["LearnCodeEnvVarNames"]; raw != "" {
+		if raw := templateVars["ScriptedEnvVarNames"]; raw != "" {
 			envVarNames = strings.Split(raw, "\n")
 		}
 
 		// Parse variable→env mapping lines (newline-separated)
 		var varMappingLines []string
-		if raw := templateVars["LearnCodeVarMapping"]; raw != "" {
+		if raw := templateVars["ScriptedVarMapping"]; raw != "" {
 			varMappingLines = strings.Split(raw, "\n")
 		}
 
 		validationSchemaJSON := templateVars["ValidationSchema"]
 		hasBrowser := templateVars["HasBrowserAccess"] == "true"
-		isCodeLocked := templateVars["IsLearnCodeLocked"] == "true"
-		codeExecutionSection += GetLearnCodeModeInstructions(codeDirAbsPath, stepExecutionPath, isRelearnMode, priorScript, priorError, inputArgPaths, envVarNames, varMappingLines, validationSchemaJSON, hasBrowser, isCodeLocked)
+		isCodeLocked := templateVars["IsScriptedLocked"] == "true"
+		codeExecutionSection += GetScriptedModeInstructions(codeDirAbsPath, stepExecutionPath, isRelearnMode, priorScript, priorError, inputArgPaths, envVarNames, varMappingLines, validationSchemaJSON, hasBrowser, isCodeLocked)
 	}
 
 	// Get variable names and values for system prompt
@@ -359,7 +359,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"KeepLearningFull":          fmt.Sprintf("%t", keepLearningFull),
 		"VariableNames":             variableNames,
 		"VariableValues":            variableValues,
-		"VarMapping":                templateVars["LearnCodeVarMapping"], // {{VAR}} → SECRET_VAR mapping (for code exec guidance)
+		"VarMapping":                templateVars["ScriptedVarMapping"], // {{VAR}} → SECRET_VAR mapping (for code exec guidance)
 		"UseCodeStyleRules":         useCodeStyleRules,
 		"PythonBestPractices":       buildCodeExecBestPractices(isCodeExecutionMode, templateVars),
 		"StepNumber":                stepNumber,
@@ -376,7 +376,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"FolderGuardReadPaths":      folderGuardReadPaths,                      // Folder guard read paths for agent guidance
 		"FolderGuardWritePaths":     folderGuardWritePaths,                     // Folder guard write paths for agent guidance
 		"IsEvaluationMode":          templateVars["IsEvaluationMode"],          // Evaluation mode flag
-		"IsLearnCodeMode":           templateVars["IsLearnCodeMode"],           // Learn code mode flag (validation schema shown in learn_code section instead)
+		"IsScriptedMode":           templateVars["IsScriptedMode"],           // Learn code mode flag (validation schema shown in scripted section instead)
 		"WorkflowRoot":              templateVars["WorkflowRoot"],              // Workflow root path for absolute cwd display
 		"DocsRoot":                  GetPromptDocsRoot(),                       // Workspace docs base path — differs between macOS dev (/Users/.../workspace-docs) and Docker (/app/workspace-docs); do NOT hardcode.
 		// Browser authoring rules (refs-are-ephemeral + durable-selector priority
@@ -396,9 +396,9 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(templateVars map[string]string) string {
 	// Split description into base description and orchestrator instructions
 	fullDescription := templateVars["StepDescription"]
-	isLearnCodeMode := templateVars["IsLearnCodeMode"] == "true"
-	if isLearnCodeMode {
-		fullDescription = sanitizeLearnCodeDescription(fullDescription)
+	isScriptedMode := templateVars["IsScriptedMode"] == "true"
+	if isScriptedMode {
+		fullDescription = sanitizeScriptedDescription(fullDescription)
 	}
 	baseDescription := fullDescription
 	orchestratorInstructions := ""
@@ -429,8 +429,8 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		WorkshopHumanInput:       templateVars["WorkshopHumanInput"],
 		StepSuccessCriteria:      templateVars["StepSuccessCriteria"],
 		HasSkill:                 fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
-		IsLearnCodeMode:          fmt.Sprintf("%t", isLearnCodeMode),
-		LearnCodePriorContext:    BuildLearnCodePriorContext(templateVars["LearnCodePriorScript"], templateVars["LearnCodePriorError"], templateVars["LearnCodeMetadataPath"], templateVars["IsLearnCodeLocked"] == "true"),
+		IsScriptedMode:          fmt.Sprintf("%t", isScriptedMode),
+		ScriptedPriorContext:    BuildScriptedPriorContext(templateVars["ScriptedPriorScript"], templateVars["ScriptedPriorError"], templateVars["ScriptedMetadataPath"], templateVars["IsScriptedLocked"] == "true"),
 	}
 
 	// Execute the pre-parsed template

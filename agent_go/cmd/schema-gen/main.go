@@ -144,7 +144,7 @@ type EventDataUnion struct {
 	StepProgressUpdated      *todo_creation_human.StepProgressUpdatedEvent      `json:"step_progress_updated,omitempty"`
 	RoutingEvaluated         *todo_creation_human.RoutingEvaluatedEvent         `json:"routing_evaluated,omitempty"`
 	PreValidationCompleted   *todo_creation_human.PreValidationCompletedEvent   `json:"pre_validation_completed,omitempty"`
-	LearnCodeScriptExecution *orchestrator_events.LearnCodeScriptExecutionEvent `json:"learn_code_script_execution,omitempty"`
+	ScriptedScriptExecution *orchestrator_events.ScriptedScriptExecutionEvent `json:"learn_code_script_execution,omitempty"`
 
 	// Todo/Planning Events
 	TodoStepsExtracted       *todo_creation_human.TodoStepsExtractedEvent       `json:"todo_steps_extracted,omitempty"`
@@ -296,7 +296,7 @@ var EventTypeMapping = map[events.EventType]string{
 	orchestrator_events.StepProgressUpdated:      "step_progress_updated",
 	orchestrator_events.RoutingEvaluated:         "routing_evaluated",
 	orchestrator_events.PreValidationCompleted:   "pre_validation_completed",
-	orchestrator_events.LearnCodeScriptExecution: "learn_code_script_execution",
+	orchestrator_events.ScriptedScriptExecution: "learn_code_script_execution",
 
 	// Todo/Planning Events
 	orchestrator_events.TodoStepsExtracted:       "todo_steps_extracted",
@@ -710,7 +710,7 @@ type UnifiedEvent struct {
 	StepTokenUsageEvent           todo_creation_human.StepTokenUsageEvent           `json:"step_token_usage"`
 	StepProgressUpdatedEvent      todo_creation_human.StepProgressUpdatedEvent      `json:"step_progress_updated"`
 	PreValidationCompletedEvent   todo_creation_human.PreValidationCompletedEvent   `json:"pre_validation_completed"`
-	LearnCodeScriptExecutionEvent orchestrator_events.LearnCodeScriptExecutionEvent `json:"learn_code_script_execution"`
+	ScriptedScriptExecutionEvent orchestrator_events.ScriptedScriptExecutionEvent `json:"learn_code_script_execution"`
 
 	// Todo/Planning Events
 	TodoStepsExtractedEvent       todo_creation_human.TodoStepsExtractedEvent       `json:"todo_steps_extracted"`

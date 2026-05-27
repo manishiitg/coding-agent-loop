@@ -9,7 +9,7 @@ import (
 //
 // Note: success_criteria has been removed. The eval step's description should
 // fully encode what passing/failing looks like (deterministic checks via
-// learn_code, or LLM judgment grounded in the description).
+// scripted, or LLM judgment grounded in the description).
 type EvaluationStep struct {
 	ID              string                         `json:"id"`
 	Title           string                         `json:"title"`

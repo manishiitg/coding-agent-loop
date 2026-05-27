@@ -209,6 +209,26 @@ func TestEvaluateRoutingViaBuilderChatTreatsPlainNumberAsDisplayedOneBasedIndex(
 	}
 }
 
+func TestRoutingNextStepTypesByID(t *testing.T) {
+	steps := []PlanStepInterface{
+		&RegularPlanStep{CommonStepFields: CommonStepFields{ID: "write"}},
+		&RoutingPlanStep{CommonStepFields: CommonStepFields{ID: "route"}},
+		&TodoTaskPlanStep{CommonStepFields: CommonStepFields{ID: "orchestrate"}},
+	}
+
+	stepTypes := routingNextStepTypesByID(steps)
+
+	if got := stepTypes["write"]; got != "regular" {
+		t.Fatalf("write step type = %q, want regular", got)
+	}
+	if got := stepTypes["route"]; got != "routing" {
+		t.Fatalf("route step type = %q, want routing", got)
+	}
+	if got := stepTypes["orchestrate"]; got != "todo_task" {
+		t.Fatalf("orchestrate step type = %q, want todo_task", got)
+	}
+}
+
 func requestIDFromRoutingMessage(message string) string {
 	for _, line := range strings.Split(message, "\n") {
 		if strings.HasPrefix(line, "Request ID:") {

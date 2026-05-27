@@ -4539,6 +4539,9 @@
         },
         "next_step_id": {
           "type": "string"
+        },
+        "next_step_type": {
+          "type": "string"
         }
       },
       "additionalProperties": false,

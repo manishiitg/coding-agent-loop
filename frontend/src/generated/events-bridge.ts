@@ -1507,6 +1507,7 @@ export interface RoutingRouteEvent {
   route_name?: string;
   condition?: string;
   next_step_id?: string;
+  next_step_type?: string;
 }
 export interface PreValidationCompletedEvent {
   timestamp?: string;

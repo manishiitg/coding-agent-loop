@@ -301,7 +301,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Routing step evaluated: selected route=%s", selectedRouteID))
 
 	// Emit routing_evaluated event
-	hcpo.emitRoutingEvaluatedEvent(ctx, step, stepIndex, routingStepPath, routingResponse, routingStep.Routes)
+	hcpo.emitRoutingEvaluatedEvent(ctx, step, stepIndex, routingStepPath, routingResponse, routingStep.Routes, allSteps)
 
 	// Save evaluation result to logs
 	var validationWorkspacePath string
@@ -345,7 +345,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 }
 
 // emitRoutingEvaluatedEvent emits a routing_evaluated event
-func (hcpo *StepBasedWorkflowOrchestrator) emitRoutingEvaluatedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string, routingResponse *RoutingResponse, routes []RoutingRoute) {
+func (hcpo *StepBasedWorkflowOrchestrator) emitRoutingEvaluatedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string, routingResponse *RoutingResponse, routes []RoutingRoute, allSteps []PlanStepInterface) {
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
 		return
@@ -360,13 +360,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitRoutingEvaluatedEvent(ctx context
 		stepId = fmt.Sprintf("step-%d", stepIndex+1)
 	}
 
+	nextStepTypes := routingNextStepTypesByID(allSteps)
 	eventRoutes := make([]RoutingRouteEvent, len(routes))
 	for i, route := range routes {
 		eventRoutes[i] = RoutingRouteEvent{
-			RouteID:    route.RouteID,
-			RouteName:  route.RouteName,
-			Condition:  route.Condition,
-			NextStepID: route.NextStepID,
+			RouteID:      route.RouteID,
+			RouteName:    route.RouteName,
+			Condition:    route.Condition,
+			NextStepID:   route.NextStepID,
+			NextStepType: nextStepTypes[strings.TrimSpace(route.NextStepID)],
 		}
 	}
 
@@ -405,6 +407,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitRoutingEvaluatedEvent(ctx context
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted routing_evaluated event for step %d: %s (route=%s)", stepIndex+1, stepTitle, routingResponse.SelectedRouteID))
 	}
+}
+
+func routingNextStepTypesByID(steps []PlanStepInterface) map[string]string {
+	nextStepTypes := make(map[string]string, len(steps))
+	for _, step := range steps {
+		if step == nil {
+			continue
+		}
+		stepID := strings.TrimSpace(step.GetID())
+		if stepID == "" {
+			continue
+		}
+		nextStepTypes[stepID] = string(step.StepType())
+	}
+	return nextStepTypes
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) startRoutingPickNotification(ctx context.Context, pc *virtualtools.ParentChatContext, routingStep *RoutingPlanStep) *routingPickNotification {

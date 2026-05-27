@@ -6,6 +6,7 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useChatStore } from '../stores/useChatStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
 interface TerminalCenterProps {
   currentSessionId?: string
@@ -424,6 +425,7 @@ interface RoutingRouteSummary {
   route_name?: string
   condition?: string
   next_step_id?: string
+  next_step_type?: string
 }
 
 interface RoutingDecision {
@@ -433,6 +435,7 @@ interface RoutingDecision {
   selectedRouteId: string
   selectedRouteName?: string
   nextStepId?: string
+  nextStepType?: string
   routeCount: number
   reasoning?: string
   timestamp?: string
@@ -485,6 +488,7 @@ function routingRoutes(value: unknown): RoutingRouteSummary[] {
       route_name: stringField(route.route_name) || undefined,
       condition: stringField(route.condition) || undefined,
       next_step_id: stringField(route.next_step_id) || undefined,
+      next_step_type: stringField(route.next_step_type) || undefined,
     })
   }
   return routes
@@ -507,6 +511,7 @@ function routingDecisionFromEvent(event: PollingEvent): RoutingDecision | null {
     selectedRouteId,
     selectedRouteName: selectedRoute?.route_name,
     nextStepId: selectedRoute?.next_step_id,
+    nextStepType: selectedRoute?.next_step_type,
     routeCount: routes.length,
     reasoning: stringField(response?.reasoning) || undefined,
     timestamp: event.timestamp,
@@ -519,7 +524,8 @@ function routeDecisionLabel(decision: RoutingDecision): string {
 
 function routeDecisionTitle(decision: RoutingDecision): string {
   const label = routeDecisionLabel(decision)
-  return `Routing: ${label}${decision.nextStepId ? ` -> ${decision.nextStepId}` : ''}`
+  const nextStepType = decision.nextStepType ? ` (${stepTypeLabel(decision.nextStepType)})` : ''
+  return `Routing: ${label}${decision.nextStepId ? ` -> ${decision.nextStepId}${nextStepType}` : ''}`
 }
 
 function routeDecisionDedupeKey(decision: RoutingDecision): string {
@@ -704,9 +710,13 @@ function formatTerminalModelLabel(terminal: TerminalSnapshot): string {
   return ''
 }
 
-function terminalStepTypeLabel(terminal: TerminalSnapshot): string {
-  const type = (terminal.step_type || '').trim()
+function stepTypeLabel(stepType?: string): string {
+  const type = (stepType || '').trim()
   return type ? `${humanizeIdentifier(type)} step` : ''
+}
+
+function terminalStepTypeLabel(terminal: TerminalSnapshot): string {
+  return stepTypeLabel(terminal.step_type)
 }
 
 function terminalRailStepTypeLabel(terminal: TerminalSnapshot): string {
@@ -1152,11 +1162,11 @@ function TerminalRailBranchMarker({ depth }: { depth: number }) {
   )
 }
 
-function TerminalStepTypeIcon({ terminal }: { terminal: TerminalSnapshot }) {
-  const type = (terminal.step_type || '').toLowerCase()
+function StepTypeIcon({ stepType, labelPrefix }: { stepType?: string; labelPrefix?: string }) {
+  const type = (stepType || '').toLowerCase()
   if (!type) return null
 
-  const label = terminalStepTypeLabel(terminal)
+  const label = `${labelPrefix || ''}${stepTypeLabel(type)}`
   const iconClass = 'h-2.5 w-2.5'
   let icon = <Terminal className={iconClass} />
   if (type === 'routing') {
@@ -1179,6 +1189,28 @@ function TerminalStepTypeIcon({ terminal }: { terminal: TerminalSnapshot }) {
     >
       {icon}
     </span>
+  )
+}
+
+function TerminalStepTypeIcon({ terminal }: { terminal: TerminalSnapshot }) {
+  return <StepTypeIcon stepType={terminal.step_type} />
+}
+
+function TerminalArchivedTurnIcon() {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-amber-700/60 bg-amber-950/20 text-amber-300/80"
+          aria-label="Archived previous turn"
+        >
+          <History className="h-2.5 w-2.5" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="text-xs">
+        Archived previous turn
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -2434,7 +2466,13 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         const routeDecision = t.step_id ? routeByNextStepID.get(t.step_id) : undefined
         const terminalDepth = routeDecision ? depth + 1 : depth
         if (routeDecision && !renderedRoutes.has(routeDecision.id)) {
-          out.push({ kind: 'route', decision: routeDecision, depth })
+          out.push({
+            kind: 'route',
+            decision: routeDecision.nextStepType || !t.step_type
+              ? routeDecision
+              : { ...routeDecision, nextStepType: t.step_type },
+            depth,
+          })
           renderedRoutes.add(routeDecision.id)
         }
         out.push({ kind: 'terminal', terminal: t, depth: terminalDepth })
@@ -2855,6 +2893,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         </button>
       </div>
       <div className={`mt-0.5 flex items-center gap-1.5 ${terminalTheme.railMetaText} ${terminalTheme.routeMeta}`}>
+        {decision.nextStepType && (
+          <StepTypeIcon stepType={decision.nextStepType} labelPrefix="Next step type: " />
+        )}
         <span className="min-w-0 truncate">
           {decision.nextStepId ? `next ${decision.nextStepId}` : decision.stepTitle || decision.stepId || 'route selected'}
         </span>
@@ -2914,6 +2955,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               />
             )}
             <TerminalStepTypeIcon terminal={terminal} />
+            {isArchivedTurnTerminal(terminal) && (
+              <TerminalArchivedTurnIcon />
+            )}
             <span className="min-w-0 flex-1 truncate font-medium">{formatTerminalTitle(terminal)}</span>
             {latestTerminalError && (
               <AlertTriangle
@@ -2956,15 +3000,6 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 title={preValidationChip.title}
               >
                 {preValidationChip.label}
-              </span>
-            )}
-            {isArchivedTurnTerminal(terminal) && (
-              <span
-                className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-neutral-700/80 text-neutral-500"
-                title="Previous turn"
-                aria-label="Previous turn"
-              >
-                <History className="h-2.5 w-2.5" />
               </span>
             )}
             {state === 'closing' && (
@@ -3094,6 +3129,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                           <GitBranch className="h-3 w-3 shrink-0" />
                           <span className="truncate">{routeDecisionLabel(selectedRouteDecision)}</span>
                         </span>
+                      )}
+                      {isArchivedTurnTerminal(selectedTerminalView) && (
+                        <TerminalArchivedTurnIcon />
                       )}
                       <span className="min-w-0 flex-1 truncate opacity-80">
                         {formatSelectedTerminalMeta(selectedTerminalView)}

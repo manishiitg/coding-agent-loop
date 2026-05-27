@@ -15,10 +15,11 @@ type RoutingResponseEvent struct {
 
 // RoutingRouteEvent represents a single route in a routing evaluated event
 type RoutingRouteEvent struct {
-	RouteID    string `json:"route_id"`
-	RouteName  string `json:"route_name"`
-	Condition  string `json:"condition"`
-	NextStepID string `json:"next_step_id"`
+	RouteID      string `json:"route_id"`
+	RouteName    string `json:"route_name"`
+	Condition    string `json:"condition"`
+	NextStepID   string `json:"next_step_id"`
+	NextStepType string `json:"next_step_type,omitempty"`
 }
 
 // RoutingEvaluatedEvent represents the event when a routing step is evaluated

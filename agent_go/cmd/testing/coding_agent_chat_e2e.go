@@ -33,6 +33,8 @@ var codingAgentChatE2EFlags struct {
 	skipLiveSteer       bool
 	skipCompletionProbe bool
 	runTmuxLossResume   bool
+	vertexFinalJudge    bool
+	vertexJudgeModel    string
 }
 
 var codingAgentChatE2ECmd = &cobra.Command{
@@ -92,6 +94,12 @@ Example:
 		model := strings.TrimSpace(codingAgentChatE2EFlags.model)
 		if model == "" {
 			model = defaultCodingAgentE2EModel(provider)
+		}
+		if codingAgentChatE2EFlags.vertexFinalJudge {
+			if codingAgentVertexJudgeAPIKey() == "" {
+				return fmt.Errorf("--vertex-final-judge requires GEMINI_API_KEY, VERTEX_API_KEY, or GOOGLE_API_KEY")
+			}
+			fmt.Printf("Vertex final-extraction judge enabled model=%s\n", codingAgentVertexJudgeModel())
 		}
 		sessionID := strings.TrimSpace(codingAgentChatE2EFlags.sessionID)
 		if sessionID == "" {
@@ -153,6 +161,36 @@ Example:
 				return fmt.Errorf("terminal pane alias check failed after completion probe: %w", err)
 			}
 			fmt.Println("PASS terminal completion: tool-backed turn reached unified completion and terminal panes are not duplicated")
+
+			secondToolToken := "COMPLETION_E2E_SECOND_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+			secondToolQuery := fmt.Sprintf("This is a later turn in the same native coding-agent session, after an earlier shell-tool turn. Use execute_shell_command exactly once to run `printf %s`. After the tool returns, reply with exactly DONE_%s and nothing else. Do not include any token from earlier turns, especially %s, %s, or DONE_%s.", secondToolToken, secondToolToken, noteToken, atToken, completionToken)
+			earlierTurnFragments := []string{noteToken, "ACK_" + noteToken, atToken, completionToken, "DONE_" + completionToken}
+			if err := client.runAndAssertFinal(ctx, sessionID, provider, model, secondToolQuery, []string{"DONE_" + secondToolToken}, earlierTurnFragments); err != nil {
+				return fmt.Errorf("multi-turn terminal final extraction probe failed: %w", err)
+			}
+			if err := client.assertNoDuplicateTerminalPanes(ctx, sessionID); err != nil {
+				return fmt.Errorf("terminal pane alias check failed after multi-turn completion probe: %w", err)
+			}
+
+			postToolToken := "POST_TOOL_FINAL_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+			postToolQuery := fmt.Sprintf("Do not use tools. This is after multiple prior turns and multiple shell-tool turns in this same native session. Reply with exactly %s and nothing else. Do not include any previous note, @ handle, or completion token.", postToolToken)
+			forbiddenPostToolFragments := append(append([]string{}, earlierTurnFragments...), secondToolToken, "DONE_"+secondToolToken)
+			if err := client.runAndAssertFinal(ctx, sessionID, provider, model, postToolQuery, []string{postToolToken}, forbiddenPostToolFragments); err != nil {
+				return fmt.Errorf("post-tool multi-turn final extraction probe failed: %w", err)
+			}
+			fmt.Println("PASS multi-turn tool extraction: later finals did not leak earlier tool or chat turns")
+
+			longFinalToken := "LONG_FINAL_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+			longFinalLines := make([]string, 0, 40)
+			for i := 1; i <= 40; i++ {
+				longFinalLines = append(longFinalLines, fmt.Sprintf("LINE_%02d LONG_FINAL_SENTINEL_%02d_%s", i, i, longFinalToken))
+			}
+			longFinalQuery := fmt.Sprintf("Do not use tools. This is a long final extraction regression after prior multi-turn shell-tool turns. Reply with exactly these %d lines, preserving every line and line order, and nothing else:\n%s", len(longFinalLines), strings.Join(longFinalLines, "\n"))
+			forbiddenLongFinalFragments := append(append([]string{}, forbiddenPostToolFragments...), postToolToken)
+			if err := client.runAndAssertFinal(ctx, sessionID, provider, model, longFinalQuery, longFinalLines, forbiddenLongFinalFragments); err != nil {
+				return fmt.Errorf("long final extraction probe failed: %w", err)
+			}
+			fmt.Println("PASS long final extraction: all sentinel lines preserved after tool turns")
 		}
 
 		if !codingAgentChatE2EFlags.skipLiveSteer {
@@ -184,20 +222,21 @@ Example:
 			}
 			fmt.Println("Sent live steer message")
 
-			final, raw, err := client.waitForCompletion(ctx, sessionID)
+			final, raw, events, err := client.waitForCompletion(ctx, sessionID, beforeSteerIndex)
 			if err != nil {
 				return fmt.Errorf("live steer turn did not complete: %w", err)
 			}
-			if ok, err := client.sessionEventsProveProvider(ctx, sessionID, provider); err != nil {
-				return fmt.Errorf("provider proof check failed: %w", err)
-			} else if !ok {
-				return fmt.Errorf("live steer event stream did not prove requested provider %q was used", provider)
+			if !eventsProveProvider(events, provider) {
+				return fmt.Errorf("live steer event stream did not prove requested provider %q was used; evidence=%s", provider, summarizeProviderProofEvents(events))
 			}
 			if !strings.Contains(final, liveToken) {
 				return fmt.Errorf("live steer token %q was not processed; final=%q", liveToken, final)
 			}
 			if err := client.assertAssistantCompletionAfter(ctx, sessionID, beforeSteerIndex, liveToken); err != nil {
 				return fmt.Errorf("live steer token was not observed in assistant completion after steer: %w; final=%q raw=%s", err, final, truncateE2E(raw, 1200))
+			}
+			if err := client.assertVertexFinalJudge(ctx, sessionID, provider, liveQuery+"\n\nLive user message: include the exact token "+liveToken+" in the final answer.", final, raw, []string{liveToken}, nil); err != nil {
+				return fmt.Errorf("live steer Vertex final-extraction judge failed: %w", err)
 			}
 			fmt.Println("PASS live steer: in-flight user message was processed by the coding agent")
 		}
@@ -222,6 +261,8 @@ func init() {
 	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.skipLiveSteer, "skip-live-steer", false, "skip the in-flight /steer regression test")
 	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.skipCompletionProbe, "skip-completion-probe", false, "skip the tool-backed completion detection regression test")
 	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.runTmuxLossResume, "run-tmux-loss-resume", false, "kill the latest tmux pane after turn 2 and require provider-native continuation recovery; certified for claude-code, codex-cli, and agy-cli")
+	codingAgentChatE2ECmd.Flags().BoolVar(&codingAgentChatE2EFlags.vertexFinalJudge, "vertex-final-judge", false, "use a Gemini/Vertex LLM judge to validate each extracted unified_completion final answer")
+	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.vertexJudgeModel, "vertex-final-judge-model", "", "Gemini/Vertex model for --vertex-final-judge; defaults to VERTEX_FINAL_EXTRACTION_JUDGE_MODEL or gemini-3.1-pro-preview")
 }
 
 type codingAgentChatE2EClient struct {
@@ -257,22 +298,39 @@ func defaultCodingAgentE2EModel(provider string) string {
 }
 
 func (c *codingAgentChatE2EClient) runAndAssertContains(ctx context.Context, sessionID, provider, model, query string, required []string) error {
+	return c.runAndAssertFinal(ctx, sessionID, provider, model, query, required, nil)
+}
+
+func (c *codingAgentChatE2EClient) runAndAssertFinal(ctx context.Context, sessionID, provider, model, query string, required, forbidden []string) error {
+	since := 0
+	if resp, _, err := c.getEvents(ctx, sessionID); err == nil {
+		since = advanceE2ECursor(since, resp.LastProcessedIndex)
+	}
 	if _, err := c.startQuery(ctx, sessionID, provider, model, query); err != nil {
 		return err
 	}
-	final, _, err := c.waitForCompletion(ctx, sessionID)
+	final, raw, events, err := c.waitForCompletion(ctx, sessionID, since)
 	if err != nil {
 		return err
 	}
-	if ok, err := c.sessionEventsProveProvider(ctx, sessionID, provider); err != nil {
-		return fmt.Errorf("provider proof check failed: %w", err)
-	} else if !ok {
-		return fmt.Errorf("event stream did not prove requested provider %q was used", provider)
+	if !eventsProveProvider(events, provider) {
+		return fmt.Errorf("event stream did not prove requested provider %q was used; evidence=%s", provider, summarizeProviderProofEvents(events))
 	}
 	for _, needle := range required {
 		if !strings.Contains(final, needle) {
 			return fmt.Errorf("completion did not contain %q; final=%q", needle, final)
 		}
+	}
+	for _, needle := range forbidden {
+		if strings.TrimSpace(needle) == "" {
+			continue
+		}
+		if strings.Contains(final, needle) {
+			return fmt.Errorf("completion leaked forbidden prior-turn fragment %q; final=%q", needle, final)
+		}
+	}
+	if err := c.assertVertexFinalJudge(ctx, sessionID, provider, query, final, raw, required, forbidden); err != nil {
+		return err
 	}
 	return nil
 }
@@ -350,36 +408,58 @@ func (c *codingAgentChatE2EClient) waitUntilCanSteer(ctx context.Context, sessio
 	return fmt.Errorf("timed out after %s", time.Since(start).Round(time.Millisecond))
 }
 
-func (c *codingAgentChatE2EClient) waitForCompletion(ctx context.Context, sessionID string) (string, string, error) {
+func (c *codingAgentChatE2EClient) waitForCompletion(ctx context.Context, sessionID string, since int) (string, string, []map[string]interface{}, error) {
 	var finalResult string
 	var lastRaw string
+	var rawHistory strings.Builder
+	var eventHistory []map[string]interface{}
 	start := time.Now()
 	deadline := e2eDeadline(ctx, c.timeoutOrDefault())
-	since := 0
+	if since < 0 {
+		since = 0
+	}
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
-			return "", lastRaw, err
+			return "", lastRaw, eventHistory, err
 		}
 		resp, raw, err := c.getEventsSince(ctx, sessionID, since)
 		if err != nil {
-			return "", lastRaw, err
+			return "", lastRaw, eventHistory, err
 		}
 		lastRaw = raw
-		since = advanceE2ECursor(since, resp.LastProcessedIndex)
+		if raw != "" {
+			rawHistory.WriteString(raw)
+			rawHistory.WriteString("\n")
+		}
+		eventHistory = append(eventHistory, resp.Events...)
+		nextSince := advanceE2ECursor(since, resp.LastProcessedIndex)
 		if extracted := extractUnifiedCompletionFinal(resp.Events); extracted != "" {
 			finalResult = extracted
 		}
 		switch resp.SessionStatus {
 		case "completed":
-			return finalResult, lastRaw, nil
+			if strings.TrimSpace(finalResult) == "" {
+				if len(resp.Events) > 0 {
+					since = nextSince
+				}
+				if err := sleepContext(ctx, 500*time.Millisecond); err != nil {
+					return "", lastRaw, eventHistory, err
+				}
+				continue
+			}
+			if rawHistory.Len() > 0 {
+				return finalResult, rawHistory.String(), eventHistory, nil
+			}
+			return finalResult, lastRaw, eventHistory, nil
 		case "error", "stopped":
-			return finalResult, lastRaw, fmt.Errorf("session ended with status %s; final=%q", resp.SessionStatus, finalResult)
+			return finalResult, lastRaw, eventHistory, fmt.Errorf("session ended with status %s; final=%q", resp.SessionStatus, finalResult)
 		}
+		since = nextSince
 		if err := sleepContext(ctx, time.Second); err != nil {
-			return "", lastRaw, err
+			return "", lastRaw, eventHistory, err
 		}
 	}
-	return finalResult, lastRaw, fmt.Errorf("timed out waiting for session completion after %s", time.Since(start).Round(time.Millisecond))
+	return finalResult, lastRaw, eventHistory, fmt.Errorf("timed out waiting for session completion after %s", time.Since(start).Round(time.Millisecond))
 }
 
 type codingAgentEventsResponse struct {
@@ -632,7 +712,7 @@ func eventsProveProvider(events []map[string]interface{}, provider string) bool 
 	}
 	for _, event := range events {
 		switch fmt.Sprint(event["type"]) {
-		case "agent_start", "llm_generation_start", "model_change", "unified_completion":
+		case "agent_start", "llm_generation_start", "llm_generation_end", "model_change", "token_usage", "unified_completion":
 			if eventPayloadString(event, "provider") == provider {
 				return true
 			}
@@ -640,10 +720,46 @@ func eventsProveProvider(events []map[string]interface{}, provider string) bool 
 				if fmt.Sprint(metadataMap["provider"]) == provider {
 					return true
 				}
+				if handle, ok := metadataMap["coding_provider_session_handle"].(map[string]interface{}); ok && fmt.Sprint(handle["provider"]) == provider {
+					return true
+				}
 			}
 		}
 	}
 	return false
+}
+
+func summarizeProviderProofEvents(events []map[string]interface{}) string {
+	if len(events) == 0 {
+		return "no events"
+	}
+	parts := make([]string, 0, len(events))
+	for _, event := range events {
+		eventType := fmt.Sprint(event["type"])
+		var providers []string
+		if provider := eventPayloadString(event, "provider"); provider != "" {
+			providers = append(providers, "provider="+provider)
+		}
+		if metadataMap := eventPayloadMap(event, "metadata"); metadataMap != nil {
+			if provider := strings.TrimSpace(fmt.Sprint(metadataMap["provider"])); provider != "" && provider != "<nil>" {
+				providers = append(providers, "metadata.provider="+provider)
+			}
+			if handle, ok := metadataMap["coding_provider_session_handle"].(map[string]interface{}); ok {
+				if provider := strings.TrimSpace(fmt.Sprint(handle["provider"])); provider != "" && provider != "<nil>" {
+					providers = append(providers, "handle.provider="+provider)
+				}
+			}
+		}
+		if len(providers) == 0 {
+			parts = append(parts, eventType)
+		} else {
+			parts = append(parts, eventType+"["+strings.Join(providers, ",")+"]")
+		}
+	}
+	if len(parts) > 16 {
+		parts = append([]string{fmt.Sprintf("...%d earlier events", len(parts)-16)}, parts[len(parts)-16:]...)
+	}
+	return strings.Join(parts, " -> ")
 }
 
 func (c *codingAgentChatE2EClient) assertAssistantCompletionAfter(ctx context.Context, sessionID string, since int, needle string) error {

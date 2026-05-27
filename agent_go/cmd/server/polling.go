@@ -52,6 +52,29 @@ func (api *StreamingAPI) canSteerSession(sessionID string) bool {
 	return api.terminalStore != nil && api.terminalStore.SessionHasBusyCodingTmux(sessionID)
 }
 
+func (api *StreamingAPI) shouldCompleteIdleForegroundSession(sessionID, status string, hasRunningBackgroundAgents bool) bool {
+	if strings.ToLower(strings.TrimSpace(status)) != "running" {
+		return false
+	}
+	if hasRunningBackgroundAgents || api.isSyntheticTurn(sessionID) {
+		return false
+	}
+	if api.hasRunningTrackedExecutionForSession(sessionID) {
+		return false
+	}
+	return !api.canSteerSession(sessionID)
+}
+
+func (api *StreamingAPI) hasRunningTrackedExecutionForSession(sessionID string) bool {
+	if api == nil || strings.TrimSpace(sessionID) == "" {
+		return false
+	}
+	api.trackedWorkflowExecutionsMux.RLock()
+	defer api.trackedWorkflowExecutionsMux.RUnlock()
+	return api.runningWorkflowExecutionBySessionLocked(sessionID) != nil ||
+		api.runningTrackedExecutionBySessionLocked(sessionID) != nil
+}
+
 // --- POLLING API TYPES ---
 // Observer APIs removed - events are now stored by sessionID
 
@@ -156,10 +179,11 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	}
 	canSteer := api.canSteerSession(sessionID)
 	hasRunningBackgroundAgents := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
-	if sessionStatus == "running" && !canSteer && !api.isSyntheticTurn(sessionID) && !hasRunningBackgroundAgents {
+	if api.shouldCompleteIdleForegroundSession(sessionID, sessionStatus, hasRunningBackgroundAgents) {
 		api.setSessionBusy(sessionID, false)
 		api.updateSessionStatus(sessionID, "completed")
 		sessionStatus = "completed"
+		canSteer = false
 	}
 
 	// If the session doesn't exist in the in-memory event store, return an
@@ -380,6 +404,9 @@ func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInf
 
 	enriched.NeedsUserInput, enriched.WaitingEventType, enriched.WaitingSince, enriched.WaitingMessage =
 		api.deriveSessionUserInputState(session.SessionID)
+	if api.shouldCompleteIdleForegroundSession(session.SessionID, enriched.Status, enriched.HasRunningBackgroundAgents) {
+		enriched.Status = "completed"
+	}
 
 	return &enriched
 }
@@ -494,14 +521,23 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 	}
 
 	// Return active session info
+	status := activeSession.Status
+	hasRunningBackgroundAgents := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
+	canSteer := api.canSteerSession(sessionID)
+	if api.shouldCompleteIdleForegroundSession(sessionID, status, hasRunningBackgroundAgents) {
+		api.setSessionBusy(sessionID, false)
+		api.updateSessionStatus(sessionID, "completed")
+		status = "completed"
+		canSteer = false
+	}
 	response := map[string]interface{}{
 		"session_id":    activeSession.SessionID,
-		"status":        activeSession.Status,
+		"status":        status,
 		"agent_mode":    activeSession.AgentMode,
 		"created_at":    activeSession.CreatedAt,
 		"last_activity": activeSession.LastActivity,
 		"query":         activeSession.Query,
-		"can_steer":     api.canSteerSession(sessionID),
+		"can_steer":     canSteer,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {

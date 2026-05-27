@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowDownToLine, Braces, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Palette, Power, RefreshCw, Square, Terminal, X } from 'lucide-react'
+import { AlertTriangle, ArrowDownToLine, Braces, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Palette, Plus, Power, RefreshCw, Square, Terminal, Trash2, X } from 'lucide-react'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -26,6 +26,7 @@ const TERMINAL_FAST_POLL_DURATION_MS = 7000
 
 type TerminalColorScheme = 'neon' | 'mono' | 'homebrew' | 'catppuccin' | 'nord' | 'gruvbox' | 'solarized' | 'tokyo'
 type TerminalDebugKey = 'enter' | 'esc' | 'ctrl-c' | 'ctrl-o'
+type TerminalRailFilter = 'all' | 'running' | 'non-running'
 
 const DEFAULT_TERMINAL_COLOR_SCHEME: TerminalColorScheme = 'homebrew'
 const TERMINAL_COLOR_SCHEME_STORAGE_KEY = 'terminal-color-scheme'
@@ -1067,6 +1068,13 @@ function isRailVisibleTerminal(terminal: TerminalSnapshot): boolean {
   return !(isArchivedTurnTerminal(terminal) && isMainAgentTerminal(terminal))
 }
 
+function terminalMatchesRailFilter(terminal: TerminalSnapshot, filter: TerminalRailFilter): boolean {
+  if (isMainAgentTerminal(terminal)) return true
+  if (filter === 'all') return true
+  const isRunning = terminalState(terminal) === 'running'
+  return filter === 'running' ? isRunning : !isRunning
+}
+
 // turnIndexFromTerminalID parses ":turn-N" out of an archived-turn terminal_id.
 // Returns 0 for terminals that don't carry a turn marker so the caller can
 // safely sort mixed lists.
@@ -2024,6 +2032,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [dismissedErrorIDs, setDismissedErrorIDs] = useState<Set<string>>(() => readDismissedTerminalErrorIDs(currentSessionId))
   const [expandedErrorIDs, setExpandedErrorIDs] = useState<Set<string>>(() => new Set())
   const [terminalColorScheme, setTerminalColorScheme] = useState<TerminalColorScheme>(() => readStoredTerminalColorScheme())
+  const [terminalRailFilter, setTerminalRailFilter] = useState<TerminalRailFilter>('all')
+  const [terminalRailMinimized, setTerminalRailMinimized] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
   const [debugPanelOpenForID, setDebugPanelOpenForID] = useState<string | null>(null)
@@ -2430,6 +2440,19 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
   }, [debugPanelOpenForID, selectedID, userSelectedID])
 
+  const clearableNonRunningTerminals = useMemo(
+    () => dedupeTerminalsByID(terminals)
+      .filter(isRailVisibleTerminal)
+      .filter(terminal => !isMainAgentTerminal(terminal) && canDismissTerminal(terminal)),
+    [terminals],
+  )
+
+  const clearNonRunningTerminals = useCallback(() => {
+    clearableNonRunningTerminals.forEach(terminal => {
+      void dismissTerminal(terminal)
+    })
+  }, [clearableNonRunningTerminals, dismissTerminal])
+
   // buildTree turns a flat list of terminals into a parent → children
   // tree. parent_step_id is a logical workflow edge, but terminal_id is
   // the actual node identity; this keeps repeated runs of the same
@@ -2492,24 +2515,36 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const groupedTerminals = useMemo(() => {
     const uniqueTerminals = dedupeTerminalsByID(terminals)
     const railTerminals = uniqueTerminals.filter(isRailVisibleTerminal)
-    // Build a single tree from ALL terminals (active + finished).
+    const filteredRailTerminals = terminalRailMinimized
+      ? railTerminals.filter(isMainAgentTerminal)
+      : railTerminals.filter(terminal => terminalMatchesRailFilter(terminal, terminalRailFilter))
+    const visibleRouteByNextStepID = terminalRailFilter === 'all' && !terminalRailMinimized ? routingDecisionByNextStepID : new Map<string, RoutingDecision>()
+    const visibleRouteDecisions = terminalRailFilter === 'all' && !terminalRailMinimized ? routingDecisions : []
+    // Build a single tree from the rail-visible terminals after applying
+    // the user's running/non-running filter.
     // Splitting them was breaking the parent→child relationship when
     // a child step finished while its parent was still running — the
     // child got displaced into the "Finished" group, losing its
     // visual nesting under the parent. One tree keeps lineage intact;
     // the colored dot on each rail row already conveys per-row state.
-    const allTerminals = sortTerminalsForRail(railTerminals)
-    const activeTerminals = railTerminals.filter(terminal => terminalState(terminal) === 'running')
-    const finishedTerminals = railTerminals.filter(terminal => terminalState(terminal) !== 'running')
-    const currentTerminals = sortTerminalsNewestFirst(railTerminals.filter(terminal => !isArchivedTurnTerminal(terminal)))
+    const allTerminals = sortTerminalsForRail(filteredRailTerminals)
+    const activeTerminals = filteredRailTerminals.filter(terminal => terminalState(terminal) === 'running')
+    const finishedTerminals = filteredRailTerminals.filter(terminal => terminalState(terminal) !== 'running')
+    const currentTerminals = sortTerminalsNewestFirst(filteredRailTerminals.filter(terminal => !isArchivedTurnTerminal(terminal)))
+    const allRunningCount = railTerminals.filter(terminal => !isMainAgentTerminal(terminal) && terminalState(terminal) === 'running').length
+    const allNonRunningCount = railTerminals.filter(terminal => !isMainAgentTerminal(terminal) && terminalState(terminal) !== 'running').length
+    const clearableNonRunningCount = railTerminals.filter(terminal => !isMainAgentTerminal(terminal) && canDismissTerminal(terminal)).length
     return {
       activeTerminals,
       finishedTerminals,
       currentTerminals,
       orderedTerminals: allTerminals,
-      tree: buildTree(allTerminals, routingDecisionByNextStepID, routingDecisions),
+      tree: buildTree(allTerminals, visibleRouteByNextStepID, visibleRouteDecisions),
+      allRunningCount,
+      allNonRunningCount,
+      clearableNonRunningCount,
     }
-  }, [terminals, routingDecisionByNextStepID, routingDecisions])
+  }, [terminals, terminalRailFilter, terminalRailMinimized, routingDecisionByNextStepID, routingDecisions])
   const currentMainTerminal = useMemo(
     () => groupedTerminals.currentTerminals.find(terminal => isMainAgentTerminal(terminal)) || null,
     [groupedTerminals.currentTerminals],
@@ -2906,6 +2941,74 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     </div>
   )
 
+  const renderRailControls = () => {
+    const filterButtonClass = (filter: TerminalRailFilter) => (
+      `px-1 py-0.5 font-mono leading-4 transition-colors ${
+        terminalRailFilter === filter
+          ? 'text-emerald-300'
+          : 'text-neutral-500 hover:text-neutral-200'
+      }`
+    )
+    const filterLabel = (filter: TerminalRailFilter, label: string) => (
+      terminalRailFilter === filter ? `[${label}]` : label
+    )
+
+    return (
+      <div key="terminal-rail-controls" className="border-y border-neutral-800/80 bg-[#0b0d0c] px-2 py-1 font-mono">
+        <div className={`flex min-w-0 items-center gap-0.5 text-[10px] leading-4 ${terminalTheme.microText}`}>
+          <button
+            type="button"
+            onClick={() => setTerminalRailMinimized(value => !value)}
+            className={`inline-flex h-4 w-4 shrink-0 items-center justify-center transition-colors ${
+              terminalRailMinimized ? 'text-emerald-300' : 'text-neutral-500 hover:text-emerald-300'
+            }`}
+            title={terminalRailMinimized ? 'Show terminals below main agent' : 'Minimize terminals below main agent'}
+            aria-label={terminalRailMinimized ? 'Show terminals below main agent' : 'Minimize terminals below main agent'}
+          >
+            {terminalRailMinimized ? <Plus className="h-2.5 w-2.5" /> : <Minus className="h-2.5 w-2.5" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTerminalRailFilter('all')}
+            disabled={terminalRailMinimized}
+            className={filterButtonClass('all')}
+            title="Show all agents"
+          >
+            {filterLabel('all', 'all')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTerminalRailFilter('running')}
+            disabled={terminalRailMinimized}
+            className={filterButtonClass('running')}
+            title="Show running agents"
+          >
+            {filterLabel('running', `run:${groupedTerminals.allRunningCount}`)}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTerminalRailFilter('non-running')}
+            disabled={terminalRailMinimized}
+            className={filterButtonClass('non-running')}
+            title="Show non-running agents"
+          >
+            {filterLabel('non-running', `done:${groupedTerminals.allNonRunningCount}`)}
+          </button>
+          <button
+            type="button"
+            onClick={clearNonRunningTerminals}
+            disabled={clearableNonRunningTerminals.length === 0}
+            className="ml-auto inline-flex h-4 w-4 shrink-0 items-center justify-center text-neutral-500 transition-colors hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:text-neutral-500"
+            title="Clear all non-running agents"
+            aria-label="Clear all non-running agents"
+          >
+            <Trash2 className="h-2.5 w-2.5" />
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   const renderRailItem = (terminal: TerminalSnapshot, depth: number = 0) => (
     (() => {
       const preValidationChip = terminalPreValidationChip(terminal, terminalTheme)
@@ -3107,11 +3210,22 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 a long list without losing the selected terminal's
                 content. Hidden below sm breakpoint to save space. */}
             <div className="hidden w-48 shrink-0 flex-col overflow-y-auto overflow-x-hidden border-r border-neutral-700/70 bg-[#141615] sm:flex">
-              {groupedTerminals.tree.map(item => (
-                item.kind === 'route'
-                  ? renderRouteRailItem(item.decision, item.depth)
-                  : renderRailItem(item.terminal, item.depth)
-              ))}
+              {(() => {
+                let controlsRendered = false
+                const rows = groupedTerminals.tree.flatMap(item => {
+                  if (item.kind === 'route') return [renderRouteRailItem(item.decision, item.depth)]
+
+                  const rendered = renderRailItem(item.terminal, item.depth)
+                  if (!controlsRendered && isMainAgentTerminal(item.terminal) && !isArchivedTurnTerminal(item.terminal)) {
+                    controlsRendered = true
+                    return [rendered, renderRailControls()]
+                  }
+                  return [rendered]
+                })
+
+                if (!controlsRendered) rows.unshift(renderRailControls())
+                return rows
+              })()}
             </div>
 
             {/* Right pane — the selected terminal's content. Header

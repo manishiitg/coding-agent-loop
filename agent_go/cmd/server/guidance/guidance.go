@@ -134,7 +134,7 @@ var referenceKinds = map[string]kindMeta{
 	// sets up the eventual prompt-trim.
 	"browser-usage":         {Group: "system", Description: "Browser automation deep guide: agent_browser HTTP API, CDP vs headless vs Playwright modes, snapshot/click/fill workflow, tab management, file uploads, session limits, common mistakes. Load when driving a browser, scraping pages, automating logins, or uploading files via a web form.", Modes: []string{"multi-agent", "workshop", "run"}},
 	"memory-usage":          {Group: "system", Description: "Persistent cross-session memory: save_memory, recall_memory, enrich_memory tools; the user-model philosophy (what to save vs not save); storage layout and recall guidelines. Load when the user asks to remember something, references past work, or you need to consolidate chat history.", Modes: []string{"multi-agent", "workshop"}},
-	"code-execution-usage":  {Group: "system", Description: "Code-execution mode HTTP bridge: $MCP_API_URL / $MCP_API_TOKEN env vars, curl pattern for calling MCP tools, response envelope, $VAR_* / $SECRET_* variable rules, single-call discipline. Load before writing scripts that call MCP tools, or when debugging bridge errors.", Modes: []string{"multi-agent", "workshop", "run"}},
+	"mcp-bridge":            {Group: "system", Description: "MCP HTTP bridge mechanics: $MCP_API_URL / $MCP_API_TOKEN env vars, curl pattern for calling MCP tools, response envelope, $VAR_* / $SECRET_* variable rules, single-call discipline. Load before writing scripts that call MCP tools via the bridge, or when debugging bridge errors.", Modes: []string{"multi-agent", "workshop", "run"}},
 }
 
 // tmplData is the typed context passed to every guidance template. Focus is

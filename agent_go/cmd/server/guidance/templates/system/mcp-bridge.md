@@ -1,22 +1,26 @@
-## Code Execution Mode — MCP Bridge HTTP API
+## MCP Bridge — HTTP API for Tool Calls
 
-This skill covers the full HTTP-bridge mechanics for code-execution mode:
-the env vars that are pre-set, the curl pattern for calling MCP tools,
-filesystem rules, and the workflow loop. The short version lives in the
+This skill covers the full mechanics of the MCP HTTP bridge: the env vars
+that are pre-set, the curl pattern for calling MCP tools, filesystem
+rules, and the workflow loop. The short version lives in the
 `system-tools` skill; this is the deep reference.
+
+The bridge is active whenever the session is in agentic or scripted mode
+(code-execution infrastructure on). In direct tool-call mode the bridge
+is not used — call tools as LLM functions instead.
 
 ## Tool access — HTTP, not direct
 
-In code-execution mode, MCP tools are reachable via an authenticated HTTP
-bridge, not as direct LLM tool calls. The full set of available servers
-and their tools is in the `<available_tools>` JSON block at the top of
-your system prompt. Use `get_api_spec(server_name="...", tool_name="...")`
-to fetch the parameter shape for any specific tool you intend to call.
+Through the bridge, MCP tools are reachable via authenticated HTTP, not
+as direct LLM tool calls. The full set of available servers and their
+tools is in the `<available_tools>` JSON block at the top of your system
+prompt. Use `get_api_spec(server_name="...", tool_name="...")` to fetch
+the parameter shape for any specific tool you intend to call.
 
 **Do NOT use provider-native or built-in filesystem / shell tools** —
 `Bash`, `Read`, `Write`, `read_file`, `write_file`, `list_directory`,
 `grep_search`, `glob`, `read_many_files`, `replace`, `run_shell_command`.
-They are disabled in this mode. For filesystem access, use only the tools
+They are disabled when the bridge is active. For filesystem access, use only the tools
 declared in this session (typically `execute_shell_command` for reads,
 writes, and commands; other workspace tools when explicitly available).
 
@@ -66,7 +70,7 @@ language of your choice. For reusable helpers saved to `main.py`
 
 ## Single-call discipline (agentic mode)
 
-The goal of code-execution mode is to **minimize tool calls**. Ideally
+The goal of agentic mode is to **minimize tool calls**. Ideally
 the entire step runs in a **single `execute_shell_command` call** — one
 script that does API calls, data processing, and output writing in one
 shot. After a step runs, review whether the agent used multiple tool

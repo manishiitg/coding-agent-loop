@@ -8,90 +8,141 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// MaterializeReferenceSkills converts every entry in referenceKinds into a
-// standalone llmtypes.Skill — one skill per reference doc — so providers that
-// can't reach the get_reference_doc MCP tool (cursor-cli, opencode-cli,
-// codex-cli, gemini-cli, agy-cli) still see the same canonical reference
-// material via their native skill mechanism. Adapters in multi-llm-provider-go
-// project each Skill into the CLI's skills directory at session launch.
+// MaterializeReferenceSkill bundles every mode-allowed entry in
+// referenceKinds into ONE Anthropic-pattern skill named "workflow-reference":
+// the SKILL.md body is a table of contents; the deep content lives in
+// references/<kind>.md supporting files. The agent's CLI matches the skill
+// by description, then reads the specific reference file it needs.
 //
-// Naming: "workflow-ref-<kind>". The "workflow-ref-" prefix namespaces these
-// off from user-authored workspace skills so descriptions don't collide in
-// each CLI's skill listing.
-//
-// mode filters by allowed workshop modes ("workshop", "run", "multi-agent",
-// or whatever the registry uses). Empty string returns every kind.
-func MaterializeReferenceSkills(mode string) []*llmtypes.Skill {
-	return materializeFromRegistry(mode, referenceKinds, "workflow-ref-", renderReferenceKind)
+// Returns nil if no kinds are allowed in the given mode (so callers can skip
+// attaching without an extra check).
+func MaterializeReferenceSkill(mode string) *llmtypes.Skill {
+	return buildMegaSkill(buildMegaSkillSpec{
+		Mode:     mode,
+		Registry: referenceKinds,
+		Name:     "workflow-reference",
+		Description: "Workflow workshop reference docs — detailed contracts and rules to consult before specific actions: " +
+			"main.py authoring, persistent stores (skill/kb/db), routing and message-sequence patterns, workflow composition " +
+			"patterns, plan-design, report-plan, evaluation-plan, optimizer playbook, file layout, schedule and secret " +
+			"management. Match this skill when you need deep reference material for any of those topics, then read the " +
+			"matching file under references/.",
+		Intro:  "This skill bundles the workflow workshop's reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — then read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",
+		Render: renderReferenceKind,
+	})
 }
 
-// MaterializeGuidanceSkills does the same for allKinds (procedural guided
-// flows). Note: procedural flows benefit from per-call Focus / Iteration
-// rendering via get_workflow_command_guidance; the materialized version is
-// the no-context rendering, intended as a fallback for non-MCP CLIs.
-func MaterializeGuidanceSkills(mode string) []*llmtypes.Skill {
-	return materializeFromRegistry(mode, allKinds, "workflow-cmd-", renderKind)
+// MaterializeGuidanceSkill bundles every mode-allowed entry in allKinds into
+// ONE skill named "workflow-commands". Same Anthropic pattern: SKILL.md is
+// the TOC, references/<kind>.md is the procedural flow for each slash
+// command (improve-workflow, review-plan, define-success, auto-improve, …).
+//
+// Procedural flows benefit from Focus/Iteration context when invoked via
+// get_workflow_command_guidance — the materialized version is the no-context
+// rendering, intended as a fallback for callers that don't go through that
+// tool.
+func MaterializeGuidanceSkill(mode string) *llmtypes.Skill {
+	return buildMegaSkill(buildMegaSkillSpec{
+		Mode:     mode,
+		Registry: allKinds,
+		Name:     "workflow-commands",
+		Description: "Workflow workshop slash-command flows — canonical procedural guidance for improve-workflow, review-plan, " +
+			"review-speed/cost/code/artifact-drift, define-success, improve-evaluation, improve-knowledge, improve-learnings, " +
+			"improve-data, improve-report, auto-improve, design-flow, ready-to-optimize. Match this skill when the user " +
+			"invokes one of those slash commands or describes the same intent in chat, then read the matching file under " +
+			"references/.",
+		Intro:  "This skill bundles the workshop's canonical slash-command procedures. Match it when the user invokes one of these commands (e.g. `/improve-workflow`, `/review-plan`) or describes the same intent in plain chat. Read the single matching file under `references/` — the prose there is your instructions for the turn, follow it verbatim.",
+		Render: renderKind,
+	})
 }
 
-// AttachReferenceSurface attaches the full reference surface to the agent:
-// the system-tools meta-skill (which advertises get_reference_doc and the
-// precondition-gate semantics) plus a materialized SKILL.md per reference
-// doc and per procedural-guidance kind. Both surfaces coexist on purpose:
+// AttachReferenceSurface attaches the consolidated reference surface to the
+// agent — at most three skills:
 //
-//   - Materialized skills give every CLI a browseable, file-mounted view of
-//     the reference content via its native skill UI (.claude/skills/,
-//     .cursor/skills/, .agents/skills/).
-//   - The meta-skill + get_reference_doc tool path remains the authoritative
-//     way to satisfy precondition gates (DocReadTracker only marks a kind
-//     loaded when the tool is actually called — reading a static SKILL.md
-//     doesn't trip the tracker). Gated tools like harden_workflow keep
-//     refusing until the agent makes the tool call.
+//   - system-tools (existing meta-skill: explains the tool surface,
+//     get_reference_doc, precondition gates)
+//   - workflow-reference (mega-skill bundling every reference doc allowed
+//     in the current mode; SKILL.md TOC + references/<kind>.md per topic)
+//   - workflow-commands (mega-skill bundling every procedural flow)
 //
-// Pass attach as the agent's AttachSkill function. The mode string is the
-// workshop mode ("workshop", "run", "multi-agent") and filters kinds by
-// their per-mode allow-list.
+// Why three folders instead of one per kind: ~25 individual skill folders
+// per session bloats every CLI's skill listing (each entry costs prompt
+// tokens), confuses description-based matching, and clutters the
+// projection adapters' output dirs. Bundling related material under one
+// skill with references/ subfiles is exactly the progressive-disclosure
+// shape Anthropic's skill spec is designed for.
+//
+// Both surfaces still coexist with the get_reference_doc tool path — the
+// DocReadTracker only marks a kind loaded when the tool is actually
+// called, so precondition gates on harden_workflow / replan / store
+// mutations keep enforcing regardless of what the agent reads off disk.
 func AttachReferenceSurface(mode string, attach func(*llmtypes.Skill)) {
 	if meta := BuildSystemToolsSkill(mode); meta != nil {
 		attach(meta)
 	}
-	for _, s := range MaterializeReferenceSkills(mode) {
-		attach(s)
+	if refs := MaterializeReferenceSkill(mode); refs != nil {
+		attach(refs)
 	}
-	for _, s := range MaterializeGuidanceSkills(mode) {
-		attach(s)
+	if cmds := MaterializeGuidanceSkill(mode); cmds != nil {
+		attach(cmds)
 	}
 }
 
-func materializeFromRegistry(
-	mode string,
-	registry map[string]kindMeta,
-	namePrefix string,
-	render func(string, tmplData) (string, error),
-) []*llmtypes.Skill {
-	kinds := kindEnumFrom(registry)
+// buildMegaSkillSpec captures the inputs for buildMegaSkill so the two
+// mega-skill constructors don't have to repeat the same plumbing.
+type buildMegaSkillSpec struct {
+	Mode        string
+	Registry    map[string]kindMeta
+	Name        string
+	Description string
+	Intro       string
+	Render      func(kind string, data tmplData) (string, error)
+}
+
+// buildMegaSkill assembles one Anthropic-pattern skill from a kind registry:
+// SKILL.md body = Intro + a TOC listing every mode-allowed kind with its
+// description and a pointer to references/<kind>.md; SupportingFiles = one
+// rendered template per kind. Returns nil if no kinds are allowed (so the
+// caller can skip attachment).
+func buildMegaSkill(spec buildMegaSkillSpec) *llmtypes.Skill {
+	kinds := kindEnumFrom(spec.Registry)
 	sort.Strings(kinds)
 
-	out := make([]*llmtypes.Skill, 0, len(kinds))
-	for _, kind := range kinds {
-		meta := registry[kind]
-		if mode != "" && !modeAllowedIn(kind, mode, registry) {
-			continue
+	allowed := make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		if spec.Mode == "" || modeAllowedIn(k, spec.Mode, spec.Registry) {
+			allowed = append(allowed, k)
 		}
-		text, err := render(kind, tmplData{WorkshopMode: mode})
-		if err != nil {
-			panic(fmt.Sprintf("guidance: materialize %s%s: %v", namePrefix, kind, err))
-		}
-		out = append(out, &llmtypes.Skill{
-			Name:        namePrefix + kind,
-			Description: meta.Description,
-			Content:     text,
-			Metadata: map[string]string{
-				"group": meta.Group,
-				"modes": strings.Join(meta.Modes, ","),
-				"kind":  kind,
-			},
-			Source: llmtypes.SkillSource{Origin: "builtin"},
-		})
 	}
-	return out
+	if len(allowed) == 0 {
+		return nil
+	}
+
+	files := make([]llmtypes.SkillFile, 0, len(allowed))
+	var toc strings.Builder
+	for _, k := range allowed {
+		meta := spec.Registry[k]
+		text, err := spec.Render(k, tmplData{WorkshopMode: spec.Mode})
+		if err != nil {
+			panic(fmt.Sprintf("guidance: materialize %s/%s: %v", spec.Name, k, err))
+		}
+		files = append(files, llmtypes.SkillFile{
+			RelPath: "references/" + k + ".md",
+			Content: []byte(text),
+		})
+		fmt.Fprintf(&toc, "- `references/%s.md` — %s\n", k, meta.Description)
+	}
+
+	body := spec.Intro + "\n\n## Available references\n\n" + toc.String()
+
+	return &llmtypes.Skill{
+		Name:            spec.Name,
+		Description:     spec.Description,
+		Content:         body,
+		SupportingFiles: files,
+		Metadata: map[string]string{
+			"mode":  spec.Mode,
+			"kinds": strings.Join(allowed, ","),
+		},
+		Source: llmtypes.SkillSource{Origin: "builtin"},
+	}
 }

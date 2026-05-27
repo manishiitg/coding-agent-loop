@@ -127,6 +127,14 @@ var referenceKinds = map[string]kindMeta{
 	// management — that don't warrant always-loaded prompt space).
 	"schedule-management": {Group: "system", Description: "Schedule cron, edit, update, or remove multi-agent scheduled tasks via _users/<id>/multiagent-schedules.json", Modes: []string{"multi-agent"}},
 	"secret-management":   {Group: "system", Description: "Manage workflow / user / global secrets via list_secrets, set_workflow_secret, set_user_secret, delete_workflow_secret, delete_user_secret — buckets, naming rules, attach-after-store discipline", Modes: []string{"multi-agent", "workshop"}},
+
+	// Cross-mode operational reference docs (browser, memory, code-execution
+	// bridge). Currently duplicated in the always-on system-prompt sections;
+	// adding them as skills lets the agent load deep details on-demand and
+	// sets up the eventual prompt-trim.
+	"browser-usage":         {Group: "system", Description: "Browser automation deep guide: agent_browser HTTP API, CDP vs headless vs Playwright modes, snapshot/click/fill workflow, tab management, file uploads, session limits, common mistakes. Load when driving a browser, scraping pages, automating logins, or uploading files via a web form.", Modes: []string{"multi-agent", "workshop", "run"}},
+	"memory-usage":          {Group: "system", Description: "Persistent cross-session memory: save_memory, recall_memory, enrich_memory tools; the user-model philosophy (what to save vs not save); storage layout and recall guidelines. Load when the user asks to remember something, references past work, or you need to consolidate chat history.", Modes: []string{"multi-agent", "workshop"}},
+	"code-execution-usage":  {Group: "system", Description: "Code-execution mode HTTP bridge: $MCP_API_URL / $MCP_API_TOKEN env vars, curl pattern for calling MCP tools, response envelope, $VAR_* / $SECRET_* variable rules, single-call discipline. Load before writing scripts that call MCP tools, or when debugging bridge errors.", Modes: []string{"multi-agent", "workshop", "run"}},
 }
 
 // tmplData is the typed context passed to every guidance template. Focus is

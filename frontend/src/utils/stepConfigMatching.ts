@@ -52,7 +52,7 @@ export interface AgentConfigs {
   knowledgebase_contribution?: string;
   description_reviewed?: boolean;
   review_notes?: string;
-  declared_execution_mode?: string;           // "learn_code" | "code_exec" | "tool_calling" — authoring hint; resolution in backend
+  declared_execution_mode?: string;           // "scripted" | "agentic" | "tool_calling" — authoring hint; resolution in backend
   declared_execution_mode_reason?: string;
 }
 

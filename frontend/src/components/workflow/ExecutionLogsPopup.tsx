@@ -679,7 +679,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                   const isExecExpanded = expandedExecutions.has(execId)
                   const isFastPath = exec.fast_path === true
                   const execMetrics = getExecutionMetrics(exec)
-                  // Fast-path entries carry LearnCodeFastPathLog shape: success/exit_code/output/error.
+                  // Fast-path entries carry ScriptedFastPathLog shape: success/exit_code/output/error.
                   // LLM-attempt entries carry ExecutionResult shape with execution_result/model.
                   const result = isFastPath
                     ? (exec.content?.success ? (exec.content?.output || '') : (exec.content?.error || exec.content?.output || ''))

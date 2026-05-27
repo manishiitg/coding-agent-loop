@@ -2039,7 +2039,7 @@
           "$ref": "#/$defs/PreValidationCompletedEvent"
         },
         "learn_code_script_execution": {
-          "$ref": "#/$defs/LearnCodeScriptExecutionEvent"
+          "$ref": "#/$defs/ScriptedExecutionEvent"
         },
         "todo_steps_extracted": {
           "$ref": "#/$defs/TodoStepsExtractedEvent"
@@ -3226,88 +3226,6 @@
         },
         "reason": {
           "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "LearnCodeScriptExecutionEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "step_id": {
-          "type": "string"
-        },
-        "step_index": {
-          "type": "integer"
-        },
-        "step_title": {
-          "type": "string"
-        },
-        "step_path": {
-          "type": "string"
-        },
-        "workspace_path": {
-          "type": "string"
-        },
-        "run_folder": {
-          "type": "string"
-        },
-        "script_path": {
-          "type": "string"
-        },
-        "script_content": {
-          "type": "string"
-        },
-        "success": {
-          "type": "boolean"
-        },
-        "exit_code": {
-          "type": "integer"
-        },
-        "output": {
-          "type": "string"
-        },
-        "error": {
-          "type": "string"
-        },
-        "fix_iteration": {
-          "type": "integer"
-        },
-        "is_saved_script": {
-          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -4542,6 +4460,88 @@
         },
         "next_step_type": {
           "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ScriptedExecutionEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "step_id": {
+          "type": "string"
+        },
+        "step_index": {
+          "type": "integer"
+        },
+        "step_title": {
+          "type": "string"
+        },
+        "step_path": {
+          "type": "string"
+        },
+        "workspace_path": {
+          "type": "string"
+        },
+        "run_folder": {
+          "type": "string"
+        },
+        "script_path": {
+          "type": "string"
+        },
+        "script_content": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "fix_iteration": {
+          "type": "integer"
+        },
+        "is_saved_script": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,

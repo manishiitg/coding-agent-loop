@@ -1280,7 +1280,7 @@ export interface ExecutionAttemptLog {
   timing?: any;
   // True when this entry came from a learn-code fast-path run (saved main.py
   // executed directly, no LLM involved). attempt=0 + fast_path=true signal this.
-  // Content shape then follows LearnCodeFastPathLog (success/exit_code/output/...).
+  // Content shape then follows ScriptedFastPathLog (success/exit_code/output/...).
   fast_path?: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   content?: any; // Full JSON content of execution result

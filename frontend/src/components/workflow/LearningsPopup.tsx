@@ -646,7 +646,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         }
       }
 
-      // Check for saved scripts. The canonical learn_code artifact is
+      // Check for saved scripts. The canonical scripted artifact is
       // learnings/{stepId}/main.py; older/secondary artifacts may live under code/.
       const codeExtensions = ['.go', '.py', '.sh', '.js', '.ts', '.jsx', '.tsx', '.bash', '.curl', '.rb', '.java', '.rs', '.c', '.cpp', '.json', '.yaml', '.yml']
       let codeFiles = files.filter((file) => {

@@ -79,9 +79,9 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     use_code_execution_mode?: boolean
     use_learn_code_mode?: boolean
   }
-  const useLearnCodeMode =
+  const useScriptedMode =
     modeFlags.use_learn_code_mode ||
-    event.input_data?.IsLearnCodeMode === 'true' ||
+    event.input_data?.IsScriptedMode === 'true' ||
     event.input_data?.is_learn_code_mode === 'true' ||
     event.input_data?.workshop_mode === 'learn_code'
 
@@ -271,8 +271,8 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     availableLLMs,
   })
   const modeLabel = isEvaluationAgent
-    ? (useLearnCodeMode ? 'Eval Learn Code' : modeFlags.use_code_execution_mode ? 'Eval Code Exec' : 'Eval')
-    : (useLearnCodeMode ? 'Learn Code' : modeFlags.use_code_execution_mode ? 'Code Exec' : null)
+    ? (useScriptedMode ? 'Eval Learn Code' : modeFlags.use_code_execution_mode ? 'Eval Code Exec' : 'Eval')
+    : (useScriptedMode ? 'Learn Code' : modeFlags.use_code_execution_mode ? 'Code Exec' : null)
   const displayName = friendlyAgentName(event)
   const treeRoleLabel = getTreeRoleLabel()
 

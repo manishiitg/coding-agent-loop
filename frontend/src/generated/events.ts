@@ -27,7 +27,7 @@ export interface UnifiedEventsComplete {
   large_tool_output_file_write_error?: LargeToolOutputFileWriteErrorEvent;
   large_tool_output_file_written?: LargeToolOutputFileWrittenEvent;
   large_tool_output_server_unavailable?: LargeToolOutputServerUnavailableEvent;
-  learn_code_script_execution?: LearnCodeScriptExecutionEvent;
+  learn_code_script_execution?: ScriptedExecutionEvent;
   llm_generation_end?: LLMGenerationEndEvent;
   llm_generation_error?: LLMGenerationErrorEvent;
   llm_generation_start?: LLMGenerationStartEvent;
@@ -553,7 +553,7 @@ export interface LargeToolOutputServerUnavailableEvent {
   tool_name?: string;
   trace_id?: string;
 }
-export interface LearnCodeScriptExecutionEvent {
+export interface ScriptedExecutionEvent {
   component?: string;
   correlation_id?: string;
   error?: string;

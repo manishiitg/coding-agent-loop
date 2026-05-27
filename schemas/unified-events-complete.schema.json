@@ -1598,88 +1598,6 @@
       },
       "type": "object"
     },
-    "LearnCodeScriptExecutionEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "component": {
-          "type": "string"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "error": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "exit_code": {
-          "type": "integer"
-        },
-        "fix_iteration": {
-          "type": "integer"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "is_saved_script": {
-          "type": "boolean"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "output": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "run_folder": {
-          "type": "string"
-        },
-        "script_content": {
-          "type": "string"
-        },
-        "script_path": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "step_id": {
-          "type": "string"
-        },
-        "step_index": {
-          "type": "integer"
-        },
-        "step_path": {
-          "type": "string"
-        },
-        "step_title": {
-          "type": "string"
-        },
-        "success": {
-          "type": "boolean"
-        },
-        "timestamp": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "workspace_path": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
     "MCPServerConnectionEvent": {
       "additionalProperties": false,
       "properties": {
@@ -2595,6 +2513,88 @@
           "type": "string"
         },
         "workflow_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ScriptedExecutionEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "type": "string"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "fix_iteration": {
+          "type": "integer"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "is_saved_script": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "output": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "run_folder": {
+          "type": "string"
+        },
+        "script_content": {
+          "type": "string"
+        },
+        "script_path": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "step_id": {
+          "type": "string"
+        },
+        "step_index": {
+          "type": "integer"
+        },
+        "step_path": {
+          "type": "string"
+        },
+        "step_title": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "workspace_path": {
           "type": "string"
         }
       },
@@ -4235,7 +4235,7 @@
       "$ref": "#/$defs/LargeToolOutputServerUnavailableEvent"
     },
     "learn_code_script_execution": {
-      "$ref": "#/$defs/LearnCodeScriptExecutionEvent"
+      "$ref": "#/$defs/ScriptedExecutionEvent"
     },
     "llm_generation_end": {
       "$ref": "#/$defs/LLMGenerationEndEvent"

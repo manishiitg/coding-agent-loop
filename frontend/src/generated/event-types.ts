@@ -84,7 +84,7 @@ import type {
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
   RoutingEvaluatedEvent,
-  LearnCodeScriptExecutionEvent,
+  ScriptedExecutionEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,
@@ -364,7 +364,7 @@ export interface EventTypeToDataMap {
   'step_progress_updated': StepProgressUpdatedEvent;
   'routing_evaluated': RoutingEvaluatedEvent;
   'pre_validation_completed': PreValidationCompletedEvent;
-  'learn_code_script_execution': LearnCodeScriptExecutionEvent;
+  'learn_code_script_execution': ScriptedExecutionEvent;
   'todo_steps_extracted': TodoStepsExtractedEvent;
   'variables_extracted': VariablesExtractedEvent;
   'independent_steps_selected': IndependentStepsSelectedEvent;
@@ -896,7 +896,7 @@ export type {
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
   RoutingEvaluatedEvent,
-  LearnCodeScriptExecutionEvent,
+  ScriptedExecutionEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,

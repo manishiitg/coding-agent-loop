@@ -1716,8 +1716,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
   useEffect(() => {
     if (!isEventHierarchyDebugEnabled()) return;
-    const learnCodeEvents = displayEvents.filter(event => event.type === 'learn_code_script_execution');
-    if (learnCodeEvents.length === 0) return;
+    const scriptedEvents = displayEvents.filter(event => event.type === 'learn_code_script_execution');
+    if (scriptedEvents.length === 0) return;
 
     const rootIds = new Set(
       eventTree
@@ -1727,7 +1727,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     console.log('[FIX_LEARN_CODE_UI] hierarchy_state', {
       tabId: tabIdProp ?? null,
-      learnCodeEvents: learnCodeEvents.map(event => {
+      scriptedEvents: scriptedEvents.map(event => {
         const agentEvent = event.data as Record<string, unknown> | undefined;
         const payload = (agentEvent?.data && typeof agentEvent.data === 'object')
           ? agentEvent.data as Record<string, unknown>

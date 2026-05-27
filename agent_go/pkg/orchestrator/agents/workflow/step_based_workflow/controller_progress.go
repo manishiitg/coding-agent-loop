@@ -848,8 +848,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) ResetValidationFailureCount(ctx conte
 	return nil
 }
 
-// emitScriptedScriptExecutionEvent emits a learn_code_script_execution event to the UI.
-func (hcpo *StepBasedWorkflowOrchestrator) emitScriptedScriptExecutionEvent(
+// emitScriptedExecutionEvent emits a learn_code_script_execution event to the UI.
+func (hcpo *StepBasedWorkflowOrchestrator) emitScriptedExecutionEvent(
 	ctx context.Context,
 	step PlanStepInterface,
 	stepIndex int,
@@ -889,7 +889,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitScriptedScriptExecutionEvent(
 		}
 	}
 
-	ev := &events.ScriptedScriptExecutionEvent{
+	ev := &events.ScriptedExecutionEvent{
 		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 			Component: "learn_code",
@@ -914,7 +914,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitScriptedScriptExecutionEvent(
 		stepID, stepTitle, isSavedScript, fixIteration, success, exitCode, len(output), len(errMsg), len(scriptContent), hcpo.selectedRunFolder,
 	))
 	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
-		Type:      events.ScriptedScriptExecution,
+		Type:      events.ScriptedExecution,
 		Timestamp: time.Now(),
 		Data:      ev,
 	})

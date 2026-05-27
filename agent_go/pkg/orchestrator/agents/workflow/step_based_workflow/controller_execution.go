@@ -1568,7 +1568,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			if fastResult.RanScript {
 				// Emit UI event for the saved-script execution attempt
 				savedScriptPath := getScriptedScriptAbsPath(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), step.GetID(), hcpo.isEvaluationMode)
-				hcpo.emitScriptedScriptExecutionEvent(ctx, step, stepIndex, stepPath,
+				hcpo.emitScriptedExecutionEvent(ctx, step, stepIndex, stepPath,
 					savedScriptPath, fastResult.Success, fastResult.ExitCode, fastResult.Output, fastResult.Error, 0, true)
 				// Save execution log so debug_step and direct file inspection can see fast-path output
 				hcpo.saveScriptedFastPathLog(ctx, stepIndex, artifactStepID, artifactStepPath, savedScriptPath, fastResult)
@@ -2024,7 +2024,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							Output:    output,
 						}
 						hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Pre-validation passed and main.py exists for step %d — skipping fix loop", stepIndex+1))
-						hcpo.emitScriptedScriptExecutionEvent(ctx, step, stepIndex, stepPath,
+						hcpo.emitScriptedExecutionEvent(ctx, step, stepIndex, stepPath,
 							mainPyPath, true, lastLcResult.ExitCode, lastLcResult.Output, "", 0, false)
 					} else if preValResults != nil && preValResults.OverallPass {
 						hcpo.GetLogger().Info(fmt.Sprintf("🧪 [learn_code] Pre-validation passed but main.py not found for step %d — entering fix loop to generate script", stepIndex+1))
@@ -2056,7 +2056,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						if fixPreValResults != nil && fixPreValResults.OverallPass && mainPyErr == nil {
 							// Outputs valid + main.py exists → success
 							lastLcResult = &ScriptedFastPathResult{RanScript: true, Success: true}
-							hcpo.emitScriptedScriptExecutionEvent(ctx, step, stepIndex, stepPath,
+							hcpo.emitScriptedExecutionEvent(ctx, step, stepIndex, stepPath,
 								mainPyPath, true, 0, "", "", fixIter, false)
 							hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Pre-validation passed for step %d on fix iteration %d", stepIndex+1, fixIter))
 							learnCodePreValidationResultsOverride = fixPreValResults
@@ -2090,7 +2090,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								}
 							}
 							lastLcResult = &ScriptedFastPathResult{RanScript: mainPyErr == nil, Success: false, Error: errMsg, ExistingScript: latestScript}
-							hcpo.emitScriptedScriptExecutionEvent(ctx, step, stepIndex, stepPath,
+							hcpo.emitScriptedExecutionEvent(ctx, step, stepIndex, stepPath,
 								mainPyPath, false, 1, "", errMsg, fixIter, false)
 							break // exhausted fix attempts
 						}

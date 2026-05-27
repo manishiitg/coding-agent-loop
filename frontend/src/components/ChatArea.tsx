@@ -1672,17 +1672,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       }
 
       if (event.type === 'learn_code_script_execution') {
-        const learnCodeData = (innerData ?? agentEvent ?? {}) as Record<string, unknown>
+        const scriptedData = (innerData ?? agentEvent ?? {}) as Record<string, unknown>
         console.log('[FIX_LEARN_CODE_UI] chat_area_event_received', {
           sessionId: actualSessionId,
           tabId: tab?.tabId ?? null,
           eventId: event.id,
-          correlationId: (event as unknown as Record<string, unknown>).correlation_id ?? agentEvent?.correlation_id ?? learnCodeData?.correlation_id ?? null,
-          stepId: learnCodeData.step_id ?? null,
-          stepTitle: learnCodeData.step_title ?? null,
-          fixIteration: learnCodeData.fix_iteration ?? null,
-          isSavedScript: learnCodeData.is_saved_script ?? null,
-          success: learnCodeData.success ?? null,
+          correlationId: (event as unknown as Record<string, unknown>).correlation_id ?? agentEvent?.correlation_id ?? scriptedData?.correlation_id ?? null,
+          stepId: scriptedData.step_id ?? null,
+          stepTitle: scriptedData.step_title ?? null,
+          fixIteration: scriptedData.fix_iteration ?? null,
+          isSavedScript: scriptedData.is_saved_script ?? null,
+          success: scriptedData.success ?? null,
         })
       }
 

@@ -134,7 +134,7 @@ export interface EventDataUnion {
   step_progress_updated?: StepProgressUpdatedEvent;
   routing_evaluated?: RoutingEvaluatedEvent;
   pre_validation_completed?: PreValidationCompletedEvent;
-  learn_code_script_execution?: LearnCodeScriptExecutionEvent;
+  learn_code_script_execution?: ScriptedExecutionEvent;
   todo_steps_extracted?: TodoStepsExtractedEvent;
   variables_extracted?: VariablesExtractedEvent;
   independent_steps_selected?: IndependentStepsSelectedEvent;
@@ -1557,7 +1557,7 @@ export interface ValidationErrorForEvent {
   actual?: string;
   message?: string;
 }
-export interface LearnCodeScriptExecutionEvent {
+export interface ScriptedExecutionEvent {
   timestamp?: string;
   trace_id?: string;
   span_id?: string;

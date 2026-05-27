@@ -210,7 +210,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 		if fastResult.RanScript {
 			savedScriptPath := getScriptedScriptAbsPath(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), stepID, hcpo.isEvaluationMode)
-			hcpo.emitScriptedScriptExecutionEvent(ctx, step, stepIndex, todoTaskStepPath,
+			hcpo.emitScriptedExecutionEvent(ctx, step, stepIndex, todoTaskStepPath,
 				savedScriptPath, fastResult.Success, fastResult.ExitCode, fastResult.Output, fastResult.Error, 0, true)
 			hcpo.saveScriptedFastPathLog(ctx, stepIndex, stepID, todoTaskStepPath, savedScriptPath, fastResult)
 		}

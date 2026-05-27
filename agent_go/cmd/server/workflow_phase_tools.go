@@ -402,14 +402,14 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 			guidance.RegisterReferenceDocTool(underlyingAgent, workshopMode, api.logger)
 			log.Printf("[WORKFLOW_PHASE] Registered get_reference_doc in %s (mode=%s)", workflowPhaseID, workshopMode)
 
-			// Attach the system-tools meta-skill so the agent has a
-			// concise pointer to the discovery surface (get_api_spec,
-			// get_reference_doc, get_workflow_command_guidance, MCP
-			// bridge usage). Lighter than projecting every ref doc body
-			// as its own skill folder.
-			if metaSkill := guidance.BuildSystemToolsSkill(workshopMode); metaSkill != nil {
-				underlyingAgent.AttachSkill(metaSkill)
-			}
+			// Attach the full reference surface: system-tools meta-skill
+			// (advertises get_reference_doc and the precondition gates)
+			// plus one materialized SKILL.md per reference doc / guided
+			// flow. Both coexist — the static skills give each CLI a
+			// browseable, file-mounted view via its native skill UI; the
+			// meta-skill + tool path remains the authoritative way to
+			// satisfy gates like the one wrapping harden_workflow.
+			guidance.AttachReferenceSurface(workshopMode, underlyingAgent.AttachSkill)
 		}
 	default:
 		// planning: plan modification tools

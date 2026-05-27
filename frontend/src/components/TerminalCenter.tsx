@@ -1921,7 +1921,7 @@ function resolveErrorTerminal(event: PollingEvent, terminals: TerminalSnapshot[]
     metadata?.tmux_session_name,
     metadata?.claude_code_interactive_session,
     metadata?.codex_interactive_session,
-    metadata?.gemini_interactive_session,
+    metadata?.gemini_interactive_session, // Known limitation: Gemini CLI (Ink-based) redraws in place, so its tmux pane has no scrollback — use Gemini's in-app scroll keys.
     metadata?.cursor_interactive_session,
   )
   for (const tmuxSession of tmuxSessions) {

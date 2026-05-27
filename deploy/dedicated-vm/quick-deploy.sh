@@ -16,7 +16,7 @@ SCP="scp $SSH_OPTS"
 RSYNC_SSH="ssh $SSH_OPTS"
 REMOTE="/opt/mcp-agent"
 TARGET="${1:-all}"
-PUBLIC_URL="${PUBLIC_URL:-https://agent.excellencetechnolgies.com}"
+PUBLIC_URL="${PUBLIC_URL:-https://agents.excellencetechnologies.in}"
 
 check_local_url() {
   local label="$1"

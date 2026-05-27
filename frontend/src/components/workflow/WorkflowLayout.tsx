@@ -97,6 +97,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   )
 })
 import { agentApi, workflowManifestApi } from '../../services/api'
+import ConfirmationDialog from '../ui/ConfirmationDialog'
 import {
   type ActiveSessionInfo,
   type ChatHistorySession,
@@ -265,11 +266,20 @@ const WorkflowPreviousChatsPanel: React.FC<{
   )
 }
 
-function isLiveWorkflowSessionForPreset(session: ActiveSessionInfo, presetId: string, workspacePath?: string | null): boolean {
+function workflowSessionMatchesPreset(session: ActiveSessionInfo, presetId: string, workspacePath?: string | null): boolean {
   if (session.agent_mode !== 'workflow' && session.agent_mode !== 'workflow_phase') return false
 
+  if (session.preset_query_id && session.preset_query_id === presetId) return true
+
+  const targetWorkspace = normalizeWorkflowPath(workspacePath)
+  return !!targetWorkspace && normalizeWorkflowPath(session.workspace_path) === targetWorkspace
+}
+
+function isLiveWorkflowSessionForPreset(session: ActiveSessionInfo, presetId: string, workspacePath?: string | null): boolean {
+  if (!workflowSessionMatchesPreset(session, presetId, workspacePath)) return false
+
   const status = (session.status || '').toLowerCase().trim()
-  const isLive =
+  return (
     session.needs_user_input === true ||
     session.has_running_background_agents === true ||
     (session.running_background_agent_count ?? 0) > 0 ||
@@ -279,12 +289,7 @@ function isLiveWorkflowSessionForPreset(session: ActiveSessionInfo, presetId: st
     status === 'paused' ||
     status === 'waiting' ||
     status === 'waiting_feedback'
-  if (!isLive) return false
-
-  if (session.preset_query_id && session.preset_query_id === presetId) return true
-
-  const targetWorkspace = normalizeWorkflowPath(workspacePath)
-  return !!targetWorkspace && normalizeWorkflowPath(session.workspace_path) === targetWorkspace
+  )
 }
 
 function isLiveWorkflowTerminalForPath(terminal: TerminalSnapshot, workspacePath?: string | null): boolean {
@@ -293,6 +298,37 @@ function isLiveWorkflowTerminalForPath(terminal: TerminalSnapshot, workspacePath
 
   const state = (terminal.state || '').toLowerCase().trim()
   return state === 'running'
+}
+
+function shouldBlockWorkflowNewChatForSession(
+  session: ActiveSessionInfo,
+  presetId: string,
+  workspacePath?: string | null,
+  terminals?: TerminalSnapshot[],
+): boolean {
+  if (!isLiveWorkflowSessionForPreset(session, presetId, workspacePath)) return false
+
+  if (
+    session.needs_user_input === true ||
+    session.has_running_background_agents === true ||
+    (session.running_background_agent_count ?? 0) > 0
+  ) {
+    return true
+  }
+
+  const status = (session.status || '').toLowerCase().trim()
+  if (status === 'paused' || status === 'waiting' || status === 'waiting_feedback') {
+    return true
+  }
+
+  if (!terminals) {
+    return true
+  }
+
+  return terminals.some(terminal =>
+    terminal.session_id === session.session_id &&
+    isLiveWorkflowTerminalForPath(terminal, workspacePath)
+  )
 }
 
 function withWorkflowRestoreTimeout<T>(promise: Promise<T>, label: string, timeoutMs = WORKFLOW_RESTORE_TIMEOUT_MS): Promise<T> {
@@ -527,6 +563,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const setIsRestoringWorkflowSessions = useChatStore(state => state.setIsRestoringWorkflowSessions)
   const [hasPreviousWorkflowChats, setHasPreviousWorkflowChats] = useState(false)
   const [hasLoadedPreviousWorkflowChats, setHasLoadedPreviousWorkflowChats] = useState(false)
+  // Kill-and-start confirmation when "+ new chat" hits a running workflow session.
+  // Holds the session ID(s) to stop and a human-readable description for the dialog.
+  const [killAndStartState, setKillAndStartState] = useState<{
+    isOpen: boolean
+    sessionIdsToStop: string[]
+    description: string
+    isStopping: boolean
+  }>({ isOpen: false, sessionIdsToStop: [], description: '', isStopping: false })
   useEffect(() => {
     if (!isRestoringWorkflowSessions) return
     const timeout = window.setTimeout(() => {
@@ -1757,14 +1801,19 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         useChatStore.getState().getActiveSessions(true),
         agentApi.listTerminals(undefined, 'none'),
       ])
+      const terminalSnapshots = terminalsResult.status === 'fulfilled'
+        ? (terminalsResult.value.terminals || [])
+        : undefined
 
+      const blockingSessionIds: string[] = []
+      let blockingSessionLabel = ''
       if (sessionsResult.status === 'fulfilled') {
         const runningSession = sessionsResult.value.find(session =>
-          isLiveWorkflowSessionForPreset(session, activePresetId, workspacePath)
+          shouldBlockWorkflowNewChatForSession(session, activePresetId, workspacePath, terminalSnapshots)
         )
         if (runningSession) {
-          addToast('Cannot start a new chat because another session is already running for this workflow.', 'error')
-          return
+          blockingSessionIds.push(runningSession.session_id)
+          blockingSessionLabel = 'workflow chat session'
         }
       } else {
         logger.warn('WorkflowLayout', 'Failed to check active sessions before starting new workflow chat:', sessionsResult.reason)
@@ -1775,12 +1824,24 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           terminal.session_id !== activeSessionId &&
           isLiveWorkflowTerminalForPath(terminal, workspacePath)
         )
-        if (runningTerminal) {
-          addToast('Cannot start a new chat because another terminal session is already running for this workflow.', 'error')
-          return
+        if (runningTerminal && !blockingSessionIds.includes(runningTerminal.session_id)) {
+          blockingSessionIds.push(runningTerminal.session_id)
+          blockingSessionLabel = blockingSessionLabel
+            ? `${blockingSessionLabel} and terminal`
+            : 'terminal session'
         }
       } else {
         logger.warn('WorkflowLayout', 'Failed to check active terminals before starting new workflow chat:', terminalsResult.reason)
+      }
+
+      if (blockingSessionIds.length > 0) {
+        setKillAndStartState({
+          isOpen: true,
+          sessionIdsToStop: blockingSessionIds,
+          description: `Another ${blockingSessionLabel} is currently running for this workflow. Starting a new chat will stop it.`,
+          isStopping: false,
+        })
+        return
       }
 
       await createFreshWorkflowBuilderTab(activePresetId)
@@ -1788,7 +1849,35 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
 
     chatAreaRef.current?.handleNewChat()
-  }, [activePresetId, activeSessionId, addToast, createFreshWorkflowBuilderTab, workspacePath])
+  }, [activePresetId, activeSessionId, createFreshWorkflowBuilderTab, workspacePath])
+
+  const handleKillAndStart = useCallback(async () => {
+    if (!activePresetId) {
+      setKillAndStartState(prev => ({ ...prev, isOpen: false }))
+      return
+    }
+    setKillAndStartState(prev => ({ ...prev, isStopping: true }))
+    const sessionIds = killAndStartState.sessionIdsToStop
+    const results = await Promise.allSettled(
+      sessionIds.map(sid => agentApi.stopSession(sid, true))
+    )
+    results.forEach((r, idx) => {
+      if (r.status === 'rejected') {
+        logger.warn('WorkflowLayout', `Failed to stop session ${sessionIds[idx]} during kill-and-start:`, r.reason)
+      }
+    })
+    setKillAndStartState({ isOpen: false, sessionIdsToStop: [], description: '', isStopping: false })
+    try {
+      await createFreshWorkflowBuilderTab(activePresetId)
+    } catch (err) {
+      logger.error('WorkflowLayout', 'createFreshWorkflowBuilderTab failed after kill-and-start:', err)
+      addToast('Failed to start new chat after stopping the previous one.', 'error')
+    }
+  }, [activePresetId, addToast, createFreshWorkflowBuilderTab, killAndStartState.sessionIdsToStop])
+
+  const handleCloseKillAndStart = useCallback(() => {
+    setKillAndStartState(prev => prev.isStopping ? prev : { isOpen: false, sessionIdsToStop: [], description: '', isStopping: false })
+  }, [])
 
   // No preset selected state
   if (!activeWorkflowPreset && !workspacePath) {
@@ -1880,6 +1969,17 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
         {workspacePaneVisible && canvasElement}
       </div>
+      <ConfirmationDialog
+        isOpen={killAndStartState.isOpen}
+        onClose={handleCloseKillAndStart}
+        onConfirm={handleKillAndStart}
+        title="Stop running session?"
+        message={killAndStartState.description}
+        confirmText={killAndStartState.isStopping ? 'Stopping…' : 'Stop and start new'}
+        cancelText="Cancel"
+        type="warning"
+        isLoading={killAndStartState.isStopping}
+      />
     </div>
   )
 }

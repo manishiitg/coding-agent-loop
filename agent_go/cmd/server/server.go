@@ -2406,6 +2406,44 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Builder-chat single-runner constraint: only one workflow-builder chat
+	// session per workflow folder may run at a time. Phase executions
+	// (cron, bot, manual phase runs) are NOT subject to this — they have
+	// their own concurrency handling. The rejection fires only when both
+	// the incoming request AND the currently-running execution are
+	// workflow-builder chats on the same workspace; same-session sends
+	// (follow-up messages on the already-running builder session) pass
+	// through. Frontend "+ new chat" pre-checks /api/workflow/running and
+	// offers a kill-and-start dialog; this 409 is the backend guard
+	// against races.
+	if req.AgentMode == "workflow_phase" &&
+		req.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder &&
+		strings.TrimSpace(req.SelectedFolder) != "" {
+		if running := api.findRunningTrackedExecutionForWorkspace(req.SelectedFolder); running != nil &&
+			running.SessionID != sessionID &&
+			running.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
+			logfWithContext(queryLogCtx, "[WORKFLOW_BUSY] Rejected workflow_builder chat for workspace %q: running session %s started %s (triggered_by=%s)", req.SelectedFolder, running.SessionID, running.StartedAt.Format(time.RFC3339), running.TriggeredBy)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":          "workflow_busy",
+				"message":        "Workflow builder chat is already running on this workflow. Stop the running chat before starting a new one.",
+				"workspace_path": running.WorkspacePath,
+				"running": map[string]interface{}{
+					"session_id":   running.SessionID,
+					"execution_id": running.ExecutionID,
+					"triggered_by": running.TriggeredBy,
+					"source":       running.Source,
+					"started_at":   running.StartedAt,
+					"phase_id":     running.PhaseID,
+					"phase_name":   running.PhaseName,
+					"title":        running.Title,
+				},
+			})
+			return
+		}
+	}
+
 	// Chat sessions are in-memory only — tracked via activeSessions map
 	// below. No persistent session metadata.
 
@@ -4507,14 +4545,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				guidance.RegisterReferenceDocTool(underlyingAgent, "multi-agent", api.logger)
 				logfWithContext(queryLogCtx, "[REFERENCE_DOC] Registered get_reference_doc for multi-agent chat")
 
-				// Attach the system-tools meta-skill so the agent has a
-				// concise pointer to the discovery surface (get_api_spec,
-				// get_reference_doc, get_workflow_command_guidance, MCP
-				// bridge usage) without duplicating each ref doc body as
-				// its own skill folder.
-				if metaSkill := guidance.BuildSystemToolsSkill("multi-agent"); metaSkill != nil {
-					underlyingAgent.AttachSkill(metaSkill)
-				}
+				// Attach the full reference surface for multi-agent chat:
+				// system-tools meta-skill (advertises get_reference_doc
+				// and gate semantics) plus one materialized SKILL.md per
+				// multi-agent-allowed reference doc. The skill files give
+				// each CLI a browseable view via its native skills UI; the
+				// tool path remains the authoritative way to satisfy
+				// precondition gates.
+				guidance.AttachReferenceSurface("multi-agent", underlyingAgent.AttachSkill)
 			}
 
 			// 2. WORKSPACE MAP — compact folder listing with absolute paths and access levels.

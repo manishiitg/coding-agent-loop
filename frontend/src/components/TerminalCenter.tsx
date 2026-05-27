@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowDownToLine, Braces, Bug, Check, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Palette, Plus, Power, RefreshCw, Square, Terminal, Trash2, X } from 'lucide-react'
+import { AnsiUp } from 'ansi_up'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -7,6 +8,48 @@ import { useChatStore } from '../stores/useChatStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
+
+// Module-level ansi_up singleton — instances are cheap but a single shared
+// one keeps escaping behavior consistent and avoids per-render allocations.
+const ansiUp = new AnsiUp()
+ansiUp.use_classes = false // inline-style colors; works without extra CSS
+
+// stripAnsi removes ANSI CSI sequences from a string. Used to feed clean text
+// into the line classifier regexes while we preserve the raw colored line for
+// rendering. Mirrors the Go-side strip on the backend so what we display
+// matches what the matcher saw.
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1B\[[0-9;?]*[A-Za-z]/g, '')
+}
+
+// hasAnsiCodes returns true when the string contains at least one CSI escape.
+// Used to decide whether to take the colored-render path or fall back to the
+// existing plain text path.
+function hasAnsiCodes(s: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  return s.includes('\x1B[')
+}
+
+// rawAfterVisibleChars returns the substring of `raw` that starts after the
+// first `visibleCharCount` non-ANSI characters. Lets us slice the raw line
+// at a position discovered against the stripped version (e.g. "$ " prefix
+// length is always 2 in the stripped form but variable in the raw form).
+function rawAfterVisibleChars(raw: string, visibleCharCount: number): string {
+  let i = 0
+  let visible = 0
+  while (i < raw.length && visible < visibleCharCount) {
+    if (raw[i] === '\x1B' && raw[i + 1] === '[') {
+      let j = i + 2
+      while (j < raw.length && !/[A-Za-z]/.test(raw[j])) j++
+      i = j + 1
+      continue
+    }
+    visible++
+    i++
+  }
+  return raw.slice(i)
+}
 
 interface TerminalCenterProps {
   currentSessionId?: string
@@ -1306,16 +1349,22 @@ function resolveRailParentKey(
 // contract.
 // ---------------------------------------------------------------------------
 
+// rawText carries the ANSI-colored version of `text`. The parser populates
+// it only when the source line contained ANSI codes; the renderer falls
+// back to plain `text` otherwise. tool rows skip rawText because their
+// internal args/result text comes from regex group captures that are
+// already stripped — coloring them would require a separate raw extraction
+// per group and isn't worth the complexity for this round.
 type TerminalRow =
-  | { kind: 'banner'; text: string }
-  | { kind: 'context'; text: string }
-  | { kind: 'user'; text: string }
-  | { kind: 'asst'; text: string }
+  | { kind: 'banner'; text: string; rawText?: string }
+  | { kind: 'context'; text: string; rawText?: string }
+  | { kind: 'user'; text: string; rawText?: string }
+  | { kind: 'asst'; text: string; rawText?: string }
   | { kind: 'tool'; name: string; args: string; result?: string; resultPrefix?: '✓' | '✗'; result_prefix?: '✓' | '✗' | string }
-  | { kind: 'attachment'; text: string }
-  | { kind: 'done'; text: string }
-  | { kind: 'error'; text: string }
-  | { kind: 'plain'; text: string }
+  | { kind: 'attachment'; text: string; rawText?: string }
+  | { kind: 'done'; text: string; rawText?: string }
+  | { kind: 'error'; text: string; rawText?: string }
+  | { kind: 'plain'; text: string; rawText?: string }
 
 const TERMINAL_USER_PREVIEW_CHARS = 180
 const TERMINAL_TOOL_ARGS_PREVIEW_CHARS = 240
@@ -1377,19 +1426,35 @@ function isAutoNotificationText(value: string): boolean {
   return value.trim().startsWith('[AUTO-NOTIFICATION]')
 }
 
-function classifyTerminalLine(line: string): TerminalRow {
-  if (line.startsWith('$ ')) return { kind: 'banner', text: line.slice(2) }
-  if (line.startsWith('↳ ')) return { kind: 'context', text: line.slice(2) }
-  if (line.startsWith('> user: ')) return { kind: 'user', text: line.slice(8) }
-  if (line.startsWith('< asst: ')) return { kind: 'asst', text: line.slice(8) }
-  if (line.startsWith('  ')) return { kind: 'asst', text: line.slice(2) }
-  if (line.startsWith('[image ')) return { kind: 'attachment', text: line }
-  if (line.startsWith('[document ')) return { kind: 'attachment', text: line }
-  if (line.startsWith('[done')) return { kind: 'done', text: line }
-  if (line.startsWith('[error]')) return { kind: 'error', text: line.slice(7).trim() }
+// classifyTerminalLine inspects a single pane line and returns a typed row.
+// `stripped` is the line with ANSI removed (for regex / prefix matching);
+// `raw` is the original line preserving ANSI SGR codes. Rows whose text body
+// can carry color are annotated with rawText so the renderer can pass it
+// through ansi_up. When the raw line has no ANSI codes the parser leaves
+// rawText undefined and the renderer falls back to plain text.
+function classifyTerminalLine(stripped: string, raw: string): TerminalRow {
+  const rawHasColor = hasAnsiCodes(raw)
+  const withColor = (kind: 'banner' | 'context' | 'asst' | 'plain' | 'attachment' | 'done' | 'error', text: string, prefixLen: number) => {
+    const rawText = rawHasColor ? rawAfterVisibleChars(raw, prefixLen) : undefined
+    return { kind, text, rawText } as TerminalRow
+  }
+  if (stripped.startsWith('$ ')) return withColor('banner', stripped.slice(2), 2)
+  if (stripped.startsWith('↳ ')) return withColor('context', stripped.slice(2), 2)
+  if (stripped.startsWith('> user: ')) {
+    // user rows have their own preview/expand UX; rawText carried so the
+    // expanded body can render in color.
+    const rawText = rawHasColor ? rawAfterVisibleChars(raw, 8) : undefined
+    return { kind: 'user', text: stripped.slice(8), rawText } as TerminalRow
+  }
+  if (stripped.startsWith('< asst: ')) return withColor('asst', stripped.slice(8), 8)
+  if (stripped.startsWith('  ')) return withColor('asst', stripped.slice(2), 2)
+  if (stripped.startsWith('[image ')) return withColor('attachment', stripped, 0)
+  if (stripped.startsWith('[document ')) return withColor('attachment', stripped, 0)
+  if (stripped.startsWith('[done')) return withColor('done', stripped, 0)
+  if (stripped.startsWith('[error]')) return withColor('error', stripped.slice(7).trim(), 7)
   // Tool start: "→ tool: name(args)" or "→ name args"
-  if (line.startsWith('→ ')) {
-    const rest = line.slice(2)
+  if (stripped.startsWith('→ ')) {
+    const rest = stripped.slice(2)
     const toolMatch = rest.match(/^tool:\s*([^(]+)\((.*)\)$/)
     if (toolMatch) {
       return { kind: 'tool', name: toolMatch[1].trim(), args: toolMatch[2] }
@@ -1400,7 +1465,7 @@ function classifyTerminalLine(line: string): TerminalRow {
     }
     return { kind: 'tool', name: rest, args: '' }
   }
-  return { kind: 'plain', text: line }
+  return withColor('plain', stripped, 0)
 }
 
 function isTerminalRowBoundary(line: string): boolean {
@@ -1426,7 +1491,11 @@ function parseTerminalContent(content: string): TerminalRow[] {
   const rows: TerminalRow[] = []
   let activeToolResultIndex: number | null = null
   let activeTextRowIndex: number | null = null
-  for (const line of lines) {
+  for (const rawLine of lines) {
+    // Each line is matched / classified against the stripped form so the
+    // existing regexes keep working with colored input. rawLine is carried
+    // into classifyTerminalLine to populate row.rawText for colored render.
+    const line = stripAnsi(rawLine)
     // Tool result variants
     const fullResult = line.match(/^([✓✗])\s+result\s+([^:]+):\s*(.*)$/)
     if (fullResult) {
@@ -1473,12 +1542,19 @@ function parseTerminalContent(content: string): TerminalRow[] {
         (activeTextRow?.kind === 'user' && isAutoNotificationText(activeTextRow.text))
       if (shouldAttachToTextRow) {
         const continuation = line.startsWith('  ') ? line.slice(2) : line
+        const rawContinuation = line.startsWith('  ') ? rawAfterVisibleChars(rawLine, 2) : rawLine
         activeTextRow.text = activeTextRow.text ? `${activeTextRow.text}\n${continuation}` : continuation
+        if (hasAnsiCodes(rawLine) || activeTextRow.rawText !== undefined) {
+          const prevRaw = activeTextRow.rawText ?? activeTextRow.text
+          activeTextRow.rawText = activeTextRow.rawText
+            ? `${prevRaw}\n${rawContinuation}`
+            : `${prevRaw}\n${rawContinuation}`
+        }
         continue
       }
       activeTextRowIndex = null
     }
-    const classified = classifyTerminalLine(line)
+    const classified = classifyTerminalLine(line, rawLine)
     activeToolResultIndex = null
     // Coalesce consecutive assistant continuation lines into one row. Join
     // with a newline (not a space) so the markdown structure that the model
@@ -1486,13 +1562,18 @@ function parseTerminalContent(content: string): TerminalRow[] {
     // and ReactMarkdown can render it. An empty continuation line becomes a
     // blank line, which markdown reads as a paragraph break.
     if (classified.kind === 'asst' && rows.length > 0 && rows[rows.length - 1].kind === 'asst') {
-      const prev = rows[rows.length - 1] as { kind: 'asst'; text: string }
+      const prev = rows[rows.length - 1] as { kind: 'asst'; text: string; rawText?: string }
       prev.text = prev.text ? `${prev.text}\n${classified.text}` : classified.text
+      if (classified.rawText !== undefined || prev.rawText !== undefined) {
+        const prevRaw = prev.rawText ?? prev.text
+        const nextRaw = classified.rawText ?? classified.text
+        prev.rawText = prev.rawText ? `${prevRaw}\n${nextRaw}` : `${prevRaw}\n${nextRaw}`
+      }
       activeTextRowIndex = rows.length - 1
       continue
     }
     if (classified.kind === 'asst' && line.startsWith('  ')) {
-      rows.push({ kind: 'plain', text: line })
+      rows.push({ kind: 'plain', text: line, rawText: hasAnsiCodes(rawLine) ? rawLine : undefined })
       activeTextRowIndex = null
       continue
     }
@@ -1540,9 +1621,61 @@ const TerminalAssistantMarkdown: React.FC<{ text: string; theme: TerminalTheme }
   />
 )
 
+// ColoredText renders ANSI-laden text via ansi_up. Memoized per input
+// string so re-renders don't repeatedly invoke the parser.
+//
+// When `rawText` is undefined or contains no ANSI escapes, the parent
+// component should render plain text directly — using this component for
+// non-colored text wastes a parse pass.
+const ColoredText: React.FC<{ rawText: string; className?: string }> = ({ rawText, className }) => {
+  const html = useMemo(() => ansiUp.ansi_to_html(rawText), [rawText])
+  return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+// RawTerminalPane is the non-structured pane view used for real CLI
+// terminals (claudecode, codex, gemini, cursor, agy interactive sessions —
+// anything where the orchestrator does NOT pre-parse the content into
+// typed rows). The whole pane content is rendered through ansi_up to
+// colorize SGR sequences; non-ANSI content takes the plain text path so we
+// don't pay parser cost for ANSI-free pages. Newlines and whitespace are
+// preserved by the `<pre>` element.
+const RawTerminalPane: React.FC<{
+  content: string
+  className?: string
+  contentRef: React.RefObject<HTMLPreElement | null>
+  onScroll: (e: React.UIEvent<HTMLPreElement>) => void
+  onWheel: (e: React.WheelEvent<HTMLPreElement>) => void
+}> = ({ content, className, contentRef, onScroll, onWheel }) => {
+  const html = useMemo(
+    () => (hasAnsiCodes(content) ? ansiUp.ansi_to_html(content) : null),
+    [content],
+  )
+  if (html !== null) {
+    return (
+      <pre
+        ref={contentRef}
+        onScroll={onScroll}
+        onWheel={onWheel}
+        className={className}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    )
+  }
+  return (
+    <pre ref={contentRef} onScroll={onScroll} onWheel={onWheel} className={className}>
+      {content}
+    </pre>
+  )
+}
+
 function normalizeTerminalRows(rows: TerminalSnapshot['rows'] | undefined): TerminalRow[] {
   if (!Array.isArray(rows)) return []
   const normalized: TerminalRow[] = []
+  // Server-pre-parsed rows carry their text with whatever ANSI the backend
+  // emitted. We strip ANSI for the `text` field (so existing display logic
+  // and string comparisons stay clean) but stash the colored original in
+  // `rawText` so the renderer can colorize via ansi_up. When the row has no
+  // ANSI codes, rawText stays undefined and the renderer falls back to plain.
   for (const row of rows) {
     switch (row.kind) {
       case 'banner':
@@ -1552,12 +1685,19 @@ function normalizeTerminalRows(rows: TerminalSnapshot['rows'] | undefined): Term
       case 'attachment':
       case 'done':
       case 'error':
-      case 'plain':
-        normalized.push({ kind: row.kind, text: row.text || '' } as TerminalRow)
+      case 'plain': {
+        const raw = row.text || ''
+        const stripped = hasAnsiCodes(raw) ? stripAnsi(raw) : raw
+        const rawText = hasAnsiCodes(raw) ? raw : undefined
+        normalized.push({ kind: row.kind, text: stripped, rawText } as TerminalRow)
         break
+      }
       case 'tool':
         normalized.push({
           kind: 'tool',
+          // tool name / args / result come from server-side regex captures —
+          // they're already stripped on the backend and don't currently
+          // carry color. Leave them as plain text.
           name: row.name || 'tool',
           args: row.args || '',
           result: row.result,
@@ -1565,8 +1705,12 @@ function normalizeTerminalRows(rows: TerminalSnapshot['rows'] | undefined): Term
           result_prefix: row.result_prefix,
         })
         break
-      default:
-        normalized.push({ kind: 'plain', text: row.text || '' })
+      default: {
+        const raw = row.text || ''
+        const stripped = hasAnsiCodes(raw) ? stripAnsi(raw) : raw
+        const rawText = hasAnsiCodes(raw) ? raw : undefined
+        normalized.push({ kind: 'plain', text: stripped, rawText })
+      }
     }
   }
   return normalized
@@ -1649,12 +1793,21 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
                 <div key={idx}>
                   {showDivider && <div className="my-2 border-t border-dashed border-neutral-700/60" />}
                   <div className={theme.prompt}>
-                    <span className="text-neutral-500">$ </span>{row.text}
+                    <span className="text-neutral-500">$ </span>
+                    {row.rawText !== undefined
+                      ? <ColoredText rawText={row.rawText} />
+                      : row.text}
                   </div>
                 </div>
               )
             case 'context':
-              return <div key={idx} className="text-neutral-500">↳ {row.text}</div>
+              return (
+                <div key={idx} className="text-neutral-500">
+                  ↳ {row.rawText !== undefined
+                    ? <ColoredText rawText={row.rawText} />
+                    : row.text}
+                </div>
+              )
             case 'user':
               {
                 const message = terminalUserMessageMeta(row.text)
@@ -1778,13 +1931,29 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
               )
             }
             case 'attachment':
-              return <div key={idx} className="text-neutral-500">{row.text}</div>
+              return (
+                <div key={idx} className="text-neutral-500">
+                  {row.rawText !== undefined ? <ColoredText rawText={row.rawText} /> : row.text}
+                </div>
+              )
             case 'done':
-              return <div key={idx} className={`${theme.done} mt-1 ${theme.doneText} font-mono`}>{row.text}</div>
+              return (
+                <div key={idx} className={`${theme.done} mt-1 ${theme.doneText} font-mono`}>
+                  {row.rawText !== undefined ? <ColoredText rawText={row.rawText} /> : row.text}
+                </div>
+              )
             case 'error':
-              return <div key={idx} className="text-red-400">[error] {row.text}</div>
+              return (
+                <div key={idx} className="text-red-400">
+                  [error] {row.rawText !== undefined ? <ColoredText rawText={row.rawText} /> : row.text}
+                </div>
+              )
             case 'plain':
-              return <div key={idx} className="text-neutral-300 whitespace-pre-wrap break-words">{row.text}</div>
+              return (
+                <div key={idx} className="text-neutral-300 whitespace-pre-wrap break-words">
+                  {row.rawText !== undefined ? <ColoredText rawText={row.rawText} /> : row.text}
+                </div>
+              )
           }
         })}
         {isStreaming && (
@@ -3530,14 +3699,13 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       theme={terminalTheme}
                     />
                   ) : (
-                    <pre
-                      ref={terminalOutputRef as React.RefObject<HTMLPreElement | null>}
+                    <RawTerminalPane
+                      contentRef={terminalOutputRef as React.RefObject<HTMLPreElement | null>}
                       onScroll={handleTerminalScroll}
-                      onWheel={handleTerminalWheel}
+                      onWheel={handleTerminalWheel as (e: React.WheelEvent<HTMLPreElement>) => void}
+                      content={selectedTerminalDisplayContent}
                       className={`min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-[#0b0d0c] p-2.5 font-mono whitespace-pre-wrap break-words text-neutral-100 ${terminalTheme.contentText} ${terminalTheme.selection}`}
-                    >
-                      {selectedTerminalDisplayContent}
-                    </pre>
+                    />
                   )}
                 </>
               ) : (

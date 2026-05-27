@@ -149,3 +149,4 @@ override.tf.json
 terraform.rc
 
 gws-credentials.json
+agent_go/migrate-mode-names

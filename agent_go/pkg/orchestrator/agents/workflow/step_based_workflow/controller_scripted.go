@@ -52,7 +52,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) cleanStepOutputDir(ctx context.Contex
 		fileDelErr := hcpo.DeleteWorkspaceFile(ctx, entryRelPath)
 		if fileDelErr != nil {
 			if folderErr := deleteFolderViaAPI(ctx, absPath); folderErr != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] cleanStepOutputDir: failed to delete %s: file=%v folder=%v", name, fileDelErr, folderErr))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] cleanStepOutputDir: failed to delete %s: file=%v folder=%v", name, fileDelErr, folderErr))
 			}
 		}
 	}
@@ -866,11 +866,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 	if !hcpo.hasValidLearnedScriptAPI(ctx, stepID) {
 		scriptRelPath := getScriptedDirRelPath(stepID, hcpo.isEvaluationMode) + "/main.py"
 		existingScript, _ := hcpo.ReadWorkspaceFile(ctx, scriptRelPath)
-		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] No saved script for step %d (%s) — LLM will generate from scratch", stepIndex+1, stepID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] No saved script for step %d (%s) — LLM will generate from scratch", stepIndex+1, stepID))
 		return &ScriptedFastPathResult{RanScript: false, ExistingScript: existingScript}
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Executing saved script for step %d (%s) — 0 LLM tokens", stepIndex+1, stepID))
+	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] Executing saved script for step %d (%s) — 0 LLM tokens", stepIndex+1, stepID))
 
 	// Read existing script content for relearn context (if script fails).
 	learnDirRelPath := getScriptedDirRelPath(stepID, hcpo.isEvaluationMode)
@@ -901,13 +901,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 	// pick up the change. LLM relearn fixes are saved back to learnings/ via
 	// saveScriptedScriptToLearnings, so always copying from learnings is safe.
 	if mkErr := createFolderViaAPI(ctx, codeDirRelPath); mkErr != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to create code/ dir for saved script copy: %v", mkErr))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to create code/ dir for saved script copy: %v", mkErr))
 	}
 	learnFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, learnDirRelPath)
 	if listErr != nil {
 		// Fallback: copy just main.py
 		if writeErr := hcpo.WriteWorkspaceFile(ctx, codeDirRelPath+"/main.py", existingScript); writeErr != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to copy main.py to code/: %v", writeErr))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to copy main.py to code/: %v", writeErr))
 		}
 	} else {
 		for _, f := range learnFiles {
@@ -920,11 +920,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 				continue
 			}
 			if writeErr := hcpo.WriteWorkspaceFile(ctx, codeDirRelPath+"/"+fileName, content); writeErr != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to copy %s to code/: %v", fileName, writeErr))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to copy %s to code/: %v", fileName, writeErr))
 			}
 		}
 	}
-	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Copied saved script from learnings/%s/ to %s/", stepID, codeDirRelPath))
+	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] Copied saved script from learnings/%s/ to %s/", stepID, codeDirRelPath))
 
 	// Static code review before execution — catch anti-patterns that would fail on reuse
 	codeIssues := reviewMainPyScript(existingScript)
@@ -988,7 +988,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 			}
 		}
 		if preValResults != nil && preValResults.OverallPass {
-			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Saved script exited %d but pre-validation passed — treating as success for step %d", exitCode, stepIndex+1))
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] Saved script exited %d but pre-validation passed — treating as success for step %d", exitCode, stepIndex+1))
 			hcpo.updateScriptedRunStats(ctx, stepID, buildRunRecord(true, "", ""), isLocked)
 			return &ScriptedFastPathResult{RanScript: true, Success: true, ExitCode: exitCode, Output: output, ExistingScript: existingScript}
 		}
@@ -1002,7 +1002,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 		if validationErrMsg != "" {
 			errMsg = fmt.Sprintf("%s\n\n%s", execErrMsg, validationErrMsg)
 		}
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Script failed for step %d: %s", stepIndex+1, errMsg))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Script failed for step %d: %s", stepIndex+1, errMsg))
 		hcpo.updateScriptedRunStats(ctx, stepID, buildRunRecord(false, failureReason, errMsg), isLocked)
 		return &ScriptedFastPathResult{
 			RanScript:       true,
@@ -1028,7 +1028,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 	}
 	if preValResults != nil && !preValResults.OverallPass {
 		errMsg := formatWorkspaceResults(preValResults)
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Script ran but output validation failed for step %d", stepIndex+1))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Script ran but output validation failed for step %d", stepIndex+1))
 		hcpo.updateScriptedRunStats(ctx, stepID, buildRunRecord(false, "validation_error", errMsg), isLocked)
 		return &ScriptedFastPathResult{
 			RanScript:       true,
@@ -1042,7 +1042,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 		}
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Script executed and validated for step %d (%s) — 0 LLM tokens used", stepIndex+1, stepID))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ [scripted] Script executed and validated for step %d (%s) — 0 LLM tokens used", stepIndex+1, stepID))
 	hcpo.updateScriptedRunStats(ctx, stepID, buildRunRecord(true, "", ""), isLocked)
 	return &ScriptedFastPathResult{RanScript: true, Success: true, Output: output}
 }
@@ -1073,7 +1073,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedScriptToLearnings(
 	mainPyRelPath := codeRelPath + "/main.py"
 
 	if _, err := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] main.py not found in code/ dir (%s) — skipping save", mainPyRelPath))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] main.py not found in code/ dir (%s) — skipping save", mainPyRelPath))
 		return
 	}
 
@@ -1107,7 +1107,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedScriptToLearnings(
 			// File delete first; fall back to folder delete for subdirectories (e.g. code/).
 			if fileDelErr := hcpo.DeleteWorkspaceFile(ctx, entryRelPath); fileDelErr != nil {
 				if folderErr := deleteFolderViaAPI(ctx, absPath); folderErr != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to delete %s from learnings: file=%v folder=%v", fileName, fileDelErr, folderErr))
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to delete %s from learnings: file=%v folder=%v", fileName, fileDelErr, folderErr))
 				}
 			}
 		}
@@ -1117,14 +1117,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedScriptToLearnings(
 	files, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, codeRelPath)
 	if listErr != nil {
 		// ListWorkspaceFiles failed — try to copy just main.py
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to list code/ dir (%s): %v — copying main.py only", codeRelPath, listErr))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to list code/ dir (%s): %v — copying main.py only", codeRelPath, listErr))
 		content, readErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath)
 		if readErr != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to read main.py: %v", readErr))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to read main.py: %v", readErr))
 			return
 		}
 		if writeErr := hcpo.WriteWorkspaceFile(ctx, learnDirRelPath+"/main.py", content); writeErr != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to write main.py to learnings: %v", writeErr))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to write main.py to learnings: %v", writeErr))
 			return
 		}
 	} else {
@@ -1140,11 +1140,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedScriptToLearnings(
 			srcRelPath := codeRelPath + "/" + fileName
 			content, readErr := hcpo.ReadWorkspaceFile(ctx, srcRelPath)
 			if readErr != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to read %s: %v", fileName, readErr))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to read %s: %v", fileName, readErr))
 				continue
 			}
 			if writeErr := hcpo.WriteWorkspaceFile(ctx, learnDirRelPath+"/"+fileName, content); writeErr != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to write %s to learnings: %v", fileName, writeErr))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to write %s to learnings: %v", fileName, writeErr))
 			}
 		}
 	}
@@ -1163,16 +1163,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedScriptToLearnings(
 	newMeta.StepID = stepID
 	newMeta.LastRunAt = time.Now().UTC().Format(time.RFC3339)
 	if err := hcpo.writeScriptedMetadataAPI(ctx, stepID, newMeta); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to write script_metadata.json: %v", err))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to write script_metadata.json: %v", err))
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Saved main.py to learnings for step (%s) — version %d", stepID, newMeta.ScriptVersion))
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ [scripted] Saved main.py to learnings for step (%s) — version %d", stepID, newMeta.ScriptVersion))
 	}
 
 	// Save diffs between old and new script files for debugging.
 	if len(oldFileContents) > 0 {
 		diffsDirRelPath := learnDirRelPath + "/diffs"
 		if mkErr := createFolderViaAPI(ctx, diffsDirRelPath, workspacePath); mkErr != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to create diffs/ dir: %v", mkErr))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to create diffs/ dir: %v", mkErr))
 		} else {
 			for fileName, oldContent := range oldFileContents {
 				newContent, readErr := hcpo.ReadWorkspaceFile(ctx, learnDirRelPath+"/"+fileName)
@@ -1185,9 +1185,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedScriptToLearnings(
 				diff := generateSimpleDiff(fileName, oldContent, newContent)
 				diffFileName := fmt.Sprintf("%s.v%d.diff", fileName, newMeta.ScriptVersion)
 				if writeErr := hcpo.WriteWorkspaceFile(ctx, diffsDirRelPath+"/"+diffFileName, diff); writeErr != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to write diff %s: %v", diffFileName, writeErr))
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to write diff %s: %v", diffFileName, writeErr))
 				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("📝 [learn_code] Saved diff for %s (v%d → v%d)", fileName, newMeta.ScriptVersion-1, newMeta.ScriptVersion))
+					hcpo.GetLogger().Info(fmt.Sprintf("📝 [scripted] Saved diff for %s (v%d → v%d)", fileName, newMeta.ScriptVersion-1, newMeta.ScriptVersion))
 				}
 			}
 		}
@@ -1398,7 +1398,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedFastPathLog(
 	logData := map[string]interface{}{
 		"step_index":       stepIndex + 1,
 		"step_path":        stepPath,
-		"mode":             "learn_code_fast_path",
+		"mode":             "scripted_fast_path",
 		"script_path":      scriptPath,
 		"exit_code":        result.ExitCode,
 		"success":          result.Success,
@@ -1410,11 +1410,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedFastPathLog(
 		"timestamp":        time.Now().Format(time.RFC3339),
 	}
 	if logJSON, err := json.MarshalIndent(logData, "", "  "); err == nil {
-		logPath := logDir + "/learn_code_fast_path.json"
+		logPath := logDir + "/scripted_fast_path.json"
 		if err := hcpo.WriteWorkspaceFile(context.Background(), logPath, string(logJSON)); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to save fast path log: %v", err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to save fast path log: %v", err))
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Saved fast path execution log: %s", logPath))
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] Saved fast path execution log: %s", logPath))
 		}
 	}
 }
@@ -1431,7 +1431,7 @@ func GetScriptedModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRel
 	if isCodeLocked {
 		sb.WriteString(fmt.Sprintf("You are in **code execution mode**. A saved `main.py` exists for this step but is **locked** (`lock_code=true`) — it is the source of truth and the controller will not save any rewrite you produce. The previous run executed that locked script (`%s/main.py`) and it failed validation, so this turn is a recovery turn.\n\n", codeDirAbsPath))
 		sb.WriteString("**Do NOT rewrite or replace `main.py` this turn.** Instead, complete the task by calling MCP tools directly via the API step by step:\n")
-		sb.WriteString("1. Read the existing `main.py` and the run-folder failure artifacts (`step_*_status.json`, screenshots, downloaded files, `learn_code_fast_path.json`) to understand *why* the saved script failed.\n")
+		sb.WriteString("1. Read the existing `main.py` and the run-folder failure artifacts (`step_*_status.json`, screenshots, downloaded files, `scripted_fast_path.json`) to understand *why* the saved script failed.\n")
 		sb.WriteString("2. Decide whether the failure is environmental (bad creds, MFA, captcha, expired session, target-site change) or a real bug in the script.\n")
 		sb.WriteString(fmt.Sprintf("3. If environmental, drive the task to completion *interactively* — write outputs directly to `%s` (available as `os.environ['STEP_OUTPUT_DIR']`) using snapshots and direct tool calls so this run produces valid outputs. Do not edit the script.\n", stepOutputAbsPath))
 		sb.WriteString("4. If you find a real script bug, surface it clearly in your reply so the orchestrator can clear `lock_code` and have you patch the script on a future run. Do not patch it now.\n\n")

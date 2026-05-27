@@ -217,7 +217,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 		if fastResult.RanScript && fastResult.Success {
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ [orchestrator_learn_code] Fast path succeeded for step %d — 0 LLM tokens", stepIndex+1))
-			hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "learn_code: builder-authored script executed and validated", todoTaskStep.NextStepID)
+			hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "scripted: builder-authored script executed and validated", todoTaskStep.NextStepID)
 			hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 			return true, todoTaskStep.NextStepID, nil
 		}
@@ -243,7 +243,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	} else if execCtx != nil && execCtx.SavedScriptOnly {
 		// fast_path_only was requested but this step isn't scripted-eligible — fail loudly
 		// rather than silently running the LLM orchestrator (caller expected zero-LLM execution).
-		return false, "", fmt.Errorf("orchestrator step %q is not in learn_code mode (requires declared_execution_mode=\"learn_code\" and ≥1 predefined route)", stepID)
+		return false, "", fmt.Errorf("orchestrator step %q is not in scripted mode (requires declared_execution_mode=\"scripted\" and ≥1 predefined route)", stepID)
 	}
 
 	// Learnings read gate — default-on unless learnings_access="none" or routing/eval.

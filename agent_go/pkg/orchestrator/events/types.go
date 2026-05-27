@@ -92,7 +92,11 @@ const (
 	// Pre-validation events
 	PreValidationCompleted events.EventType = "pre_validation_completed"
 
-	// Learn code mode events
+	// Scripted-mode events (legacy wire name "learn_code_script_execution"
+	// kept as the EventType value for back-compat with frontend code paths
+	// that still match on the old discriminator string. The next release
+	// cycle will flip this value to "scripted_execution" and migrate the
+	// frontend in lockstep.)
 	ScriptedExecution events.EventType = "learn_code_script_execution" // When controller runs python3 main.py
 
 	// Todo task orchestration events

@@ -8137,13 +8137,13 @@ func buildWorkshopActionHint(workshopMode string, isLockCode, isLockLearnings bo
 			"(`lock_code=true`, `lock_learnings=true`) and ran on the fast path, " +
 			"so only the saved main.py executed — no fix loop, no LLM repair attempt. " +
 			"Investigate the failure: read the run folder " +
-			"(`step_*_status.json`, `learn_code_fast_path.json`, screenshots, downloaded files) " +
+			"(`step_*_status.json`, `scripted_fast_path.json`, screenshots, downloaded files) " +
 			"and decide between two recovery paths:\n" +
 			"  1. **Fix main.py** — if there's a real bug in the script (these accumulate over time as " +
 			"sites and APIs change), clear `lock_code` via `update_step_config` and update the script. " +
 			"Use `review_step_code` or rewrite directly based on what you find.\n" +
 			"  2. **Re-run with `fast_path_only=false`** — calls `execute_step` again with the fast path " +
-			"disabled so the full code_exec path engages. The LLM will drive tools directly, can repair " +
+			"disabled so the full agentic path engages. The LLM will drive tools directly, can repair " +
 			"the run live, and (if `lock_code` is cleared) save an updated main.py back to learnings. " +
 			"Good first move when you're not sure whether it's a script bug or environmental.\n" +
 			"If after inspection it's clearly environmental (bad creds, MFA prompt, captcha) and the " +
@@ -8153,7 +8153,7 @@ func buildWorkshopActionHint(workshopMode string, isLockCode, isLockLearnings bo
 	if isLockCode {
 		return "\n\n[CODE-LOCKED FAILURE] `lock_code=true` so the fix loop is disabled and the saved " +
 			"main.py is frozen. Inspect the run folder, then either clear `lock_code` and fix the " +
-			"script, or re-run with `fast_path_only=false` to engage code_exec for this run." +
+			"script, or re-run with `fast_path_only=false` to engage agentic mode for this run." +
 			streakHint
 	}
 	return ""

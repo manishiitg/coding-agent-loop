@@ -1580,23 +1580,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				validationResponse = &ValidationResponse{
 					IsSuccessCriteriaMet: true,
 					ExecutionStatus:      "COMPLETED",
-					Reasoning:            "learn_code: saved script executed and validated (0 LLM tokens)",
+					Reasoning:            "scripted: saved script executed and validated (0 LLM tokens)",
 				}
 				// If the script in execution/code/ differs from learnings (e.g., LLM-fixed version
 				// from a previous attempt), save the working version back to learnings.
 				learnCodeScriptNeedsSaving = true
-				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Fast path succeeded for step %d — skipping execution loop", stepIndex+1))
+				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] Fast path succeeded for step %d — skipping execution loop", stepIndex+1))
 			} else if fastResult.RanScript {
 				// Script ran but failed — fall through to LLM for relearn
 				learnCodePriorScript = fastResult.ExistingScript
 				learnCodePriorError = fastResult.Error
-				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Script failed for step %d — falling back to LLM with error context", stepIndex+1))
+				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] Script failed for step %d — falling back to LLM with error context", stepIndex+1))
 			} else if fastResult.ExistingScript != "" {
 				// A saved script exists but wasn't executed successfully. Pass it to the LLM
 				// so it can adapt the working script rather than rewriting from scratch.
 				learnCodePriorScript = fastResult.ExistingScript
 				// No prior error — this is an update/reuse path, not a failure
-				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Step %d found an existing saved script — LLM will update it in place", stepIndex+1))
+				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] Step %d found an existing saved script — LLM will update it in place", stepIndex+1))
 			}
 
 			// templateVars were built before the fast-path check. Refresh the scripted
@@ -1891,7 +1891,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					if isScriptedMode {
 						codeDirRelPath := stepExecutionPath + "/code"
 						if mkErr := createFolderViaAPI(ctx, codeDirRelPath); mkErr != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to pre-create code/ dir for step %d: %v", stepIndex+1, mkErr))
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to pre-create code/ dir for step %d: %v", stepIndex+1, mkErr))
 						}
 					}
 
@@ -1995,7 +1995,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					isCodeLockedForFixLoop := agentConfigs != nil && agentConfigs.LockCode != nil && *agentConfigs.LockCode
 					maxFixIter := 3
 					if isCodeLockedForFixLoop {
-						hcpo.GetLogger().Info(fmt.Sprintf("🔒 [learn_code] Code locked for step %d — skipping fix loop, will fall back to code_exec mode", stepIndex+1))
+						hcpo.GetLogger().Info(fmt.Sprintf("🔒 [scripted] Code locked for step %d — skipping fix loop, will fall back to agentic mode", stepIndex+1))
 						maxFixIter = -1
 					} else if agentCfgs := getAgentConfigs(step); agentCfgs != nil && agentCfgs.ScriptedMaxFixIter != nil {
 						maxFixIter = *agentCfgs.ScriptedMaxFixIter
@@ -2023,11 +2023,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							ExitCode:  exitCode,
 							Output:    output,
 						}
-						hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Pre-validation passed and main.py exists for step %d — skipping fix loop", stepIndex+1))
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ [scripted] Pre-validation passed and main.py exists for step %d — skipping fix loop", stepIndex+1))
 						hcpo.emitScriptedExecutionEvent(ctx, step, stepIndex, stepPath,
 							mainPyPath, true, lastLcResult.ExitCode, lastLcResult.Output, "", 0, false)
 					} else if preValResults != nil && preValResults.OverallPass {
-						hcpo.GetLogger().Info(fmt.Sprintf("🧪 [learn_code] Pre-validation passed but main.py not found for step %d — entering fix loop to generate script", stepIndex+1))
+						hcpo.GetLogger().Info(fmt.Sprintf("🧪 [scripted] Pre-validation passed but main.py not found for step %d — entering fix loop to generate script", stepIndex+1))
 					}
 
 					// Track script content before each fix iteration to generate diffs
@@ -2043,8 +2043,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						// Check for context cancellation before each fix iteration
 						select {
 						case <-ctx.Done():
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Step execution canceled during fix iteration %d for step %d", fixIter+1, stepIndex+1))
-							return "", updatedContextFiles, fmt.Errorf("step execution canceled during learn_code fix loop: %w", ctx.Err())
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Step execution canceled during fix iteration %d for step %d", fixIter+1, stepIndex+1))
+							return "", updatedContextFiles, fmt.Errorf("step execution canceled during scripted fix loop: %w", ctx.Err())
 						default:
 						}
 
@@ -2058,7 +2058,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							lastLcResult = &ScriptedFastPathResult{RanScript: true, Success: true}
 							hcpo.emitScriptedExecutionEvent(ctx, step, stepIndex, stepPath,
 								mainPyPath, true, 0, "", "", fixIter, false)
-							hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Pre-validation passed for step %d on fix iteration %d", stepIndex+1, fixIter))
+							hcpo.GetLogger().Info(fmt.Sprintf("✅ [scripted] Pre-validation passed for step %d on fix iteration %d", stepIndex+1, fixIter))
 							learnCodePreValidationResultsOverride = fixPreValResults
 							break
 						}
@@ -2150,7 +2150,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							sb.WriteString("Fix main.py, run it again, and ensure all required output files are produced correctly.")
 						}
 						feedbackMsg = sb.String()
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] validation failed for step %d (fix attempt %d/%d) — continuing conversation with feedback", stepIndex+1, fixIter+1, maxFixIter))
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] validation failed for step %d (fix attempt %d/%d) — continuing conversation with feedback", stepIndex+1, fixIter+1, maxFixIter))
 
 						// Create a fresh repair agent for each fix iteration — each attempt gets
 						// a clean conversation with the latest script + errors as context.
@@ -2161,7 +2161,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						repairCtx := context.WithValue(ctx, WorkshopTierOverrideKey, int(TierHigh))
 						repairAgent, repairErr := hcpo.createExecutionOnlyAgent(repairCtx, "execution_only", stepPath, repairAgentName, agentConfigs, step.GetID(), getExecutionArtifactFolderOverride(execCtx))
 						if repairErr != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] failed to create repair agent for step %d fix %d: %v", stepIndex+1, fixIter+1, repairErr))
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] failed to create repair agent for step %d fix %d: %v", stepIndex+1, fixIter+1, repairErr))
 							break
 						}
 						if repairCfg := repairAgent.GetConfig(); repairCfg != nil && repairCfg.LLMConfig.Primary.ModelID != "" {
@@ -2175,14 +2175,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							_ = executionAgent.Close()
 						}
 						executionAgent = repairAgent
-						hcpo.GetLogger().Info(fmt.Sprintf("🔁 [learn_code] created fresh repair agent for step %d fix %d: %s", stepIndex+1, fixIter+1, executionLLM))
+						hcpo.GetLogger().Info(fmt.Sprintf("🔁 [scripted] created fresh repair agent for step %d fix %d: %s", stepIndex+1, fixIter+1, executionLLM))
 
 						// Fresh conversation each time — feedback message already contains
 						// the full script + execution output + validation errors as context.
 						if ba := executionAgent.GetBaseAgent(); ba != nil {
 							_, executionConversationHistory, err = ba.Execute(ctx, feedbackMsg, nil, repairSystemPrompt, false)
 							if err != nil {
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] agent error during fix attempt %d: %v", fixIter+1, err))
+								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] agent error during fix attempt %d: %v", fixIter+1, err))
 								break
 							}
 						} else {
@@ -2197,7 +2197,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								diff := generateSimpleDiff("main.py", prevFixScript, curScript)
 								diffFile := fmt.Sprintf("fix-%d-to-%d.diff", fixIter, fixIter+1)
 								if writeErr := hcpo.WriteWorkspaceFile(ctx, fixDiffsRelPath+"/"+diffFile, diff); writeErr == nil {
-									hcpo.GetLogger().Info(fmt.Sprintf("📝 [learn_code] Saved fix diff %s for step %d", diffFile, stepIndex+1))
+									hcpo.GetLogger().Info(fmt.Sprintf("📝 [scripted] Saved fix diff %s for step %d", diffFile, stepIndex+1))
 								}
 							}
 							prevFixScript = curScript
@@ -2213,7 +2213,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// AND: don't save if code is locked — the user froze the script intentionally.
 					isCodeLocked := agentConfigs != nil && agentConfigs.LockCode != nil && *agentConfigs.LockCode
 					if isCodeLocked {
-						hcpo.GetLogger().Info(fmt.Sprintf("🔒 [learn_code] Code locked for step %d — NOT saving script back to learnings", stepIndex+1))
+						hcpo.GetLogger().Info(fmt.Sprintf("🔒 [scripted] Code locked for step %d — NOT saving script back to learnings", stepIndex+1))
 						learnCodeScriptNeedsSaving = false
 					} else if mainPyRelCheck := stepExecutionPath + "/code/main.py"; true {
 						if scriptContent, checkErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelCheck); checkErr == nil && scriptContent != "" {
@@ -2225,10 +2225,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								}
 							}
 							if hasSyntaxError {
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] NOT saving main.py to learnings for step %d — script has syntax errors", stepIndex+1))
+								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] NOT saving main.py to learnings for step %d — script has syntax errors", stepIndex+1))
 							} else {
 								hcpo.saveScriptedScriptToLearnings(step, toAbsPath(stepExecutionPath))
-								hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Saved LLM-produced main.py to learnings for step %d (replaces known-broken version)", stepIndex+1))
+								hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] Saved LLM-produced main.py to learnings for step %d (replaces known-broken version)", stepIndex+1))
 								learnCodeScriptNeedsSaving = false // already saved, don't duplicate later
 							}
 						}
@@ -2241,13 +2241,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						} else {
 							errMsg = fmt.Sprintf("main.py still failing after %d fix attempts:\n%s", maxFixIter, lastLcResult.Error)
 						}
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] step %d failed after fix loop: %s", stepIndex+1, errMsg))
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] step %d failed after fix loop: %s", stepIndex+1, errMsg))
 						// Fallback: disable scripted mode for remaining retries.
 						// The LLM couldn't write a working main.py — let it use tools
 						// directly in normal agentic mode to complete the task.
 						isScriptedMode = false
 						templateVars["IsScriptedMode"] = "false"
-						hcpo.GetLogger().Info(fmt.Sprintf("🔄 [learn_code] Switching step %d to normal code_exec mode for remaining retries", stepIndex+1))
+						hcpo.GetLogger().Info(fmt.Sprintf("🔄 [scripted] Switching step %d to normal agentic mode for remaining retries", stepIndex+1))
 						// Add explicit guidance for the agentic fallback — tell the LLM
 						// that the scripted approach failed and it should use tools directly.
 						fallbackGuidance := fmt.Sprintf(
@@ -2270,7 +2270,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						continue
 					}
 					turnCount = len(executionConversationHistory)
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] main.py executed successfully for step %d — proceeding to validation", stepIndex+1))
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ [scripted] main.py executed successfully for step %d — proceeding to validation", stepIndex+1))
 				}
 
 				// Run pre-validation (code-based structural checks) -- always active, independent of LLM validation.

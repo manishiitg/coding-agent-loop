@@ -883,16 +883,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitScriptedExecutionEvent(
 		scriptRelPath = strings.TrimPrefix(scriptRelPath, hcpo.GetWorkspacePath()+"/")
 		if content, err := hcpo.ReadWorkspaceFile(ctx, scriptRelPath); err == nil {
 			scriptContent = content
-			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Read script content for UI: %s (%d bytes)", scriptRelPath, len(content)))
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] Read script content for UI: %s (%d bytes)", scriptRelPath, len(content)))
 		} else {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to read script content for UI (%s): %v", scriptRelPath, err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to read script content for UI (%s): %v", scriptRelPath, err))
 		}
 	}
 
 	ev := &events.ScriptedExecutionEvent{
 		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
-			Component: "learn_code",
+			Component: "scripted",
 		},
 		StepID:        stepID,
 		StepIndex:     stepIndex,
@@ -910,7 +910,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitScriptedExecutionEvent(
 		IsSavedScript: isSavedScript,
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf(
-		"🧭 [FIX_LEARN_CODE_UI] emitting learn_code_script_execution step=%s title=%q saved=%t fix_iter=%d success=%t exit=%d output_len=%d error_len=%d script_len=%d run_folder=%s",
+		"🧭 [FIX_SCRIPTED_UI] emitting learn_code_script_execution step=%s title=%q saved=%t fix_iter=%d success=%t exit=%d output_len=%d error_len=%d script_len=%d run_folder=%s",
 		stepID, stepTitle, isSavedScript, fixIteration, success, exitCode, len(output), len(errMsg), len(scriptContent), hcpo.selectedRunFolder,
 	))
 	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
@@ -949,7 +949,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitScriptedTerminalSnapshot(
 	}
 	fmt.Fprintf(&b, "$ python %s (source=%s fix_iter=%d)\n", scriptPath, source, fixIteration)
 	if stepID != "" || stepTitle != "" {
-		fmt.Fprintf(&b, "↳ step %s (learn_code)\n", firstNonEmptyStr(stepID, stepTitle))
+		fmt.Fprintf(&b, "↳ step %s (scripted)\n", firstNonEmptyStr(stepID, stepTitle))
 	}
 	if scriptContent != "" {
 		b.WriteString("--- script ---\n")
@@ -976,10 +976,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitScriptedTerminalSnapshot(
 			Timestamp: time.Now(),
 			Metadata: map[string]interface{}{
 				"kind":      "terminal",
-				"source":    "learn_code",
+				"source":    "scripted",
 				"step_id":   stepID,
 				"replace":   true,
-				"transport": "learn_code",
+				"transport": "scripted",
 			},
 		},
 		Content:    b.String(),
@@ -1001,9 +1001,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitScriptedTerminalSnapshot(
 			Timestamp: time.Now(),
 			Metadata: map[string]interface{}{
 				"kind":      "terminal",
-				"source":    "learn_code",
+				"source":    "scripted",
 				"step_id":   stepID,
-				"transport": "learn_code",
+				"transport": "scripted",
 			},
 		},
 	}

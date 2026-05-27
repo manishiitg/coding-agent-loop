@@ -250,21 +250,21 @@ func TestWorkflowMessageSequenceItemTypeInvalidRejected(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// learn_code mode (tightened from the original broken version)
+// scripted mode (tightened from the original broken version)
 
 // TestWorkflowScriptedFastPathRunsPreSeededScript proves the engine's
-// learn_code FAST PATH actually runs a pre-existing main.py — which
-// is the entire point of the mode (controller_learn_code.go:838,
+// scripted FAST PATH actually runs a pre-existing main.py — which
+// is the entire point of the mode (controller_scripted.go:838,
 // tryRunSavedScriptedScript). We:
 //
 //	(1) pre-seed learnings/<step-id>/main.py with a known Python script
 //	    that prints a deterministic token to stdout.
-//	(2) configure the step with declared_execution_mode="learn_code".
+//	(2) configure the step with declared_execution_mode="scripted".
 //	(3) run the workflow.
 //	(4) assert the engine ran the script — proof is the script's token
 //	    in the step's execution_result AND the engine's "Executing
 //	    saved script" branch artifact (execution/code/main.py copied
-//	    from learnings/, see controller_learn_code.go:887).
+//	    from learnings/, see controller_scripted.go:887).
 //
 // This pair of checks is the load-bearing assertion for learn_code:
 // "given a saved script, the engine reuses it instead of calling the
@@ -286,13 +286,13 @@ func TestWorkflowScriptedFastPathRunsPreSeededScript(t *testing.T) {
 
 	// 1) Pre-seed the saved script. The engine's
 	//    hasValidLearnedScriptAPI gate only checks for the file's
-	//    existence (controller_learn_code.go:597) so writing main.py
+	//    existence (controller_scripted.go:597) so writing main.py
 	//    on disk is sufficient — no need to pre-seed metadata.
 	learningsDir := filepath.Join(wo.workspaceDisk, "learnings", stepID)
 	if err := os.MkdirAll(learningsDir, 0o755); err != nil {
 		t.Fatalf("mkdir learnings: %v", err)
 	}
-	// The engine runs reviewMainPyScript (controller_learn_code.go:352)
+	// The engine runs reviewMainPyScript (controller_scripted.go:352)
 	// as a static check before executing main.py. It rejects scripts
 	// that use os.environ.get(KEY, fallback) for required env vars
 	// because fallbacks silently hide misconfiguration. Use the
@@ -310,7 +310,7 @@ with open(os.path.join(out_dir, "computed.txt"), "w") as f:
 		t.Fatalf("seed main.py: %v", err)
 	}
 
-	// 2) Plan + step_config declaring learn_code mode.
+	// 2) Plan + step_config declaring scripted mode.
 	writeEdgePlan(t, wo.workspaceDisk, map[string]interface{}{
 		"steps": []map[string]interface{}{
 			{
@@ -330,7 +330,7 @@ with open(os.path.join(out_dir, "computed.txt"), "w") as f:
 				"title": "Learn-code fast path",
 				"agent_configs": map[string]interface{}{
 					"declared_execution_mode":        "learn_code",
-					"declared_execution_mode_reason": "test fixture pinning learn_code mode",
+					"declared_execution_mode_reason": "test fixture pinning scripted mode",
 					"learning_objective":             "Compute the constant 42 via 6*7.",
 				},
 			},
@@ -350,7 +350,7 @@ with open(os.path.join(out_dir, "computed.txt"), "w") as f:
 	}
 
 	// 4a) Engine copies the saved script to execution/code/main.py
-	//     before running it (controller_learn_code.go:887). Presence
+	//     before running it (controller_scripted.go:887). Presence
 	//     of that copy is proof the fast path triggered.
 	execCodeGlob := filepath.Join(wo.workspaceDisk, "runs", "*", "*", "execution", "*", "code", "main.py")
 	if execMatches, _ := filepath.Glob(execCodeGlob); len(execMatches) == 0 {
@@ -442,9 +442,9 @@ func TestWorkflowScriptedControlNoModeWritesNoScript(t *testing.T) {
 	mainPyPath := filepath.Join(wo.workspaceDisk, "learnings", stepID, "main.py")
 	if _, err := os.Stat(mainPyPath); err == nil {
 		body, _ := os.ReadFile(mainPyPath)
-		t.Fatalf("control: learnings/%s/main.py exists when learn_code mode is NOT declared — engine is writing main.py for plain regular steps. main.py:\n%s", stepID, string(body))
+		t.Fatalf("control: learnings/%s/main.py exists when scripted mode is NOT declared — engine is writing main.py for plain agentic steps. main.py:\n%s", stepID, string(body))
 	}
-	t.Logf("✅ control: no learn_code mode → no main.py written")
+	t.Logf("✅ control: no scripted mode → no main.py written")
 }
 
 // TestWorkflowScriptedStepConfigIDMismatchNotApplied proves that a
@@ -498,7 +498,7 @@ func TestWorkflowScriptedStepConfigIDMismatchNotApplied(t *testing.T) {
 	}
 
 	if _, err := os.Stat(filepath.Join(wo.workspaceDisk, "learnings", planStepID, "main.py")); err == nil {
-		t.Fatalf("learnings/%s/main.py exists — engine applied learn_code mode to the wrong step (step_config.id was \"step-y\")", planStepID)
+		t.Fatalf("learnings/%s/main.py exists — engine applied scripted mode to the wrong step (step_config.id was \"step-y\")", planStepID)
 	}
 	if _, err := os.Stat(filepath.Join(wo.workspaceDisk, "learnings", "step-y", "main.py")); err == nil {
 		t.Fatalf("learnings/step-y/main.py exists — engine wrote artifacts for a step that doesn't appear in plan.json")

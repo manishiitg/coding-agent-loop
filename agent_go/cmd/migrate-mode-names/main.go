@@ -44,10 +44,24 @@ var (
 )
 
 var targetNames = map[string]bool{
-	"step_config.json":      true,
-	"output_plan.json":      true,
-	"script_metadata.json":  true,
+	"step_config.json":     true,
+	"output_plan.json":     true,
+	"script_metadata.json": true,
 }
+
+// Legacy filename rename map (Phase 4): the saved fast-path execution log
+// moved from learn_code_fast_path.json to scripted_fast_path.json. Old runs
+// in workspace-docs/Workflow/.../runs/.../logs/.../execution/ keep the old
+// name on disk; this migration renames them in place.
+var legacyFilenameRenames = map[string]string{
+	"learn_code_fast_path.json": "scripted_fast_path.json",
+}
+
+// Inside the fast-path file the "mode" field also stores the legacy
+// "learn_code_fast_path" marker — rewrite to the canonical name on
+// the way past.
+var fastPathModeOld = []byte(`"mode": "learn_code_fast_path"`)
+var fastPathModeNew = []byte(`"mode": "scripted_fast_path"`)
 
 func main() {
 	dryRun := flag.Bool("dry-run", false, "Show what would change without writing")
@@ -69,12 +83,39 @@ func main() {
 		os.Exit(1)
 	}
 
-	var rewritten, skipped int
+	var rewritten, renamed, skipped int
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
+			return nil
+		}
+		// Phase 4: rename legacy fast-path filenames in place. Also rewrite
+		// the "mode" field inside so the file's self-described marker stays
+		// consistent with its filename.
+		if newName, ok := legacyFilenameRenames[d.Name()]; ok {
+			newPath := filepath.Join(filepath.Dir(path), newName)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "read %s: %v\n", path, err)
+				return nil
+			}
+			out := bytes.ReplaceAll(data, fastPathModeOld, fastPathModeNew)
+			if *dryRun {
+				fmt.Printf("WOULD RENAME: %s -> %s\n", path, newPath)
+			} else {
+				if err := os.WriteFile(newPath, out, 0o644); err != nil {
+					fmt.Fprintf(os.Stderr, "write %s: %v\n", newPath, err)
+					return nil
+				}
+				if err := os.Remove(path); err != nil {
+					fmt.Fprintf(os.Stderr, "remove %s: %v\n", path, err)
+					return nil
+				}
+				fmt.Printf("renamed: %s -> %s\n", path, newPath)
+			}
+			renamed++
 			return nil
 		}
 		if !targetNames[d.Name()] {
@@ -115,5 +156,9 @@ func main() {
 	if *dryRun {
 		verb = "would rewrite"
 	}
-	fmt.Printf("\nDone. %s %d file(s); %d eligible file(s) had no changes to apply.\n", verb, rewritten, skipped)
+	renameVerb := "renamed"
+	if *dryRun {
+		renameVerb = "would rename"
+	}
+	fmt.Printf("\nDone. %s %d file(s); %s %d legacy filename(s); %d eligible file(s) had no changes to apply.\n", verb, rewritten, renameVerb, renamed, skipped)
 }

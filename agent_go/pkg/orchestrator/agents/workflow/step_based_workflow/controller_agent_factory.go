@@ -589,7 +589,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	// Check if TARGET_RUN_PATH variable is set (used for evaluation) and add to read paths
 	// This allows evaluation agents to read the artifacts of the run they are evaluating.
 	// Also grant the parent run folder so evals can reach sibling logs (e.g. logs/<step>/execution/
-	// learn_code_fast_path.json) — under sandbox-exec, stat() on a denied path raises EPERM, which
+	// scripted_fast_path.json) — under sandbox-exec, stat() on a denied path raises EPERM, which
 	// Python surfaces as PermissionError and breaks callers that only guard against FileNotFoundError.
 	if targetRunPath, ok := hcpo.variableValues["TARGET_RUN_PATH"]; ok && targetRunPath != "" {
 		readPaths = append(readPaths, targetRunPath)
@@ -805,7 +805,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for CLI provider '%s' - MCP tools accessed via HTTP bridge", actualProvider))
 	} else if isScripted {
 		config.UseCodeExecutionMode = true
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for learn_code step — LLM needs tool index and get_api_spec to write main.py"))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for scripted step — LLM needs tool index and get_api_spec to write main.py"))
 	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
 		config.UseCodeExecutionMode = *stepConfig.UseCodeExecutionMode
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode: %v", config.UseCodeExecutionMode))

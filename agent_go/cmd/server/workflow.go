@@ -3814,11 +3814,13 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 										})
 
 										entry["executions"] = executions
-									} else if execName == "learn_code_fast_path.json" {
-										// Learn-code fast-path run: saved main.py executed directly without
+									} else if execName == "scripted_fast_path.json" || execName == "learn_code_fast_path.json" {
+										// Scripted fast-path run: saved main.py executed directly without
 										// invoking the LLM. Content shape is documented in
-										// controller_learn_code.go:saveScriptedFastPathLog — includes
-										// success/exit_code/output/error + mode marker "learn_code_fast_path".
+										// controller_scripted.go:saveScriptedFastPathLog — includes
+										// success/exit_code/output/error + mode marker "scripted_fast_path".
+										// Legacy filename learn_code_fast_path.json is still accepted on read
+										// so runs that pre-date the Phase 4 rename keep surfacing in the UI.
 										// Surface as a synthetic execution entry so the UI can render it
 										// alongside LLM attempts; fast_path flag lets the frontend pick a
 										// minimal renderer (no conversation file, no fix loop).

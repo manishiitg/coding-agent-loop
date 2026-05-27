@@ -31,7 +31,7 @@ The learning system has **two active dimensions** per step: `learnings_access` c
 - **Auto-lock fires automatically** once learnings converge, but the exact rule depends on write method: `agent` mode auto-locks after 3 successful runs against the same step-description hash; `direct` mode is stricter and additionally requires the direct learnings turn to report no materially new learning in 2 consecutive runs. Don't pre-emptively set `lock_learnings: true` — the system does it for you.
 - **Auto-unlock fires automatically** when an auto-locked step's description changes. The old frozen learnings are invalidated and the counter restarts. Manual locks (set by a human without an `auto_locked_at` metadata record) are preserved across description edits.
 - **Global Skill Objective**: set `global_skill_objective` in `execution_defaults` to describe what reusable HOW knowledge the skill should accumulate — e.g. *"Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably."* Every learning contribution is guided by this objective.
-- **learn_code steps**: usually `learnings_access: "read"` (not `"read-write"`). The saved `learnings/{step-id}/main.py` IS the learned artifact — the HOW is encoded as code. Opt into write only when there's cross-step HOW knowledge the script itself can't capture (e.g. operator notes, patterns spanning multiple steps).
+- **scripted steps**: usually `learnings_access: "read"` (not `"read-write"`). The saved `learnings/{step-id}/main.py` IS the learned artifact — the HOW is encoded as code. Opt into write only when there's cross-step HOW knowledge the script itself can't capture (e.g. operator notes, patterns spanning multiple steps).
 - **Clearing a bad setting**: if a step was miss-configured with `learnings_access: "read-write"` but shouldn't contribute, clear it via `update_step_config(step_id, clear_fields=["learnings_access", "learning_objective"])`.
 
 #### The Three Locks — What They Freeze and When To Use
@@ -41,7 +41,7 @@ Mature workflows accumulate three kinds of state that you can freeze independent
 | Lock | Scope | Freezes | Prevents | Use when |
 | --- | --- | --- | --- | --- |
 | `lock_learnings` | Per-step | `learnings/_global/SKILL.md` content the step relies on | Learning agent from updating SKILL.md after this step runs | **Auto-set** after learnings converge. In `agent` mode: 3 successful runs with the same description hash. In `direct` mode: same threshold plus 2 consecutive no-new-learning outcomes from the direct learnings turn. **Auto-cleared** when the description changes (for auto-locked steps). Manually set only when you hand-edited SKILL.md and want your edits preserved regardless of description changes. |
-| `lock_code` | Per-step (learn_code only) | `learnings/{step-id}/main.py` | Execution-agent rewrites on failure, fast-path repair loop, and learning-agent replacement of the script | The user explicitly wanted `learn_code`, the step is highly deterministic, and script/eval evidence shows 10+ successful scenario-covering runs. Hand-patched scripts still need this evidence before freezing, otherwise keep `lock_code=false` so repair can continue. |
+| `lock_code` | Per-step (scripted only) | `learnings/{step-id}/main.py` | Execution-agent rewrites on failure, fast-path repair loop, and learning-agent replacement of the script | The user explicitly wanted `scripted`, the step is highly deterministic, and script/eval evidence shows 10+ successful scenario-covering runs. Hand-patched scripts still need this evidence before freezing, otherwise keep `lock_code=false` so repair can continue. |
 | `lock_knowledgebase` | Workflow-level | `knowledgebase/notes/` auto-updates after step completions | Post-step KB update agent from firing across ALL steps (reads still work) | Domain knowledge has stabilized — keep `improve_kb` for intentional curation but stop paying per-step LLM cost |
 
 **Rule of thumb after hand-editing an artifact**: always lock the matching artifact immediately. Otherwise the corresponding agent will overwrite your edit on the next run.
@@ -74,16 +74,16 @@ You can read, edit, and delete them using **execute_shell_command** and **diff_p
 - **Lock after editing**: Always suggest lock_learnings=true after manual edits to prevent the learning agent from overwriting.
 - **Legacy migration**: If you find '*_learning.md' files (old format) instead of SKILL.md, migrate their content into a new SKILL.md with proper frontmatter and delete the legacy files.
 
-### 3b. Debugging & Fixing Scripted Code Steps (learn_code)
+### 3b. Debugging & Fixing Scripted Code Steps (scripted)
 
 When patching `learnings/{step-id}/main.py`, also load the full main.py authoring rules:
 `get_reference_doc(kind="code-authoring")` — covers env access, sys.argv contract, data authenticity, logging, robustness, patching discipline.
 
-For steps in learn_code mode, the saved Python script at `learnings/{step-id}/main.py` is the primary artifact. When a scripted step fails, follow this workflow:
+For steps in scripted mode, the saved Python script at `learnings/{step-id}/main.py` is the primary artifact. When a scripted step fails, follow this workflow:
 
 **1. Diagnose** — Understand what went wrong:
 - Read the script: `cat learnings/{step-id}/main.py`
-- Read the execution log: `cat runs/{iteration}/{group}/logs/{step-id}/execution/learn_code_fast_path.json` — contains exit_code, stdout output, and error
+- Read the execution log: `cat runs/{iteration}/{group}/logs/{step-id}/execution/scripted_fast_path.json` — contains exit_code, stdout output, and error
 - Read script_metadata.json: `cat learnings/{step-id}/script_metadata.json` — shows recent_runs (last 10 with error snippets), per-group stats, duration trends, last failure details, and success/failure streak
 - Check pre-validation results: `cat runs/{iteration}/{group}/logs/{step-id}/pre_validation.json`
 - Use `debug_step(step_id)` for a comprehensive analysis including the script metadata
@@ -112,7 +112,7 @@ For steps in learn_code mode, the saved Python script at `learnings/{step-id}/ma
 
 **5. Lock** — After confirming the fix works:
 - `update_step_config(step_id, lock_learnings=true)` to prevent the learning agent from overwriting the SKILL.md notes that guided your fix.
-- `update_step_config(step_id, lock_code=true)` to freeze `learnings/{step-id}/main.py` itself only after the learn_code gate is satisfied: explicit user request, highly deterministic behavior, and 10+ successful scenario-covering runs with eval/metric evidence at target. With `lock_code=true`, the script is used as-is on every run: the fix loop cannot rewrite it, and the execution agent will never replace it after a failure.
+- `update_step_config(step_id, lock_code=true)` to freeze `learnings/{step-id}/main.py` itself only after the scripted gate is satisfied: explicit user request, highly deterministic behavior, and 10+ successful scenario-covering runs with eval/metric evidence at target. With `lock_code=true`, the script is used as-is on every run: the fix loop cannot rewrite it, and the execution agent will never replace it after a failure.
 - **Do not lock code just because you hand-patched it.** After a hand-fix, keep `lock_code=false` until the script proves stable across the 10+ run scenario surface. `lock_learnings=true` can still freeze the WHY (SKILL.md) when the learning notes are correct.
 
 **Key principle**: Always edit `learnings/{step-id}/main.py`, never `execution/{step-id}/code/main.py`. The execution copy is overwritten from learnings on every run.
@@ -190,18 +190,18 @@ After running a step, review it for optimization — but follow this priority or
 
 When the user runs a step, briefly note the highest-priority improvement needed. Don't dump all dimensions at once — focus on what matters most right now.
 
-### 7. Execution Modes: Code Exec vs Learn Code
+### 7. Execution Modes: Agentic vs Scripted
 
-Steps have two execution modes — set via **update_step_config(step_id, use_code_execution_mode=true, declared_execution_mode="learn_code"|"code_exec")**:
+Steps have two execution modes — set via **update_step_config(step_id, use_code_execution_mode=true, declared_execution_mode="scripted"|"agentic")**:
 
-- **Learn Code mode** (declared_execution_mode="learn_code"): Agent writes a reusable `main.py` that is saved and tried first on future runs (0 LLM tokens when stable). If the saved script fails, the LLM repairs it. **Do not use this as the default optimization path.** Promote to this mode only when ALL conditions hold: the user explicitly asked for scripted/learn_code execution for this step; the step is highly deterministic; and there is broad stability evidence, normally 10+ successful runs across the relevant variable groups/scenarios with eval/metric evidence still at target. Good candidates after those gates:
+- **Scripted mode** (declared_execution_mode="scripted"): Agent writes a reusable `main.py` that is saved and tried first on future runs (0 LLM tokens when stable). If the saved script fails, the LLM repairs it. **Do not use this as the default optimization path.** Promote to this mode only when ALL conditions hold: the user explicitly asked for scripted execution for this step; the step is highly deterministic; and there is broad stability evidence, normally 10+ successful runs across the relevant variable groups/scenarios with eval/metric evidence still at target. Good candidates after those gates:
   - The step needs to combine multiple tool calls with logic (loops, conditionals, data transformation)
   - The step processes data that benefits from Python libraries (parsing, calculations, formatting)
   - The step needs to orchestrate several tools together in a single script
   - Deterministic data processing: iterating rows, matching columns, extracting/transforming data — a Python loop handles it reliably in one shot without the agent needing to "think" through each row
-- **Code Execution mode** (declared_execution_mode="code_exec"): LLM writes and runs code inline each time — no persistent script is saved. Use when the work varies too much between runs to stabilize into a reusable script, or when the step requires adaptive reasoning. Browser/UI steps should generally stay here unless the user explicitly wants scripted browser automation and 10+ scenario-covering successful runs prove the flow is stable enough to freeze into `main.py` (durable selectors, predictable navigation, low semantic branching). If a code_exec step has leftover `learnings/{step-id}/main.py`, delete it; that file is stale mode debt and should not be patched.
+- **Agentic mode** (declared_execution_mode="agentic"): the default. The LLM acts each turn — it picks tools, can run inline shell/Python via `execute_shell_command` when consolidating multiple operations is useful, and can also just call MCP tools directly when one tool call is enough. No persistent script is saved. Use this mode when the work varies between runs, when adaptive reasoning is needed, or when the step is a single tool call where writing a script would be overkill. Browser/UI steps should generally stay here unless the user explicitly wants scripted browser automation and 10+ scenario-covering successful runs prove the flow is stable enough to freeze into `main.py`. If an agentic step has leftover `learnings/{step-id}/main.py`, delete it; that file is stale mode debt and should not be patched.
 
-**Promotion rule:** Builder-created steps should arrive here as `code_exec`. Promote a step to `learn_code` only when the user explicitly asks, the step is very deterministic, and run evidence covers enough scenarios to trust the saved script (normally 10+ successful runs across the relevant groups/scenarios with eval/metric evidence at target). A `learn_code` script written before stability is proven will need repeated repair on every drift, and `lock_code` accidents become harder to unwind. If any of the three gates is missing, keep `code_exec` and improve descriptions, validation, learnings, or tool usage instead.
+**Promotion rule:** Builder-created steps should arrive here as `agentic`. Promote a step to `scripted` only when the user explicitly asks, the step is very deterministic, and run evidence covers enough scenarios to trust the saved script (normally 10+ successful runs across the relevant groups/scenarios with eval/metric evidence at target). A `scripted` script written before stability is proven will need repeated repair on every drift, and `lock_code` accidents become harder to unwind. If any of the three gates is missing, keep `agentic` and improve descriptions, validation, learnings, or tool usage instead.
 
 **Mode declaration is required**: Every executable step should store:
 - `declared_execution_mode`
@@ -229,14 +229,14 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 - If significant changes were applied, re-run the workflow to verify, then update description_reviewed/review_notes only once the new behavior passes consistently.
 - If you make major changes to the step description, tools, or validation schema, clear stale locks in the same call: `update_step_config(step_id, lock_learnings=false, lock_code=false, description_reviewed=false)`.
 
-**When you lock a learn_code step, lock its code only after strong evidence**:
-- `update_step_config(step_id, lock_learnings=true, lock_code=true)` — only after the user explicitly wanted `learn_code`, the step is highly deterministic, and `script_metadata.json` / eval evidence shows 10+ successful runs across the groups/scenarios you care about. Without `lock_code`, a single transient failure can trigger the fix loop to rewrite a script that was actually working, but premature locking freezes drift and is harder to unwind.
+**When you lock a scripted step, lock its code only after strong evidence**:
+- `update_step_config(step_id, lock_learnings=true, lock_code=true)` — only after the user explicitly wanted `scripted`, the step is highly deterministic, and `script_metadata.json` / eval evidence shows 10+ successful runs across the groups/scenarios you care about. Without `lock_code`, a single transient failure can trigger the fix loop to rewrite a script that was actually working, but premature locking freezes drift and is harder to unwind.
 - Only lock code when the script has been stable across multiple runs AND multiple groups (if the workflow is multi-group). Flaky scripts should be fixed first, not frozen.
 
-**`lock_learnings` is independent of `learn_code`**:
-- It is valid to recommend `lock_learnings=true` while a step remains `code_exec`.
-- A step does not need to migrate to `learn_code` before its shared SKILL.md guidance is mature enough to freeze.
-- This is often the right sequence for browser steps: keep execution mode as `code_exec`, stabilize and lock the shared learnings first, and only consider `learn_code` later if the user explicitly wants it and the browser flow proves durable enough to script.
+**`lock_learnings` is independent of `scripted`**:
+- It is valid to recommend `lock_learnings=true` while a step remains `agentic`.
+- A step does not need to migrate to `scripted` before its shared SKILL.md guidance is mature enough to freeze.
+- This is often the right sequence for browser steps: keep execution mode as `agentic`, stabilize and lock the shared learnings first, and only consider `scripted` later if the user explicitly wants it and the browser flow proves durable enough to script.
 
 **When the knowledgebase stops changing, lock it workflow-wide**:
 - After several successful runs where the post-step KB update agent produces only trivial/no-op edits under `knowledgebase/notes/`, set `update_workflow_config(lock_knowledgebase=true)`. Reads keep working; the automatic writer stops. This is a pure cost-saver — no output quality regression.
@@ -273,14 +273,14 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 
 **Rule of thumb:** When planning a new workflow, start by identifying the distinct tasks, then group related tasks into todo_task steps with sub-agents. Only use regular steps for truly simple, single-purpose tasks.
 
-### 9a. Orchestrator learn_code mode (deterministic delegation, 0 LLM tokens)
+### 9a. Orchestrator scripted mode (deterministic delegation, 0 LLM tokens)
 
-When a todo_task orchestrator's flow is **stable and deterministic** — the set of sub-agent calls is known in advance and branches only on success/failure — you may author a `main.py` and mark the step `declared_execution_mode=learn_code` only if the user explicitly asks for this fast path and 10+ successful runs across the relevant scenarios/groups prove the route behavior is stable. At runtime the script runs first; any failure falls back to the normal LLM orchestrator with a fresh start.
+When a todo_task orchestrator's flow is **stable and deterministic** — the set of sub-agent calls is known in advance and branches only on success/failure — you may author a `main.py` and mark the step `declared_execution_mode=scripted` only if the user explicitly asks for this fast path and 10+ successful runs across the relevant scenarios/groups prove the route behavior is stable. At runtime the script runs first; any failure falls back to the normal LLM orchestrator with a fresh start.
 
-**Unlike regular-step learn_code, the orchestrator path is read-only at runtime**: you (the builder) write `learnings/{step-id}/main.py` once, and the runtime never repairs or rewrites it. There is no fix loop, no save-back. Script failures are surfaced so you can regenerate `main.py` manually if needed.
+**Unlike regular-step scripted, the orchestrator path is read-only at runtime**: you (the builder) write `learnings/{step-id}/main.py` once, and the runtime never repairs or rewrites it. There is no fix loop, no save-back. Script failures are surfaced so you can regenerate `main.py` manually if needed.
 
 **Eligibility (hard constraints, enforced at runtime):**
-- `declared_execution_mode="learn_code"` on the todo_task step (set via `update_step_config(step_id, declared_execution_mode="learn_code")`)
+- `declared_execution_mode="scripted"` on the todo_task step (set via `update_step_config(step_id, declared_execution_mode="scripted")`)
 - `len(predefined_routes) >= 1` — route IDs the script may reference
 
 Either missing → the script is never attempted, even if `main.py` exists.
@@ -293,11 +293,11 @@ Either missing → the script is never attempted, even if `main.py` exists.
 **When NOT to pick it:**
 - The orchestrator must decide per item whether to delegate or skip based on semantic inspection of prior results
 - The flow needs ad-hoc generic-agent calls — keep the step on the normal LLM path
-- Only one predefined route exists *and* the flow is a single call — make it a regular learn_code step instead; the orchestrator shell adds no value
+- Only one predefined route exists *and* the flow is a single call — make it a regular scripted step instead; the orchestrator shell adds no value
 
 **Authoring `main.py`:**
 
-Write the script to `learnings/{step-id}/main.py` using the same bridge conventions as regular learn_code steps, with one addition — sub-agent delegation goes through the workflow's custom tool endpoint:
+Write the script to `learnings/{step-id}/main.py` using the same bridge conventions as regular scripted steps, with one addition — sub-agent delegation goes through the workflow's custom tool endpoint:
 
 ```python
 import os, json, requests
@@ -321,7 +321,7 @@ Rules:
 - Only `call_sub_agent` is allowed — never call `call_generic_agent`, never run arbitrary shell or MCP tools directly. If you need a different tool, add it as a new predefined route.
 - `route_id` values must match one of the step's `predefined_routes` — unknown route IDs will fail at runtime.
 - Let unhandled exceptions bubble up. A non-zero exit is the fallback signal — the runtime drops to the LLM orchestrator with no script state carried over. Do not wrap everything in `try/except` that swallows failures; that makes fallback undetectable.
-- Read context dependencies from `sys.argv` (same convention as regular learn_code). Write final outputs to `os.environ['STEP_OUTPUT_DIR']` if the step has a validation_schema.
+- Read context dependencies from `sys.argv` (same convention as regular scripted). Write final outputs to `os.environ['STEP_OUTPUT_DIR']` if the step has a validation_schema.
 - Set a `validation_schema` on the orchestrator step so fast-path success is deterministically verifiable (artifact presence). Without one, any exit-zero script is treated as success.
 
 **Fallback behavior (what happens when the script fails):**

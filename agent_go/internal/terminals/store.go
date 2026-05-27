@@ -34,7 +34,7 @@ type Snapshot struct {
 	StepTotal         int        `json:"step_total,omitempty"`
 	ParentStepID      string     `json:"parent_step_id,omitempty"`
 	StepAttempt       int        `json:"step_attempt,omitempty"`
-	StepExecutionMode string     `json:"step_execution_mode,omitempty"` // "learn_code" | "code_exec"
+	StepExecutionMode string     `json:"step_execution_mode,omitempty"` // "scripted" | "agentic" (legacy: "learn_code" | "code_exec")
 	StepTransport     string     `json:"step_transport,omitempty"`      // "tmux" | "structured"
 	StepTriggeredBy   string     `json:"step_triggered_by,omitempty"`   // e.g., "workflow_executor", "parent_step:X"
 	AgentName         string     `json:"agent_name,omitempty"`

@@ -113,7 +113,7 @@ type ContextAwareEventBridge struct {
 	currentStepTotal     int    // Total number of steps in the plan
 	currentParentStepID  string // ID of the step that triggered this one (nested/sub-agents)
 	currentAttempt       int    // 1-based retry counter for this step
-	currentExecutionMode string // "learn_code" | "code_exec" — the declared execution mode
+	currentExecutionMode string // "scripted" | "agentic" — the declared execution mode (legacy: "learn_code" | "code_exec")
 	currentTransport     string // "tmux" | "structured" — coding-agent CLI transport for this step
 	currentTriggeredBy   string // What invoked this step: "workflow_executor" | "run_full_workflow" | "execute_step" | "parent_step:X"
 
@@ -194,7 +194,7 @@ type RichStepContext struct {
 	StepTotal     int    // Total steps in the plan
 	ParentStepID  string // Triggering step id (nested workflow / sub-agent)
 	Attempt       int    // 1-based retry counter
-	ExecutionMode string // "learn_code" | "code_exec"
+	ExecutionMode string // "scripted" | "agentic" (legacy: "learn_code" | "code_exec")
 	Transport     string // "tmux" | "structured"
 	TriggeredBy   string // "workflow_executor" | "run_full_workflow" | "execute_step" | "parent_step:X"
 }

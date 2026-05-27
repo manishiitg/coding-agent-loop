@@ -489,7 +489,12 @@ func captureTerminalPaneLines(ctx context.Context, tmuxSession string, lines int
 	if lines > terminalMaxCaptureLines {
 		lines = terminalMaxCaptureLines
 	}
-	content, err := runTerminalTmuxOutputCommand(ctx, "capture-pane", "-p", "-t", tmuxSession, "-S", fmt.Sprintf("-%d", lines))
+	// -e preserves ANSI SGR (color, bold, dim, …) so the frontend can colorize
+	// the snapshot via ansi_up. Mirrors the captureXPaneForDisplay flag used
+	// by the live-stream path in multi-llm-provider-go; without it, terminal
+	// refresh / completion fetches would silently strip color even though the
+	// running session was emitting it.
+	content, err := runTerminalTmuxOutputCommand(ctx, "capture-pane", "-p", "-e", "-t", tmuxSession, "-S", fmt.Sprintf("-%d", lines))
 	if err != nil {
 		return "", fmt.Errorf("failed to capture terminal pane: %w", err)
 	}

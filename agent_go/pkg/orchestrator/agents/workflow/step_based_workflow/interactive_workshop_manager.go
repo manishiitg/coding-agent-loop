@@ -265,8 +265,34 @@ func collectInnerSteps(step PlanStepInterface) []WorkshopStepInfo {
 	return result
 }
 
+// StepModeAgentic is the canonical mode name for steps where the LLM acts
+// each turn with tools available (the default). Previously called
+// "code_exec" — the old name biased agents toward writing Python scripts
+// when a tool call would do. "Agentic" describes the actual behavior:
+// the LLM decides each turn what to call. Old name is still accepted on
+// read for backward compatibility with persisted configs.
+const StepModeAgentic = "agentic"
+
+// StepModeScripted is the canonical mode name for steps that author a
+// reusable main.py saved at learnings/{step-id}/main.py, replayed
+// deterministically on future runs. Previously called "learn_code".
+// The on-disk directory name remains "learnings/" — the mode label and
+// the directory are decoupled. Old name is still accepted on read.
+const StepModeScripted = "scripted"
+
+// canonicalDeclaredExecutionMode normalizes the declared execution mode
+// string. It accepts both the new canonical names ("agentic", "scripted")
+// and the legacy names ("code_exec", "learn_code") on input, always
+// returning the canonical form. Empty input returns empty.
 func canonicalDeclaredExecutionMode(mode string) string {
-	return strings.TrimSpace(mode)
+	switch strings.TrimSpace(mode) {
+	case "code_exec", StepModeAgentic:
+		return StepModeAgentic
+	case "learn_code", StepModeScripted:
+		return StepModeScripted
+	default:
+		return strings.TrimSpace(mode)
+	}
 }
 
 // isScriptedExecutionModeConfig returns true when the step is in learn_code mode
@@ -278,7 +304,7 @@ func isScriptedExecutionModeConfig(cfg *AgentConfigs) bool {
 	if cfg == nil {
 		return false
 	}
-	return cfg.DeclaredExecutionMode == "learn_code"
+	return canonicalDeclaredExecutionMode(cfg.DeclaredExecutionMode) == StepModeScripted
 }
 
 // isOrchestratorLearnCodeEligible gates the todo_task fast path: the builder-authored
@@ -304,15 +330,15 @@ func syncDeclaredExecutionModeConfig(cfg *AgentConfigs) {
 	}
 
 	switch canonicalDeclaredExecutionMode(cfg.DeclaredExecutionMode) {
-	case "code_exec":
+	case "agentic":
 		trueVal := true
-		cfg.DeclaredExecutionMode = "code_exec"
+		cfg.DeclaredExecutionMode = "agentic"
 		cfg.UseCodeExecutionMode = &trueVal
 		falseVal := false
 		cfg.LockCode = &falseVal
-	case "learn_code":
+	case "scripted":
 		trueVal := true
-		cfg.DeclaredExecutionMode = "learn_code"
+		cfg.DeclaredExecutionMode = "scripted"
 		cfg.UseCodeExecutionMode = &trueVal
 	}
 }
@@ -2997,7 +3023,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						}
 					}
 					if isLearnCodeStep {
-						inputData["workshop_mode"] = "learn_code"
+						inputData["workshop_mode"] = "scripted"
 						inputData["IsLearnCodeMode"] = "true"
 					}
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
@@ -3707,11 +3733,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// === Builder tools: config, optimization, learning ===
 
 	// Tool 4: update_step_config — update step_config.json for a specific step
-	declaredExecutionModeEnum := []interface{}{"code_exec", "learn_code"}
+	declaredExecutionModeEnum := []interface{}{"agentic", "scripted"}
 	declaredExecutionModeDescription := "Required mode declaration for this step. Always set this intentionally so the optimizer records the final decision explicitly. Workshop mode accepts only code_exec. In Workshop mode, set learn_code only when the user explicitly asked for it, the step is highly deterministic, and 10+ successful runs across relevant scenarios/groups prove the saved script is safe."
 	lockCodeDescription := "If true, lock the saved main.py script — prevents LLM-rewritten scripts from being saved back to learnings, and skips the fix loop (falls back directly to code_exec mode). Only applies to learn_code steps. Use only when the user explicitly wanted learn_code, the script is deterministic, and script_metadata/eval evidence shows 10+ successful scenario-covering runs."
 	if iwm.currentWorkshopModeFromConfigs(nil) == "builder" {
-		declaredExecutionModeEnum = []interface{}{"code_exec"}
+		declaredExecutionModeEnum = []interface{}{"agentic"}
 		declaredExecutionModeDescription = "Workshop mode only accepts code_exec. Create and debug the workflow with code_exec steps; learn_code promotion requires Workshop mode and requires explicit user request plus 10+ scenario-covering successful runs."
 		lockCodeDescription = "Unavailable in Workshop mode. Workshop creates and debugs code_exec steps; lock_code freezes learn_code main.py scripts and requires workshop mode plus explicit user intent plus 10+ scenario-covering successful runs prove the script is stable. Passing lock_code=true without the learn_code promotion gate is rejected."
 	}
@@ -3903,8 +3929,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			workshopMode := iwm.currentWorkshopModeFromConfigs(configs)
 			if workshopMode == "builder" {
 				if val, ok := args["declared_execution_mode"]; ok && val != nil {
-					if s, ok := val.(string); ok && s == "learn_code" {
-						return "Workshop mode only creates and debugs code_exec steps. Use declared_execution_mode=\"code_exec\" here. Learn_code promotion requires Workshop mode and requires explicit user request plus 10+ scenario-covering successful runs.", nil
+					if s, ok := val.(string); ok && canonicalDeclaredExecutionMode(s) == StepModeScripted {
+						return "Workshop mode only creates and debugs agentic steps. Use declared_execution_mode=\"agentic\" here. Promotion to scripted mode requires Workshop mode plus explicit user request plus 10+ scenario-covering successful runs.", nil
 					}
 				}
 				if val, ok := args["lock_code"]; ok && val != nil {
@@ -4346,7 +4372,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			cleanupStaleMainPy := targetConfig.AgentConfigs != nil &&
-				canonicalDeclaredExecutionMode(targetConfig.AgentConfigs.DeclaredExecutionMode) == "code_exec"
+				canonicalDeclaredExecutionMode(targetConfig.AgentConfigs.DeclaredExecutionMode) == "agentic"
 
 			// Write updated configs back to the matching durable config file.
 			if err := iwm.controller.WriteStepConfigsToSubdir(ctx, configSubdir, configs); err != nil {
@@ -9976,7 +10002,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
 		var sb strings.Builder
 		for _, sc := range stepConfigs {
-			mode := "code_exec"
+			mode := "agentic"
 			declaredMode := ""
 			successfulRuns := 0
 			lockLearnings := false
@@ -9992,7 +10018,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 			descriptionReviewed := false
 			if sc.AgentConfigs != nil {
 				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
-					mode = "learn_code"
+					mode = "scripted"
 				}
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
 				if sc.AgentConfigs.SuccessfulRuns != nil {
@@ -10104,7 +10130,7 @@ func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Co
 	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
 		var sb strings.Builder
 		for _, sc := range stepConfigs {
-			mode := "code_exec"
+			mode := "agentic"
 			declaredMode := ""
 			successfulRuns := 0
 			lockLearnings := false
@@ -10116,7 +10142,7 @@ func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Co
 			reviewNotes := ""
 			if sc.AgentConfigs != nil {
 				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
-					mode = "learn_code"
+					mode = "scripted"
 				}
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
 				if sc.AgentConfigs.SuccessfulRuns != nil {
@@ -10232,14 +10258,14 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowResultsAgent(ctx context
 	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
 		var sb strings.Builder
 		for _, sc := range stepConfigs {
-			mode := "code_exec"
+			mode := "agentic"
 			declaredMode := ""
 			successfulRuns := 0
 			lockLearnings := false
 			lockCode := false
 			if sc.AgentConfigs != nil {
 				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
-					mode = "learn_code"
+					mode = "scripted"
 				}
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
 				if sc.AgentConfigs.SuccessfulRuns != nil {
@@ -10335,14 +10361,14 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowTimingAgent(ctx context.
 	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
 		var sb strings.Builder
 		for _, sc := range stepConfigs {
-			mode := "code_exec"
+			mode := "agentic"
 			declaredMode := ""
 			successfulRuns := 0
 			lockLearnings := false
 			lockCode := false
 			if sc.AgentConfigs != nil {
 				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
-					mode = "learn_code"
+					mode = "scripted"
 				}
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
 				if sc.AgentConfigs.SuccessfulRuns != nil {
@@ -10438,14 +10464,14 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowCostsAgent(ctx context.C
 	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
 		var sb strings.Builder
 		for _, sc := range stepConfigs {
-			mode := "code_exec"
+			mode := "agentic"
 			declaredMode := ""
 			successfulRuns := 0
 			lockLearnings := false
 			lockCode := false
 			if sc.AgentConfigs != nil {
 				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
-					mode = "learn_code"
+					mode = "scripted"
 				}
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
 				if sc.AgentConfigs.SuccessfulRuns != nil {
@@ -10715,11 +10741,11 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
 		var sb strings.Builder
 		for _, sc := range stepConfigs {
-			mode := "code_exec"
+			mode := "agentic"
 			declaredMode := ""
 			if sc.AgentConfigs != nil {
 				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
-					mode = "learn_code"
+					mode = "scripted"
 				}
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
 			}
@@ -10812,7 +10838,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
 		var sb strings.Builder
 		for _, sc := range stepConfigs {
-			mode := "code_exec"
+			mode := "agentic"
 			declaredMode := ""
 			successfulRuns := 0
 			lockLearnings := false
@@ -10826,7 +10852,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 			reviewNotes := ""
 			if sc.AgentConfigs != nil {
 				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
-					mode = "learn_code"
+					mode = "scripted"
 				}
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
 				if sc.AgentConfigs.SuccessfulRuns != nil {

@@ -35,7 +35,7 @@ PHASE 1 — OUTPUT + METRIC REVIEW
 6. Inspect KB/learnings/report/db only when the evidence points there:
    - knowledgebase/context/context.md for user-supplied runtime context that steps may be ignoring; when a step needs it, the fix must update both `knowledgebase_access` and the step description so it names the relevant context section/path
    - knowledgebase/notes/_index.json + topic files for stale, duplicate, missing, or contradictory workflow-discovered context
-   - learnings/_global/SKILL.md and learnings/<step-id>/script_metadata.json for stale rules, missing learning objectives, or code_exec steps with leftover main.py
+   - learnings/_global/SKILL.md and learnings/<step-id>/script_metadata.json for stale rules, missing learning objectives, or agentic steps with leftover main.py
    - db/*.json for broken data contracts or write/read drift
    - reports/report_plan.json for dashboard/report wiring that hides important metric/eval evidence
 7. List the top 1-3 candidate actions. Each candidate must name the evidence and the expected metric/success-criteria impact. Include eval-plan improvement as a candidate when the workflow output cannot be trusted because evaluation coverage, scoring, structured output, or metric-to-eval wiring is weak.
@@ -44,12 +44,12 @@ PHASE 2 — CLASSIFY
 Use this decision model. Classify the evidence first, then choose the smallest action that matches the failure. If primary metrics stay below target after measurement and local reliability are healthy, treat that as a replan/strategy signal.
 
 1. **Harden** when the workflow path is basically right, but execution quality or artifact wiring is weak.
-   Examples: bad tool args, prompt ambiguity, missing validation, stale code_exec main.py, invalid lock state, missing learning objective, KB/db/report contract mismatch, metric source resolve_error caused by eval/config drift, hardcoded user-specific values.
+   Examples: bad tool args, prompt ambiguity, missing validation, stale agentic main.py, invalid lock state, missing learning objective, KB/db/report contract mismatch, metric source resolve_error caused by eval/config drift, hardcoded user-specific values.
    Action: call `harden_workflow(group_name?, focus?)`.
 
 2. **Replan** when the workflow path is misaligned with the objective, success criteria, or outcome metrics.
    Examples: wrong business work, missing required capability, wrong output artifact, wrong evidence collected, step ordering/boundaries prevent success, outputs still miss a criterion after local hardening, or primary outcome metrics remain weak across retained runs while secondary reliability/guardrail metrics are healthy.
-   Action: call `replan_workflow_from_results(group_name?, focus?)`. If the replan keeps or converts any step to `code_exec`, ensure stale `learnings/<step-id>/main.py` is removed so future agents do not confuse ephemeral code_exec with reusable learn_code.
+   Action: call `replan_workflow_from_results(group_name?, focus?)`. If the replan keeps or converts any step to `agentic`, ensure stale `learnings/<step-id>/main.py` is removed so future agents do not confuse ephemeral agentic with reusable scripted.
 
 3. **Eval-plan improvement** when the workflow behavior may be fine or unknown, but the measurement layer is weak.
    Examples: success criterion has no eval coverage, eval rationale contradicts the visible output, scoring is too lenient/strict, eval structured output does not expose fields used by metrics, eval step lacks a validation schema, or eval reports give false confidence.

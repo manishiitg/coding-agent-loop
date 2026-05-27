@@ -133,8 +133,8 @@ End your response with exactly one of:
 var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
 {{.OrchestratorInstructions}}
 {{else}}**DESCRIPTION**: {{.BaseDescription}}
-{{end}}{{if eq .IsLearnCodeMode "true"}}**CODE EXEC NOTE**: Implement the task below as reusable Python code. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
-{{else}}**CODE EXEC NOTE**: This step is running in normal `+"`"+`code_exec`+"`"+` mode, not `+"`"+`learn_code`+"`"+`. Do **not** try to write one large reusable Python script for the whole task. Prefer calling the available tools and APIs step by step to inspect state, fetch data, and produce outputs. Batching API calls is fine when it improves performance, but keep it task-focused for this run rather than turning it into a reusable `+"`"+`main.py`+"`"+` authoring exercise. Use short one-off shell or Python snippets only when they materially help a specific subtask.
+{{end}}{{if eq .IsLearnCodeMode "true"}}**MODE NOTE (scripted)**: Implement the task below as reusable Python code saved to `+"`"+`learnings/{step-id}/main.py`+"`"+`. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
+{{else}}**MODE NOTE (agentic)**: This step is running in normal `+"`"+`agentic`+"`"+` mode, not `+"`"+`scripted`+"`"+`. **Tool calls come first.** Call the available tools and APIs directly to inspect state, fetch data, and produce outputs. Do **not** try to write one large reusable Python script for the whole task — that is what `+"`"+`scripted`+"`"+` mode is for, which this step is not in. Use short one-off shell or Python snippets via `+"`"+`execute_shell_command`+"`"+` only when consolidating several tool calls into one materially helps a specific subtask (e.g. batching API calls, parsing JSON with `+"`"+`jq`+"`"+`). A single tool call is a perfectly valid step.
 {{end}}**LOCATION**: {{.StepExecutionPath}}/ (Workspace: {{.WorkspacePath}})
 
 {{if .PreviousIterationOutput}}
@@ -151,7 +151,7 @@ You MUST incorporate it into this run. It takes priority over the default step d
 {{.WorkshopHumanInput}}
 {{end}}
 
-{{/* Only renders on learn_code retries. Pure code_exec pre-validation failures
+{{/* Only renders on scripted retries. Pure agentic pre-validation failures
      take the continuation path (buildValidationContinuationUserMessage), which
      sends a follow-up user message instead of re-rendering this template. */}}
 {{if .ValidationFeedback}}

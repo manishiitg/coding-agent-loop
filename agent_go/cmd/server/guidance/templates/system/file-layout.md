@@ -30,7 +30,7 @@ All paths below are relative to the workspace root (prepend the absolute root wh
 | runs/{iter}/{group}/logs/{step-id}/execution/*-conversation.json | Full conversation log: `conversation_history` (messages) + `tool_calls[]` (each with `tool_name`, `args`, `result`, `duration`) |
 | runs/{iter}/{group}/logs/{step-id}/execution/*-iteration-*.json | Execution summary: model, result text, step path, `duration_ms`, `llm_call_count`, `llm_duration_ms`, `tool_call_count`, `tool_duration_ms` |
 | runs/{iter}/{group}/logs/{step-id}/execution/*-timing.json | **Clear timing breakdown**: read `agent.*` for agent wall-clock, `llm.*` for LLM timing (`time_to_first_response_ms`, `time_to_first_content_ms`, `time_to_first_tool_call_ms`), and `tools.calls[]` for per-tool durations/offsets |
-| runs/{iter}/{group}/logs/{step-id}/execution/learn_code_fast_path.json | **learn_code steps**: main.py result — `exit_code`, `output` (stdout), `error`, `success`, `script_path` |
+| runs/{iter}/{group}/logs/{step-id}/execution/scripted_fast_path.json | **scripted steps**: main.py result — `exit_code`, `output` (stdout), `error`, `success`, `script_path` |
 | runs/{iter}/{group}/logs/{step-id}/pre_validation.json | Pre-validation result: `overall_pass`, `errors[]`, `files_checked[]`, `schema_used` |
 
 ### Best Way To Read Timing
@@ -55,7 +55,7 @@ Use this order when debugging latency:
 ### Learnings (persistent across runs)
 | Path | Contents |
 |------|----------|
-| learnings/{step-id}/main.py | **learn_code steps**: saved Python script — executed on each scripted run via fast path |
+| learnings/{step-id}/main.py | **scripted steps**: saved Python script — executed on each scripted run via fast path |
 | learnings/_global/SKILL.md | Global prose learnings shared across all steps |
 | learnings/{step-id}/script_metadata.json | Script version, run counts, per-group stats, duration stats, recent run history (last 10 with exit codes/errors/durations), last failure details, success/failure streak |
 

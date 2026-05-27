@@ -12,8 +12,8 @@ Workshop owns the eval plan: write it, validate it, run it against `iteration-0`
 - `pre_validation` checks files inside the eval step execution folder, not the original run folder.
 - Eval step descriptions may reference `{{"{{TARGET_RUN_PATH}}"}}`, which resolves to the absolute path of the original execution folder being scored. Use that placeholder when the eval needs to inspect original run artifacts directly; never hardcode iteration paths.
 - For eval step config in `evaluation/step_config.json`:
-  - default to `declared_execution_mode=code_exec`; promote eval steps to `learn_code` only when the user explicitly asks to freeze/reuse scoring code, the check is fully deterministic, and 10+ eval runs cover the relevant output scenarios
-  - use `declared_execution_mode=code_exec` when the eval still needs adaptive model judgment, the rubric is changing, or the scenario coverage is not proven
+  - default to `declared_execution_mode=agentic`; promote eval steps to `scripted` only when the user explicitly asks to freeze/reuse scoring code, the check is fully deterministic, and 10+ eval runs cover the relevant output scenarios
+  - use `declared_execution_mode=agentic` when the eval still needs adaptive model judgment, the rubric is changing, or the scenario coverage is not proven
   - set per-eval-step `execution_tier` with `update_step_config(step_id="eval-step-id", execution_tier="high|medium|low")`; the tool writes `evaluation/step_config.json` when the id is from `evaluation/evaluation_plan.json`
   - tier rule of thumb: `high` for subjective/ambiguous judgment, `medium` for normal eval checks, `low` for deterministic/file-shape checks
   - there is no final combined scoring agent; each eval step must emit the structured verdict fields that metrics need

@@ -65,7 +65,7 @@ type LearnCodeMetadata struct {
 	CreatedAt      string         `json:"created_at"`
 	LastRunAt      string         `json:"last_run_at"`
 	TotalRuns      int            `json:"total_runs"`
-	SuccessfulRuns map[string]int `json:"successful_runs"` // per-mode success counts; canonical scripted key is "code_exec"
+	SuccessfulRuns map[string]int `json:"successful_runs"` // per-mode success counts; canonical scripted key is "agentic"
 	FailedRuns     int            `json:"failed_runs"`
 	RelearnCount   int            `json:"relearn_count"` // how many times the LLM had to rewrite
 
@@ -552,8 +552,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) readLearnCodeMetadataAPI(ctx context.
 		if meta.SuccessfulRuns == nil {
 			meta.SuccessfulRuns = map[string]int{}
 		}
-		if meta.SuccessfulRuns["code_exec"] == 0 && meta.SuccessfulRuns["learn_code"] > 0 {
-			meta.SuccessfulRuns["code_exec"] = meta.SuccessfulRuns["learn_code"]
+		// Legacy migration: older script_metadata.json files used the
+		// pre-rename map keys "code_exec" / "learn_code". Fold them into
+		// the canonical "agentic" / "scripted" keys so downstream code only
+		// has to look at the new names.
+		if v, ok := meta.SuccessfulRuns["code_exec"]; ok && v > 0 {
+			meta.SuccessfulRuns["agentic"] += v
+			delete(meta.SuccessfulRuns, "code_exec")
+		}
+		if v, ok := meta.SuccessfulRuns["learn_code"]; ok && v > 0 {
+			meta.SuccessfulRuns["scripted"] += v
+			delete(meta.SuccessfulRuns, "learn_code")
+		}
+		if meta.SuccessfulRuns["agentic"] == 0 && meta.SuccessfulRuns["scripted"] > 0 {
+			meta.SuccessfulRuns["agentic"] = meta.SuccessfulRuns["scripted"]
 		}
 		return &meta
 	}
@@ -577,7 +589,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) readLearnCodeMetadataAPI(ctx context.
 		CreatedAt:      legacy.CreatedAt,
 		LastRunAt:      legacy.LastRunAt,
 		TotalRuns:      legacy.TotalRuns,
-		SuccessfulRuns: map[string]int{"code_exec": legacy.SuccessfulRuns},
+		SuccessfulRuns: map[string]int{"agentic": legacy.SuccessfulRuns},
 		FailedRuns:     legacy.FailedRuns,
 		RelearnCount:   legacy.RelearnCount,
 	}
@@ -1248,7 +1260,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearnCodeRunStats(ctx context.C
 		if meta.SuccessfulRuns == nil {
 			meta.SuccessfulRuns = map[string]int{}
 		}
-		meta.SuccessfulRuns["code_exec"]++
+		meta.SuccessfulRuns["agentic"]++
 	} else {
 		meta.FailedRuns++
 	}

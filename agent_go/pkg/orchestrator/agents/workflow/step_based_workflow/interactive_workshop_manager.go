@@ -4852,7 +4852,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			exec := &WorkshopStepExecution{
 				ID:             execID,
-				StepID:         GlobalLearningID,
+				StepID:         "Skill Update",
 				AgentSessionID: agentSessionID,
 				Status:         WorkshopStepRunning,
 				cancel:         cancel,
@@ -4863,7 +4863,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
 					ID:                execID,
 					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
-					Name:              "Organize Global Learnings",
+					Name:              "Skill Update",
 					Cancel:            cancel,
 				})
 			}

@@ -112,6 +112,44 @@ func TestApplyStepConfigToAgentConfigEnablesWorkspaceIsolation(t *testing.T) {
 	}
 }
 
+// TestAllWorkflowAgentFactoriesEnableWorkspaceIsolation verifies that every
+// agent factory that produces a long-lived coding-CLI session flips
+// IsolateCodingAgentWorkspace=true so the session runs in os.MkdirTemp instead
+// of CodingAgentWorkingDir. Four such factories exist today:
+//   - regular-step path (applyStepConfigToAgentConfig)
+//   - conditional-agent path (createConditionalAgent — also serves routing steps)
+//   - todo-task orchestrator path (createTodoTaskOrchestratorAgent)
+//   - workshop background-task agent (runBackgroundTaskAgent, invoked by the
+//     workshop chat's `run_in_background` tool)
+//
+// Without isolation on any of these, an agy-cli orchestrator / conditional /
+// background-task agent collides with the workshop chat's agy session in the
+// same workflow folder and the step fails with "agy-cli does not support
+// concurrent sessions in working directory ... with different MCP configs".
+//
+// The test asserts a specific count per file. A new factory added later
+// without isolation trips this test rather than shipping a silent regression.
+// Conversely, removing one of these call sites by accident is also caught.
+func TestAllWorkflowAgentFactoriesEnableWorkspaceIsolation(t *testing.T) {
+	cases := []struct {
+		path string
+		want int
+	}{
+		{path: "controller_agent_factory.go", want: 3}, // regular + conditional + todo-task orchestrator
+		{path: "interactive_workshop_manager.go", want: 1}, // workshop background-task agent
+	}
+	const needle = "config.IsolateCodingAgentWorkspace = true"
+	for _, tc := range cases {
+		source, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatalf("read %s: %v", tc.path, err)
+		}
+		if got := strings.Count(string(source), needle); got != tc.want {
+			t.Fatalf("%s: %q occurrences = %d, want %d (a workflow agent factory in this file must enable isolation; chat code paths in other files must not)", tc.path, needle, got, tc.want)
+		}
+	}
+}
+
 func TestApplyStepConfigToAgentConfigForcesGeminiWorkflowStepsToStructuredTransport(t *testing.T) {
 	tests := []struct {
 		name       string

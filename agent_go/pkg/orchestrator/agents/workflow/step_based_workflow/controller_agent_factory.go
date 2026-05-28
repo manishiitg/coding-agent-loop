@@ -1795,6 +1795,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	effectiveTransport := hcpo.applyWorkflowTransportToAgentConfig(config, stepConfig, "conditional agent")
 	hcpo.publishWorkflowTransportContext(effectiveTransport, stepConfig)
 
+	// Run the coding-CLI session in a fresh os.MkdirTemp dir instead of
+	// CodingAgentWorkingDir — same protection the regular execution-step
+	// path gets via applyStepConfigToAgentConfig. Without this, a
+	// conditional agent collides with any other agy-cli session already
+	// attached to the workflow folder (notably the workshop chat that
+	// triggered the run): agy-cli rejects concurrent sessions on the
+	// same dir with different MCP configs.
+	config.IsolateCodingAgentWorkspace = true
+
 	// Set EnableContextOffloading if specified
 	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
 		config.EnableContextOffloading = stepConfig.EnableContextOffloading
@@ -2007,6 +2016,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	effectiveTransport := hcpo.applyWorkflowTransportToAgentConfig(config, stepConfig, "todo task orchestrator agent")
 	hcpo.publishWorkflowTransportContext(effectiveTransport, stepConfig)
 	hcpo.disableParentAgentTimeout(config, "todo task orchestrator agent")
+
+	// Run the coding-CLI session in a fresh os.MkdirTemp dir instead of
+	// CodingAgentWorkingDir — same protection the regular execution-step
+	// path gets via applyStepConfigToAgentConfig. Without this, a
+	// todo-task orchestrator agent collides with any other agy-cli
+	// session already attached to the workflow folder (notably the
+	// workshop chat that triggered the run): agy-cli rejects concurrent
+	// sessions on the same dir with different MCP configs, and the step
+	// fails with "agy-cli does not support concurrent sessions in
+	// working directory ... with different MCP configs". The MCP bridge
+	// remains the authoritative path for any file changes the model
+	// wants to make to the user's actual workspace.
+	config.IsolateCodingAgentWorkspace = true
 
 	// Give nested todo_task orchestrators their own session-level folder guard just like
 	// normal execution steps. Without this, shell calls fall back to the broader parent

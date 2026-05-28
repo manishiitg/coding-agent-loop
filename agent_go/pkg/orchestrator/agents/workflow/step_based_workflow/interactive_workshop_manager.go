@@ -10830,6 +10830,19 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 	isCodeExecMode := iwm.controller.GetUseCodeExecutionMode()
 	config.UseCodeExecutionMode = isCodeExecMode
 	config.EnableParallelToolExecution = true
+	// Run the coding-CLI session in a fresh os.MkdirTemp dir instead of
+	// CodingAgentWorkingDir — same protection workflow-step agents get via
+	// applyStepConfigToAgentConfig. Background-task agents are spawned by
+	// the workshop chat's `run_in_background` tool, which means the
+	// workshop chat itself is already attached to the workflow folder
+	// with the chat's MCP config; without isolation, the background
+	// agent's agy-cli session collides with the chat's session on the
+	// same dir with different MCP configs, and the run fails with
+	// "agy-cli does not support concurrent sessions ...". File access to
+	// the user's workspace continues to flow through the MCP api-bridge
+	// tools, which take absolute workspace paths and do not depend on
+	// CLI CWD.
+	config.IsolateCodingAgentWorkspace = true
 	defer iwm.configureWorkshopToolAgentSession(config, "background-task", readPaths, writePaths)()
 
 	// --- Tools: same as default execution agent (all workspace tools) ---

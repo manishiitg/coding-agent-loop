@@ -498,7 +498,38 @@ func captureTerminalPaneLines(ctx context.Context, tmuxSession string, lines int
 	if err != nil {
 		return "", fmt.Errorf("failed to capture terminal pane: %w", err)
 	}
-	return content, nil
+	return collapseBlankRuns(content), nil
+}
+
+// collapseBlankRuns squeezes any run of blank/whitespace-only lines down to a
+// single blank line and trims trailing whitespace from each line. Agy and
+// other CLIs use cursor positioning to repaint loading spinners ("Generating
+// ...") in place; with `capture-pane -e`, every frame leaves its current pane
+// state in scrollback — typically the spinner row followed by ~25 empty rows
+// of pane area. Across thousands of frames this turns a useful snapshot into
+// a near-empty scroll with the actual content scattered between huge gaps.
+// Collapsing here loses no signal — paragraph breaks need only one blank line
+// — and fixes the loading-state-looks-broken rendering bug.
+func collapseBlankRuns(s string) string {
+	if s == "" {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	blankRun := 0
+	for _, line := range lines {
+		trimmed := strings.TrimRight(line, " \t\r")
+		if strings.TrimSpace(trimmed) == "" {
+			blankRun++
+			if blankRun <= 1 {
+				out = append(out, "")
+			}
+			continue
+		}
+		blankRun = 0
+		out = append(out, trimmed)
+	}
+	return strings.Join(out, "\n")
 }
 
 func wantsDeepTerminalContent(r *http.Request) bool {

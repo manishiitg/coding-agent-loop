@@ -6034,10 +6034,22 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 		// from the agent's default mcpagent base prompt instead of the
 		// workflow-builder workshop template. See ChatHistoryAgentRuntime
 		// SystemPrompt field docs in chat_history_persistence.go.
-		if sp := strings.TrimSpace(underlyingAgent.GetSystemPrompt()); sp != "" {
+		//
+		// GetSystemPrompt() returns the fully assembled prompt (base + every
+		// AppendSystemPrompt entry merged in with "\n\n" separators). On
+		// restore we SetSystemPrompt(SystemPrompt) and then re-AppendSystemPrompt
+		// each AppendedSystemPrompts entry, so if we stored the assembled form
+		// the appendix would land twice and accumulate on every save/restore
+		// cycle. Strip the appendix here so SystemPrompt is the pre-append base.
+		sp := strings.TrimSpace(underlyingAgent.GetSystemPrompt())
+		appended := underlyingAgent.GetAppendedSystemPrompts()
+		for i := len(appended) - 1; i >= 0; i-- {
+			sp = strings.TrimSuffix(sp, "\n\n"+appended[i])
+		}
+		if sp != "" {
 			runtime.SystemPrompt = sp
 		}
-		if appended := underlyingAgent.GetAppendedSystemPrompts(); len(appended) > 0 {
+		if len(appended) > 0 {
 			runtime.AppendedSystemPrompts = append([]string(nil), appended...)
 		}
 		if handle := underlyingAgent.CurrentAgentSessionHandle(); handle != nil && !handle.Empty() {

@@ -938,6 +938,55 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationAppliesPersistedSystemPro
 	}
 }
 
+// TestCaptureChatHistoryAgentRuntimeDoesNotDuplicateAppendsAcrossRestores guards
+// against the prompt-bloat regression where every chat-restore cycle added
+// another copy of the supplementary appendix (capability / secrets / browser).
+// Cause: capture used to save GetSystemPrompt() (= base + all appends merged in)
+// AND the appendix list separately; restore then SetSystemPrompt(merged) +
+// re-AppendSystemPrompt each entry — so the appendix doubled per cycle and
+// .agents/rules/mlp-system.md ballooned linearly with chat resumes. Fix is to
+// strip the appendix from the saved SystemPrompt so the persisted base is
+// pre-append. This test runs 5 capture→restore cycles and verifies the
+// in-memory composite stays the same size as a single-cycle restore.
+func TestCaptureChatHistoryAgentRuntimeDoesNotDuplicateAppendsAcrossRestores(t *testing.T) {
+	api := &StreamingAPI{}
+	workshopPrompt := "<workshop-template>workflow-builder system prompt</workshop-template>"
+	capability := "<capability>browser available</capability>"
+	secretBlock := "<secrets>SECRET_FOO=$SECRET_FOO</secrets>"
+
+	agent := &mcpagent.Agent{
+		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
+			Provider:        "agy-cli",
+			NativeSessionID: "agy-conversation-roundtrip",
+			ProjectDirID:    "Workflow/example",
+			Model:           "agy-cli",
+		},
+	}
+	agent.SetSystemPrompt(workshopPrompt)
+	agent.AppendSystemPrompt(capability)
+	agent.AppendSystemPrompt(secretBlock)
+	baselineLen := len(agent.GetSystemPrompt())
+
+	for i := 0; i < 5; i++ {
+		runtime := api.captureChatHistoryAgentRuntime("agy-ui-session", "agy-cli", "agy-cli", "Workflow/example", agent)
+		if runtime == nil {
+			t.Fatalf("cycle %d: expected runtime", i)
+		}
+		// Stored SystemPrompt must be the base alone — no merged appendix.
+		if strings.Contains(runtime.SystemPrompt, capability) || strings.Contains(runtime.SystemPrompt, secretBlock) {
+			t.Fatalf("cycle %d: stored SystemPrompt must be base-only, got %q", i, runtime.SystemPrompt)
+		}
+		fresh := &mcpagent.Agent{}
+		if !api.seedCodingAgentRuntimeFromRestoredConversation("agy-ui-session", "agy-cli", "", runtime, fresh) {
+			t.Fatalf("cycle %d: expected restore to succeed", i)
+		}
+		if got := len(fresh.GetSystemPrompt()); got != baselineLen {
+			t.Fatalf("cycle %d: composite prompt grew from %d to %d chars (appendix duplication regressed)", i, baselineLen, got)
+		}
+		agent = fresh
+	}
+}
+
 // TestSeedCodingAgentRuntimeFromRestoredConversationSkipsEmptySystemPrompt
 // guards against a runtime saved before the SystemPrompt field existed:
 // a missing system prompt must NOT wipe the agent's existing prompt

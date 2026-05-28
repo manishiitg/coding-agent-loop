@@ -53,18 +53,19 @@ func executeInteractiveWorkshopPromptForMode(t *testing.T, mode string) string {
 func TestInteractiveWorkshopPromptDocumentsMessageSequenceRouteReuse(t *testing.T) {
 	prompt := executeInteractiveWorkshopPromptForMode(t, "workshop")
 
-	// After the prompt-trim, the inline workshop prompt carries only a
-	// pointer to the message-sequence skill (pattern names appear in
-	// the parenthetical catalog, no bold). The full content lives in
-	// the .md doc that the agent loads on demand.
+	// The dedicated "Message sequence routes" inline section was folded
+	// into the consolidated "Planning steps" section that lists
+	// message-sequence as one of several per-step-type deep-dive skills.
+	// The agent reaches the full pattern catalog by loading the skill.
 	inlineMustContain := []string{
-		"## Message sequence routes",
+		"## Planning steps",
+		"message-sequence",
 		"Stateful Specialist",
 		"Test/Fix Loop",
-		"Maker + Reviewer",
+		"Maker+Reviewer",
 		"Clean-Room Retry",
 		"HITL Re-entry",
-		`get_reference_doc(kind="message-sequence")`,
+		`get_reference_doc(kind="plan-design")`,
 	}
 	for _, snippet := range inlineMustContain {
 		if !strings.Contains(prompt, snippet) {
@@ -92,18 +93,19 @@ func TestInteractiveWorkshopPromptDocumentsMessageSequenceRouteReuse(t *testing.
 func TestOptimizerPromptDocumentsMessageSequenceRoutePatterns(t *testing.T) {
 	prompt := executeInteractiveWorkshopPromptForMode(t, "workshop")
 
-	// Inline carries only the skill pointer; pattern catalog is
-	// referenced by name in the inline parenthetical list and detailed
-	// in the message-sequence.md doc.
+	// The pattern catalog now lives entirely in message-sequence.md.
+	// The inline workshop prompt only carries the consolidated
+	// "Planning steps" section that names message-sequence (and the
+	// other per-step-type skills) as deep-dive entry points.
 	inlineMustContain := []string{
-		"## Message sequence routes",
+		"## Planning steps",
+		"message-sequence",
 		"Stateful Specialist",
 		"Test/Fix Loop",
-		"Maker + Reviewer",
+		"Maker+Reviewer",
 		"Clean-Room Retry",
 		"HITL Re-entry",
 		"Scripted Conversation",
-		`get_reference_doc(kind="message-sequence")`,
 	}
 	for _, snippet := range inlineMustContain {
 		if !strings.Contains(prompt, snippet) {

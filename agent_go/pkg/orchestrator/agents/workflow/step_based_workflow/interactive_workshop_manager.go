@@ -1843,9 +1843,6 @@ Each workflow has three separate stores that survive across runs: `+"`learnings/
 
 
 {{if eq .WorkshopMode "workshop"}}
-## Message sequence routes
-
-todo_task routes can use `+"`message_sequence`"+` (stateful specialist with re-entry) or `+"`regular`"+` (stateless one-off). For the full pattern catalog (Stateful Specialist, Test/Fix Loop, Maker + Reviewer, Panel, Clean-Room Retry, HITL Re-entry, Scripted Conversation), restart-vs-reuse rules, and anti-patterns: `+"`get_reference_doc(kind=\"message-sequence\")`"+`.
 {{end}}
 
 {{if eq .WorkshopMode "workshop"}}
@@ -1983,13 +1980,16 @@ Use `+"`execute_shell_command`"+` with focused queries like:
 Use `+"`cat planning/plan.json`"+` only when you genuinely need the entire file.{{end}}
 
 {{if eq .WorkshopMode "workshop"}}
-## PLAN DESIGN (DESIGN phase)
+## Planning steps
 
 When a user describes what to automate: **present the plan and get explicit confirmation before creating any steps.** The user may be exploring — do not assume they are ready to commit. Default to `+"`regular`"+` unless the task clearly needs branching, iteration, or sub-agents. Every step must have a `+"`validation_schema`"+`. Context flow is forward-only via `+"`context_dependencies`"+` → `+"`context_output`"+`.
 
-Step types at a glance: `+"`regular`"+` · `+"`todo_task`"+` · `+"`routing`"+` · `+"`human_input`"+` · `+"`message_sequence`"+` · orphan (`+"`is_orphan: true`"+`).
+Step types: `+"`regular`"+` · `+"`todo_task`"+` (orchestrator with predefined_routes; each route is `+"`regular`"+` / `+"`message_sequence`"+` / nested `+"`todo_task`"+` 1-level only) · `+"`routing`"+` · `+"`human_input`"+` · `+"`message_sequence`"+` · orphan (`+"`is_orphan: true`"+`, reusable across orchestrators via `+"`shared_with.orchestrator_ids`"+` + `+"`orphan_step_ref`"+`).
 
-For the full playbook (8 design steps, type trade-offs, anti-patterns, step-types reference, inner steps, reusable orphan-route pattern): `+"`get_reference_doc(kind=\"plan-design\")`"+`. For recurring multi-step shapes (Phase Router, Scoped Investigation, Linear Pipeline, Fan-out & Consolidate, Verification Gate, etc.): `+"`get_reference_doc(kind=\"workflow-patterns\")`"+`. Per-step-type deep dives: `+"`todo-task`"+`, `+"`human-input`"+`, `+"`message-sequence`"+`, `+"`routing`"+`.
+For the design playbook (8-step design walkthrough, step-type trade-offs, validation design, context flow, anti-patterns, step-types reference, inner steps, reusable orphan-route pattern), call **`+"`get_reference_doc(kind=\"plan-design\")`"+`** — this is the entry point for any plan-composition decision. From there:
+
+- For per-step-type deep dives: `+"`todo-task`"+` (anatomy + routes + nested + scripted fast-path), `+"`human-input`"+` (input types + routing pairing + unattended schedules), `+"`message-sequence`"+` (full pattern catalog: Stateful Specialist, Test/Fix Loop, Maker+Reviewer, Panel, Clean-Room Retry, HITL Re-entry, Scripted Conversation), `+"`routing`"+` (pure vs execute-then-route, anti-patterns).
+- For recurring multi-step shapes: `+"`get_reference_doc(kind=\"workflow-patterns\")`"+` (Phase Router, Scoped Investigation, Linear Pipeline, Fan-out & Consolidate, Verification Gate, Pre-flight Probe, Human Checkpoint, Critique Loop, Persistence Tail).
 {{end}}
 
 ## RUNNING STEPS

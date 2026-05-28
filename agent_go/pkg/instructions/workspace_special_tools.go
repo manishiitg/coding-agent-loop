@@ -1,37 +1,27 @@
 package instructions
 
-// GetSpecialWorkspaceToolsInstructions returns a shared prompt section that
-// explains the workspace-level generation and analysis tools used by both chat
-// agents and workflow-builder agents.
+// GetSpecialWorkspaceToolsInstructions returns the cheat-sheet section
+// for workspace-level provider-backed tools (text/image/video/audio/music
+// generation, image/video/PDF reading, transcription, web search, capability
+// discovery). The full reference — signatures, parameters, defaults,
+// provider-setup discipline — lives in the workspace-media-tools skill
+// loaded on demand via get_reference_doc(kind="workspace-media-tools").
+//
+// Used by both chat agents and workflow-builder agents.
 func GetSpecialWorkspaceToolsInstructions() string {
-	return `## Special Workspace Tools
+	return `## Special Workspace Tools (cheat sheet)
 
-Use these tools when you need a direct provider-backed capability instead of general chat reasoning:
+Provider-backed capabilities you can call directly instead of general chat reasoning. **Path contract**: every file-path argument must be a full absolute path under the workspace docs root. **Provider/model contract**: pass ` + "`provider`" + ` and ` + "`model_id`" + ` together from the same ` + "`list_llm_capabilities(capability=\"...\", include_models=true)`" + ` result — do not pass only ` + "`model_id`" + ` and ask the backend to infer.
 
-- Path contract: every file path argument for these tools must be a full absolute path under the workspace docs root. Do not pass workspace-relative paths to media read, media generation, edit, transcription, or PDF tools.
-- ` + "`list_llm_capabilities(capability?, include_models?)`" + ` — Inspect which providers/models are supported and currently usable for ` + "`chat`" + `, ` + "`search_web`" + `, ` + "`read_image`" + `, ` + "`read_video`" + `, ` + "`generate_image`" + `, ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, and ` + "`generate_music`" + `. Use this before choosing a provider when the user's request depends on provider capability, auth, pricing, or runtime availability.
-- Provider/model contract: when you choose a concrete model for any provider-backed LLM/media tool, pass ` + "`provider`" + ` and ` + "`model_id`" + ` together from the same ` + "`list_llm_capabilities(capability=\"...\", include_models=true)`" + ` result. Do not pass only ` + "`model_id`" + ` and ask the backend to infer the provider.
-- ` + "`estimate_llm_cost(capability, provider, model_id?, characters?, seconds?, minutes?, count?)`" + ` — Estimate priced media generation/transcription costs before high-volume ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, or ` + "`generate_music`" + ` runs.
-- ` + "`set_provider_auth(provider, api_key?, region?, endpoint?, api_version?)`" + ` — Store provider auth in the encrypted workspace provider store. If the user provides an API key for Gemini/Vertex, MiniMax, ElevenLabs, Deepgram, or another managed provider, call this tool directly; do not paste the key into shell commands, scripts, curl calls, logs, or config files.
-- ` + "`generate_text_llm(user_message, tier)`" + ` — Generate text with one direct LLM call using the workspace tier config. ` + "`tier`" + ` must be ` + "`high`" + `, ` + "`medium`" + `, or ` + "`low`" + `.
-- ` + "`search_web_llm(query, provider, model_id?)`" + ` — Run a live web search using a published search-capable provider from ` + "`config/published-llms.json`" + `. Before selecting a provider/model, call ` + "`list_llm_capabilities(capability=\"search_web\", include_models=true)`" + `. ` + "`provider`" + ` is required. ` + "`model_id`" + ` is optional only when accepting the backend's default for that provider.
-- ` + "`image_gen(prompt, output_path, provider?, model_id?)`" + ` — Generate images using ` + "`config/image-generation-config.json`" + ` or an explicit provider/model override from ` + "`list_llm_capabilities(capability=\"generate_image\", include_models=true)`" + `. ` + "`output_path`" + ` is required and must be a full absolute workspace-docs destination chosen by the caller.
-- ` + "`image_edit(image_path, output_path, prompt, provider?, model_id?)`" + ` — Edit an existing workspace image using a provider/model pair from ` + "`list_llm_capabilities(capability=\"generate_image\", include_models=true)`" + `. ` + "`image_path`" + ` and ` + "`output_path`" + ` must be full absolute workspace-docs paths; use ` + "`absolute_paths`" + ` from a prior ` + "`image_gen`" + ` result when chaining.
-- ` + "`generate_video(prompt, output_path, model_id, provider?)`" + ` — Generate videos with Veo using a provider/model pair from ` + "`list_llm_capabilities(capability=\"generate_video\", include_models=true)`" + `. ` + "`output_path`" + ` is required and must be a full absolute workspace-docs destination. ` + "`input_image_path`" + `, when used, must also be absolute. ` + "`model_id`" + ` determines the Google backend: Vertex AI models (` + "`veo-3.1-generate-001`" + `, ` + "`veo-3.1-lite-generate-001`" + `, ` + "`veo-3.1-fast-generate-001`" + `) require ` + "`GOOGLE_CLOUD_PROJECT`" + ` + ADC and support native audio; Gemini API preview models (` + "`veo-3.1-generate-preview`" + `, ` + "`veo-3.1-fast-generate-preview`" + `) use API-key auth and do not support native audio.
-- ` + "`text_to_speech(prompt, output_path, voice_name?, language_code?, provider?, model_id?)`" + ` — Generate TTS speech audio using a provider/model pair from ` + "`list_llm_capabilities(capability=\"text_to_speech\", include_models=true)`" + `. Defaults to Gemini ` + "`gemini-3.1-flash-tts-preview`" + `, MiniMax when ` + "`provider=\"minimax\"`" + `, ElevenLabs when ` + "`provider=\"elevenlabs\"`" + `, or Deepgram when ` + "`provider=\"deepgram\"`" + `. ` + "`output_path`" + ` is required and must be a full absolute workspace-docs destination. Use the prompt for style, pace, tone, accent, and the exact transcript to speak.
-- ` + "`speech_to_text(audio_path, language_code?, provider?, model_id?)`" + ` — Transcribe workspace audio using a provider/model pair from ` + "`list_llm_capabilities(capability=\"speech_to_text\", include_models=true)`" + `. Defaults to Deepgram ` + "`nova-3`" + `. ` + "`audio_path`" + ` is required and must be a full absolute workspace-docs source file.
-- ` + "`generate_music(prompt, output_path, duration_ms?, instrumental?, provider?, model_id?)`" + ` — Generate music using a provider/model pair from ` + "`list_llm_capabilities(capability=\"generate_music\", include_models=true)`" + `. Defaults to ElevenLabs ` + "`music_v1`" + `, or MiniMax when ` + "`provider=\"minimax\"`" + `. ` + "`output_path`" + ` is required and must be a full absolute workspace-docs destination. Use the prompt for genre, mood, instrumentation, structure, and lyrics direction.
-- ` + "`read_image(filepath, query, provider?, model_id?)`" + ` — Analyze an image file using a provider/model pair from ` + "`list_llm_capabilities(capability=\"read_image\", include_models=true)`" + ` or ` + "`config/image-analysis-config.json`" + `. ` + "`filepath`" + ` must be a full absolute path under the workspace docs root; do not pass workspace-relative paths. If no image-analysis config exists, it falls back to the current chat model. ` + "`codex-cli`" + `, ` + "`cursor-cli`" + `, ` + "`opencode-cli`" + `, and ` + "`claude-code`" + ` are supported by passing the local workspace image path to the CLI.
-- ` + "`read_video(filepath, query, provider?, model_id?)`" + ` — Analyze a workspace video file using a provider/model pair from ` + "`list_llm_capabilities(capability=\"read_video\", include_models=true)`" + `. ` + "`filepath`" + ` must be a full absolute workspace-docs path. Direct video providers are not advertised by default; prefer a published coding-agent model until a dedicated provider is configured.
-- ` + "`read_pdf(filepath, page_range?, max_pages?, password?)`" + ` — Extract text from a workspace PDF. ` + "`filepath`" + ` must be a full absolute workspace-docs path.
+Available tools:
+- **Discovery + cost**: ` + "`list_llm_capabilities`" + `, ` + "`estimate_llm_cost`" + `, ` + "`set_provider_auth`" + ` (always use this for API keys — never paste into shell, scripts, or config files).
+- **Text**: ` + "`generate_text_llm(user_message, tier)`" + ` · ` + "`search_web_llm(query, provider, model_id?)`" + `.
+- **Image**: ` + "`image_gen(prompt, output_path, ...)`" + ` · ` + "`image_edit(image_path, output_path, prompt, ...)`" + `.
+- **Video**: ` + "`generate_video(prompt, output_path, model_id, ...)`" + ` (Vertex AI models support native audio; Gemini API preview models do not).
+- **Audio + music**: ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + ` (default Deepgram nova-3), ` + "`generate_music`" + ` (default ElevenLabs music_v1).
+- **Media reading**: ` + "`read_image`" + `, ` + "`read_video`" + `, ` + "`read_pdf`" + `.
 
-Provider setup rules:
-- Published LLM entries are for chat/text routing. Audio, video, image, and music providers are workspace tool capabilities; do not conclude they are unavailable just because they are absent from ` + "`config/published-llms.json`" + ` or a published-LLM list.
-- For audio and music generation, call ` + "`text_to_speech`" + ` or ` + "`generate_music`" + ` directly. Do not hand-roll provider HTTP calls through ` + "`execute_shell_command`" + ` unless the dedicated workspace tool is unavailable and the user explicitly asks for raw API debugging.
-- Keep provider auth in ` + "`config/provider-api-keys.json`" + ` using the ` + "`set_provider_auth`" + ` tool. Do not hand-edit the encrypted auth file.
-- Do not read, cat, grep, print, or manually edit ` + "`config/provider-api-keys.json`" + `; it is encrypted and not useful to inspect as plaintext.
-- Search provider routing comes from ` + "`config/published-llms.json`" + `.
-- Image generation defaults come from ` + "`config/image-generation-config.json`" + `.
-- Image analysis defaults come from ` + "`config/image-analysis-config.json`" + `.
-- Video analysis uses Kimi provider auth from ` + "`config/provider-api-keys.json`" + ` / ` + "`KIMI_API_KEY`" + ` by default. For Z.AI MCP video analysis, set provider auth for ` + "`z-ai`" + ` / ` + "`Z_AI_API_KEY`" + ` and pass ` + "`provider=\"z-ai\"`" + `.`
+Provider-setup essentials (do not hand-edit ` + "`config/provider-api-keys.json`" + ` — it's encrypted and managed via ` + "`set_provider_auth`" + `; audio/video/image/music providers are workspace **tool** capabilities, not published-LLM entries — call ` + "`list_llm_capabilities(capability=\"...\")`" + ` for the authoritative availability answer).
+
+**For the full reference — every tool's parameters, defaults, provider routing rules, model-ID lists, and common-mistake gotchas — call:** ` + "`get_reference_doc(kind=\"workspace-media-tools\")`" + `.`
 }

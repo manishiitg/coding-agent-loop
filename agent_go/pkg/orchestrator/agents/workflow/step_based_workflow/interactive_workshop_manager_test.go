@@ -53,18 +53,17 @@ func executeInteractiveWorkshopPromptForMode(t *testing.T, mode string) string {
 func TestInteractiveWorkshopPromptDocumentsMessageSequenceRouteReuse(t *testing.T) {
 	prompt := executeInteractiveWorkshopPromptForMode(t, "workshop")
 
-	// Inline prompt should mention the patterns by name and point at the doc.
+	// After the prompt-trim, the inline workshop prompt carries only a
+	// pointer to the message-sequence skill (pattern names appear in
+	// the parenthetical catalog, no bold). The full content lives in
+	// the .md doc that the agent loads on demand.
 	inlineMustContain := []string{
-		"## Message sequence route patterns",
-		"**Stateful Specialist**",
-		"**Test/Fix Loop**",
-		"**Maker + Reviewer**",
-		"**Panel of Specialists**",
-		"**Clean-Room Retry**",
-		"**Human-in-the-Loop Re-entry**",
-		"**Top-Level Scripted Conversation**",
-		"message_sequence_restart=true",
-		"only when the prior conversation is stale",
+		"## Message sequence routes",
+		"Stateful Specialist",
+		"Test/Fix Loop",
+		"Maker + Reviewer",
+		"Clean-Room Retry",
+		"HITL Re-entry",
 		`get_reference_doc(kind="message-sequence")`,
 	}
 	for _, snippet := range inlineMustContain {
@@ -93,15 +92,17 @@ func TestInteractiveWorkshopPromptDocumentsMessageSequenceRouteReuse(t *testing.
 func TestOptimizerPromptDocumentsMessageSequenceRoutePatterns(t *testing.T) {
 	prompt := executeInteractiveWorkshopPromptForMode(t, "workshop")
 
+	// Inline carries only the skill pointer; pattern catalog is
+	// referenced by name in the inline parenthetical list and detailed
+	// in the message-sequence.md doc.
 	inlineMustContain := []string{
-		"## Message sequence route patterns",
-		"**Stateful Specialist**",
-		"**Test/Fix Loop**",
-		"**Maker + Reviewer**",
-		"**Panel of Specialists**",
-		"**Clean-Room Retry**",
-		"**Human-in-the-Loop Re-entry**",
-		"**Top-Level Scripted Conversation**",
+		"## Message sequence routes",
+		"Stateful Specialist",
+		"Test/Fix Loop",
+		"Maker + Reviewer",
+		"Clean-Room Retry",
+		"HITL Re-entry",
+		"Scripted Conversation",
 		`get_reference_doc(kind="message-sequence")`,
 	}
 	for _, snippet := range inlineMustContain {

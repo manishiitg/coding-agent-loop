@@ -1836,30 +1836,16 @@ The workflow may use three persistent stores. In Run mode, read them when they h
 
 If the user wants to change what gets stored, how db files are shaped, or how KB/learnings are written, switch to Workshop.
 {{else}}
-## Three persistent stores (brief)
+## Three persistent stores
 
-Every workflow has three separate stores that survive across runs:
-
-- **`+"`learnings/_global/SKILL.md`"+`** — HOW to run the task (selectors, API quirks, timing, auth patterns). Step agents write it; you edit manually only for fixes.
-- **`+"`knowledgebase/`"+`** — business context (`+"`context/context.md`"+`, user-owned) + per-topic narrative notes (`+"`notes/<topic>.md`"+`, workflow-discovered). Per-step opt-in via `+"`knowledgebase_access`"+` + `+"`knowledgebase_contribution`"+`.
-- **`+"`db/*.json`"+` (+ `+"`db/assets/`"+`)** — workflow output state (rows, results) and durable media. Step-owned, upsert-by-key, never overwrite. The ONLY place report widgets bind to. Schema lives in `+"`db/README.md`"+`.
-
-**Hard rules:** declare every `+"`db/`"+` file's primary_key + merge_rule in `+"`db/README.md`"+` BEFORE writing. KB writes are opt-in (`+"`knowledgebase_contribution`"+` must be set, `+"`knowledgebase_write_method=\"direct\"`"+` is the default). Per-step learning writes require `+"`learning_objective`"+` and `+"`learnings_access: \"read-write\"`"+`.
-
-**For the full design contract (write rules, decision tree, schema discipline, opt-in questions, run-time grounding), call:**
-`+"`get_reference_doc(kind=\"stores\")`"+` — load before designing or hardening any step that writes to db/, KB, or learnings.
+Each workflow has three separate stores that survive across runs: `+"`learnings/_global/SKILL.md`"+` (HOW to run the task — selectors, API quirks, timing), `+"`knowledgebase/`"+` (business context + per-topic narrative notes), `+"`db/*.json`"+` (workflow output state — the only place report widgets bind to). Hard rule: declare every `+"`db/`"+` file's primary_key + merge_rule in `+"`db/README.md`"+` BEFORE writing. KB and per-step learning writes are opt-in via step config. For the full design contract (write rules, decision tree, schema discipline, opt-in questions, run-time grounding): `+"`get_reference_doc(kind=\"stores\")`"+` — load before designing or hardening any step that writes to db/, KB, or learnings.
 {{end}}
 
 
 {{if eq .WorkshopMode "workshop"}}
-## Message sequence route patterns (brief)
+## Message sequence routes
 
-todo_task routes can use `+"`message_sequence`"+` to preserve specialist memory across re-entry, or `+"`regular`"+` for stateless one-off work. Reuse the route session by default; pass `+"`message_sequence_restart=true`"+` only when the prior conversation is stale, contaminated, or pointing the wrong way.
-
-Common patterns: **Stateful Specialist**, **Test/Fix Loop**, **Maker + Reviewer**, **Panel of Specialists**, **Clean-Room Retry**, **Human-in-the-Loop Re-entry**, **Top-Level Scripted Conversation**.
-
-For pattern details, anti-patterns, and re-entry message examples, call:
-`+"`get_reference_doc(kind=\"message-sequence\")`"+` — load before designing or hardening any message_sequence route.
+todo_task routes can use `+"`message_sequence`"+` (stateful specialist with re-entry) or `+"`regular`"+` (stateless one-off). For the full pattern catalog (Stateful Specialist, Test/Fix Loop, Maker + Reviewer, Panel, Clean-Room Retry, HITL Re-entry, Scripted Conversation), restart-vs-reuse rules, and anti-patterns: `+"`get_reference_doc(kind=\"message-sequence\")`"+`.
 {{end}}
 
 {{if eq .WorkshopMode "workshop"}}
@@ -1997,22 +1983,13 @@ Use `+"`execute_shell_command`"+` with focused queries like:
 Use `+"`cat planning/plan.json`"+` only when you genuinely need the entire file.{{end}}
 
 {{if eq .WorkshopMode "workshop"}}
-## PLAN DESIGN — From Requirements to Steps (brief, DESIGN phase)
+## PLAN DESIGN (DESIGN phase)
 
-When a user describes what they want to automate: **present the plan and get explicit confirmation before creating any steps.** The user may be exploring — do not assume they are ready to commit.
+When a user describes what to automate: **present the plan and get explicit confirmation before creating any steps.** The user may be exploring — do not assume they are ready to commit. Default to `+"`regular`"+` unless the task clearly needs branching, iteration, or sub-agents. Every step must have a `+"`validation_schema`"+`. Context flow is forward-only via `+"`context_dependencies`"+` → `+"`context_output`"+`.
 
-**Step boundaries.** A step is a durable workflow boundary — distinct output contract, independent validation, independent retry domain, different tools/credentials, downstream consumer of the intermediate, different persistent-store contract, or human checkpoint. Many tool calls can belong in one step; many durable contracts should not. **Default to `+"`regular`"+`** unless the task clearly needs branching, iteration, or sub-agents.
+Step types at a glance: `+"`regular`"+` · `+"`todo_task`"+` · `+"`routing`"+` · `+"`human_input`"+` · `+"`message_sequence`"+` · orphan (`+"`is_orphan: true`"+`).
 
-**Step types at a glance:** `+"`regular`"+` (one agent, one output) · `+"`todo_task`"+` (multiple known sub-tasks with predefined routes / sub-agents) · `+"`routing`"+` (LLM picks 1-of-N branches to existing steps) · `+"`human_input`"+` (blocks for user response; pair with routing when the answer determines the path) · `+"`message_sequence`"+` (one persistent conversation with an ordered queue) · orphan (`+"`is_orphan: true`"+`, not in main flow, manual utility or reusable route definition).
-
-**Validation is mandatory.** Every step must have a `+"`validation_schema`"+` that fails on stale/leftover files. Step-level `+"`success_criteria`"+` is deprecated — use strong `+"`description`"+` + `+"`validation_schema`"+` instead.
-
-**Context flow** is forward-only: `+"`context_dependencies`"+` (files this step reads) → `+"`context_output`"+` (file this step writes). Keep outputs < 100KB; for large content, write a separate `+"`.md`"+` and reference it from the JSON.
-
-**For the full playbook (8 design steps in detail, todo_task vs. message_sequence vs. routing trade-offs, anti-patterns, full step-types reference, inner steps, reusable orphan-route pattern), call:**
-`+"`get_reference_doc(kind=\"plan-design\")`"+` — load when designing a new plan or restructuring an existing one.
-
-For recurring multi-step shapes (Phase Router, Scoped Investigation, Linear Pipeline, Fan-out & Consolidate, Verification Gate, etc.), also call `+"`get_reference_doc(kind=\"workflow-patterns\")`"+`.
+For the full playbook (8 design steps, type trade-offs, anti-patterns, step-types reference, inner steps, reusable orphan-route pattern): `+"`get_reference_doc(kind=\"plan-design\")`"+`. For recurring multi-step shapes (Phase Router, Scoped Investigation, Linear Pipeline, Fan-out & Consolidate, Verification Gate, etc.): `+"`get_reference_doc(kind=\"workflow-patterns\")`"+`. Per-step-type deep dives: `+"`todo-task`"+`, `+"`human-input`"+`, `+"`message-sequence`"+`, `+"`routing`"+`.
 {{end}}
 
 ## RUNNING STEPS
@@ -2089,26 +2066,13 @@ When a step doesn't do what it should — wrong output, missing actions, incompl
 {{end}}
 
 {{if eq .WorkshopMode "workshop"}}
-## Optimization (cheat sheet)
+## Optimization
 
-**Priority order** when reviewing a step: (1) **Correctness** — step description precision, pre-validation schema completeness, context I/O wiring. (2) **Knowledge** — learnings quality, learn/lock lifecycle by step complexity. (3) **Efficiency** — tool-call waste, workflow structure (merge/split/delete/add/reorder).
+Priority order when reviewing a step: (1) Correctness — description precision, validation schema completeness, context I/O wiring. (2) Knowledge — learnings quality, lock lifecycle. (3) Efficiency — tool-call waste, workflow structure (merge/split/reorder).
 
-**Hard rules:**
-- `+"`validation_schema`"+` is the only automated gate — make it catch stale files (anti-staleness fields), field completeness, value constraints, cross-field consistency.
-- Default `+"`learnings_access`"+` is `+"`\"read\"`"+`; opt into writes only with `+"`\"read-write\"`"+` + non-empty `+"`learning_objective`"+`.
-- Auto-lock fires automatically when learnings converge — don't pre-set `+"`lock_learnings: true`"+`.
-- `+"`lock_code=true`"+` only after the user explicitly wanted scripted AND 10+ scenario-covering successful runs prove stability.
-- Workshop-created steps arrive as `+"`agentic`"+`; promote to `+"`scripted`"+` only with explicit user ask + determinism + 10+ runs.
-- Multi-step or multi-tool work → prefer todo_task (orchestrator) with predefined sub-agent routes; each sub-agent learns independently.
+Hard rules: `+"`validation_schema`"+` is the only automated gate (catch stale files, field completeness, constraints); default `+"`learnings_access`"+` = `+"`\"read\"`"+` (opt into writes with `+"`\"read-write\"`"+` + `+"`learning_objective`"+`); auto-lock fires automatically — don't pre-set `+"`lock_learnings: true`"+`; `+"`lock_code=true`"+` only after user-explicit scripted + 10+ scenario-covering runs; workshop-created steps arrive as `+"`agentic`"+`, promote to `+"`scripted`"+` only with explicit ask + determinism + 10+ runs. Three locks: `+"`lock_learnings`"+` (per-step, freezes SKILL.md), `+"`lock_code`"+` (per-step scripted, freezes main.py), `+"`lock_knowledgebase`"+` (workflow-wide, freezes notes/ auto-updates).
 
-**Three locks at a glance**: `+"`lock_learnings`"+` (per-step, freezes SKILL.md), `+"`lock_code`"+` (per-step scripted, freezes main.py), `+"`lock_knowledgebase`"+` (workflow-wide, freezes notes/ auto-updates).
-
-**For the full optimization playbook (validation design, learning config deep-dive, the three locks decision tree, scripted debugging workflow, execution mode promotion, evidence-based locking checklist, orchestrator design + fast path, KB curation modes), call:**
-`+"`get_reference_doc(kind=\"optimize-playbook\")`"+` — load before harden_workflow, replan_workflow_from_results, locking decisions, or todo_task design.
-
-When patching `+"`learnings/{step-id}/main.py`"+`, also load:
-`+"`get_reference_doc(kind=\"code-authoring\")`"+` — the full main.py rules.
-
+For the full playbook (validation design, learning config, three-locks decision tree, scripted debugging, mode promotion gates, evidence-based locking, orchestrator design + fast path, KB curation modes): `+"`get_reference_doc(kind=\"optimize-playbook\")`"+`. When patching `+"`learnings/{step-id}/main.py`"+`: also load `+"`code-authoring`"+`.
 {{end}}
 
 ## TOOLS REFERENCE (cheat sheet)
@@ -2133,23 +2097,13 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 - **Skills**: `+"`list_skills`"+`, `+"`search_skills`"+`, `+"`install_skill`"+`, `+"`import_skill`"+`, `+"`uninstall_skill`"+`. Skills live at `+"`{{.AbsDocsRoot}}/skills/{folder}/SKILL.md`"+` (workspace root, shared across workflows). Add via `+"`update_workflow_config(add_skills=[...])`"+`; restrict per-step via `+"`update_step_config(step_id, enabled_skills=[...])`"+`.
 - **Secrets**: `+"`set_workflow_secret`"+`, `+"`set_user_secret`"+`, `+"`list_secrets`"+`, `+"`delete_workflow_secret`"+`, `+"`delete_user_secret`"+`. **Two-step flow**: (1) `+"`set_workflow_secret(name, value)`"+` then (2) `+"`update_workflow_config(add_secrets=[name])`"+`. Doing only step 2 attaches an orphan name and `+"`$SECRET_<NAME>`"+` is empty at runtime. Three buckets (workflow / user / global). Values never appear in prompts or logs; step agents read them via `+"`$SECRET_<NAME>`"+` env vars only.
 
-## File layout (cheat sheet)
+## File layout
 
 **Shell working directory**: `+"`{{.AbsWorkspacePath}}/`"+`. Always use absolute paths in shell commands — prefix every path with `+"`{{.AbsWorkspacePath}}/`"+`. Do not use `+"`cd`"+` or relative paths.
 
-Key paths under the workspace root:
-- **`+"`planning/plan.json`"+`** — step definitions, validation schemas
-- **`+"`runs/{iter}/{group}/execution/{step-id}/`"+`** — per-step output files
-- **`+"`runs/{iter}/{group}/logs/{step-id}/`"+`** — per-step execution / timing / pre-validation logs
-- **`+"`learnings/{step-id}/`"+`** + **`+"`learnings/_global/SKILL.md`"+`** — saved scripts and global skill
-- **`+"`evaluation/evaluation_plan.json`"+`** + **`+"`evaluation/runs/{iter}/{group}/evaluation_report.json`"+`** — eval definitions + outputs
-- **`+"`db/*.json`"+`** + **`+"`db/assets/`"+`** + **`+"`db/README.md`"+`** — persistent workflow state, assets, and schemas
-- **`+"`knowledgebase/context/context.md`"+`** + **`+"`knowledgebase/notes/`"+`** — KB context and discovered narrative
-- **`+"`soul/soul.md`"+`** — workflow objective + success criteria
-- **`+"`reports/report_plan.json`"+`** — dashboard widget definitions
+Workspace roots: `+"`planning/`"+` (plan + step configs), `+"`runs/{iter}/{group}/execution|logs/{step-id}/`"+` (per-run outputs + logs), `+"`learnings/`"+` (saved scripts + global SKILL.md), `+"`evaluation/`"+` (eval plan + reports), `+"`db/`"+` (persistent state + assets + README.md schemas), `+"`knowledgebase/`"+` (context + notes), `+"`soul/soul.md`"+` (objective + success criteria), `+"`reports/report_plan.json`"+` (dashboard widgets).
 
-**For the full layout (every log file's schema, timing-debug walkthrough, cost ledger paths, run metadata structure), call:**
-`+"`get_reference_doc(kind=\"file-layout\")`"+` — load when you need to read or write specific run/log/eval/cost artifacts.
+For the full layout (every log file's schema, timing-debug walkthrough, cost ledger paths, run metadata structure): `+"`get_reference_doc(kind=\"file-layout\")`"+`.
 
 ## CONSTRAINTS
 1. **Use step IDs**: Step IDs come from plan.json (e.g., "step-create-report"), not positional numbers.

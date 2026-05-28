@@ -1,0 +1,170 @@
+## Workshop & Workflow Tools — Full Reference
+
+The workshop chat agent has access to a broad set of workflow-management
+tools. The inline system prompt now carries only a one-line-per-category
+cheat sheet; this skill is the deep reference with full signatures,
+parameters, when-to-use rules, and gotchas.
+
+If you need to confirm an exact parameter shape that isn't documented
+here, call `get_api_spec(server_name="workflow", tool_name="...")` — that
+returns the live JSON schema for the tool.
+
+## Step Execution & Inspection
+
+- **`execute_step(step_id, group_name, instructions?, human_input?, tier?, message_sequence_restart?)`** — Start a single step in the background; returns `execution_id`. In Workshop mode this is the primary way to test one step after adding or editing it. Execution uses `iteration-0`. For `message_sequence` steps, pass `human_input` to resume with one new user message, or `message_sequence_restart=true` to start from scratch. For `human_input` steps, `human_input` is used as the response. For other executable steps, `human_input` is high-priority custom context.
+- **`execute_step(step_id, group_name, fast_path_only=true)`** *(Workshop mode only)* — Run the step's saved Python `learnings/{step-id}/main.py` directly with the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM. Used to quickly test `scripted` main.py patches.
+- **`query_step(step_id, tool_call_id?)`** — Live status check for a running single step. Resolves the latest execution for that step and shows execution status plus structured MCP tool calls and tool-call details captured so far. For coding-CLI providers, terminal/TUI progress is surfaced in the UI terminal stream and may not appear here.
+- **`debug_step(step_id, iteration, group_name)`** — Rich insights: learning status, validation result, log paths.
+- **`list_executions(status_filter?)`** — List all background executions.
+- **`stop_step(execution_id)` / `stop_all_executions()`** — Cancel running steps.
+- **`run_in_background(name, instruction)`** — Spawn an independent background agent with the same tools.
+- **`run_full_workflow(group_name, human_inputs?, disable_eval?)`** — Execute the complete workflow (all steps) for a single variable group in background. Always uses `iteration-0` and starts from the beginning. If the plan has `human_input` steps, you MUST provide `human_inputs` (object mapping step_id to response string) — the tool will error listing missing steps if omitted. Pass `disable_eval=true` only when the user explicitly wants to skip the automatic evaluation pass. Returns `execution_id`.
+
+## Step Config & Analysis (Workshop mode)
+
+- **`update_step_config(step_id, ...)`** — Update servers, tools, skills, learning settings, execution mode, LLMs, locks, review notes, and description review state. For eval steps this writes to `evaluation/step_config.json`.
+- **`harden_workflow(group_name?, focus?)`** — Reliability repair. Always reads `iteration-0` eval reports and execution outputs. Pass `group_name` to scope to one group, or omit it to analyze all groups under `iteration-0`. Use when the path is otherwise sound but local step behavior, validation, artifact shape, config, learnings, KB/db/report/eval wiring, or deterministic invariants are broken. It patches `main.py` only for `scripted` steps and deletes stale `main.py` files for `agentic` steps. **Precondition: call `get_reference_doc(kind="optimize-playbook")` first.**
+- **Objective + success criteria** — Edit `soul/soul.md` directly via shell (fill in the `## Objective` and `## Success Criteria` sections). `soul.md` is the canonical source; `plan.json` no longer stores these fields. No dedicated tool — use `diff_patch_workspace_file` or a shell heredoc.
+- **`replan_workflow_from_results(group_name?, focus?)`** — Alignment rewrite: add/remove/reorder steps using actual `iteration-0` run/eval evidence so the workflow better satisfies `soul/soul.md` objective, success criteria, and any outcome metrics. Pass `group_name` to scope to one group. Use when the workflow path is misaligned with the desired result. When replanning keeps or converts a step to `agentic`, remove any stale `learnings/{step-id}/main.py` so future agents do not confuse ephemeral agentic with reusable scripted. Use `harden_workflow` for local reliability, prompt/config, validation, or artifact-drift fixes. **Precondition: call `get_reference_doc(kind="optimize-playbook")` first.**
+- **`review_workflow_results(iteration?, group_name?, focus?)`** — Read-only outcome review: checks whether a real run is achieving the objective and success criteria, and whether the evaluation actually measures them properly.
+- **`review_workflow_timing(iteration?, group_name?, focus?)`** — Read-only latency review: finds the slowest groups/steps/tools/LLM calls and recommends faster descriptions, fewer handoffs, safer step merges, or plan changes.
+- **`review_workflow_costs(iteration?, group_name?, focus?)`** — Read-only cost review: finds the biggest cost drivers and recommends cheaper models, fewer retries/handoffs, better descriptions, or plan changes without sacrificing success criteria.
+- **`get_cost_summary(run_folder?)`** — Token usage and cost breakdown.
+
+## Read-Only Info
+
+- **`get_step_prompts(step_id, attempt?, iteration?)`** — System prompt and user message for a step.
+- **`get_workflow_config`** — Inspect the workflow's current MCP servers, selected skills, available secrets, and LLM config. Use this instead of `cat workflow.json`. For the global installed skill catalog, use `list_skills`.
+- **`get_llm_config`** — Per-step LLM overrides.
+- **`get_workflow_command_guidance(kind="review-artifact-drift", focus?)`** *(Workshop only)* — Canonical artifact drift audit after material plan/config changes. Checks `planning/changelog/` entries against learnings, saved `main.py`, KB, db, reports, and eval wiring. Writes its cursor in `builder/review.md`; do not create a new state file.
+
+## Plan Modification (Workshop mode)
+
+- **Create steps**: `create_plan`, `add_regular_step`, `add_message_sequence_step`, `add_human_input_step`, `add_todo_task_step`, `add_routing_step`, `delete_plan_steps`, `cleanup_orphan_step_configs`.
+- **Update steps**: `update_regular_step`, `update_message_sequence_step`, `update_human_input_step`, `update_routing_step`, `update_todo_task_step`.
+- **Todo task routes**: `add_todo_task_route`, `update_todo_task_route`, `delete_todo_task_route`. For todo_task routes, choose one pattern per route: inline `sub_agent_step` for a route-specific agent, or `orphan_step_ref` to reuse a shared orphan step already allowlisted via `shared_with.orchestrator_ids`. Do not set both.
+- **Validation**: `update_validation_schema`.
+- **Versioning**: `publish_workflow_version(label)`, `restore_workflow_version(version)`. To inspect available versions before restoring, use `execute_shell_command` with relative paths like `ls versions/` and `cat versions/v3/version_meta.json`.
+
+## Variables & Config
+
+- **`update_variable(action, name?, value?, description?)`** — Add, update, or delete a variable.
+- **`add_group` / `update_group` / `delete_group`** — Manage variable groups.
+- **MCP servers workflow**:
+  1. `get_workflow_config` to inspect which servers are currently selected.
+  2. `update_workflow_config(add_servers=["server-name"])` to add to the workflow. **Do NOT edit `workflow.json` manually.**
+  3. `update_step_config(step_id, servers=["server-name"])` to scope specific servers to a step.
+- **`update_workflow_config(add_servers?, remove_servers?, add_skills?, remove_skills?, add_secrets?, remove_secrets?, run_retention_count?)`** — Update workflow MCP servers, skills, secrets, or run/eval backup retention.
+
+## Schedule Management (Workshop mode)
+
+For the operational cheat sheet on creating / editing / deleting schedules
+(cron syntax, modes, payload shape), see this section. For the
+multi-agent-only schedule cron flow, see
+`get_reference_doc(kind="schedule-management")` instead.
+
+- **Tools**: `create_schedule`, `create_calendar_schedule`, `update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs`.
+- To view existing schedules, read `workflow.json` via `execute_shell_command` — schedules live under the `schedules` key.
+- **Entry shape**:
+  ```
+  { "id": "...", "name": "...", "description": "...",
+    "cron_expression": "0 9 * * 1-5", "timezone": "UTC",
+    "enabled": true, "trigger_payload": {},
+    "group_names": ["confida-prod"] }
+  ```
+  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`).
+- Schedule management is available in **builder and optimizer modes**. If the user asks in another mode, tell them to switch.
+
+### Three ways to schedule a workflow
+
+1. **Execute** (`mode=workflow`, default) — runs the orchestrator directly, no LLM involved. Fast, no messages needed.
+2. **Run** (`mode=workshop`, `workshop_mode=run`) — LLM-driven execution with per-step notifications. Requires `messages` array (e.g. a single message: `"Run the full workflow using run_full_workflow(group_name=\"group-1\")"`).
+3. **Optimize** (`mode=workshop`, `workshop_mode=optimizer`) — LLM-driven optimizer run. Requires `messages` array with exact group scope, `runs/iteration-0` evidence scope, metric/eval/log review, and bounded stop conditions.
+
+**Default mode rule:** choose `mode="workflow"` unless the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule. Do not choose `mode="workshop"` for normal recurring business runs.
+
+**`/auto-improve` exception**: When setting up continuous improvement, BOTH schedules must be workshop schedules. The recurring execution schedule uses `mode="workshop", workshop_mode="run"` and a message that calls `run_full_workflow(group_name="...")` for each configured group. The recurring improvement schedule uses `mode="workshop", workshop_mode="workshop"`. Do not use direct `mode="workflow"` for this command.
+
+### Writing messages for scheduled runs
+
+`messages` is an ordered queue of strings sent to the workshop LLM one-by-one as user turns. The LLM completes all tool calls triggered by message N before message N+1 is sent.
+
+- Write each message as a plain instruction, like you would type in chat: `"Run the full workflow"`, `"Generate the final report"`.
+- **Run mode** (`workshop_mode="run"`): typically one message with exact groups, e.g. `"Do not ask for confirmation. Run the full workflow for group-1 using run_full_workflow(group_name=\"group-1\")."`
+- **Optimize mode**: one message with stop conditions (see optimizer best practices below).
+- Use multiple messages to break work into sequential phases, e.g. `["Run the workflow", "Generate the final report"]`.
+- Read `variables/variables.json` for available group names and include them explicitly in the message if needed.
+
+**CRITICAL — schedules run unattended; messages must never require human input:**
+
+- Explicitly tell the agent to make all decisions autonomously: `"Do not ask for confirmation, proceed automatically"`.
+- Provide all required parameters upfront in the message (group names, run folders, step IDs) so the agent never needs to ask.
+- Tell the agent to skip or use defaults for anything unclear rather than pausing to ask.
+- Never include open-ended questions or `"let me know"` style instructions.
+- **Bad**: `"Run the workflow and ask me which steps to optimize"`.
+- **Good**: `"Review runs/iteration-0 for group-1, read metrics/eval/log evidence, then choose harden_workflow or replan_workflow_from_results using the scheduled decision model. Log no action if nothing is ready."`
+
+### Workshop optimizer-style schedules
+
+When creating a schedule with `workshop_mode="workshop"`, craft the message around the exact recurring job. For `/auto-improve`, the message should:
+
+- Name the configured `group_names`.
+- Use only `runs/iteration-0` evidence for those groups.
+- Inspect run outputs plus execution/tool logs for failures, retries, wrong tool arguments, timeouts, validation errors, and stuck steps.
+- Read `planning/metrics.json` / `db/metrics_history.jsonl` / `builder/improve.md` / `builder/review.md` / recent `planning/changelog/` entries.
+- Handle report-layout work with report-plan tools only when the recurring job explicitly includes report quality or an unresolved review/improve item queues it.
+
+For active workflows, prefer a workshop optimizer-style check after every workflow run, or at worst after every two runs; if cron cannot trigger on run completion, approximate with a frequent lightweight schedule that no-ops when there is no new evidence. Weekly continuous improvement is appropriate for weekly or explicitly low-touch workflows. After material plan/config changes, tighten the improve cadence for 24–48 hours or until the next one or two post-change `iteration-0` runs have been reviewed.
+
+**Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) use bounded evidence review, (2) apply at most one primary harden/replan action per fire, (3) avoid fresh workflow reruns unless verification is explicitly needed, (4) stop after recording what was applied or deferred.
+
+## Shell & Discovery
+
+- **`execute_shell_command`** — Run shell commands. Quick lookups:
+  - `jq '[.steps[] | {id, title, type}]' planning/plan.json`
+  - `` jq --arg sid "step-id" '.. | objects | select(.id? == $sid) | {id, title, type, description, context_dependencies, context_output}' planning/plan.json ``
+  - `cat planning/step_config.json`
+  - `ls runs/`
+  - `cat variables/variables.json`
+- **`human_feedback`** — Ask the user a question during a run.
+
+## Skills
+
+Skills are reusable instruction sets injected into step agents at runtime. They live at the **workspace root** `{{"{{"}}.AbsDocsRoot{{"}}"}}/skills/{folder}/SKILL.md` — shared across all workflows. Do NOT create or reference skills inside the workflow folder (e.g. `Workflow/trading/skills/` does not exist).
+
+**Workflow for managing skills**:
+
+1. **Find**: `list_skills` to see installed skills, or `search_skills(query)` to search the public registry.
+2. **Install**: `install_skill(source)` (e.g. `owner/repo@skill-name`) or `import_skill(github_url)` — downloads into `{{"{{"}}.AbsDocsRoot{{"}}"}}/skills/{folder}/`. If a skill folder exists but has no `SKILL.md`, reinstall it using the same method it was originally installed with — **never write `SKILL.md` content manually**.
+3. **Add to workflow**: `update_workflow_config(add_skills=["folder-name"])` — all steps inherit it. **Do NOT edit `workflow.json` manually.**
+4. **Restrict to specific steps**: By default all steps inherit all workflow-level skills. To limit a step: `update_step_config(step_id, enabled_skills=["skill-a"])`. Empty array = no skills for that step.
+5. **Remove from workflow**: `update_workflow_config(remove_skills=["folder-name"])`.
+6. **Uninstall**: `uninstall_skill(folder_name)` — removes files from workspace entirely.
+
+Use `get_workflow_config` to see the workflow's selected skills. Use `list_skills` to see all installed skills.
+
+## Secrets
+
+Secrets are credentials (API keys, tokens, passwords) injected into step agents as `$SECRET_<NAME>` environment variables at execution time. They exist in three buckets:
+
+- **Workflow secrets** — per-user, encrypted server-side, scoped only to this workflow. Use these by default for workflow-specific credentials.
+- **User secrets** — per-user, encrypted server-side, reusable across workflows.
+- **Global secrets** — operator-managed via `GLOBAL_SECRET_*` env vars on the server. Read-only from chat.
+
+**Adding a secret is a TWO-STEP flow. Doing only step 2 is a common silent-failure trap: the name gets attached but `$SECRET_<NAME>` is empty at runtime.**
+
+1. **Store the value**: prefer `set_workflow_secret(name="BUFFER_API_KEY", value="<plaintext>")` for workflow-only credentials. Use `set_user_secret` only when the same credential should be reusable across workflows.
+2. **Attach to this workflow**: `update_workflow_config(add_secrets=["BUFFER_API_KEY"])`. This step validates that a value exists (workflow store, user store, or global); attaching an orphan name is rejected with an error pointing to step 1.
+
+**When the user asks you to add/save/set a secret for this workflow, complete both steps in the same turn.** Do not stop after `set_workflow_secret` or `set_user_secret`; immediately call `update_workflow_config(add_secrets=[...])` so the next step run receives `$SECRET_<NAME>`. If the user only gives a name and no value, call `list_secrets` first and attach an existing available secret if present; otherwise ask for the value. If the user pastes a value in chat, store it and then refer to it by name only.
+
+Do **not** give boilerplate advice like `"rotate this secret"` after a normal user-requested save. Recommend rotation only when there is a concrete exposure reason: the value was printed into logs/output, committed to a file, sent to the wrong channel, or the user explicitly asks for security remediation.
+
+**Other secret ops**:
+
+- **Inspect**: `list_secrets` returns `global`, `workflow`, and `user` buckets — values are never exposed.
+- **Edit a value**: call `set_workflow_secret` or `set_user_secret` again with the same name — it upserts.
+- **Delete from store**: `delete_workflow_secret(name)` or `delete_user_secret(name)`. Workflow attachments are separate — also run `update_workflow_config(remove_secrets=["NAME"])` to detach.
+- **Detach only (keep value)**: `update_workflow_config(remove_secrets=["NAME"])`.
+
+Secret VALUES are never rendered into prompts, logs, or tool outputs. Step agents read them only from `$SECRET_<NAME>` in `execute_shell_command`. Never echo, print, or hardcode a secret value in descriptions, learnings, or `main.py`.

@@ -90,8 +90,9 @@ func executeRealisticWorkshopPromptForMode(t *testing.T, mode string) string {
 const MaxWorkshopPromptBytes = 70_000 // ~17.5k tokens at 4 chars/token
 
 // MinWorkshopPromptBytes catches accidental gutting (e.g. a template-var
-// rename that silently drops a section).
-const MinWorkshopPromptBytes = 30_000
+// rename that silently drops a section). Lowered 2026-05-28 after the
+// workshop-mode-flow + debugging-flow skill-pointer trim (~5KB cut).
+const MinWorkshopPromptBytes = 22_000
 
 // TestWorkshopPromptSize logs the current rendered size for the canonical
 // workshop mode and fails if it exceeds MaxWorkshopPromptBytes. The legacy

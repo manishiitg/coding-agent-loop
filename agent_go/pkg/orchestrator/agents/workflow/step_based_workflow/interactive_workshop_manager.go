@@ -1848,54 +1848,11 @@ Each workflow has three separate stores that survive across runs: `+"`learnings/
 {{if eq .WorkshopMode "workshop"}}
 **WORKSHOP MODE** — Design, run, evaluate, harden, and replan as a single mode. The agent decides the right action from workspace state (see the phase-detection directive near the top of this prompt). Make existing steps reliable across all groups and runs; build new steps when the plan needs extending.
 
-**Ensure the foundation is set:**
-1. Verify the current foundation directly in `+"`soul/soul.md`"+`. This is the canonical source for the workflow objective and success criteria; `+"`planning/plan.json`"+` no longer stores root objective/success fields.
-2. {{if .WorkflowSuccessCriteria}}**Success criteria is set**: "{{.WorkflowSuccessCriteria}}"{{else}}**Success criteria appears missing** — check `+"`soul/soul.md`"+` for a `+"`## Success Criteria`"+` section. If missing, ask the user what success looks like, then write the section via shell.{{end}}
-3. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}"{{else}}**Objective appears missing** — check `+"`soul/soul.md`"+` for a `+"`## Objective`"+` section. If missing, ask the user what the workflow is for, then write the section via shell.{{end}}
+**Foundation check:** verify `+"`soul/soul.md`"+` has both `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections. If either is missing, ask the user and write via shell. `+"`planning/plan.json`"+` no longer stores root objective/success fields. {{if .WorkflowSuccessCriteria}}Current success criteria: "{{.WorkflowSuccessCriteria}}"{{end}}{{if .WorkflowObjective}} Current objective: "{{.WorkflowObjective}}"{{end}}
 
-**Read previous builder conversations** from `+"`builder/`"+` folder (`+"`ls -t builder/*.json | head -3`"+`) to avoid repeating failed approaches and build on previous progress.
+**Read previous builder conversations** from `+"`builder/`"+` folder (`+"`ls -t builder/*.json | head -3`"+`) to avoid repeating failed approaches.
 
-**The core optimization loop is: run → eval → classify → act → verify.**
-
-Treat harden, replan, eval improvement, metric cleanup, and no-action/blocker as peer outcomes. Classify the evidence first, then choose the action whose scope matches the failure. Choose `+"`harden_workflow`"+` when the workflow path is basically right but reliability, validation, artifact shape, eval wiring, KB/db/report contracts, or local step behavior is broken. Choose `+"`replan_workflow_from_results`"+` when primary outcome metrics or success criteria show a strategy/path gap that local repair is unlikely to close.
-
-**harden_workflow** is the reliability repair tool. It reads evaluation reports and execution outputs from real runs, fixes failing steps when the path is otherwise sound, and runs a best-practice sweep across plan/config/learnings/KB/db/report/eval/variables artifacts. Use it for objective invariant violations rooted in local contracts or reliability. Use replanning for strategy or path redesign.
-- Adds pre-validation rules that would have caught the failure
-- Tightens step descriptions to be more specific
-- Applies small evidence-backed structural fixes when the failure is caused by missing/split/obsolete steps or bad step boundaries
-- Patches main.py only for `+"`scripted`"+` steps; deletes stale `+"`learnings/{step-id}/main.py`"+` for `+"`agentic`"+` steps
-- Updates step config (execution mode, servers, learnings, KB/db/report/eval wiring)
-- Locks stable learnings when they converge and records review evidence
-- Cleans deterministic best-practice violations such as invalid locks, missing learning objectives, KB/db contract mismatches, stale report wiring after field changes, and hardcoded user-specific values
-
-**Optimization workflow:**
-1. **Run the workflow** — execute the full workflow or individual steps against `+"`iteration-0`"+`
-2. **Run evaluation** — `+"`run_full_evaluation(group_name=\"...\")`"+` for each group you need to score. Evaluation always targets `+"`iteration-0`"+`.
-3. **Classify** — decide whether the evidence calls for harden, replan, eval-plan improvement, metric cleanup, or no action/blocker.
-4. **Act** — call the matching tool or apply the matching bounded edit.
-5. **Re-run and verify** — execute again only when one targeted verification would materially reduce uncertainty.
-6. **Repeat** until primary metrics and success criteria are healthy, not merely until local step checks pass.
-
-**Progressive hardening loop** (when user asks to "harden loop" or "run and harden all groups"):
-Run one group at a time so each group's failures harden the workflow before the next group runs:
-1. Read variables/variables.json to get all enabled group names
-2. For each group (one by one):
-   a. Execute the workflow for this group only (execute_step with group_name, or run_full_workflow with a single group)
-   b. Run evaluation for this group's `+"`iteration-0`"+` results with `+"`run_full_evaluation(group_name=\"...\")`"+`
-   c. Classify the failure. For local reliability/contract failures, run `+"`harden_workflow(group_name=\"...\")`"+`. For strategy/path, measurement, or metric-definition failures, use `+"`replan_workflow_from_results`"+`, eval tools, or metric tools.
-3. After all groups have run: summarize overall scores and remaining issues
-4. If any groups still failing: repeat the loop (max 2 full iterations to prevent infinite loops)
-
-For **small evidence-backed structural fixes** (add a missing validation/extraction step, remove an obsolete step, split/merge a clearly broken boundary), `+"`harden_workflow`"+` may use the plan modification tools directly. Use `+"`replan_workflow_from_results`"+` when run/eval/metric evidence shows the workflow path itself is misaligned with the objective or success criteria — for example, it is doing the wrong business work, collecting the wrong evidence, optimizing the wrong artifact, or producing outputs that local hardening has not made capable of satisfying a success criterion.
-
-### When to redirect to another mode
-Workshop is for the run/eval/classify/act loop. If the user asks about:
-- **Dashboard widgets, themes, layouts, custom colors** → handle them here with the report-plan tools. Workshop can maintain `+"`reports/report_plan.json`"+` when report changes need to reflect run/eval/metric evidence.
-- **Greenfield workflow design — adding new execution steps or defining a new workflow's structure from scratch** → switch to **Workshop mode**. Workshop hardens an existing structure.
-- **Evaluation coverage — drafting or improving `+"`evaluation/evaluation_plan.json`"+`** → handle it in Workshop. Workshop owns eval design, validation, scoring, and hardening.
-- **Just running the finished workflow / inspecting prior runs in plain English** → switch to **Run mode**, which is the user-friendly execution surface (also used over WhatsApp/Slack).
-
-Don't try to handle these requests yourself — tell the user which mode owns the task and offer to switch.
+**Core loop:** run → eval → classify → act → verify. Treat harden, replan, eval improvement, metric cleanup, and no-action/blocker as peer outcomes. For the full playbook (harden_workflow details, optimization workflow steps, progressive hardening loop across groups, when-to-redirect decision tree): `+"`get_reference_doc(kind=\"workshop-mode-flow\")`"+`. Load before choosing between harden_workflow and replan_workflow_from_results, or before running a multi-group hardening loop.
 {{else}}
 **RUN MODE** — You're chatting with a workflow that's already been built and tuned. Most of the time you'll be running it and answering questions about results, often over WhatsApp / Slack / a phone screen rather than a desktop terminal.
 
@@ -2030,40 +1987,11 @@ When the user asks you to "stop", "cancel", or "abort" running tasks, you MUST c
 
 When a step doesn't do what it should — wrong output, missing actions, incomplete results — **don't just re-run it**. You have a smarter model — use it to investigate.
 
-{{if eq .WorkshopMode "workshop"}}**When a step is stuck or repeatedly failing**, run the task yourself using the same tools the step agent would use, but first read `+"`learnings/_global/SKILL.md`"+` and any relevant KB/db/run artifacts so you reuse the workflow's generated playbook. Figure out what works, then update the step's instructions, validation, config, or learnings with the correct approach.
-{{else}}**When a step is stuck or repeatedly failing**, inspect what happened with the available run/review tools and explain the likely fix. Do not update step instructions, validation, config, or learnings in this mode.
+{{if eq .WorkshopMode "workshop"}}**Workshop:** harden / replan / manual edit per the workshop investigation workflow. When a step is stuck or repeatedly failing, run the task yourself using the same tools the step agent would use, after reading `+"`learnings/_global/SKILL.md`"+`; figure out what works, then update the step. **Act, don't just analyze.**
+{{else}}**Run mode:** inspect via `+"`query_step`"+` (live) / `+"`debug_step`"+` (completed) / `+"`list_executions`"+`; explain the likely fix in plain English. Do not mutate plan/config/learnings/KB/report/eval here — redirect those to Workshop.
 {{end}}
 
-{{if eq .WorkshopMode "workshop"}}
-**Workshop investigation workflow:**
-1. Pick the action that matches the failure: if the workflow path is sound but reliability is broken, run **harden_workflow(group_name?)**. If primary metrics or success criteria show a strategy gap, run **replan_workflow_from_results(group_name?)**. For local fixes (description, validation_schema, context wiring, step config), apply them directly with the matching update tool.
-2. For background actions, continue other work while they run — you'll be auto-notified.
-3. Review the summary of changes; re-run the affected scope to verify.
-{{else}}
-**Run investigation workflow:**
-1. If the user asks for live status, call `+"`query_step(step_id=...)`"+` for the relevant step. Use `+"`list_executions(status_filter=\"running\")`"+` only if you need to identify running steps.
-2. If a running step appears stuck, use `+"`query_step`"+` to inspect captured structured MCP tool calls and summarize what is known. If no tool calls are listed for a coding CLI provider, say that terminal/TUI progress is separate and wait for auto-notification unless the user asks you to stop or check again. Do not poll in a tight loop.
-3. If a step already completed or failed, use `+"`debug_step(step_id, group_name=...)`"+` plus targeted reads of run outputs/log summaries. For whole-run questions, use `+"`review_workflow_results`"+`, timing, and cost reviews.
-4. Explain the observed failure or data gap in plain English and offer retry/skip/help when appropriate.
-5. If the right action is a targeted retry, utility check, or one-off investigation, run the relevant normal or orphan step with `+"`execute_step`"+`; if the request needs the whole workflow, call `+"`run_full_workflow`"+`.
-6. If fixing requires changing step descriptions, validation, config, learnings, KB, db shape, report wiring, or evaluation, tell the user to switch to Workshop. Do not call harden_workflow or mutate workflow design artifacts from Run mode.
-{{end}}
-
-**Root cause → Fix mapping:**
-- **Agent didn't attempt the task** → Step description is unclear. Rewrite it.
-- **Agent used wrong approach** → Description missing constraints. Add HOW instructions.
-- **Agent missed fields/data** → Update validation_schema and clarify output structure.
-- **Agent couldn't find data from previous steps** → Fix context_dependencies chain.
-- **Validation rejected correct output** → Schema too strict. Update it.
-- **Agent wasted turns on irrelevant tool calls** → Description too vague. Tighten it.
-
-{{if eq .WorkshopMode "workshop"}}**The fix should be one of:** update step description (most common), update validation_schema, fix context dependencies, edit/delete learnings, run harden_workflow, or replan from evidence.
-{{else}}**The fix should be one of:** explain the issue, rerun/inspect safely, or switch to Workshop for any workflow mutation.
-{{end}}
-
-{{if eq .WorkshopMode "workshop"}}**CRITICAL: Act, don't just analyze.** harden_workflow applies fixes directly. For manual fixes, use the same tools — update step descriptions, update validation_schema, edit learnings. After fixing, re-run to verify.
-{{else}}**CRITICAL: Stay in the runtime boundary.** Do direct runtime work, run/inspect steps, and answer from workflow state as requested, but redirect workflow design/config/eval/report mutations to Workshop.
-{{end}}
+For the full debugging playbook (workshop vs run investigation workflow steps, root-cause → fix mapping table, fix options per mode): `+"`get_reference_doc(kind=\"debugging-flow\")`"+`. Load when a step has failed or is stuck and you need to decide between retry / manual fix / harden_workflow / replan / mode switch.
 
 {{if eq .WorkshopMode "workshop"}}
 ## Optimization
@@ -2181,13 +2109,18 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 		}
 	}
 
-	// Append browser instructions if browser tools are available in this workflow
+	// Append browser instructions if browser tools are available in this workflow.
+	// Replace the ~5-10KB BuildBrowserInstructions block with a one-line
+	// pointer; the full guide lives in the workflow-reference mega-skill as
+	// `browser-usage` and is fetched on demand. Mirrors the pattern at
+	// server.go:5024 (workflow_phase path).
 	browserCfg := iwm.controller.resolveBrowserConfig(iwm.controller.GetSelectedServers(), iwm.controller.GetSelectedSkills())
-	if browserPromptStr := instructions.BuildBrowserInstructions(browserCfg); browserPromptStr != "" {
-		systemPrompt.WriteString("\n\n")
-		systemPrompt.WriteString(browserPromptStr)
-		logger.Info(fmt.Sprintf("🌐 Added browser instructions to workflow builder system prompt (playwright=%v, agent-browser=%v)",
-			browserCfg.HasPlaywright, browserCfg.HasAgentBrowser))
+	if browserCfg.HasPlaywright || browserCfg.HasAgentBrowser {
+		systemPrompt.WriteString("\n\n## Browser\n\nThis workflow has a browser tool available (mode=")
+		systemPrompt.WriteString(browserCfg.Mode)
+		systemPrompt.WriteString("). For the full agent_browser HTTP API + per-mode behaviors (CDP / headless / Playwright), tab discipline, file uploads, and session limits, call `get_reference_doc(kind=\"browser-usage\")` before driving the browser.\n")
+		logger.Info(fmt.Sprintf("🌐 Added browser-skill pointer to workflow builder system prompt (mode=%s, playwright=%v, agent-browser=%v)",
+			browserCfg.Mode, browserCfg.HasPlaywright, browserCfg.HasAgentBrowser))
 	}
 
 	// NOTE: Secrets are injected by the server-level handler (server.go) via AppendSystemPrompt
@@ -11058,8 +10991,15 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 		secretPrompt = BuildWorkflowSecretPrompt(effectiveSecrets)
 	}
 
+	// Same trim as workshop main path: emit a one-line pointer to the
+	// browser-usage skill instead of the ~5-10KB BuildBrowserInstructions
+	// block. Background-task agents fetch the full guide on demand.
 	bgBrowserCfg := iwm.controller.resolveBrowserConfig(config.ServerNames, effectiveSkills)
-	browserPrompt := instructions.BuildBrowserInstructions(bgBrowserCfg)
+	browserPrompt := ""
+	if bgBrowserCfg.HasPlaywright || bgBrowserCfg.HasAgentBrowser {
+		browserPrompt = "\n## Browser\n\nThis task has a browser tool available (mode=" + bgBrowserCfg.Mode +
+			"). For the full agent_browser HTTP API + per-mode behaviors (CDP / headless / Playwright), tab discipline, file uploads, and session limits, call `get_reference_doc(kind=\"browser-usage\")` before driving the browser.\n"
+	}
 
 	// Apply post-setup configuration (folder guard + registry for code execution mode)
 	if err := iwm.controller.applyPostSetupToAgent(agent, "background-task-agent", isCodeExecMode); err != nil {

@@ -1720,62 +1720,23 @@ Until you've checked, do not assume the workflow needs hardening or fresh design
 {{end}}
 {{.SpecialWorkspaceToolsInstructions}}
 
-## Execution policy — run ONE group at a time by default
+## Execution policy
 
-When you call `+"`"+`run_full_workflow`+"`"+` for a multi-group workflow, **default to sequential per-group execution** — pass `+"`"+`group_name=\"<single-group>\"`+"`"+` and wait for that group to finish before starting the next. Only run groups in parallel when the user explicitly says so ("run all groups", "run in parallel", "all at once", etc.).
-
-**Why per-group by default:**
-- **Cleaner failure signal.** A failure in group A is isolated; you can diagnose it before group B runs and reach a different conclusion than if both failed mixed-together.
-- **Fixes propagate forward.** If you run and fix issues per group, group A's fixes apply BEFORE group B runs — group B benefits from the improvements without re-running A.
-- **Avoids resource contention.** Browsers, MCP server connections, API rate limits, file-system contention all behave better with serialized groups than with N parallel workers fighting over them.
-- **Earlier abort.** If group A reveals a structural problem (wrong selectors, missing variable, broken auth), you can stop the loop before wasting compute on B and C.
-- **Iteration rotation still works correctly.** The first group's run triggers the paired iteration-0 → iteration-N rotation; subsequent partial-group runs in the same session reuse iteration-0, so all groups end up in the same iteration-0 by the end of the loop.
-
-**The pattern:**
-`+"```"+`
-1. Read variables/variables.json → list of enabled group names.
-2. for each group in groups:
-     run_full_workflow(group_name="{group}")
-     wait for completion (use list_executions / query_step to monitor if needed)
-     if user asked for hardening or optimization, switch to Workshop mode
-3. After all groups: summarize.
-`+"```"+`
-
-**Exceptions where parallel is appropriate** (still requires explicit user signal):
-- User says "run all groups in parallel" / "all at once" / "fan out".
-- Single-group workflow (only one group exists — there's nothing to serialize).
-- The workflow's steps have no shared external resources (no browser, no API rate limits, no shared files) AND speed matters more than per-group debug clarity. Even then, prefer asking the user before defaulting to parallel.
-
-**If the user is ambiguous** ("run the workflow"), default to sequential per-group and tell them: "I'm running groups one at a time so any failures isolate cleanly. Say 'run in parallel' if you'd rather fan out."
+**Default to sequential per-group execution** for multi-group `+"`run_full_workflow`"+` calls: pass `+"`group_name=\"<single-group>\"`"+` and wait for each group to finish before starting the next. Only run groups in parallel when the user explicitly says so. If the user is ambiguous ("run the workflow"), default sequential and tell them so. For the full rationale (cleaner failure signal, fixes propagate forward, resource contention, iteration rotation), the loop recipe, and the exceptions where parallel is appropriate: `+"`get_reference_doc(kind=\"execution-policy\")`"+`.
 
 {{if or (eq .WorkshopMode "run") (eq .WorkshopMode "workshop")}}
-## Deployed channel workflow runtime
+## Deployed channel runtime
 
-In deployment, users may ask questions from Slack, WhatsApp, or another configured bot channel. Those messages can be routed to this existing workflow through this conversational workflow agent. The channel route selects the active workshop mode: Workshop or Run. If no mode is selected, bot channels default to Run mode.
-
-Respect the selected mode. When a channel-routed user message lands in Run or Workshop mode for an existing workflow, treat it as a runtime request by default. Do not reinterpret ordinary operational questions as requests to redesign the workflow unless the user explicitly asks to create, edit, review, optimize, or change the workflow. For question-answer, support, investigation, RCA, lookup, or analysis workflows, the user's message is the workflow input.
-
-Runtime handling pattern:
-- Identify the relevant enabled group from the message when it names an environment, tenant, account, brand, region, or similar group dimension. If it does not, prefer the single enabled group; otherwise use the workflow's documented/default production-like group when that matches the workflow objective. Ask only when the workflow cannot safely infer the group.
-- Before running anything, read and apply the workflow's relevant runtime context when useful: `+"`soul/soul.md`"+` for intent, `+"`learnings/_global/SKILL.md`"+` for how this workflow usually operates, step-specific saved scripts for learned deterministic behavior, `+"`knowledgebase/context/`"+` and `+"`knowledgebase/notes/`"+` for business facts/rules, and `+"`db/`"+` for accumulated state.
-- If the user asks a question or a small operational task that can be completed directly from available tools, KB/learnings, db, or existing run artifacts, do it directly in Run mode and answer in plain language. Do not force a full workflow run just because the request came through Slack/WhatsApp.
-- Use `+"`run_full_workflow(group_name=\"<group>\", human_inputs=...)`"+` for the normal path. Populate human input steps with the user's original question and any available channel context such as platform, channel/thread, user, and message timestamp when the step asks for or can preserve that context.
-- Use `+"`execute_step`"+` for targeted actions, retries, debugging, filling a missing artifact after the full run has enough context, or invoking a plan-local orphan utility step when that orphan is the right tool for the user's request.
-- After execution, read the final user-facing artifacts yourself and answer in the channel with the substance of the result. Do not reply with only file paths, internal run IDs, or "check the artifact" unless the user asked for raw files.
-- In Run mode, do not change workflow design or configuration. If the run fails because of workflow structure, variables, secrets wiring, plan shape, step instructions, or report bindings, explain the failure and ask/suggest switching to Workshop for repair. In Workshop mode, diagnose and fix Workshop-owned setup, then rerun the smallest useful scope. If the issue is eval design, hardening, metric cleanup, or systematic quality improvement, explain that it belongs in Workshop mode.
+Users may reach this workflow through Slack, WhatsApp, or another bot channel. Treat the routed message as a runtime request by default; identify the group from message context, ground in `+"`soul.md`"+` / `+"`learnings/_global/SKILL.md`"+` / KB / db before running. Use direct-answer (small ops), `+"`run_full_workflow(group_name=..., human_inputs=...)`"+` (normal path), or `+"`execute_step`"+` (targeted). Summarize final artifacts in plain language, not file paths. Don't reinterpret operational questions as design requests. For the full handling pattern (group inference rules, channel-context plumbing, Run vs Workshop boundary on failures): `+"`get_reference_doc(kind=\"deployed-channel\")`"+`.
 
 {{end}}
 
-{{if eq .WorkshopMode "workshop"}}
-## Reporting — Workshop maintains the live dashboard
+## Reporting
 
-The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders the widget blocks defined there against `+"`db/*.json`"+`, durable `+"`db/assets/`"+` references, `+"`knowledgebase/`"+` context/notes, and dedicated workflow APIs for built-in `+"`costs`"+` / `+"`evals`"+` / `+"`runs`"+` widgets. It is always available — there is NO "generate report" phase, no HTML/PDF artifact to produce, no step that writes a finished report.
+The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders widgets against `+"`db/*.json`"+`, `+"`db/assets/`"+`, `+"`knowledgebase/`"+`, and built-in costs/evals/runs APIs. **NO "generate report" phase — no HTML/PDF artifact, no step writes a finished report.**
 
-Workshop mode can author and maintain report widgets when reporting needs to reflect optimization/evaluation/run evidence: creating dashboard widgets, themes, layouts, custom colors, and `+"`reports/report_plan.json`"+` edits. Keep report edits presentation-only unless the user also asked for workflow hardening/eval changes.
-{{else}}
-## Reporting — switch to Workshop mode to edit dashboards
-
-The workflow has a live frontend report viewer at the top toolbar's "Report" tab, but Run mode does not own report widget authoring. If the user asks to create dashboard widgets, themes, layouts, custom colors, or `+"`reports/report_plan.json`"+` edits, tell them to switch to Workshop mode. Do not offer to draft or edit `+"`reports/report_plan.json`"+` via shell/direct file writes from Run mode.
+{{if eq .WorkshopMode "workshop"}}**Workshop owns `+"`reports/report_plan.json`"+`** — author/edit widgets via the report-plan tools (`+"`get_report_plan`"+` / `+"`upsert_report_widget`"+` / etc.). Keep report edits presentation-only unless the user also asked for workflow hardening/eval changes. **Do NOT** add a step that generates HTML/markdown rendered reports or Python that produces a dashboard file. For the full dashboard policy (tabbed-routes layout, "No report yet" vs empty-widget diagnosis, auto-refresh discipline, new-widget-type escape hatch): `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
+{{else}}**Run mode does not author dashboards.** If the user asks to create/edit widgets, themes, layouts, or `+"`reports/report_plan.json`"+`, tell them to switch to Workshop. Do not edit `+"`reports/report_plan.json`"+` via shell from Run mode. For policy details: `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
 {{end}}
 
 	{{if eq .WorkshopMode "run"}}
@@ -1785,22 +1746,6 @@ The workflow has a live frontend report viewer at the top toolbar's "Report" tab
 
 	If confirmed, call `+"`capture_context`"+` with a concise `+"`context_text`"+`, a section name, and existing `+"`target_metrics`"+`. Do not manually edit `+"`knowledgebase/context/context.md`"+`; the tool writes the structured improve.md audit entry. If there are no metrics yet, tell the user setup is needed before context can be anchored and suggest switching to Workshop for `+"`/define-success`"+`.
 	{{end}}
-
-	{{if eq .WorkshopMode "workshop"}}
-**When the user asks "create a report" / "build a reporting UI" / "show me X in a dashboard":**
-- The answer is almost always: **update `+"`reports/report_plan.json`"+` via the report-plan tools** — add, move, toggle, or remove widgets.
-- If the workflow has routing routes, todo_task predefined routes, or other route-specific outputs, prefer a tabbed report section: `+"`set_section_layout(mode=\"tabs\")`"+`, then give each route's widgets `+"`tab: \"<route name>\"`"+`. Use one tab per user-meaningful route so the dashboard does not mix unrelated path outputs in one long section.
-- When creating or improving a report for a routed workflow, first inspect the route list and decide the report structure from that route map. Use tabs for route-specific evidence/results by default; use a combined table only when the user explicitly wants cross-route comparison or the route outputs share the same schema.
-- Do NOT add a step that generates HTML, markdown, or any other "rendered report" artifact.
-- Do NOT write Python that produces a dashboard file. The React frontend already does this from the report plan.
-- If the user wants a NEW kind of visualization the widget grammar can't express, say so explicitly and propose either (a) a new widget type to add to the renderer, or (b) reshaping the underlying `+"`db/`"+` data to fit existing widget types. Don't silently fall back to "I'll write a Python script that makes HTML."
-
-**When the report shows "No report yet":** it means `+"`reports/report_plan.json`"+` is missing or contains zero usable widgets. Fix by creating/updating the report plan.
-
-**When the report renders but is empty/missing widgets the user expects:** the plan resolved correctly but the widget `+"`source`"+` JSON is missing or has no rows yet. Either a step hasn't run, or the widget points at the wrong path. Inspect `+"`reports/report_plan.json`"+` and the actual `+"`db/`"+` files to diagnose.
-
-**Report viewer auto-updates** when the user opens or switches to the Report tab — no rebuild step needed. After the agent updates `+"`report_plan.json`"+`, the user just clicks Report (or refreshes if they're already on it) to see the new widgets.
-{{end}}
 
 {{if eq .WorkshopMode "workshop"}}
 ### Report plan — reports/report_plan.json (brief)
@@ -1939,49 +1884,20 @@ Use `+"`cat planning/plan.json`"+` only when you genuinely need the entire file.
 {{if eq .WorkshopMode "workshop"}}
 ## Planning steps
 
-When a user describes what to automate: **present the plan and get explicit confirmation before creating any steps.** The user may be exploring — do not assume they are ready to commit. Default to `+"`regular`"+` unless the task clearly needs branching, iteration, or sub-agents. Every step must have a `+"`validation_schema`"+`. Context flow is forward-only via `+"`context_dependencies`"+` → `+"`context_output`"+`.
+**Present the plan and get explicit confirmation before creating any steps.** Default to `+"`regular`"+` unless the task clearly needs branching/iteration/sub-agents. Every step needs `+"`validation_schema`"+`. Context flow forward-only via `+"`context_dependencies`"+` → `+"`context_output`"+`. Step types: `+"`regular`"+` · `+"`todo_task`"+` · `+"`routing`"+` · `+"`human_input`"+` · `+"`message_sequence`"+` · orphan.
 
-Step types: `+"`regular`"+` · `+"`todo_task`"+` (orchestrator with predefined_routes; each route is `+"`regular`"+` / `+"`message_sequence`"+` / nested `+"`todo_task`"+` 1-level only) · `+"`routing`"+` · `+"`human_input`"+` · `+"`message_sequence`"+` · orphan (`+"`is_orphan: true`"+`, reusable across orchestrators via `+"`shared_with.orchestrator_ids`"+` + `+"`orphan_step_ref`"+`).
+`+"`message_sequence`"+` pattern catalog (named so you know what to ask for; full details in the `+"`message-sequence`"+` reference doc): Stateful Specialist · Test/Fix Loop · Maker+Reviewer · Panel · Clean-Room Retry · HITL Re-entry · Scripted Conversation.
 
-For the design playbook (8-step design walkthrough, step-type trade-offs, validation design, context flow, anti-patterns, step-types reference, inner steps, reusable orphan-route pattern), call **`+"`get_reference_doc(kind=\"plan-design\")`"+`** — this is the entry point for any plan-composition decision. From there:
-
-- For per-step-type deep dives: `+"`todo-task`"+` (anatomy + routes + nested + scripted fast-path), `+"`human-input`"+` (input types + routing pairing + unattended schedules), `+"`message-sequence`"+` (full pattern catalog: Stateful Specialist, Test/Fix Loop, Maker+Reviewer, Panel, Clean-Room Retry, HITL Re-entry, Scripted Conversation), `+"`routing`"+` (pure vs execute-then-route, anti-patterns).
-- For recurring multi-step shapes: `+"`get_reference_doc(kind=\"workflow-patterns\")`"+` (Phase Router, Scoped Investigation, Linear Pipeline, Fan-out & Consolidate, Verification Gate, Pre-flight Probe, Human Checkpoint, Critique Loop, Persistence Tail).
+For the design playbook (8-step walkthrough, step-type trade-offs, validation design, context flow, anti-patterns, orphan-route pattern): `+"`get_reference_doc(kind=\"plan-design\")`"+`. For per-step deep dives use the corresponding kinds: `+"`todo-task`"+`, `+"`human-input`"+`, `+"`message-sequence`"+`, `+"`routing`"+`. For recurring multi-step shapes: `+"`workflow-patterns`"+`. A condensed composition overview is also available at `+"`get_reference_doc(kind=\"planning-steps\")`"+`.
 {{end}}
 
-## RUNNING STEPS
+## Running steps
 
-### Iterations & Groups
-**Iterations** are just output folders (e.g., iteration-0). In workshop builder mode, always use **iteration-0**. Do not choose or pass any other iteration. Every execute_step re-reads the **latest** plan.json — no caching or snapshotting.
+Workshop builder always uses `+"`iteration-0`"+`. Every `+"`execute_step`"+` re-reads the latest `+"`plan.json`"+`. Before running anything, read `+"`cat variables/variables.json`"+` for `+"`group_name`"+` values and ALWAYS pass an explicit `+"`group_name`"+`. {{if .AvailableGroups}}Available groups: **{{.AvailableGroups}}**.{{end}}
 
-{{if .AvailableGroups}}Available groups: **{{.AvailableGroups}}**
-{{end}}
+Pass `+"`human_input`"+` to human-input steps inline (don't block on UI). **Always follow up** after execution; never fire-and-forget. **To stop:** call `+"`stop_all_executions()`"+` or `+"`stop_step(execution_id)`"+` — text alone does NOT stop background tasks. Auto-notifications arrive prefixed `+"`[AUTO-NOTIFICATION]`"+` and are system-generated, not user messages; don't poll `+"`query_step`"+` in a loop.
 
-When running a step or the full workflow:
-- Before running anything, read `+"`cat variables/variables.json`"+` to find available `+"`group_name`"+` values.
-- Always use execute_step with an explicit `+"`group_name`"+`. Never guess or silently default if multiple groups exist.
-- Scripts must read user/account-specific values from variables or environment, not hardcode them.
-- When testing agentic steps that operate on group-specific data, verify them across more than one group before treating the design as ready.
-
-### Execution Procedure
-1. User says "run step-X" → determine group → call **execute_step("step-id", group_name=group_name)** → get execution_id
-2. execute_step follows the step's persistent learnings config (`+"`learnings_access`"+`, `+"`learnings_write_method`"+`, `+"`lock_learnings`"+`).
-3. **Human input steps**: Pass **human_input** parameter with the appropriate answer from your conversation context. This prevents blocking for manual UI input.
-4. Tell user step is running. Move on to other work or wait for the auto-notification.
-5. When the notification arrives:
-   - ✅ If success: briefly tell user the result.
-   - ❌ If failed: report the error clearly. Investigate the root cause (use debug_step, read logs, or use MCP tools directly). {{if eq .WorkshopMode "workshop"}}Fix the step description, config, context wiring, or validation schema, then re-run.{{else}}In this mode, do not mutate workflow artifacts; explain the needed fix and switch to Workshop if changes are required.{{end}}
-6. **ALWAYS follow up** after execution. Never fire-and-forget.
-
-### Auto-Notification System
-All background agents **automatically notify you** when they complete:
-- Notifications arrive as messages prefixed with **[AUTO-NOTIFICATION]** — they are **system-generated, NOT from the user**. Do not treat them as user requests.
-- **Do NOT poll** with query_step in a loop or ask the user when something finishes — the system handles this.
-- **Notifications may be delayed** — they can arrive after you've moved on or the user has changed the plan. Always check whether a notification is still relevant to the **current** context before acting on it.
-- Use **query_step** for a live status check — it shows the execution registry status and structured MCP tool calls captured so far. For coding CLI providers, terminal/TUI activity is shown in the UI terminal stream and may exist before any structured tool call appears.
-
-### Stopping Tasks
-When the user asks you to "stop", "cancel", or "abort" running tasks, you MUST call **stop_all_executions()** or **stop_step(execution_id)**. Simply responding with text does NOT stop anything — tasks run independently in the background.
+For the full 6-step execution procedure (run / handle human_input / wait / success-failure handling), iteration & groups rules, auto-notification semantics (may be delayed, recency check), and stopping discipline: `+"`get_reference_doc(kind=\"running-steps\")`"+`.
 
 ## DEBUGGING
 

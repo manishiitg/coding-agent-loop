@@ -11,8 +11,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
 // Module-level ansi_up singleton — instances are cheap but a single shared
 // one keeps escaping behavior consistent and avoids per-render allocations.
+//
+// use_classes = true makes ansi_up emit CSS classes (ansi-red-fg,
+// ansi-bright-blue-fg, ansi-bold, etc.) instead of inline colors. The
+// classes are styled in index.css with a single palette that reads well
+// across every TERMINAL_THEMES dark variant. Switching to per-theme color
+// palettes (one ANSI scheme per dropdown selection) would mean scoped CSS
+// variables on the pane wrapper — deferred until anyone asks for it.
 const ansiUp = new AnsiUp()
-ansiUp.use_classes = false // inline-style colors; works without extra CSS
+ansiUp.use_classes = true
 
 // stripAnsi removes ANSI CSI sequences from a string. Used to feed clean text
 // into the line classifier regexes while we preserve the raw colored line for
@@ -3111,11 +3118,15 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   )
 
   const renderRailControls = () => {
+    // Active filter uses the theme's prompt color (consistent with the
+    // colored `$ ` prompts in the pane). Inactive uses a dim neutral that
+    // reads as "muted" across every dark theme; hover lifts to the rail's
+    // standard text color so the cue is theme-coherent on rollover.
     const filterButtonClass = (filter: TerminalRailFilter) => (
       `px-1 py-0.5 font-mono leading-4 transition-colors ${
         terminalRailFilter === filter
-          ? 'text-emerald-300'
-          : 'text-neutral-500 hover:text-neutral-200'
+          ? terminalTheme.prompt
+          : `text-neutral-500 hover:text-neutral-200`
       }`
     )
     const filterLabel = (filter: TerminalRailFilter, label: string) => (

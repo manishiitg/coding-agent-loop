@@ -4602,14 +4602,34 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[CHANNEL] Added %s formatting rules to system prompt", req.BotPlatform)
 			}
 
-			// 4. MODE-SPECIFIC — browser and memory (only when those capabilities are active).
+			// 4. MODE-SPECIFIC — browser and memory.
+			//
+			// The full guides for both live in the workflow-reference mega-skill
+			// (`browser-usage`, `memory-usage`) and are loaded on demand. We only
+			// inject a one-line pointer per capability so the agent KNOWS the
+			// surface exists, without paying for the ~10KB browser block and ~3KB
+			// memory block on every single turn.
 			chatBrowserCfg := buildChatBrowserConfig(req)
-			if chatBrowserPrompt := browserinstructions.BuildBrowserInstructions(chatBrowserCfg); chatBrowserPrompt != "" {
-				underlyingAgent.AppendSystemPrompt(chatBrowserPrompt)
-				log.Printf("[BROWSER] Added browser instructions to system prompt (playwright=%v, agent-browser=%v, cdp=%v)",
+			if chatBrowserCfg.HasPlaywright || chatBrowserCfg.HasAgentBrowser {
+				underlyingAgent.AppendSystemPrompt(
+					"\n## Browser\n\nThis session has a browser tool available. " +
+						"For the full API + per-mode behaviors (CDP / headless / Playwright), session limits, and upload rules, " +
+						"call `get_reference_doc(kind=\"browser-usage\")` before driving the browser.\n",
+				)
+				log.Printf("[BROWSER] Added browser-skill pointer to system prompt (playwright=%v, agent-browser=%v, cdp=%v)",
 					chatBrowserCfg.HasPlaywright, chatBrowserCfg.HasAgentBrowser, chatBrowserCfg.CdpPort > 0)
 			}
-			underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions(memFolderForPrompt))
+			memoryFolderForPointer := strings.TrimSpace(memFolderForPrompt)
+			if memoryFolderForPointer == "" {
+				memoryFolderForPointer = virtualtools.MemoryFolderPath
+			}
+			underlyingAgent.AppendSystemPrompt(
+				"\n## Memory\n\nPersistent cross-session memory is available via the `save_memory` / " +
+					"`recall_memory` / `enrich_memory` tools. Your memory folder is `" + memoryFolderForPointer + "`. " +
+					"For save rules (user-explicit asks only), recall guidelines, and the user-model " +
+					"philosophy of what to save vs not save, call `get_reference_doc(kind=\"memory-usage\")`. " +
+					"Your memory index is auto-loaded below when one exists.\n",
+			)
 
 			// Auto-inject memory index.md so the agent has prior context without needing a tool call.
 			// This is critical for the orchestrator which would otherwise skip recall_memory entirely.
@@ -4993,9 +5013,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									phaseBrowserCfg.HasPlaywright = true
 								}
 							}
-							if phaseBrowserPrompt := browserinstructions.BuildBrowserInstructions(phaseBrowserCfg); phaseBrowserPrompt != "" {
-								underlyingAgent.AppendSystemPrompt(phaseBrowserPrompt)
-								log.Printf("[WORKFLOW_PHASE] Appended browser instructions to %s (mode=%s, playwright=%v, agent-browser=%v)",
+							if phaseBrowserCfg.HasPlaywright || phaseBrowserCfg.HasAgentBrowser {
+								// Replace the ~5-10KB BuildBrowserInstructions block with a
+								// one-line pointer. The full guide (API + per-mode behaviors,
+								// upload rules, session limits) lives in the workflow-reference
+								// mega-skill as `browser-usage` and is fetched on demand.
+								underlyingAgent.AppendSystemPrompt(
+									"\n## Browser\n\nThis phase has a browser tool available (mode=" + effectiveBrowserMode +
+										"). For the full agent_browser HTTP API + per-mode behaviors (CDP / headless / Playwright), " +
+										"tab discipline, file uploads, and session limits, call " +
+										"`get_reference_doc(kind=\"browser-usage\")` before driving the browser.\n",
+								)
+								log.Printf("[WORKFLOW_PHASE] Appended browser-skill pointer to %s (mode=%s, playwright=%v, agent-browser=%v)",
 									workflowPhaseID, effectiveBrowserMode, phaseBrowserCfg.HasPlaywright, phaseBrowserCfg.HasAgentBrowser)
 							}
 

@@ -196,14 +196,154 @@ Use this pattern for any bar or horizontal bar chart. Replace the `data` array w
 </script>
 ```
 
+### Review / findings reports — extra patterns
+
+When the HTML is a review or findings document (not a data dashboard), apply these additional patterns on top of the layout baseline.
+
+**Blocker box — always first inside the summary div.**
+Surface the single most important action in a red box before any prose:
+```html
+<div class="blocker-box">
+  <strong>Top blocker:</strong> <code>route-pick-topic</code> validation pins <code>^1\.0$</code>
+  but db file is v3.0 — every run fails pre-validation. Fix F-013 first.
+</div>
+```
+```css
+.blocker-box {
+  background: #fff3f3; border-left: 4px solid #c62828;
+  padding: 12px 16px; border-radius: 4px; margin-bottom: 16px; font-size: 0.9rem;
+}
+@media (prefers-color-scheme: dark) {
+  .blocker-box { background: #3b1a1a; border-color: #ff5252; }
+}
+```
+
+**Stat chips with severity backgrounds — not just colored numbers.**
+Each stat chip in the summary gets a tinted background matching its severity:
+```html
+<div class="stat critical-chip"><span class="label">CRITICAL</span><span class="value">9</span></div>
+<div class="stat warning-chip"><span class="label">WARNING</span><span class="value">13</span></div>
+<div class="stat info-chip"><span class="label">INFO</span><span class="value">4</span></div>
+```
+```css
+.critical-chip { background: #ffebee; border-radius: 6px; padding: 8px 14px; }
+.warning-chip  { background: #fff3e0; border-radius: 6px; padding: 8px 14px; }
+.info-chip     { background: #e3f2fd; border-radius: 6px; padding: 8px 14px; }
+@media (prefers-color-scheme: dark) {
+  .critical-chip { background: #5a2020; }
+  .warning-chip  { background: #5a3a00; }
+  .info-chip     { background: #1a3a60; }
+}
+```
+
+**Sticky alert bar — visible while scrolling.**
+Add below the `<nav>` so the severity count + top-blocker link stays visible no matter how far the user has scrolled:
+```html
+<div class="alert-bar">
+  <span class="red">9 CRITICAL</span> · <span class="amber">13 WARNING</span> · <span class="blue">4 INFO</span>
+  &nbsp;|&nbsp; Top blocker: F-013 &nbsp;
+  <a href="#top5">→ Fix first</a>
+</div>
+```
+```css
+.alert-bar {
+  position: sticky; top: 33px; /* below nav */ background: #fafafa;
+  border-bottom: 1px solid #e0e0e0; padding: 6px 16px;
+  font-size: 0.82rem; font-weight: 600; z-index: 9;
+}
+@media (prefers-color-scheme: dark) {
+  .alert-bar { background: #252526; border-color: #3e3e3e; }
+}
+```
+
+**Severity-grouped finding divs — not tables.**
+For findings sections, use colored `<div>` containers instead of table rows. Group by severity with a colored header:
+```html
+<h3 class="severity-heading critical-heading">CRITICAL (9)</h3>
+<div class="finding critical">
+  <span class="fid">F-2026-05-28-013</span>
+  <span class="badge fail">CRITICAL</span>
+  <strong>route-design-plan — version contradiction</strong>
+  <p>db/card-template-contracts.json is v3.0 but validators pin ^1\.0$...</p>
+  <p><em>Action:</em> update regex to <code>^3\.0$</code>. Owner: Builder.</p>
+</div>
+
+<h3 class="severity-heading warning-heading">WARNING (13)</h3>
+<div class="finding warning"> ... </div>
+```
+```css
+.severity-heading { margin-top: 24px; padding: 6px 12px; border-radius: 4px; font-size: 0.9rem; }
+.critical-heading { background: #ffebee; color: #c62828; border-left: 4px solid #c62828; }
+.warning-heading  { background: #fff3e0; color: #e65100; border-left: 4px solid #e65100; }
+.info-heading     { background: #e3f2fd; color: #0277bd; border-left: 4px solid #0277bd; }
+@media (prefers-color-scheme: dark) {
+  .critical-heading { background: #5a2020; color: #ff8080; }
+  .warning-heading  { background: #5a3a00; color: #ffcc80; }
+  .info-heading     { background: #1a3a60; color: #90caf9; }
+}
+```
+
+**Collapsible sections — use `<details>` for phases.**
+Wrap each large phase in a `<details>` so users can collapse sections they've read:
+```html
+<details open>
+  <summary class="phase-summary">Phase 2 — Per-Step Audit
+    <span class="badge fail" style="float:right">3 CRITICAL</span>
+    <span class="badge warn" style="float:right;margin-right:6px">5 WARNING</span>
+  </summary>
+  <div class="phase-body">
+    <!-- findings here -->
+  </div>
+</details>
+```
+```css
+.phase-summary {
+  cursor: pointer; list-style: none; padding: 10px 14px;
+  background: #f5f5f5; border-radius: 4px; font-weight: 700;
+  font-size: 0.95rem; margin-top: 20px; user-select: none;
+}
+.phase-summary::-webkit-details-marker { display: none; }
+.phase-summary::before { content: "▶ "; font-size: 0.75rem; }
+details[open] .phase-summary::before { content: "▼ "; }
+.phase-body { padding: 12px 4px; }
+@media (prefers-color-scheme: dark) {
+  .phase-summary { background: #2d2d2d; }
+}
+```
+
+**Finding ID dark-mode fix — `.fid` must be visible.**
+The `.fid` monospace ID `color: #555` is invisible in dark mode. Always override it:
+```css
+.fid { font-family: monospace; font-size: 0.8rem; font-weight: 700; color: #555; margin-right: 6px; }
+@media (prefers-color-scheme: dark) { .fid { color: #a0c4ff; } }
+```
+
+**Badge dark-mode contrast — use these values, not the baseline ones.**
+The baseline dark values are too low-contrast for review badges. Use these instead:
+```css
+@media (prefers-color-scheme: dark) {
+  .badge.fail    { background: #5a2020; color: #ff8080; }
+  .badge.warn    { background: #5a3a00; color: #ffdb58; }
+  .badge.pass    { background: #1b3a1f; color: #80e880; }
+  .badge.info    { background: #1a3a60; color: #90caf9; }
+  .badge.partial { background: #3a1f60; color: #ce93d8; }
+}
+```
+
 ### Quality checklist — verify before writing the file
 
 - [ ] No external URLs in `<link>` or `<script src>` — all CSS/JS is inline
-- [ ] `@media (prefers-color-scheme: dark)` block present
+- [ ] `@media (prefers-color-scheme: dark)` block present with **high-contrast** badge values
 - [ ] Summary box at the top with key numbers
+- [ ] **Blocker box** (red border, red background) is the first element inside the summary — if there is a top blocker
+- [ ] **Stat chips** have severity-tinted backgrounds, not just colored numbers
+- [ ] **Sticky alert bar** below the nav shows severity counts + top-blocker link
 - [ ] Sticky `<nav>` with anchor links (when ≥3 sections)
 - [ ] Tables use `<thead>` + striped rows
-- [ ] Status fields use `.badge.pass` / `.badge.fail` / `.badge.warn` classes
+- [ ] **Findings use colored `<div>` containers** grouped by severity with severity headings — not flat table rows
+- [ ] **Phases wrapped in `<details open>`** so users can collapse sections
+- [ ] **`.fid` IDs have dark-mode override** (`color: #a0c4ff`)
+- [ ] Status fields use `.badge.pass` / `.badge.fail` / `.badge.warn` classes with high-contrast dark values
 - [ ] No raw JSON blobs visible as text — data embedded in JS variables
 - [ ] `<meta viewport>` present for responsive layout
 - [ ] File is self-contained: opening it with no network renders correctly

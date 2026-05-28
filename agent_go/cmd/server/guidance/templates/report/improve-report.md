@@ -1,4 +1,4 @@
-Review and improve reports/report_plan.json in two passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your report-plan findings and applied decisions when you finish.{{if .Focus}}
+Review and improve reports/report_plan.json in two passes. Use builder/improve.html as the shared improvement log: read it first if it exists, create it if it does not, and append your report-plan findings and applied decisions when you finish. If you generate any standalone `.html` output file during this flow, first call `get_reference_doc(kind="html-output")` and follow its quality checklist.{{if .Focus}}
 
 Focus on: {{.Focus}}.{{end}}
 
@@ -36,7 +36,7 @@ Then call get_report_plan yourself and also sample the underlying db/*.json sour
 
 Show ALL proposed changes as a diff (before/after snippets per widget) before editing. Ask whether to apply all, some, or none. Don't edit report_plan.json until I confirm.
 
-When you finish, update builder/improve.md with:
+When you finish, update builder/improve.html with:
 - what report evidence you reviewed
 - the main report weaknesses you found
 - what you recommended
@@ -46,17 +46,17 @@ Each new entry that records a *proposed but not-yet-applied* report change gets 
 
 CLOSE-OUT EDITS — read this carefully.
 
-Reporting findings rarely live in builder/review.md (the /review-* commands focus on plan/eval/cost/speed, not report layout). But if you can find a matching finding (e.g. user previously flagged "the funnel chart is unreadable" and that landed in review.md), apply close-out the same way the other /improve-* commands do:
+Reporting findings rarely live in builder/review.html (the /review-* commands focus on plan/eval/cost/speed, not report layout). But if you can find a matching finding (e.g. user previously flagged "the funnel chart is unreadable" and that landed in review.html), apply close-out the same way the other /improve-* commands do:
 
-1. **Edit builder/review.md** to append, on its own line immediately after each matched finding:
+1. **Edit builder/review.html** to append, on its own line immediately after each matched finding:
    ```
    **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
    ```
 
-2. **Append a structured builder/improve.md decision block** for the report change (use `diff_patch_workspace_file`):
+2. **Append a structured builder/improve.html decision block** for the report change (use `diff_patch_workspace_file`):
    ```improve-decision
 {"id":"<short-id>","ts":"<ISO-8601 UTC>","source":"agent","trigger":"improve-report","applied_changes":["reports/report_plan.json"],"rationale":"<one-line>","linked_review_finding":["F-..."]}
    ```
-   `linked_review_finding` is omitted when no matching finding exists. This improve.md decision trail is what makes report-layout changes auditable alongside plan/eval changes.
+   `linked_review_finding` is omitted when no matching finding exists. This improve.html decision trail is what makes report-layout changes auditable alongside plan/eval changes.
 
 This applies to chat-intent report fixes too.

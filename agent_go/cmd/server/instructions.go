@@ -88,7 +88,7 @@ Organize output files under descriptive project folders — never dump files at 
 ` + "```" + `
 ` + p.Chats + `/
   <project-name>/          ← One folder per task/project (kebab-case)
-    report.md              ← Final output
+    report.html            ← Final output (use HTML for rich reports)
     data.json              ← Supporting data
     analysis/              ← Sub-folder for complex outputs
   <another-project>/
@@ -96,6 +96,8 @@ Organize output files under descriptive project folders — never dump files at 
 
 Examples: ` + "`quarterly-sales-analysis/`" + `, ` + "`aws-cost-report/`" + `, ` + "`bank-statement-parsing/`" + `
 Reuse existing project folders for follow-up work on the same topic.
+
+**Output format**: prefer ` + "`.html`" + ` over ` + "`.md`" + ` for any final report, analysis, or summary meant for a human to read — HTML renders richly in the file viewer with tables, charts, navigation, and colour. Use ` + "`.json`" + ` for raw data. Use ` + "`.md`" + ` only for short notes or content that will be pasted/appended elsewhere. When writing HTML, make it self-contained (inline all CSS and JS — no external CDN links), include a summary box at the top, use semantic colour for status fields, and add dark-mode styles (` + "`@media (prefers-color-scheme: dark)`" + `).
 `
 }
 
@@ -283,8 +285,8 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Interactive builder / workshop:**
 - ` + "`builder/conversation/YYYY-MM-DD/session-{id}-conversation.json`" + ` — workshop (interactive builder) conversation histories. These are JSON files with ` + "`conversation_history`" + ` entries. User messages have ` + "`Role`" + `=` + "`human`" + `/` + "`user`" + ` and text in ` + "`Parts[].Text`" + `; assistant replies have ` + "`Role`" + `=` + "`ai`" + `/` + "`assistant`" + `. Tool calls/results are interleaved and noisy, so scan from the end for the latest user/assistant text instead of assuming the final JSON entry is the latest user request. Used by workshop agents to avoid repeating failed approaches.
-- ` + "`builder/improve.md`" + ` — durable auto-improvement ledger entry point and active index. Read on every improvement turn. It keeps Workflow Profile, Active Improvement Index, Archive Index, current gaps, recent entries, and structured ` + "```improve-decision" + ` fenced JSON blocks for applied decisions, metric changes, rubric changes, and captured user context. Older detail may be moved to referenced ` + "`builder/improve-archive/YYYY-MM.md`" + ` files.
-- ` + "`planning/changelog/changelog-YYYY-MM-DD-HH-MM-SS.json`" + ` — per-session log of every plan-mod tool call (` + "`update_*_step`" + `, ` + "`add_*_step`" + `, ` + "`delete_plan_steps`" + `, ` + "`*_todo_task_route`" + `, ` + "`update_validation_schema`" + `, ` + "`update_step_config`" + `). Each entry carries timestamp, tool, the mandatory ` + "`reason`" + ` you supplied at invocation, affected step ids, per-field old/new values, and full JSON of added/deleted steps for revert. **Read this** before proposing plan edits to see what's already been tried this session and why; complements workflow-level history in ` + "`builder/improve.md`" + ` with per-session, per-mutation detail. Files rotate hourly. Read-only via shell — entries are written automatically by the plan-mod tools, never edit them by hand.
+- ` + "`builder/improve.html`" + ` — durable auto-improvement ledger entry point and active index. Read on every improvement turn. It keeps Workflow Profile, Active Improvement Index, Archive Index, current gaps, recent entries, and structured ` + "```improve-decision" + ` fenced JSON blocks for applied decisions, metric changes, rubric changes, and captured user context. Older detail may be moved to referenced ` + "`builder/improve-archive/YYYY-MM.html`" + ` files.
+- ` + "`planning/changelog/changelog-YYYY-MM-DD-HH-MM-SS.json`" + ` — per-session log of every plan-mod tool call (` + "`update_*_step`" + `, ` + "`add_*_step`" + `, ` + "`delete_plan_steps`" + `, ` + "`*_todo_task_route`" + `, ` + "`update_validation_schema`" + `, ` + "`update_step_config`" + `). Each entry carries timestamp, tool, the mandatory ` + "`reason`" + ` you supplied at invocation, affected step ids, per-field old/new values, and full JSON of added/deleted steps for revert. **Read this** before proposing plan edits to see what's already been tried this session and why; complements workflow-level history in ` + "`builder/improve.html`" + ` with per-session, per-mutation detail. Files rotate hourly. Read-only via shell — entries are written automatically by the plan-mod tools, never edit them by hand.
 
 **Auto-improvement framework files (opt-in per workflow):**
 - ` + "`planning/metrics.json`" + ` — quantified goal definitions. Each metric has id (kebab.dot), unit, direction (higher_better/lower_better), mode (target/slo with target/floor/ceiling), a source (eval_step or telemetry), and ` + "`success_criteria`" + ` quoting or summarizing the soul.md success criterion it operationalizes. For anything else (external feeds, schema checks, lineage, delayed-outcome attribution), write a Python eval step that does the work and emits the value, then declare an eval_step-sourced metric pointing at that step. **Tool-only writes**: lives under ` + "`planning/`" + ` so the FolderGuard BlockedWritePaths makes shell writes impossible. Use ` + "`propose_metric`" + ` to add a metric or amend an existing metric with ` + "`amend_existing`" + `, and ` + "`retire_metric`" + ` to remove one. Direct shell/diff writes to this file are expected to fail.
@@ -293,14 +295,14 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
   • ` + "`source.id`" + ` referencing an eval step that doesn't exist in ` + "`evaluation/evaluation_plan.json`" + `.
   • Source type ` + "`telemetry`" + ` with an unknown ` + "`field`" + ` (only the six wired fields are recognized — see ` + "`propose_metric`" + ` description).
   Fix path: call ` + "`propose_metric`" + ` with ` + "`amend_existing:{id,reason}`" + ` when the same outcome metric needs a corrected source/threshold; use ` + "`retire_metric`" + ` only when the metric should no longer be active. The trajectory chart uses metric versions to avoid mixing old and new definitions; old history rows stay as audit.
-- ` + "`knowledgebase/context/context.md`" + ` and ` + "`knowledgebase/context/examples/`" + ` — user-supplied runtime business context: rules, preferences, constraints, assumptions, examples. Agents append captured context through the ` + "`capture_context`" + ` tool when the user confirms capture (see "Proactive business-context capture" below for the flow). **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — context lives as a sub-section of the knowledgebase. Audit trail for context capture lives as structured ` + "```improve-decision" + ` entries in ` + "`builder/improve.md`" + ` filtered to ` + "`source: user`" + ` + ` + "`trigger: capture-context`" + `.
+- ` + "`knowledgebase/context/context.md`" + ` and ` + "`knowledgebase/context/examples/`" + ` — user-supplied runtime business context: rules, preferences, constraints, assumptions, examples. Agents append captured context through the ` + "`capture_context`" + ` tool when the user confirms capture (see "Proactive business-context capture" below for the flow). **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — context lives as a sub-section of the knowledgebase. Audit trail for context capture lives as structured ` + "```improve-decision" + ` entries in ` + "`builder/improve.html`" + ` filtered to ` + "`source: user`" + ` + ` + "`trigger: capture-context`" + `.
 
 **Workflow profile and oversight:**
-- The workflow's **profile** lives as prose in ` + "`builder/improve.md`" + ` under a "## Workflow Profile" section. It declares a primary type, optional secondary traits, plan stability, runtime mode, business-context accumulation, and improvement cadence. Read it on every improvement turn and adjust behavior accordingly. Real workflows don't fit a single enum (e.g. Twitter can be open metric optimization + dual-mode + contextual all at once); primary/secondary prose captures the nuance.
+- The workflow's **profile** lives as prose in ` + "`builder/improve.html`" + ` under a "## Workflow Profile" section. It declares a primary type, optional secondary traits, plan stability, runtime mode, business-context accumulation, and improvement cadence. Read it on every improvement turn and adjust behavior accordingly. Real workflows don't fit a single enum (e.g. Twitter can be open metric optimization + dual-mode + contextual all at once); primary/secondary prose captures the nuance.
 - ` + "`oversight_mode`" + ` (in ` + "`workflow.json`" + `) — ` + "`manual`" + ` (every change gated) | ` + "`supervised`" + ` (low-risk auto, high-risk gated) | ` + "`autonomous`" + ` (all auto). Default: ` + "`supervised`" + `. Hard gate: drives auto-vs-human-approval flow.
 - ` + "`decision_log_mutability`" + ` (in ` + "`workflow.json`" + `) — ` + "`append_only`" + ` | ` + "`append_only_strict`" + ` (no edits even for corrections; used by compliance workflows). Hard gate.
 - ` + "`run_retention_count`" + ` (in ` + "`workflow.json`" + `) — optional integer, 1-50. Number of backup run/eval iterations to keep, excluding active ` + "`iteration-0`" + `. Default: 5. Builder, harden, and optimizer agents may raise it when a workflow needs a wider evidence window.
-- For **dual-mode workflows** (declared as such in improve.md), the active mode lives in ` + "`planning/metrics.json`" + ` under ` + "`active_mode`" + ` so steps can branch on it via variables.
+- For **dual-mode workflows** (declared as such in improve.html), the active mode lives in ` + "`planning/metrics.json`" + ` under ` + "`active_mode`" + ` so steps can branch on it via variables.
 
 ### Log Layout (inside ` + "`runs/iteration-{N}/{group-name}/logs/step-X/`" + `)
 - ` + "`validation-{N}.json`" + ` — validation attempts for the step
@@ -319,7 +321,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - **Variables + groups:** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/variables/variables.json\")`" + `
 - **Global workflow learnings:** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/learnings/_global/SKILL.md\")`" + `
 - **Saved step code (scripted steps only):** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/learnings/<step-id>/main.py\")`" + `
-- **Run logs:** start with ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/runs/iteration-0/\")`" + ` for the latest active run, then inspect older retained ` + "`iteration-{N}`" + ` folders when improve.md / decisions timestamps / metric history indicate a relevant before-after window.
+- **Run logs:** start with ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/runs/iteration-0/\")`" + ` for the latest active run, then inspect older retained ` + "`iteration-{N}`" + ` folders when improve.html / decisions timestamps / metric history indicate a relevant before-after window.
 - **Latest final reports:** ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/reports/\")`" + `
 - **Full config (when needed):** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/workflow.json\")`" + `
 
@@ -344,7 +346,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 ### What You Can Do
 - **Reuse global workflow learnings**: ` + "`learnings/_global/SKILL.md`" + ` contains accumulated domain knowledge for a workflow (how to log into a bank, parsing quirks, conventions). Read it and reuse the guidance in your own delegated tasks for related work.
 - **Reuse saved step scripts**: For ` + "`scripted`" + ` steps, the canonical working script lives at ` + "`learnings/<step-id>/main.py`" + `. Read it to understand what a step does, or borrow patterns into your own scripts.
-- **Inspect recent runs**: ` + "`runs/iteration-0/`" + ` always holds the most recent execution. Older ` + "`runs/iteration-{N}/`" + ` folders are retained history; use them for trends, regressions, and before/after comparisons against builder/improve.md timestamps.
+- **Inspect recent runs**: ` + "`runs/iteration-0/`" + ` always holds the most recent execution. Older ` + "`runs/iteration-{N}/`" + ` folders are retained history; use them for trends, regressions, and before/after comparisons against builder/improve.html timestamps.
 - **Use memory**: save patterns and trends about what each employee's workflows produce over time.
 
 ## Auto-Improvement Framework — When to Use the Tools
@@ -366,13 +368,13 @@ Said simply: **plan defines the work and goal; eval produces per-step evidence; 
 
 ### Setup precondition: ` + "`/define-success`" + `
 
-Before recurring improvement can do useful work, the workflow should have its **Workflow Profile** written into ` + "`builder/improve.md`" + ` and (for workflows that target measurable outcomes) at least one metric defined. The dedicated entry point is ` + "`/define-success`" + ` — a one-time setup command that:
+Before recurring improvement can do useful work, the workflow should have its **Workflow Profile** written into ` + "`builder/improve.html`" + ` and (for workflows that target measurable outcomes) at least one metric defined. The dedicated entry point is ` + "`/define-success`" + ` — a one-time setup command that:
 
-1. Classifies the workflow through conversation as one primary type plus optional secondary traits, then maps that to plan stability, runtime mode, business-context accumulation, and improvement cadence. Writes a "## Workflow Profile" section into ` + "`builder/improve.md`" + `. Sets ` + "`oversight_mode`" + ` and ` + "`decision_log_mutability`" + ` in ` + "`workflow.json`" + ` (those two are hard gates and stay structured).
+1. Classifies the workflow through conversation as one primary type plus optional secondary traits, then maps that to plan stability, runtime mode, business-context accumulation, and improvement cadence. Writes a "## Workflow Profile" section into ` + "`builder/improve.html`" + `. Sets ` + "`oversight_mode`" + ` and ` + "`decision_log_mutability`" + ` in ` + "`workflow.json`" + ` (those two are hard gates and stay structured).
 2. Proposes profile-appropriate starter metrics and creates ` + "`metrics.json`" + ` via ` + "`propose_metric`" + `.
 3. For workflows that accumulate business context, scaffolds ` + "`knowledgebase/context/context.md`" + ` with metric-keyed sections.
 
-When a user runs ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, or ` + "`/auto-improve`" + ` on a workflow that has not been set up yet (no Workflow Profile in improve.md, or empty metrics.json on a workflow that should have metrics), **stop and redirect them to ` + "`/define-success`" + ` first.** Do NOT bootstrap inline — setup is a meaningful conversation, and conflating it with improvement work bloats every improvement turn.
+When a user runs ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, or ` + "`/auto-improve`" + ` on a workflow that has not been set up yet (no Workflow Profile in improve.html, or empty metrics.json on a workflow that should have metrics), **stop and redirect them to ` + "`/define-success`" + ` first.** Do NOT bootstrap inline — setup is a meaningful conversation, and conflating it with improvement work bloats every improvement turn.
 
 ### Tool: ` + "`propose_metric`" + `
 Use when the workflow needs a metric that doesn't yet exist in ` + "`metrics.json`" + `, OR when an existing metric must be amended (definition or source change). Include ` + "`success_criteria`" + ` so the metric is visibly anchored to the soul.md outcome it measures. On amend, the prior series is archived so the trajectory chart breaks cleanly.
@@ -391,7 +393,7 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
     - design-flow            → context dependency / handoff design
     - ready-to-optimize      → pre-optimizer readiness checklist
 
-  Reviews (recommend, don't apply; appends to ` + "`builder/review.md`" + `):
+  Reviews (recommend, don't apply; appends to ` + "`builder/review.html`" + `):
     - review-plan            → comprehensive plan audit (structure + per-step descriptions + todo_task orchestrators)
     - review-speed           → latency analysis
     - review-cost            → cost analysis
@@ -420,11 +422,11 @@ The existing ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, ` +
 
 ### Resolution discipline
 
-` + "`builder/review.md`" + ` and ` + "`builder/improve.md`" + ` are append-only logs of findings and proposals. They go stale fast unless every fix that lands is mirrored back into them — otherwise the next ` + "`/review-*`" + ` run re-flags the same items and the user can't tell what's outstanding.
+` + "`builder/review.html`" + ` and ` + "`builder/improve.html`" + ` are append-only logs of findings and proposals. They go stale fast unless every fix that lands is mirrored back into them — otherwise the next ` + "`/review-*`" + ` run re-flags the same items and the user can't tell what's outstanding.
 
-**Improve ledger retention.** ` + "`builder/improve.md`" + ` is the single source-of-truth entry point, but it should not grow without bound. Keep Workflow Profile, Active Improvement Index, Archive Index, current metric/eval gaps, open hypotheses, and the latest 10-20 detailed entries in the root file. When it grows beyond roughly 800 lines, 60 KB, or 20 detailed entries, move older resolved/no-action/repeated detail into monthly files under ` + "`builder/improve-archive/YYYY-MM.md`" + ` and leave an Archive Index row with date range, entry count, unresolved ids, and summary. Read archive files only when the active index, unresolved ids, selected evidence window, or a metric/eval semantic change points there. Do not archive away unresolved findings, active hypotheses, current gaps, or the latest semantic plan/eval/metric change.
+**Improve ledger retention.** ` + "`builder/improve.html`" + ` is the single source-of-truth entry point, but it should not grow without bound. Keep Workflow Profile, Active Improvement Index, Archive Index, current metric/eval gaps, open hypotheses, and the latest 10-20 detailed entries in the root file. When it grows beyond roughly 800 lines, 60 KB, or 20 detailed entries, move older resolved/no-action/repeated detail into monthly files under ` + "`builder/improve-archive/YYYY-MM.html`" + ` and leave an Archive Index row with date range, entry count, unresolved ids, and summary. Read archive files only when the active index, unresolved ids, selected evidence window, or a metric/eval semantic change points there. Do not archive away unresolved findings, active hypotheses, current gaps, or the latest semantic plan/eval/metric change.
 
-**Finding IDs.** When a ` + "`/review-*`" + ` template emits findings into ` + "`builder/review.md`" + `, every distinct finding gets a stable id of the form ` + "`F-YYYY-MM-DD-NNN`" + ` — today's date plus a 3-digit sequence that restarts at ` + "`001`" + ` per day per file. The same convention applies when ` + "`/improve-*`" + ` records a proposed change in ` + "`builder/improve.md`" + ` (id prefix ` + "`I-YYYY-MM-DD-NNN`" + `). Read the file first to find the next free sequence; never reuse an id.
+**Finding IDs.** When a ` + "`/review-*`" + ` template emits findings into ` + "`builder/review.html`" + `, every distinct finding gets a stable id of the form ` + "`F-YYYY-MM-DD-NNN`" + ` — today's date plus a 3-digit sequence that restarts at ` + "`001`" + ` per day per file. The same convention applies when ` + "`/improve-*`" + ` records a proposed change in ` + "`builder/improve.html`" + ` (id prefix ` + "`I-YYYY-MM-DD-NNN`" + `). Read the file first to find the next free sequence; never reuse an id.
 
 **Close-out marker.** When you apply a fix — whether triggered by a slash command, a chat-intent fix, a harden/replan action, metric cleanup, or a manual user request — and that fix addresses one or more existing findings, you MUST edit the original entry to append, on its own line immediately after the finding text:
 
@@ -434,9 +436,9 @@ The existing ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, ` +
 
 Do not delete or rewrite the original finding. The marker preserves audit history; the un-resolved findings stay visible above and below it. If only part of a finding was addressed, write ` + "`[PARTIALLY RESOLVED ...]`" + ` and explain what's still open. If a finding turned out to be wrong, write ` + "`[INVALID YYYY-MM-DD — ...]`" + ` instead.
 
-**Structured improve.md linkage.** When the fix lands a structured ` + "```improve-decision" + ` block in ` + "`builder/improve.md`" + ` or a referenced ` + "`builder/improve-archive/YYYY-MM.md`" + ` file (harden/replan action, metric cleanup, rule capture, or direct change), include ` + "`linked_review_finding`" + ` (or ` + "`linked_improve_entry`" + `) in the payload, set to the id(s) you just resolved — array if multiple. This keeps the audit trail searchable from the improve ledger.
+**Structured improve.html linkage.** When the fix lands a structured ` + "```improve-decision" + ` block in ` + "`builder/improve.html`" + ` or a referenced ` + "`builder/improve-archive/YYYY-MM.html`" + ` file (harden/replan action, metric cleanup, rule capture, or direct change), include ` + "`linked_review_finding`" + ` (or ` + "`linked_improve_entry`" + `) in the payload, set to the id(s) you just resolved — array if multiple. This keeps the audit trail searchable from the improve ledger.
 
-**When to apply.** This discipline runs whenever you write a structured decision block to ` + "`builder/improve.md`" + ` AND a corresponding finding exists in ` + "`review.md`" + ` / ` + "`improve.md`" + `. Don't skip it because the fix came from chat instead of a slash command — the .md files are the user's view of what's outstanding, and silent fixes break that view.
+**When to apply.** This discipline runs whenever you write a structured decision block to ` + "`builder/improve.html`" + ` AND a corresponding finding exists in ` + "`review.html`" + ` / ` + "`improve.html`" + `. Don't skip it because the fix came from chat instead of a slash command — the .html files are the user's view of what's outstanding, and silent fixes break that view.
 
 ### Honesty rules
 
@@ -464,13 +466,13 @@ There is no slash command for context capture because it should happen naturally
 1. **Recognize.** Briefly echo the rule back so the user confirms it's accurately captured. Do not write anything until the user confirms.
 2. **Anchor.** Read ` + "`planning/metrics.json`" + ` and ask the user which existing metric(s) the rule is meant to move. If ` + "`planning/metrics.json`" + ` is empty, redirect to ` + "`/define-success`" + ` first.
 3. **Pick a section.** Read ` + "`knowledgebase/context/context.md`" + ` when useful and choose the right ` + "`## <Section>`" + ` heading or propose a new one.
-4. **Capture.** Call ` + "`capture_context`" + ` with ` + "`section`" + `, ` + "`context_text`" + `, and ` + "`target_metrics`" + `. The tool appends the context and writes a structured ` + "```improve-decision" + ` entry to ` + "`builder/improve.md`" + ` with ` + "`source: \"user\"`" + ` and ` + "`trigger: \"capture-context\"`" + `. ` + "`source: \"user\"`" + ` is load-bearing — the trajectory chart filters by source to distinguish user-authoritative changes from agent proposals.
+4. **Capture.** Call ` + "`capture_context`" + ` with ` + "`section`" + `, ` + "`context_text`" + `, and ` + "`target_metrics`" + `. The tool appends the context and writes a structured ` + "```improve-decision" + ` entry to ` + "`builder/improve.html`" + ` with ` + "`source: \"user\"`" + ` and ` + "`trigger: \"capture-context\"`" + `. ` + "`source: \"user\"`" + ` is load-bearing — the trajectory chart filters by source to distinguish user-authoritative changes from agent proposals.
 5. **Wire affected steps.** If an existing step must apply this context at runtime, update that step through the plan modification tools: set ` + "`knowledgebase_access`" + ` to ` + "`read`" + ` or ` + "`read-write`" + ` and add one sentence to the step description naming the relevant ` + "`knowledgebase/context/context.md`" + ` section/path. Do not copy the whole context file into the description; make the dependency explicit so the step agent knows to read and apply it.
-6. **Confirm.** Tell the user the section + context that was added, which step descriptions/configs were wired, and the improve.md entry id returned by ` + "`capture_context`" + `.
+6. **Confirm.** Tell the user the section + context that was added, which step descriptions/configs were wired, and the improve.html entry id returned by ` + "`capture_context`" + `.
 
 **On workflows without business-context accumulation**: do NOT add context to ` + "`knowledgebase/context/`" + ` unless the workflow profile says it accumulates business context. If the user shares what looks like durable runtime context:
 - For deterministic/compliance-style workflows, the rule probably belongs in ` + "`soul.md`" + `, the eval plan, or a hardened validation check; offer that path.
-- For open optimization, monitoring, research, creative, or human-review workflows, tell the user that if durable context is becoming part of runtime behavior, the Workflow Profile in ` + "`builder/improve.md`" + ` should be updated to add ` + "`business_context_accumulating`" + ` as primary/secondary or set ` + "`Business context: accumulating`" + ` — then ` + "`/define-success`" + ` will bootstrap metrics and the context folder.
+- For open optimization, monitoring, research, creative, or human-review workflows, tell the user that if durable context is becoming part of runtime behavior, the Workflow Profile in ` + "`builder/improve.html`" + ` should be updated to add ` + "`business_context_accumulating`" + ` as primary/secondary or set ` + "`Business context: accumulating`" + ` — then ` + "`/define-success`" + ` will bootstrap metrics and the context folder.
 
 **Be conservative.** It's better to ask "should I capture that as a rule?" than to silently start writing to the user's context store. The user's context is their content; you write to it only with explicit OK.
 
@@ -983,9 +985,9 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Final reports: `+"`%s/reports/{group-name}/{timestamp}.md`"+` — per-group final output reports
 - Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`
 - Builder sessions: `+"`%s/builder/conversation/YYYY-MM-DD/session-{id}-conversation.json`"+` — workshop chat histories
-- Improve ledger: `+"`%s/builder/improve.md`"+` — single source-of-truth entry point for auto-improvement narrative, active index, archive index, and recent structured `+"```improve-decision"+` audit entries. Older detail may live in referenced `+"`%s/builder/improve-archive/YYYY-MM.md`"+` files.
+- Improve ledger: `+"`%s/builder/improve.html`"+` — single source-of-truth entry point for auto-improvement narrative, active index, archive index, and recent structured `+"```improve-decision"+` audit entries. Older detail may live in referenced `+"`%s/builder/improve-archive/YYYY-MM.html`"+` files.
 - Metrics: `+"`%s/planning/metrics.json`"+` (optional) — quantified goal definitions; required for workflows with business-context accumulation. Tool-only writes (use propose_metric); shell writes blocked by FolderGuard.
-- Context store: `+"`%s/knowledgebase/context/context.md`"+` and `+"`%s/knowledgebase/context/examples/`"+` — accumulated user-supplied runtime business context; excluded from KB reorganize/consolidate passes. Audit trail folded into structured entries in `+"`builder/improve.md`"+` (source=user + trigger=capture-context).
+- Context store: `+"`%s/knowledgebase/context/context.md`"+` and `+"`%s/knowledgebase/context/examples/`"+` — accumulated user-supplied runtime business context; excluded from KB reorganize/consolidate passes. Audit trail folded into structured entries in `+"`builder/improve.html`"+` (source=user + trigger=capture-context).
 `, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
 
 	// 7. Step folder naming conventions and log file guide

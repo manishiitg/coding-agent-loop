@@ -1,10 +1,16 @@
-Define what success means for this workflow before optimization. Either bootstrap the auto-improvement framework (one-time configuration: Workflow Profile + metrics) or, if the framework is already in place, audit the existing setup and surface issues.{{if .Focus}}
+Define what success means for this workflow before optimization.
+
+Before writing builder/improve.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown.
+
+MIGRATION (one-time): Check whether builder/improve.md exists. If it does, read it, extract all unresolved entries and structured blocks, incorporate them into builder/improve.html, then delete builder/improve.md with execute_shell_command. Also check for builder/review.md and migrate it to builder/review.html the same way.
+
+Either bootstrap the auto-improvement framework (one-time configuration: Workflow Profile + metrics) or, if the framework is already in place, audit the existing setup and surface issues.{{if .Focus}}
 
 Focus / hints from user: {{.Focus}}{{end}}
 
 DISCOVERY (read-only)
 1. Read workflow.json. Note any existing oversight_mode / decision_log_mutability.
-2. Read builder/improve.md if present — note any existing "## Workflow Profile" section, Active Improvement Index, Archive Index, and recent entries. If there is no index/retention structure yet, read the file in full.
+2. Read builder/improve.html if present — note any existing "## Workflow Profile" section, Active Improvement Index, Archive Index, and recent entries. If there is no index/retention structure yet, read the file in full.
 3. Read soul/soul.md to extract the workflow's objective and success_criteria.
 4. Read planning/plan.json — note the steps, their types, and overall structure (frozen plan vs in flux vs explore/exploit).
 5. Read evaluation/evaluation_plan.json if present — eval steps will be the natural source for many starter metrics.
@@ -15,8 +21,8 @@ DISCOVERY (read-only)
 STEP 0 — DETECT SETUP STATE AND BRANCH
 After Discovery, decide which mode this command runs in:
 
-- **FRESH SETUP** — `builder/improve.md` has no "## Workflow Profile" section AND `planning/metrics.json` is absent or empty. Proceed to STEP 1.
-- **REVIEW EXISTING** — `builder/improve.md` already has a "## Workflow Profile" section AND/OR `planning/metrics.json` already has metrics declared. **Skip STEPS 1–4 and go to STEP 5 (REVIEW PATH)** — do not re-bootstrap a workflow that already has a framework configured. Audit instead.
+- **FRESH SETUP** — `builder/improve.html` has no "## Workflow Profile" section AND `planning/metrics.json` is absent or empty. Proceed to STEP 1.
+- **REVIEW EXISTING** — `builder/improve.html` already has a "## Workflow Profile" section AND/OR `planning/metrics.json` already has metrics declared. **Skip STEPS 1–4 and go to STEP 5 (REVIEW PATH)** — do not re-bootstrap a workflow that already has a framework configured. Audit instead.
 - **PARTIAL** — one is present, the other isn't. Run STEP 5 first to surface what's there, then walk the user through completing the missing piece (Profile if absent → STEP 2; metrics if absent → STEP 4).
 
 STEP 1 — Classify the workflow profile
@@ -44,8 +50,8 @@ Then map the confirmed type/traits onto the internal axes:
 
 Show your inference + reasoning + the alternative answers you considered for primary type, secondary traits, and each axis. Ask the user to confirm.
 
-STEP 2 — Write the Workflow Profile to builder/improve.md
-Append (or replace, if a section already exists) the following section in builder/improve.md. Use `diff_patch_workspace_file` — do NOT `mkdir` via shell. Use workflow-relative paths.
+STEP 2 — Write the Workflow Profile to builder/improve.html
+Append (or replace, if a section already exists) the following section in builder/improve.html. Use `diff_patch_workspace_file` — do NOT `mkdir` via shell. Use workflow-relative paths.
 
 ```markdown
 ## Workflow Profile (auto-improvement framework)
@@ -84,7 +90,7 @@ STEP 3 — Set the two hard-gate fields in workflow.json
 These are the only structured framework fields; they drive real behavior.
 
 - `oversight_mode` — `manual` / `supervised` (default) / `autonomous`. Recommended defaults: deterministic + ratcheting workflow → `manual`; exploratory → `autonomous`; contextual / business-context → `supervised`.
-- `decision_log_mutability` — `append_only` (default) / `append_only_strict`. Set strict ONLY for compliance / audit workflows where structured improve.md decision entries are forensic.
+- `decision_log_mutability` — `append_only` (default) / `append_only_strict`. Set strict ONLY for compliance / audit workflows where structured improve.html decision entries are forensic.
 
 STEP 4 — Bootstrap metrics.json
 Behavior depends on the profile from Step 1:
@@ -145,11 +151,11 @@ For each broken metric, name the metric, the resolve_error, and the recommended 
 5.6 — **Telemetry SLOs present?**
 - If `cost_per_run` and `run_duration_seconds` (or `total.cost_usd` / `total.duration_seconds`) aren't defined as telemetry SLOs, suggest adding them. Free signal.
 
-After STEP 5 — Record what you reviewed and recommended in `builder/improve.md` under a "## Framework review YYYY-MM-DD" subsection so the audit trail survives the session. Include a structured `improve-decision` fenced JSON block summarizing the review.
+After STEP 5 — Record what you reviewed and recommended in `builder/improve.html` under a "## Framework review YYYY-MM-DD" subsection so the audit trail survives the session. Include a structured `improve-decision` fenced JSON block summarizing the review.
 
-If existing `builder/improve.md` is already long, preserve it as the ledger but compact it after the review:
-- keep Workflow Profile, Active Improvement Index, Archive Index, and latest 10-20 detailed entries in `builder/improve.md`
-- move older resolved/no-action/repeated detailed entries to `builder/improve-archive/YYYY-MM.md`
+If existing `builder/improve.html` is already long, preserve it as the ledger but compact it after the review:
+- keep Workflow Profile, Active Improvement Index, Archive Index, and latest 10-20 detailed entries in `builder/improve.html`
+- move older resolved/no-action/repeated detailed entries to `builder/improve-archive/YYYY-MM.html`
 - preserve structured `improve-decision` blocks in the archive
 - leave Archive Index rows with date range, entry count, unresolved ids, and summary
 - keep unresolved findings, active hypotheses, current metric/eval gaps, and latest semantic plan/eval/metric changes in the root file

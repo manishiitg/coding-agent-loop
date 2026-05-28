@@ -23,6 +23,7 @@ import {
 import { agentApi } from '../../services/api'
 import ModalPortal from '../ui/ModalPortal'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
+import { HtmlRenderer } from '../ui/HtmlRenderer'
 import { EvaluationReportsPanel } from './EvaluationPopup'
 
 // =====================================================================
@@ -524,7 +525,7 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
   }[which]
   const showFileMenu = (which === 'improve' || which === 'review') && !!onSelectPath
   const activePath = selectedPath || doc?.path || ''
-  const currentPath = which === 'review' ? 'builder/review.md' : 'builder/improve.md'
+  const currentPath = which === 'review' ? 'builder/review.html' : 'builder/improve.html'
   const currentLabel = which === 'review' ? 'Current review' : 'Current ledger'
   const filesLabel = which === 'review' ? 'Review files' : 'Improve files'
   const fileOptions = [{ path: currentPath, label: currentLabel }, ...archiveFiles]
@@ -589,11 +590,17 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
         )}
         {doc && doc.exists && (
           <div className="border rounded-md p-3 bg-card">
-            <MarkdownRenderer
-              content={doc.content}
-              disablePathLinking
-              className="!text-[12px] leading-relaxed [&_p]:!text-[12px] [&_li]:!text-[12px] [&_h1]:!text-base [&_h2]:!text-sm [&_h3]:!text-xs [&_h1]:mt-3 [&_h2]:mt-3 [&_h3]:mt-2 [&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_code]:!text-[11px] [&_pre]:!text-[11px]"
-            />
+            {doc.content.trimStart().startsWith('<!DOCTYPE') || doc.content.trimStart().startsWith('<html') ? (
+              <div className="h-[70vh]">
+                <HtmlRenderer content={doc.content} />
+              </div>
+            ) : (
+              <MarkdownRenderer
+                content={doc.content}
+                disablePathLinking
+                className="!text-[12px] leading-relaxed [&_p]:!text-[12px] [&_li]:!text-[12px] [&_h1]:!text-base [&_h2]:!text-sm [&_h3]:!text-xs [&_h1]:mt-3 [&_h2]:mt-3 [&_h3]:mt-2 [&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_code]:!text-[11px] [&_pre]:!text-[11px]"
+              />
+            )}
           </div>
         )}
       </div>
@@ -612,8 +619,8 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
   const [soulDoc, setSoulDoc] = useState<BuilderDoc | null>(null)
   const [improveArchiveFiles, setImproveArchiveFiles] = useState<BuilderDocArchiveFile[]>([])
   const [reviewArchiveFiles, setReviewArchiveFiles] = useState<BuilderDocArchiveFile[]>([])
-  const [selectedImprovePath, setSelectedImprovePath] = useState('builder/improve.md')
-  const [selectedReviewPath, setSelectedReviewPath] = useState('builder/review.md')
+  const [selectedImprovePath, setSelectedImprovePath] = useState('builder/improve.html')
+  const [selectedReviewPath, setSelectedReviewPath] = useState('builder/review.html')
   const [docLoading, setDocLoading] = useState<Record<BuilderDocKind, boolean>>(emptyDocLoadingState)
   const [docError, setDocError] = useState<Record<BuilderDocKind, string | null>>(emptyDocErrorState)
   const docRequestSeq = useRef<Record<BuilderDocKind, number>>({ soul: 0, improve: 0, review: 0 })
@@ -716,8 +723,8 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
     setReviewDoc(null)
     setImproveArchiveFiles([])
     setReviewArchiveFiles([])
-    setSelectedImprovePath('builder/improve.md')
-    setSelectedReviewPath('builder/review.md')
+    setSelectedImprovePath('builder/improve.html')
+    setSelectedReviewPath('builder/review.html')
     setDocLoading(emptyDocLoadingState())
     setDocError(emptyDocErrorState())
   }, [workspacePath, isOpen])
@@ -736,13 +743,13 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
     if (tab === 'improve') {
       fetchDocArchives('improve')
       if (improveDoc === null || improveDoc.path !== selectedImprovePath) {
-        fetchDoc('improve', selectedImprovePath === 'builder/improve.md' ? undefined : selectedImprovePath)
+        fetchDoc('improve', selectedImprovePath === 'builder/improve.html' ? undefined : selectedImprovePath)
       }
     }
     if (tab === 'review') {
       fetchDocArchives('review')
       if (reviewDoc === null || reviewDoc.path !== selectedReviewPath) {
-        fetchDoc('review', selectedReviewPath === 'builder/review.md' ? undefined : selectedReviewPath)
+        fetchDoc('review', selectedReviewPath === 'builder/review.html' ? undefined : selectedReviewPath)
       }
     }
   }, [isOpen, workspacePath, tab, soulDoc, improveDoc, selectedImprovePath, reviewDoc, selectedReviewPath, fetchDoc, fetchDocArchives])
@@ -857,9 +864,9 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                       ? selectedReviewPath
                       : ''
                   const rootPath = tab === 'improve'
-                    ? 'builder/improve.md'
+                    ? 'builder/improve.html'
                     : tab === 'review'
-                      ? 'builder/review.md'
+                      ? 'builder/review.html'
                       : ''
                   fetchDoc(tab, selectedPath && selectedPath !== rootPath ? selectedPath : undefined)
                 }}
@@ -867,10 +874,10 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                 selectedPath={tab === 'improve' ? selectedImprovePath : tab === 'review' ? selectedReviewPath : undefined}
                 onSelectPath={tab === 'improve' ? (path) => {
                   setSelectedImprovePath(path)
-                  fetchDoc('improve', path === 'builder/improve.md' ? undefined : path)
+                  fetchDoc('improve', path === 'builder/improve.html' ? undefined : path)
                 } : tab === 'review' ? (path) => {
                   setSelectedReviewPath(path)
-                  fetchDoc('review', path === 'builder/review.md' ? undefined : path)
+                  fetchDoc('review', path === 'builder/review.html' ? undefined : path)
                 } : undefined}
               />
             )}

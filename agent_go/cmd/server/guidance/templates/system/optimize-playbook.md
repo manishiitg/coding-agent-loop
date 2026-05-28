@@ -154,7 +154,7 @@ The step **description** in plan.json is the primary instruction the execution a
 - `description_reviewed` + `review_notes`
 If the step description changes later, clear `description_reviewed` yourself — the system does not auto-invalidate the review.
 
-**Artifact drift after material changes**: If you materially change a step's description, output contract, dependencies, validation, tools, execution mode, learnings, KB contribution, report wiring, or eval wiring, run the canonical `/review-artifact-drift` flow before declaring the work done. Call `get_workflow_command_guidance(kind="review-artifact-drift", focus="<step-id or change summary>")` and follow it. It uses `builder/review.md` as the cursor/checkpoint; do not create a separate sync state file.
+**Artifact drift after material changes**: If you materially change a step's description, output contract, dependencies, validation, tools, execution mode, learnings, KB contribution, report wiring, or eval wiring, run the canonical `/review-artifact-drift` flow before declaring the work done. Call `get_workflow_command_guidance(kind="review-artifact-drift", focus="<step-id or change summary>")` and follow it. It uses `builder/review.html` as the cursor/checkpoint; do not create a separate sync state file.
 
 ### 6. Post-Execution Step Review
 After running a step, review it for optimization — but follow this priority order. Fix fundamentals first before worrying about efficiency.

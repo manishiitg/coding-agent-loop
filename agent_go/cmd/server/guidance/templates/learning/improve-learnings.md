@@ -1,4 +1,10 @@
-Improve the workflow learnings so `learnings/_global/` supports the current plan and objective. This command maintains reusable HOW-to-run knowledge such as selectors, tool/API patterns, auth quirks, timing/wait strategies, file-format pitfalls, reusable recovery steps, and common failure signatures.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Improve the workflow learnings so `learnings/_global/` supports the current plan and objective.
+
+Before writing builder/improve.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown.
+
+MIGRATION (one-time): Check whether builder/improve.md exists. If it does, read it, extract all unresolved entries, incorporate them into builder/improve.html, then delete builder/improve.md with execute_shell_command.
+
+This command maintains reusable HOW-to-run knowledge such as selectors, tool/API patterns, auth quirks, timing/wait strategies, file-format pitfalls, reusable recovery steps, and common failure signatures.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 BOUNDARIES
 
@@ -12,7 +18,7 @@ READ FIRST
 
 1. Read `soul/soul.md` if present to understand the workflow objective and success criteria.
 2. Read `planning/plan.json` and `planning/step_config.json` if present. Use them to understand current steps, `learnings_access`, `learning_objective`, `lock_learnings`, and `lock_code` decisions.
-3. Read `builder/review.md` and `builder/improve.md` if present. Carry unresolved learning/code findings, prior cleanup attempts, recent harden/replan actions, and recent plan changes into the instruction.
+3. Read `builder/review.html` and `builder/improve.html` if present. Carry unresolved learning/code findings, prior cleanup attempts, recent harden/replan actions, and recent plan changes into the instruction.
 4. Read `learnings/_global/SKILL.md` and relevant files under `learnings/_global/references/`. Do not blindly load every large reference file; use the index and file names to pick relevant files.
 
 WHEN TO USE EACH MODE
@@ -38,7 +44,7 @@ If unsure, use `mode="auto"` or omit mode. Broad instructions like "optimize lea
 
 ACTION
 
-1. Build one concrete instruction. It must mention the objective from `soul.md` or `planning/plan.json`, the user's focus if provided, and any unresolved learning-related findings from `builder/review.md` or `builder/improve.md`.
+1. Build one concrete instruction. It must mention the objective from `soul.md` or `planning/plan.json`, the user's focus if provided, and any unresolved learning-related findings from `builder/review.html` or `builder/improve.html`.
    - Always include this invariant in the instruction: keep `learnings/_global/SKILL.md` lean as an index/overview; move detailed HOW-to-run content into `learnings/_global/references/<topic>.md` and link those files from `SKILL.md`.
    - Always include this stale-content rule: compare learnings against current `planning/plan.json` step descriptions and `planning/step_config.json` learning objectives; remove or replace HOW guidance that belongs to old step behavior, obsolete selectors/API paths, removed dependencies, or previous descriptions.
 2. Call:
@@ -47,4 +53,4 @@ ACTION
 
 3. The tool runs in the background and returns an `execution_id`. If you need the result before answering, use `query_step(execution_id="<id>")` until it completes.
 4. When complete, summarize files changed under `learnings/_global/`, duplicate/stale HOW knowledge removed, reference files created or reorganized, declared learning objectives that still lack matching content, and any follow-up review/harden work needed.
-5. If the improvement resolves an existing `F-...` finding in `builder/review.md`, append a resolved marker immediately after that finding. If it is part of an optimizer/improvement pass, append a short note to `builder/improve.md`; otherwise report in chat only.
+5. If the improvement resolves an existing `F-...` finding in `builder/review.html`, append a resolved marker immediately after that finding. If it is part of an optimizer/improvement pass, append a short note to `builder/improve.html`; otherwise report in chat only.

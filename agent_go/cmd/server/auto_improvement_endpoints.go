@@ -216,8 +216,8 @@ type BuilderDocArchivesResponse struct {
 	Error   string                  `json:"error,omitempty"`
 }
 
-// handleGetBuilderDoc serves the contents of builder/improve.md,
-// builder/review.md, or soul/soul.md so the AutoImprovementPopup can render
+// handleGetBuilderDoc serves the contents of builder/improve.html (with .md fallback),
+// builder/review.html (with .md fallback), or soul/soul.md so the AutoImprovementPopup can render
 // them inline.
 // The "doc" query param picks which file. Read-only.
 func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Request) {
@@ -233,9 +233,9 @@ func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Requ
 	var rel string
 	switch doc {
 	case "improve":
-		rel = "builder/improve.md"
+		rel = "builder/improve.html"
 	case "review":
-		rel = "builder/review.md"
+		rel = "builder/review.html"
 	case "soul":
 		rel = "soul/soul.md"
 	default:
@@ -249,10 +249,18 @@ func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Requ
 		}
 		cleanPath := path.Clean(requestedPath)
 		if !isBuilderDocArchivePath(doc, cleanPath) {
-			http.Error(w, "path must be under the matching builder/*-archive/ folder and end with .md", http.StatusBadRequest)
+			http.Error(w, "path must be under the matching builder/*-archive/ folder and end with .md or .html", http.StatusBadRequest)
 			return
 		}
 		rel = cleanPath
+	}
+	// If the primary HTML file doesn't exist, fall back to the legacy .md file.
+	if requestedPath == "" && (doc == "improve" || doc == "review") {
+		htmlFull := path.Join(strings.Trim(workspacePath, "/"), rel)
+		_, htmlExists, _ := readFileFromWorkspace(r.Context(), htmlFull)
+		if !htmlExists {
+			rel = strings.TrimSuffix(rel, ".html") + ".md"
+		}
 	}
 	full := path.Join(strings.Trim(workspacePath, "/"), rel)
 	content, exists, err := readFileFromWorkspace(r.Context(), full)
@@ -302,7 +310,8 @@ func (api *StreamingAPI) handleGetBuilderDocArchives(w http.ResponseWriter, r *h
 		if !isBuilderDocArchivePath(doc, rel) {
 			continue
 		}
-		label := strings.TrimSuffix(path.Base(rel), ".md")
+		base := path.Base(rel)
+		label := strings.TrimSuffix(strings.TrimSuffix(base, ".html"), ".md")
 		files = append(files, BuilderDocArchiveFile{Path: rel, Label: label})
 	}
 	sort.Slice(files, func(i, j int) bool {
@@ -313,9 +322,10 @@ func (api *StreamingAPI) handleGetBuilderDocArchives(w http.ResponseWriter, r *h
 
 func isBuilderDocArchivePath(doc, rel string) bool {
 	rel = path.Clean(strings.TrimSpace(rel))
+	ext := strings.ToLower(path.Ext(rel))
 	return (doc == "improve" || doc == "review") &&
 		strings.HasPrefix(rel, "builder/"+doc+"-archive/") &&
-		strings.HasSuffix(rel, ".md") &&
+		(ext == ".md" || ext == ".html") &&
 		!strings.Contains(rel, "..")
 }
 

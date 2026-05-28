@@ -1,4 +1,4 @@
-Improve this workflow using actual retained run evidence. Metrics are evidence, not a separate action path. Your job is to decide whether the next action is `harden_workflow`, `replan_workflow_from_results`, eval-plan improvement, metric-definition cleanup (`propose_metric` / `retire_metric`), KB cleanup (`improve_kb`), learning cleanup (`improve_learnings`), or no action. Use builder/improve.md as the shared improvement ledger entry point: read it first if it exists, create it if it does not, read referenced archive files only when they matter, and update the ledger before finishing.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Improve this workflow using actual retained run evidence. Metrics are evidence, not a separate action path. Your job is to decide whether the next action is `harden_workflow`, `replan_workflow_from_results`, eval-plan improvement, metric-definition cleanup (`propose_metric` / `retire_metric`), KB cleanup (`improve_kb`), learning cleanup (`improve_learnings`), or no action. Use builder/improve.html as the shared improvement ledger entry point: read it first if it exists, create it if it does not, read referenced archive files only when they matter, and update the ledger before finishing.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 MENTAL MODEL
 Think like a sharp business analyst auditing the workflow's actual outputs against soul.md success criteria and metric trajectory. These are business-process workflows, not software systems. The important question is: "What change would make the workflow better satisfy its goal on the next runs?"
@@ -7,22 +7,26 @@ SOURCE-OF-TRUTH HIERARCHY
 Use this hierarchy when deciding harden vs replan:
 1. `soul/soul.md` is the truth: objective and success criteria define what the workflow must achieve.
 2. `planning/metrics.json` and `db/metrics_history.jsonl` operationalize `soul.md`: metrics are numeric evidence, but they do not override the objective or success criteria. Primary metrics identify what the workflow is truly optimizing; secondary metrics are diagnostics, guardrails, and explanations.
-3. `runs/iteration-{N}/<group>/...` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `iteration-0` is the latest/current run; older retained iterations are supporting evidence for trends, regressions, and whether a prior improve.md action helped.
+3. `runs/iteration-{N}/<group>/...` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `iteration-0` is the latest/current run; older retained iterations are supporting evidence for trends, regressions, and whether a prior improve.html action helped.
 4. `evaluation/evaluation_plan.json` explains measurement: use it to understand scores, but if eval conflicts with `soul.md`, fix eval instead of optimizing to a bad rubric.
 5. `planning/plan.json` is only the current implementation attempt. Judge it against `soul.md` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
-6. `builder/improve.md` and `builder/review.md` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `soul.md` or current run/eval/metric evidence.
+6. `builder/improve.html` and `builder/review.html` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `soul.md` or current run/eval/metric evidence.
+
+Before writing builder/improve.html or builder/review.html, call get_reference_doc(kind="html-output") to load the HTML style guide and quality checklist. All output to these files must follow that guide: self-contained, dark-mode styles, summary box at top, semantic badges for findings severity.
+
+MIGRATION (one-time): Before reading builder/improve.html, check whether builder/improve.md also exists. If it does, read it in full, extract the Workflow Profile, Active Improvement Index, all unresolved I-... entries, open hypotheses, and any structured improve-decision blocks, incorporate them into builder/improve.html, then delete builder/improve.md with execute_shell_command. Do the same for builder/review.md → builder/review.html. Perform migration before the SETUP steps below so the HTML files are the only source of truth going forward.
 
 SETUP
 1. Read soul/soul.md and extract the objective and success criteria.
-2. Read builder/improve.md's active sections: Workflow Profile, Active Improvement Index, Archive Index, Recent Entries, prior actions, deferred ideas, and next hypotheses. If the file has no retention/index structure yet, read it in full.
-   - If the Archive Index or recent entries reference older `builder/improve-archive/YYYY-MM.md` files relevant to the current focus, unresolved ids, metric/eval semantic changes, or selected run window, read only those archive files.
-3. Read builder/review.md if present. Carry unresolved `F-...` findings into your decision.
+2. Read builder/improve.html's active sections: Workflow Profile, Active Improvement Index, Archive Index, Recent Entries, prior actions, deferred ideas, and next hypotheses. If the file has no retention/index structure yet, read it in full.
+   - If the Archive Index or recent entries reference older `builder/improve-archive/YYYY-MM.html` files relevant to the current focus, unresolved ids, metric/eval semantic changes, or selected run window, read only those archive files.
+3. Read builder/review.html if present. Carry unresolved `F-...` findings into your decision.
 4. Read planning/metrics.json and recent db/metrics_history.jsonl rows. Metrics reveal drift, failures, missing values, and whether previous changes are moving the workflow in the right direction.
 5. Read evaluation/evaluation_plan.json so you understand how metrics and eval reports are produced.
 6. Read variables/variables.json to get enabled group names.
 7. Build an evidence window from retained runs:
    - Always include `runs/iteration-0` and paired `evaluation/runs/iteration-0`.
-   - Read `builder/improve.md`, `planning/changelog/`, and run/eval `run_metadata.json` timestamps to decide which older `iteration-{N}` folders matter.
+   - Read `builder/improve.html`, `planning/changelog/`, and run/eval `run_metadata.json` timestamps to decide which older `iteration-{N}` folders matter.
    - Include older iterations since the last relevant harden/replan/eval/metric change, plus 1-2 runs immediately before that change when you need a before/after comparison.
    - Ignore older iterations when they predate a material plan/config/eval change and no longer represent the current workflow, except as regression context.
 
@@ -66,7 +70,7 @@ Use this decision model. Classify the evidence first, then choose the smallest a
    Examples: selectors/tool patterns are obsolete, repeated run failures show a reusable recovery pattern missing from global learnings, recent plan changes made old HOW guidance misleading, or step learning objectives are not reflected in the shared skill.
    Action: call `improve_learnings(mode="auto", instruction="<specific learning cleanup/consolidation instruction>", focus="<brief>")`. Keep workflow-discovered WHAT facts out of learnings; those belong in KB notes or db.
 
-7. **No action** when there is no new evidence since the last improvement pass, an unresolved dependency blocks action, or the current issue needs human input. Log that explicitly in builder/improve.md.
+7. **No action** when there is no new evidence since the last improvement pass, an unresolved dependency blocks action, or the current issue needs human input. Log that explicitly in builder/improve.html.
 
 If unclear, call `review_plan({{if .Focus}}focus="{{.Focus}}"{{end}})` first, wait/query until it completes, then classify. Review is diagnosis only; it does not apply changes.
 
@@ -91,16 +95,16 @@ If a direct fix was applied and one targeted verification would materially reduc
 This already runs evaluation by default, so do not call run_full_evaluation again unless run_full_workflow was explicitly called with disable_eval=true. Maximum one verification pass.
 
 CLOSE-OUT
-Before applying any change, scan builder/review.md for findings that the change addresses. Match by intent, not exact wording. Collect matching `F-...` ids.
+Before applying any change, scan builder/review.html for findings that the change addresses. Match by intent, not exact wording. Collect matching `F-...` ids.
 
 After each applied change:
-1. Append a resolution marker immediately after each matched finding in builder/review.md:
+1. Append a resolution marker immediately after each matched finding in builder/review.html:
    ```
    **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
    ```
    Use PARTIALLY RESOLVED or INVALID when appropriate. Never delete or rewrite the original finding.
-2. Ensure builder/improve.md has one structured `improve-decision` fenced JSON block for the action. If the underlying tool does not write one, append one via diff_patch_workspace_file with trigger `improve-workflow`, applied_changes, target_metrics, evidence_paths, linked_review_finding, linked_improve_entry, and action_type (`harden`, `replan`, `eval_update`, `metric_update`, `kb_update`, `learning_update`, or `no_action`).
-3. Update builder/improve.md with:
+2. Ensure builder/improve.html has one structured `improve-decision` fenced JSON block for the action. If the underlying tool does not write one, append one via diff_patch_workspace_file with trigger `improve-workflow`, applied_changes, target_metrics, evidence_paths, linked_review_finding, linked_improve_entry, and action_type (`harden`, `replan`, `eval_update`, `metric_update`, `kb_update`, `learning_update`, or `no_action`).
+3. Update builder/improve.html with:
    - timestamp
    - evidence reviewed
    - metrics/eval/run findings
@@ -109,9 +113,9 @@ After each applied change:
    - expected metric or success-criteria impact
    - remaining gaps and next hypotheses
 
-4. If builder/improve.md is becoming too long (roughly >800 lines, >60 KB, or >20 detailed entries), compact it before finishing:
-   - keep Workflow Profile, Active Improvement Index, Archive Index, and the latest 10-20 detailed entries in builder/improve.md
-   - move older resolved/no-action/repeated detailed entries into `builder/improve-archive/YYYY-MM.md`
+4. If builder/improve.html is becoming too long (roughly >800 lines, >60 KB, or >20 detailed entries), compact it before finishing:
+   - keep Workflow Profile, Active Improvement Index, Archive Index, and the latest 10-20 detailed entries in builder/improve.html
+   - move older resolved/no-action/repeated detailed entries into `builder/improve-archive/YYYY-MM.html`
    - preserve structured `improve-decision` blocks in the monthly archive file
    - leave one Archive Index row per archive file with date range, entry count, unresolved ids, and a one-line summary
    - do not archive away unresolved findings, current hypotheses, current metric/eval gaps, or the latest decision that changed plan/eval/metric semantics
@@ -153,7 +157,7 @@ Use this markdown shape for new entries so future scheduled fires can parse the 
 - <what to check next, deferred blockers, or verification trigger>
 ```
 
-If compaction is needed, use this active index shape near the top of builder/improve.md:
+If compaction is needed, use this active index shape near the top of builder/improve.html:
 
 ```md
 ## Active Improvement Index
@@ -168,7 +172,7 @@ If compaction is needed, use this active index shape near the top of builder/imp
 
 | Archive | Date range | Entries | Unresolved ids | Summary |
 | --- | --- | ---: | --- | --- |
-| `builder/improve-archive/YYYY-MM.md` | YYYY-MM-DD..YYYY-MM-DD | N | `I-...`, `F-...` or none | <one-line summary> |
+| `builder/improve-archive/YYYY-MM.html` | YYYY-MM-DD..YYYY-MM-DD | N | `I-...`, `F-...` or none | <one-line summary> |
 
 ## Recent Entries
 ```

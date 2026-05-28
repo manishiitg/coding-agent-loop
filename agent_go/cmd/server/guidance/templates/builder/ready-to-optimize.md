@@ -1,5 +1,7 @@
 Run an optimization-readiness checklist. Check each item and report PASS or FAIL:
 
+Before writing builder/review.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown. Use .badge.pass for PASS items, .badge.fail for FAIL, .badge.warn for WARN. Read the existing file first to carry forward unresolved entries.
+
 1. **Objective set?** — Read soul/soul.md and check the "## Objective" section. FAIL if the file is missing, the section is absent, or its body is empty / still a "<TODO: ...>" placeholder.
 2. **Success criteria set?** — Read soul/soul.md and check the "## Success Criteria" section. Same FAIL conditions as objective.
 3. **All steps have descriptions?** — Check every step in plan.json has a non-empty description. FAIL if any are empty.
@@ -15,4 +17,4 @@ Summary:
 - NOT READY if any FAILs — list what needs to be done
 - If READY with WARNs — "Ready but recommended to fix these first"
 
-REVIEW LOG: append a dated entry to builder/review.md (create if absent) with the readiness verdict, the FAILs/WARNs list, and what needs to be done before optimizing.
+REVIEW LOG: append a dated entry to builder/review.html (create if absent) with the readiness verdict, the FAILs/WARNs list, and what needs to be done before optimizing.

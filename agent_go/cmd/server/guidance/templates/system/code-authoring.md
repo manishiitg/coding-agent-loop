@@ -31,3 +31,11 @@ Apply these when writing or patching a step's `main.py`. Scripts must run identi
 - Edit `learnings/{step-id}/main.py` — this is the source of truth. NEVER edit `execution/{step-id}/code/main.py`; the controller overwrites it from learnings on every run.
 - Prefer `diff_patch_workspace_file` for targeted changes — preserves working code and reduces regressions. Full rewrite (cat-heredoc) only when restructuring large portions.
 - Helper files alongside main.py also live in `learnings/{step-id}/` — patch them the same way.
+
+**Output format — HTML vs JSON vs Markdown**
+
+- **JSON** — for structured data consumed by downstream steps or db writes. Always use JSON for `context_output` files other steps read.
+- **HTML** — for final human-readable reports, analyses, or dashboards. HTML renders richly in the file viewer with tables, charts, navigation, and colour. A step that synthesises data for a human to read should write `.html`, not `.md`.
+- **Markdown** — only for short prose notes or content appended into learnings/KB files.
+
+Before writing a `.html` output file, call `get_reference_doc(kind="html-output")` — it has the full layout baseline, dark-mode styles, inline chart pattern, and quality checklist.

@@ -1,5 +1,7 @@
 Improve the workflow database surface so `db/*.json` supports the current plan, downstream steps, and report widgets.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
+Before writing builder/improve.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown.
+
 BOUNDARIES
 
 1. The applied tool is `improve_db`; call it once with a concrete `instruction` string and optional `focus`.
@@ -51,4 +53,4 @@ ACTION
 
 3. The tool runs in the background and returns an `execution_id`. If you need the result before answering, use `query_step(execution_id="<id>")` until it completes.
 4. When complete, summarize files changed under `db/`, schema/contract improvements, report compatibility changes, any row/data migrations performed, and remaining follow-up work.
-5. If this is part of an optimizer/improvement pass, append a short note to `builder/improve.md` after the tool completes; otherwise report in chat only.
+5. If this is part of an optimizer/improvement pass, append a short note to `builder/improve.html` after the tool completes; otherwise report in chat only.

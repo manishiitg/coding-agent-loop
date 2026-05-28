@@ -124,6 +124,66 @@ Default `~/.gemini/settings.json` is OAuth — fails non-interactively. `ensureG
 ### 3. Claude Code + `ANTHROPIC_API_KEY` conflict
 If `ANTHROPIC_API_KEY` is set, Claude Code uses it instead of its OAuth credentials. Validation in `llm_config_handlers.go` strips it from env before `claude --print`. Also: don't pass `--dangerously-skip-permissions` when running as root.
 
+### 3a. Antigravity CLI (`agy`) install + auth
+`setup-server.sh` does **not** install Antigravity — it ships as a standalone binary, not an npm package. Install + auth on the VM is a one-time manual step.
+
+**Install:**
+```bash
+ssh -i ~/.ssh/hetzner_mcp root@138.201.227.99
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+# Binary lands at /root/.local/bin/agy
+```
+The installer appends `export PATH="/root/.local/bin:$PATH"` to `~/.bashrc` and `~/.profile`, but **systemd doesn't read those** — update the unit file too:
+```bash
+sed -i.bak 's|^Environment=PATH=|Environment=PATH=/root/.local/bin:|' /etc/systemd/system/mcp-agent.service
+systemctl daemon-reload
+systemctl restart mcp-agent
+```
+
+**Auth (OAuth — agy does NOT accept API keys, despite the `AGY_API_KEY`/`GOOGLE_API_KEY` env vars the adapter passes):**
+
+agy's auto-poll has a hardcoded 30s timeout that's too tight for a relay-through-someone-else workflow. Easiest path is to do the whole flow inside a single SSH session:
+
+```bash
+ssh -i ~/.ssh/hetzner_mcp root@138.201.227.99
+/root/.local/bin/agy --print "hi"
+```
+
+agy prints:
+```
+Authentication required. Please visit the URL to log in:
+  https://accounts.google.com/o/oauth2/auth?...&state=XYZ
+
+Waiting for authentication (timeout 30s)...
+Or, paste the authorization code here and press Enter:
+```
+
+1. Copy the `https://accounts.google.com/...` URL into your **local** browser.
+2. Complete Google login (use the workspace account you want associated; e.g. `confida.ai`).
+3. Browser redirects to `https://antigravity.google/oauth-callback?...`. The callback page **displays the authorization code on screen** (not in the URL — the URL only contains `state=`, `iss=`, `scope=`, `hd=`). Copy that displayed code; it starts with `4/0AeoWuM9...`.
+4. Paste the code into the same SSH terminal at the `Or, paste the authorization code here:` prompt and hit Enter — within 30s of starting agy.
+5. If it times out, re-run `agy --print "hi"`; Google login is cached now, so step 2 is instant on the second pass.
+
+**Verify:**
+```bash
+ls -la /root/.gemini/antigravity-cli/antigravity-oauth-token   # mode 600, ~500 bytes
+/root/.local/bin/agy --print "Reply OK."                       # should return: OK
+```
+
+The token file contains a refresh token, so access tokens self-renew. Revoke any time via Google Account → Security → Third-party access → Antigravity CLI.
+
+**Then: complete the interactive first-run wizard.** Auth alone is not enough — `agy --print` works after auth, but the interactive/tmux mode that mcp-agent-builder uses for chat sessions opens a one-time setup wizard (color scheme picker, default model, telemetry consent). The adapter doesn't know how to dismiss it and the "Test Connection" button fails with `failed to clear stale Agy prompt draft … latest pane: Welcome to Antigravity CLI! Choose your color scheme: …`.
+
+Run it once over SSH to clear it:
+```bash
+/root/.local/bin/agy --prompt-interactive ""
+# Arrow keys + Enter through the color scheme picker, model picker, telemetry consent.
+# When you reach the main `> you:` prompt, Ctrl+D to exit.
+```
+The wizard state persists under `/root/.gemini/antigravity-cli/`, so subsequent interactive launches skip the wizard.
+
+> **DO NOT** scp this token from your laptop to the VM as a shortcut. Each token is bound to the device identifier from the install; cross-machine reuse may work in the short term but breaks on refresh and is messy to debug. Run the OAuth flow once *on the VM*.
+
 ### 4. UFW blocks Docker→host
 Containers can't reach the bare-metal agent without an explicit rule:
 ```bash
@@ -140,7 +200,7 @@ Local binary is mac-arm; server is linux-amd64. `quick-deploy.sh` runs `go insta
 Don't set this in `run-agent.sh` — a 15m cap was previously killing legitimate sub-agent runs. Sub-agents now use the default (no hard cap).
 
 ### 8. systemd env
-The unit must set `HOME=/root`, `GOPATH=/root/go`, `GOMODCACHE=/root/go/pkg/mod`, and a PATH that includes `/usr/local/go/bin:/root/go/bin` (so the agent can find `go`, `mcpbridge`, `claude`, `gemini`).
+The unit must set `HOME=/root`, `GOPATH=/root/go`, `GOMODCACHE=/root/go/pkg/mod`, and a PATH that includes `/usr/local/go/bin:/root/go/bin:/root/.local/bin` (so the agent can find `go`, `mcpbridge`, `claude`, `gemini`, `agy`).
 
 ## Files in this directory
 

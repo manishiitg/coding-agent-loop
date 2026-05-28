@@ -297,6 +297,21 @@ function isLiveWorkflowTerminalForPath(terminal: TerminalSnapshot, workspacePath
   if (!targetWorkspace || normalizeWorkflowPath(terminal.workflow_path) !== targetWorkspace) return false
 
   const state = (terminal.state || '').toLowerCase().trim()
+  // Any terminal whose backing tmux pane is still alive blocks a new chat
+  // — the CLI process inside the pane holds workspace-scoped registry
+  // leases (e.g. agy-cli's MCP config lease, claudecode CLAUDE.md
+  // restore registry, etc.) for the full idle-retention window after a
+  // turn completes. terminal.active flips to false on turn completion,
+  // and state moves to "idle"/"completed", but the tmux pane is kept
+  // for up to 20 minutes (AGY_CLI_INTERACTIVE_IDLE_TIMEOUT_SECONDS).
+  // A new chat in the same workdir during that window collides on the
+  // lease and fails with "does not support concurrent sessions". So we
+  // treat the presence of a non-empty tmux_session as the authoritative
+  // "this pane is alive" signal, unless the backend has already
+  // detected the pane is dead (state === "stale" or "failed").
+  if (typeof terminal.tmux_session === 'string' && terminal.tmux_session.trim() !== '') {
+    return state !== 'stale' && state !== 'failed'
+  }
   return state === 'running'
 }
 

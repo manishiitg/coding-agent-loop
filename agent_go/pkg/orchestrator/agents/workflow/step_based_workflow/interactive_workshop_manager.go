@@ -1778,7 +1778,7 @@ Each workflow has three separate stores that survive across runs: `+"`learnings/
 {{if eq .WorkshopMode "workshop"}}
 **WORKSHOP MODE** — Design, run, evaluate, harden, and replan as a single mode. The agent decides the right action from workspace state (see the phase-detection directive near the top of this prompt). Make existing steps reliable across all groups and runs; build new steps when the plan needs extending.
 
-**Foundation check:** verify `+"`soul/soul.md`"+` has both `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections. If either is missing, ask the user and write via shell. `+"`planning/plan.json`"+` no longer stores root objective/success fields. The current objective and success criteria are shown verbatim under **CURRENT STATE** below — don't restate them here.
+**Foundation check:** verify `+"`soul/soul.md`"+` has both `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections. If either is missing, ask the user and write via shell. `+"`planning/plan.json`"+` no longer stores root objective/success fields.
 
 **Read previous builder conversations** from `+"`builder/`"+` folder (`+"`ls -t builder/*.json | head -3`"+`) to avoid repeating failed approaches.
 
@@ -1847,8 +1847,7 @@ Read-only review commands such as `+"`/review-plan`"+` are available if the user
 
 - **Workspace**: {{.WorkspacePath}} (`+"`{{.AbsWorkspacePath}}/`"+`)
 - **Run Folder**: {{.RunFolder}}
-- **Workflow Objective**: {{if .WorkflowObjective}}{{.WorkflowObjective}}{{else if eq .WorkshopMode "run"}}⚠️ Not defined — tell the user the workflow objective is missing and suggest switching to Workshop to define it. Do not edit `+"`soul/soul.md`"+` in Run mode.{{else}}⚠️ Not defined — check `+"`soul/soul.md`"+` for a `+"`## Objective`"+` section and fill it in via shell. soul.md is the canonical source (plan.json no longer holds this field).{{end}}
-- **Success Criteria**: {{if .WorkflowSuccessCriteria}}{{.WorkflowSuccessCriteria}}{{else if eq .WorkshopMode "run"}}⚠️ Not defined — tell the user success criteria are missing and suggest switching to Workshop to define them. Do not edit `+"`soul/soul.md`"+` in Run mode.{{else}}⚠️ Not defined — check `+"`soul/soul.md`"+` for a `+"`## Success Criteria`"+` section. If missing, ask the user what success looks like, then write the section via shell.{{end}}
+- **Objective & Success Criteria**: {{if and .WorkflowObjective .WorkflowSuccessCriteria}}defined in `+"`soul/soul.md`"+` — read it for the canonical objective and success criteria (not inlined here to keep this prompt small; you're instructed to read soul.md first regardless).{{else}}{{if not .WorkflowObjective}}⚠️ Objective not defined — {{if eq .WorkshopMode "run"}}tell the user it's missing and suggest switching to Workshop to define it; do not edit `+"`soul/soul.md`"+` in Run mode. {{else}}check `+"`soul/soul.md`"+` for a `+"`## Objective`"+` section and fill it in via shell (soul.md is canonical; plan.json no longer holds this). {{end}}{{end}}{{if not .WorkflowSuccessCriteria}}⚠️ Success criteria not defined — {{if eq .WorkshopMode "run"}}tell the user they're missing and suggest switching to Workshop; do not edit `+"`soul/soul.md`"+` in Run mode.{{else}}check `+"`soul/soul.md`"+` for a `+"`## Success Criteria`"+` section; if missing, ask the user what success looks like, then write it via shell.{{end}}{{end}}{{end}}
 {{if .AvailableGroups}}- **Available Groups**: {{.AvailableGroups}}
 {{end}}- **Step Configs**: {{if .StepConfigSummary}}{{.StepConfigSummary}}{{else}}No step configs yet{{end}}
 - **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}

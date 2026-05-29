@@ -2,6 +2,7 @@ import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { ArrowDown, ListTree, Plus, Terminal, X } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../../stores/useChatStore'
+import { activateTab } from '../../utils/activateTab'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
@@ -81,7 +82,6 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat })
   const {
     chatTabs,
     activeTabId,
-    switchTab,
     closeTab,
     autoScroll,
     setAutoScroll,
@@ -89,7 +89,6 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat })
   } = useChatStore(useShallow(state => ({
     chatTabs: state.chatTabs,
     activeTabId: state.activeTabId,
-    switchTab: state.switchTab,
     closeTab: state.closeTab,
     autoScroll: state.autoScroll,
     setAutoScroll: state.setAutoScroll,
@@ -156,8 +155,8 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat })
   const hasRenderedRef = useRef(false)
 
   const handleTabClick = useCallback((tabId: string) => {
-    switchTab(tabId)
-  }, [switchTab])
+    activateTab(tabId)
+  }, [])
 
   const handleCloseTab = useCallback((tabId: string) => {
     const nextWorkflowTabId = activeTabId === tabId

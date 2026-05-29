@@ -1037,7 +1037,7 @@ export const ModePresetBar: React.FC = () => {
                       ['Minimize Sidebar', 'Ctrl+5'],
                       ['Minimize Workspace', 'Ctrl+6'],
                       ['Toggle Auto-scroll', 'Ctrl+7'],
-                      ['New Chat Tab (Chat mode)', 'Ctrl+N'],
+                      ['New Chat (Chat mode)', 'Ctrl+N'],
                     ].map(([label, key]) => (
                       <div key={key} className="flex items-center justify-between py-1">
                         <span className="text-sm text-gray-600 dark:text-gray-300">{label}</span>

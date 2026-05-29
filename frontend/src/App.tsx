@@ -29,6 +29,7 @@ import { WorkflowsOverviewPage } from "./components/WorkflowsOverviewPage";
 import { ModePresetBar } from "./components/ModePresetBar";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 import { ChatTabs } from "./components/ChatTabs";
+import ConfirmationDialog from "./components/ui/ConfirmationDialog";
 import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
 import { useLLMStore } from "./stores/useLLMStore";
@@ -1099,6 +1100,29 @@ function App() {
       }
 
       const chatStore = useChatStore.getState()
+
+      // Single-tab invariant: older sessions may have persisted multiple
+      // multi-agent tabs. Collapse them to the most-recently-accessed one and
+      // close the rest so multi-agent chat always shows exactly one tab.
+      const multiAgentTabs = Object.values(chatStore.chatTabs).filter(tab =>
+        tab.metadata?.mode === 'multi-agent' &&
+        tab.metadata?.isOrganizationAssistant !== true
+      )
+      if (multiAgentTabs.length > 1) {
+        const keep = multiAgentTabs.reduce((best, t) =>
+          (t.lastAccessedAt ?? t.createdAt ?? 0) > (best.lastAccessedAt ?? best.createdAt ?? 0) ? t : best
+        , multiAgentTabs[0])
+        for (const tab of multiAgentTabs) {
+          if (tab.tabId !== keep.tabId) {
+            // keepEvents=false, stopSession=false: discard the extra tab's UI
+            // state without killing its backend session.
+            await chatStore.closeTab(tab.tabId, false)
+          }
+        }
+        chatStore.switchTab(keep.tabId)
+        return
+      }
+
       const activeTabId = chatStore.activeTabId
 
       // Check if activeTabId is null, points to a non-existent tab, or belongs to a different mode
@@ -1107,15 +1131,8 @@ function App() {
         activeTab.metadata?.mode === selectedModeCategory &&
         activeTab.metadata?.isOrganizationAssistant !== true
 
-      if (!hasValidActiveTab) {
-        const modeTabs = Object.values(chatStore.chatTabs).filter(tab =>
-          tab.metadata?.mode === selectedModeCategory &&
-          tab.metadata?.isOrganizationAssistant !== true
-        ).sort((a, b) => a.createdAt - b.createdAt)
-
-        if (modeTabs.length > 0) {
-          chatStore.switchTab(modeTabs[0].tabId)
-        }
+      if (!hasValidActiveTab && multiAgentTabs.length === 1) {
+        chatStore.switchTab(multiAgentTabs[0].tabId)
       }
     }
 
@@ -1243,13 +1260,19 @@ function App() {
     setWorkspaceMinimized(!workspaceMinimized)
   }, [workspaceMinimized, setWorkspaceMinimized])
 
-  const createNewMultiAgentTab = useCallback(async () => {
-    const chatStore = useChatStore.getState()
-    const visibleChatTabs = Object.values(chatStore.chatTabs).filter(tab =>
-      tab.metadata?.mode === 'multi-agent' && !tab.metadata?.isOrganizationAssistant
-    )
-    const tabName = `Agent Chat ${visibleChatTabs.length + 1}`
-    await chatStore.createChatTab(tabName, { mode: 'multi-agent' })
+  // Multi-agent chat is single-tab: "New Chat" resets the current chat in
+  // place (clears the conversation + starts a fresh backend session) instead
+  // of opening another tab. Confirm first so the running session isn't lost
+  // by accident.
+  const [showNewChatConfirm, setShowNewChatConfirm] = useState(false)
+  const requestNewMultiAgentChat = useCallback(() => {
+    setShowNewChatConfirm(true)
+  }, [])
+  const confirmNewMultiAgentChat = useCallback(() => {
+    setShowNewChatConfirm(false)
+    // handleNewChat clears the backend session and resetTabChat's the single
+    // multi-agent tab in place (see ChatArea.handleNewChat).
+    void chatAreaRef.current?.handleNewChat()
   }, [])
 
   // After Ctrl+1/Ctrl+2 mode switch, restore the most recently-accessed
@@ -1325,7 +1348,7 @@ function App() {
       if ((event.ctrlKey || event.metaKey) && event.key === 'n') {
         event.preventDefault()
         if (selectedModeCategory === 'multi-agent' && !showWorkflowsOverview) {
-          void createNewMultiAgentTab()
+          requestNewMultiAgentChat()
           return
         }
         // Outside chat mode, preserve the existing reset-current-chat behavior.
@@ -1337,7 +1360,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [createNewMultiAgentTab, selectedModeCategory, showWorkflowsOverview, toggleSidebarMinimize, toggleWorkspaceMinimize, setAgentMode, setShowWorkflowsOverview, startNewChat])
+  }, [requestNewMultiAgentChat, selectedModeCategory, showWorkflowsOverview, toggleSidebarMinimize, toggleWorkspaceMinimize, setAgentMode, setShowWorkflowsOverview, startNewChat])
 
   useEffect(() => {
     if (showWorkflowsOverview) {
@@ -1393,12 +1416,24 @@ function App() {
             <ModePresetBar />
             
             {/* Chat Tabs - global navigation for both chat and workflow modes */}
-            <ChatTabs 
+            <ChatTabs
+              onNewChat={requestNewMultiAgentChat}
               autoScroll={useChatStore(state => state.autoScroll)}
               onToggleAutoScroll={() => {
                 const chatStore = useChatStore.getState()
                 chatStore.setAutoScroll(!chatStore.autoScroll)
               }}
+            />
+
+            <ConfirmationDialog
+              isOpen={showNewChatConfirm}
+              onClose={() => setShowNewChatConfirm(false)}
+              onConfirm={confirmNewMultiAgentChat}
+              title="Start a new chat?"
+              message="This stops the current chat session and clears the conversation. This can't be undone."
+              confirmText="New Chat"
+              cancelText="Cancel"
+              type="warning"
             />
             
               <div className="flex-1 min-h-0 overflow-hidden relative">

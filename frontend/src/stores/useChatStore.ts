@@ -1922,6 +1922,26 @@ export const useChatStore = create<ChatState>()(
         // Generate unique tab ID
         const timestamp = Date.now()
         const mode = metadata?.mode || 'multi-agent'
+
+        // Single-tab invariant: multi-agent chat has exactly ONE tab
+        // (organization-assistant tabs are exempt). Any attempt to create
+        // another reuses the existing one, so no call site — New Chat, session
+        // restore, ChatInput, or rehydration — can ever fork a second tab.
+        if (mode === 'multi-agent' && !metadata?.isOrganizationAssistant) {
+          const existing = Object.values(get().chatTabs).find(t =>
+            t.metadata?.mode === 'multi-agent' && !t.metadata?.isOrganizationAssistant
+          )
+          if (existing) {
+            // Restore binds the single tab to a specific backend session.
+            if (existingObserverId && existingObserverId !== existing.sessionId) {
+              get().updateTabSessionId(existing.tabId, existingObserverId)
+            }
+            set({ activeTabId: existing.tabId })
+            logger.debug('TabStore', `Reusing single multi-agent tab ${existing.tabId} (single-tab invariant)`)
+            return existing.tabId
+          }
+        }
+
         const tabId = mode === 'workflow' && metadata?.phaseId
           ? `phase_${metadata.phaseId}_${timestamp}`
           : `chat_${timestamp}`

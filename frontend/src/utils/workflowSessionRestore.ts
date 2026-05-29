@@ -1,3 +1,4 @@
+import { activateTab } from './activateTab'
 import { agentApi } from '../services/api'
 import type { ActiveSessionInfo, RunningWorkflowInfo } from '../services/api-types'
 import { useAppStore } from '../stores/useAppStore'
@@ -187,7 +188,7 @@ export async function restoreWorkflowSessionChat(
       latestChatStore.setTabStreaming(tabId, isActive)
       latestChatStore.setTabCompleted(tabId, !isActive)
       useWorkflowStore.getState().setShowChatArea(true)
-      latestChatStore.switchTab(tabId)
+      activateTab(tabId)
       if (options.scrollToBottom !== false) requestChatScrollToBottom()
       return tabId
     }
@@ -208,7 +209,7 @@ export async function restoreWorkflowSessionChat(
     }
 
     useWorkflowStore.getState().setShowChatArea(true)
-    latestChatStore.switchTab(tabId)
+    activateTab(tabId)
     if (options.scrollToBottom !== false) requestChatScrollToBottom()
     return tabId
   } finally {
@@ -348,7 +349,7 @@ async function restoreReadOnlyWorkflowRunChat(
     chatStore.setTabCompleted(tabId, !isActiveWorkflowSession(session))
   }
 
-  chatStore.switchTab(tabId)
+  activateTab(tabId)
   window.dispatchEvent(new CustomEvent('workflow-readonly-run-restored', {
     detail: { presetId, tabId }
   }))

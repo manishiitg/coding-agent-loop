@@ -4,6 +4,7 @@ import type { ActiveSessionInfo, RunningWorkflowInfo, SessionExecutionTreeNode }
 import { agentApi } from '../services/api'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
+import { activateTab } from '../utils/activateTab'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { restoreSession } from '../utils/sessionRestore'
 import { isBotWorkflowSession, isScheduledWorkflowSession, restoreBotWorkflowRunChat, restoreScheduledWorkflowRunChat, restoreWorkflowSessionChat, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
@@ -572,10 +573,9 @@ export const GlobalActivityMonitor: React.FC = () => {
     }
 
     if (existingTab) {
-      if (existingTab.metadata?.mode === 'workflow' || existingTab.metadata?.mode === 'multi-agent') {
-        useModeStore.getState().setModeCategory(existingTab.metadata.mode)
-      }
-      chatStore.switchTab(existingTab.tabId)
+      // activateTab clears the Workflows Overview overlay and sets the pane mode
+      // from the tab metadata — without that the tab is selected but stays hidden.
+      activateTab(existingTab.tabId)
       setOpen(false)
       return
     }
@@ -584,8 +584,7 @@ export const GlobalActivityMonitor: React.FC = () => {
       title: sessionTitle(session, runningWorkflowsBySession[session.session_id], currentWorkflowPresetName),
       source: 'global-activity-monitor',
     })
-    useModeStore.getState().setModeCategory('multi-agent')
-    useChatStore.getState().switchTab(tabId)
+    activateTab(tabId)
     setOpen(false)
   }, [currentWorkflowPresetName, runningWorkflowsBySession])
 
@@ -642,7 +641,7 @@ export const GlobalActivityMonitor: React.FC = () => {
           {visibleSessions.length > 0 && <span className="text-gray-400 dark:text-gray-600 select-none text-xs">/</span>}
           <button
             type="button"
-            onClick={() => builderTab && useChatStore.getState().switchTab(builderTab.tabId)}
+            onClick={() => builderTab && activateTab(builderTab.tabId)}
             className={pillClasses}
             title={builderBusy ? 'Builder is processing — wait before sending a message' : 'Builder is idle — ready for your next message'}
           >

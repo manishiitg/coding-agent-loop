@@ -4,11 +4,11 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useChatStore } from '../stores'
 import type { ChatTab } from '../stores/useChatStore'
-import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useAppStore } from '../stores/useAppStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { ActiveSessionInfo, PollingEvent } from '../services/api-types'
 import { restoreSession } from '../utils/sessionRestore'
+import { activateTab } from '../utils/activateTab'
 import { isBotWorkflowSession, isScheduledWorkflowSession, restoreBotWorkflowRunChat, restoreScheduledWorkflowRunChat, restoreWorkflowSessionChat, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
 import { formatEventMemoryBytes, hasEventMemoryPressure, type EventMemoryStats } from '../utils/eventMemory'
 
@@ -504,15 +504,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
   // Switch to a workflow, chat tab, active session, or retained-event owner.
   const switchToTab = useCallback((tab: ChatTab) => {
-    useAppStore.getState().setShowWorkflowsOverview(false)
-    const tabMode = tab.metadata?.mode || 'multi-agent'
-    if (useModeStore.getState().selectedModeCategory !== tabMode) {
-      useModeStore.getState().setModeCategory(tabMode)
-    }
-    useChatStore.getState().switchTab(tab.tabId)
-    if (tabMode === 'workflow') {
-      useWorkflowStore.getState().setShowChatArea(true)
-    }
+    activateTab(tab.tabId)
     requestChatScrollToBottom()
   }, [])
 
@@ -560,11 +552,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
     if (item.type === 'chat') {
       console.log(`%c[QuickSwitcher] Switching to chat tab: ${item.label} (${item.tabId})`, 'color: #FF9800; font-weight: bold')
-      useAppStore.getState().setShowWorkflowsOverview(false)
-      if (useModeStore.getState().selectedModeCategory !== 'multi-agent') {
-        useModeStore.getState().setModeCategory('multi-agent')
-      }
-      useChatStore.getState().switchTab(item.tabId)
+      activateTab(item.tabId)
       requestChatScrollToBottom()
       onClose()
       return
@@ -621,8 +609,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
         .sort((a, b) => b.createdAt - a.createdAt)
 
       if (presetTabs.length > 0) {
-        updatedChatStore.switchTab(presetTabs[0].tabId)
-        useWorkflowStore.getState().setShowChatArea(true)
+        activateTab(presetTabs[0].tabId)
       } else {
         // No tabs for this preset yet — create an empty builder tab. WorkflowLayout
         // watches this state and offers workspace builder-history restore when present.
@@ -632,8 +619,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           phaseName: 'Workflow Builder',
           presetQueryId: item.preset.id,
         })
-        updatedChatStore.switchTab(tabId)
-        useWorkflowStore.getState().setShowChatArea(true)
+        activateTab(tabId)
       }
     }
 

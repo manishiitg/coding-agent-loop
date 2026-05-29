@@ -1,28 +1,28 @@
 import React, { useCallback, useEffect, useMemo } from 'react'
-import { Plus, ArrowDown, ListTree, Terminal, X } from 'lucide-react'
+import { Plus, ArrowDown, ListTree, Terminal } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useModeStore } from '../stores/useModeStore'
-import { shouldShowEventByMode } from './events/eventModeUtils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
-import { logger } from '../utils/logger'
+
 interface ChatTabsProps {
-  // For multi-agent mode: callback when starting a new chat
+  // For multi-agent mode: callback when starting a new chat (reset-in-place)
   onNewChat?: () => void
   // Auto-scroll state and toggle
   autoScroll?: boolean
   onToggleAutoScroll?: () => void
 }
 
-export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScroll }) => {
+// Multi-agent chat is single-tab: this bar is a slim header for the one chat
+// tab (title + view controls + New Chat). It is not a tab switcher anymore.
+// Workflow mode renders its own tabs (WorkflowChatTabs) inside the chat panel.
+export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onToggleAutoScroll }) => {
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
   const {
     chatTabs,
     activeTabId,
     switchTab,
-    closeTab,
-    tabEvents,
     autoScroll: storeAutoScroll,
     setAutoScroll,
     setTabViewMode,
@@ -38,214 +38,71 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     // Never match by tab name — that can hide normal chat tabs.
     return tab.metadata?.isOrganizationAssistant === true
   }, [])
-  
+
   // Use prop if provided, otherwise use store value
   const effectiveAutoScroll = autoScroll !== undefined ? autoScroll : storeAutoScroll
   const handleToggleAutoScroll = onToggleAutoScroll || (() => {
     setAutoScroll(!storeAutoScroll)
   })
-  
-  // Auto-select first tab if none is active but tabs exist (e.g. after page refresh)
+
+  // Auto-select the single multi-agent tab if none is active (e.g. after refresh)
   useEffect(() => {
-    const visibleTabs = Object.values(chatTabs).filter(tab =>
-      tab.metadata?.mode === selectedModeCategory && !isHiddenOrganizationTab(tab)
-    )
+    if (selectedModeCategory !== 'multi-agent' || showWorkflowsOverview) return
 
     if (activeTabId) {
       const activeTab = chatTabs[activeTabId]
       if (
         activeTab &&
-        activeTab.metadata?.mode === selectedModeCategory &&
+        activeTab.metadata?.mode === 'multi-agent' &&
         !isHiddenOrganizationTab(activeTab)
       ) {
         return
       }
     }
 
-    if (selectedModeCategory !== 'multi-agent' || showWorkflowsOverview) return
+    const visibleTabs = Object.values(chatTabs).filter(tab =>
+      tab.metadata?.mode === 'multi-agent' && !isHiddenOrganizationTab(tab)
+    )
     if (visibleTabs.length > 0) {
       const sorted = [...visibleTabs].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
       switchTab(sorted[0].tabId)
     }
   }, [activeTabId, chatTabs, selectedModeCategory, showWorkflowsOverview, switchTab, isHiddenOrganizationTab])
 
-  // Filter tabs by current mode
-  // In workflow mode, only show chat tabs in global ChatTabs (workflow tabs show in chat area)
-  const modeTabs = useMemo(() => {
-    if (selectedModeCategory === 'workflow') {
-      // In workflow mode, only show multi-agent tabs (workflow tabs are shown in the chat area panel)
-      return Object.values(chatTabs).filter(tab => 
-        tab.metadata?.mode === 'multi-agent'
-      ).sort((a, b) => a.createdAt - b.createdAt)
-    }
-    // In multi-agent mode, show all multi-agent tabs
-    return Object.values(chatTabs).filter(tab =>
-      tab.metadata?.mode === selectedModeCategory && !isHiddenOrganizationTab(tab)
-    ).sort((a, b) => a.createdAt - b.createdAt)
-  }, [chatTabs, selectedModeCategory, isHiddenOrganizationTab])
-  
-  // Session status is now delivered via SSE status events — no polling needed
-
-  const handleTabClick = (tabId: string) => {
-    switchTab(tabId)
-  }
-
-  const handleCloseTab = useCallback((event: React.MouseEvent, tabId: string) => {
-    event.stopPropagation()
-    void closeTab(tabId)
-  }, [closeTab])
-
-  const handleNewTab = async () => {
-    logger.debug('ChatTabs', 'handleNewTab called, mode:', selectedModeCategory)
-    // In workflow mode, phases are started from WorkflowToolbar, not from ChatTabs
-    if (selectedModeCategory === 'workflow') {
-      logger.debug('ChatTabs', 'Workflow mode: phases should be started from WorkflowToolbar, not ChatTabs')
-      return
-    }
-    
-    if (selectedModeCategory === 'multi-agent') {
-      const mode = selectedModeCategory
-      logger.debug('ChatTabs', `Creating new ${mode} tab...`)
-      const chatStore = useChatStore.getState()
-      const allModeTabs = Object.values(chatTabs).filter(tab =>
-        tab.metadata?.mode === mode && !isHiddenOrganizationTab(tab)
-      )
-      const tabNumber = allModeTabs.length + 1
-      const tabName = `Agent Chat ${tabNumber}`
-
-      logger.debug('ChatTabs', `Tab name: ${tabName}, existing tabs: ${allModeTabs.length}`)
-
-      try {
-        logger.debug('ChatTabs', `Creating new tab: ${tabName} in mode: ${mode}`)
-        const newTabId = await chatStore.createChatTab(tabName, { mode })
-        logger.debug('ChatTabs', `createChatTab returned tab ID: ${newTabId}`)
-        logger.debug('ChatTabs', `Tab creation completed. Tab ID: ${newTabId}`)
-      } catch (error) {
-        logger.error('ChatTabs', 'Failed to create new tab:', error)
-        if (error instanceof Error) {
-          logger.error('ChatTabs', 'Error details:', {
-            name: error.name,
-            message: error.message,
-            stack: error.stack
-          })
-        }
-        alert(`Failed to create new tab: ${error instanceof Error ? error.message : String(error)}`)
-      }
-    } else {
-      logger.warn('ChatTabs', 'Unknown mode category:', selectedModeCategory)
-    }
-  }
-
-  // Show tabs bar in multi-agent mode (workflow tabs are shown in WorkflowChatTabs inside ChatArea panel)
-  const shouldShowTabsBar = selectedModeCategory === 'multi-agent' && !showWorkflowsOverview
-  const hasTabs = modeTabs.length > 0
-  
-  // In workflow mode, don't show ChatTabs at all
-  if (!shouldShowTabsBar) {
+  // Only render in multi-agent mode (workflow tabs live in WorkflowChatTabs).
+  const shouldShowHeader = selectedModeCategory === 'multi-agent' && !showWorkflowsOverview
+  if (!shouldShowHeader) {
     return null
   }
-  
-  // Only show border when there are actual tabs (not just the "New Chat" button)
-  const borderClass = hasTabs ? 'border-b border-gray-200 dark:border-gray-700' : ''
-  
+
+  const activeTab = activeTabId ? chatTabs[activeTabId] : undefined
+  const showHeaderContent =
+    !!activeTab && activeTab.metadata?.mode === 'multi-agent' && !isHiddenOrganizationTab(activeTab)
+  const chatTitle = showHeaderContent ? (activeTab?.name || 'Agent Chat') : 'Agent Chat'
+
   return (
-    <div className={`flex-shrink-0 flex items-center gap-1 bg-gray-50 dark:bg-gray-800 px-2 py-1 overflow-x-auto${borderClass ? ` ${borderClass}` : ''}`}>
-      {/* Existing Tabs */}
-      {modeTabs.map((tab) => {
-        const isActive = tab.tabId === activeTabId
-        const canCloseTab = modeTabs.length > 1
-        
-        // Determine active border color based on mode
-          const activeBorderClass = 'border-blue-500'
+    <div className="flex-shrink-0 flex items-center gap-2 bg-gray-50 dark:bg-gray-800 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700">
+      {/* Single-chat title */}
+      <span className="text-sm font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap truncate">
+        {chatTitle}
+      </span>
 
-          // Calculate new event count for inactive tabs using per-mode filtering
-          // This ensures the badge count matches what the user sees in the current event mode
-          const newEventCount = (() => {
-            if (isActive || !tab.sessionId) return 0
+      <div className="ml-auto flex items-center gap-1">
+        {/* New Chat — resets the current chat in place (confirmation handled upstream) */}
+        {onNewChat && (
+          <button
+            onClick={onNewChat}
+            data-testid="new-chat-button"
+            className="flex items-center gap-1 px-2 py-1 mr-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+            title="New chat — clears the current conversation and starts a fresh session"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Chat</span>
+          </button>
+        )}
 
-            // Get all events for this tab's session
-            const allEvents = tabEvents[tab.sessionId] || []
-
-            // Events that are too noisy to count as "new" in the badge
-            const BADGE_EXCLUDED_EVENTS = new Set([
-              'tool_call_start',
-              'tool_call_end',
-              'tool_call_delta',
-            ])
-
-            // Filter events by visibility rules, excluding noisy tool events from badge
-            const visibleEvents = allEvents.filter(e => e.type && shouldShowEventByMode(e.type) && !BADGE_EXCLUDED_EVENTS.has(e.type))
-
-            // Get the last viewed count (with fallback for migration)
-            const lastViewedCount = tab.lastViewedEventCounts?.micro ?? tab.lastViewedEventCount ?? 0
-
-            // New events = current visible count - last viewed count for this mode
-            const newCount = Math.max(0, visibleEvents.length - lastViewedCount)
-            return newCount
-          })()
-          
-          return (
-            <div
-              key={tab.tabId}
-              onClick={() => handleTabClick(tab.tabId)}
-              onKeyDown={(e) => e.key === 'Enter' && handleTabClick(tab.tabId)}
-              role="button"
-              tabIndex={0}
-              data-testid={`chat-tab-${tab.tabId}`}
-              className={`
-                group flex items-center gap-2 px-3 py-1.5 rounded-t-md text-sm font-medium transition-colors cursor-pointer outline-none
-                ${isActive
-                  ? `bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b-2 ${activeBorderClass}`
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
-                }
-              `}
-            >
-              {/* Tab Name */}
-              <span className="whitespace-nowrap">{tab.name}</span>
-              
-              {/* New Events Badge - show for inactive tabs with new events */}
-              {!isActive && newEventCount > 0 && (
-                <span className="flex items-center justify-center min-w-[18px] h-4 px-1.5 text-xs font-semibold text-white bg-red-500 dark:bg-red-600 rounded-full">
-                  {newEventCount > 99 ? '99+' : newEventCount}
-                </span>
-              )}
-
-              {canCloseTab && (
-                <button
-                  type="button"
-                  onClick={(event) => handleCloseTab(event, tab.tabId)}
-                  onKeyDown={(event) => event.stopPropagation()}
-                  className={`
-                    flex h-4 w-4 shrink-0 items-center justify-center rounded text-gray-400 transition-colors
-                    hover:bg-gray-200 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-200
-                    ${isActive ? 'opacity-80' : 'opacity-60 group-hover:opacity-90 focus:opacity-100'}
-                  `}
-                  title="Close chat"
-                  aria-label={`Close ${tab.name}`}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          )
-        })}
-      
-      {/* New Tab Button - Show in multi-agent mode (workflow phases are started from WorkflowToolbar) */}
-      {selectedModeCategory === 'multi-agent' && (
-        <button
-          onClick={handleNewTab}
-          data-testid="new-chat-button"
-          className="flex items-center gap-1 px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
-          title="New agent chat"
-        >
-          <Plus className="w-4 h-4" />
-          <span className="text-xs">New Agent Chat</span>
-        </button>
-      )}
-      
-      {/* Right-side view controls - only show when there are tabs */}
-      {modeTabs.length > 0 && (
-        <div className="ml-auto flex items-center gap-1 border-l border-gray-200 dark:border-gray-700 pl-2">
+        {/* Right-side view controls */}
+        <div className="flex items-center gap-1 border-l border-gray-200 dark:border-gray-700 pl-2">
           <div
             data-tour="event-view-mode"
             data-testid="tour-event-view-mode"
@@ -302,7 +159,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
             </button>
           )}
         </div>
-      )}
+      </div>
     </div>
   )
 }

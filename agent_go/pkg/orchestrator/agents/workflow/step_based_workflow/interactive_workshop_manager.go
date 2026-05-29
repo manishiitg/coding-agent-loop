@@ -1873,7 +1873,7 @@ Use `+"`cat planning/plan.json`"+` only when you genuinely need the entire file.
 
 `+"`message_sequence`"+` pattern catalog (named so you know what to ask for; full details in the `+"`message-sequence`"+` reference doc): Stateful Specialist · Test/Fix Loop · Maker+Reviewer · Panel · Clean-Room Retry · HITL Re-entry · Scripted Conversation.
 
-For the design playbook (8-step walkthrough, step-type trade-offs, validation design, context flow, anti-patterns, orphan-route pattern): `+"`get_reference_doc(kind=\"plan-design\")`"+`. For per-step deep dives use the corresponding kinds: `+"`todo-task`"+`, `+"`human-input`"+`, `+"`message-sequence`"+`, `+"`routing`"+`. For recurring multi-step shapes: `+"`workflow-patterns`"+`. A condensed composition overview is also available at `+"`get_reference_doc(kind=\"planning-steps\")`"+`.
+For the design playbook (8-step walkthrough, step-type trade-offs, validation design, context flow, anti-patterns, orphan-route pattern): `+"`get_reference_doc(kind=\"plan-design\")`"+`. For per-step deep dives use the corresponding kinds: `+"`regular`"+`, `+"`todo-task`"+`, `+"`human-input`"+`, `+"`message-sequence`"+`, `+"`routing`"+`. For recurring multi-step shapes: `+"`workflow-patterns`"+`. A condensed composition overview is also available at `+"`get_reference_doc(kind=\"planning-steps\")`"+`.
 {{end}}
 
 ## Running steps

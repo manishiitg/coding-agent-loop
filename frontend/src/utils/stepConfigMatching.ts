@@ -218,6 +218,18 @@ export interface TodoTaskPlanStep extends CommonStepFields {
   predefined_routes?: PlanRoutingRoute[];   // Predefined sub-agents with learning/prevalidation
   enable_generic_agent?: boolean;           // Allow generic execution agent (no learning/prevalidation)
   next_step_id?: string;                    // ID of step after todo task completes (or "end")
+  messages?: TodoTaskMessage[];             // Optional scripted message sequence fed into the orchestrator's own conversation after its first turn
+}
+
+export interface TodoTaskMessage {
+  id?: string;
+  type?: 'message' | 'prevalidation' | 'foreach' | string;
+  message?: string;                         // message entries: instruction for one orchestrator turn; foreach entries: the per-row template
+  validation_schema?: ValidationSchema;     // prevalidation entries: the gate schema
+  max_corrections?: number;                 // prevalidation only: corrective turns allowed on failure (default 1)
+  source?: string;                          // foreach entries: workspace-relative JSON array file (e.g. db/tasks.json)
+  source_path?: string;                     // foreach entries: optional dot-path to the array field
+  max_iterations?: number;                  // foreach entries: optional cap on rows (0 = all)
 }
 
 export interface MessageSequenceWriteAccess {
@@ -233,7 +245,7 @@ export interface MessageSequenceFailurePolicy {
 
 export interface MessageSequenceItem {
   id: string;
-  type: 'user_message' | 'code' | 'prevalidation' | string;
+  type: 'user_message' | 'code' | 'prevalidation' | 'foreach' | string;
   kind?: 'execution' | 'learning' | 'knowledgebase' | 'db' | 'check' | 'critique' | 'self_validation' | 'reference_check' | 'hallucination_check' | 'code_review' | string;
   title?: string;
   message?: string;
@@ -247,14 +259,14 @@ export interface MessageSequenceItem {
   save_repaired_script?: boolean;
   validation_schema?: ValidationSchema;
   prevalidation?: ValidationSchema;
+  source?: string;            // foreach items: workspace-relative JSON array file (e.g. db/tasks.json)
+  source_path?: string;       // foreach items: optional dot-path to the array field
+  max_iterations?: number;    // foreach items: optional cap on rows (0 = all)
 }
 
 export interface MessageSequencePlanStep extends CommonStepFields {
   type: 'message_sequence';
   items?: MessageSequenceItem[];
-  session_mode?: string;
-  conversation_scope?: string;
-  reentry_policy?: string;
   next_step_id?: string;
 }
 

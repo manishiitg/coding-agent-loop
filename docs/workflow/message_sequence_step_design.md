@@ -30,8 +30,6 @@ Add a step type:
   "type": "message_sequence",
   "id": "bank-portal-daily-run",
   "title": "Bank portal daily run",
-  "session_mode": "single_conversation",
-  "conversation_scope": "resume_within_orchestrator_run",
   "items": []
 }
 ```
@@ -47,27 +45,27 @@ prevalidation -> pass/fail
 ...
 ```
 
-If the step is nested inside an orchestrator and the orchestrator calls the same step again, the step can resume its existing agent conversation instead of starting from scratch.
+If the step is used as a route inside a `todo_task` orchestrator and the orchestrator calls the same route again within the same run, the step continues its existing agent conversation instead of starting from scratch. That conversation is held **in memory on the orchestrator instance, scoped to the current workflow run**. It is not loaded back from disk.
 
 ```text
-first call to write-tests:
-  create conversation A
+first orchestrator call to write-tests route:
+  create conversation A (held in memory for this run)
   send configured message queue
 
-later orchestrator calls write-tests again:
-  resume conversation A
+later orchestrator call to write-tests route (same run):
+  continue conversation A from the in-memory cache
   send orchestrator-provided re-entry user message
 ```
 
-This allows critique or execution feedback to loop back into the same writer agent with its existing context.
+This allows critique or execution feedback to loop back into the same writer agent with its existing context, but only within one run. See "Persistence model" below.
 
 ## Design Principles
 
 - The workflow controls ordering.
 - The agent handles conditional logic inside messages.
-- A sequence step can resume its own conversation when an orchestrator re-enters it.
+- A sequence step used as a `todo_task` route continues its own in-memory conversation when the orchestrator re-enters it within the same run. A standalone (top-level) sequence step has no memory and re-runs its fixed queue.
 - Prevalidation is a backend gate, not a normal LLM task.
-- Learning, knowledgebase, DB, execution, and code can all be explicit sequence items.
+- Work turns, learning, knowledgebase, DB, and code can all be explicit sequence items.
 - Read access is open for the sequence; write access is opened only for the active item.
 - Python/scripted items can run without LLM unless they fail.
 - Failed validations stop the step after any configured repair attempts are exhausted.
@@ -92,48 +90,77 @@ Use `todo_task` when:
 - The next route depends heavily on the result of the previous route.
 - The agent should choose between predefined routes.
 
-## Conversation Re-Entry
+## Single-step quality patterns
 
-A `message_sequence` step can be called more than once by a parent orchestrator or manually from the workflow builder.
+The patterns elsewhere use `message_sequence` as a `todo_task` route. `message_sequence` is equally useful as a standalone step that makes one unit of work trustworthy, using the item queue (`user_message` + `code` + prevalidation sharing one conversation):
 
-Recommended config:
+- Self-Validation Gate: after a work turn, add `user_message` items that interrogate the same conversation about what it actually did ("Did you actually call xyz? Quote the exact output. Did you actually produce abc?"), then a prevalidation item whose schema checks the concrete artifacts. Interleave several interrogate→prevalidation pairs, each prevalidation using a different schema, to gate distinct claims.
+- Compute-then-Reason: alternate `code` items (fetch/parse/compute ground truth) with `user_message` items that reason over the result; the runtime feeds each code item's stdout + exit code into the next message turn.
+- Citation / Grounding Gate: a `user_message` forcing the agent to cite the exact file/line/tool-output behind each claim, then a prevalidation that the cited files exist.
+- Self-Healing Script: on a `code` item set `on_failure: repair_with_llm` with `max_retries` (and `save_repaired_script`) so the same conversation debugs its own failing script across attempts.
 
-```json
-{
-  "conversation_scope": "resume_within_orchestrator_run",
-  "reentry_policy": "resume_existing",
-  "reentry_message_source": "orchestrator|builder"
-}
+Briefer variants: Plan-then-Execute, Dry-Run-then-Commit, Accumulator.
+
+Constraint: the item queue is linear and runs once — no branching, no conditional skip, no "loop until prevalidation passes" inside a single sequence. Iteration comes only from in-memory orchestrator re-entry (route) or the code-item repair loop.
+
+## Persistence model: route (in-memory) vs standalone (fixed queue)
+
+A `message_sequence` has two roles that differ ONLY in whether the conversation is remembered. There is no disk-based session resume in either role.
+
+**ROUTE** — a `message_sequence` used as a sub-agent inside a `todo_task`'s `predefined_routes`:
+
+- The orchestrator re-enters the same specialist across its calls within one run, and the conversation IS remembered.
+- That memory lives **in memory on the orchestrator instance, scoped to a single workflow run**. It is detected by call source `orchestrator_reentry`.
+- It is NOT loaded back from disk, does NOT survive a process restart, and does NOT resume across separate workflow runs.
+
+**STANDALONE** — a top-level `message_sequence` step in the plan:
+
+- A **fixed item queue that runs once**. There is NO memory and NO re-entry.
+- Re-running a standalone step simply re-runs the configured queue from the start.
+
+In both roles the runtime still writes `session.json`, but only as a **one-way observability log** (see below); it is never read back to resume a conversation.
+
+There is NO support for "resume/rerun at a later time" across separate runs or across process restarts. If you need iteration with memory, drive re-entry from the orchestrator (route) within a single run. If you need to run the whole sequence again later, schedule the workflow to re-run — that produces a fresh run with a fresh standalone queue (and, for routes, a fresh in-memory conversation).
+
+### session.json is a write-only observability log
+
+The runtime writes:
+
+```text
+runs/{run_folder}/execution/message_sequences/{step_path}/{step_id}/session.json
 ```
 
-Orchestrator behavior:
+This file records the conversation history and per-item entries for debugging and inspection. It is a one-way log: the runtime never reads it back to seed or resume a conversation. (Tests assert it exists and contains conversation content, so it stays on disk.)
 
-- First entry creates the agent conversation and sends the configured item queue.
-- The step completes, but the conversation handle is kept in the orchestrator run state.
-- If the orchestrator calls the same sequence step again, runtime resumes that conversation.
-- Re-entry sends a new user message provided by the orchestrator.
-- Re-entry does not replay the original queue unless explicitly requested.
+## Conversation Re-Entry
+
+Conversation re-entry happens only for a ROUTE, only within one run, and only in memory. There is no builder/manual disk-based resume.
+
+Route re-entry behavior:
+
+- First call (within a run) creates the agent conversation and sends the configured item queue. The conversation is stored in the orchestrator's in-memory route cache for the remainder of the run.
+- The step completes, but the conversation stays in the in-memory cache keyed by `step_path + step_id`.
+- If the orchestrator calls the same route again in the same run, the runtime continues that in-memory conversation.
+- Re-entry sends a new user message provided by the orchestrator (from `instructions`/`InstructionsToSubAgent`). It does not replay the original queue.
+- `message_sequence_restart=true` clears the in-memory conversation AND wipes the route's on-disk runtime artifacts (working code copies, stdout, the `session.json` log) for a clean start. There is no archive of the old session.
 
 Example:
 
 ```text
-1. write-tests sequence runs and creates tests
-2. execute-tests sequence runs tests
-3. critique-tests sequence finds missing cases
-4. orchestrator calls write-tests again with:
+1. write-tests route runs and creates tests (conversation cached in memory for this run)
+2. execute-tests route runs tests
+3. critique-tests route finds missing cases
+4. orchestrator calls write-tests route again (same run) with:
    "Use this critique and update the tests: {{critique.output}}"
-5. write-tests resumes its original conversation and updates the tests
+5. write-tests continues its in-memory conversation and updates the tests
 ```
 
-The identity key should be the sequence step instance inside the current orchestrator run. That means two different sequence steps do not share conversation state, but the same step can continue when re-entered.
+The in-memory key is `step_path + step_id` within the current orchestrator run. Two different sequence steps do not share conversation state, but the same route can continue when re-entered in the same run. Once the run ends (or the process restarts), the in-memory conversation is gone.
 
-Builder behavior:
+Standalone behavior:
 
-- The builder can start the sequence from the beginning.
-- The builder can resume an existing sequence conversation.
-- On resume, the builder sends a new user message into the same conversation.
-- Resume does not replay the original queue unless the builder explicitly chooses restart.
-- Builder resume should show the previous run/session being resumed so the user does not accidentally continue the wrong conversation.
+- A standalone `message_sequence` step has no re-entry. Running it always runs the configured queue once.
+- Re-running it just re-runs the queue. There is no "session exists → provide a re-entry message or restart" path, and there is no error for re-running a standalone step.
 
 ## Item Types
 
@@ -145,7 +172,6 @@ Sends a user message into the same agent session.
 {
   "type": "user_message",
   "id": "login",
-  "kind": "execution",
   "message": "Log in to the bank portal. If OTP is required, ask the user. If not, continue."
 }
 ```
@@ -585,12 +611,10 @@ Then it reruns that prevalidation.
   "type": "message_sequence",
   "id": "bank-daily-run",
   "title": "Bank daily run",
-  "session_mode": "single_conversation",
   "items": [
     {
       "type": "user_message",
       "id": "login",
-      "kind": "execution",
       "message": "Log in to the bank portal. If OTP is required, ask the user for OTP. If not, continue. Stop after login is complete."
     },
     {
@@ -602,7 +626,6 @@ Then it reruns that prevalidation.
     {
       "type": "user_message",
       "id": "extract-balance",
-      "kind": "execution",
       "message": "Go to the dashboard and extract the current account balance. Write the raw extracted value and source evidence to the step output folder."
     },
     {
@@ -629,7 +652,6 @@ Then it reruns that prevalidation.
     {
       "type": "user_message",
       "id": "download-statement",
-      "kind": "execution",
       "message": "Go to the account statement page and download the latest statement PDF or CSV. Save it under this step's execution folder."
     },
     {
@@ -675,7 +697,6 @@ This gives the agent all context it needs while still preventing accidental writ
     {
       "type": "user_message",
       "id": "login",
-      "kind": "execution",
       "write_access": {
         "knowledgebase": false,
         "db": false,
@@ -702,12 +723,14 @@ Default write access by item kind:
 
 | Item kind | KB write | DB write | Learnings write |
 | --- | --- | --- | --- |
-| execution | false | false | false |
+| (no kind) | false | false | false |
 | learning | false | false | true |
 | knowledgebase | true | false | false |
 | db | false | true | false |
-| code | false | based on output files | false |
+| code | based on output files | based on output files | false |
 | prevalidation | false | false | false |
+
+`kind` only meaningfully accepts `learning`, `knowledgebase`, `db`, and `code`; it drives item-scoped write access. For `code`, DB/KB write access is auto-inferred from `output_files`. A work turn that just performs the task needs no `kind`.
 
 The builder can still allow overrides, but it should show them as item write windows, not broad sequence permissions.
 
@@ -734,9 +757,6 @@ type MessageSequencePlanStep struct {
     Type StepType `json:"type"`
     CommonStepFields
     Items []MessageSequenceItem `json:"items"`
-    SessionMode string `json:"session_mode,omitempty"`
-    ConversationScope string `json:"conversation_scope,omitempty"`
-    ReentryPolicy string `json:"reentry_policy,omitempty"`
     NextStepID string `json:"next_step_id,omitempty"`
     AgentConfigs *AgentConfigs `json:"-"`
 }
@@ -885,7 +905,7 @@ export interface MessageSequencePlanStep extends CommonStepFields {
 export interface MessageSequenceItem {
   id: string;
   type: 'user_message' | 'code' | 'prevalidation';
-  kind?: 'execution' | 'learning' | 'knowledgebase' | 'db';
+  kind?: 'learning' | 'knowledgebase' | 'db' | 'code';
   message?: string;
   write_access?: MessageSequenceWriteAccess;
 }
@@ -923,7 +943,7 @@ Warnings should not silently widen permissions. The user or builder must explici
 Add backend tests for:
 
 - read paths include KB, DB, and learnings for every sequence item.
-- write paths are empty for execution items by default.
+- write paths are empty for items with no kind by default.
 - DB write is present only for active DB/code items.
 - KB write grants `knowledgebase/notes` but not `knowledgebase/context`.
 - learning write grants `learnings/_global` only for active learning items.
@@ -935,7 +955,7 @@ Add frontend type/build coverage for:
 
 ## Builder Instructions Implementation
 
-The workflow builder needs explicit authoring instructions so it knows when to create `message_sequence`, how to shape the queue, and how to configure item write windows, Python items, resume, and prevalidation.
+The workflow builder needs explicit authoring instructions so it knows when to create `message_sequence`, how to shape the queue, and how to configure item write windows, Python items, route re-entry, and prevalidation.
 
 ### Where To Add Instructions
 
@@ -961,14 +981,14 @@ Add this text to the builder instructions:
 ```text
 ## Message Sequence Steps
 
-Use a `message_sequence` step when the workflow needs to send a known ordered queue of user messages into one persistent agent conversation.
+Use a `message_sequence` step when the workflow needs to send a known ordered queue of user messages into one agent conversation.
 
 Choose `message_sequence` when:
 - the order of messages is known at design time
-- the same agent should keep context across multiple messages
+- the same agent should keep context across multiple messages within one run
 - learning, KB, DB, prevalidation, and Python/code actions must happen at exact points
 - the agent can handle conditional details inside each user message
-- a parent orchestrator or the builder may later resume the same conversation with a new user message
+- as a `todo_task` route, the orchestrator may re-enter the same specialist with a new user message within the same run (in-memory conversation; not across runs or restarts)
 
 Do NOT use `message_sequence` when:
 - the agent should dynamically choose routes or delegate work; use `todo_task`
@@ -980,19 +1000,18 @@ Message sequence rules:
 - Each `user_message` item is sent as a user message into the same conversation.
 - Prefer smaller user messages over one large message. Break a big task into multiple focused items.
 - Do not model workflow-level if/else inside the sequence. Put conditional behavior inside the message text.
-- Learning, KB, and DB updates are normal `user_message` items with kind labels. They run wherever they appear in the queue.
-- Add explicit reference-check, hallucination-check, critique, or self-validation messages when quality matters.
-- Use reference-check items to force the agent to cite files, sources, DB rows, screenshots, logs, or prior outputs before making claims.
-- Use self-validation items to ask the same conversation to inspect its own output before backend prevalidation or before moving to the next major action.
+- Learning, KB, and DB updates are normal `user_message` items with the matching `kind` (`learning`/`knowledgebase`/`db`) for write access. They run wherever they appear in the queue.
+- Add explicit reference-check, hallucination-check, critique, or self-validation `user_message` turns when quality matters. These are message techniques, not `kind` values.
+- Use reference-check messages to force the agent to cite files, sources, DB rows, screenshots, logs, or prior outputs before making claims.
+- Use self-validation messages to ask the same conversation to inspect its own output before backend prevalidation or before moving to the next major action.
 - Prevalidation is a backend item/gate, not a normal LLM task.
 - Python/code items run before involving the LLM. The LLM is called only if the code fails, validation fails, or the next item is a user message.
 - If prevalidation fails after configured repair attempts, the step stops.
-- Re-entry/resume sends only the new user message. It does not replay the original queue unless the user explicitly chooses restart.
+- Route re-entry sends only the new user message into the in-memory conversation. It does not replay the original queue.
 
 Default message sequence settings:
-- `session_mode`: `single_conversation`
-- `conversation_scope`: `resume_within_orchestrator_run`
-- `reentry_policy`: `resume_existing`
+- A route's conversation is remembered in memory for the current run only. Passing `message_sequence_restart=true` at execution time clears that in-memory conversation and wipes the route's on-disk runtime artifacts for a clean start. There is no per-step config and no disk-based resume.
+- A standalone (top-level) sequence step has no memory; it runs the configured queue once and re-runs it on every run.
 - read access: KB, DB, and learnings enabled for the whole sequence
 - write access: disabled by default except item-kind defaults
 
@@ -1021,12 +1040,10 @@ Prevalidation rules:
 - For learning writes, validate no secrets, OTPs, tokens, or raw credentials are stored.
 - For KB writes, validate durable facts have source context and notes/index stay consistent.
 
-Builder resume rules:
-- The builder can start a message sequence from the beginning.
-- The builder can resume an existing sequence conversation by selecting a prior run/session and sending one new user message.
-- On resume, show the run/session being resumed.
-- Reject resume without a new message.
-- Do not replay the original item queue on resume unless the user explicitly chooses restart.
+Re-run rules:
+- Running a `message_sequence` always runs its configured item queue.
+- There is no disk-based resume: a sequence cannot continue a prior run's conversation. Conversation memory only exists in-memory for a `todo_task` route within one run.
+- To iterate with memory, make it a `todo_task` route and let the orchestrator re-enter it within the same run. To run the whole thing again later, re-run the workflow (a fresh run with a fresh queue).
 
 When creating a message sequence, produce compact item messages. Each message should tell the agent what to do now, what files/stores it may use, and what output should exist after the item. Avoid long meta-explanations.
 
@@ -1049,21 +1066,16 @@ Add item schema support:
   "type": "message_sequence",
   "id": "write-and-critique-tests",
   "title": "Write and refine test cases",
-  "session_mode": "single_conversation",
-  "conversation_scope": "resume_within_orchestrator_run",
-  "reentry_policy": "resume_existing",
   "items": [
     {
       "type": "user_message",
       "id": "write-tests",
-      "kind": "execution",
       "message": "Read the approved use case and existing test files. List the behaviors that need test coverage with file references.",
       "write_access": {}
     },
     {
       "type": "user_message",
       "id": "draft-tests",
-      "kind": "execution",
       "message": "Write focused test cases for the listed behaviors. Keep the changes minimal and summarize files changed.",
       "write_access": {}
     },
@@ -1090,14 +1102,12 @@ Add item schema support:
     {
       "type": "user_message",
       "id": "reference-check-tests",
-      "kind": "execution",
       "message": "Check the tests against the use case and test run output. Identify any unsupported assumptions or missing references before adding more code.",
       "write_access": {}
     },
     {
       "type": "user_message",
       "id": "critique-tests",
-      "kind": "execution",
       "message": "Add missing meaningful cases found by the reference check. Do not add brittle tests.",
       "write_access": {}
     }
@@ -1112,8 +1122,8 @@ Builder tools should support these update operations:
 - delete item
 - reorder item
 - update item write access
-- update resume policy
 - add inline prevalidation
+- toggle a standalone sequence vs a `todo_task` route mounting
 - convert regular step to message sequence only when the user asks for ordered multi-message behavior
 
 ### Builder Validation Before Saving
@@ -1129,9 +1139,8 @@ Before saving a `message_sequence`, the builder should check:
 - KB-writing items have item KB write access
 - learning-writing items have item learnings write access
 - prevalidation schemas reference accessible files
-- resume policy is explicit when the sequence may be nested inside an orchestrator
 
-These checks should warn by default. They should block save only for malformed schema, missing required fields, invalid access values, or resume without a message.
+These checks should warn by default. They should block save only for malformed schema, missing required fields, or invalid access values.
 
 ### Builder Response Style
 
@@ -1149,273 +1158,78 @@ Access:
 - Reads: KB, DB, learnings
 - Writes: item-scoped
 
-Resume:
-- first run sends the queue
-- resume sends only the new user message
+Re-entry:
+- standalone: runs the configured queue once (re-runs on every run; no memory)
+- as a todo_task route: orchestrator re-entry continues the in-memory conversation within the run and sends only the new user message
 ```
 
 Do not call it "single shot". Use "message sequence" or "single conversation sequence".
 
-## Builder Start/Resume State Implementation
+## Run State Implementation
 
-Builder start/resume is the manual version of orchestrator re-entry. The user chooses whether to replay the configured queue from scratch or continue a previous sequence conversation with one new message.
+There is no disk-based session store, no session listing, no builder "resume existing" mode, and no archive. Running a `message_sequence` always runs its configured queue. The only conversation memory is the orchestrator's in-memory route cache, and it lives only for the current run.
 
-### Builder UI
+### Running a standalone sequence
 
-For every `message_sequence` step, show run controls:
-
-```text
-Start from beginning
-Resume conversation
-```
-
-`Start from beginning` requires:
-
-- run folder / group selection
-- optional initial builder instruction
-- confirmation if an existing session will be archived
-
-`Resume conversation` requires:
-
-- run folder / group selection
-- selected existing sequence session
-- new user message
-
-The resume dialog should show:
-
-```text
-Run: iteration-1
-Sequence: write-tests
-Last updated: 2026-05-14 15:30
-Status: completed
-Last entry: critique feedback applied
-```
-
-Do not allow resume without a message.
-
-### Session Listing
-
-Add an API that lists available message sequence sessions for a step.
-
-Request:
-
-```text
-GET /api/workflow/message-sequences/sessions?workspace_path=...&step_id=write-tests&run_folder=iteration-1
-```
-
-Response:
-
-```json
-{
-  "sessions": [
-    {
-      "session_id": "step-2-sub-write-tests/write-tests-sequence",
-      "step_id": "write-tests-sequence",
-      "run_folder": "iteration-1",
-      "status": "completed",
-      "created_at": "...",
-      "updated_at": "...",
-      "entry_count": 2,
-      "last_entry_source": "builder_resume",
-      "last_entry_summary": "Added missing auth edge case tests."
-    }
-  ]
-}
-```
-
-Backend reads:
-
-```text
-runs/{run_folder}/execution/message_sequences/**/session.json
-```
-
-Filter by `step_id` when supplied.
-
-### Start From Beginning
-
-Start-from-scratch request:
-
-```json
-{
-  "step_id": "write-tests-sequence",
-  "run_folder": "iteration-1",
-  "mode": "start_from_beginning",
-  "message": "Optional builder instruction for this run."
-}
-```
-
-Backend behavior:
+Running a standalone (top-level) `message_sequence` step:
 
 1. Resolve the step and confirm it is `message_sequence`.
-2. Resolve the target session path for this run and step.
-3. If `session.json` exists, archive it:
+2. Build `plannedItems` from the configured queue.
+3. Run each item in order, writing per-item logs and the `session.json` observability log.
+4. There is no "session exists" check and no archive — the queue always runs from the start.
+
+A standalone step has no `Restart` semantics it needs: re-running it is itself a fresh run of the queue.
+
+### In-memory route cache
+
+For a `todo_task` route, the orchestrator keeps the conversation in an in-memory map keyed by `step_path + step_id` (call source `orchestrator_reentry`):
 
 ```text
-runs/{run}/execution/message_sequences/{session_key}/archive/{timestamp}/session.json
+loadMsgSeqRouteSession(key)   // returns the in-memory conversation if this run already ran it
+storeMsgSeqRouteSession(key)  // records the conversation after a call so re-entry can continue it
+clearMsgSeqRouteSession(key)  // drops the conversation on restart
 ```
 
-4. Create a new empty session.
-5. Run the configured item queue from item 1.
-6. If `message` is non-empty, inject it as high-priority initial context before the first configured item. Do not replace the queue.
-7. Persist the new conversation history and item results.
-
-Start from beginning always replays the configured queue.
-
-### Resume Existing Conversation
-
-Resume request:
-
-```json
-{
-  "step_id": "write-tests-sequence",
-  "run_folder": "iteration-1",
-  "mode": "resume_existing",
-  "session_id": "step-2-sub-write-tests/write-tests-sequence",
-  "message": "Use the critique and add missing auth edge cases."
-}
-```
-
-Backend behavior:
-
-1. Validate `message` is non-empty.
-2. Load the selected `session.json`.
-3. Restore `conversation_history`.
-4. Create one synthetic planned item:
-
-```json
-{
-  "type": "user_message",
-  "id": "builder-resume-<timestamp>",
-  "kind": "execution",
-  "message": "Use the critique and add missing auth edge cases."
-}
-```
-
-5. Send only that message into the existing conversation.
-6. Do not replay configured items.
-7. Save updated `conversation_history`.
-8. Append a new session entry with `source: "builder_resume"`.
-
-Resume existing always continues the selected conversation.
-
-### Backend API Shape
-
-Prefer adding a dedicated controller method:
-
-```go
-func (hcpo *StepBasedWorkflowOrchestrator) ExecuteMessageSequenceForBuilder(
-    ctx context.Context,
-    req BuilderMessageSequenceRunRequest,
-) (BuilderMessageSequenceRunResponse, error)
-```
-
-Request:
-
-```go
-type BuilderMessageSequenceRunRequest struct {
-    StepID    string `json:"step_id"`
-    RunFolder string `json:"run_folder"`
-    Mode      string `json:"mode"` // start_from_beginning | resume_existing
-    SessionID string `json:"session_id,omitempty"`
-    Message   string `json:"message,omitempty"`
-}
-```
-
-Response:
-
-```go
-type BuilderMessageSequenceRunResponse struct {
-    StepID    string `json:"step_id"`
-    SessionID string `json:"session_id"`
-    Mode      string `json:"mode"`
-    Status    string `json:"status"`
-    Summary   string `json:"summary"`
-}
-```
-
-This can internally reuse `executeMessageSequenceStep`, but the builder API should not pretend this is a normal `run_single_step` call because resume semantics are different.
-
-### Workshop Option Integration
-
-If we want to reuse `ExecuteStepForWorkshop`, extend `WorkshopExecuteOptions`:
-
-```go
-type WorkshopExecuteOptions struct {
-    // existing fields...
-    MessageSequenceMode      string // start_from_beginning | resume_existing
-    MessageSequenceSessionID string
-    MessageSequenceMessage   string
-}
-```
-
-Then `ExecuteStepForWorkshop` should special-case `StepTypeMessageSequence`:
+Route call mode resolution:
 
 ```text
-if target step is message_sequence and MessageSequenceMode is set:
-  call ExecuteMessageSequenceForBuilder
-  return its summary
+isRoute := source == "orchestrator_reentry"
+
+if isRoute && restart:
+  clear in-memory conversation
+  cleanupMessageSequenceRuntime(...)   // wipe working code copies, stdout, session.json log
+  // falls through to first-entry
+
+if isRoute && in-memory conversation exists (and not restart):
+  mode = re-entry
+  require a non-empty re-entry message
+  plannedItems = one synthetic user_message(reentry_message)
+
 else:
-  use existing run_single_step path
+  mode = first entry (or standalone)
+  plannedItems = configured queue
 ```
 
-This avoids cleanup logic deleting the session on resume.
+The conversation seed for re-entry comes from the in-memory cache, never from disk. After the run ends or the process restarts, the cache is gone and there is nothing to resume.
 
-### State Restore
+### session.json (write-only log)
 
-Restoring state means loading:
+The runtime writes `session.json` after each item and at the end, in both standalone and route cases:
 
 ```text
-session.json.conversation_history
-session.json.entries
-session.json.last_runtime_context
+runs/{run_folder}/execution/message_sequences/{step_path}/{step_id}/session.json
 ```
 
-The executor uses `conversation_history` as the seed for the next LLM call. It does not summarize and restart unless the normal LLM/provider layer requires compaction.
+It captures `conversation_history` and per-item `entries` for observability only. It is NEVER read back to seed or resume a conversation. There is no `loadMessageSequenceSession` and no archive step; restart wipes the runtime directory (including the log) via `cleanupMessageSequenceRuntime`.
 
-Minimal session fields for restore:
+### Restart
 
-```json
-{
-  "session_id": "step-2-sub-write-tests/write-tests-sequence",
-  "step_id": "write-tests-sequence",
-  "run_folder": "iteration-1",
-  "status": "completed",
-  "conversation_history": [],
-  "last_runtime_context": {
-    "items_completed": ["write-tests", "run-tests"],
-    "outputs": ["db/test_results.json"]
-  },
-  "entries": []
-}
-```
+`message_sequence_restart=true` applies only to a route. It:
 
-### Frontend Service Methods
+1. Clears the route's in-memory conversation.
+2. Wipes the route's on-disk runtime artifacts (working code copies, stdout/stderr, the `session.json` log) so the next call starts clean.
 
-Add methods in:
-
-```text
-frontend/src/services/api.ts
-frontend/src/services/api-types.ts
-```
-
-```ts
-listMessageSequenceSessions(params): Promise<MessageSequenceSessionSummary[]>
-
-runMessageSequenceFromBuilder({
-  step_id,
-  run_folder,
-  mode,
-  session_id,
-  message,
-}): Promise<MessageSequenceRunResponse>
-```
-
-Frontend must send:
-
-- `mode: "start_from_beginning"` for restart
-- `mode: "resume_existing"` for continue
-- `session_id` only for resume
-- `message` required for resume
+There is no archive of the old session — the directory is simply cleaned and rebuilt.
 
 ## Prevalidation Model
 
@@ -1501,7 +1315,7 @@ validation reports
 updated db/learnings/kb outputs
 ```
 
-Scheduling does not change the model. It only triggers the sequence.
+Scheduling does not change the model. It only triggers the sequence. A scheduled re-run is the supported way to "run the sequence again later" — each run is independent, with a fresh standalone queue and (for routes) a fresh in-memory conversation. No conversation state carries over from a previous run.
 
 ## Logging
 
@@ -1514,7 +1328,6 @@ The runtime should persist:
   "items": [
     {
       "id": "login",
-      "kind": "execution",
       "status": "completed",
       "started_at": "...",
       "completed_at": "...",
@@ -1552,9 +1365,8 @@ worktree: /Users/mipl/ai-work/mcp-agent-builder-go-message-sequence-step-design
 Scope for v1:
 
 - Add the new `message_sequence` step type.
-- Support first-run queue execution.
-- Support orchestrator re-entry into the same sequence conversation.
-- Support builder start/resume controls.
+- Support configured-queue execution (standalone and first route call).
+- Support in-memory orchestrator re-entry into the same route conversation within one run.
 - Support user-message, code, and prevalidation items first.
 - Represent learning, KB, and DB as user-message items with kind-specific labels plus item-scoped write access.
 
@@ -1581,9 +1393,6 @@ type MessageSequencePlanStep struct {
     Type StepType `json:"type"`
     CommonStepFields
     Items []MessageSequenceItem `json:"items"`
-    SessionMode string `json:"session_mode,omitempty"`
-    ConversationScope string `json:"conversation_scope,omitempty"`
-    ReentryPolicy string `json:"reentry_policy,omitempty"`
     NextStepID string `json:"next_step_id,omitempty"`
     AgentConfigs *AgentConfigs `json:"-"`
 }
@@ -1625,9 +1434,6 @@ Add:
 export interface MessageSequencePlanStep extends CommonStepFields {
   type: 'message_sequence';
   items: MessageSequenceItem[];
-  session_mode?: 'single_conversation';
-  conversation_scope?: 'resume_within_orchestrator_run';
-  reentry_policy?: 'resume_existing' | 'fresh_each_call';
   next_step_id?: string;
 }
 
@@ -1640,7 +1446,7 @@ export interface MessageSequenceWriteAccess {
 export interface MessageSequenceItem {
   id: string;
   type: 'user_message' | 'code' | 'prevalidation';
-  kind?: 'execution' | 'learning' | 'knowledgebase' | 'db';
+  kind?: 'learning' | 'knowledgebase' | 'db' | 'code';
   message?: string;
   write_access?: MessageSequenceWriteAccess;
 }
@@ -1650,13 +1456,10 @@ Update the builder/editor:
 
 - Add `message_sequence` as a selectable step type.
 - Add an ordered item editor with add/remove/reorder.
-- Add item kinds: execution, learning, knowledgebase, db, code, prevalidation.
+- Add item kinds: learning, knowledgebase, db, code.
 - Show global read access for KB, DB, and learnings.
 - Add item-scoped write access controls for KB, DB, and learnings.
-- Add run controls:
-  - `Start from beginning`
-  - `Resume existing conversation`
-- For resume, show the target run/session and require a new user message.
+- Add a single `Run` control that runs the configured queue. There is no disk-based resume control: standalone runs re-run the queue, and route re-entry is driven by the orchestrator in memory within a run.
 - Add the builder prompt/tool instructions from "Builder Instructions Implementation" so the builder can author and validate this step type.
 
 Likely UI files:
@@ -1689,31 +1492,31 @@ if step.StepType() == StepTypeMessageSequence:
 Runtime shape:
 
 ```text
-resolve call mode:
-  first_entry
-  orchestrator_reentry
-  builder_resume
+isRoute := source == "orchestrator_reentry"
 
-load or create sequence session
+if isRoute and restart:
+  clear in-memory route conversation
+  cleanupMessageSequenceRuntime (wipe working copies, stdout, session.json log)
+
+look up in-memory route conversation (route only; never from disk)
 configure sequence read access and active item write access
 build planned_items:
-  first_entry -> configured queue
-  orchestrator_reentry -> one user_message from orchestrator
-  builder_resume -> one user_message from builder
+  in-memory route conversation exists -> one user_message from orchestrator (re-entry)
+  otherwise (first route call or standalone) -> configured queue
 
 for item in planned_items:
-  persist item_started
   run item
   run item prevalidation if configured
-  persist item_completed or item_failed
+  write per-item entry + session.json (observability log only)
   if validation fails after repair attempts:
     stop the step
 
-persist sequence session
-return sequence summary as execution result
+store the route conversation back in the in-memory cache (route only)
+write session.json (observability log only)
+return sequence summary + conversation history as execution result
 ```
 
-The executor should reuse existing regular execution primitives where possible, but it should not call `executeSingleStep` for every user message because that would create fresh agent conversations. It needs one conversation history for the whole sequence step.
+The executor should reuse existing regular execution primitives where possible, but it should not call `executeSingleStep` for every user message because that would create fresh agent conversations. It needs one conversation history for the whole sequence step (kept in memory; for a route it is also held in the orchestrator's route cache across calls within the run).
 
 ### Orchestrator Step-Type And State Selection
 
@@ -1797,53 +1600,50 @@ The exact signature can vary, but it needs the route ID, todo ID, and delegated 
 
 #### First Entry vs Existing Conversation
 
-The message sequence executor should decide call mode with this order:
+The message sequence executor decides call mode against the in-memory route cache (never from disk):
 
 ```text
-session = load sequence session by key
+isRoute = source == "orchestrator_reentry"
 
-if caller explicitly requested restart:
-  mode = first_entry
-  archive/delete old session
-  planned_items = configured queue
+if isRoute and caller requested restart:
+  clear in-memory route conversation
+  cleanupMessageSequenceRuntime (wipe working copies, stdout, session.json log)
+  // falls through to first-entry
 
-else if session does not exist:
-  mode = first_entry
-  planned_items = configured queue
-
-else if caller supplied a non-empty reentry_message:
+if isRoute and in-memory route conversation exists (and not restart):
   mode = orchestrator_reentry
+  require a non-empty reentry_message (error if missing)
   planned_items = one synthetic user_message(reentry_message)
 
-else:
-  fail clearly:
-    "message_sequence session already exists; provide reentry_message or restart"
+else:  // first route call, or any standalone run
+  mode = first_entry
+  planned_items = configured queue
 ```
 
-This avoids accidental replay. The orchestrator cannot silently start over once a sequence session exists.
+A standalone (non-route) run is always first-entry: it has no in-memory cache, so it just runs the configured queue. Re-running a standalone step is not an error. The "session already exists; provide a re-entry message or restart" footgun does not exist; the only place a missing re-entry message is an error is when an in-memory route conversation already exists and the orchestrator re-enters without instructions.
 
-#### Session Key
+#### In-Memory Route Key
 
-Use a stable key so the same route reuses the same conversation inside the same orchestrator run:
+The route conversation is held in an in-memory map on the orchestrator, keyed by:
 
 ```text
-run_folder + parent_orchestrator_step_id + sub_agent_step_path + message_sequence_step_id
+sub_agent_step_path + message_sequence_step_id
 ```
 
-Example:
+This key scopes the conversation to one mounted route within one run. It is NOT a disk path and is never persisted as resumable state. The `session.json` written on disk uses the same step path / step id only as an observability log location:
 
 ```text
 runs/iteration-1/execution/message_sequences/
   step-2-sub-write-tests/
     write-tests-sequence/
-      session.json
+      session.json   # write-only log; never read back
 ```
 
 Why include `sub_agent_step_path`:
 
 - the same reusable orphan sequence could be mounted under two routes
-- each mounted route should get its own conversation
-- repeated calls to the same mounted route should resume the same conversation
+- each mounted route should get its own in-memory conversation
+- repeated calls to the same mounted route in the same run continue the same in-memory conversation
 
 #### Where Re-Entry Message Comes From
 
@@ -1860,17 +1660,17 @@ On later calls, `InstructionsToSubAgent` becomes the single re-entry user messag
 Example:
 
 ```text
-First route call:
+First route call (this run):
   route = write-tests
-  session missing
+  no in-memory conversation yet
   run configured queue:
     1. write initial tests
 
-Second route call:
+Second route call (same run):
   route = write-tests
-  session exists
+  in-memory conversation exists
   instructions = "Critique found missing auth edge cases. Add coverage."
-  send one user message into existing conversation
+  send one user message into the in-memory conversation
 ```
 
 #### Orchestrator Prompt/Tool Instruction
@@ -1881,76 +1681,72 @@ Update `todo_task_orchestrator_agent.go` route-tool guidance:
 Some predefined routes may be message sequence routes.
 
 For a message sequence route:
-- First call starts the sequence and sends its configured queue.
-- Later calls to the same route resume the existing route conversation.
+- First call (this run) starts the sequence and sends its configured queue.
+- Later calls to the same route in the same run continue the in-memory route conversation.
 - Your `instructions` argument becomes the re-entry user message on later calls.
 - Do not ask to replay the original queue unless you intentionally want a restart.
 - Use the same route again when critique/test/output feedback should go back to the original specialist with its prior context.
+- The conversation lives only for this run. It does not carry over to a future run or survive a process restart.
 ```
 
 The route description returned by `get_route_description(route_id)` should include:
 
 ```text
 Step type: message_sequence
-Conversation: resumes within this orchestrator run
+Conversation: continues in memory within this orchestrator run only
 First call: sends configured queue
 Re-entry: sends your instructions as the next user message
 ```
 
 #### State Stored For Orchestrator
 
-The session file should also record caller metadata:
+The in-memory route conversation (and the write-only `session.json` log) records entries per item:
 
 ```json
 {
   "step_id": "write-tests-sequence",
-  "parent_step_id": "write-test-orchestrator",
-  "sub_agent_step_path": "step-2-sub-write-tests",
-  "route_id": "write-tests",
   "conversation_history": [],
   "entries": [
     {
       "source": "configured_queue",
-      "todo_id": "todo-1",
-      "instructions": "Write the initial test cases.",
       "status": "completed"
     },
     {
       "source": "orchestrator_reentry",
-      "todo_id": "todo-3",
-      "instructions": "Add missing auth edge cases from critique.",
       "status": "completed"
     }
   ]
 }
 ```
 
-The orchestrator does not need to keep the whole conversation in its own prompt. It only needs the session reference and item summary. The detailed history stays in the message-sequence session file.
+The orchestrator keeps the conversation in its in-memory route cache for the run. It does not need the whole history in its own prompt; it only needs the per-item summaries. The detailed history lives in memory (and is mirrored to the write-only `session.json` log).
 
-### Phase 4: Conversation Session Persistence
+### Phase 4: In-Memory Conversation State
 
-Add a small session store for message sequences.
+There is no disk-based session store. Conversation state for a route lives only in the orchestrator's in-memory route cache for the duration of the run; standalone steps keep no state at all.
 
-Suggested path:
+The write-only observability log is written here (never read back):
 
 ```text
-runs/{run_folder}/execution/message_sequences/{step_id}/session.json
+runs/{run_folder}/execution/message_sequences/{step_path}/{step_id}/session.json
 ```
 
-Session shape:
+Log shape:
 
 ```json
 {
-  "step_id": "write-tests",
-  "conversation_id": "write-tests",
+  "session_id": "write-tests-sequence",
+  "step_id": "write-tests-sequence",
+  "run_folder": "iteration-1",
+  "status": "completed",
   "created_at": "...",
   "updated_at": "...",
   "conversation_history": [],
   "entries": [
     {
       "entry_id": "initial",
-      "source": "configured_queue|orchestrator_reentry|builder_resume",
-      "items_run": ["write-tests-main"],
+      "source": "configured_queue|orchestrator_reentry",
+      "item_id": "write-tests-main",
       "status": "completed"
     }
   ]
@@ -1959,16 +1755,14 @@ Session shape:
 
 Identity rules:
 
-- For normal workflow execution, key by run folder + step ID.
-- For orchestrator re-entry, key by parent orchestrator run + nested sequence step ID.
-- For builder resume, user selects the run/session explicitly.
-- Restart creates a new session or archives the old one before replaying the configured queue.
+- The in-memory route key is `sub_agent_step_path + message_sequence_step_id`, scoped to the current run.
+- Standalone steps have no key — they always run the configured queue.
+- Restart clears the in-memory conversation and wipes the runtime directory (no archive).
 
 Implementation detail:
 
-- Store `conversation_history` as `[]llmtypes.MessageContent`.
-- Add helpers such as `loadMessageSequenceSession`, `saveMessageSequenceSession`, and `appendMessageSequenceEntry`.
-- Use atomic writes if available in the repo.
+- Store `conversation_history` as `[]llmtypes.MessageContent` in the in-memory cache.
+- Helpers: `loadMsgSeqRouteSession`, `storeMsgSeqRouteSession`, `clearMsgSeqRouteSession` (in-memory), plus `saveMessageSequenceSession` (write-only log). There is no `loadMessageSequenceSession` — the log is never read back.
 
 ### Phase 5: Agent Execution
 
@@ -1981,12 +1775,12 @@ For each `user_message` item:
 - Execute with the existing conversation history.
 - Capture the updated conversation history after each item.
 
-For re-entry:
+For route re-entry:
 
-- Load the prior conversation history.
-- Append the new user message from orchestrator or builder.
+- Take the prior conversation history from the in-memory route cache.
+- Append the new user message from the orchestrator.
 - Execute once.
-- Save updated history.
+- Store the updated history back in the in-memory route cache.
 
 Backend changes likely touch:
 
@@ -2048,9 +1842,9 @@ For `todo_task` routes and reusable orphan steps:
 
 - Allow `message_sequence` as a `sub_agent_step`.
 - When todo orchestrator chooses a route pointing to a message sequence:
-  - first call runs the configured queue.
-  - later call to the same sequence step can pass a re-entry message.
-- Store the sequence session reference where todo-task route execution can find it.
+  - first call (this run) runs the configured queue.
+  - later call to the same route in the same run continues the in-memory conversation with a re-entry message.
+- Hold the route conversation in the orchestrator's in-memory route cache, keyed by `sub_agent_step_path + step_id`.
 - Use the call-mode rules from "Orchestrator Step-Type And State Selection".
 
 Likely backend touchpoints:
@@ -2059,26 +1853,22 @@ Likely backend touchpoints:
 - `todo_task_orchestrator_agent.go`
 - `controller_agent_factory.go` tools that execute sub-agents or inspect sub-agent conversations.
 
-The orchestrator should explicitly choose re-entry. If it does not pass a re-entry message, runtime should treat the call as a normal first-entry or fail with a clear error if a session already exists and replay is not requested.
+The orchestrator continues an in-memory conversation only if one already exists for the route in this run. If a route conversation exists and the orchestrator re-enters without a re-entry message, that is an error; otherwise the call is a first-entry that runs the configured queue.
 
-### Phase 9: Builder Start/Resume API
+### Phase 9: Standalone Run (no resume API)
 
-Implement the detailed flow from "Builder Start/Resume State Implementation".
+There is no builder resume API, no session-listing endpoint, and no `start_from_beginning`/`resume_existing` modes. Running a standalone `message_sequence` always runs the configured queue.
 
 Required behavior:
 
-- list existing sequence sessions for a step/run
-- start from beginning by archiving old session and replaying the configured queue
-- resume existing by loading selected `session.json` and sending one new user message
-- reject resume if no session exists
-- reject resume without a message
-- avoid normal single-step cleanup when resuming because cleanup could delete the session being restored
+- run the configured queue for a standalone step
+- write the `session.json` observability log (never read it back)
+- for a route, restart (`message_sequence_restart=true`) clears the in-memory conversation and wipes the runtime directory via `cleanupMessageSequenceRuntime`
 
 Likely touchpoints:
 
 - workflow execution API handler that powers `ExecuteStepForWorkshop`.
 - `controller_workshop.go`.
-- frontend service methods in `frontend/src/services/api.ts`.
 
 ### Phase 10: Events And Logs
 
@@ -2117,8 +1907,10 @@ Backend tests:
 - step config matching still works by ID.
 - main execution dispatch calls `executeMessageSequenceStep`.
 - first entry runs configured items in order.
-- re-entry resumes existing conversation and does not replay the queue.
-- builder resume rejects missing session or empty message.
+- route re-entry continues the in-memory conversation and does not replay the queue.
+- a standalone step re-runs its configured queue (no "session exists" error).
+- route restart clears the in-memory conversation and wipes the runtime directory.
+- `session.json` is written but never read back to seed a conversation.
 - prevalidation failure stops the step.
 - code item success continues; code item failure can send repair message.
 
@@ -2127,7 +1919,7 @@ Frontend tests or type checks:
 - `PlanStep` union accepts `message_sequence`.
 - builder can edit item queue.
 - item `write_access` fields serialize correctly.
-- start/resume controls produce the expected API payload.
+- the run control produces the expected API payload.
 
 Run checks:
 
@@ -2143,8 +1935,9 @@ go test ./agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/...
 3. Per-message max turns are not needed.
 4. Read access is open for the full sequence; write access is item-scoped for KB, DB, and learnings.
 5. Prevalidation failures stop the step after configured repair attempts are exhausted.
-6. When an orchestrator re-enters the same sequence step, it can resume the existing conversation and send a new user message.
-7. The workflow builder can also start a sequence from the beginning or resume an existing sequence conversation with a new user message.
+6. When an orchestrator re-enters the same route within one run, it continues the in-memory conversation and sends a new user message. This memory is not persisted to disk and does not survive across runs or process restarts.
+7. A standalone (top-level) `message_sequence` step has no memory and no re-entry; it runs the configured queue once and re-runs it on every run.
+8. `session.json` is a write-only observability log; it is never read back to resume a conversation. There is no session archiving.
 
 ## Open Question
 
@@ -2153,9 +1946,8 @@ go test ./agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/...
 ## Recommended Defaults
 
 - New step type: `message_sequence`.
-- Session mode: `single_conversation`.
-- Conversation scope: `resume_within_orchestrator_run`.
-- Re-entry or builder resume sends only the new user message.
+- A route's conversation is remembered in memory for the current run only; `message_sequence_restart=true` clears it and wipes the runtime directory (no per-step config, no disk-based resume). A standalone step keeps no memory and re-runs its queue.
+- Route re-entry sends only the new user message into the in-memory conversation.
 - No workflow-level `if/else`; conditionals live inside user messages.
 - Learning and KB updates run wherever the sequence places them.
 - Prevalidation failures stop the step after configured repair attempts are exhausted.

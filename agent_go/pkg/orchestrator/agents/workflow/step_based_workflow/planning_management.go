@@ -71,20 +71,6 @@ func validatePlanStepIDs(steps []PlanStepInterface) error {
 		if err := validateRoutingStepTyped(step, i); err != nil {
 			return err
 		}
-
-		// Recursively validate branch steps (for conditional steps)
-		if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
-			if len(conditionalStep.IfTrueSteps) > 0 {
-				if err := validateBranchStepIDs(conditionalStep.IfTrueSteps, step.GetTitle(), "true"); err != nil {
-					return err
-				}
-			}
-			if len(conditionalStep.IfFalseSteps) > 0 {
-				if err := validateBranchStepIDs(conditionalStep.IfFalseSteps, step.GetTitle(), "false"); err != nil {
-					return err
-				}
-			}
-		}
 	}
 	return nil
 }
@@ -102,14 +88,6 @@ func collectStepIDsRecursive(steps []PlanStepInterface, pathPrefix string, seen 
 				return fmt.Errorf("duplicate step ID %q: first at %s, again at %s", id, prev, thisLoc)
 			}
 			seen[id] = thisLoc
-		}
-		if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
-			if err := collectStepIDsRecursive(conditionalStep.IfTrueSteps, thisLoc+".if_true", seen); err != nil {
-				return err
-			}
-			if err := collectStepIDsRecursive(conditionalStep.IfFalseSteps, thisLoc+".if_false", seen); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
@@ -129,30 +107,6 @@ func validateStepIDUniqueness(plan *PlanningResponse) error {
 	}
 	if err := collectStepIDsRecursive(plan.OrphanSteps, "orphan_steps", seen); err != nil {
 		return err
-	}
-	return nil
-}
-
-// validateBranchStepIDs recursively validates that all branch steps have IDs
-func validateBranchStepIDs(steps []PlanStepInterface, parentTitle, branchType string) error {
-	for i, step := range steps {
-		if step.GetID() == "" {
-			return fmt.Errorf("branch step at index %d in %s branch of parent %q is missing required ID field. Step title: %q", i, branchType, parentTitle, step.GetTitle())
-		}
-
-		// Recursively validate nested branch steps
-		if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
-			if len(conditionalStep.IfTrueSteps) > 0 {
-				if err := validateBranchStepIDs(conditionalStep.IfTrueSteps, step.GetTitle(), "true"); err != nil {
-					return err
-				}
-			}
-			if len(conditionalStep.IfFalseSteps) > 0 {
-				if err := validateBranchStepIDs(conditionalStep.IfFalseSteps, step.GetTitle(), "false"); err != nil {
-					return err
-				}
-			}
-		}
 	}
 	return nil
 }
@@ -211,40 +165,6 @@ func validateLoadedPlanStep(typedStep PlanStepInterface, stepIndex int) error {
 	case *RoutingPlanStep:
 		if err := validateRoutingStepTyped(step, stepIndex); err != nil {
 			return err
-		}
-		return nil
-
-	case *ConditionalPlanStep:
-		// Each branch must specify either nested steps OR a flat
-		// next_step_id, but never both (ambiguous flow) and never
-		// neither (workflow ends with no successor — silent drop).
-		// planning_agent.go:334-335 documents next_step_id as REQUIRED
-		// when the steps array is empty; we enforce it here.
-		if len(step.IfTrueSteps) == 0 && strings.TrimSpace(step.IfTrueNextStepID) == "" {
-			return fmt.Errorf("conditional step %q (index %d): if_true branch is empty AND if_true_next_step_id is unset — set one or the other", step.GetID(), stepIndex)
-		}
-		if len(step.IfFalseSteps) == 0 && strings.TrimSpace(step.IfFalseNextStepID) == "" {
-			return fmt.Errorf("conditional step %q (index %d): if_false branch is empty AND if_false_next_step_id is unset — set one or the other", step.GetID(), stepIndex)
-		}
-		if len(step.IfTrueSteps) > 0 && strings.TrimSpace(step.IfTrueNextStepID) != "" {
-			return fmt.Errorf("conditional step %q (index %d): cannot set BOTH if_true_steps and if_true_next_step_id — they are mutually exclusive (nested branch implies its own successor)", step.GetID(), stepIndex)
-		}
-		if len(step.IfFalseSteps) > 0 && strings.TrimSpace(step.IfFalseNextStepID) != "" {
-			return fmt.Errorf("conditional step %q (index %d): cannot set BOTH if_false_steps and if_false_next_step_id — they are mutually exclusive", step.GetID(), stepIndex)
-		}
-		if len(step.IfTrueSteps) > 0 {
-			for i, branchStep := range step.IfTrueSteps {
-				if err := validateLoadedPlanStep(branchStep, i); err != nil {
-					return fmt.Errorf("conditional if_true_steps[%d]: %w", i, err)
-				}
-			}
-		}
-		if len(step.IfFalseSteps) > 0 {
-			for i, branchStep := range step.IfFalseSteps {
-				if err := validateLoadedPlanStep(branchStep, i); err != nil {
-					return fmt.Errorf("conditional if_false_steps[%d]: %w", i, err)
-				}
-			}
 		}
 		return nil
 
@@ -317,9 +237,6 @@ func collectKnownStepIDs(plan *PlanningResponse) map[string]struct{} {
 				out[id] = struct{}{}
 			}
 			switch s := step.(type) {
-			case *ConditionalPlanStep:
-				walk(s.IfTrueSteps)
-				walk(s.IfFalseSteps)
 			case *TodoTaskPlanStep:
 				for _, route := range s.PredefinedRoutes {
 					if route.SubAgentStep != nil {
@@ -362,19 +279,6 @@ func validateNextStepIDReferences(plan *PlanningResponse) error {
 					if err := ref(s.GetID(), fmt.Sprintf("route %q.next_step_id", route.RouteID), route.NextStepID); err != nil {
 						return err
 					}
-				}
-			case *ConditionalPlanStep:
-				if err := ref(s.GetID(), "if_true_next_step_id", s.IfTrueNextStepID); err != nil {
-					return err
-				}
-				if err := ref(s.GetID(), "if_false_next_step_id", s.IfFalseNextStepID); err != nil {
-					return err
-				}
-				if err := walk(s.IfTrueSteps); err != nil {
-					return err
-				}
-				if err := walk(s.IfFalseSteps); err != nil {
-					return err
 				}
 			case *TodoTaskPlanStep:
 				if err := ref(s.GetID(), "next_step_id", s.NextStepID); err != nil {
@@ -425,31 +329,6 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 	switch step := typedStep.(type) {
 	case *RegularPlanStep:
 		// Regular step (may have loops)
-		// Populate runtime field directly on plan step
-		step.AgentConfigs = agentConfigs
-		if validationSchemaOverride != nil {
-			step.ValidationSchema = validationSchemaOverride
-		}
-		return nil
-
-	case *ConditionalPlanStep:
-		// Conditional step: populate branch steps recursively
-		if len(step.IfTrueSteps) > 0 {
-			for _, branchStep := range step.IfTrueSteps {
-				if err := populateRuntimeFields(branchStep, stepConfigs); err != nil {
-					return fmt.Errorf("failed to populate if_true branch step: %w", err)
-				}
-			}
-		}
-
-		if len(step.IfFalseSteps) > 0 {
-			for _, branchStep := range step.IfFalseSteps {
-				if err := populateRuntimeFields(branchStep, stepConfigs); err != nil {
-					return fmt.Errorf("failed to populate if_false branch step: %w", err)
-				}
-			}
-		}
-
 		// Populate runtime field directly on plan step
 		step.AgentConfigs = agentConfigs
 		if validationSchemaOverride != nil {
@@ -536,24 +415,7 @@ func populateStepRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepCo
 	}
 
 	// Recursively populate runtime fields for nested steps
-	switch step := typedStep.(type) {
-	case *ConditionalPlanStep:
-		// Populate branch steps recursively
-		if len(step.IfTrueSteps) > 0 {
-			for _, branchStep := range step.IfTrueSteps {
-				if err := populateRuntimeFields(branchStep, stepConfigs); err != nil {
-					return nil, fmt.Errorf("failed to populate if_true branch step: %w", err)
-				}
-			}
-		}
-		if len(step.IfFalseSteps) > 0 {
-			for _, branchStep := range step.IfFalseSteps {
-				if err := populateRuntimeFields(branchStep, stepConfigs); err != nil {
-					return nil, fmt.Errorf("failed to populate if_false branch step: %w", err)
-				}
-			}
-		}
-
+	switch typedStep.(type) {
 	case *EvaluationStep:
 		// No nested steps for evaluation steps currently
 
@@ -631,9 +493,8 @@ func getMetadataKeys(metadata map[string]interface{}) []string {
 
 // IsPlanModificationTool checks if a tool name is a plan modification tool
 func IsPlanModificationTool(name string) bool {
-	return name == "update_regular_step" || name == "update_conditional_step" || name == "update_routing_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "update_message_sequence_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_routing_step" || name == "add_loop_step" || name == "add_human_input_step" || name == "add_todo_task_step" || name == "add_message_sequence_step" ||
-		name == "convert_step_to_conditional" || name == "add_branch_steps" || name == "update_branch_steps" ||
-		name == "delete_branch_steps" || name == "convert_conditional_to_regular" || name == "update_validation_schema" ||
+	return name == "update_regular_step" || name == "update_routing_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "update_message_sequence_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_routing_step" || name == "add_loop_step" || name == "add_human_input_step" || name == "add_todo_task_step" || name == "add_message_sequence_step" ||
+		name == "update_validation_schema" ||
 		name == "add_todo_task_route" || name == "update_todo_task_route" || name == "delete_todo_task_route"
 }
 
@@ -701,7 +562,7 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 				}
 
 				switch toolName {
-				case "update_regular_step", "update_conditional_step", "update_routing_step":
+				case "update_regular_step", "update_routing_step":
 					// Extract existing_step_id from updated step
 					if stepID, ok := argsMap["existing_step_id"].(string); ok && stepID != "" {
 						changed.Updated = append(changed.Updated, stepID)
@@ -717,76 +578,10 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 						}
 					}
 
-				case "add_regular_step", "add_conditional_step", "add_routing_step", "add_loop_step":
+				case "add_regular_step", "add_routing_step", "add_loop_step":
 					// Extract id from new step
 					if stepID, ok := argsMap["id"].(string); ok && stepID != "" {
 						changed.Added = append(changed.Added, stepID)
-					}
-
-				case "add_branch_steps":
-					// Extract step IDs from branch steps
-					if branchType, ok := argsMap["branch_type"].(string); ok {
-						var stepsKey string
-						if branchType == "true" {
-							stepsKey = "if_true_steps"
-						} else if branchType == "false" {
-							stepsKey = "if_false_steps"
-						}
-						if stepsKey != "" {
-							if stepsRaw, ok := argsMap[stepsKey].([]interface{}); ok {
-								for _, stepRaw := range stepsRaw {
-									if stepMap, ok := stepRaw.(map[string]interface{}); ok {
-										if stepID, ok := stepMap["id"].(string); ok && stepID != "" {
-											changed.Added = append(changed.Added, stepID)
-										}
-									}
-								}
-							}
-						}
-					}
-
-				case "update_branch_steps":
-					// Extract step IDs from updated branch steps
-					if branchType, ok := argsMap["branch_type"].(string); ok {
-						var stepsKey string
-						if branchType == "true" {
-							stepsKey = "if_true_steps"
-						} else if branchType == "false" {
-							stepsKey = "if_false_steps"
-						}
-						if stepsKey != "" {
-							if stepsRaw, ok := argsMap[stepsKey].([]interface{}); ok {
-								for _, stepRaw := range stepsRaw {
-									if stepMap, ok := stepRaw.(map[string]interface{}); ok {
-										if stepID, ok := stepMap["id"].(string); ok && stepID != "" {
-											changed.Updated = append(changed.Updated, stepID)
-										}
-									}
-								}
-							}
-						}
-					}
-
-				case "delete_branch_steps":
-					// Extract step IDs from deleted branch steps
-					if deletedIDsRaw, ok := argsMap["deleted_step_ids"].([]interface{}); ok {
-						for _, idRaw := range deletedIDsRaw {
-							if stepID, ok := idRaw.(string); ok && stepID != "" {
-								changed.Deleted = append(changed.Deleted, stepID)
-							}
-						}
-					}
-
-				case "convert_step_to_conditional":
-					// Extract existing_step_id
-					if stepID, ok := argsMap["existing_step_id"].(string); ok && stepID != "" {
-						changed.Updated = append(changed.Updated, stepID)
-					}
-
-				case "convert_conditional_to_regular":
-					// Extract existing_step_id
-					if stepID, ok := argsMap["existing_step_id"].(string); ok && stepID != "" {
-						changed.Updated = append(changed.Updated, stepID)
 					}
 
 				case "update_validation_schema":

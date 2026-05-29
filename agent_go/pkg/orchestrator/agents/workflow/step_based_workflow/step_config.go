@@ -390,8 +390,6 @@ func ApplyStepConfigFromFile(
 			switch s := step.(type) {
 			case *RegularPlanStep:
 				s.AgentConfigs = matchedConfig
-			case *ConditionalPlanStep:
-				s.AgentConfigs = matchedConfig
 			case *TodoTaskPlanStep:
 				s.AgentConfigs = matchedConfig
 			case *HumanInputPlanStep:
@@ -430,8 +428,6 @@ func ApplyStepConfigFromFile(
 			// Set overrides as the config
 			switch s := step.(type) {
 			case *RegularPlanStep:
-				s.AgentConfigs = overrides
-			case *ConditionalPlanStep:
 				s.AgentConfigs = overrides
 			case *TodoTaskPlanStep:
 				s.AgentConfigs = overrides

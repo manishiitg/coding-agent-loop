@@ -106,50 +106,6 @@ func TestWorkflowEdgeRoutingNextStepIDMustExist(t *testing.T) {
 	}
 }
 
-// TestWorkflowEdgeConditionalEmptyBranchRequiresNextStepID proves the
-// engine refuses a conditional with `if_true_steps: []` AND no
-// `if_true_next_step_id` set. Per planning_agent.go:334, NextStepID is
-// REQUIRED in this case; a missing one would leave the workflow with
-// no successor and the engine would silently end mid-plan.
-func TestWorkflowEdgeConditionalEmptyBranchRequiresNextStepID(t *testing.T) {
-	wo, cleanup, ok := buildEdgeCaseOrchestrator(t)
-	if !ok {
-		return
-	}
-	defer cleanup()
-
-	plan := map[string]interface{}{
-		"steps": []map[string]interface{}{
-			{
-				"type":                 "conditional",
-				"id":                   "cond",
-				"title":                "branch",
-				"description":          "",
-				"context_dependencies": []string{},
-				"context_output":       "c.json",
-				"condition_question":   "Is true equal to true?",
-				"condition_context":    "",
-				"if_true_steps":        []map[string]interface{}{},
-				"if_false_steps":       []map[string]interface{}{},
-				// Both *_next_step_id intentionally omitted.
-			},
-		},
-	}
-	writeEdgePlan(t, wo.workspaceDisk, plan)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	_, err := wo.orchestrator.Execute(ctx, "empty-branch test", wo.workspaceRel, map[string]interface{}{
-		"workflowStatus": workflowtypes.WorkflowStatusPreVerification,
-	})
-	if err == nil {
-		t.Fatal("expected engine to reject conditional with empty branches and no next_step_id; got nil error")
-	}
-	if !containsAny(err.Error(), "next_step_id", "required", "branch", "empty") {
-		t.Errorf("error message should explain the empty-branch + missing-next_step_id violation; got: %v", err)
-	}
-}
-
 // TestWorkflowEdgeEmptyPlanRejected proves the engine refuses a plan
 // with zero steps. An empty plan can't be a valid workflow — the only
 // sane runtime behavior is "fail at load", not "succeed in 0 ms".
@@ -218,54 +174,6 @@ func TestWorkflowEdgeRoutingRequiresMultipleRoutes(t *testing.T) {
 	}
 	if !containsAny(err.Error(), "routes", "at least 2", "min", "multiple") {
 		t.Errorf("error should explain the min-routes invariant; got: %v", err)
-	}
-}
-
-// TestWorkflowEdgeConditionalConflictingTrueBranchAndNextStepID locks
-// in an answer to: when a conditional has BOTH if_true_steps populated
-// AND if_true_next_step_id set, which wins? Either both-set is an
-// error and the engine must reject, OR one-takes-precedence and the
-// behavior must be documented. Today the spec is silent; this test
-// will fail until the engine emits a deterministic decision (error
-// or warning) that we can lock in.
-func TestWorkflowEdgeConditionalConflictingTrueBranchAndNextStepID(t *testing.T) {
-	wo, cleanup, ok := buildEdgeCaseOrchestrator(t)
-	if !ok {
-		return
-	}
-	defer cleanup()
-
-	writeEdgePlan(t, wo.workspaceDisk, map[string]interface{}{
-		"steps": []map[string]interface{}{
-			{
-				"type":                 "conditional",
-				"id":                   "conflicting-cond",
-				"title":                "Branch with conflict",
-				"description":          "",
-				"context_dependencies": []string{},
-				"context_output":       "c.json",
-				"condition_question":   "Is true equal to true?",
-				"condition_context":    "",
-				"if_true_steps": []map[string]interface{}{
-					{"type": "regular", "id": "inside-branch", "title": "Inside", "description": "Reply ACK", "context_dependencies": []string{}, "context_output": "inner.json"},
-				},
-				// Conflict: both a nested branch AND a flat next_step_id.
-				"if_true_next_step_id":  "end",
-				"if_false_next_step_id": "end",
-			},
-		},
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
-	defer cancel()
-	_, err := wo.orchestrator.Execute(ctx, "conflicting branches", wo.workspaceRel, map[string]interface{}{
-		"workflowStatus": workflowtypes.WorkflowStatusPreVerification,
-	})
-	if err == nil {
-		t.Fatal("expected engine to reject conditional with both nested branch and explicit next_step_id; got nil error")
-	}
-	if !containsAny(err.Error(), "conflict", "ambiguous", "either", "not both", "if_true_steps", "next_step_id") {
-		t.Errorf("error should explain the conflict between if_true_steps and if_true_next_step_id; got: %v", err)
 	}
 }
 

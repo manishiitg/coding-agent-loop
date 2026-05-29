@@ -239,7 +239,7 @@ type AgentConfigs struct {
 	Transport                   string `json:"transport,omitempty"`
 	DisableTierOptimization     *bool  `json:"disable_tier_optimization,omitempty"`      // If true, execution and conditional agents always use Tier 1 (high reasoning)
 	SuccessfulRuns              *int   `json:"successful_runs,omitempty"`                // System-managed counter. Written by syncSuccessfulRunsToStepConfig after each successful validation; mirrors the authoritative count in learning metadata. Read by the readiness checklist to gauge optimization progress (3+ = ready). Agents must NOT set this directly.
-	ScriptedMaxFixIter         *int   `json:"learn_code_max_fix_iterations,omitempty"`  // Max LLM fix iterations when main.py execution fails (default: 5)
+	ScriptedMaxFixIter          *int   `json:"learn_code_max_fix_iterations,omitempty"`  // Max LLM fix iterations when main.py execution fails (default: 5)
 	DeclaredExecutionMode       string `json:"declared_execution_mode,omitempty"`        // Required mode decision for the step: "scripted" or "agentic" (legacy values "learn_code" / "code_exec" are still accepted on read)
 	DeclaredExecutionModeReason string `json:"declared_execution_mode_reason,omitempty"` // Audit trail: why the declared mode is the best fit. Not consumed by Go runtime, but preserved so future LLM reviewers (harden, replan) reading raw step_config.json see the original decision rationale.
 	DescriptionReviewed         *bool  `json:"description_reviewed,omitempty"`           // True when the step description has been reviewed — clarity AND secrets/hardcoded values.
@@ -255,12 +255,11 @@ type AgentConfigs struct {
 type StepType string
 
 const (
-	StepTypeRegular     StepType = "regular"
-	StepTypeConditional StepType = "conditional"
-	StepTypeHumanInput  StepType = "human_input"
-	StepTypeTodoTask    StepType = "todo_task"
-	StepTypeRouting     StepType = "routing"
-	StepTypeMessageSeq  StepType = "message_sequence"
+	StepTypeRegular    StepType = "regular"
+	StepTypeHumanInput StepType = "human_input"
+	StepTypeTodoTask   StepType = "todo_task"
+	StepTypeRouting    StepType = "routing"
+	StepTypeMessageSeq StepType = "message_sequence"
 )
 
 // CommonStepFields contains fields shared by all step types
@@ -321,148 +320,6 @@ func (r *RegularPlanStep) MarshalJSON() ([]byte, error) {
 	// Use type alias to avoid infinite recursion
 	type Alias RegularPlanStep
 	return json.Marshal((*Alias)(r))
-}
-
-// ConditionalPlanStep represents a conditional step with branches
-// NOTE: Conditional steps are wrappers that branch based on conditions.
-// Loops are NOT supported on conditional wrappers - if looping is needed, it should be on the branch steps (IfTrueSteps, IfFalseSteps).
-type ConditionalPlanStep struct {
-	Type StepType `json:"type"` // Always "conditional" - required for JSON marshaling/unmarshaling
-	CommonStepFields
-	ConditionQuestion string              `json:"condition_question,omitempty"`    // question to ask ConditionalLLM
-	ConditionContext  string              `json:"condition_context,omitempty"`     // context to provide to ConditionalLLM
-	IfTrueSteps       []PlanStepInterface `json:"if_true_steps,omitempty"`         // nested steps for true branch
-	IfFalseSteps      []PlanStepInterface `json:"if_false_steps,omitempty"`        // nested steps for false branch
-	IfTrueNextStepID  string              `json:"if_true_next_step_id,omitempty"`  // ID of step to connect to after true branch completes (or "end" to end workflow). When if_true_steps is empty [], this is REQUIRED. When if_true_steps has steps, this is optional (defaults to next step in main plan if not specified).
-	IfFalseNextStepID string              `json:"if_false_next_step_id,omitempty"` // ID of step to connect to after false branch completes (or "end" to end workflow). When if_false_steps is empty [], this is REQUIRED. When if_false_steps has steps, this is optional (defaults to next step in main plan if not specified).
-	ConditionResult   *bool               `json:"-"`                               // runtime: stores decision result - not stored in plan.json
-	ConditionReason   string              `json:"-"`                               // runtime: stores LLM reasoning - not stored in plan.json
-	AgentConfigs      *AgentConfigs       `json:"-"`                               // runtime: per-agent configuration (LLM, max turns, toggles) - not stored in plan.json
-}
-
-// Implement PlanStepInterface for ConditionalPlanStep
-func (c *ConditionalPlanStep) GetID() string                           { return c.ID }
-func (c *ConditionalPlanStep) GetTitle() string                        { return c.Title }
-func (c *ConditionalPlanStep) GetDescription() string                  { return c.Description }
-func (c *ConditionalPlanStep) GetContextDependencies() []string        { return c.ContextDependencies }
-func (c *ConditionalPlanStep) GetContextOutput() FlexibleContextOutput { return c.ContextOutput }
-func (c *ConditionalPlanStep) GetValidationSchema() *ValidationSchema  { return c.ValidationSchema }
-func (c *ConditionalPlanStep) StepType() StepType                      { return StepTypeConditional }
-func (c *ConditionalPlanStep) GetCommonFields() CommonStepFields {
-	return CommonStepFields{
-		ID:                  c.ID,
-		Title:               c.Title,
-		Description:         c.Description,
-		ContextDependencies: c.ContextDependencies,
-		ContextOutput:       c.ContextOutput,
-		ValidationSchema:    c.ValidationSchema,
-		SharedWith:          c.SharedWith,
-	}
-}
-
-// MarshalJSON ensures the type field is always set when marshaling
-func (c *ConditionalPlanStep) MarshalJSON() ([]byte, error) {
-	// Ensure type is set
-	c.Type = StepTypeConditional
-
-	type conditionalJSON struct {
-		Type StepType `json:"type"`
-		CommonStepFields
-		ConditionQuestion string            `json:"condition_question,omitempty"`
-		ConditionContext  string            `json:"condition_context,omitempty"`
-		IfTrueSteps       []json.RawMessage `json:"if_true_steps,omitempty"`
-		IfFalseSteps      []json.RawMessage `json:"if_false_steps,omitempty"`
-		IfTrueNextStepID  string            `json:"if_true_next_step_id,omitempty"`
-		IfFalseNextStepID string            `json:"if_false_next_step_id,omitempty"`
-	}
-
-	result := conditionalJSON{
-		Type:              c.Type,
-		CommonStepFields:  c.CommonStepFields,
-		ConditionQuestion: c.ConditionQuestion,
-		ConditionContext:  c.ConditionContext,
-		IfTrueNextStepID:  c.IfTrueNextStepID,
-		IfFalseNextStepID: c.IfFalseNextStepID,
-	}
-
-	// Marshal IfTrueSteps
-	if len(c.IfTrueSteps) > 0 {
-		result.IfTrueSteps = make([]json.RawMessage, len(c.IfTrueSteps))
-		for i, step := range c.IfTrueSteps {
-			stepJSON, err := json.Marshal(step)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal if_true_steps[%d]: %w", i, err)
-			}
-			result.IfTrueSteps[i] = stepJSON
-		}
-	}
-
-	// Marshal IfFalseSteps
-	if len(c.IfFalseSteps) > 0 {
-		result.IfFalseSteps = make([]json.RawMessage, len(c.IfFalseSteps))
-		for i, step := range c.IfFalseSteps {
-			stepJSON, err := json.Marshal(step)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal if_false_steps[%d]: %w", i, err)
-			}
-			result.IfFalseSteps[i] = stepJSON
-		}
-	}
-
-	return json.Marshal(result)
-}
-
-// UnmarshalJSON implements custom unmarshaling for ConditionalPlanStep
-// This is needed to properly handle nested if_true_steps and if_false_steps arrays
-func (c *ConditionalPlanStep) UnmarshalJSON(data []byte) error {
-	// First, unmarshal into a temporary struct to extract nested steps as raw JSON
-	var temp struct {
-		Type StepType `json:"type"`
-		CommonStepFields
-		ConditionQuestion string            `json:"condition_question,omitempty"`
-		ConditionContext  string            `json:"condition_context,omitempty"`
-		IfTrueSteps       []json.RawMessage `json:"if_true_steps,omitempty"`
-		IfFalseSteps      []json.RawMessage `json:"if_false_steps,omitempty"`
-		IfTrueNextStepID  string            `json:"if_true_next_step_id,omitempty"`
-		IfFalseNextStepID string            `json:"if_false_next_step_id,omitempty"`
-		// Runtime fields (ConditionResult, ConditionReason, AgentConfigs) are excluded - they use json:"-" and won't be in plan.json
-	}
-
-	if err := json.Unmarshal(data, &temp); err != nil {
-		return fmt.Errorf("failed to unmarshal conditional step: %w", err)
-	}
-
-	// Copy basic fields
-	c.Type = temp.Type
-	c.CommonStepFields = temp.CommonStepFields
-	c.ConditionQuestion = temp.ConditionQuestion
-	c.ConditionContext = temp.ConditionContext
-	c.IfTrueNextStepID = temp.IfTrueNextStepID
-	c.IfFalseNextStepID = temp.IfFalseNextStepID
-	// Runtime fields (ConditionResult, ConditionReason, AgentConfigs) are not unmarshaled - they use json:"-"
-
-	// Unmarshal nested steps
-	if len(temp.IfTrueSteps) > 0 {
-		steps, err := unmarshalStepsFromJSON(temp.IfTrueSteps)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal if_true_steps: %w", err)
-		}
-		c.IfTrueSteps = steps
-	} else {
-		c.IfTrueSteps = nil
-	}
-
-	if len(temp.IfFalseSteps) > 0 {
-		steps, err := unmarshalStepsFromJSON(temp.IfFalseSteps)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal if_false_steps: %w", err)
-		}
-		c.IfFalseSteps = steps
-	} else {
-		c.IfFalseSteps = nil
-	}
-
-	return nil
 }
 
 // RoutingRoute represents a single route option in a routing step
@@ -607,17 +464,18 @@ type MessageSequenceItem struct {
 	SaveRepaired     bool                         `json:"save_repaired_script,omitempty"`
 	ValidationSchema *ValidationSchema            `json:"validation_schema,omitempty"`
 	Prevalidation    *ValidationSchema            `json:"prevalidation,omitempty"`
+	// foreach items: iterate a JSON array from a db file, one templated user_message per row.
+	Source        string `json:"source,omitempty"`         // workspace-relative JSON file (e.g. db/tasks.json)
+	SourcePath    string `json:"source_path,omitempty"`    // optional dot-path to the array field
+	MaxIterations int    `json:"max_iterations,omitempty"` // optional cap on rows (0 = all)
 }
 
 type MessageSequencePlanStep struct {
 	Type StepType `json:"type"`
 	CommonStepFields
-	Items             []MessageSequenceItem `json:"items,omitempty"`
-	SessionMode       string                `json:"session_mode,omitempty"`
-	ConversationScope string                `json:"conversation_scope,omitempty"`
-	ReentryPolicy     string                `json:"reentry_policy,omitempty"`
-	NextStepID        string                `json:"next_step_id,omitempty"`
-	AgentConfigs      *AgentConfigs         `json:"-"`
+	Items        []MessageSequenceItem `json:"items,omitempty"`
+	NextStepID   string                `json:"next_step_id,omitempty"`
+	AgentConfigs *AgentConfigs         `json:"-"`
 }
 
 func (m *MessageSequencePlanStep) GetID() string                           { return m.ID }
@@ -645,8 +503,26 @@ type TodoTaskPlanStep struct {
 	CommonStepFields                          // Embeds ID, Title, Description, SuccessCriteria, ContextDependencies, ContextOutput, ValidationSchema
 	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"` // Predefined sub-agents (with learning/prevalidation)
 	NextStepID       string                   `json:"next_step_id,omitempty"`      // ID of step after todo task completes (or "end")
+	Messages         []TodoTaskMessage        `json:"messages,omitempty"`          // Optional scripted message sequence fed into the orchestrator's own conversation after its first turn
 	TodoTaskResponse *TodoTaskResponse        `json:"-"`                           // runtime: stores orchestrator decisions - not stored in plan.json
 	AgentConfigs     *AgentConfigs            `json:"-"`                           // runtime: per-agent configuration - not stored in plan.json
+}
+
+// TodoTaskMessage is one entry in a todo_task step's optional scripted message sequence.
+// After the orchestrator's first turn, each message is fed into the SAME orchestrator
+// conversation in order, so it keeps working through them with full memory of prior turns
+// and sub-agent results. A prevalidation entry is a hard gate between turns. The whole
+// sequence runs within one execution — there is no persistence or re-entry.
+type TodoTaskMessage struct {
+	ID               string            `json:"id,omitempty"`
+	Type             string            `json:"type,omitempty"`              // "message" (default) | "prevalidation"
+	Message          string            `json:"message,omitempty"`           // message entries: the instruction for one orchestrator turn; foreach entries: the per-row Go template
+	ValidationSchema *ValidationSchema `json:"validation_schema,omitempty"` // prevalidation entries: the gate schema
+	MaxCorrections   int               `json:"max_corrections,omitempty"`   // prevalidation only: corrective orchestrator turns allowed on failure (default 1)
+	// foreach entries: iterate a JSON array from a db file, one orchestrator turn per row.
+	Source        string `json:"source,omitempty"`         // workspace-relative JSON file (e.g. db/tasks.json)
+	SourcePath    string `json:"source_path,omitempty"`    // optional dot-path to the array field
+	MaxIterations int    `json:"max_iterations,omitempty"` // optional cap on rows (0 = all)
 }
 
 // TodoTaskResponse represents the structured output from the TodoTask orchestrator agent
@@ -716,7 +592,8 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 			OrphanStepRef string          `json:"orphan_step_ref,omitempty"`
 			ContextToPass string          `json:"context_to_pass,omitempty"`
 		} `json:"predefined_routes,omitempty"`
-		NextStepID string `json:"next_step_id,omitempty"`
+		NextStepID string            `json:"next_step_id,omitempty"`
+		Messages   []TodoTaskMessage `json:"messages,omitempty"`
 	}
 
 	if err := json.Unmarshal(data, &temp); err != nil {
@@ -728,6 +605,7 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 	t.ID = temp.ID
 	t.Title = temp.Title
 	t.NextStepID = temp.NextStepID
+	t.Messages = temp.Messages
 
 	// Copy flat format fields
 	t.Description = temp.Description
@@ -807,7 +685,7 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 	}
 
 	if stepWithType.Type == "" {
-		return nil, fmt.Errorf("%s %d is missing required 'type' field (must be: regular, conditional, human_input, todo_task, routing, or message_sequence)", label, index)
+		return nil, fmt.Errorf("%s %d is missing required 'type' field (must be: regular, human_input, todo_task, routing, or message_sequence)", label, index)
 	}
 
 	switch stepWithType.Type {
@@ -815,12 +693,6 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 		var step RegularPlanStep
 		if err := json.Unmarshal(stepData, &step); err != nil {
 			return nil, fmt.Errorf("failed to parse regular %s %d: %w", label, index, err)
-		}
-		return &step, nil
-	case "conditional":
-		var step ConditionalPlanStep
-		if err := json.Unmarshal(stepData, &step); err != nil {
-			return nil, fmt.Errorf("failed to parse conditional %s %d: %w", label, index, err)
 		}
 		return &step, nil
 	case "human_input":
@@ -848,7 +720,7 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 		}
 		return &step, nil
 	default:
-		return nil, fmt.Errorf("unknown step type %q in %s %d (must be: regular, conditional, human_input, todo_task, routing, or message_sequence)", stepWithType.Type, label, index)
+		return nil, fmt.Errorf("unknown step type %q in %s %d (must be: regular, human_input, todo_task, routing, or message_sequence)", stepWithType.Type, label, index)
 	}
 }
 
@@ -939,19 +811,12 @@ type PartialPlanStep struct {
 	LoopCondition       string                `json:"loop_condition,omitempty"`       // DEPRECATED: loop feature removed
 	MaxIterations       *int                  `json:"max_iterations,omitempty"`       // DEPRECATED: loop feature removed
 	LoopDescription     string                `json:"loop_description,omitempty"`     // DEPRECATED: loop feature removed
-	// Conditional step fields
-	HasCondition      *bool                    `json:"has_condition,omitempty"`      // Optional: Updated has_condition (use pointer to distinguish unset from false)
-	ConditionQuestion string                   `json:"condition_question,omitempty"` // Optional: Updated condition question
-	ConditionContext  string                   `json:"condition_context,omitempty"`  // Optional: Updated condition context
-	IfTrueSteps       []map[string]interface{} `json:"if_true_steps,omitempty"`      // Optional: Updated if_true_steps (nil = not provided, empty array = clear steps) - will be converted to PlanStepInterface
-	IfFalseSteps      []map[string]interface{} `json:"if_false_steps,omitempty"`     // Optional: Updated if_false_steps (nil = not provided, empty array = clear steps) - will be converted to PlanStepInterface
 	// Todo task step fields
 	TodoTaskStep     map[string]interface{}   `json:"todo_task_step,omitempty"`    // Optional: Updated todo task step - will be converted to PlanStepInterface
 	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"` // Optional: Updated predefined routes for todo task steps
-	// Routing fields (used by both conditional, decision, and routing steps)
-	IfTrueNextStepID  string `json:"if_true_next_step_id,omitempty"`  // Optional: Updated if_true_next_step_id
-	IfFalseNextStepID string `json:"if_false_next_step_id,omitempty"` // Optional: Updated if_false_next_step_id
-	NextStepID        string `json:"next_step_id,omitempty"`          // Optional: Updated next_step_id (for routing steps)
+	Messages         []TodoTaskMessage        `json:"messages,omitempty"`          // Optional: Updated scripted message sequence for todo task steps
+	// Routing fields
+	NextStepID string `json:"next_step_id,omitempty"` // Optional: Updated next_step_id (for routing steps)
 	// Routing step fields
 	RoutingQuestion string         `json:"routing_question,omitempty"` // Optional: Updated routing question
 	Routes          []RoutingRoute `json:"routes,omitempty"`           // Optional: Updated routes
@@ -966,10 +831,7 @@ type PartialPlanStep struct {
 	OptionRoutes     map[string]string `json:"option_routes,omitempty"`       // Optional: Updated option routes (for multiple_choice)
 	ValidationSchema *ValidationSchema `json:"validation_schema,omitempty"`   // Optional: Updated validation schema
 	// Message sequence fields
-	Items             []MessageSequenceItem `json:"items,omitempty"`
-	SessionMode       string                `json:"session_mode,omitempty"`
-	ConversationScope string                `json:"conversation_scope,omitempty"`
-	ReentryPolicy     string                `json:"reentry_policy,omitempty"`
+	Items []MessageSequenceItem `json:"items,omitempty"`
 }
 
 // planFileMutex ensures thread-safe access to plan.json
@@ -1262,10 +1124,10 @@ func getAddMessageSequenceStepSchema() string {
 					"type": "object",
 					"properties": {
 						"id": {"type": "string"},
-						"type": {"type": "string", "description": "user_message, code, or prevalidation"},
-						"kind": {"type": "string", "description": "execution, learning, knowledgebase, db, check, critique, self_validation, reference_check, hallucination_check, code_review"},
+						"type": {"type": "string", "description": "user_message, code, prevalidation, or foreach"},
+						"kind": {"type": "string", "description": "Drives item-scoped write access. One of: learning, knowledgebase, db, or code (when code, db/kb write access is auto-inferred from output_files paths). Omit for a plain user_message item with no extra write access. Explicit write_access overrides kind."},
 						"title": {"type": "string"},
-						"message": {"type": "string", "description": "For user_message items: concise instruction for one turn. The runtime keeps the same agent conversation."},
+						"message": {"type": "string", "description": "For user_message items: concise instruction for one turn, run in the same persistent conversation. Use plain work turns, or self-validation/interrogation turns (e.g. \"Did you actually call X? Quote its exact output. Did you actually produce Y?\") to make the step check its own work before a prevalidation gate. For foreach items: a Go text/template rendered once per row of source, with the row bound to '.' (e.g. 'Process {{.id}}: {{.task}}')."},
 						"runtime": {"type": "string", "description": "For code items: python."},
 						"script_path": {"type": "string", "description": "For code items: workspace-relative source script to execute."},
 						"input_files": {"type": "array", "items": {"type": "string"}},
@@ -1283,20 +1145,20 @@ func getAddMessageSequenceStepSchema() string {
 						"on_failure": {
 							"type": "object",
 							"properties": {
-								"action": {"type": "string", "description": "stop_step or repair_with_llm"},
+								"action": {"type": "string", "description": "CODE ITEMS ONLY (ignored for user_message/prevalidation items): stop_step (default), repair_with_llm, or repair_same_session."},
 								"max_retries": {"type": "number"}
 							}
 						},
 						"save_repaired_script": {"type": "boolean"},
-						"validation_schema": {"type": "object"},
-						"prevalidation": {"type": "object"}
+						"validation_schema": {"type": "object", "description": "For prevalidation items: backend validation schema (a hard gate). Interleave prevalidation items with DIFFERENT schemas between turns to gate distinct claims one at a time."},
+						"prevalidation": {"type": "object", "description": "Alias for validation_schema on a prevalidation item."},
+						"source": {"type": "string", "description": "For foreach items: workspace-relative JSON file to iterate (typically under db/, e.g. db/tasks.json). Must resolve to a JSON array (directly, or via source_path). Use this to reliably process every row a prior step wrote to the db — the runtime sends one user_message turn per row."},
+						"source_path": {"type": "string", "description": "For foreach items: optional dot-path to the array inside source (e.g. 'result.items'). Omit if the file's top level IS the array."},
+						"max_iterations": {"type": "number", "description": "For foreach items: optional cap on rows processed (0 = all). Excess rows are skipped and logged, never silently dropped."}
 					},
 					"required": ["id", "type"]
 				}
 			},
-			"session_mode": {"type": "string", "description": "Usually persistent."},
-			"conversation_scope": {"type": "string", "description": "Usually step_instance."},
-			"reentry_policy": {"type": "string", "description": "Usually resume_existing."},
 			"next_step_id": {"type": "string", "description": "Optional next step ID or end."},
 			"insert_after_step_id": {"type": "string", "description": "REQUIRED: Existing step ID to insert after, or empty string to insert first."},
 			"validation_schema": {"type": "object"},
@@ -1316,9 +1178,6 @@ func getUpdateMessageSequenceStepSchema() string {
 			"context_dependencies": {"type": "array", "items": {"type": "string"}},
 			"context_output": {"type": "string"},
 			"items": {"type": "array", "items": {"type": "object"}, "description": "Replace the ordered item queue."},
-			"session_mode": {"type": "string"},
-			"conversation_scope": {"type": "string"},
-			"reentry_policy": {"type": "string"},
 			"next_step_id": {"type": "string"},
 			"validation_schema": {"type": "object"},
 			"reason": {"type": "string", "description": "REQUIRED: One-sentence rationale for this update."}
@@ -1625,6 +1484,24 @@ func getAddTodoTaskStepSchema() string {
 				"type": "string",
 				"description": "REQUIRED: ID of step to connect to after all todos are complete, or 'end' to end the workflow."
 			},
+			"messages": {
+				"type": "array",
+				"description": "OPTIONAL: Scripted message sequence for long, multi-phase work on one orchestrator step. After the orchestrator's first turn, each entry is fed into the SAME orchestrator conversation in order, so it keeps going with full memory of prior turns and sub-agent results. Runs within one execution; NO persistence/re-entry. A foreach entry iterates a db array (e.g. one a prior step wrote) and feeds one orchestrator turn per row — reliable enumeration of every row. For a specialist that resumes across the orchestrator's own repeated calls, use a message_sequence route instead.",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": {"type": "string"},
+						"type": {"type": "string", "description": "message (default), prevalidation, or foreach"},
+						"message": {"type": "string", "description": "message entries: the instruction for one orchestrator turn (e.g. a follow-up phase, or 'now verify X and fix any gaps'). foreach entries: a Go text/template rendered once per row of source, row bound to '.' (e.g. 'Handle task {{.id}}: {{.desc}}')."},
+						"validation_schema": {"type": "object", "description": "prevalidation entries: a hard gate checked between turns. On failure the orchestrator receives the failures as a corrective turn and retries up to max_corrections."},
+						"max_corrections": {"type": "number", "description": "prevalidation entries only: corrective orchestrator turns allowed on gate failure (default 1)."},
+						"source": {"type": "string", "description": "foreach entries: workspace-relative JSON array file to iterate (e.g. db/tasks.json). The orchestrator gets one turn per row — reliable processing of every row a prior step wrote to the db."},
+						"source_path": {"type": "string", "description": "foreach entries: optional dot-path to the array inside source."},
+						"max_iterations": {"type": "number", "description": "foreach entries: optional cap on rows processed (0 = all)."}
+					},
+					"required": ["type"]
+				}
+			},
 			"insert_after_step_id": {
 				"type": "string",
 				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string to insert at the beginning."
@@ -1707,6 +1584,11 @@ func getUpdateTodoTaskStepSchema() string {
 			"next_step_id": {
 				"type": "string",
 				"description": "OPTIONAL: ID of step to connect to after all todos are complete, or 'end'"
+			},
+			"messages": {
+				"type": "array",
+				"description": "OPTIONAL: Replaces the scripted message sequence. After the orchestrator's first turn, each entry is fed into the same orchestrator conversation in order. Entries are {type: message|prevalidation, message, validation_schema, max_corrections}.",
+				"items": {"type": "object"}
 			},
 			"reason": {
 				"type": "string",
@@ -2063,12 +1945,6 @@ func convertMapToStep(stepMap map[string]interface{}) (PlanStepInterface, error)
 			return nil, fmt.Errorf("failed to parse regular step: %w", err)
 		}
 		typedStep = &step
-	case "conditional":
-		var step ConditionalPlanStep
-		if err := json.Unmarshal(stepJSON, &step); err != nil {
-			return nil, fmt.Errorf("failed to parse conditional step: %w", err)
-		}
-		typedStep = &step
 	case "human_input":
 		var step HumanInputPlanStep
 		if err := json.Unmarshal(stepJSON, &step); err != nil {
@@ -2128,13 +2004,6 @@ func unmarshalStepFromJSON(stepData json.RawMessage) (PlanStepInterface, error) 
 		// Ensure Type field is set (may be empty if not in JSON)
 		step.Type = StepTypeRegular
 		typedStep = &step
-	case "conditional":
-		var step ConditionalPlanStep
-		if err := json.Unmarshal(stepData, &step); err != nil {
-			return nil, fmt.Errorf("failed to parse conditional step: %w", err)
-		}
-		step.Type = StepTypeConditional
-		typedStep = &step
 	case "human_input":
 		var step HumanInputPlanStep
 		if err := json.Unmarshal(stepData, &step); err != nil {
@@ -2164,24 +2033,10 @@ func unmarshalStepFromJSON(stepData json.RawMessage) (PlanStepInterface, error) 
 		step.Type = StepTypeMessageSeq
 		typedStep = &step
 	default:
-		return nil, fmt.Errorf("unknown step type %q (must be: regular, conditional, human_input, todo_task, routing, or message_sequence)", stepType)
+		return nil, fmt.Errorf("unknown step type %q (must be: regular, human_input, todo_task, routing, or message_sequence)", stepType)
 	}
 
 	return typedStep, nil
-}
-
-// unmarshalStepsFromJSON unmarshals an array of steps from JSON
-// This is a helper function used by custom UnmarshalJSON methods for step types with nested step arrays
-func unmarshalStepsFromJSON(stepsData []json.RawMessage) ([]PlanStepInterface, error) {
-	steps := make([]PlanStepInterface, len(stepsData))
-	for i, stepData := range stepsData {
-		step, err := unmarshalStepFromJSON(stepData)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse step %d: %w", i, err)
-		}
-		steps[i] = step
-	}
-	return steps, nil
 }
 
 // validateRegexPatternsInSchema validates all regex patterns in a ValidationSchema
@@ -2388,8 +2243,6 @@ func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSche
 	switch s := step.(type) {
 	case *RegularPlanStep:
 		s.ValidationSchema = schema
-	case *ConditionalPlanStep:
-		s.ValidationSchema = schema
 	case *HumanInputPlanStep:
 		s.ValidationSchema = schema
 	case *TodoTaskPlanStep:
@@ -2515,75 +2368,6 @@ func compareNestedStepFields(oldStep PlanStepInterface, newStep PlanStepInterfac
 			}
 		}
 
-	case *ConditionalPlanStep:
-		if newS, ok := newStep.(*ConditionalPlanStep); ok {
-			if oldS.ConditionQuestion != newS.ConditionQuestion {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".condition_question",
-					OldValue: oldS.ConditionQuestion,
-					NewValue: newS.ConditionQuestion,
-				})
-			}
-			if oldS.ConditionContext != newS.ConditionContext {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".condition_context",
-					OldValue: oldS.ConditionContext,
-					NewValue: newS.ConditionContext,
-				})
-			}
-			if oldS.IfTrueNextStepID != newS.IfTrueNextStepID {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".if_true_next_step_id",
-					OldValue: oldS.IfTrueNextStepID,
-					NewValue: newS.IfTrueNextStepID,
-				})
-			}
-			if oldS.IfFalseNextStepID != newS.IfFalseNextStepID {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".if_false_next_step_id",
-					OldValue: oldS.IfFalseNextStepID,
-					NewValue: newS.IfFalseNextStepID,
-				})
-			}
-			// Compare nested steps in branches (simplified - track count and IDs)
-			if len(oldS.IfTrueSteps) != len(newS.IfTrueSteps) {
-				oldIDs := make([]string, len(oldS.IfTrueSteps))
-				for i, s := range oldS.IfTrueSteps {
-					oldIDs[i] = s.GetID()
-				}
-				newIDs := make([]string, len(newS.IfTrueSteps))
-				for i, s := range newS.IfTrueSteps {
-					newIDs[i] = s.GetID()
-				}
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".if_true_steps",
-					OldValue: fmt.Sprintf("%d steps: %v", len(oldIDs), oldIDs),
-					NewValue: fmt.Sprintf("%d steps: %v", len(newIDs), newIDs),
-				})
-			}
-			if len(oldS.IfFalseSteps) != len(newS.IfFalseSteps) {
-				oldIDs := make([]string, len(oldS.IfFalseSteps))
-				for i, s := range oldS.IfFalseSteps {
-					oldIDs[i] = s.GetID()
-				}
-				newIDs := make([]string, len(newS.IfFalseSteps))
-				for i, s := range newS.IfFalseSteps {
-					newIDs[i] = s.GetID()
-				}
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".if_false_steps",
-					OldValue: fmt.Sprintf("%d steps: %v", len(oldIDs), oldIDs),
-					NewValue: fmt.Sprintf("%d steps: %v", len(newIDs), newIDs),
-				})
-			}
-		}
-
 	}
 }
 
@@ -2648,50 +2432,6 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		// Validation schema is LLM-generated only - no code-based auto-generation
 		return &updated
 
-	case *ConditionalPlanStep:
-		updated := *step
-		if partialUpdate.Title != "" {
-			updated.Title = partialUpdate.Title
-		}
-		if partialUpdate.ConditionQuestion != "" {
-			updated.ConditionQuestion = partialUpdate.ConditionQuestion
-		}
-		if partialUpdate.ConditionContext != "" {
-			updated.ConditionContext = partialUpdate.ConditionContext
-		}
-		if partialUpdate.IfTrueSteps != nil {
-			// Convert map[string]interface{} to PlanStepInterface
-			updated.IfTrueSteps = make([]PlanStepInterface, len(partialUpdate.IfTrueSteps))
-			for i, stepMap := range partialUpdate.IfTrueSteps {
-				converted, err := convertMapToStep(stepMap)
-				if err != nil {
-					// If conversion fails, we can't update - return original
-					return existingStep
-				}
-				updated.IfTrueSteps[i] = converted
-			}
-		}
-		if partialUpdate.IfFalseSteps != nil {
-			updated.IfFalseSteps = make([]PlanStepInterface, len(partialUpdate.IfFalseSteps))
-			for i, stepMap := range partialUpdate.IfFalseSteps {
-				converted, err := convertMapToStep(stepMap)
-				if err != nil {
-					return existingStep
-				}
-				updated.IfFalseSteps[i] = converted
-			}
-		}
-		if partialUpdate.IfTrueNextStepID != "" {
-			updated.IfTrueNextStepID = partialUpdate.IfTrueNextStepID
-		}
-		if partialUpdate.IfFalseNextStepID != "" {
-			updated.IfFalseNextStepID = partialUpdate.IfFalseNextStepID
-		}
-		if partialUpdate.ValidationSchema != nil {
-			updated.ValidationSchema = partialUpdate.ValidationSchema
-		}
-		return &updated
-
 	case *HumanInputPlanStep:
 		updated := *step
 		if partialUpdate.Title != "" {
@@ -2751,15 +2491,6 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		if partialUpdate.Items != nil {
 			updated.Items = partialUpdate.Items
-		}
-		if partialUpdate.SessionMode != "" {
-			updated.SessionMode = partialUpdate.SessionMode
-		}
-		if partialUpdate.ConversationScope != "" {
-			updated.ConversationScope = partialUpdate.ConversationScope
-		}
-		if partialUpdate.ReentryPolicy != "" {
-			updated.ReentryPolicy = partialUpdate.ReentryPolicy
 		}
 		if partialUpdate.NextStepID != "" {
 			updated.NextStepID = partialUpdate.NextStepID
@@ -2823,6 +2554,9 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 				updated.PredefinedRoutes[i] = route
 			}
 		}
+		if partialUpdate.Messages != nil {
+			updated.Messages = partialUpdate.Messages
+		}
 		if partialUpdate.NextStepID != "" {
 			updated.NextStepID = partialUpdate.NextStepID
 		}
@@ -2877,13 +2611,6 @@ func findStepByID(steps []PlanStepInterface, id string) (PlanStepInterface, int,
 
 		// Search in nested structures
 		switch s := step.(type) {
-		case *ConditionalPlanStep:
-			if foundStep, idx, slice := findStepByID(s.IfTrueSteps, id); foundStep != nil {
-				return foundStep, idx, slice
-			}
-			if foundStep, idx, slice := findStepByID(s.IfFalseSteps, id); foundStep != nil {
-				return foundStep, idx, slice
-			}
 		case *TodoTaskPlanStep:
 			for _, route := range s.PredefinedRoutes {
 				if route.SubAgentStep != nil {
@@ -2908,13 +2635,6 @@ func updateStepRecursively(steps []PlanStepInterface, partialUpdate PartialPlanS
 
 		// Recursively search and update in nested structures
 		switch s := step.(type) {
-		case *ConditionalPlanStep:
-			if updated, _ := updateStepRecursively(s.IfTrueSteps, partialUpdate, fieldChanges); updated {
-				return true, i // Return parent index for learning unlock purposes (simplified)
-			}
-			if updated, _ := updateStepRecursively(s.IfFalseSteps, partialUpdate, fieldChanges); updated {
-				return true, i
-			}
 		case *TodoTaskPlanStep:
 			for j := range s.PredefinedRoutes {
 				if s.PredefinedRoutes[j].SubAgentStep != nil {
@@ -3009,180 +2729,7 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			NewValue: string(newBytes),
 		})
 	}
-	if partialUpdate.SessionMode != "" {
-		changedFields = append(changedFields, "session_mode")
-		oldValue := ""
-		if sequenceStep, ok := existingStep.(*MessageSequencePlanStep); ok {
-			oldValue = sequenceStep.SessionMode
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{StepID: partialUpdate.ExistingStepID, Field: "session_mode", OldValue: oldValue, NewValue: partialUpdate.SessionMode})
-	}
-	if partialUpdate.ConversationScope != "" {
-		changedFields = append(changedFields, "conversation_scope")
-		oldValue := ""
-		if sequenceStep, ok := existingStep.(*MessageSequencePlanStep); ok {
-			oldValue = sequenceStep.ConversationScope
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{StepID: partialUpdate.ExistingStepID, Field: "conversation_scope", OldValue: oldValue, NewValue: partialUpdate.ConversationScope})
-	}
-	if partialUpdate.ReentryPolicy != "" {
-		changedFields = append(changedFields, "reentry_policy")
-		oldValue := ""
-		if sequenceStep, ok := existingStep.(*MessageSequencePlanStep); ok {
-			oldValue = sequenceStep.ReentryPolicy
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{StepID: partialUpdate.ExistingStepID, Field: "reentry_policy", OldValue: oldValue, NewValue: partialUpdate.ReentryPolicy})
-	}
 	// Loop fields ignored (feature removed)
-	// Conditional step fields
-	if partialUpdate.ConditionQuestion != "" {
-		changedFields = append(changedFields, "condition_question")
-		oldConditionQuestion := ""
-		if conditionalStep, ok := existingStep.(*ConditionalPlanStep); ok {
-			oldConditionQuestion = conditionalStep.ConditionQuestion
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "condition_question",
-			OldValue: oldConditionQuestion,
-			NewValue: partialUpdate.ConditionQuestion,
-		})
-	}
-	if partialUpdate.ConditionContext != "" {
-		changedFields = append(changedFields, "condition_context")
-		oldConditionContext := ""
-		if conditionalStep, ok := existingStep.(*ConditionalPlanStep); ok {
-			oldConditionContext = conditionalStep.ConditionContext
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "condition_context",
-			OldValue: oldConditionContext,
-			NewValue: partialUpdate.ConditionContext,
-		})
-	}
-	if partialUpdate.IfTrueSteps != nil {
-		changedFields = append(changedFields, "if_true_steps")
-		// Get old steps
-		var oldSteps []PlanStepInterface
-		if conditionalStep, ok := existingStep.(*ConditionalPlanStep); ok {
-			oldSteps = conditionalStep.IfTrueSteps
-		}
-		// Convert new steps from maps to PlanStepInterface
-		newSteps := make([]PlanStepInterface, 0, len(partialUpdate.IfTrueSteps))
-		for _, stepMap := range partialUpdate.IfTrueSteps {
-			converted, err := convertMapToStep(stepMap)
-			if err == nil {
-				newSteps = append(newSteps, converted)
-			}
-		}
-		// Compare steps in detail
-		maxLen := len(oldSteps)
-		if len(newSteps) > maxLen {
-			maxLen = len(newSteps)
-		}
-		for i := 0; i < maxLen; i++ {
-			stepPrefix := fmt.Sprintf("if_true_steps[%d]", i)
-			if i >= len(oldSteps) {
-				// New step added
-				if i < len(newSteps) {
-					newStepJSON, _ := json.Marshal(newSteps[i])
-					*fieldChanges = append(*fieldChanges, PlanFieldChange{
-						StepID:   partialUpdate.ExistingStepID,
-						Field:    stepPrefix,
-						OldValue: nil,
-						NewValue: string(newStepJSON),
-					})
-				}
-			} else if i >= len(newSteps) {
-				// Step removed
-				oldStepJSON, _ := json.Marshal(oldSteps[i])
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    stepPrefix,
-					OldValue: string(oldStepJSON),
-					NewValue: nil,
-				})
-			} else {
-				// Step modified - compare fields
-				compareNestedStepFields(oldSteps[i], newSteps[i], partialUpdate.ExistingStepID, stepPrefix, fieldChanges)
-			}
-		}
-	}
-	if partialUpdate.IfFalseSteps != nil {
-		changedFields = append(changedFields, "if_false_steps")
-		// Get old steps
-		var oldSteps []PlanStepInterface
-		if conditionalStep, ok := existingStep.(*ConditionalPlanStep); ok {
-			oldSteps = conditionalStep.IfFalseSteps
-		}
-		// Convert new steps from maps to PlanStepInterface
-		newSteps := make([]PlanStepInterface, 0, len(partialUpdate.IfFalseSteps))
-		for _, stepMap := range partialUpdate.IfFalseSteps {
-			converted, err := convertMapToStep(stepMap)
-			if err == nil {
-				newSteps = append(newSteps, converted)
-			}
-		}
-		// Compare steps in detail
-		maxLen := len(oldSteps)
-		if len(newSteps) > maxLen {
-			maxLen = len(newSteps)
-		}
-		for i := 0; i < maxLen; i++ {
-			stepPrefix := fmt.Sprintf("if_false_steps[%d]", i)
-			if i >= len(oldSteps) {
-				// New step added
-				if i < len(newSteps) {
-					newStepJSON, _ := json.Marshal(newSteps[i])
-					*fieldChanges = append(*fieldChanges, PlanFieldChange{
-						StepID:   partialUpdate.ExistingStepID,
-						Field:    stepPrefix,
-						OldValue: nil,
-						NewValue: string(newStepJSON),
-					})
-				}
-			} else if i >= len(newSteps) {
-				// Step removed
-				oldStepJSON, _ := json.Marshal(oldSteps[i])
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    stepPrefix,
-					OldValue: string(oldStepJSON),
-					NewValue: nil,
-				})
-			} else {
-				// Step modified - compare fields
-				compareNestedStepFields(oldSteps[i], newSteps[i], partialUpdate.ExistingStepID, stepPrefix, fieldChanges)
-			}
-		}
-	}
-	if partialUpdate.IfTrueNextStepID != "" {
-		changedFields = append(changedFields, "if_true_next_step_id")
-		oldIfTrueNextStepID := ""
-		if conditionalStep, ok := existingStep.(*ConditionalPlanStep); ok {
-			oldIfTrueNextStepID = conditionalStep.IfTrueNextStepID
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "if_true_next_step_id",
-			OldValue: oldIfTrueNextStepID,
-			NewValue: partialUpdate.IfTrueNextStepID,
-		})
-	}
-	if partialUpdate.IfFalseNextStepID != "" {
-		changedFields = append(changedFields, "if_false_next_step_id")
-		oldIfFalseNextStepID := ""
-		if conditionalStep, ok := existingStep.(*ConditionalPlanStep); ok {
-			oldIfFalseNextStepID = conditionalStep.IfFalseNextStepID
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "if_false_next_step_id",
-			OldValue: oldIfFalseNextStepID,
-			NewValue: partialUpdate.IfFalseNextStepID,
-		})
-	}
 	// Legacy todo_task_step field — extract fields and track them as top-level changes
 	if partialUpdate.TodoTaskStep != nil {
 		if desc, ok := partialUpdate.TodoTaskStep["description"].(string); ok && desc != "" {
@@ -4114,6 +3661,28 @@ func validateTodoTaskStepFieldsTyped(step *TodoTaskPlanStep) error {
 	if err := validateTodoTaskNestingDepth(step, 0); err != nil {
 		return err
 	}
+	for i, m := range step.Messages {
+		mType := strings.TrimSpace(m.Type)
+		switch mType {
+		case "", "message", "user_message":
+			if strings.TrimSpace(m.Message) == "" {
+				return fmt.Errorf("step (title: %q, ID: %s) messages[%d] is a message entry but has an empty message", step.Title, step.ID, i)
+			}
+		case "prevalidation":
+			if m.ValidationSchema == nil {
+				return fmt.Errorf("step (title: %q, ID: %s) messages[%d] is a prevalidation entry but has no validation_schema", step.Title, step.ID, i)
+			}
+		case "foreach":
+			if strings.TrimSpace(m.Source) == "" {
+				return fmt.Errorf("step (title: %q, ID: %s) messages[%d] is a foreach entry but has no source", step.Title, step.ID, i)
+			}
+			if strings.TrimSpace(m.Message) == "" {
+				return fmt.Errorf("step (title: %q, ID: %s) messages[%d] is a foreach entry but has no message (the per-row template)", step.Title, step.ID, i)
+			}
+		default:
+			return fmt.Errorf("step (title: %q, ID: %s) messages[%d] has unsupported type %q (use message, prevalidation, or foreach)", step.Title, step.ID, i, mType)
+		}
+	}
 	return nil
 }
 
@@ -4162,6 +3731,13 @@ func validateMessageSequenceStepFieldsTyped(step *MessageSequencePlanStep) error
 			if item.ValidationSchema == nil && item.Prevalidation == nil && step.ValidationSchema == nil {
 				return fmt.Errorf("message_sequence step %q item %q is prevalidation but no validation_schema/prevalidation exists", step.ID, item.ID)
 			}
+		case "foreach":
+			if strings.TrimSpace(item.Source) == "" {
+				return fmt.Errorf("message_sequence step %q item %q is foreach but source is empty", step.ID, item.ID)
+			}
+			if strings.TrimSpace(item.Message) == "" {
+				return fmt.Errorf("message_sequence step %q item %q is foreach but message (the per-row template) is empty", step.ID, item.ID)
+			}
 		default:
 			return fmt.Errorf("message_sequence step %q item %q has unsupported type %q", step.ID, item.ID, item.Type)
 		}
@@ -4172,11 +3748,6 @@ func validateMessageSequenceStepFieldsTyped(step *MessageSequencePlanStep) error
 func setStepIdentity(step PlanStepInterface, id, title string) error {
 	switch s := step.(type) {
 	case *RegularPlanStep:
-		s.ID = id
-		if strings.TrimSpace(s.Title) == "" {
-			s.Title = title
-		}
-	case *ConditionalPlanStep:
 		s.ID = id
 		if strings.TrimSpace(s.Title) == "" {
 			s.Title = title
@@ -4255,17 +3826,6 @@ func migrateTodoRouteIDsInStep(step PlanStepInterface, parentStepFilter string, 
 				if err := migrateTodoRouteIDsInStep(route.SubAgentStep, parentStepFilter, changes); err != nil {
 					return err
 				}
-			}
-		}
-	case *ConditionalPlanStep:
-		for _, nested := range s.IfTrueSteps {
-			if err := migrateTodoRouteIDsInStep(nested, parentStepFilter, changes); err != nil {
-				return err
-			}
-		}
-		for _, nested := range s.IfFalseSteps {
-			if err := migrateTodoRouteIDsInStep(nested, parentStepFilter, changes); err != nil {
-				return err
 			}
 		}
 	}
@@ -4348,17 +3908,6 @@ func validateTodoTaskNestingDepth(step PlanStepInterface, todoRouteDepth int) er
 			}
 			if err := validateTodoTaskNestingDepth(route.SubAgentStep, todoRouteDepth+1); err != nil {
 				return fmt.Errorf("predefined_route[%d] (route_id: %s): %w", i, route.RouteID, err)
-			}
-		}
-	case *ConditionalPlanStep:
-		for i, nested := range s.IfTrueSteps {
-			if err := validateTodoTaskNestingDepth(nested, todoRouteDepth); err != nil {
-				return fmt.Errorf("conditional if_true_steps[%d]: %w", i, err)
-			}
-		}
-		for i, nested := range s.IfFalseSteps {
-			if err := validateTodoTaskNestingDepth(nested, todoRouteDepth); err != nil {
-				return fmt.Errorf("conditional if_false_steps[%d]: %w", i, err)
 			}
 		}
 	}

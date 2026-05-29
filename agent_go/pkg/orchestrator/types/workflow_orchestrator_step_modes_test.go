@@ -506,10 +506,373 @@ func TestWorkflowScriptedStepConfigIDMismatchNotApplied(t *testing.T) {
 	t.Logf("✅ step_config.json with mismatched id: no learn_code artifacts written")
 }
 
-// min is the local int helper used by the main.py text snippet log.
-func min(a, b int) int {
-	if a < b {
-		return a
+// ──────────────────────────────────────────────────────────────────────
+// foreach — data-driven message expansion (message_sequence + todo_task)
+
+// TestWorkflowMessageSequenceForeach proves a `foreach` item expands a db
+// JSON array into ONE user_message turn per row, deterministically, through
+// the same conversation. An earlier step's data (here: a pre-seeded
+// db/foreach_rows.json) drives the turns — the producer/consumer pattern.
+//
+// Asserts, like the multi-item test:
+//
+//	(1) >= one human turn per row (proves the runtime looped, not the LLM);
+//	(2) each row's token appears in exactly one ai turn, in row order.
+//
+// Gated on the same env as the other e2e tests (RUN_WORKFLOW_REAL_E2E + a
+// real provider). No-ops otherwise.
+func TestWorkflowMessageSequenceForeach(t *testing.T) {
+	wo, cleanup, ok := buildEdgeCaseOrchestrator(t)
+	if !ok {
+		return
 	}
-	return b
+	defer cleanup()
+
+	// Producer artifact: a db array a prior step would have written.
+	rows := []map[string]string{
+		{"id": "alpha", "token": "ROW_ALPHA"},
+		{"id": "bravo", "token": "ROW_BRAVO"},
+		{"id": "charlie", "token": "ROW_CHARLIE"},
+	}
+	if err := os.MkdirAll(filepath.Join(wo.workspaceDisk, "db"), 0o755); err != nil {
+		t.Fatalf("mkdir db: %v", err)
+	}
+	if err := writeJSON(filepath.Join(wo.workspaceDisk, "db", "foreach_rows.json"), rows); err != nil {
+		t.Fatalf("write db/foreach_rows.json: %v", err)
+	}
+
+	writeEdgePlan(t, wo.workspaceDisk, map[string]interface{}{
+		"steps": []map[string]interface{}{
+			{
+				"type":                 "message_sequence",
+				"id":                   "foreach-seq",
+				"title":                "Foreach over db rows",
+				"description":          "Process every row of db/foreach_rows.json, one turn each",
+				"context_dependencies": []string{},
+				"context_output":       "fe.json",
+				"items": []map[string]interface{}{
+					{
+						"id":      "loop",
+						"type":    "foreach",
+						"title":   "Per-row turn",
+						"source":  "db/foreach_rows.json",
+						"message": "This is row {{.id}}. Reply with EXACTLY the line {{.token}} on a line by itself and stop. Do not write any code; do not call any tools.",
+					},
+				},
+				"next_step_id": "end",
+			},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	if _, err := wo.orchestrator.Execute(ctx, "Foreach message sequence", wo.workspaceRel, map[string]interface{}{
+		"workflowStatus": workflowtypes.WorkflowStatusPreVerification,
+	}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	sess := loadSessionJSON(t, wo.workspaceDisk, "foreach-seq")
+	if sess.Status != "completed" {
+		t.Errorf("session.status = %q, want completed", sess.Status)
+	}
+
+	humans := sess.roleTurns("human")
+	if len(humans) < len(rows) {
+		t.Fatalf("expected >=%d human turns (one per row); got %d — foreach did not expand per row", len(rows), len(humans))
+	}
+
+	wantTokens := []string{"ROW_ALPHA", "ROW_BRAVO", "ROW_CHARLIE"}
+	ais := sess.roleTurns("ai")
+	tokenTurn := make(map[string]int)
+	for _, tok := range wantTokens {
+		for i, ai := range ais {
+			if strings.Contains(ai.text(), tok) {
+				tokenTurn[tok] = i
+				break
+			}
+		}
+		if _, ok := tokenTurn[tok]; !ok {
+			t.Errorf("token %q not in any ai turn — that row didn't run or the LLM didn't follow the prompt", tok)
+		}
+	}
+	if len(tokenTurn) == len(wantTokens) {
+		if !(tokenTurn["ROW_ALPHA"] < tokenTurn["ROW_BRAVO"] && tokenTurn["ROW_BRAVO"] < tokenTurn["ROW_CHARLIE"]) {
+			t.Errorf("rows ran out of order: alpha=%d bravo=%d charlie=%d", tokenTurn["ROW_ALPHA"], tokenTurn["ROW_BRAVO"], tokenTurn["ROW_CHARLIE"])
+		}
+	}
+	t.Logf("✅ foreach message_sequence: %d human turns, %d ai turns, token→turn: %v", len(humans), len(ais), tokenTurn)
+}
+
+// TestWorkflowTodoTaskForeachMessages proves a todo_task step's scripted
+// `messages` with a `foreach` entry feeds ONE orchestrator turn per db row.
+// Assertion reads the todo_task execution logs (which capture each turn's
+// conversation_history) and checks every row's token appears.
+//
+// Gated like the other e2e tests; no-ops otherwise.
+func TestWorkflowTodoTaskForeachMessages(t *testing.T) {
+	wo, cleanup, ok := buildEdgeCaseOrchestrator(t)
+	if !ok {
+		return
+	}
+	defer cleanup()
+
+	rows := []map[string]string{
+		{"id": "t1", "token": "ORCH_ROW_ONE"},
+		{"id": "t2", "token": "ORCH_ROW_TWO"},
+	}
+	if err := os.MkdirAll(filepath.Join(wo.workspaceDisk, "db"), 0o755); err != nil {
+		t.Fatalf("mkdir db: %v", err)
+	}
+	if err := writeJSON(filepath.Join(wo.workspaceDisk, "db", "orch_rows.json"), rows); err != nil {
+		t.Fatalf("write db/orch_rows.json: %v", err)
+	}
+
+	const stepID = "orch-foreach"
+	writeEdgePlan(t, wo.workspaceDisk, map[string]interface{}{
+		"steps": []map[string]interface{}{
+			{
+				"type":                 "todo_task",
+				"id":                   stepID,
+				"title":                "Orchestrator foreach over db rows",
+				"description":          "You are answering a short scripted sequence. There are no tasks to delegate; for each instruction simply reply exactly as asked.",
+				"context_dependencies": []string{},
+				"context_output":       "orch.json",
+				"messages": []map[string]interface{}{
+					{
+						"id":      "rows",
+						"type":    "foreach",
+						"source":  "db/orch_rows.json",
+						"message": "Acknowledge row {{.id}} by replying with EXACTLY the line {{.token}} on a line by itself and stop.",
+					},
+				},
+				"next_step_id": "end",
+			},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	if _, err := wo.orchestrator.Execute(ctx, "Orchestrator foreach", wo.workspaceRel, map[string]interface{}{
+		"workflowStatus": workflowtypes.WorkflowStatusPreVerification,
+	}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Read every todo_task execution log for this step and concatenate.
+	pat := filepath.Join(wo.workspaceDisk, "runs", "*", "*", "logs", stepID, "execution", "execution-attempt-*-iteration-*.json")
+	matches, _ := filepath.Glob(pat)
+	if len(matches) == 0 {
+		t.Fatalf("no todo_task execution logs under %s — step did not run", pat)
+	}
+	var all strings.Builder
+	for _, m := range matches {
+		b, err := os.ReadFile(m)
+		if err != nil {
+			t.Fatalf("read log %s: %v", m, err)
+		}
+		all.Write(b)
+		all.WriteByte('\n')
+	}
+	logs := all.String()
+	for _, r := range rows {
+		if !strings.Contains(logs, r["token"]) {
+			t.Errorf("token %q for row %q not found in any todo_task execution log — foreach row turn did not run or reply", r["token"], r["id"])
+		}
+	}
+	t.Logf("✅ todo_task foreach messages: %d log file(s) scanned, all %d row tokens present", len(matches), len(rows))
+}
+
+// readTodoTaskLogs concatenates every todo_task execution log for a step (each
+// turn — including scripted messages/foreach rows — is logged with its
+// conversation_history).
+func readTodoTaskLogs(t *testing.T, workspaceDisk, stepID string) string {
+	t.Helper()
+	pat := filepath.Join(workspaceDisk, "runs", "*", "*", "logs", stepID, "execution", "execution-attempt-*-iteration-*.json")
+	matches, _ := filepath.Glob(pat)
+	if len(matches) == 0 {
+		t.Fatalf("no todo_task execution logs under %s — step did not run", pat)
+	}
+	var b strings.Builder
+	for _, m := range matches {
+		c, err := os.ReadFile(m)
+		if err != nil {
+			t.Fatalf("read log %s: %v", m, err)
+		}
+		b.Write(c)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// TestWorkflowTodoTaskScriptedMessages covers the plain (type=message) scripted
+// `messages` happy path: after the orchestrator's first turn, each scripted
+// message is fed into the SAME conversation, in order. Gated like the others.
+func TestWorkflowTodoTaskScriptedMessages(t *testing.T) {
+	wo, cleanup, ok := buildEdgeCaseOrchestrator(t)
+	if !ok {
+		return
+	}
+	defer cleanup()
+
+	const stepID = "orch-scripted"
+	writeEdgePlan(t, wo.workspaceDisk, map[string]interface{}{
+		"steps": []map[string]interface{}{
+			{
+				"type":                 "todo_task",
+				"id":                   stepID,
+				"title":                "Scripted orchestrator messages",
+				"description":          "You are answering a short scripted Q&A. There is nothing to delegate; reply to each instruction exactly as asked.",
+				"context_dependencies": []string{},
+				"context_output":       "os.json",
+				"messages": []map[string]interface{}{
+					{"id": "m1", "type": "message", "message": "Reply with EXACTLY the line SCRIPTED_ONE on a line by itself and stop."},
+					{"id": "m2", "type": "message", "message": "Now reply with EXACTLY the line SCRIPTED_TWO on a line by itself and stop."},
+				},
+				"next_step_id": "end",
+			},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	if _, err := wo.orchestrator.Execute(ctx, "scripted messages", wo.workspaceRel, map[string]interface{}{
+		"workflowStatus": workflowtypes.WorkflowStatusPreVerification,
+	}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	logs := readTodoTaskLogs(t, wo.workspaceDisk, stepID)
+	for _, tok := range []string{"SCRIPTED_ONE", "SCRIPTED_TWO"} {
+		if !strings.Contains(logs, tok) {
+			t.Errorf("token %q not found in todo_task logs — scripted message turn did not run/reply", tok)
+		}
+	}
+	t.Logf("✅ todo_task scripted messages: both scripted-turn tokens present")
+}
+
+// TestWorkflowTodoTaskPrevalidationGate covers the prevalidation-gate happy
+// path on todo_task `messages`: a scripted turn runs, then a prevalidation gate
+// passes (the required artifact is present) and the step completes. The artifact
+// is pre-seeded so "gate passes → sequence continues" is deterministic (the
+// failure/corrective-retry path is a separate concern).
+func TestWorkflowTodoTaskPrevalidationGate(t *testing.T) {
+	wo, cleanup, ok := buildEdgeCaseOrchestrator(t)
+	if !ok {
+		return
+	}
+	defer cleanup()
+
+	const stepID = "orch-gate"
+	// Pre-seed the file the gate checks in the workflow-root db/ store — a stable,
+	// non-run-scoped path (so we don't have to guess the run folder, and we don't
+	// perturb run-folder selection by pre-creating runs/).
+	if err := os.MkdirAll(filepath.Join(wo.workspaceDisk, "db"), 0o755); err != nil {
+		t.Fatalf("mkdir db: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wo.workspaceDisk, "db", "gate.txt"), []byte("DONE\n"), 0o644); err != nil {
+		t.Fatalf("write db/gate.txt: %v", err)
+	}
+
+	writeEdgePlan(t, wo.workspaceDisk, map[string]interface{}{
+		"steps": []map[string]interface{}{
+			{
+				"type":                 "todo_task",
+				"id":                   stepID,
+				"title":                "Prevalidation gate (happy path)",
+				"description":          "Reply briefly. Do not delegate.",
+				"context_dependencies": []string{},
+				"context_output":       "og.json",
+				"messages": []map[string]interface{}{
+					{"id": "say", "type": "message", "message": "Reply with EXACTLY the line GATE_OK on a line by itself and stop."},
+					{"id": "gate", "type": "prevalidation", "validation_schema": map[string]interface{}{
+						"files": []map[string]interface{}{
+							{"file_name": "db/gate.txt", "must_exist": true},
+						},
+					}},
+				},
+				"next_step_id": "end",
+			},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+	if _, err := wo.orchestrator.Execute(ctx, "prevalidation gate", wo.workspaceRel, map[string]interface{}{
+		"workflowStatus": workflowtypes.WorkflowStatusPreVerification,
+	}); err != nil {
+		t.Fatalf("Execute returned error (gate should pass with pre-seeded gate.txt): %v", err)
+	}
+
+	logs := readTodoTaskLogs(t, wo.workspaceDisk, stepID)
+	if !strings.Contains(logs, "GATE_OK") {
+		t.Errorf("GATE_OK not in todo_task logs — the scripted turn before the gate did not run")
+	}
+	t.Logf("✅ todo_task prevalidation gate: scripted turn ran and the gate passed")
+}
+
+// TestWorkflowMessageSequenceRouteReentry covers the headline of the (b2)
+// persistence refactor: a message_sequence used as a todo_task ROUTE remembers
+// its conversation across the orchestrator's repeated calls (in-memory,
+// run-scoped). The orchestrator is told to call the route twice — seed a secret
+// word, then ask for it back — and we assert the route's LAST reply recalls the
+// word, which is only possible if call #2 saw call #1's context.
+func TestWorkflowMessageSequenceRouteReentry(t *testing.T) {
+	wo, cleanup, ok := buildEdgeCaseOrchestrator(t)
+	if !ok {
+		return
+	}
+	defer cleanup()
+
+	writeEdgePlan(t, wo.workspaceDisk, map[string]interface{}{
+		"steps": []map[string]interface{}{
+			{
+				"type":                 "todo_task",
+				"id":                   "reentry-orch",
+				"title":                "Route re-entry memory",
+				"description":          "You coordinate a memory specialist sub-agent called 'recaller'. You MUST call sub-agent 'recaller' exactly TWICE, in order, and do nothing else: (1) FIRST call — instruct recaller to remember the secret word KANGAROO. (2) SECOND call — ask recaller ONLY 'What is the secret word you were told to remember?'. Then finish. Never state the word yourself.",
+				"context_dependencies": []string{},
+				"context_output":       "rt.json",
+				"predefined_routes": []map[string]interface{}{
+					{
+						"route_id":   "recaller",
+						"route_name": "Recaller",
+						"condition":  "Remembers and recalls a secret word across calls",
+						"sub_agent_step": map[string]interface{}{
+							"type":                 "message_sequence",
+							"id":                   "recaller",
+							"title":                "Recaller",
+							"description":          "You are a memory specialist. Follow each instruction and keep all prior context across turns. Reply concisely.",
+							"context_dependencies": []string{},
+							"context_output":       "rc.json",
+							"items": []map[string]interface{}{
+								{"id": "ack", "type": "user_message", "message": "Acknowledge the instruction you were just given with a one-line confirmation."},
+							},
+							"next_step_id": "end",
+						},
+					},
+				},
+				"next_step_id": "end",
+			},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if _, err := wo.orchestrator.Execute(ctx, "route reentry memory", wo.workspaceRel, map[string]interface{}{
+		"workflowStatus": workflowtypes.WorkflowStatusPreVerification,
+	}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	sess := loadSessionJSON(t, wo.workspaceDisk, "recaller")
+	ais := sess.roleTurns("ai")
+	if len(ais) < 2 {
+		t.Fatalf("recaller had %d ai turn(s); expected >=2 (orchestrator should have called it twice) — cannot prove route memory", len(ais))
+	}
+	last := strings.ToUpper(ais[len(ais)-1].text())
+	if !strings.Contains(last, "KANGAROO") {
+		t.Errorf("recaller's final reply did not recall KANGAROO — route did NOT remember across calls (b2 in-memory route memory broken).\nfinal reply: %s", ais[len(ais)-1].text())
+	}
+	t.Logf("✅ route re-entry: recaller had %d ai turns and recalled the secret word across calls", len(ais))
 }

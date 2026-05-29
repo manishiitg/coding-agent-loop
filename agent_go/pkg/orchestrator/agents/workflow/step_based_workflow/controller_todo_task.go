@@ -94,7 +94,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	readPaths := []string{executionWorkspacePath, dbPath}
 	writePaths := []string{executionWorkspacePath, dbPath}
 	if learningsAccessForGuard != LearningsAccessNone {
-		readPaths = append(readPaths, filepath.Join(baseWorkspacePath, "learnings", GlobalLearningID))
+		globalLearningsPath := filepath.Join(baseWorkspacePath, "learnings", GlobalLearningID)
+		readPaths = append(readPaths, globalLearningsPath)
+		// Unlike regular steps (which write learnings in a dedicated post-step turn),
+		// the orchestrator writes its stores directly via the folder guard — same as it
+		// does for knowledgebase/notes below. Grant learnings write when access is read-write.
+		if learningsAccessForGuard == LearningsAccessReadWrite {
+			writePaths = append(writePaths, globalLearningsPath)
+		}
 	}
 	if kbAccessAllowsRead(kbAccessForGuard) {
 		readPaths = append(readPaths, getKnowledgebasePath(baseWorkspacePath))
@@ -366,6 +373,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		// Log execution
 		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, retryAttempt-1, executionLLM, updatedHistory, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
 
+		// Drive the optional scripted message sequence through the SAME orchestrator
+		// conversation. First attempt only — retries continue the conversation with
+		// validation feedback and must not replay the scripted messages.
+		if retryAttempt == 1 && len(todoTaskStep.Messages) > 0 {
+			if msErr := hcpo.runTodoTaskMessageSequence(ctx, todoTaskStep, stepIndex, todoTaskStepPath, stepExecutionPath, todoTaskAgent, &conversationHistory); msErr != nil {
+				return false, "", fmt.Errorf("todo task message sequence failed: %w", msErr)
+			}
+		}
+
 		// Run pre-validation if schema exists
 		if validationSchema != nil {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running pre-validation after execution (attempt %d/%d)", retryAttempt, maxRetryAttempts))
@@ -408,6 +424,135 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 	// Should not reach here, but handle gracefully
 	return false, todoTaskStep.NextStepID, nil
+}
+
+// runTodoTaskMessageSequence drives a todo_task step's optional scripted message sequence.
+// After the orchestrator's first turn, each message entry is fed into the SAME orchestrator
+// conversation (so it keeps working with full memory of prior turns and sub-agent results),
+// and each prevalidation entry is a hard gate between turns. A failed gate is fed back to the
+// orchestrator as a corrective turn and re-checked up to max_corrections times. Everything
+// runs within one execution — no persistence, no re-entry.
+func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskMessageSequence(
+	ctx context.Context,
+	step *TodoTaskPlanStep,
+	stepIndex int,
+	stepPath string,
+	stepExecutionPath string,
+	agent orchestratoragents.OrchestratorAgent,
+	conversationHistory *[]llmtypes.MessageContent,
+) error {
+	ba := agent.GetBaseAgent()
+	if ba == nil {
+		return fmt.Errorf("todo task orchestrator has no base agent for message sequence")
+	}
+	executionLLM := agentConfigModelLabel(agent.GetConfig())
+
+	// runTurn feeds one user turn into the SAME orchestrator conversation, captures timing,
+	// and logs it. logSeq starts past the retry-attempt indices to avoid log-file collisions.
+	logSeq := 100
+	runTurn := func(text string) error {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return nil
+		}
+		if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+			cab.StartTimingCapture()
+		}
+		startedAt := time.Now().UTC()
+		_, updated, err := ba.Execute(ctx, text, *conversationHistory, "", false)
+		completedAt := time.Now().UTC()
+		var toolCalls []orchestrator.ToolCallEntry
+		var llmCalls []orchestrator.LLMCallEntry
+		if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+			tc := cab.DrainTimingCapture()
+			toolCalls = tc.ToolCalls
+			llmCalls = tc.LLMCalls
+		}
+		if err != nil {
+			return err
+		}
+		*conversationHistory = updated
+		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), stepPath, logSeq, executionLLM, updated, toolCalls, llmCalls, startedAt, completedAt, completedAt.Sub(startedAt))
+		logSeq++
+		return nil
+	}
+
+	for i, m := range step.Messages {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("todo task message sequence canceled: %w", ctx.Err())
+		default:
+		}
+
+		mType := strings.TrimSpace(m.Type)
+		if mType == "" {
+			mType = "message"
+		}
+		switch mType {
+		case "message", "user_message":
+			hcpo.GetLogger().Info(fmt.Sprintf("💬 Todo task scripted message %d/%d for step %d", i+1, len(step.Messages), stepIndex+1))
+			if err := runTurn(m.Message); err != nil {
+				return fmt.Errorf("todo task scripted message %d failed: %w", i+1, err)
+			}
+
+		case "foreach":
+			rows, err := hcpo.expandForeach(ctx, m.Source, m.SourcePath, m.Message, m.MaxIterations)
+			if err != nil {
+				return fmt.Errorf("todo task foreach (messages[%d]): %w", i, err)
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("🔁 Todo task foreach (messages[%d]) for step %d: %d row(s)", i, stepIndex+1, len(rows)))
+			for ridx, rowMsg := range rows {
+				select {
+				case <-ctx.Done():
+					return fmt.Errorf("todo task foreach (messages[%d]) canceled: %w", i, ctx.Err())
+				default:
+				}
+				if err := runTurn(rowMsg); err != nil {
+					return fmt.Errorf("todo task foreach (messages[%d]) row %d failed: %w", i, ridx, err)
+				}
+			}
+
+		case "prevalidation":
+			schema := m.ValidationSchema
+			if schema == nil {
+				continue
+			}
+			maxCorr := m.MaxCorrections
+			if maxCorr <= 0 {
+				maxCorr = 1
+			}
+			passed := false
+			for attempt := 0; attempt <= maxCorr; attempt++ {
+				res, vErr := RunPreValidation(ctx, schema, stepExecutionPath, hcpo.BaseOrchestrator)
+				if vErr == nil && res != nil && res.OverallPass {
+					passed = true
+					break
+				}
+				if attempt >= maxCorr {
+					break
+				}
+				feedback := "Pre-validation gate failed. Fix the issues below, then make sure the required outputs exist before continuing."
+				if res != nil {
+					feedback += "\n\n" + formatWorkspaceResults(res)
+				} else if vErr != nil {
+					feedback = fmt.Sprintf("Pre-validation gate could not run: %v. Ensure the required outputs exist before continuing.", vErr)
+				}
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Todo task gate (messages[%d]) failed for step %d - corrective turn %d/%d", i, stepIndex+1, attempt+1, maxCorr))
+				_, updated, exErr := ba.Execute(ctx, feedback, *conversationHistory, "", false)
+				if exErr != nil {
+					return fmt.Errorf("todo task gate %d correction turn failed: %w", i+1, exErr)
+				}
+				*conversationHistory = updated
+			}
+			if !passed {
+				return fmt.Errorf("todo task prevalidation gate (messages[%d]) did not pass after %d correction(s)", i, maxCorr)
+			}
+
+		default:
+			return fmt.Errorf("unsupported todo_task message type %q", mType)
+		}
+	}
+	return nil
 }
 
 func formatMessageSequenceRoutePromptBlock(step PlanStepInterface) string {
@@ -487,6 +632,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	fgWritePaths := []string{fgExecPath, fgDBPath}
 	if learningsAccess != LearningsAccessNone {
 		fgReadPaths = append(fgReadPaths, fgGlobalLearningsPath)
+		// Orchestrator writes its stores directly via the folder guard (mirrors KB below).
+		if learningsAccess == LearningsAccessReadWrite {
+			fgWritePaths = append(fgWritePaths, fgGlobalLearningsPath)
+		}
 	}
 	if kbAccessAllowsRead(kbAccess) {
 		fgReadPaths = append(fgReadPaths, fgKnowledgebasePath)
@@ -527,6 +676,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"KbAccess":                  kbAccess,
 		"KbAccessLabel":             kbAccessLabel(kbAccess),
 		"KbWriteMethod":             kbWriteMethod,
+		"LearningsAccess":           learningsAccess,
 		"KnowledgebaseContribution": kbContributionForPrompt(stepConfig),
 		"KBGuidanceBlock":           BuildStepKBGuidance(kbAccess, kbWriteMethod, kbContributionForPrompt(stepConfig)),
 		// Workspace paths and folder guard (consistent with execution agent)
@@ -587,8 +737,6 @@ func routeStepTypeSummary(step PlanStepInterface) string {
 		return "type: todo_task, nested orchestrator"
 	case StepTypeRegular:
 		return "type: regular, stateless worker"
-	case StepTypeConditional:
-		return "type: conditional"
 	case StepTypeRouting:
 		return "type: routing"
 	case StepTypeHumanInput:
@@ -962,10 +1110,6 @@ func cloneStepWithDelegationOverrides(
 ) (PlanStepInterface, error) {
 	switch s := step.(type) {
 	case *RegularPlanStep:
-		stepCopy := *s
-		applyDelegationOverridesToCommonFields(&stepCopy.CommonStepFields, instructions)
-		return &stepCopy, nil
-	case *ConditionalPlanStep:
 		stepCopy := *s
 		applyDelegationOverridesToCommonFields(&stepCopy.CommonStepFields, instructions)
 		return &stepCopy, nil

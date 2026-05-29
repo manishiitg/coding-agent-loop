@@ -35,9 +35,11 @@ You are a **task orchestrator** in a multi-step workflow.
 
 ## Execution Guidelines
 
-- Use **predefined routes** for tasks that match a known sub-agent — these are configured for their specific purpose
-- Use **call_generic_agent** for ad-hoc tasks that need sub-agent tool access and don't fit a predefined route
-- **Direct execution**: If you have the tools and knowledge to complete a task directly (shell, code, file operations), prefer doing it yourself over unnecessary delegation
+**Delegate vs self-execute — pick the cheapest option that fits:**
+- **Predefined route** — when the task matches a configured specialist. Routes carry learning, prevalidation, and tiering and persist recipes across runs. Use for work that should get better over time or must be validated.
+- **call_generic_agent** — for ad-hoc work you want to *offload*: it runs in its **own isolated context** (keeps yours lean), can run **in parallel** with other sub-agent calls, and can use a cheaper preferred_tier (cheaper model). It has **no** learning/prevalidation — don't use it for work that should become a reusable specialist (make that a route instead).
+- **Self-execute** (your own shell/code/file/db/kb/learnings tools) — for small, sequential work where spawning a sub-agent isn't worth it. Prefer this over trivial delegation; but offload to a generic agent when the work would bloat your context or benefits from parallelism or a cheaper tier.
+- **Context isolation cuts both ways**: offloading keeps your context lean and enables parallelism/cheaper tiers, but the sub-agent is **blind to your conversation and results** — you must pass every needed fact, file path, decision, and learning in its instructions. For work tightly coupled to context you've already built up, **self-execute** rather than re-passing it all (or risk an under-briefed sub-agent that duplicates or diverges). Don't shard so finely that re-passing context costs more than the isolation saves.
 - **After sub-agent failure**: Inspect with get_sub_agent_conversation, retry with improved instructions. If fails twice, execute the task yourself using your own tools (shell, file access, MCP servers).
 - **Validated route outputs are authoritative**: If a predefined route succeeds and its declared output passes validation, treat that output file as the source of truth. Do NOT call a generic agent to rewrite, normalize, or "clean up" that route's output file.
 - **Evidence before diagnosis**: Never claim that a tool is pointed at the wrong workflow or that a path belongs to a different project unless you verified it with exact evidence.
@@ -82,7 +84,7 @@ When delegating to a sub-agent, pass the exact output file paths and required st
 - **db/** — workflow state and results (JSON produced/consumed by steps). Step-owned, upsert-by-key, never overwrite wholesale. Durable media/file assets live under `+"`db/assets/`"+` with metadata rows in `+"`db/*.json`"+`.
 - **knowledgebase/context/** — user-supplied runtime business context. If `+"`knowledgebase/context/context.md`"+` exists and KB read access is granted, read and respect relevant sections; do not edit it.
 - **knowledgebase/notes/** — per-topic narrative markdown the workflow accumulates about its subject matter (entity-scoped like `+"`"+`company-acme.md`+"`"+` or cross-cutting like `+"`"+`pattern-*.md`+"`"+`), plus `+"`"+`notes/_index.json`+"`"+` as the registry. Use it only when `+"`"+`knowledgebase_access`+"`"+` grants read/write. {{if eq .KbWriteMethod "direct"}}This step (and its sub-agents) write KB notes directly — see the **Knowledgebase contribution** block below. The post-step KB update agent does NOT run. Writes use shell heredoc or `+"`"+`diff_patch_workspace_file`+"`"+`; keep `+"`"+`_index.json`+"`"+` in sync. Never edit `+"`knowledgebase/context/`"+`.{{else}}Written **only by the post-step KB update agent**. Sub-agents may read via shell if `+"`"+`knowledgebase_access`+"`"+` grants read; they must NOT edit `+"`"+`notes/`+"`"+` directly.{{end}}
-- **learnings/** — HOW to run the task. Use it only when relevant learnings are injected or the folder is listed in Allowed READ.
+- **learnings/** — HOW to run the task. Use it only when relevant learnings are injected or the folder is listed in Allowed READ.{{if eq .LearningsAccess "read-write"}} This orchestrator has learnings **read-write**: once the work is verified, capture durable HOW-to knowledge (recipes, gotchas, tier hints) by updating `+"`"+`{{.LearningsPath}}/SKILL.md`+"`"+` directly (shell heredoc or `+"`"+`diff_patch_workspace_file`+"`"+`). Keep it concise and generalizable; never dump run-specific data there — that belongs in db/.{{end}}
 - **builder/** — prior review/improvement context. At step start, read `+"`builder/review.md`"+` and `+"`builder/improve.md`"+` if they exist. Use unresolved findings, prior failed approaches, active/deferred improvement ideas, and resolved markers as context so you do not repeat known mistakes. Treat these logs as READ-ONLY. When delegating, pass the relevant finding/improvement context in the sub-agent `+"`instructions`"+`; sub-agents cannot see your system prompt.
 
 {{if ne .KbAccess "none"}}Knowledgebase access for this step: **{{.KbAccessLabel}}**.{{if eq .KbAccess "read"}} Sub-agents may `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+` KB files; writes are blocked.{{else if eq .KbWriteMethod "direct"}} Direct write: this orchestrator (and every sub-agent it delegates to) contributes KB inline — see the **Knowledgebase contribution** block below. No post-step KB update agent runs.{{else}} Write-scoped (agent method): emit observations in step output and let the post-step KB update agent append to the right topic files — do not patch `+"`"+`notes/`+"`"+` directly.{{end}}
@@ -340,6 +342,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"KbAccess":                      templateVars["KbAccess"],
 		"KbAccessLabel":                 templateVars["KbAccessLabel"],
 		"KbWriteMethod":                 templateVars["KbWriteMethod"],
+		"LearningsAccess":               templateVars["LearningsAccess"],
 		"KnowledgebaseContribution":     templateVars["KnowledgebaseContribution"],
 		"KBGuidanceBlock":               templateVars["KBGuidanceBlock"],
 		"IsCodeExecutionMode":           templateVars["IsCodeExecutionMode"] == "true",

@@ -75,30 +75,56 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 		stepPath = fmt.Sprintf("step-%d", stepIndex+1)
 	}
 
+	// How a message_sequence behaves depends on how it is invoked:
+	//   - ROUTE (Source=="orchestrator_reentry"): the todo_task orchestrator re-enters the
+	//     same specialist across calls within one run. The conversation is kept in an
+	//     in-memory cache on this orchestrator so it remembers prior calls. This memory is
+	//     NEVER read back from disk — it lives only for the lifetime of the run.
+	//   - STANDALONE (top-level step / workshop): a fixed item queue that runs once. No
+	//     memory and no re-entry — re-running simply re-runs the queue.
+	// session.json is still written in both cases as a one-way observability log (never read
+	// back for resume).
+	isRoute := opts.Source == "orchestrator_reentry"
+	routeKey := hcpo.msgSeqRouteKey(stepPath, sequenceStep.GetID())
 	sessionRelPath := hcpo.messageSequenceSessionPath(stepPath, sequenceStep.GetID())
-	session, sessionExists, err := hcpo.loadMessageSequenceSession(ctx, sessionRelPath)
-	if err != nil {
-		return "", nil, err
-	}
-	if opts.Restart {
-		if sessionExists {
-			if err := hcpo.archiveMessageSequenceSession(ctx, sessionRelPath); err != nil {
-				return "", nil, err
-			}
-		}
-		if err := hcpo.cleanupMessageSequenceRuntime(ctx, stepPath, sequenceStep.GetID(), true); err != nil {
+
+	if isRoute && opts.Restart {
+		hcpo.clearMsgSeqRouteSession(routeKey)
+		if err := hcpo.cleanupMessageSequenceRuntime(ctx, stepPath, sequenceStep.GetID()); err != nil {
 			return "", nil, err
 		}
-		sessionExists = false
-		session = nil
 	}
 
+	var existing *messageSequenceSession
+	var hasExisting bool
+	if isRoute && !opts.Restart {
+		existing, hasExisting = hcpo.loadMsgSeqRouteSession(routeKey)
+	}
+
+	var session *messageSequenceSession
 	var plannedItems []MessageSequenceItem
 	source := opts.Source
 	if source == "" {
 		source = "configured_queue"
 	}
-	if !sessionExists {
+	if hasExisting {
+		// Route re-entry: continue the in-memory conversation with one new user message.
+		session = existing
+		msg := strings.TrimSpace(opts.ReentryMessage)
+		if msg == "" {
+			return "", session.ConversationHistory, fmt.Errorf("message_sequence route %q already has an active conversation; provide a re-entry message or restart", sequenceStep.GetID())
+		}
+		plannedItems = []MessageSequenceItem{{
+			ID:      fmt.Sprintf("reentry-%d", len(session.Entries)),
+			Type:    "user_message",
+			Kind:    "execution",
+			Message: msg,
+		}}
+		if source == "configured_queue" {
+			source = "builder_resume"
+		}
+	} else {
+		// First route call, or any standalone run: run the configured queue.
 		session = &messageSequenceSession{
 			SessionID: sequenceStep.GetID(),
 			StepID:    sequenceStep.GetID(),
@@ -111,20 +137,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 			session.LastRuntimeContext = "Builder/orchestrator initial instruction:\n" + opts.ReentryMessage
 		}
 		source = "configured_queue"
-	} else {
-		msg := strings.TrimSpace(opts.ReentryMessage)
-		if msg == "" {
-			return "", session.ConversationHistory, fmt.Errorf("message_sequence %q already has a session; provide a re-entry message or restart", sequenceStep.GetID())
-		}
-		plannedItems = []MessageSequenceItem{{
-			ID:      fmt.Sprintf("reentry-%d", time.Now().UnixNano()),
-			Type:    "user_message",
-			Kind:    "execution",
-			Message: msg,
-		}}
-		if source == "configured_queue" {
-			source = "builder_resume"
-		}
 	}
 
 	for _, item := range plannedItems {
@@ -147,21 +159,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 			session.Status = "failed"
 			session.Entries = append(session.Entries, entry)
 			session.UpdatedAt = time.Now()
+			if isRoute {
+				hcpo.storeMsgSeqRouteSession(routeKey, session)
+			}
 			_ = hcpo.saveMessageSequenceSession(ctx, sessionRelPath, session)
 			return "", session.ConversationHistory, err
 		}
 		session.Entries = append(session.Entries, entry)
 		session.UpdatedAt = time.Now()
-		if err := hcpo.saveMessageSequenceSession(ctx, sessionRelPath, session); err != nil {
-			return "", session.ConversationHistory, err
-		}
+		_ = hcpo.saveMessageSequenceSession(ctx, sessionRelPath, session)
 	}
 
 	session.Status = "completed"
 	session.UpdatedAt = time.Now()
-	if err := hcpo.saveMessageSequenceSession(ctx, sessionRelPath, session); err != nil {
-		return "", session.ConversationHistory, err
+	if isRoute {
+		hcpo.storeMsgSeqRouteSession(routeKey, session)
 	}
+	_ = hcpo.saveMessageSequenceSession(ctx, sessionRelPath, session)
 	return hcpo.summarizeMessageSequenceSession(session), session.ConversationHistory, nil
 }
 
@@ -169,6 +183,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceItem(ctx contex
 	switch item.Type {
 	case "user_message", "":
 		return hcpo.executeMessageSequenceUserMessage(ctx, step, item, stepIndex, stepPath, session)
+	case "foreach":
+		return hcpo.executeMessageSequenceForeachItem(ctx, step, item, stepIndex, stepPath, session)
 	case "code":
 		return hcpo.executeMessageSequenceCodeItem(ctx, step, item, stepPath, session)
 	case "prevalidation":
@@ -261,6 +277,38 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceUserMessage(ctx
 	session.ConversationHistory = history
 	session.LastRuntimeContext = ""
 	return strings.TrimSpace(result), nil
+}
+
+// executeMessageSequenceForeachItem expands a foreach item into one user_message turn per row
+// of its db source and runs each through the same conversation (auto-summarization keeps the
+// growing context bounded). Each row's templated text is sent as an ordinary user_message,
+// inheriting the foreach item's kind / write_access.
+func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceForeachItem(ctx context.Context, step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, session *messageSequenceSession) (string, error) {
+	messages, err := hcpo.expandForeach(ctx, item.Source, item.SourcePath, item.Message, item.MaxIterations)
+	if err != nil {
+		return "", fmt.Errorf("foreach item %q: %w", item.ID, err)
+	}
+	if len(messages) == 0 {
+		return fmt.Sprintf("foreach %s: 0 rows, nothing to process", item.ID), nil
+	}
+	for idx, msg := range messages {
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("foreach item %q canceled: %w", item.ID, ctx.Err())
+		default:
+		}
+		synth := MessageSequenceItem{
+			ID:          fmt.Sprintf("%s-%d", item.ID, idx),
+			Type:        "user_message",
+			Kind:        item.Kind,
+			Message:     msg,
+			WriteAccess: item.WriteAccess,
+		}
+		if _, err := hcpo.executeMessageSequenceUserMessage(ctx, step, synth, stepIndex, stepPath, session); err != nil {
+			return "", fmt.Errorf("foreach %s row %d: %w", item.ID, idx, err)
+		}
+	}
+	return fmt.Sprintf("foreach %s: processed %d row(s)", item.ID, len(messages)), nil
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceCodeItem(ctx context.Context, step *MessageSequencePlanStep, item MessageSequenceItem, stepPath string, session *messageSequenceSession) (string, error) {
@@ -669,47 +717,47 @@ func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceStepPathsForSte
 	return nil
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceRuntime(ctx context.Context, stepPath string, stepID string, preserveArchive bool) error {
+// cleanupMessageSequenceRuntime wipes a route's on-disk execution artifacts (working code
+// copies, stdout, the session.json log). Called on restart so a fresh attempt starts clean.
+func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceRuntime(ctx context.Context, stepPath string, stepID string) error {
 	relPath := hcpo.messageSequenceExecutionRelPath(stepPath, stepID)
-	if !preserveArchive {
-		hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaning message_sequence runtime: %s", relPath))
-		if err := hcpo.CleanupDirectory(ctx, relPath, fmt.Sprintf("execution/message_sequences/%s/%s", stepPath, stepID)); err != nil {
-			return fmt.Errorf("failed to cleanup message_sequence runtime %s/%s: %w", stepPath, stepID, err)
-		}
-		return nil
-	}
-
-	entries, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, relPath)
-	if err != nil {
-		errStr := err.Error()
-		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") || strings.Contains(errStr, "does not exist") {
-			return nil
-		}
-		return fmt.Errorf("failed to list message_sequence runtime %s/%s: %w", stepPath, stepID, err)
-	}
-	for _, entry := range entries {
-		if entry == "archive" {
-			continue
-		}
-		entryRelPath := filepath.Join(relPath, entry)
-		hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaning message_sequence runtime entry: %s", entryRelPath))
-		if err := hcpo.CleanupDirectory(ctx, entryRelPath, fmt.Sprintf("execution/message_sequences/%s/%s/%s", stepPath, stepID, entry)); err != nil {
-			return fmt.Errorf("failed to cleanup message_sequence runtime entry %s: %w", entryRelPath, err)
-		}
+	hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaning message_sequence runtime: %s", relPath))
+	if err := hcpo.CleanupDirectory(ctx, relPath, fmt.Sprintf("execution/message_sequences/%s/%s", stepPath, stepID)); err != nil {
+		return fmt.Errorf("failed to cleanup message_sequence runtime %s/%s: %w", stepPath, stepID, err)
 	}
 	return nil
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) loadMessageSequenceSession(ctx context.Context, relPath string) (*messageSequenceSession, bool, error) {
-	content, err := hcpo.ReadWorkspaceFile(ctx, relPath)
-	if err != nil {
-		return nil, false, nil
+// msgSeqRouteKey identifies a message_sequence route's in-memory conversation within a run.
+func (hcpo *StepBasedWorkflowOrchestrator) msgSeqRouteKey(stepPath, stepID string) string {
+	return stepPath + "/" + stepID
+}
+
+// loadMsgSeqRouteSession returns a route's in-memory conversation if the orchestrator has
+// already run it in this run. Route memory is never read back from disk.
+func (hcpo *StepBasedWorkflowOrchestrator) loadMsgSeqRouteSession(key string) (*messageSequenceSession, bool) {
+	hcpo.msgSeqRoutesMu.Lock()
+	defer hcpo.msgSeqRoutesMu.Unlock()
+	s, ok := hcpo.msgSeqRoutes[key]
+	return s, ok
+}
+
+// storeMsgSeqRouteSession records a route's conversation so a later re-entry in the same run
+// continues from where it left off.
+func (hcpo *StepBasedWorkflowOrchestrator) storeMsgSeqRouteSession(key string, session *messageSequenceSession) {
+	hcpo.msgSeqRoutesMu.Lock()
+	defer hcpo.msgSeqRoutesMu.Unlock()
+	if hcpo.msgSeqRoutes == nil {
+		hcpo.msgSeqRoutes = make(map[string]*messageSequenceSession)
 	}
-	var session messageSequenceSession
-	if err := json.Unmarshal([]byte(content), &session); err != nil {
-		return nil, false, fmt.Errorf("parse message sequence session %s: %w", relPath, err)
-	}
-	return &session, true, nil
+	hcpo.msgSeqRoutes[key] = session
+}
+
+// clearMsgSeqRouteSession drops a route's in-memory conversation (used on restart).
+func (hcpo *StepBasedWorkflowOrchestrator) clearMsgSeqRouteSession(key string) {
+	hcpo.msgSeqRoutesMu.Lock()
+	defer hcpo.msgSeqRoutesMu.Unlock()
+	delete(hcpo.msgSeqRoutes, key)
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) saveMessageSequenceSession(ctx context.Context, relPath string, session *messageSequenceSession) error {
@@ -718,15 +766,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveMessageSequenceSession(ctx contex
 		return err
 	}
 	return hcpo.WriteWorkspaceFile(ctx, relPath, string(out))
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) archiveMessageSequenceSession(ctx context.Context, relPath string) error {
-	content, err := hcpo.ReadWorkspaceFile(ctx, relPath)
-	if err != nil {
-		return nil
-	}
-	archivePath := filepath.Join(filepath.Dir(relPath), "archive", fmt.Sprintf("%d-session.json", time.Now().UnixNano()))
-	return hcpo.WriteWorkspaceFile(ctx, archivePath, content)
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) summarizeMessageSequenceSession(session *messageSequenceSession) string {

@@ -91,6 +91,34 @@ top-level → nested-todo_task is valid; nested-todo_task containing
 another nested todo_task is rejected. Break deeper hierarchies into
 sibling orphan steps or message_sequence specialists.
 
+## Routes vs generic agent vs self-execution
+
+At runtime the orchestrator chooses *how* to do each unit of work — design with
+that in mind:
+
+- **Predefined route** — define one only when the work is a **reusable
+  specialist that should learn and be validated** (routes carry learning +
+  prevalidation + tiering and persist recipes across runs). This is the only
+  delegation path that improves over time.
+- **Generic agent** (`call_generic_agent`) — the orchestrator uses it for
+  **ad-hoc** work it wants offloaded: isolated context, parallelizable, cheaper
+  tier — but **no** learning/prevalidation. Don't create a route for one-off,
+  unspecialized work; leave it to the generic agent.
+- **Self-execution** — the orchestrator does small/sequential work itself
+  (shell/code/db/kb/learnings) with no sub-agent at all.
+
+Rule of thumb: a route earns its place only when its work is a reusable
+specialist (and you have ≥2 of them, or genuine coordination). One-off or
+unspecialized work needs **no** route — see Anti-patterns.
+
+**Context isolation is a tradeoff, not a free win.** Delegating keeps the
+orchestrator's context lean and enables parallelism — but sub-agents (routes and
+generic alike) can't see what the orchestrator knows, so it must re-pass all
+relevant context in every call. Work that is tightly coupled to accumulated
+context is often cheaper to self-execute than to delegate. Don't design a step so
+finely sharded that the orchestrator spends more effort re-briefing sub-agents
+than the isolation saves.
+
 ## Variables and group_name
 
 `run_full_workflow(group_name, ...)` and `execute_step(step_id, group_name, ...)`
@@ -99,6 +127,34 @@ typically iterate over the variables in that group. The orchestrator
 sees `$VAR_GROUP_NAME` and any per-group variables as env. When you
 add a todo_task step, write the description so it explicitly reads
 the group's variables / inputs rather than guessing.
+
+## Scripted messages (long, multi-phase tasks)
+
+A todo_task step can carry an optional ordered `messages` list. After the
+orchestrator's first turn, each entry is fed into the **same orchestrator
+conversation** in order — so it keeps going through the phases with full memory
+of its prior turns and every sub-agent result. Use this when one orchestrator
+needs to work a long, multi-phase task as a continuous conversation ("do phase
+1" → "now phase 2 using what you found" → "now reconcile and write the report").
+
+- Three entry types: `message` (an instruction for one orchestrator turn),
+  `prevalidation` (a hard gate between turns — on failure the orchestrator gets
+  the failed checks as a corrective turn and retries up to `max_corrections`),
+  and `foreach` (data-driven — see below).
+- **`foreach`** iterates a JSON array from a db file and feeds **one orchestrator
+  turn per row** (row bound to `.` in a Go template via `message`; `source` =
+  e.g. `db/tasks.json`, optional `source_path`, optional `max_iterations`). The
+  loop is deterministic (in code, not the LLM), so the orchestrator reliably
+  works through **every** row a prior step wrote — delegating to sub-agents per
+  row as needed. This is the producer/consumer pattern: one step fills a db, this
+  one drains it.
+- It all runs in **one execution** — there is **no persistence and no re-entry**.
+  For a specialist that resumes across the orchestrator's *own repeated calls*,
+  or anything that must "rerun later", use a `message_sequence` **route** instead
+  (see the `message-sequence` reference doc) — that is the only place persistence
+  lives.
+- Retries of the step (on final pre-validation failure) continue the existing
+  conversation with feedback; they do **not** replay the scripted messages.
 
 ## Anti-patterns
 

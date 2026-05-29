@@ -551,7 +551,7 @@ func TestTerminalRoutesRefreshTerminalCapturesTmuxPane(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("refresh status = %d body=%s, want 200", rec.Code, rec.Body.String())
 	}
-	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -t "+tmuxSession+" -S -2000" {
+	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -e -t "+tmuxSession+" -S -2000" {
 		t.Fatalf("tmux args = %q, want capture-pane", got)
 	}
 	var response terminalActionResponse
@@ -586,7 +586,7 @@ func TestTerminalRoutesGetTerminalCanDeepRefreshSelectedPane(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
 	}
-	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -t "+tmuxSession+" -S -12000" {
+	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -e -t "+tmuxSession+" -S -12000" {
 		t.Fatalf("tmux args = %q, want deep capture", got)
 	}
 	var response terminals.Snapshot

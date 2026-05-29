@@ -127,20 +127,12 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 				"default_route_id": "route_even",
 			},
 			{
-				"type":                 "conditional",
+				"type":                 "regular",
 				"id":                   stepIDs[2],
 				"title":                "Confirm the answer equals 42",
-				"description":          "",
+				"description":          "The previous steps computed and classified the value 42 (six times seven). Confirm that the value 42 equals 42. Reply with EXACTLY the line CONFIRM_42_OK on a line by itself and stop.",
 				"context_dependencies": []string{},
 				"context_output":       "step3.json",
-				"condition_question":   "The previous steps computed and classified the value 42 (six times seven). Is the value 42 equal to 42? Answer true if yes, false if no.",
-				"condition_context":    "",
-				// Empty branches with NextStepID set is the canonical
-				// "jump after evaluating" form (planning_agent.go:334).
-				"if_true_steps":         []map[string]interface{}{},
-				"if_false_steps":        []map[string]interface{}{},
-				"if_true_next_step_id":  stepIDs[3],
-				"if_false_next_step_id": stepIDs[3],
 			},
 			{
 				"type":                 "todo_task",
@@ -290,7 +282,7 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
-	result, err := wo.Execute(ctx, "Compute 6*7 and verify the answer through routing, conditional, todo, and message-sequence steps.", workspace, map[string]interface{}{
+	result, err := wo.Execute(ctx, "Compute 6*7 and verify the answer through routing, regular, todo, and message-sequence steps.", workspace, map[string]interface{}{
 		"workflowStatus": workflowtypes.WorkflowStatusPreVerification,
 	})
 	if err != nil {
@@ -449,7 +441,7 @@ func writeJSON(path string, v interface{}) error {
 // assertAllStepsExecutedAndDecisionsMatch is the Tier-1 assertion: for
 // each step type it confirms (a) the engine wrote per-type execution
 // evidence AND (b) where the evidence carries the LLM's decision
-// (routing, conditional), the decision matches the deterministic value
+// (routing), the decision matches the deterministic value
 // our prompts steered the LLM toward. Catches silent-skip bugs
 // (smoke-pass with no execution) and LLM/prompt drift that previously
 // would have passed the lower-bar "did it produce a file" check.
@@ -466,7 +458,7 @@ func assertAllStepsExecutedAndDecisionsMatch(t *testing.T, walkRoot string, step
 	}
 	evidenceByStep := map[string]evidence{
 		"step-compute":     {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "logs", "step-compute", "execution", "execution-attempt-*-iteration-*.json")}},
-		"step-verify-even": {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "logs", "step-verify-even", "conditional-evaluation.json")}},
+		"step-verify-even": {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "logs", "step-verify-even", "execution", "execution-attempt-*-iteration-*.json")}},
 		// routing-evaluation.json records the LLM's selected_route_id.
 		// The prompt instructs "Is 42 even? Pick route_even"; the engine
 		// must actually pick route_even or either the routing path is
@@ -486,11 +478,6 @@ func assertAllStepsExecutedAndDecisionsMatch(t *testing.T, walkRoot string, step
 		// execution/message_sequences/<step-path>/<step-id>/.
 		"step-report": {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "execution", "message_sequences", "*", "step-report", "session.json")}},
 	}
-	// Conditional also drops a decision file at
-	// logs/step-conditional/conditional-evaluation.json with
-	// condition_result. Assert the LLM picked TRUE because our prompt
-	// asked "Is 'yes' equal to 'yes'?".
-	conditionalDecisionGlob := filepath.Join(walkRoot, "runs", "*", "*", "logs", "step-verify-even", "conditional-evaluation.json")
 
 	var completed, missing []string
 	for _, id := range stepIDs {
@@ -525,17 +512,6 @@ func assertAllStepsExecutedAndDecisionsMatch(t *testing.T, walkRoot string, step
 		if got != m.wantValue {
 			t.Errorf("%s: %s = %v, want %v (full file %s)", id, m.assertField, got, m.wantValue, match)
 		}
-	}
-	if matches, _ := filepath.Glob(conditionalDecisionGlob); len(matches) > 0 {
-		body, _ := os.ReadFile(matches[0])
-		var decoded map[string]interface{}
-		if err := json.Unmarshal(body, &decoded); err == nil {
-			if got, _ := decoded["condition_result"].(bool); !got {
-				t.Errorf("step-conditional: condition_result = %v, want true (full file %s)", decoded["condition_result"], matches[0])
-			}
-		}
-	} else {
-		t.Errorf("step-conditional: conditional-evaluation.json missing at %s", conditionalDecisionGlob)
 	}
 
 	if len(missing) > 0 {

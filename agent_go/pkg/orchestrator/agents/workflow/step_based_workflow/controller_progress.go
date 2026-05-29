@@ -258,13 +258,6 @@ func collectNestedArtifactFolderNames(step PlanStepInterface, names map[string]s
 	}
 
 	switch s := step.(type) {
-	case *ConditionalPlanStep:
-		for _, nested := range s.IfTrueSteps {
-			collectNestedArtifactFolderNames(nested, names)
-		}
-		for _, nested := range s.IfFalseSteps {
-			collectNestedArtifactFolderNames(nested, names)
-		}
 	case *TodoTaskPlanStep:
 		for _, route := range s.PredefinedRoutes {
 			collectNestedArtifactFolderNames(route.SubAgentStep, names)

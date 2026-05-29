@@ -4,7 +4,7 @@ These are the recurring shapes that real workflows in this system take. When des
 
 Each pattern lists: industry-alignment line (for users with prior vocabulary), trigger phrases, primitive layout, common pitfalls.
 
-The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `human_input`, `message_sequence`, `conditional`.
+The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `human_input`, `message_sequence`.
 
 ---
 
@@ -116,8 +116,8 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 
 **Layout**:
 - First `regular` step is a cheap probe (auth status, connectivity, access token, browser session, DB reachable)
-- Immediately followed by a `conditional` or `routing` step that aborts / re-auths / continues based on the probe's output
-- Probe's `context_output` is small (just a status JSON) and read by the conditional
+- Immediately followed by a `routing` step that aborts / re-auths / continues based on the probe's output
+- Probe's `context_output` is small (just a status JSON) and read by the routing step
 
 **When to use**: when the rest of the plan is expensive or destructive and an early environmental failure would waste a run. Critical for browser-driven flows, cloud SSO, third-party APIs.
 
@@ -155,7 +155,7 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 **Trigger phrases**: "review and improve", "self-correct", "critique the draft", "iterate until good", "find issues in the output".
 
 **Layout**:
-- `regular`(execute) → `regular`(critique with explicit rubric) → optional `conditional`/`routing` back to execute, or forward to publish
+- `regular`(execute) → `regular`(critique with explicit rubric) → optional `routing` back to execute, or forward to publish
 - The critique step has its own learnings/KB so review standards accumulate over runs
 - A todo_task variant: maker route + reviewer route, with the orchestrator alternating between them
 
@@ -185,6 +185,26 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 - Tail step couples to the main work — if the tail fails, the user thinks the workflow failed. Keep tail steps idempotent and clearly named.
 - Writing to too many stores in one tail step — split per store so failures are localized.
 - Forgetting `db/README.md` schema declaration before writing to `db/` — see `get_reference_doc(kind="stores")`.
+
+---
+
+### 10. Data-Driven Iteration (foreach)
+
+**Industry alignment**: *Map* over a dataset — deterministic iteration driven by data, not by an LLM enumerating items.
+
+**Trigger phrases**: "for every row a prior step found", "process each record in the db", "one pass per item in the list", "drain the queue".
+
+**Layout**:
+- A producer step (any type) writes a JSON array to `db/<file>.json`
+- A consumer step with a `foreach` item/entry over that file: `message_sequence` foreach (one agent handles each row) or `todo_task` foreach (orchestrator can delegate per row). The runtime sends one turn per row; the row is bound to `.` in the message template.
+- Optional verify/`prevalidation` gate after the loop
+
+**When to use**: an earlier step produces a list and **every** row must be processed. The loop lives in code, so nothing is skipped — the key advantage over telling an orchestrator "process all rows" (which can miss some). This is the reliable form of producer/consumer fan-out when the item set is already materialized in `db/`.
+
+**Pitfalls**:
+- Reaching for #4 (Fan-out & Consolidate) when the items are already a db array — `foreach` enumerates deterministically; an orchestrator might not.
+- Unbounded rows blowing up cost — set `max_iterations`; the shared conversation is bounded by auto-summarization but each row is still an LLM turn.
+- Producer/consumer path mismatch — the consumer's `source` must point at exactly where the producer wrote.
 
 ---
 

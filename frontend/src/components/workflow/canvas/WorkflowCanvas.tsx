@@ -10,7 +10,7 @@ import {
   type NodeChange,
   type OnNodeDrag
 } from '@xyflow/react'
-import { Braces, Download, FileText, GitBranch, Laptop, Loader2, RefreshCw, Route, Settings, Smartphone, TabletSmartphone, X } from 'lucide-react'
+import { Braces, Download, FileText, GitBranch, Laptop, ListOrdered, Loader2, RefreshCw, Route, Settings, Smartphone, TabletSmartphone, X } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
@@ -874,6 +874,7 @@ function ReadOnlyStepDetailPanel({
     : step?.type === 'todo_task'
       ? step.predefined_routes
       : undefined
+  const todoMessages = step?.type === 'todo_task' ? step.messages : undefined
   const validationSchema = step?.validation_schema || ('validation_schema' in data ? data.validation_schema : undefined)
   const agentConfigs = step?.agent_configs
   const contextInputs = step?.context_dependencies || []
@@ -930,6 +931,51 @@ function ReadOnlyStepDetailPanel({
             ) : null}
           </DetailSection>
         )}
+
+        {todoMessages?.length ? (
+          <DetailSection icon={ListOrdered} title={`Scripted Sequence (${todoMessages.length})`}>
+            <p className="mb-2 text-xs text-muted-foreground">Ordered turns fed into the orchestrator&apos;s own conversation after its first turn.</p>
+            <ol className="space-y-2">
+              {todoMessages.map((msg, index) => {
+                const kind = msg.type || 'message'
+                const chipClass =
+                  kind === 'prevalidation' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                    : kind === 'foreach' ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400'
+                      : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
+                return (
+                  <li key={msg.id || index} className="rounded-md border border-border bg-muted/25 p-2">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted-foreground/20 text-[10px] font-semibold text-foreground/70">{index + 1}</span>
+                      <span className={`rounded px-1.5 py-0.5 font-mono text-[10px] uppercase ${chipClass}`}>{kind}</span>
+                      {msg.id && <span className="truncate font-mono text-[10px] text-muted-foreground">{msg.id}</span>}
+                    </div>
+                    {kind === 'foreach' ? (
+                      <div className="space-y-1 text-xs text-foreground/85">
+                        <div>
+                          For each row in <span className="font-mono text-foreground">{msg.source || '—'}</span>
+                          {msg.source_path ? <> at <span className="font-mono text-foreground">{msg.source_path}</span></> : null}
+                          {msg.max_iterations ? <> (max {msg.max_iterations})</> : null}:
+                        </div>
+                        {msg.message && <div className="rounded bg-muted/40 px-2 py-1 leading-relaxed text-foreground/80">{msg.message}</div>}
+                      </div>
+                    ) : kind === 'prevalidation' ? (
+                      <div className="space-y-1 text-xs text-foreground/85">
+                        <div className="text-muted-foreground">
+                          Validation gate{typeof msg.max_corrections === 'number' ? ` · up to ${msg.max_corrections} correction${msg.max_corrections === 1 ? '' : 's'}` : ''}
+                        </div>
+                        {msg.validation_schema && (
+                          <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-muted/40 px-2 py-1 font-mono text-[10px] leading-relaxed text-foreground/70">{formatJson(msg.validation_schema)}</pre>
+                        )}
+                      </div>
+                    ) : (
+                      msg.message ? <div className="text-xs leading-relaxed text-foreground/85">{msg.message}</div> : null
+                    )}
+                  </li>
+                )
+              })}
+            </ol>
+          </DetailSection>
+        ) : null}
 
         {(contextInputs.length > 0 || contextOutputs.length > 0) && (
           <DetailSection icon={FileText} title="Context">

@@ -1,6 +1,6 @@
 import { memo, useMemo, type ReactElement } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, ListTodo, Bot, Route } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, ListTodo, Bot, Route, ListOrdered } from 'lucide-react'
 import type { TodoTaskNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 
@@ -60,15 +60,20 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
   const isNestedTodoSubAgent = useMemo(() => id.includes('-sub-agent-') && !!parentOrchestratorTitle, [id, parentOrchestratorTitle])
   const cardWidth = isNestedTodoSubAgent ? 264 : 300
 
+  // Scripted message sequence (foreach / scripted turns / prevalidation gates)
+  // fed into the orchestrator's own conversation after its first turn.
+  const scriptedCount = step && 'messages' in step && Array.isArray(step.messages) ? step.messages.length : 0
+
   // Calculate node height based on content
   const nodeHeight = useMemo(() => {
     let height = isNestedTodoSubAgent ? 72 : 80
     if (isNestedTodoSubAgent && (routeName || parentOrchestratorTitle)) height += 24
     if (step?.description) height += isNestedTodoSubAgent ? 24 : 30
     if (predefined_routes && predefined_routes.length > 0) height += isNestedTodoSubAgent ? 28 : 36 + Math.min(predefined_routes.length, 4) * 32
+    if (scriptedCount > 0) height += isNestedTodoSubAgent ? 16 : 20
     if (enable_generic_agent) height += isNestedTodoSubAgent ? 16 : 20
     return Math.max(height, isNestedTodoSubAgent ? 108 : 120)
-  }, [isNestedTodoSubAgent, routeName, parentOrchestratorTitle, step?.description, predefined_routes, enable_generic_agent])
+  }, [isNestedTodoSubAgent, routeName, parentOrchestratorTitle, step?.description, predefined_routes, scriptedCount, enable_generic_agent])
 
   return (
     <div
@@ -196,6 +201,14 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
                   +{predefined_routes.length - 4} more route{predefined_routes.length - 4 === 1 ? '' : 's'}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Scripted message sequence indicator */}
+          {scriptedCount > 0 && (
+            <div className={`mt-2 flex items-center gap-1.5 text-[10px] font-semibold ${isNestedTodoSubAgent ? 'text-violet-600 dark:text-violet-400' : 'text-purple-600 dark:text-purple-400'}`}>
+              <ListOrdered className="w-3 h-3" />
+              <span>{scriptedCount} scripted step{scriptedCount === 1 ? '' : 's'}</span>
             </div>
           )}
 

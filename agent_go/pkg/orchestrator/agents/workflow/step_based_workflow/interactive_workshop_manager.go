@@ -1778,7 +1778,7 @@ Each workflow has three separate stores that survive across runs: `+"`learnings/
 {{if eq .WorkshopMode "workshop"}}
 **WORKSHOP MODE** — Design, run, evaluate, harden, and replan as a single mode. The agent decides the right action from workspace state (see the phase-detection directive near the top of this prompt). Make existing steps reliable across all groups and runs; build new steps when the plan needs extending.
 
-**Foundation check:** verify `+"`soul/soul.md`"+` has both `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections. If either is missing, ask the user and write via shell. `+"`planning/plan.json`"+` no longer stores root objective/success fields. {{if .WorkflowSuccessCriteria}}Current success criteria: "{{.WorkflowSuccessCriteria}}"{{end}}{{if .WorkflowObjective}} Current objective: "{{.WorkflowObjective}}"{{end}}
+**Foundation check:** verify `+"`soul/soul.md`"+` has both `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections. If either is missing, ask the user and write via shell. `+"`planning/plan.json`"+` no longer stores root objective/success fields. The current objective and success criteria are shown verbatim under **CURRENT STATE** below — don't restate them here.
 
 **Read previous builder conversations** from `+"`builder/`"+` folder (`+"`ls -t builder/*.json | head -3`"+`) to avoid repeating failed approaches.
 

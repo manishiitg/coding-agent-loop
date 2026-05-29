@@ -291,6 +291,9 @@ type StreamingAPI struct {
 	// Pending completions queue — background agent IDs that finished while session was busy
 	pendingCompletions map[string][]string
 	pendingMu          sync.RWMutex
+	// completionRetryScheduled guards schedulePendingCompletionRetry so at most one
+	// retry timer runs per session at a time. Guarded by pendingMu.
+	completionRetryScheduled map[string]bool
 
 	// Pending start notifications — background agent IDs that started while
 	// the main session was busy. These are synthetic user messages just like
@@ -864,6 +867,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		sessionBusy:               make(map[string]bool),
 		sessionBusySince:          make(map[string]time.Time),
 		pendingCompletions:        make(map[string][]string),
+		completionRetryScheduled:  make(map[string]bool),
 		pendingStartNotifications: make(map[string][]string),
 		lastQueryRequests:         make(map[string]QueryRequest),
 		sessionWorkspaceFolders:   make(map[string]string),
@@ -5761,6 +5765,7 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// synthetic auto-notification turns that reuse the stored agent after stop.
 	api.pendingMu.Lock()
 	delete(api.pendingCompletions, sessionID)
+	delete(api.completionRetryScheduled, sessionID)
 	api.pendingMu.Unlock()
 
 	api.lastQueryMu.Lock()
@@ -7978,21 +7983,71 @@ func (api *StreamingAPI) drainPendingCompletions(sessionID string) []string {
 	return pending
 }
 
+// schedulePendingCompletionRetry is the backstop that guarantees queued or
+// dropped background-agent completions are eventually delivered even if no
+// further user/synthetic turn fires drainPendingAutoNotificationsAfterTurn. It
+// runs at most one timer per session (guarded by completionRetryScheduled);
+// when the session next looks idle it re-sweeps the registry for any terminal-
+// but-unnotified agent, then drains. Trigger it whenever a completion is queued
+// because the session was busy.
 func (api *StreamingAPI) schedulePendingCompletionRetry(sessionID string) {
+	api.pendingMu.Lock()
+	if api.completionRetryScheduled == nil {
+		api.completionRetryScheduled = make(map[string]bool)
+	}
+	if api.completionRetryScheduled[sessionID] {
+		api.pendingMu.Unlock()
+		return
+	}
+	api.completionRetryScheduled[sessionID] = true
+	api.pendingMu.Unlock()
+
 	time.AfterFunc(5*time.Second, func() {
+		api.pendingMu.Lock()
+		delete(api.completionRetryScheduled, sessionID)
+		api.pendingMu.Unlock()
+
 		if api.isSessionStoppedOrInactive(sessionID) {
 			return
 		}
 		if api.isSessionBusyForAutoNotification(sessionID) {
+			// Still busy — re-arm and check again later.
 			api.schedulePendingCompletionRetry(sessionID)
 			return
 		}
+		// Recover both completions queued while busy AND any that a full
+		// notification channel dropped, then deliver in one batch.
+		api.requeueUnnotifiedCompletions(sessionID)
 		pending := api.drainPendingCompletions(sessionID)
 		if len(pending) == 0 {
 			return
 		}
 		api.processBatchedBackgroundAgentCompletions(sessionID, pending)
 	})
+}
+
+// requeueUnnotifiedCompletions sweeps the registry for agents whose execution
+// finished (completed/failed) but whose synthetic [AUTO-NOTIFICATION] turn was
+// never emitted (notified == false), and queues them for delivery. This is the
+// safety net behind NotifyCompletion's best-effort channel send: a dropped or
+// missed send cannot strand a completion permanently.
+func (api *StreamingAPI) requeueUnnotifiedCompletions(sessionID string) {
+	for _, agent := range api.bgAgentRegistry.GetAll(sessionID) {
+		if agent == nil {
+			continue
+		}
+		snap := agent.GetSnapshot()
+		if snap.Status != BGAgentCompleted && snap.Status != BGAgentFailed {
+			continue
+		}
+		agent.mu.Lock()
+		notified := agent.notified
+		agent.mu.Unlock()
+		if notified {
+			continue
+		}
+		api.queuePendingCompletion(sessionID, snap.ID)
+	}
 }
 
 // backgroundCompletionLoop listens for background agent completions and triggers synthetic turns
@@ -8012,8 +8067,10 @@ func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 			continue
 		}
 		if api.isSessionBusyForAutoNotification(sessionID) {
-			// Session is busy — queue the completion for later processing
+			// Session is busy — queue the completion and arm the retry backstop
+			// so it still drains even if no further turn fires the post-turn drain.
 			api.queuePendingCompletion(sessionID, agentID)
+			api.schedulePendingCompletionRetry(sessionID)
 			log.Printf("[BG AGENT] Session %s busy, queued completion for agent %s", sessionID, agentID)
 		} else {
 			api.processBackgroundAgentCompletion(sessionID, agentID)

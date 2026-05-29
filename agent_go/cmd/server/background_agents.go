@@ -390,10 +390,17 @@ func (r *BackgroundAgentRegistry) NotifyCompletion(sessionID, agentID string) {
 	r.mu.RUnlock()
 
 	if ok {
-		// Non-blocking send — if channel is full, completion will be picked up on next poll
+		// Non-blocking send to avoid blocking the (often synchronous) caller.
+		// If the buffered channel is full the send is dropped here, but the
+		// completion is NOT lost: the agent's terminal status + unset `notified`
+		// flag remain in the registry, and the session-level retry backstop
+		// (schedulePendingCompletionRetry) re-sweeps the registry and re-queues
+		// any terminal-but-unnotified agent. We log the drop so saturation is
+		// visible rather than silent.
 		select {
 		case ch <- agentID:
 		default:
+			log.Printf("[BG AGENT] completion channel full for session %s; dropping immediate notify for agent %s (retry backstop will recover it)", sessionID, agentID)
 		}
 	}
 }

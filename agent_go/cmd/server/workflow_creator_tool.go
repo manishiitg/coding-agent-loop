@@ -248,7 +248,7 @@ func validatePlanJSONRequiredFields(m map[string]interface{}) error {
 		}
 		stepType, _ := step["type"].(string)
 		if strings.TrimSpace(stepType) == "" {
-			return fmt.Errorf("plan_json.steps[%d].type is required (e.g. 'regular', 'conditional', 'routing', 'human_input', 'todo_task')", i)
+			return fmt.Errorf("plan_json.steps[%d].type is required (e.g. 'regular', 'routing', 'human_input', 'todo_task')", i)
 		}
 		stepID, _ := step["id"].(string)
 		stepID = strings.TrimSpace(stepID)

@@ -1813,16 +1813,6 @@ func collectAllStepIDs(steps []todo_creation_human.PlanStepInterface) []string {
 			stepIDs = append(stepIDs, stepID)
 		}
 
-		// Handle conditional steps - collect branch step IDs
-		if conditionalStep, ok := step.(*todo_creation_human.ConditionalPlanStep); ok {
-			if len(conditionalStep.IfTrueSteps) > 0 {
-				stepIDs = append(stepIDs, collectAllStepIDs(conditionalStep.IfTrueSteps)...)
-			}
-			if len(conditionalStep.IfFalseSteps) > 0 {
-				stepIDs = append(stepIDs, collectAllStepIDs(conditionalStep.IfFalseSteps)...)
-			}
-		}
-
 		// Handle todo_task steps - collect sub-agent step IDs from predefined_routes
 		if todoTaskStep, ok := step.(*todo_creation_human.TodoTaskPlanStep); ok {
 			// Collect sub-agent step IDs from predefined routes
@@ -1972,15 +1962,6 @@ type PlanStepUpdate struct {
 	LoopCondition   *string `json:"loop_condition,omitempty"`
 	MaxIterations   *int    `json:"max_iterations,omitempty"`
 	LoopDescription *string `json:"loop_description,omitempty"`
-
-	// Conditional step fields
-	HasCondition      *bool           `json:"has_condition,omitempty"`
-	ConditionQuestion *string         `json:"condition_question,omitempty"`
-	ConditionContext  *string         `json:"condition_context,omitempty"`
-	IfTrueSteps       json.RawMessage `json:"if_true_steps,omitempty"`  // Will be converted to []PlanStepInterface
-	IfFalseSteps      json.RawMessage `json:"if_false_steps,omitempty"` // Will be converted to []PlanStepInterface
-	IfTrueNextStepID  *string         `json:"if_true_next_step_id,omitempty"`
-	IfFalseNextStepID *string         `json:"if_false_next_step_id,omitempty"`
 
 	// Routing/TodoTask step fields
 	NextStepID *string `json:"next_step_id,omitempty"`
@@ -2285,41 +2266,6 @@ func writeStepConfigToWorkspace(ctx context.Context, workspacePath string, confi
 	return nil
 }
 
-// findInStepsWithOffset recursively searches nested steps within a step, handling ConditionalPlanStep offsets correctly
-func findInStepsWithOffset(step todo_creation_human.PlanStepInterface, targetID string, basePath []int, findInSteps func([]todo_creation_human.PlanStepInterface, string, []int) (todo_creation_human.PlanStepInterface, []int)) (todo_creation_human.PlanStepInterface, []int) {
-	switch s := step.(type) {
-	case *todo_creation_human.ConditionalPlanStep:
-		// Check nested if_true_steps
-		if found, foundPath := findInSteps(s.IfTrueSteps, targetID, basePath); found != nil {
-			return found, foundPath
-		}
-		// Check nested if_false_steps with offset
-		for k, nestedFalseStep := range s.IfFalseSteps {
-			nestedFalseIndex := len(s.IfTrueSteps) + k
-			nestedFalsePath := append(basePath, nestedFalseIndex)
-			if nestedFalseStep.GetID() == targetID {
-				return nestedFalseStep, nestedFalsePath
-			}
-			// Continue recursion for deeper nesting
-			if found, foundPath := findInStepsWithOffset(nestedFalseStep, targetID, nestedFalsePath, findInSteps); found != nil {
-				return found, foundPath
-			}
-		}
-	case *todo_creation_human.TodoTaskPlanStep:
-		for routeIdx, route := range s.PredefinedRoutes {
-			if route.SubAgentStep != nil {
-				if route.SubAgentStep.GetID() == targetID {
-					return route.SubAgentStep, append(basePath, -4, routeIdx)
-				}
-				if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{route.SubAgentStep}, targetID, basePath); found != nil {
-					return found, foundPath
-				}
-			}
-		}
-	}
-	return nil, nil
-}
-
 // findStepInPlan recursively finds a step by ID in the plan
 // Returns the step and a path to it (indices for nested steps)
 func findStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string) (todo_creation_human.PlanStepInterface, []int) {
@@ -2335,25 +2281,6 @@ func findStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string) (
 
 			// Check nested steps based on step type
 			switch s := step.(type) {
-			case *todo_creation_human.ConditionalPlanStep:
-				// Check if_true_steps
-				if found, foundPath := findInSteps(s.IfTrueSteps, targetID, currentPath); found != nil {
-					return found, foundPath
-				}
-				// Check if_false_steps with offset to avoid index overlap
-				// False branch indices are offset by len(IfTrueSteps) to match updateNestedStepInPlanRecursive expectations
-				for j, falseStep := range s.IfFalseSteps {
-					falseIndex := len(s.IfTrueSteps) + j
-					falsePath := append(currentPath, falseIndex)
-					if falseStep.GetID() == targetID {
-						return falseStep, falsePath
-					}
-					// Recursively check nested steps in false branch using findInSteps with offset handling
-					// We need to search nested steps but ensure paths are built correctly
-					if found, foundPath := findInStepsWithOffset(falseStep, targetID, falsePath, findInSteps); found != nil {
-						return found, foundPath
-					}
-				}
 			case *todo_creation_human.TodoTaskPlanStep:
 				// Check predefined_routes
 				for j, route := range s.PredefinedRoutes {
@@ -2403,46 +2330,6 @@ func updateStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string,
 		}
 		if updates.LoopDescription != nil {
 			updated.LoopDescription = *updates.LoopDescription
-		}
-		updatedStep = &updated
-
-	case *todo_creation_human.ConditionalPlanStep:
-		updated := *s // Copy the step
-		applyCommonFields(&updated.CommonStepFields, updates)
-		if updates.ConditionQuestion != nil {
-			updated.ConditionQuestion = *updates.ConditionQuestion
-		}
-		if updates.ConditionContext != nil {
-			updated.ConditionContext = *updates.ConditionContext
-		}
-		if updates.IfTrueNextStepID != nil {
-			updated.IfTrueNextStepID = *updates.IfTrueNextStepID
-		}
-		if updates.IfFalseNextStepID != nil {
-			updated.IfFalseNextStepID = *updates.IfFalseNextStepID
-		}
-		// Handle nested steps
-		if len(updates.IfTrueSteps) > 0 {
-			var ifTrueArray []json.RawMessage
-			if err := json.Unmarshal(updates.IfTrueSteps, &ifTrueArray); err != nil {
-				return fmt.Errorf("failed to unmarshal if_true_steps array: %w", err)
-			}
-			steps, err := unmarshalStepsFromJSON(ifTrueArray)
-			if err != nil {
-				return fmt.Errorf("failed to unmarshal if_true_steps: %w", err)
-			}
-			updated.IfTrueSteps = steps
-		}
-		if len(updates.IfFalseSteps) > 0 {
-			var ifFalseArray []json.RawMessage
-			if err := json.Unmarshal(updates.IfFalseSteps, &ifFalseArray); err != nil {
-				return fmt.Errorf("failed to unmarshal if_false_steps array: %w", err)
-			}
-			steps, err := unmarshalStepsFromJSON(ifFalseArray)
-			if err != nil {
-				return fmt.Errorf("failed to unmarshal if_false_steps: %w", err)
-			}
-			updated.IfFalseSteps = steps
 		}
 		updatedStep = &updated
 
@@ -2509,12 +2396,6 @@ func unmarshalStepFromJSON(data json.RawMessage) (todo_creation_human.PlanStepIn
 			return nil, fmt.Errorf("failed to unmarshal regular step: %w", err)
 		}
 		return &s, nil
-	case "conditional":
-		var s todo_creation_human.ConditionalPlanStep
-		if err := json.Unmarshal(data, &s); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal conditional step: %w", err)
-		}
-		return &s, nil
 	case "todo_task":
 		var s todo_creation_human.TodoTaskPlanStep
 		if err := json.Unmarshal(data, &s); err != nil {
@@ -2550,25 +2431,6 @@ func updateNestedStepInPlan(plan *todo_creation_human.PlanningResponse, path []i
 
 	// Handle different step types
 	switch s := parentStep.(type) {
-	case *todo_creation_human.ConditionalPlanStep:
-		if len(path) == 2 {
-			// Direct child in branch
-			branchIndex := path[1]
-			// Determine which branch (need to check if_true or if_false)
-			// For now, we'll need to search both branches
-			// This is a limitation - we'd need to track branch type in path
-			// For simplicity, try if_true first, then if_false
-			if branchIndex < len(s.IfTrueSteps) {
-				s.IfTrueSteps[branchIndex] = updatedStep
-				return nil
-			} else if branchIndex < len(s.IfTrueSteps)+len(s.IfFalseSteps) {
-				s.IfFalseSteps[branchIndex-len(s.IfTrueSteps)] = updatedStep
-				return nil
-			}
-			return fmt.Errorf("invalid branch index")
-		}
-		// Deeper nesting - recursively update
-		return updateNestedStepInPlanRecursive(s.IfTrueSteps, s.IfFalseSteps, path[1:], updatedStep)
 	case *todo_creation_human.TodoTaskPlanStep:
 		if len(path) >= 3 && path[1] == -4 {
 			// predefined_routes[path[2]].sub_agent_step
@@ -2604,8 +2466,6 @@ func updateNestedStepInPlanRecursive(ifTrueSteps, ifFalseSteps []todo_creation_h
 		// Deeper nesting
 		step := ifTrueSteps[index]
 		switch s := step.(type) {
-		case *todo_creation_human.ConditionalPlanStep:
-			return updateNestedStepInPlanRecursive(s.IfTrueSteps, s.IfFalseSteps, path[1:], updatedStep)
 		case *todo_creation_human.TodoTaskPlanStep:
 			if len(path) >= 3 && path[1] == -4 {
 				routeIndex := path[2]
@@ -2631,8 +2491,6 @@ func updateNestedStepInPlanRecursive(ifTrueSteps, ifFalseSteps []todo_creation_h
 			// Deeper nesting
 			step := ifFalseSteps[adjustedIndex]
 			switch s := step.(type) {
-			case *todo_creation_human.ConditionalPlanStep:
-				return updateNestedStepInPlanRecursive(s.IfTrueSteps, s.IfFalseSteps, path[1:], updatedStep)
 			case *todo_creation_human.TodoTaskPlanStep:
 				if len(path) >= 3 && path[1] == -4 {
 					routeIndex := path[2]
@@ -3198,7 +3056,7 @@ func (api *StreamingAPI) handleAddStep(w http.ResponseWriter, r *http.Request) {
 	// Determine step type and unmarshal to typed step
 	stepType, ok := req.Step["type"].(string)
 	if !ok {
-		http.Error(w, "step must have 'type' field (regular, conditional, human_input, todo_task, or routing)", http.StatusBadRequest)
+		http.Error(w, "step must have 'type' field (regular, human_input, todo_task, or routing)", http.StatusBadRequest)
 		return
 	}
 
@@ -3215,13 +3073,6 @@ func (api *StreamingAPI) handleAddStep(w http.ResponseWriter, r *http.Request) {
 		var s todo_creation_human.RegularPlanStep
 		if err := json.Unmarshal(stepJSON, &s); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to parse regular step: %v", err), http.StatusBadRequest)
-			return
-		}
-		newStep = &s
-	case "conditional":
-		var s todo_creation_human.ConditionalPlanStep
-		if err := json.Unmarshal(stepJSON, &s); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to parse conditional step: %v", err), http.StatusBadRequest)
 			return
 		}
 		newStep = &s
@@ -3248,26 +3099,8 @@ func (api *StreamingAPI) handleAddStep(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else if req.ParentStepID != "" {
-		// Insert into nested step (conditional branch)
-		parentStep, _ := findStepInPlan(plan, req.ParentStepID)
-		if parentStep == nil {
-			http.Error(w, fmt.Sprintf("Parent step %q not found", req.ParentStepID), http.StatusBadRequest)
-			return
-		}
-
-		if conditionalStep, ok := parentStep.(*todo_creation_human.ConditionalPlanStep); ok {
-			if req.BranchType == "if_true" {
-				conditionalStep.IfTrueSteps = append(conditionalStep.IfTrueSteps, newStep)
-			} else if req.BranchType == "if_false" {
-				conditionalStep.IfFalseSteps = append(conditionalStep.IfFalseSteps, newStep)
-			} else {
-				http.Error(w, "branch_type must be 'if_true' or 'if_false' when parent_step_id is provided", http.StatusBadRequest)
-				return
-			}
-		} else {
-			http.Error(w, "Parent step must be a conditional step for nested insertion", http.StatusBadRequest)
-			return
-		}
+		http.Error(w, "Nested step insertion via parent_step_id is no longer supported", http.StatusBadRequest)
+		return
 	} else {
 		// Add to end
 		plan.Steps = append(plan.Steps, newStep)

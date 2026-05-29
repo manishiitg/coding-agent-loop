@@ -813,9 +813,6 @@ func extractStepSummary(planJSON string) string {
 					Title string `json:"title"`
 				} `json:"sub_agent_step"`
 			} `json:"predefined_routes,omitempty"`
-			// For decision/conditional steps
-			IfTrueSteps  []json.RawMessage `json:"if_true_steps,omitempty"`
-			IfFalseSteps []json.RawMessage `json:"if_false_steps,omitempty"`
 		}
 		if err := json.Unmarshal(raw, &step); err != nil {
 			continue

@@ -67,13 +67,6 @@ func collectTodoTaskStepIDs(step PlanStepInterface, ids map[string]bool) {
 	}
 
 	switch s := step.(type) {
-	case *ConditionalPlanStep:
-		for _, branchStep := range s.IfTrueSteps {
-			collectTodoTaskStepIDs(branchStep, ids)
-		}
-		for _, branchStep := range s.IfFalseSteps {
-			collectTodoTaskStepIDs(branchStep, ids)
-		}
 	case *TodoTaskPlanStep:
 		if s.GetID() != "" {
 			ids[s.GetID()] = true
@@ -92,17 +85,6 @@ func resolveOrphanRefsInStep(step PlanStepInterface, orphanByID map[string]PlanS
 	}
 
 	switch s := step.(type) {
-	case *ConditionalPlanStep:
-		for _, branchStep := range s.IfTrueSteps {
-			if err := resolveOrphanRefsInStep(branchStep, orphanByID, orphanChain); err != nil {
-				return err
-			}
-		}
-		for _, branchStep := range s.IfFalseSteps {
-			if err := resolveOrphanRefsInStep(branchStep, orphanByID, orphanChain); err != nil {
-				return err
-			}
-		}
 	case *TodoTaskPlanStep:
 		for i := range s.PredefinedRoutes {
 			route := &s.PredefinedRoutes[i]

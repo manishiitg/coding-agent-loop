@@ -111,13 +111,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) findStepInPlan(steps []PlanStepInterf
 
 		// Handle nested steps
 		switch s := step.(type) {
-		case *ConditionalPlanStep:
-			if found := hcpo.findStepInPlan(s.IfTrueSteps, targetID); found != nil {
-				return found
-			}
-			if found := hcpo.findStepInPlan(s.IfFalseSteps, targetID); found != nil {
-				return found
-			}
 		case *TodoTaskPlanStep:
 			// Check sub-agents in routes
 			for _, route := range s.PredefinedRoutes {

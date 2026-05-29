@@ -53,7 +53,6 @@ You are a **read-only** execution analysis assistant. Help the user understand w
 - **Execution outputs**: '{{.WorkspacePath}}/runs/{iteration}/execution/step-{X}/'
 - **Validation logs**: '{{.WorkspacePath}}/runs/{iteration}/logs/step-{X}/validation-{N}.json'
 - **Execution logs**: '{{.WorkspacePath}}/runs/{iteration}/logs/step-{X}/execution/'
-- **Conditional evaluations**: '{{.WorkspacePath}}/runs/{iteration}/logs/step-{X}/conditional-evaluation.json'
 - **Decision evaluations**: '{{.WorkspacePath}}/runs/{iteration}/logs/step-{X}/decision-evaluation.json'
 - **Routing evaluations**: '{{.WorkspacePath}}/runs/{iteration}/logs/step-{X}/routing-evaluation.json'
 - **Orchestration routing**: '{{.WorkspacePath}}/runs/{iteration}/logs/step-{X}/orchestration-execution.json' (JSONL)
@@ -61,7 +60,6 @@ You are a **read-only** execution analysis assistant. Help the user understand w
 
 ## 📖 STEP FOLDER NAMING
 - Regular steps: 'step-{X}/' (X = 1-based)
-- Conditional branches: 'step-{X}-if-true-{idx}/', 'step-{X}-if-false-{idx}/'
 - Decision steps: 'step-{X}-decision/'
 - Sub-agents: 'step-{X}-sub-agent-{idx}/'
 - Generic agents: 'step-{X}-generic-agent-{idx}/'

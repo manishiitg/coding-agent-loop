@@ -76,6 +76,14 @@ type StepBasedWorkflowOrchestrator struct {
 	workshopGroupSessionRefs map[string]int
 	workshopGroupLastUsed    map[string]time.Time
 
+	// In-memory message_sequence ROUTE conversation cache. When a message_sequence is used
+	// as a todo_task route, the orchestrator re-enters it across calls within one run; this
+	// holds each route's conversation so it remembers prior calls WITHOUT reading back from
+	// disk. Scoped to this orchestrator instance (one workflow run). Standalone
+	// message_sequence steps never use this — they always run a fixed queue.
+	msgSeqRoutesMu sync.Mutex
+	msgSeqRoutes   map[string]*messageSequenceSession
+
 	// Variable management
 	variablesManifest *VariablesManifest // Extracted variables
 	variableValues    map[string]string  // Runtime variable values
@@ -1194,9 +1202,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 
 	return "Todo planning complete.", nil
 }
-
-// executeConditionalStep executes a conditional step by evaluating the condition and executing the chosen branch
-// depth: current nesting depth (0 = main plan, 1 = first level conditional, 2 = second level conditional)
 
 func (hcpo *StepBasedWorkflowOrchestrator) Execute(ctx context.Context, objective string, workspacePath string, options map[string]interface{}) (string, error) {
 	// Validate that no options are provided since this orchestrator doesn't use them

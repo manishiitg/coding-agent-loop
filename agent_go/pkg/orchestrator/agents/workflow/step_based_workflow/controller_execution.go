@@ -2811,12 +2811,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 // boolean flags, making the execution routing logic more maintainable and
 // preparing for future migration to type-safe step types.
 
-// isConditionalStep returns true if the step is a conditional step (has conditional branches)
-func isConditionalStep(step PlanStepInterface) bool {
-	_, ok := step.(*ConditionalPlanStep)
-	return ok
-}
-
 // isHumanInputStep returns true if the step is a human input step (asks question and blocks for input)
 func isHumanInputStep(step PlanStepInterface) bool {
 	_, ok := step.(*HumanInputPlanStep)
@@ -2869,8 +2863,6 @@ func isMessageSequenceStep(step PlanStepInterface) bool {
 func getAgentConfigs(step PlanStepInterface) *AgentConfigs {
 	switch s := step.(type) {
 	case *RegularPlanStep:
-		return s.AgentConfigs
-	case *ConditionalPlanStep:
 		return s.AgentConfigs
 	case *TodoTaskPlanStep:
 		return s.AgentConfigs
@@ -3046,122 +3038,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 		}
 
 		// Route execution based on step type using helper functions
-		// Check if this is a conditional step
-		if isConditionalStep(step) {
-			// Execute conditional step - pass execution results directly (not file paths)
-			hcpo.GetLogger().Info(fmt.Sprintf("🔀 Starting conditional step execution: %s", step.GetTitle()))
-			if err := hcpo.executeConditionalStep(ctx, step, i, 0, progress, previousExecutionResults, iteration, execCtx, breakdownSteps); err != nil {
-				// Check if this is a workflow termination signal
-				if strings.Contains(err.Error(), "WORKFLOW_END") {
-					hcpo.GetLogger().Info(fmt.Sprintf("🏁 Conditional step %d signaled workflow termination - ending workflow", i+1))
-					// Mark step as completed and break to end workflow
-					hcpo.addCompletedStepIndex(progress, i)
-					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after conditional step termination: %v", err))
-					}
-					break // Break out of the execution loop to end workflow
-				}
-				hcpo.GetLogger().Error(fmt.Sprintf("❌ Conditional step %d execution failed: %v", i+1, err), nil)
-				// Emit error event using centralized method
-				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "conditional-step-execution", fmt.Sprintf("Execute conditional step: %s", step.GetTitle()), err.Error(), i, iteration)
-				return fmt.Errorf("conditional step %d execution failed: %w", i+1, err)
-			}
-
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Conditional step %d completed successfully: %s", i+1, step.GetTitle()))
-
-			// Mark conditional step as completed (executeConditionalStep handles progress internally)
-			hcpo.addCompletedStepIndex(progress, i)
-			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after conditional step: %v", err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved progress: conditional step %d marked as completed", i+1))
-			}
-
-			// Check if we're in single step mode and should stop
-			if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
-				hcpo.GetLogger().Info(fmt.Sprintf("🎯 Single step mode: completed target step %d, stopping execution", i+1))
-				hcpo.SetRunSingleStepMode(false, -1) // Reset mode
-				break
-			}
-
-			// Determine next step based on branch execution and next_step_id
-			// Get which branch was executed from branch progress
-			var nextStepID string
-			if branchProgress, exists := progress.BranchSteps[i]; exists {
-				if branchProgress.BranchExecuted == "if_true" {
-					// True branch was executed
-					// Check if next_step_id is provided (optional when branch has steps, required when empty)
-					if conditionalStep, ok := step.(*ConditionalPlanStep); ok && conditionalStep.IfTrueNextStepID != "" {
-						nextStepID = conditionalStep.IfTrueNextStepID
-						hcpo.GetLogger().Info(fmt.Sprintf("🔗 True branch completed - using if_true_next_step_id: %s", nextStepID))
-					} else if conditionalStep, ok := step.(*ConditionalPlanStep); ok && len(conditionalStep.IfTrueSteps) > 0 {
-						// Branch has steps but no explicit next_step_id - default to next sequential step
-						nextStepID = "" // Will default to next step in loop
-						hcpo.GetLogger().Info(fmt.Sprintf("🔗 True branch completed - no explicit next_step_id, defaulting to next sequential step"))
-					} else {
-						// Empty branch - next_step_id should have been required, but handle gracefully
-						nextStepID = "" // Will default to next step in loop
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ True branch is empty but no if_true_next_step_id provided - defaulting to next sequential step"))
-					}
-				} else {
-					// False branch was executed
-					// Check if next_step_id is provided (optional when branch has steps, required when empty)
-					if conditionalStep, ok := step.(*ConditionalPlanStep); ok && conditionalStep.IfFalseNextStepID != "" {
-						nextStepID = conditionalStep.IfFalseNextStepID
-						hcpo.GetLogger().Info(fmt.Sprintf("🔗 False branch completed - using if_false_next_step_id: %s", nextStepID))
-					} else if conditionalStep, ok := step.(*ConditionalPlanStep); ok && len(conditionalStep.IfFalseSteps) > 0 {
-						// Branch has steps but no explicit next_step_id - default to next sequential step
-						nextStepID = "" // Will default to next step in loop
-						hcpo.GetLogger().Info(fmt.Sprintf("🔗 False branch completed - no explicit next_step_id, defaulting to next sequential step"))
-					} else {
-						// Empty branch - next_step_id should have been required, but handle gracefully
-						nextStepID = "" // Will default to next step in loop
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ False branch is empty but no if_false_next_step_id provided - defaulting to next sequential step"))
-					}
-				}
-			} else {
-				// No branch progress found (shouldn't happen, but handle gracefully)
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ No branch progress found for conditional step %d - defaulting to next sequential step", i+1))
-				nextStepID = "" // Will default to next step in loop
-			}
-
-			// Handle next step navigation
-			if nextStepID == "end" {
-				// End workflow
-				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Conditional step %d specified 'end' - terminating workflow", i+1))
-				break
-			} else if nextStepID != "" {
-				// Find target step by ID and jump to it
-				targetStepIndex := -1
-				for idx, s := range breakdownSteps {
-					if s.GetID() == nextStepID {
-						targetStepIndex = idx
-						break
-					}
-				}
-				if targetStepIndex >= 0 {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Jumping to step %d (ID: %s) as specified by next_step_id", targetStepIndex+1, nextStepID))
-
-					// Update startFromStep to allow execution from target step
-					// This prevents the skip check (i < startFromStep) from blocking execution
-					if targetStepIndex < startFromStep {
-						startFromStep = targetStepIndex
-						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Updated startFromStep to %d to allow execution from routed step", startFromStep+1))
-					}
-
-					// Set loop index to jump to target step (subtract 1 because loop will increment)
-					i = targetStepIndex - 1
-					continue
-				} else {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step ID '%s' not found in plan - defaulting to next sequential step", nextStepID))
-					// Fall through to default behavior (continue to next step)
-				}
-			}
-
-			// Default: continue to next sequential step
-			continue
-		}
-
 		// Check if this is a routing step
 		if isRoutingStep(step) {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔀 Starting routing step execution: %s", step.GetTitle()))

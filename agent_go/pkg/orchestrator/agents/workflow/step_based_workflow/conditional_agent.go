@@ -14,46 +14,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// Pre-parsed templates for conditional agent - panics at startup if invalid
-var conditionalSystemTemplate = MustRegisterTemplate("conditionalSystem", `## 🤖 ROLE: Conditional Agent
-**Task**: Evaluate a workflow condition (TRUE/FALSE).
-**Constraint**: Context is historical. Use tools to verify CURRENT state.
-
-{{if .CodeExecutionSection}}
-{{.CodeExecutionSection}}
-{{end}}
-
-## 🔍 PROCESS
-1. **Analyze**: Understand the question: {{.Description}}
-2. **Verify**: Use tools to gather factual evidence.
-3. **Decide**:
-   - **TRUE**: Meets requirements.
-   - **FALSE**: Does not meet requirements.
-
-{{if .VariableValues}}
-## 🔑 VARIABLES
-{{.VariableNames}}
-**Current Values**: {{.VariableValues}}
-{{end}}
-
-{{if .LearningHistory}}
-## 📚 LEARNINGS (Historical)
-{{.LearningHistory}}
-{{end}}
-
-## 📤 OUTPUT
-Return ONLY JSON: {"result": true|false, "reason": "evidence-based explanation"}`)
-
-var conditionalUserTemplate = MustRegisterTemplate("conditionalUser", `## 📝 TASK
-**Condition**: {{.Question}}
-**Context**: {{.ConditionContext}}
-{{if .StepContextDependencies}}
-## 📎 CONTEXT DEPENDENCIES (declared input files for this condition)
-{{.StepContextDependencies}}
-{{end}}
-**MANDATORY**: Use tools to verify reality. Do NOT rely on historical context alone.
-**Output**: JSON {"result": bool, "reason": "string"}`)
-
+// Pre-parsed templates for routing evaluation - panics at startup if invalid
 var routingSystemTemplate = MustRegisterTemplate("routingSystem", `## 🤖 ROLE: Routing Evaluator
 **Task**: Analyze context/output and select the best route from available options.
 
@@ -81,18 +42,7 @@ var routingUserTemplate = MustRegisterTemplate("routingUser", `## 📝 ROUTING E
 
 **Select the best matching route and submit via 'submit_routing_result'.**`)
 
-// ConditionalResponse represents a true/false response with reasoning
-type ConditionalResponse struct {
-	Result bool   `json:"result"`
-	Reason string `json:"reason"`
-}
-
-// GetResult returns the boolean result
-func (cr *ConditionalResponse) GetResult() bool {
-	return cr.Result
-}
-
-// WorkflowConditionalAgent evaluates conditional decisions for step branching
+// WorkflowConditionalAgent evaluates routing decisions for step branching
 type WorkflowConditionalAgent struct {
 	*agents.BaseOrchestratorAgent
 }
@@ -110,77 +60,6 @@ func NewWorkflowConditionalAgent(config *agents.OrchestratorAgentConfig, logger 
 	return &WorkflowConditionalAgent{
 		BaseOrchestratorAgent: baseAgent,
 	}
-}
-
-// Decide makes a true/false decision based on context and question
-// Returns ConditionalResponse for backward compatibility with conditional steps
-// variableNames: Variable names with descriptions ({{VAR_NAME}} - description)
-// variableValues: Variable names with actual values ({{VAR_NAME}} = value - description)
-func (hctpca *WorkflowConditionalAgent) conditionalSystemPromptProcessor(templateVars map[string]string, isCodeExecutionMode bool) string {
-	templateData := map[string]interface{}{
-		"Description":          templateVars["Description"],
-		"LearningHistory":      templateVars["LearningHistory"],
-		"VariableNames":        templateVars["VariableNames"],
-		"VariableValues":       templateVars["VariableValues"],
-		"CodeExecutionSection": BuildCodeExecutionSection(isCodeExecutionMode, ""),
-	}
-
-	var result strings.Builder
-	if err := conditionalSystemTemplate.Execute(&result, templateData); err != nil {
-		panic(fmt.Sprintf("conditional system prompt template execution failed (missing variable?): %v", err))
-	}
-	return result.String()
-}
-
-func (hctpca *WorkflowConditionalAgent) conditionalUserMessageProcessor(templateVars map[string]string) string {
-	var result strings.Builder
-	if err := conditionalUserTemplate.Execute(&result, templateVars); err != nil {
-		panic(fmt.Sprintf("conditional user message template execution failed (missing variable?): %v", err))
-	}
-	return result.String()
-}
-
-// Decide makes a true/false decision based on context and question
-func (hctpca *WorkflowConditionalAgent) Decide(ctx context.Context, conditionContext, question, description string, stepIndex, iteration int, isCodeExecutionMode bool, learningHistory string, variableNames, variableValues string, stepContextDependencies string) (*ConditionalResponse, error) {
-	templateVars := map[string]string{
-		"ConditionContext":        conditionContext,
-		"Question":                question,
-		"Description":             description,
-		"LearningHistory":         learningHistory,
-		"VariableNames":           variableNames,
-		"VariableValues":          variableValues,
-		"StepContextDependencies": stepContextDependencies,
-	}
-
-	systemPrompt := hctpca.conditionalSystemPromptProcessor(templateVars, isCodeExecutionMode)
-	inputProcessor := func(vars map[string]string) string {
-		return hctpca.conditionalUserMessageProcessor(vars)
-	}
-
-	schema := `{
-		"type": "object",
-		"properties": {
-			"result": {"type": "boolean"},
-			"reason": {"type": "string"}
-		},
-		"required": ["result", "reason"]
-	}`
-
-	result, _, err := agents.ExecuteStructuredWithInputProcessor[ConditionalResponse](
-		hctpca.BaseOrchestratorAgent,
-		ctx,
-		templateVars,
-		inputProcessor,
-		[]llmtypes.MessageContent{},
-		schema,
-		systemPrompt,
-		isCodeExecutionMode,
-	)
-
-	if err != nil {
-		return nil, fmt.Errorf("conditional decision failed: %w", err)
-	}
-	return &result, nil
 }
 
 // EvaluateRouting evaluates a routing question and selects one of N routes
@@ -303,7 +182,7 @@ func (hctpca *WorkflowConditionalAgent) routingUserMessageProcessor(templateVars
 }
 
 // Execute implements the OrchestratorAgent interface
-// NOTE: This method is NOT USED - use Decide() instead
+// NOTE: This method is NOT USED - use EvaluateRouting() instead
 func (hctpca *WorkflowConditionalAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	return "", nil, fmt.Errorf("Execute() is not used for conditional agent - use Decide() instead")
+	return "", nil, fmt.Errorf("Execute() is not used for routing agent - use EvaluateRouting() instead")
 }

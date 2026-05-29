@@ -236,21 +236,6 @@ func collectInnerSteps(step PlanStepInterface) []WorkshopStepInfo {
 	parentType := step.StepType()
 
 	switch s := step.(type) {
-	case *ConditionalPlanStep:
-		for _, inner := range s.IfTrueSteps {
-			result = append(result, WorkshopStepInfo{
-				Step: inner, ParentID: parentID, ParentType: parentType,
-				BranchName: "if_true", TopIndex: -1,
-			})
-			result = append(result, collectInnerSteps(inner)...)
-		}
-		for _, inner := range s.IfFalseSteps {
-			result = append(result, WorkshopStepInfo{
-				Step: inner, ParentID: parentID, ParentType: parentType,
-				BranchName: "if_false", TopIndex: -1,
-			})
-			result = append(result, collectInnerSteps(inner)...)
-		}
 	case *TodoTaskPlanStep:
 		for _, route := range s.PredefinedRoutes {
 			if route.SubAgentStep != nil {

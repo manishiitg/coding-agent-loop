@@ -204,32 +204,6 @@ func CreateEventEmitter(
 	}
 }
 
-// CreateConditionalLLMWithEventBridge creates a conditional LLM with mandatory event bridge integration
-func CreateConditionalLLMWithEventBridge(
-	config *agents.OrchestratorAgentConfig,
-	eventBridge mcpagent.AgentEventListener,
-	logger loggerv2.Logger,
-	tracer observability.Tracer,
-) (*ConditionalLLM, error) {
-	logger.Info(fmt.Sprintf("🔧 Creating conditional LLM with mandatory event bridge integration"))
-
-	// Create LLM instance using helper
-	llmInstance, err := CreateLLMInstance(config, logger, "conditional")
-	if err != nil {
-		return nil, err
-	}
-
-	// Create conditional LLM with BaseLLM (which includes mandatory event bridge)
-	conditionalLLM := &ConditionalLLM{
-		BaseLLM: NewBaseLLM(llmInstance, logger, tracer, eventBridge, "conditional"),
-	}
-
-	logger.Info(fmt.Sprintf("✅ Conditional LLM created successfully with event bridge - Provider: %s, Model: %s, Temperature: %.1f",
-		config.LLMConfig.Primary.Provider, config.LLMConfig.Primary.ModelID, config.Temperature))
-
-	return conditionalLLM, nil
-}
-
 // CreateStructuredOutputLLMWithEventBridge creates a structured output LLM with mandatory event bridge integration
 func CreateStructuredOutputLLMWithEventBridge(
 	config *agents.OrchestratorAgentConfig,

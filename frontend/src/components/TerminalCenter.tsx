@@ -38,6 +38,43 @@ function hasAnsiCodes(s: string): boolean {
   return s.includes('\x1B[')
 }
 
+// stripAnsiBackgrounds removes background-color parameters from SGR escape
+// sequences while preserving foreground color, bold, dim, underline, etc.
+// CLI TUIs (gemini-cli's input/notification box, codex banners) paint a
+// background highlight that reads fine against their native terminal theme
+// but renders as an ugly grey block over the pane's near-black backdrop once
+// captured (-e) and re-colorized by ansi_up. Stripping at the SGR layer
+// catches both the 16-color background classes AND 256/truecolor backgrounds
+// (which ansi_up would otherwise emit as inline styles that CSS can't reach).
+//
+// Background params dropped: 40-47 (standard), 100-107 (bright), 49 (default
+// reset), and the extended form 48;5;<n> / 48;2;<r>;<g>;<b>. Everything else
+// — including foreground 38;5/38;2 runs — is passed through untouched. A
+// sequence that contained ONLY background params collapses to nothing (NOT a
+// `\x1b[m` reset, which would wrongly clear the active foreground color).
+function stripAnsiBackgrounds(input: string): string {
+  // eslint-disable-next-line no-control-regex
+  return input.replace(/\x1B\[([0-9;]*)m/g, (_full, rawParams: string) => {
+    const parts = rawParams.length ? rawParams.split(';') : ['0']
+    const kept: string[] = []
+    for (let i = 0; i < parts.length; i++) {
+      const n = parseInt(parts[i], 10)
+      if (Number.isNaN(n)) { kept.push(parts[i]); continue }
+      if (n === 48) {
+        // Extended background — skip the whole selector run so its trailing
+        // numbers aren't reinterpreted as unrelated SGR codes.
+        if (parts[i + 1] === '5') i += 2
+        else if (parts[i + 1] === '2') i += 4
+        else i += 1
+        continue
+      }
+      if ((n >= 40 && n <= 49) || (n >= 100 && n <= 107)) continue
+      kept.push(parts[i])
+    }
+    return kept.length ? `\x1B[${kept.join(';')}m` : ''
+  })
+}
+
 // rawAfterVisibleChars returns the substring of `raw` that starts after the
 // first `visibleCharCount` non-ANSI characters. Lets us slice the raw line
 // at a position discovered against the stripped version (e.g. "$ " prefix
@@ -1654,7 +1691,7 @@ const RawTerminalPane: React.FC<{
   onWheel: (e: React.WheelEvent<HTMLPreElement>) => void
 }> = ({ content, className, contentRef, onScroll, onWheel }) => {
   const html = useMemo(
-    () => (hasAnsiCodes(content) ? ansiUp.ansi_to_html(content) : null),
+    () => (hasAnsiCodes(content) ? ansiUp.ansi_to_html(stripAnsiBackgrounds(content)) : null),
     [content],
   )
   if (html !== null) {

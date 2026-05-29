@@ -494,7 +494,14 @@ func captureTerminalPaneLines(ctx context.Context, tmuxSession string, lines int
 	// by the live-stream path in multi-llm-provider-go; without it, terminal
 	// refresh / completion fetches would silently strip color even though the
 	// running session was emitting it.
-	content, err := runTerminalTmuxOutputCommand(ctx, "capture-pane", "-p", "-e", "-t", tmuxSession, "-S", fmt.Sprintf("-%d", lines))
+	//
+	// -J rejoins lines that tmux hard-wrapped at the pane width into a single
+	// logical line. The web pane is a whitespace-pre-wrap <pre> whose width
+	// rarely equals the tmux pane width, so without -J a long line gets
+	// double-wrapped (once by tmux, again by the browser) and shows a ragged
+	// right edge. -J only joins genuinely wrapped continuations — TUI box
+	// borders, which end at the pane edge deliberately, are left intact.
+	content, err := runTerminalTmuxOutputCommand(ctx, "capture-pane", "-p", "-e", "-J", "-t", tmuxSession, "-S", fmt.Sprintf("-%d", lines))
 	if err != nil {
 		return "", fmt.Errorf("failed to capture terminal pane: %w", err)
 	}

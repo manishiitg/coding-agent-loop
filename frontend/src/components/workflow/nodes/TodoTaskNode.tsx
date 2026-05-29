@@ -60,9 +60,10 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
   const isNestedTodoSubAgent = useMemo(() => id.includes('-sub-agent-') && !!parentOrchestratorTitle, [id, parentOrchestratorTitle])
   const cardWidth = isNestedTodoSubAgent ? 264 : 300
 
-  // Scripted message sequence (foreach / scripted turns / prevalidation gates)
-  // fed into the orchestrator's own conversation after its first turn.
-  const scriptedCount = step && 'messages' in step && Array.isArray(step.messages) ? step.messages.length : 0
+  // Scripted message sequence (scripted turns / foreach loops / prevalidation
+  // gates) fed into the orchestrator's own conversation after its first turn.
+  const scriptedMessages = step && 'messages' in step && Array.isArray(step.messages) ? step.messages : []
+  const scriptedCount = scriptedMessages.length
 
   // Calculate node height based on content
   const nodeHeight = useMemo(() => {
@@ -70,7 +71,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
     if (isNestedTodoSubAgent && (routeName || parentOrchestratorTitle)) height += 24
     if (step?.description) height += isNestedTodoSubAgent ? 24 : 30
     if (predefined_routes && predefined_routes.length > 0) height += isNestedTodoSubAgent ? 28 : 36 + Math.min(predefined_routes.length, 4) * 32
-    if (scriptedCount > 0) height += isNestedTodoSubAgent ? 16 : 20
+    if (scriptedCount > 0) height += isNestedTodoSubAgent ? 28 : 30 + Math.min(scriptedCount, 20) * 28
     if (enable_generic_agent) height += isNestedTodoSubAgent ? 16 : 20
     return Math.max(height, isNestedTodoSubAgent ? 108 : 120)
   }, [isNestedTodoSubAgent, routeName, parentOrchestratorTitle, step?.description, predefined_routes, scriptedCount, enable_generic_agent])
@@ -204,11 +205,47 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
             </div>
           )}
 
-          {/* Scripted message sequence indicator */}
+          {/* Scripted message sequence */}
           {scriptedCount > 0 && (
-            <div className={`mt-2 flex items-center gap-1.5 text-[10px] font-semibold ${isNestedTodoSubAgent ? 'text-violet-600 dark:text-violet-400' : 'text-purple-600 dark:text-purple-400'}`}>
-              <ListOrdered className="w-3 h-3" />
-              <span>{scriptedCount} scripted step{scriptedCount === 1 ? '' : 's'}</span>
+            <div className="mt-2 space-y-1.5">
+              <div className={`flex items-center gap-1.5 text-[10px] font-semibold ${isNestedTodoSubAgent ? 'text-violet-600 dark:text-violet-400' : 'text-purple-600 dark:text-purple-400'}`}>
+                <ListOrdered className="w-3 h-3" />
+                <span>{scriptedCount} scripted step{scriptedCount === 1 ? '' : 's'}</span>
+              </div>
+              {!isNestedTodoSubAgent && scriptedMessages.slice(0, 20).map((msg, index) => {
+                const kind = msg.type === 'foreach' ? 'foreach' : msg.type === 'prevalidation' ? 'prevalidation' : 'message'
+                const label = kind === 'prevalidation' ? 'gate' : kind
+                const summary = kind === 'foreach'
+                  ? `Each row in ${msg.source || '—'}${msg.source_path ? ` · ${msg.source_path}` : ''}`
+                  : kind === 'prevalidation'
+                    ? 'Validation gate'
+                    : (msg.message || '(no instruction)')
+                const chip = kind === 'prevalidation'
+                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300'
+                  : kind === 'foreach'
+                    ? 'bg-violet-100 text-violet-700 dark:bg-violet-400/15 dark:text-violet-300'
+                    : 'bg-blue-100 text-blue-700 dark:bg-blue-400/15 dark:text-blue-300'
+                return (
+                  <div
+                    key={msg.id || index}
+                    className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 dark:border-slate-700/80 dark:bg-slate-800/70"
+                    title={summary}
+                  >
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-purple-600 text-[9px] font-bold text-white dark:bg-purple-500/80 dark:text-purple-50">
+                      {index + 1}
+                    </span>
+                    <span className={`shrink-0 rounded px-1 py-0.5 text-[8px] font-bold uppercase tracking-wide ${chip}`}>{label}</span>
+                    <span className="min-w-0 flex-1 truncate text-[10px] text-slate-600 dark:text-slate-400">
+                      {summary}
+                    </span>
+                  </div>
+                )
+              })}
+              {!isNestedTodoSubAgent && scriptedCount > 20 && (
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                  +{scriptedCount - 20} more step{scriptedCount - 20 === 1 ? '' : 's'}
+                </div>
+              )}
             </div>
           )}
 

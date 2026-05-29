@@ -2379,47 +2379,6 @@ func applyCommonFields(common *todo_creation_human.CommonStepFields, updates *Pl
 	}
 }
 
-// unmarshalStepFromJSON unmarshals a single step from JSON
-func unmarshalStepFromJSON(data json.RawMessage) (todo_creation_human.PlanStepInterface, error) {
-	// First, determine the step type
-	var typeCheck struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(data, &typeCheck); err != nil {
-		return nil, fmt.Errorf("failed to determine step type: %w", err)
-	}
-
-	switch typeCheck.Type {
-	case "regular":
-		var s todo_creation_human.RegularPlanStep
-		if err := json.Unmarshal(data, &s); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal regular step: %w", err)
-		}
-		return &s, nil
-	case "todo_task":
-		var s todo_creation_human.TodoTaskPlanStep
-		if err := json.Unmarshal(data, &s); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal todo_task step: %w", err)
-		}
-		return &s, nil
-	default:
-		return nil, fmt.Errorf("unknown step type: %s", typeCheck.Type)
-	}
-}
-
-// unmarshalStepsFromJSON unmarshals an array of steps from JSON
-func unmarshalStepsFromJSON(data []json.RawMessage) ([]todo_creation_human.PlanStepInterface, error) {
-	steps := make([]todo_creation_human.PlanStepInterface, 0, len(data))
-	for i, raw := range data {
-		step, err := unmarshalStepFromJSON(raw)
-		if err != nil {
-			return nil, fmt.Errorf("failed to unmarshal step at index %d: %w", i, err)
-		}
-		steps = append(steps, step)
-	}
-	return steps, nil
-}
-
 // updateNestedStepInPlan updates a nested step using its path
 func updateNestedStepInPlan(plan *todo_creation_human.PlanningResponse, path []int, updatedStep todo_creation_human.PlanStepInterface) error {
 	if len(path) < 2 {

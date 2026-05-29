@@ -876,11 +876,3 @@ func TestWorkflowMessageSequenceRouteReentry(t *testing.T) {
 	}
 	t.Logf("✅ route re-entry: recaller had %d ai turns and recalled the secret word across calls", len(ais))
 }
-
-// min is the local int helper used by the main.py text snippet log.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

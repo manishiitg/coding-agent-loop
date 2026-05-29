@@ -255,11 +255,11 @@ type AgentConfigs struct {
 type StepType string
 
 const (
-	StepTypeRegular     StepType = "regular"
-	StepTypeHumanInput  StepType = "human_input"
-	StepTypeTodoTask    StepType = "todo_task"
-	StepTypeRouting     StepType = "routing"
-	StepTypeMessageSeq  StepType = "message_sequence"
+	StepTypeRegular    StepType = "regular"
+	StepTypeHumanInput StepType = "human_input"
+	StepTypeTodoTask   StepType = "todo_task"
+	StepTypeRouting    StepType = "routing"
+	StepTypeMessageSeq StepType = "message_sequence"
 )
 
 // CommonStepFields contains fields shared by all step types
@@ -2037,20 +2037,6 @@ func unmarshalStepFromJSON(stepData json.RawMessage) (PlanStepInterface, error) 
 	}
 
 	return typedStep, nil
-}
-
-// unmarshalStepsFromJSON unmarshals an array of steps from JSON
-// This is a helper function used by custom UnmarshalJSON methods for step types with nested step arrays
-func unmarshalStepsFromJSON(stepsData []json.RawMessage) ([]PlanStepInterface, error) {
-	steps := make([]PlanStepInterface, len(stepsData))
-	for i, stepData := range stepsData {
-		step, err := unmarshalStepFromJSON(stepData)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse step %d: %w", i, err)
-		}
-		steps[i] = step
-	}
-	return steps, nil
 }
 
 // validateRegexPatternsInSchema validates all regex patterns in a ValidationSchema

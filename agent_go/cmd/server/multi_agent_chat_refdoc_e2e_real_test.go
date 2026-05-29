@@ -222,9 +222,9 @@ func TestMultiAgentChatPromptSteersToReferenceDocs_ClaudeCode(t *testing.T) {
 	}
 
 	systemPrompt := virtualtools.GetMultiAgentDelegationInstructionsWithUser("Chats", "default")
-	adapter := claudecodeadapter.NewClaudeCodeExperimentalAdapter(model, &e2eMockLogger{})
+	adapter := claudecodeadapter.NewClaudeCodeInteractiveAdapter(model, &e2eMockLogger{})
 	t.Cleanup(func() {
-		_ = claudecodeadapter.CleanupClaudeCodeExperimentalSessions(context.Background())
+		_ = claudecodeadapter.CleanupClaudeCodeTmuxSessions(context.Background())
 	})
 
 	type caseSpec struct {
@@ -369,9 +369,9 @@ This workflow is ` + workflowDescription + `. It runs continuously and updates `
 `
 	systemPrompt := delegationPrompt + employeesSection + workflowContextSection + memoryPrompt
 
-	adapter := claudecodeadapter.NewClaudeCodeExperimentalAdapter(model, &e2eMockLogger{})
+	adapter := claudecodeadapter.NewClaudeCodeInteractiveAdapter(model, &e2eMockLogger{})
 	t.Cleanup(func() {
-		_ = claudecodeadapter.CleanupClaudeCodeExperimentalSessions(context.Background())
+		_ = claudecodeadapter.CleanupClaudeCodeTmuxSessions(context.Background())
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)

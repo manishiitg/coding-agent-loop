@@ -479,15 +479,15 @@ func TestClaudeCodeTransportHelpers(t *testing.T) {
 	stepConfig := agents.NewOrchestratorAgentConfig("step-agent")
 	stepConfig.LLMConfig.Primary.Provider = string(mcpllm.ProviderClaudeCode)
 	forceWorkflowClaudeCodeInteractiveTransport(stepConfig)
-	if stepConfig.ClaudeCodeTransport != mcpllm.ClaudeCodeTransportExperimental {
-		t.Fatalf("step ClaudeCodeTransport = %q, want %q", stepConfig.ClaudeCodeTransport, mcpllm.ClaudeCodeTransportExperimental)
+	if stepConfig.ClaudeCodeTransport != mcpllm.ClaudeCodeTransportTmux {
+		t.Fatalf("step ClaudeCodeTransport = %q, want %q", stepConfig.ClaudeCodeTransport, mcpllm.ClaudeCodeTransportTmux)
 	}
 
 	chatConfig := agents.NewOrchestratorAgentConfig("workflow-builder-agent")
 	chatConfig.LLMConfig.Primary.Provider = string(mcpllm.ProviderClaudeCode)
 	forceWorkflowClaudeCodeInteractiveTransport(chatConfig)
-	if chatConfig.ClaudeCodeTransport != mcpllm.ClaudeCodeTransportExperimental {
-		t.Fatalf("chat ClaudeCodeTransport = %q, want %q", chatConfig.ClaudeCodeTransport, mcpllm.ClaudeCodeTransportExperimental)
+	if chatConfig.ClaudeCodeTransport != mcpllm.ClaudeCodeTransportTmux {
+		t.Fatalf("chat ClaudeCodeTransport = %q, want %q", chatConfig.ClaudeCodeTransport, mcpllm.ClaudeCodeTransportTmux)
 	}
 }
 

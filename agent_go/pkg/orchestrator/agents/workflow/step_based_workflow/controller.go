@@ -1226,9 +1226,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetType() string {
 	return "human_controlled_todo_planner"
 }
 
-// UseKnowledgebase returns whether the knowledgebase feature is enabled
+// UseKnowledgebase reports whether the knowledgebase prerequisite is enabled.
+// The knowledgebase is now ALWAYS enabled for workflows — the per-preset
+// "enable KB" toggle was removed. Per-step access is still opt-in via each
+// step's knowledgebase_access (default "none"); this prerequisite no longer
+// acts as a global kill-switch.
 func (hcpo *StepBasedWorkflowOrchestrator) UseKnowledgebase() bool {
-	return hcpo.useKnowledgebase
+	return true
 }
 
 // LockKnowledgebase returns whether the post-step KB update agent is frozen.

@@ -500,10 +500,10 @@ func buildClaudeCodeTmuxTerminalAdapter(t *testing.T) (llmtypes.Model, []llmtype
 		model = "claude-haiku-4-5"
 	}
 	t.Cleanup(func() {
-		_ = claudecodeadapter.CleanupClaudeCodeExperimentalSessions(context.Background())
+		_ = claudecodeadapter.CleanupClaudeCodeTmuxSessions(context.Background())
 	})
 	owner := "claudecode-tmux-terminal-pane-" + strings.ToLower(strings.ReplaceAll(time.Now().Format("150405.000"), ".", ""))
-	return claudecodeadapter.NewClaudeCodeExperimentalAdapter(model, silentLogger{}), []llmtypes.CallOption{
+	return claudecodeadapter.NewClaudeCodeInteractiveAdapter(model, silentLogger{}), []llmtypes.CallOption{
 		claudecodeadapter.WithInteractiveSessionID(owner),
 		claudecodeadapter.WithPersistentInteractiveSession(true),
 	}, ""

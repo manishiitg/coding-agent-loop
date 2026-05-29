@@ -99,8 +99,8 @@ func TestCodingAgentPersistentInteractiveFlagsCoverTmuxContracts(t *testing.T) {
 }
 
 func TestCodingAgentClaudeCodeChatTransport(t *testing.T) {
-	if got := codingAgentClaudeCodeChatTransport(string(llm.ProviderClaudeCode)); got != llm.ClaudeCodeTransportExperimental {
-		t.Fatalf("claude-code chat transport = %q, want %q", got, llm.ClaudeCodeTransportExperimental)
+	if got := codingAgentClaudeCodeChatTransport(string(llm.ProviderClaudeCode)); got != llm.ClaudeCodeTransportTmux {
+		t.Fatalf("claude-code chat transport = %q, want %q", got, llm.ClaudeCodeTransportTmux)
 	}
 	if got := codingAgentClaudeCodeChatTransport(string(llm.ProviderCodexCLI)); got != "" {
 		t.Fatalf("non-Claude chat transport = %q, want empty", got)

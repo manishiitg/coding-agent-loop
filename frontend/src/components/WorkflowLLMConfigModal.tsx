@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { X, Brain, Zap, Gauge, Cpu, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react'
 import { Button } from './ui/Button'
-import { useLLMStore } from '../stores'
+import { useLLMStore, useChatStore } from '../stores'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
@@ -156,6 +156,17 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
       onClose()
     } catch (err) {
       console.error('[WorkflowLLMConfig] Save failed:', err)
+      // Surface the failure instead of silently swallowing it (previously the
+      // modal just stayed open with no feedback — looked like "didn't save").
+      // The server returns the validation reason as the response body.
+      const serverDetail = (err as { response?: { data?: unknown } })?.response?.data
+      const detail =
+        typeof serverDetail === 'string' && serverDetail.trim() !== ''
+          ? serverDetail.trim()
+          : err instanceof Error
+            ? err.message
+            : 'Unknown error'
+      useChatStore.getState().addToast(`Failed to save LLM config: ${detail}`, 'error')
     } finally {
       setIsSaving(false)
     }

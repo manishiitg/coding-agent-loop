@@ -453,10 +453,10 @@ func TestMultiTurnChatE2E_ClaudeCode(t *testing.T) {
 			}
 		},
 		newAdapter: func(t *testing.T) llmtypes.Model {
-			return claudecodeadapter.NewClaudeCodeExperimentalAdapter(model, &e2eMockLogger{})
+			return claudecodeadapter.NewClaudeCodeInteractiveAdapter(model, &e2eMockLogger{})
 		},
 		turnOptions: func(ownerSessionID string) []llmtypes.CallOption {
-			// Claude Code's experimental adapter manages its own
+			// Claude Code's interactive adapter manages its own
 			// session via the response's NativeSessionID; we don't
 			// need to pass options for persistence here.
 			return nil
@@ -464,7 +464,7 @@ func TestMultiTurnChatE2E_ClaudeCode(t *testing.T) {
 		expectNonZero:    true,
 		expectCacheReads: true, // claude prompt-caches the system prompt across turns
 		cleanup: func(ctx context.Context) {
-			_ = claudecodeadapter.CleanupClaudeCodeExperimentalSessions(ctx)
+			_ = claudecodeadapter.CleanupClaudeCodeTmuxSessions(ctx)
 		},
 	})
 }

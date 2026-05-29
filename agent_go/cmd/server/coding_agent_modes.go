@@ -35,7 +35,7 @@ func codingAgentPersistentInteractiveFlags(provider string) (claudeCode bool, co
 
 func codingAgentClaudeCodeChatTransport(provider string) string {
 	if strings.ToLower(strings.TrimSpace(provider)) == strings.ToLower(string(llm.ProviderClaudeCode)) {
-		return llm.ClaudeCodeTransportExperimental
+		return llm.ClaudeCodeTransportTmux
 	}
 	return ""
 }

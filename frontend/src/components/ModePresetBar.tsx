@@ -15,7 +15,7 @@ import { schedulerApi } from '../api/scheduler'
 import { agentApi, workflowManifestApi } from '../services/api'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip'
 import ModalPortal from './ui/ModalPortal'
-import { useLLMStore } from '../stores'
+import { useLLMStore, useChatStore } from '../stores'
 import { useMCPStore } from '../stores/useMCPStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
@@ -495,6 +495,17 @@ export const ModePresetBar: React.FC = () => {
       setEditingPreset(null)
     } catch (error) {
       console.error('[ModePresetBar] Failed to save preset:', error)
+      // Surface the failure — previously this was swallowed (no toast), so a
+      // rejected manifest save looked like a silent no-op. The server returns
+      // the validation reason as the response body.
+      const serverDetail = (error as { response?: { data?: unknown } })?.response?.data
+      const detail =
+        typeof serverDetail === 'string' && serverDetail.trim() !== ''
+          ? serverDetail.trim()
+          : error instanceof Error
+            ? error.message
+            : 'Unknown error'
+      useChatStore.getState().addToast(`Failed to save workflow: ${detail}`, 'error')
     }
   }, [editingPreset, savePreset, handlePresetClick])
 

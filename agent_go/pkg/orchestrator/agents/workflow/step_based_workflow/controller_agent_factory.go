@@ -39,9 +39,13 @@ func normalizeServerNames(servers []string) []string {
 	return servers
 }
 
+// forceWorkflowClaudeCodeInteractiveTransport sets the tmux baseline for Claude
+// Code workflow agents. tmux is the default (99% path). When a step explicitly
+// opts into the structured/json transport, applyWorkflowTransportToAgentConfig
+// overrides this to the print adapter afterwards.
 func forceWorkflowClaudeCodeInteractiveTransport(config *agents.OrchestratorAgentConfig) {
 	if workflowAgentConfigUsesClaudeCode(config) {
-		config.ClaudeCodeTransport = mcpllm.ClaudeCodeTransportExperimental
+		config.ClaudeCodeTransport = mcpllm.ClaudeCodeTransportTmux
 	}
 }
 
@@ -69,38 +73,53 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkflowTransportToAgentConfig(c
 		effectiveTransport = "tmux"
 	}
 
-	if stepConfig == nil {
-		return effectiveTransport
+	if stepConfig != nil {
+		// "json" is accepted as a synonym for "structured" — same stream-json
+		// transport, just the name operators tend to use.
+		switch strings.ToLower(strings.TrimSpace(stepConfig.Transport)) {
+		case "":
+			// inherit the default computed above
+		case "tmux":
+			if workflowAgentConfigPrimaryProviderIs(config, mcpllm.ProviderGeminiCLI) {
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport=tmux ignored for Gemini CLI workflow step; using structured stream-json", agentKind))
+				effectiveTransport = "structured"
+			} else if common.IsCLIProvider(provider) {
+				config.ForceStructuredCodingAgent = false
+				effectiveTransport = "tmux"
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport override: tmux for CLI provider '%s'", agentKind, provider))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport=tmux ignored for non-CLI provider '%s'", agentKind, provider))
+				effectiveTransport = ""
+			}
+		case "structured", "json":
+			if common.IsCLIProvider(provider) {
+				config.ForceStructuredCodingAgent = true
+				config.CodingAgentKeepAlive = false
+				effectiveTransport = "structured"
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport override: structured JSON for CLI provider '%s'", agentKind, provider))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport=structured ignored for non-CLI provider '%s'", agentKind, provider))
+				effectiveTransport = ""
+			}
+		default:
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown %s transport=%q (allowed: 'tmux' | 'structured'/'json'); inheriting default", agentKind, stepConfig.Transport))
+		}
 	}
-	switch strings.ToLower(strings.TrimSpace(stepConfig.Transport)) {
-	case "":
-		return effectiveTransport
-	case "tmux":
-		if workflowAgentConfigPrimaryProviderIs(config, mcpllm.ProviderGeminiCLI) {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport=tmux ignored for Gemini CLI workflow step; using structured stream-json", agentKind))
-			return "structured"
-		}
-		if common.IsCLIProvider(provider) {
-			config.ForceStructuredCodingAgent = false
-			effectiveTransport = "tmux"
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport override: tmux for CLI provider '%s'", agentKind, provider))
+
+	// Claude Code uses a dedicated adapter per transport — unlike the other CLIs
+	// (which have one adapter with a structured branch), its tmux adapter has no
+	// structured fallback, and the structured/json path is the separate `claude
+	// -p` print adapter. Select that print adapter ONLY when this step explicitly
+	// opted into structured; every other Claude Code step stays on tmux (the
+	// default). This is the single place the tmux→print decision is made.
+	if workflowAgentConfigUsesClaudeCode(config) {
+		if config.ForceStructuredCodingAgent {
+			config.ClaudeCodeTransport = mcpllm.ClaudeCodeTransportPrint
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport=tmux ignored for non-CLI provider '%s'", agentKind, provider))
-			effectiveTransport = ""
+			config.ClaudeCodeTransport = mcpllm.ClaudeCodeTransportTmux
 		}
-	case "structured":
-		if common.IsCLIProvider(provider) {
-			config.ForceStructuredCodingAgent = true
-			config.CodingAgentKeepAlive = false
-			effectiveTransport = "structured"
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport override: structured JSON for CLI provider '%s'", agentKind, provider))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport=structured ignored for non-CLI provider '%s'", agentKind, provider))
-			effectiveTransport = ""
-		}
-	default:
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown %s transport=%q (allowed: 'tmux' | 'structured'); inheriting default", agentKind, stepConfig.Transport))
 	}
+
 	return effectiveTransport
 }
 

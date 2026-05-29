@@ -58,7 +58,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
   const enableContextSummarization = true;
-  const [useKnowledgebase, setUseKnowledgebase] = useState(true);
   const [browserMode, setBrowserModeState] = useState<'none' | 'headless' | 'cdp' | 'playwright'>('none');
   const enableBrowserAccess = browserMode === 'headless' || browserMode === 'cdp';
   const [useCdp, setUseCdp] = useState(false);
@@ -248,7 +247,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         model_id: primaryConfig.model_id
       };
       setLlmConfig(presetLLM);
-      setUseKnowledgebase(presetLLM.use_knowledgebase !== false); // Default true unless explicitly false
       // Load browser mode: prefer explicit browserMode, fall back to legacy derivation
       if (editingPreset.browserMode && editingPreset.browserMode !== 'none') {
         setBrowserModeState(editingPreset.browserMode);
@@ -294,7 +292,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         model_id: primaryConfig.model_id
       };
       setLlmConfig(defaultLLM);
-      setUseKnowledgebase(true); // Default true
       setBrowserModeState('none'); // Default no browser
       // Initialize agent-specific configs to null (will use legacy default)
       setLearningLLM(null);
@@ -388,7 +385,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           ...workflowBaseLLMConfig,
           learning_llm: learningLLM || defaultWorkflowLLM,
           phase_llm: phaseLLM || effectiveTier1LLM || defaultWorkflowLLM,
-          use_knowledgebase: useKnowledgebase,
           llm_allocation_mode: 'tiered' as const,
           ...(effectiveTier1LLM && effectiveTier2LLM && effectiveTier3LLM ? {
             tiered_config: {
@@ -426,7 +422,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, learningLLM, phaseLLM, useKnowledgebase, enableBrowserAccess, browserMode, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, learningLLM, phaseLLM, enableBrowserAccess, browserMode, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -811,34 +807,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     workflowPath={workflowSecretPath}
                   />
                 )}
-
-                {/* Knowledgebase Toggle */}
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Knowledgebase
-                  </label>
-                  <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">
-                          Enable Knowledgebase
-                        </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          Persistent folder shared across all runs for templates and configs
-                        </div>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer ml-3">
-                        <input
-                          type="checkbox"
-                          checked={useKnowledgebase}
-                          onChange={(e) => setUseKnowledgebase(e.target.checked)}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-                      </label>
-                    </div>
-                  </div>
-                </div>
 
                 {/* Browser Automation Mode Selector */}
                 <div>

@@ -164,9 +164,9 @@ func TestCostSummaryHTTPCapturesRealClaudeCodeTmuxTurn(t *testing.T) {
 	if model == "" {
 		model = "claude-haiku-4-5-20251001"
 	}
-	t.Cleanup(func() { _ = claudecodeadapter.CleanupClaudeCodeExperimentalSessions(context.Background()) })
+	t.Cleanup(func() { _ = claudecodeadapter.CleanupClaudeCodeTmuxSessions(context.Background()) })
 
-	adapter := claudecodeadapter.NewClaudeCodeExperimentalAdapter(model, &e2eMockLogger{})
+	adapter := claudecodeadapter.NewClaudeCodeInteractiveAdapter(model, &e2eMockLogger{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

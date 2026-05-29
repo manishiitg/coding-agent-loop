@@ -72,7 +72,7 @@ import (
 )
 
 var (
-	cleanupClaudeCodeProviderSessions  = llmproviders.CleanupClaudeCodeExperimentalSessions
+	cleanupClaudeCodeProviderSessions  = llmproviders.CleanupClaudeCodeTmuxSessions
 	cleanupCodexCLIProviderSessions    = llmproviders.CleanupCodexCLIInteractiveSessions
 	cleanupGeminiCLIProviderSessions   = llmproviders.CleanupGeminiCLIInteractiveSessions
 	cleanupCursorCLIProviderSessions   = llmproviders.CleanupCursorCLIInteractiveSessions
@@ -5670,6 +5670,52 @@ func (api *StreamingAPI) handleCancelCurrentTurn(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// closeAllCodingCLIInteractiveSessionsForOwner tears down the persistent
+// tmux-backed coding-CLI session registered under the given owner key, across
+// every tmux provider. Each adapter's CloseXxxInteractiveSessionForOwner runs
+// its own graceful-then-force shutdown (e.g. agy: tmux send-keys "/exit" →
+// tmux kill-session) and is a no-op when no session is registered for the
+// owner, so calling all five is safe and provider-agnostic. (OpenCode is a
+// structured transport with no persistent tmux session, so it needs no close.)
+func closeAllCodingCLIInteractiveSessionsForOwner(owner, reason string) {
+	llmproviders.CloseAgyCLIInteractiveSessionForOwner(owner, reason)
+	llmproviders.CloseCursorCLIInteractiveSessionForOwner(owner, reason)
+	llmproviders.CloseGeminiCLIInteractiveSessionForOwner(owner, reason)
+	llmproviders.CloseCodexCLIInteractiveSessionForOwner(owner, reason)
+	llmproviders.CloseClaudeCodeInteractiveSessionForOwner(owner, reason)
+}
+
+// gracefulCloseCodingCLITmuxByName runs the provider-specific graceful shutdown
+// (e.g. agy: Escape → "/exit" → Enter; claude: "C-u /exit C-m"; codex/cursor/
+// gemini: C-c) plus the adapter's file/MCP-lease cleanup for the tmux-backed
+// coding CLI identified by its tmux session name. The provider is detected from
+// the session-name prefix (set by each adapter's new<Provider>TmuxSessionName).
+// This tears the session down by tmux name rather than owner key, so it works
+// for workflow sub-agents that registered under a step-execution owner the
+// caller can't reconstruct. Returns false when the prefix matches no known
+// provider (caller should fall back to a raw kill-session).
+func gracefulCloseCodingCLITmuxByName(tmuxName, reason string) bool {
+	name := strings.TrimSpace(tmuxName)
+	if name == "" {
+		return false
+	}
+	switch {
+	case strings.HasPrefix(name, "mlp-agy-cli"):
+		llmproviders.CloseAgyCLIInteractiveSessionByTmux(name, reason)
+	case strings.HasPrefix(name, "mlp-claude-code"):
+		llmproviders.CloseClaudeCodeInteractiveSessionByTmux(name, reason)
+	case strings.HasPrefix(name, "mlp-codex-cli"):
+		llmproviders.CloseCodexCLIInteractiveSessionByTmux(name, reason)
+	case strings.HasPrefix(name, "mlp-cursor-cli"):
+		llmproviders.CloseCursorCLIInteractiveSessionByTmux(name, reason)
+	case strings.HasPrefix(name, "mlp-gemini-cli"):
+		llmproviders.CloseGeminiCLIInteractiveSessionByTmux(name, reason)
+	default:
+		return false
+	}
+	return true
+}
+
 // Add endpoint to stop/clear a session
 func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
@@ -5851,12 +5897,56 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// session is registered for the owner, so calling all five is safe
 	// and provider-agnostic.
 	closeReason := "user pressed stop"
-	llmproviders.CloseAgyCLIInteractiveSessionForOwner(sessionID, closeReason)
-	llmproviders.CloseCursorCLIInteractiveSessionForOwner(sessionID, closeReason)
-	llmproviders.CloseGeminiCLIInteractiveSessionForOwner(sessionID, closeReason)
-	llmproviders.CloseCodexCLIInteractiveSessionForOwner(sessionID, closeReason)
-	llmproviders.CloseClaudeCodeInteractiveSessionForOwner(sessionID, closeReason)
+	closeAllCodingCLIInteractiveSessionsForOwner(sessionID, closeReason)
 	log.Printf("[SESSION DEBUG] Closed any tmux-backed coding-CLI session for stopped session %s", sessionID)
+
+	// The calls above are keyed by the chat / main-agent session ID. Workflow-step
+	// sub-agents, however, register their interactive CLI session under the STEP
+	// execution-owner ID (e.g. "workflow-step:exec-...:step-name") — not this
+	// chat sessionID — so the owner-keyed close above never matches them and
+	// their tmux panes orphan: the CLI process keeps running (and keeps holding
+	// the workflow's single-session slot, which blocks "new chat" and workflow
+	// model changes) long after the user stopped the run. This is provider-wide,
+	// not agy-specific.
+	//
+	// When the caller explicitly asked to cancel agents (cancelAgents=true — e.g.
+	// the workflow "kill & start new chat" popup, which calls stopSession(sid,
+	// true)), enumerate this session's live terminals and tear each sub-agent
+	// down by its OWN owner key (graceful, provider-agnostic), plus a guaranteed
+	// tmux kill-session backstop for active panes in case the adapter's registry
+	// bookkeeping drifted from the terminal store's owner ID.
+	if r.URL.Query().Get("cancelAgents") == "true" && api.terminalStore != nil {
+		mainOwner := "main:" + sessionID
+		for _, snap := range api.terminalStore.List(sessionID) {
+			owner := strings.TrimSpace(snap.OwnerID)
+			if owner == "" || owner == sessionID || owner == mainOwner {
+				continue // chat / main-agent session already handled above
+			}
+			tmux := strings.TrimSpace(snap.TmuxSession)
+			if tmux == "" {
+				continue // structured transport: no tmux pane; context cancel above handles it
+			}
+			// Primary: run the provider's own graceful exit + cleanup, resolved
+			// by tmux name so it works even though the sub-agent registered its
+			// CLI session under a step-execution owner (not this chat sessionID).
+			// The adapter kills the tmux session itself as the final step of that
+			// sequence, so a separate kill-session is only needed when no adapter
+			// claimed it (e.g. the registry was lost across a server restart).
+			if handled := gracefulCloseCodingCLITmuxByName(tmux, closeReason); !handled {
+				killCtx, killCancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
+				if err := runTerminalTmuxCommand(killCtx, "", "kill-session", "-t", tmux); err != nil {
+					log.Printf("[SESSION DEBUG] kill-session %q (owner %s) failed (may already be gone): %v", tmux, owner, err)
+				}
+				killCancel()
+			}
+			if snap.Active {
+				// Only relabel panes that were still live; leave already completed
+				// terminals in their terminal state.
+				api.terminalStore.MarkFailed(snap.TerminalID)
+			}
+			log.Printf("[SESSION DEBUG] Tore down workflow sub-agent terminal owner=%s tmux=%s active=%v for stopped session %s", owner, tmux, snap.Active, sessionID)
+		}
+	}
 
 	// Note: Conversation history and orchestrator state are preserved to allow resuming the conversation
 	// Use /api/session/clear if you want to clear conversation history

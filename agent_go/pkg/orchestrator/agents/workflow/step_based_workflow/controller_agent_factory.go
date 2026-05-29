@@ -49,15 +49,6 @@ func forceWorkflowClaudeCodeInteractiveTransport(config *agents.OrchestratorAgen
 	}
 }
 
-func forceWorkflowGeminiStructuredTransport(config *agents.OrchestratorAgentConfig) bool {
-	if !workflowAgentConfigPrimaryProviderIs(config, mcpllm.ProviderGeminiCLI) {
-		return false
-	}
-	config.ForceStructuredCodingAgent = true
-	config.CodingAgentKeepAlive = false
-	return true
-}
-
 func (hcpo *StepBasedWorkflowOrchestrator) applyWorkflowTransportToAgentConfig(config *agents.OrchestratorAgentConfig, stepConfig *AgentConfigs, agentKind string) string {
 	if config == nil {
 		return ""
@@ -66,10 +57,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkflowTransportToAgentConfig(c
 	config.ForceStructuredCodingAgent = false
 	effectiveTransport := ""
 
-	if forceWorkflowGeminiStructuredTransport(config) {
-		effectiveTransport = "structured"
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Gemini CLI %s transport forced to structured stream-json", agentKind))
-	} else if common.IsCLIProvider(provider) {
+	// All CLI providers (claude-code, codex, cursor, agy, gemini-cli) default
+	// to tmux and opt into structured/json per-step below. Gemini used to be
+	// pinned to structured here; it now follows the same path as every other
+	// CLI.
+	if common.IsCLIProvider(provider) {
 		effectiveTransport = "tmux"
 	}
 
@@ -80,10 +72,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkflowTransportToAgentConfig(c
 		case "":
 			// inherit the default computed above
 		case "tmux":
-			if workflowAgentConfigPrimaryProviderIs(config, mcpllm.ProviderGeminiCLI) {
-				hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport=tmux ignored for Gemini CLI workflow step; using structured stream-json", agentKind))
-				effectiveTransport = "structured"
-			} else if common.IsCLIProvider(provider) {
+			if common.IsCLIProvider(provider) {
 				config.ForceStructuredCodingAgent = false
 				effectiveTransport = "tmux"
 				hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s transport override: tmux for CLI provider '%s'", agentKind, provider))
@@ -150,13 +139,6 @@ func workflowAgentConfigUsesClaudeCode(config *agents.OrchestratorAgentConfig) b
 		}
 	}
 	return false
-}
-
-func workflowAgentConfigPrimaryProviderIs(config *agents.OrchestratorAgentConfig, provider mcpllm.Provider) bool {
-	if config == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(config.LLMConfig.Primary.Provider), string(provider))
 }
 
 // filterServersByWorkflow intersects stepServers with workflowServers so that the

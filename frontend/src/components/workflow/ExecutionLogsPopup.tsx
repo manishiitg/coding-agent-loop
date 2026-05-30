@@ -479,22 +479,22 @@ const StepStatusBadge = ({ status }: { status: 'completed' | 'failed' | 'running
   switch (status) {
     case 'running':
       return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-blue-600 border border-blue-500/20 dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/30 animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.1)]">
-          <Loader2 className="w-3 h-3 animate-spin text-blue-500 dark:text-blue-400" />
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-indigo-600 border border-indigo-500/20 dark:bg-indigo-500/20 dark:text-indigo-300 dark:border-indigo-500/30 animate-pulse shadow-[0_0_8px_rgba(99,102,241,0.15)]">
+          <Loader2 className="w-3 h-3 animate-spin text-indigo-500 dark:text-indigo-400" />
           Running
         </span>
       )
     case 'completed':
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-semibold text-green-600 border border-green-500/20 dark:bg-green-500/20 dark:text-green-300 dark:border-green-500/30">
-          <CheckCircle className="w-3 h-3 text-green-500" />
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 border border-emerald-500/20 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/30">
+          <CheckCircle className="w-3 h-3 text-emerald-500 dark:text-emerald-400" />
           Completed
         </span>
       )
     case 'failed':
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-600 border border-red-500/20 dark:bg-red-500/20 dark:text-red-300 dark:border-red-500/30">
-          <XCircle className="w-3 h-3 text-red-500" />
+        <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-600 border border-rose-500/20 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30">
+          <XCircle className="w-3 h-3 text-rose-500 dark:text-rose-400" />
           Failed
         </span>
       )
@@ -2027,7 +2027,9 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 .sort(sortStepEntriesByExecution)
                 .map(([stepId, stepLogs]) => {
                   const isExpanded = expandedSteps.has(stepId)
-                  const title = stepLogs.title || stepId
+                  const displayId = stepLogs.original_id || stepId
+                  const hasCustomTitle = !!stepLogs.title && stepLogs.title !== displayId
+                  const displayTitle = hasCustomTitle ? stepLogs.title : displayId
                   const description = stepLogs.description || ''
                   const nestingLevel = getStepNestingLevel(stepId)
                   const indentStyle = getStepIndentStyle(nestingLevel)
@@ -2040,26 +2042,35 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                   // Determine card styles and glow based on execution status
                   let cardBorderClass = 'border-border'
                   let cardBgClass = 'bg-card'
+                  let accentBarClass = 'bg-muted-foreground/20'
                   if (stepStatus === 'running') {
-                    cardBorderClass = 'border-blue-500/40 shadow-[0_0_12px_rgba(59,130,246,0.12)]'
-                    cardBgClass = 'bg-blue-50/5 dark:bg-blue-950/5 animate-pulse-subtle'
+                    cardBorderClass = 'border-indigo-500/30 dark:border-indigo-500/40 shadow-[0_0_12px_rgba(99,102,241,0.08)]'
+                    cardBgClass = 'bg-indigo-500/[0.02] dark:bg-indigo-500/[0.03] animate-pulse-subtle'
+                    accentBarClass = 'bg-indigo-500'
                   } else if (stepStatus === 'completed') {
-                    cardBorderClass = 'border-green-500/20'
-                    cardBgClass = 'bg-green-500/[0.005] dark:bg-green-500/[0.01]'
+                    cardBorderClass = 'border-emerald-500/20 dark:border-emerald-500/30'
+                    cardBgClass = 'bg-emerald-500/[0.01] dark:bg-emerald-500/[0.015]'
+                    accentBarClass = 'bg-emerald-500/70'
                   } else if (stepStatus === 'failed') {
-                    cardBorderClass = 'border-red-500/30'
-                    cardBgClass = 'bg-red-500/[0.005] dark:bg-red-500/[0.01]'
+                    cardBorderClass = 'border-rose-500/30 dark:border-rose-500/40 shadow-[0_0_10px_rgba(244,63,94,0.05)]'
+                    cardBgClass = 'bg-rose-500/[0.01] dark:bg-rose-500/[0.02]'
+                    accentBarClass = 'bg-rose-500'
                   } else {
-                    cardBorderClass = 'border-border opacity-80'
+                    cardBorderClass = 'border-border/80 opacity-80'
+                    cardBgClass = 'bg-card'
+                    accentBarClass = 'bg-muted-foreground/30'
                   }
 
                   return (
-                    <div key={stepId} className={`border ${cardBorderClass} ${cardBgClass} rounded-lg overflow-hidden transition-all duration-300 ${nestingClass}`} style={indentStyle}>
+                    <div key={stepId} className={`relative border ${cardBorderClass} ${cardBgClass} rounded-lg overflow-hidden transition-all duration-300 ${nestingClass}`} style={indentStyle}>
+                      {/* Left accent bar indicator */}
+                      <div className={`absolute left-0 top-0 bottom-0 w-[4px] ${accentBarClass}`} />
+
                       <button
                         onClick={() => toggleStep(stepId)}
                         className={`
-                          w-full flex flex-col gap-2 px-4 py-3 text-left transition-colors
-                          ${isExpanded ? 'bg-accent/40' : 'hover:bg-accent/40'}
+                          w-full flex flex-col gap-2 pl-6 pr-4 py-3 text-left transition-colors
+                          ${isExpanded ? 'bg-accent/30' : 'hover:bg-accent/40'}
                         `}
                       >
                         <div className="flex w-full items-start justify-between gap-3">
@@ -2071,11 +2082,15 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                 <span className="flex-shrink-0" title={`Step type: ${stepLogs.type || 'regular'}`}>
                                   {getStepIcon(stepLogs.type)}
                                 </span>
-                                <span className="font-mono text-xs opacity-50">{stepLogs.original_id || stepId}</span>
-                                <span className="text-sm font-medium text-foreground truncate">{title}</span>
+                                <span className="text-sm font-semibold text-foreground truncate">{displayTitle}</span>
+                                {hasCustomTitle && (
+                                  <span className="font-mono text-[10px] bg-muted/70 text-muted-foreground border border-border px-1.5 py-0.5 rounded-md flex-shrink-0" title="Step ID">
+                                    {displayId}
+                                  </span>
+                                )}
                               </div>
                               {description && (
-                                <span className="text-xs text-muted-foreground line-clamp-1 truncate w-full mt-0.5">{description}</span>
+                                <span className="text-xs text-muted-foreground line-clamp-1 truncate w-full mt-0.5 pl-6">{description}</span>
                               )}
                             </div>
                           </div>
@@ -2086,7 +2101,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                           </div>
                         </div>
                         
-                        <div className="flex w-full flex-wrap items-center gap-1.5 pl-7 text-xs text-muted-foreground">
+                        <div className="flex w-full flex-wrap items-center gap-1.5 pl-10 text-xs text-muted-foreground">
                           {showMetrics && (
                             <>
                               {stepMetrics.totalTokens > 0 && (

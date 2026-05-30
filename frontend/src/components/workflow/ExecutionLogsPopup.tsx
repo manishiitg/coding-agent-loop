@@ -447,6 +447,68 @@ const StepMetricChip = ({ title, children }: { title: string; children: React.Re
   </span>
 )
 
+// Helper to determine the overall real-time status of a step
+const getStepStatus = (stepLogs: any): 'completed' | 'failed' | 'running' | 'pending' => {
+  const validations = stepLogs.validations || []
+  const executions = stepLogs.executions || []
+
+  // Check validations first for finality
+  if (validations.length > 0) {
+    if (validations.some((v: any) => v.content?.execution_status === 'FAILED')) {
+      return 'failed'
+    }
+    const latestVal = validations[validations.length - 1]
+    if (latestVal.content?.execution_status === 'COMPLETED') {
+      return 'completed'
+    }
+    if (latestVal.content?.execution_status === 'RUNNING' || latestVal.content?.execution_status === 'PENDING') {
+      return 'running'
+    }
+  }
+
+  // If executions exist but validations aren't finalized or present, it's currently running
+  if (executions.length > 0) {
+    return 'running'
+  }
+
+  return 'pending'
+}
+
+// Visual status pill with color-matched icon, background, text, and active animations
+const StepStatusBadge = ({ status }: { status: 'completed' | 'failed' | 'running' | 'pending' }) => {
+  switch (status) {
+    case 'running':
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-blue-600 border border-blue-500/20 dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/30 animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.1)]">
+          <Loader2 className="w-3 h-3 animate-spin text-blue-500 dark:text-blue-400" />
+          Running
+        </span>
+      )
+    case 'completed':
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-semibold text-green-600 border border-green-500/20 dark:bg-green-500/20 dark:text-green-300 dark:border-green-500/30">
+          <CheckCircle className="w-3 h-3 text-green-500" />
+          Completed
+        </span>
+      )
+    case 'failed':
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-600 border border-red-500/20 dark:bg-red-500/20 dark:text-red-300 dark:border-red-500/30">
+          <XCircle className="w-3 h-3 text-red-500" />
+          Failed
+        </span>
+      )
+    case 'pending':
+    default:
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground border border-border">
+          <Clock className="w-3 h-3 text-muted-foreground" />
+          Pending
+        </span>
+      )
+  }
+}
+
 const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   isOpen,
   onClose,
@@ -522,17 +584,20 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
       const data = await agentApi.getExecutionLogs(workspacePath, selectedRunFolder)
       setLogs(data)
       
-      const failedStepIds = Object.entries(data.steps)
-        .filter(([, stepLogs]) => stepLogs.validations.some(v => v.content?.execution_status === 'FAILED'))
+      const failedOrRunningStepIds = Object.entries(data.steps)
+        .filter(([, stepLogs]) => {
+          const status = getStepStatus(stepLogs)
+          return status === 'failed' || status === 'running'
+        })
         .map(([stepId]) => stepId)
 
       if (autoExpandedRunRef.current !== selectedRunFolder) {
         autoExpandedRunRef.current = selectedRunFolder
-        setExpandedSteps(new Set(failedStepIds))
-      } else if (failedStepIds.length > 0) {
+        setExpandedSteps(new Set(failedOrRunningStepIds))
+      } else if (failedOrRunningStepIds.length > 0) {
         setExpandedSteps(prev => {
           const next = new Set(prev)
-          failedStepIds.forEach(stepId => next.add(stepId))
+          failedOrRunningStepIds.forEach(stepId => next.add(stepId))
           return next
         })
       }
@@ -1970,29 +2035,54 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                   const stepMetrics = getStepMetrics(stepLogs.executions || [])
                   const showMetrics = hasStepMetrics(stepMetrics)
 
+                  const stepStatus = getStepStatus(stepLogs)
+
+                  // Determine card styles and glow based on execution status
+                  let cardBorderClass = 'border-border'
+                  let cardBgClass = 'bg-card'
+                  if (stepStatus === 'running') {
+                    cardBorderClass = 'border-blue-500/40 shadow-[0_0_12px_rgba(59,130,246,0.12)]'
+                    cardBgClass = 'bg-blue-50/5 dark:bg-blue-950/5 animate-pulse-subtle'
+                  } else if (stepStatus === 'completed') {
+                    cardBorderClass = 'border-green-500/20'
+                    cardBgClass = 'bg-green-500/[0.005] dark:bg-green-500/[0.01]'
+                  } else if (stepStatus === 'failed') {
+                    cardBorderClass = 'border-red-500/30'
+                    cardBgClass = 'bg-red-500/[0.005] dark:bg-red-500/[0.01]'
+                  } else {
+                    cardBorderClass = 'border-border opacity-80'
+                  }
+
                   return (
-                    <div key={stepId} className={`border border-border rounded-lg overflow-hidden bg-card ${nestingClass}`} style={indentStyle}>
+                    <div key={stepId} className={`border ${cardBorderClass} ${cardBgClass} rounded-lg overflow-hidden transition-all duration-300 ${nestingClass}`} style={indentStyle}>
                       <button
                         onClick={() => toggleStep(stepId)}
                         className={`
                           w-full flex flex-col gap-2 px-4 py-3 text-left transition-colors
-                          ${isExpanded ? 'bg-accent/50' : 'hover:bg-accent/50'}
+                          ${isExpanded ? 'bg-accent/40' : 'hover:bg-accent/40'}
                         `}
                       >
-                        <div className="flex min-w-0 items-center gap-3 overflow-hidden">
-                          {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
-                          
-                          <div className="flex flex-col items-start text-left min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="flex-shrink-0" title={`Step type: ${stepLogs.type || 'regular'}`}>
-                                {getStepIcon(stepLogs.type)}
-                              </span>
-                              <span className="font-mono text-xs opacity-50">{stepLogs.original_id || stepId}</span>
-                              <span className="text-sm font-medium text-foreground truncate">{title}</span>
+                        <div className="flex w-full items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-start gap-3 overflow-hidden flex-1">
+                            {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />}
+                            
+                            <div className="flex flex-col items-start text-left min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="flex-shrink-0" title={`Step type: ${stepLogs.type || 'regular'}`}>
+                                  {getStepIcon(stepLogs.type)}
+                                </span>
+                                <span className="font-mono text-xs opacity-50">{stepLogs.original_id || stepId}</span>
+                                <span className="text-sm font-medium text-foreground truncate">{title}</span>
+                              </div>
+                              {description && (
+                                <span className="text-xs text-muted-foreground line-clamp-1 truncate w-full mt-0.5">{description}</span>
+                              )}
                             </div>
-                            {description && (
-                              <span className="text-xs text-muted-foreground line-clamp-1 truncate w-full">{description}</span>
-                            )}
+                          </div>
+                          
+                          {/* Step Status Badge on the right */}
+                          <div className="flex-shrink-0 self-center">
+                            <StepStatusBadge status={stepStatus} />
                           </div>
                         </div>
                         

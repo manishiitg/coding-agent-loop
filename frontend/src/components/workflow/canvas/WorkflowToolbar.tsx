@@ -9,7 +9,7 @@ import {
   Package,
   Database,
   Table2,
-  Beaker,
+  TrendingUp,
   ShieldCheck,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -422,7 +422,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 onClick={() => setShowAutoImprovementPopup(true)}
                 className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
               >
-                <Beaker className="w-3.5 h-3.5" />
+                <TrendingUp className="w-3.5 h-3.5" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom"><p>Auto-improvement (metrics, trajectory, decisions)</p></TooltipContent>

@@ -2246,7 +2246,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [expandedErrorIDs, setExpandedErrorIDs] = useState<Set<string>>(() => new Set())
   const [terminalColorScheme, setTerminalColorScheme] = useState<TerminalColorScheme>(() => readStoredTerminalColorScheme())
   const [terminalRailFilter, setTerminalRailFilter] = useState<TerminalRailFilter>('all')
-  const [terminalRailMinimized, setTerminalRailMinimized] = useState(false)
+  // In the workflow's narrow (compact) chat rail the agent tree is cramped, so
+  // start it minimized (main agent only, sub-agent terminals hidden below it).
+  // The +/- toggle still expands it on demand.
+  const [terminalRailMinimized, setTerminalRailMinimized] = useState(Boolean(compact))
   const [error, setError] = useState<string | null>(null)
   const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
   const [debugPanelOpenForID, setDebugPanelOpenForID] = useState<string | null>(null)

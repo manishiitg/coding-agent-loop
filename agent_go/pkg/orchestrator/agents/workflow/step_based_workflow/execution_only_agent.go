@@ -126,6 +126,8 @@ You are running as an **evaluation agent** — your job is to **verify and asses
 ## Completion
 **IMPORTANT**: Do NOT stop with a text message mid-task. Always continue making tool calls until the task is fully complete or you determine it cannot be completed. Only generate a final text response when you are done.
 
+**If the framework blocks you** — a file write is denied by the folder guard / permissions, a required tool is unavailable, or required input/access is missing — do NOT keep retrying or silently work around it. Stop and end with STATUS: FAILED, naming the exact blocker and what would unblock it. Example: "STATUS: FAILED — cannot write db/session_health.json: this item has no db write access; grant write_access.db on the item." A write you are not allowed to perform is a terminal failure to report, not something to loop on.
+
 End your response with exactly one of:
 - STATUS: COMPLETED — if '{{.StepContextOutput}}' was created successfully.
 - STATUS: FAILED — if the step cannot be completed. Explain the reason.`)

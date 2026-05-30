@@ -433,6 +433,31 @@ type MessageSequenceWriteAccess struct {
 	Learnings     bool `json:"learnings,omitempty"`
 }
 
+// UnmarshalJSON rejects per-file scoping attempts on write_access. The access is
+// folder-level booleans (knowledgebase/db/learnings); authors frequently try
+// {"db": true, "paths": ["db/foo.json"]} expecting a single file to be writable.
+// Standard decoding silently drops the unknown "paths" key, granting the whole
+// db/ folder while the author thinks it was scoped — a real footgun. Catch the
+// path-like keys with an explicit, actionable error instead.
+func (w *MessageSequenceWriteAccess) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, key := range []string{"paths", "path", "files", "file"} {
+		if _, ok := raw[key]; ok {
+			return fmt.Errorf("write_access does not support per-file scoping (%q): it is folder-level booleans only — use {\"db\": true}, {\"knowledgebase\": true}, and/or {\"learnings\": true}", key)
+		}
+	}
+	type alias MessageSequenceWriteAccess
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*w = MessageSequenceWriteAccess(a)
+	return nil
+}
+
 type MessageSequenceFailurePolicy struct {
 	Action     string `json:"action,omitempty"` // "stop_step" | "repair_with_llm" | "repair_same_session"
 	MaxRetries int    `json:"max_retries,omitempty"`
@@ -1135,7 +1160,7 @@ func getAddMessageSequenceStepSchema() string {
 						"output_files": {"type": "array", "items": {"type": "string"}},
 						"write_access": {
 							"type": "object",
-							"description": "Item-scoped writes only. Reads for kb/db/learnings are always open.",
+							"description": "Item-scoped writes only. Reads for kb/db/learnings are always open. Folder-level booleans only — NO per-file path scoping (a \"paths\" list is rejected); db:true grants the whole db/ folder.",
 							"properties": {
 								"knowledgebase": {"type": "boolean"},
 								"db": {"type": "boolean"},
@@ -3740,6 +3765,23 @@ func validateMessageSequenceStepFieldsTyped(step *MessageSequencePlanStep) error
 			}
 		default:
 			return fmt.Errorf("message_sequence step %q item %q has unsupported type %q", step.ID, item.ID, item.Type)
+		}
+
+		// Writes are item-scoped and default-deny; reads of db/kb/learnings are
+		// always open. An item whose message or output_files say it writes to
+		// db/ or the knowledgebase but that has no matching write_access (or
+		// inferred kind) would silently fail at execution — the file write is
+		// blocked by the folder guard. Reject it at plan time with an actionable
+		// message so the grant is added up front.
+		needsDB, needsKB := messageSequenceItemWriteIntent(item)
+		if needsDB || needsKB {
+			access := resolveMessageSequenceItemWriteAccess(item)
+			if needsDB && !access.DB {
+				return fmt.Errorf("message_sequence step %q item %q writes to db/ (per its message or output_files) but has no db write access; add \"write_access\": {\"db\": true} to the item (or set \"kind\": \"db\"). Reads are always open; writes are item-scoped.", step.ID, item.ID)
+			}
+			if needsKB && !access.Knowledgebase {
+				return fmt.Errorf("message_sequence step %q item %q writes to the knowledgebase but has no kb write access; add \"write_access\": {\"knowledgebase\": true} to the item (or set \"kind\": \"knowledgebase\"). Reads are always open; writes are item-scoped.", step.ID, item.ID)
+			}
 		}
 	}
 	return nil

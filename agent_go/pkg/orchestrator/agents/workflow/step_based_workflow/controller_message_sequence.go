@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -164,6 +165,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 			}
 			_ = hcpo.saveMessageSequenceSession(ctx, sessionRelPath, session)
 			return "", session.ConversationHistory, err
+		}
+		// A user_message/foreach turn that self-reported STATUS: FAILED is a
+		// terminal failure — stop the queue here instead of running the
+		// remaining items (e.g. a prevalidation gate that would just re-confirm
+		// the failure). The reported reason flows out as the step error → the
+		// failed auto-notification.
+		if itemType := item.Type; itemType == "" || itemType == "user_message" || itemType == "foreach" {
+			if reason, failedStatus := messageSequenceItemReportedFailure(summary); failedStatus {
+				entry.Status = "failed"
+				session.Status = "failed"
+				session.Entries = append(session.Entries, entry)
+				session.UpdatedAt = time.Now()
+				if isRoute {
+					hcpo.storeMsgSeqRouteSession(routeKey, session)
+				}
+				_ = hcpo.saveMessageSequenceSession(ctx, sessionRelPath, session)
+				return "", session.ConversationHistory, fmt.Errorf("message_sequence step %q item %q reported STATUS: FAILED: %s", sequenceStep.GetID(), item.ID, reason)
+			}
 		}
 		session.Entries = append(session.Entries, entry)
 		session.UpdatedAt = time.Now()
@@ -424,6 +443,72 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceCodeRepair(ctx 
 	}
 	session.ConversationHistory = history
 	return nil
+}
+
+// A write verb followed (within one sentence, a short window) by a db/ or kb/
+// path. The verbs are stems so writes/writing/saved/appending/... all match.
+// The bounded, non-greedy gap and \b anchor keep this from firing on reads
+// ("read db/x.json" has no preceding write verb) or on a write whose target is
+// elsewhere ("compare against db/baseline and write the report" — the verb
+// comes after the path, and is too far / wrong order).
+var messageSequenceWriteVerbStem = `\b(writ|sav|append|updat|persist|stor|record|creat|produc|output|overwrit|populat|emit|dump|flush)[a-z]*`
+
+var messageSequenceDBWriteIntentRe = regexp.MustCompile(messageSequenceWriteVerbStem + `[^\n.;!?]{0,40}?\bdb/`)
+
+var messageSequenceKBWriteIntentRe = regexp.MustCompile(messageSequenceWriteVerbStem + `[^\n.;!?]{0,40}?\b(knowledgebase|kb)/`)
+
+// messageSequenceItemWriteIntent reports whether an item is going to WRITE to
+// db/ or the knowledgebase, inferred from its declared output_files (definitive)
+// and its message prose (write verb adjacent to a db/ or kb/ path). It is the
+// counterpart to resolveMessageSequenceItemWriteAccess: the former says what the
+// item is GRANTED, this says what it APPEARS to need, and validation flags the
+// gap so an item can't quietly ask to write a file it has no access to.
+// messageSequenceItemReportedFailure reports whether an LLM turn ended with the
+// agent's terminal STATUS: FAILED marker (the execution_only Completion
+// contract). When a turn self-reports failure there's no point running the rest
+// of the queue — especially a following prevalidation gate, which would just
+// re-confirm the failure — so the sequence short-circuits and fails the step
+// with the reported reason.
+func messageSequenceItemReportedFailure(summary string) (reason string, failed bool) {
+	for _, line := range strings.Split(summary, "\n") {
+		trimmed := strings.TrimSpace(line)
+		compact := strings.ToUpper(strings.Join(strings.Fields(trimmed), " "))
+		if !strings.HasPrefix(compact, "STATUS: FAILED") && !strings.HasPrefix(compact, "STATUS:FAILED") {
+			continue
+		}
+		if idx := strings.Index(strings.ToUpper(trimmed), "FAILED"); idx >= 0 {
+			reason = strings.TrimSpace(strings.TrimLeft(trimmed[idx+len("FAILED"):], " —-:"))
+		}
+		if reason == "" {
+			reason = trimmed
+		}
+		return reason, true
+	}
+	return "", false
+}
+
+func messageSequenceItemWriteIntent(item MessageSequenceItem) (needsDB, needsKB bool) {
+	for _, out := range item.OutputFiles {
+		clean := filepath.ToSlash(filepath.Clean(strings.TrimSpace(out)))
+		if clean == "" || clean == "." {
+			continue
+		}
+		if clean == DBFolderName || strings.HasPrefix(clean, DBFolderName+"/") || strings.Contains(clean, "/"+DBFolderName+"/") {
+			needsDB = true
+		}
+		if strings.HasPrefix(clean, KnowledgebaseFolderName+"/notes/") || strings.Contains(clean, "/"+KnowledgebaseFolderName+"/notes/") {
+			needsKB = true
+		}
+	}
+	if msg := strings.ToLower(item.Message); msg != "" {
+		if messageSequenceDBWriteIntentRe.MatchString(msg) {
+			needsDB = true
+		}
+		if messageSequenceKBWriteIntentRe.MatchString(msg) {
+			needsKB = true
+		}
+	}
+	return needsDB, needsKB
 }
 
 func resolveMessageSequenceItemWriteAccess(item MessageSequenceItem) MessageSequenceWriteAccess {

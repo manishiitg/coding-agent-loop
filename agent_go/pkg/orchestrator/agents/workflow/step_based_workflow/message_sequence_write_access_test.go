@@ -2,9 +2,29 @@ package step_based_workflow
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestMessageSequenceExecutionRelPath_UsesNormalStepFolder(t *testing.T) {
+	hcpo := &StepBasedWorkflowOrchestrator{selectedRunFolder: "iteration-0"}
+	for _, tc := range []struct{ stepPath, stepID string }{
+		{"step-5", "step-run-intent-orchestrator"},
+		{"step-3-sub-login", "login-specialist"},
+	} {
+		got := hcpo.messageSequenceExecutionRelPath(tc.stepPath, tc.stepID)
+		// Must equal the folder every other step writes to (execution/<stepID>) —
+		// the folder downstream context_dependencies resolve against.
+		want := filepath.Join("runs", "iteration-0", "execution", getArtifactFolderName(tc.stepID, tc.stepPath))
+		if got != want {
+			t.Fatalf("messageSequenceExecutionRelPath(%q,%q) = %q, want normal step folder %q", tc.stepPath, tc.stepID, got, want)
+		}
+		if strings.Contains(got, "message_sequences") {
+			t.Fatalf("sequence still writes to isolated message_sequences folder: %q", got)
+		}
+	}
+}
 
 func TestMessageSequenceWriteAccess_RejectsPerFilePaths(t *testing.T) {
 	var w MessageSequenceWriteAccess

@@ -359,8 +359,9 @@ func assertStepExecutionResultContains(t *testing.T, walkRoot, stepID, wantToken
 		}
 		return
 	}
-	// 3) Message-sequence session log
-	if matches, _ := filepath.Glob(filepath.Join(walkRoot, "runs", "*", "*", "execution", "message_sequences", "*", stepID, "session.json")); len(matches) > 0 {
+	// 3) Message-sequence session log — lives in the step's normal execution
+	// folder (execution/<stepID>/session.json), same as every other step.
+	if matches, _ := filepath.Glob(filepath.Join(walkRoot, "runs", "*", "*", "execution", stepID, "session.json")); len(matches) > 0 {
 		body, err := os.ReadFile(matches[len(matches)-1])
 		if err != nil {
 			t.Errorf("%s: read %s: %v", stepID, matches[len(matches)-1], err)
@@ -474,9 +475,9 @@ func assertAllStepsExecutedAndDecisionsMatch(t *testing.T, walkRoot string, step
 		// the engine does not persist to disk (TodoTaskResponse is
 		// runtime-only per planning_agent.go:646).
 		"step-double-check": {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "logs", "step-double-check", "execution", "todo-task-prompts.json")}},
-		// message_sequence persists session.json under
-		// execution/message_sequences/<step-path>/<step-id>/.
-		"step-report": {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "execution", "message_sequences", "*", "step-report", "session.json")}},
+		// message_sequence persists session.json in the step's normal
+		// execution folder: execution/<step-id>/session.json.
+		"step-report": {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "execution", "step-report", "session.json")}},
 	}
 
 	var completed, missing []string

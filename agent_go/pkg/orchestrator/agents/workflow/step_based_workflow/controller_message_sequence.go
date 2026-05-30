@@ -571,13 +571,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, message string, readPaths []string, writePaths []string) map[string]string {
 	stepExecRel := hcpo.messageSequenceExecutionRelPath(stepPath, step.GetID())
 	docsRoot := GetPromptDocsRoot()
+	// Honor the step's declared context_output so the sequence writes the file
+	// downstream steps expect (in execution/<stepID>/, the normal step folder).
+	// Fall back to the generic name only when the step declares no output.
+	contextOutput := strings.TrimSpace(step.GetContextOutput().String())
+	if contextOutput == "" {
+		contextOutput = "message_sequence_result.json"
+	}
 	return map[string]string{
 		"StepTitle":                step.GetTitle(),
 		"StepDescription":          message,
 		"BaseDescription":          message,
 		"OrchestratorInstructions": message,
 		"StepContextDependencies":  strings.Join(step.GetContextDependencies(), "\n"),
-		"StepContextOutput":        "message_sequence_result.json",
+		"StepContextOutput":        contextOutput,
 		"WorkspacePath":            messageSequenceAbsPath(filepath.Join(hcpo.GetWorkspacePath(), "runs", hcpo.selectedRunFolder, "execution")),
 		"WorkflowRoot":             messageSequenceAbsPath(hcpo.GetWorkspacePath()),
 		"DocsRoot":                 docsRoot,
@@ -751,8 +758,16 @@ func messageSequenceAbsPath(path string) string {
 	return filepath.Join(docsRoot, path)
 }
 
+// messageSequenceExecutionRelPath returns the step's execution folder — the SAME
+// folder regular and orchestrator steps use (execution/<stepID>). The sequence's
+// per-item artifacts and session.json live in subfolders under it, and its
+// declared context_output lands directly here, so downstream context_dependencies
+// resolve it exactly like any other step's output. (Previously this was an
+// isolated execution/message_sequences/<stepPath>/<stepID> folder that was not on
+// the dependency-resolution path, so a sequence could not hand off a local output
+// file to later steps.)
 func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceExecutionRelPath(stepPath string, stepID string) string {
-	return filepath.Join("runs", hcpo.selectedRunFolder, "execution", "message_sequences", stepPath, stepID)
+	return filepath.Join("runs", hcpo.selectedRunFolder, "execution", getArtifactFolderName(stepID, stepPath))
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceItemRelPath(stepPath string, stepID string, itemID string) string {

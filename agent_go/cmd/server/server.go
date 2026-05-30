@@ -78,6 +78,7 @@ var (
 	cleanupCursorCLIProviderSessions   = llmproviders.CleanupCursorCLIInteractiveSessions
 	cleanupAgyCLIProviderSessions      = llmproviders.CleanupAgyCLIInteractiveSessions
 	cleanupOpenCodeCLIProviderSessions = llmproviders.CleanupOpenCodeCLIInteractiveSessions
+	sweepOrphanedTmuxSessions          = llmproviders.SweepOrphanedInteractiveTmuxSessions
 )
 
 // stepDelegationRegistry maps a workshop step's ForceCorrelationID ("workshop-step-*") to the
@@ -668,6 +669,22 @@ func runServer(cmd *cobra.Command, args []string) {
 			os.Setenv("MCP_ENV_LOADED", "1")
 			fmt.Println("[ENV] Loaded .env file for LLM config")
 		}
+	}
+
+	// Startup recovery: sweep coding-agent tmux sessions (and their orphaned
+	// process trees) stranded by a PREVIOUS run that exited ungracefully
+	// (crash, SIGKILL, machine sleep). The in-process registries the shutdown
+	// cleanup relies on are empty on a fresh boot, so those leftovers would
+	// otherwise accumulate across restarts. Single-instance only — set
+	// MCP_DISABLE_TMUX_STARTUP_SWEEP=1 to skip (e.g. when sharing a tmux server
+	// with another backend or test).
+	if os.Getenv("MCP_DISABLE_TMUX_STARTUP_SWEEP") == "" {
+		sweepCtx, cancelSweep := context.WithTimeout(context.Background(), 10*time.Second)
+		if n := sweepOrphanedTmuxSessions(sweepCtx); n > 0 {
+			fmt.Printf("🧹 Swept %d orphaned coding-agent tmux session(s) from a previous run\n", n)
+			log.Printf("[STARTUP] swept %d orphaned coding-agent tmux sessions", n)
+		}
+		cancelSweep()
 	}
 
 	// Show execution agent LLM config at startup
@@ -7316,24 +7333,36 @@ func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result s
 		return
 	}
 
-	// If agent was already canceled (by CancelAll during workflow stop), treat as
-	// terminated — don't emit completion events or trigger notification.
-	if agent.GetStatus() == BGAgentCanceled {
-		log.Printf("[BG AGENT] OnExecutionComplete skipped for already-canceled agent %s", execID)
-		return
-	}
-
-	// Context-canceled errors indicate the parent workflow was stopped.
-	// Treat these as cancellations even if CancelAll hasn't marked this specific
-	// agent yet (e.g. it was registered after CancelAll ran).
+	// Context-canceled / deadline-exceeded means the execution was cut short
+	// (idle/inactivity timeout, parent-context cancel, etc.) rather than finishing.
+	// Emit a terminated notification so a waiting main agent learns it died — even
+	// when the agent is already marked canceled. This branch runs BEFORE the
+	// already-canceled skip below so a non-user cancel (e.g. a timeout) is not
+	// silently swallowed. MarkTerminalNotified dedups against an explicit stop that
+	// already emitted via OnExecutionTerminated, so we never double-notify.
 	if err != nil && (strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded")) {
 		agent.SetCanceled()
 		n.api.completeTrackedExecution(execID, trackedExecutionStatusCanceled, err.Error(), meta)
-		log.Printf("[BG AGENT] OnExecutionComplete treating context-canceled agent %s as terminated", execID)
-		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_terminated", map[string]interface{}{
-			"agent_id": execID,
-			"name":     name,
-		})
+		if agent.MarkTerminalNotified() {
+			log.Printf("[BG AGENT] OnExecutionComplete emitting terminated for context-canceled agent %s", execID)
+			n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_terminated", map[string]interface{}{
+				"agent_id": execID,
+				"name":     name,
+			})
+			// Drive the auto-notification (synthetic turn / live steer) so the main
+			// agent is actually told, not just the UI pill — matches OnExecutionTerminated.
+			n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
+		} else {
+			log.Printf("[BG AGENT] OnExecutionComplete skipped duplicate terminated for agent %s", execID)
+		}
+		return
+	}
+
+	// Already canceled with no context-cancel error — an explicit stop
+	// (OnExecutionTerminated / CancelAll) set the flag and already emitted the
+	// terminal event. Don't emit completion events or re-notify.
+	if agent.GetStatus() == BGAgentCanceled {
+		log.Printf("[BG AGENT] OnExecutionComplete skipped for already-canceled agent %s", execID)
 		return
 	}
 
@@ -7378,10 +7407,14 @@ func (n *workshopExecutionBgNotifier) OnExecutionTerminated(execID, name string)
 	}
 	agent.SetCanceled()
 	n.api.completeTrackedExecution(execID, trackedExecutionStatusCanceled, "execution terminated", nil)
-	n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_terminated", map[string]interface{}{
-		"agent_id": execID,
-		"name":     name,
-	})
+	// Dedup with OnExecutionComplete's context-cancel path: emit the terminated
+	// event only once per agent regardless of which path fires first.
+	if agent.MarkTerminalNotified() {
+		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_terminated", map[string]interface{}{
+			"agent_id": execID,
+			"name":     name,
+		})
+	}
 	// Signal completion so the loop can process any pending completions
 	n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
 }

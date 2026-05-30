@@ -674,15 +674,20 @@ function terminalTaskLabel(terminal: TerminalSnapshot): string {
   const rawLabel = terminal.label || terminal.execution_id || terminal.owner_id || ''
   const kind = terminal.execution_kind || terminal.scope
   if (kind === 'workflow_step' || kind === 'step' || kind === 'execution_only') {
-    return terminal.step_id || terminal.step_name || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
+    // Prefer the human step title / agent name over the raw step_id. The ID
+    // (e.g. "_global" for the global-learnings skill) is a folder/lookup key,
+    // not a display name; it remains the last-resort fallback.
+    return terminal.step_name || terminal.agent_name || terminal.step_id || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
   }
   return terminal.step_name || terminal.agent_name || visibleStepID(terminal) || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
 }
 
 function formatTerminalTitle(terminal: TerminalSnapshot): string {
-  // Title is just the step_id (the most useful identifier). Everything
-  // else — parent, chip, workflow name, kind — moves to the meta row
-  // so the title stays minimal and scannable in dense lists.
+  // Prefer a human title (step title, or the agent's own name for step-less
+  // maintenance agents like learning/organize) over the raw step_id. The ID —
+  // e.g. "_global" for the global-learnings skill — is a folder/lookup key, not
+  // a display name, so it's the last-resort fallback. Everything else — parent,
+  // chip, workflow name, kind — lives in the meta row so the title stays minimal.
   const kind = (terminal.execution_kind || terminal.scope || '').toLowerCase()
   if (isMainAgentTerminal(terminal)) {
     return terminal.agent_name || terminal.step_name || 'Main agent'
@@ -690,7 +695,7 @@ function formatTerminalTitle(terminal: TerminalSnapshot): string {
   if (kind === 'background_agent' || kind === 'background' || kind === 'delegation' || kind === 'todo_task' || kind === 'sub_agent') {
     return terminal.agent_name || terminal.step_name || terminal.display_title || visibleStepID(terminal) || formatTerminalKindLabel(terminal) || 'Terminal'
   }
-  return visibleStepID(terminal) || terminal.step_name || formatTerminalKindLabel(terminal) || terminal.display_title || 'Terminal'
+  return terminal.step_name || terminal.agent_name || visibleStepID(terminal) || formatTerminalKindLabel(terminal) || 'Terminal'
 }
 
 function visibleStepID(terminal: TerminalSnapshot): string {

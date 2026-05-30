@@ -73,7 +73,9 @@ func TestStoreTracksTerminalChunksByOwner(t *testing.T) {
 	if snapshot.StepType != "todo_task" {
 		t.Fatalf("unexpected step type: %q", snapshot.StepType)
 	}
-	if snapshot.DisplayTitle != "Rtsrca -> step-sentry-evidence" {
+	// Display title prefers the human step title over the raw step ID
+	// ("step-sentry-evidence"); the ID remains in snapshot.StepID for lookups.
+	if snapshot.DisplayTitle != "Rtsrca -> Pull Sentry Evidence" {
 		t.Fatalf("unexpected display title: %q", snapshot.DisplayTitle)
 	}
 	if snapshot.DisplayMeta != "Todo task · Workflow step" {

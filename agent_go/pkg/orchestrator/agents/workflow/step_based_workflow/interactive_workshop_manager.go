@@ -4911,8 +4911,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				// Create learning agent with write access to _global folder
-				agentName := fmt.Sprintf("%s-organize-global-skill", GlobalLearningID)
+				// Create learning agent with write access to _global folder.
+				// Use a human-readable name (not the "_global-…" slug): it surfaces as
+				// the terminal/agent label, and the folder/lookup identity is carried
+				// separately by the stepID (GlobalLearningID), not this name.
+				agentName := "Organize Global Learnings"
 				phaseLLM := iwm.controller.selectPhaseLLM("organize global learnings agent")
 				if phaseLLM == nil {
 					execErr = fmt.Errorf("no valid LLM configuration found for organize global learnings agent")

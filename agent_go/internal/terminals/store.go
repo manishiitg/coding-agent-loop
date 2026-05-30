@@ -1566,7 +1566,12 @@ func fillDisplayContext(snapshot *Snapshot) {
 func terminalTaskLabel(snapshot Snapshot) string {
 	switch firstNonEmpty(snapshot.ExecutionKind, snapshot.Scope) {
 	case "workflow_step", "step", "execution_only":
-		return firstNonEmpty(snapshot.StepID, snapshot.StepName)
+		// Prefer a human title (plan step title, or the agent's own name for
+		// step-less maintenance agents like learning/organize) over the raw step
+		// ID. The ID — e.g. "_global" for the global-learnings skill — is a folder
+		// / lookup key, not a display name. Falls back to the ID when no human name
+		// is present, so genuine steps without a title are unchanged.
+		return firstNonEmpty(snapshot.StepName, snapshot.AgentName, snapshot.StepID)
 	case "main_agent", "main", "chat":
 		return firstNonEmpty(snapshot.AgentName, snapshot.StepName)
 	case "background_agent", "background", "delegation", "todo_task", "sub_agent":

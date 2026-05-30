@@ -18,10 +18,11 @@ interface MarkdownRendererProps {
   showScrollbar?: boolean
   disablePathLinking?: boolean
   basePath?: string
+  onLinkClick?: (filepath: string) => void
 }
 
-const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/', '_users/']
-const workspaceStandardPrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/']
+const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/', '_users/', 'learnings/']
+const workspaceStandardPrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'learnings/']
 const linkableWorkspaceFileExtensions = [
   'md', 'markdown', 'txt', 'json', 'jsonl', 'csv', 'tsv', 'yaml', 'yml', 'xml',
   'html', 'htm', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'png', 'jpg', 'jpeg',
@@ -406,10 +407,23 @@ const getParentPath = (path: string): string => {
   return slashIndex === -1 ? '' : normalized.slice(0, slashIndex)
 }
 
+const cleanToWorkspaceRelativePath = (path: string): string => {
+  const normalizedPath = path.replace(/\\/g, '/')
+  const prefixes = ['Workflow/', 'skills/', 'Chats/', 'Downloads/', 'knowledgebase/', '_users/', 'learnings/']
+  for (const prefix of prefixes) {
+    const index = normalizedPath.indexOf(prefix)
+    if (index !== -1) {
+      return normalizedPath.slice(index)
+    }
+  }
+  return normalizedPath
+}
+
 const resolveRelativeWorkspacePath = (href: string, basePath: string): string => {
   const cleanedHref = safeDecodeURIComponent(stripLinkFragmentAndQuery(href)).replace(/^\/+/, '')
   const baseDir = getParentPath(basePath)
-  return normalizeWorkspacePathSegments(baseDir ? `${baseDir}/${cleanedHref}` : cleanedHref)
+  const resolved = normalizeWorkspacePathSegments(baseDir ? `${baseDir}/${cleanedHref}` : cleanedHref)
+  return cleanToWorkspaceRelativePath(resolved)
 }
 
 const ToolDefinition: React.FC<{ content: string }> = ({ content }) => {
@@ -535,7 +549,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   maxHeight = "none",
   showScrollbar = false,
   disablePathLinking = false,
-  basePath
+  basePath,
+  onLinkClick
 }) => {
   const containerClasses = `prose prose-sm max-w-none dark:prose-invert ${className}`
   const scrollClasses = showScrollbar ? 'overflow-y-auto overflow-x-auto min-w-0' : ""
@@ -563,8 +578,10 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     const parts = folderFilepath.split('/').filter(Boolean)
     const lastPart = parts[parts.length - 1]
     const isFile = lastPart?.includes('.')
-    return isFile && parts.length > 1 ? parts.slice(0, -1).join('/') : parts.join('/')
+    const folderPath = isFile && parts.length > 1 ? parts.slice(0, -1).join('/') : parts.join('/')
+    return cleanToWorkspaceRelativePath(folderPath)
   }, [])
+
 
   const getWorkspaceDisplayPath = useCallback((filepath: string): string => {
     const workflowFolderPath = getActiveWorkflowFolderPath()
@@ -681,6 +698,9 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         setFileContent('')
         setShowFileContent(true)
         setLoadingFileContent(false)
+        if (onLinkClick) {
+          onLinkClick(resolvedPath)
+        }
         return
       }
 
@@ -693,6 +713,9 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           setFileContent('')
           setShowFileContent(true)
           setLoadingFileContent(false)
+          if (onLinkClick) {
+            onLinkClick(resolvedPath)
+          }
           return
         }
 
@@ -707,6 +730,9 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
         setFileContent(content || '')
         setShowFileContent(true)
+        if (onLinkClick) {
+          onLinkClick(resolvedPath)
+        }
       }
     } catch (error) {
       console.error('[MarkdownRenderer] Failed to open workspace link:', error)
@@ -724,6 +750,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     setSelectedFile,
     setShowFileContent,
     setWorkspaceMinimized,
+    onLinkClick,
   ])
 
   const handleMarkdownClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
@@ -755,7 +782,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     // Group 1: Optional opening backtick
     // Group 2: The actual path (starting with allowed prefixes)
     // \1: Matches the closing backtick if Group 1 matched (ensuring balanced quotes)
-    const pathRegex = /(`?)\b((?:_users\/[\w.-]+\/(?:Chats|memories)|Chats|Downloads|Workflow|skills|knowledgebase)\/(?:[\w\-./]+(?:[ ]+[\w\-./]+)*\.\w+|[\w\-./]+))\1/g
+    const pathRegex = /(`?)\b((?:_users\/[\w.-]+\/(?:Chats|memories)|Chats|Downloads|Workflow|skills|knowledgebase|learnings)\/(?:[\w\-./]+(?:[ ]+[\w\-./]+)*\.\w+|[\w\-./]+))\1/g
     
     // Replace with custom link protocol "#workspace/" to avoid sanitization issues
     // CHALLENGE 1: ReactMarkdown sanitizes unknown protocols like "workspace://", stripping the href.
@@ -1150,7 +1177,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             )
           },
           img: ({ src, alt }) => {
-            const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/', '_users/']
+            const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/', '_users/', 'learnings/']
             const workspaceFilepath = src?.startsWith('#workspace/')
               ? decodeURIComponent(src.replace('#workspace/', ''))
               : (src && workspacePrefixes.some(p => src.startsWith(p)) ? src : null)

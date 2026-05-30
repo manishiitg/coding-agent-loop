@@ -1,15 +1,8 @@
 64. make multiagent like highly memory orientated having access to workflows. - progress
 
-65. over time as we added changes to a workflow.. all things don't get updated with it...... need to think on it 
-
 66. we need have a total to notify human based on connectors
 
-67... one more thing.. right now we have plan with multiple steps.. and each step has a description
--  what i am using personally in claude code is like a single step but divided into multiple user messages like 1. check if aws works 2. do this x 3. valid x y z 4. give proof.. instead of a multiple sptes we can have a single step also do this ? if we have auto summization
-
 68. implement agent sdk closer to 15th june when claude will have the plan for it 
-
-67. we should implement proper tree vs flat view. 
 
 68. optimize open code for kimi, glm, minimax, deepseek and free plans and go plan
 
@@ -30,3 +23,10 @@
         -t \"$ROOT\"/builder/*.json 2>/dev/null | head -3; else echo 'NO_BUILDER_DIR'; fi","timeout":30})
     {"stdout": "", "stderr": "sh: line 2: printf: --: invalid option\nprintf: usage: printf [-v var] format [arguments]\n", "exit_code": 2,
         "execution_time_ms": 16}
+
+
+71. can we show the recap from claude code and show that in resume?
+
+72. add goal support
+
+73. should auto notification also send if faced any issues in execution it tasks to the main buider so main builder can fix it ?

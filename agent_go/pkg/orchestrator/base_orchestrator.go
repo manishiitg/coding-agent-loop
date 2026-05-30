@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
@@ -303,6 +304,7 @@ func (bo *BaseOrchestrator) SetMCPSessionID(sessionID string) {
 			newURL := baseURL + "/s/" + sessionID
 			bo.workspaceEnvRef["MCP_API_URL"] = newURL
 			bo.workspaceEnvRef["MCP_SESSION_ID"] = sessionID
+			common.PopulateMCPBridgeShortEnv(bo.workspaceEnvRef)
 			bo.workspaceEnvMu.Unlock()
 			bo.logger.Info(fmt.Sprintf("🔗 Updated workspace env MCP_API_URL: %s → %s", oldURL, newURL))
 			bo.logger.Info(fmt.Sprintf("🔗 Updated workspace env MCP_SESSION_ID: %s", sessionID))
@@ -324,6 +326,7 @@ func (bo *BaseOrchestrator) GetMCPSessionID() string {
 // so that code execution mode shell commands automatically use the correct session URL.
 // The env map is the same reference used by workspace.Client.ExtraEnv (Go maps are reference types).
 func (bo *BaseOrchestrator) SetWorkspaceEnvRef(env map[string]string) {
+	common.PopulateMCPBridgeShortEnv(env)
 	bo.workspaceEnvRef = env
 	if env != nil {
 		bo.logger.Info(fmt.Sprintf("🔗 Stored workspace env ref (keys: %v, MCP_API_URL=%s, MCP_SESSION_ID=%s)",

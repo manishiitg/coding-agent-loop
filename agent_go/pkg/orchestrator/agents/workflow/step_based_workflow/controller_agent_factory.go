@@ -241,6 +241,16 @@ func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutput
 				mergedEnv["MCP_API_URL"] = scopedURL
 			}
 		}
+		stringEnv := make(map[string]string, len(mergedEnv))
+		for k, v := range mergedEnv {
+			if s, ok := v.(string); ok {
+				stringEnv[k] = s
+			}
+		}
+		common.PopulateMCPBridgeShortEnv(stringEnv)
+		for k, v := range stringEnv {
+			mergedEnv[k] = v
+		}
 		args["extra_env"] = mergedEnv
 		return original(ctx, args)
 	}

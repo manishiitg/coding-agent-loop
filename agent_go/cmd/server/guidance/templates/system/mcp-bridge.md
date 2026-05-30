@@ -28,7 +28,9 @@ writes, and commands; other workspace tools when explicitly available).
 
 | Variable | Purpose |
 |---|---|
-| `$MCP_API_URL` + `$MCP_API_TOKEN` | HTTP endpoint + bearer for the MCP bridge |
+| `$MCP_MCP`, `$MCP_CUSTOM`, `$MCP_VIRTUAL` | Short endpoint bases for MCP, custom, and virtual tools |
+| `$MCP_AUTH` | Authorization header value; use `-H "$MCP_AUTH"` |
+| `$MCP_API_URL` + `$MCP_API_TOKEN` | Full endpoint + bearer token fallback |
 | `$STEP_OUTPUT_DIR` | Write primary outputs here. The folder exists — do not `mkdir` it |
 | `$STEP_EXECUTION_DIR` | Parent of `$STEP_OUTPUT_DIR`. Use only as a fallback when reaching a sibling step's folder and `sys.argv` wasn't used |
 | `$VAR_<NAME>` | Workflow config values (e.g. `$VAR_PAN`, `$VAR_SHEET_URL`). Reference always; never hardcode the literal value |
@@ -40,15 +42,13 @@ writes, and commands; other workspace tools when explicitly available).
 
 ## Calling an MCP tool
 
-MCP tools live at `$MCP_API_URL/tools/mcp/{server}/{tool}`. Authenticate
-with `Bearer $MCP_API_TOKEN`. Use any shell that fits — curl, jq, node,
-python, whatever. Shell-first; Python is optional.
+MCP tools live at `$MCP_MCP/{server}/{tool}`. Authenticate with
+`-H "$MCP_AUTH"`. Use any shell that fits — curl, jq, node, python,
+whatever. Shell-first; Python is optional.
 
 ```bash
-curl -sS -X POST "$MCP_API_URL/tools/mcp/{server_name}/{tool_name}" \
-  -H "Authorization: Bearer $MCP_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"arg1":"value1"}' | jq
+payload='{"arg1":"value1"}'
+curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_MCP/{server_name}/{tool_name}" | jq
 ```
 
 **Response envelope:** `{"success": true|false, "result": ..., "error": "..."}`.

@@ -3,6 +3,9 @@ package virtualtools
 import "testing"
 
 func TestCreateWorkspaceToolRegistryIncludesProviderMediaTools(t *testing.T) {
+	t.Setenv("MCP_API_URL", "http://example.test")
+	t.Setenv("MCP_API_TOKEN", "registry-token")
+
 	registry := CreateWorkspaceToolRegistry(WorkspaceToolRegistryConfig{
 		UserID:    "default",
 		SessionID: "registry-test-session",
@@ -43,5 +46,11 @@ func TestCreateWorkspaceToolRegistryIncludesProviderMediaTools(t *testing.T) {
 
 	if got := registry.Env["MCP_SESSION_ID"]; got != "registry-test-session" {
 		t.Fatalf("registry env MCP_SESSION_ID = %q, want registry-test-session", got)
+	}
+	if got := registry.Env["MCP_AUTH"]; got != "Authorization: Bearer registry-token" {
+		t.Fatalf("registry env MCP_AUTH = %q", got)
+	}
+	if got := registry.Env["MCP_CUSTOM"]; got != "http://example.test/s/registry-test-session/tools/custom" {
+		t.Fatalf("registry env MCP_CUSTOM = %q", got)
 	}
 }

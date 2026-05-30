@@ -24,6 +24,7 @@ import (
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"mcp-agent-builder-go/agent_go/cmd/server/services"
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 )
 
@@ -189,6 +190,7 @@ func getMCPExtraEnv(sessionID ...string) map[string]string {
 	if sid != "" {
 		env["MCP_SESSION_ID"] = sid
 	}
+	common.PopulateMCPBridgeShortEnv(env)
 	log.Printf("[MCP_ENV_DEBUG] getMCPExtraEnv: baseURL=%s sessionID=%s final_MCP_API_URL=%s", baseURL, sid, env["MCP_API_URL"])
 	return env
 }

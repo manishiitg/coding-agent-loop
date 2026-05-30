@@ -102,9 +102,9 @@ const terminalPromptCompletionInactiveAfter = time.Minute
 const terminalToolTextMaxRunes = 2400
 
 var (
-	regexpMCPToken    = regexp.MustCompile(`(?i)(MCP_API_TOKEN=)[^\s"']+`)
-	regexpBearerToken = regexp.MustCompile(`(?i)(Authorization:\s*Bearer\s+)[^\s"']+`)
-	regexpSecretEnv   = regexp.MustCompile(`(?m)(SECRET_[A-Z0-9_]+=)[^\s"']+`)
+	regexpMCPToken    = regexp.MustCompile(`(?i)(MCP_API_TOKEN=)[^\s"'\\]+`)
+	regexpBearerToken = regexp.MustCompile(`(?i)(Authorization:\s*Bearer\s+)[^\s"'\\]+`)
+	regexpSecretEnv   = regexp.MustCompile(`(?m)(SECRET_[A-Z0-9_]+=)[^\s"'\\]+`)
 )
 
 type terminalToolLines struct {

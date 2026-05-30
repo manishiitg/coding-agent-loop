@@ -237,7 +237,7 @@ func TestStoreMergesStructuredWorkflowToolCallsIntoTerminalContent(t *testing.T)
 		time.Now(),
 	))
 	store.HandleEvent("session-1", toolStartEvent(ownerID, "call-1", "mcp_api-bridge_execute_shell_command", `{"command":"env | grep MCP_API_TOKEN"}`, metadata))
-	store.HandleEvent("session-1", toolEndEvent(ownerID, "call-1", "mcp_api-bridge_execute_shell_command", `{"stdout":"MCP_API_TOKEN=secret-token\nok"}`, metadata))
+	store.HandleEvent("session-1", toolEndEvent(ownerID, "call-1", "mcp_api-bridge_execute_shell_command", `{"stdout":"MCP_API_TOKEN=secret-token\nMCP_AUTH=Authorization: Bearer secret-token\nok"}`, metadata))
 	store.HandleEvent("session-1", terminalEventWithMetadata(
 		ownerID,
 		"$ gemini --output-format stream-json model=auto msgs=2\n> user: prompt\n[done · 1s · 10 in · 2 out]",
@@ -261,6 +261,9 @@ func TestStoreMergesStructuredWorkflowToolCallsIntoTerminalContent(t *testing.T)
 	}
 	if !strings.Contains(snapshot.Content, "MCP_API_TOKEN=[redacted]") {
 		t.Fatalf("expected redacted token marker:\n%s", snapshot.Content)
+	}
+	if !strings.Contains(snapshot.Content, "MCP_AUTH=Authorization: Bearer [redacted]") {
+		t.Fatalf("expected redacted auth marker:\n%s", snapshot.Content)
 	}
 	toolIdx := strings.Index(snapshot.Content, "→ tool:")
 	doneIdx := strings.Index(snapshot.Content, "[done")

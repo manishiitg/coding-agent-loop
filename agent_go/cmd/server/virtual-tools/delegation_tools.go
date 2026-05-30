@@ -829,31 +829,25 @@ The following tools are NOT available as direct function calls — call them via
 
 **Pattern:**
 ` + "```" + `bash
-curl -s -X POST "$MCP_API_URL/tools/custom/{tool_name}" \
-  -H "Authorization: Bearer $MCP_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{...parameters...}'
+payload='{...parameters...}'
+curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/{tool_name}"
 ` + "```" + `
 
 **Examples:**
 
 delegate a task:
 ` + "```" + `bash
-curl -s -X POST "$MCP_API_URL/tools/custom/delegate" \
-  -H "Authorization: Bearer $MCP_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"instruction": "Your task instructions here", "reasoning_level": "medium"}'
+payload='{"instruction": "Your task instructions here", "reasoning_level": "medium"}'
+curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/delegate"
 ` + "```" + `
 
 save a memory:
 ` + "```" + `bash
-curl -s -X POST "$MCP_API_URL/tools/custom/save_memory" \
-  -H "Authorization: Bearer $MCP_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"content": "Important context to remember"}'
+payload='{"content": "Important context to remember"}'
+curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/save_memory"
 ` + "```" + `
 
-$MCP_API_URL and $MCP_API_TOKEN are pre-set environment variables — use them as-is.
+$MCP_CUSTOM and $MCP_AUTH are pre-set environment variables — use them as-is.
 
 **Important:** Whenever instructions mention ` + "`delegate(...)`" + ` or ` + "`save_memory(...)`" + `, translate to the curl pattern above. Do NOT call these as direct function calls.
 

@@ -58,6 +58,12 @@ func TestSwitchWorkshopGroupSessionCachesPerGroup(t *testing.T) {
 	if envRef["MCP_SESSION_ID"] != group1Session {
 		t.Fatalf("expected workspace env MCP_SESSION_ID %q, got %q", group1Session, envRef["MCP_SESSION_ID"])
 	}
+	if got := envRef["MCP_CUSTOM"]; got != "http://example.test/s/"+group1Session+"/tools/custom" {
+		t.Fatalf("expected workspace env MCP_CUSTOM for group session, got %q", got)
+	}
+	if got := envRef["MCP_AUTH"]; got != "Authorization: Bearer test-token" {
+		t.Fatalf("expected workspace env MCP_AUTH, got %q", got)
+	}
 
 	releaseGroup1Again, err := hcpo.switchWorkshopGroupSession("group-1")
 	if err != nil {

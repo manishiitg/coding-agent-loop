@@ -53,6 +53,31 @@ const (
 // WorkspaceFolders are the standard workspace folders.
 var WorkspaceFolders = []string{"Chats", "Downloads"}
 
+// PopulateMCPBridgeShortEnv derives short shell-friendly MCP bridge variables
+// from MCP_API_URL and MCP_API_TOKEN. It mutates env in-place.
+func PopulateMCPBridgeShortEnv(env map[string]string) {
+	if env == nil {
+		return
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(env["MCP_API_URL"]), "/")
+	if baseURL == "" {
+		delete(env, "MCP_MCP")
+		delete(env, "MCP_CUSTOM")
+		delete(env, "MCP_VIRTUAL")
+	} else {
+		env["MCP_MCP"] = baseURL + "/tools/mcp"
+		env["MCP_CUSTOM"] = baseURL + "/tools/custom"
+		env["MCP_VIRTUAL"] = baseURL + "/tools/virtual"
+	}
+
+	token := strings.TrimSpace(env["MCP_API_TOKEN"])
+	if token == "" {
+		delete(env, "MCP_AUTH")
+		return
+	}
+	env["MCP_AUTH"] = "Authorization: Bearer " + token
+}
+
 // SessionShellConfig holds per-session shell execution settings.
 // Shared by execute_shell_command and agent_browser to ensure identical sandboxing.
 //

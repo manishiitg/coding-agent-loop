@@ -269,6 +269,7 @@ func newAgentFactoryTestOrchestrator(t *testing.T) *StepBasedWorkflowOrchestrato
 
 func TestInjectStepEnvIntoShellExecutor_OverridesStaleMCPSessionEnv(t *testing.T) {
 	t.Setenv("MCP_API_URL", "http://example.test/s/parent-session")
+	t.Setenv("MCP_API_TOKEN", "step-token")
 
 	var capturedArgs map[string]interface{}
 	executors := map[string]interface{}{
@@ -295,6 +296,7 @@ func TestInjectStepEnvIntoShellExecutor_OverridesStaleMCPSessionEnv(t *testing.T
 		"extra_env": map[string]interface{}{
 			"MCP_SESSION_ID":     "parent-session",
 			"MCP_API_URL":        "http://example.test/s/parent-session",
+			"MCP_API_TOKEN":      "step-token",
 			"STEP_OUTPUT_DIR":    "/stale/output",
 			"STEP_EXECUTION_DIR": "/stale/execution",
 		},
@@ -319,6 +321,12 @@ func TestInjectStepEnvIntoShellExecutor_OverridesStaleMCPSessionEnv(t *testing.T
 	}
 	if got := rawExtraEnv["MCP_API_URL"]; got != "http://example.test/s/step-session-123" {
 		t.Fatalf("expected step-scoped MCP_API_URL, got %#v", got)
+	}
+	if got := rawExtraEnv["MCP_CUSTOM"]; got != "http://example.test/s/step-session-123/tools/custom" {
+		t.Fatalf("expected step-scoped MCP_CUSTOM, got %#v", got)
+	}
+	if got := rawExtraEnv["MCP_AUTH"]; got != "Authorization: Bearer step-token" {
+		t.Fatalf("expected MCP_AUTH, got %#v", got)
 	}
 }
 

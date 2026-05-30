@@ -38,7 +38,7 @@ func TestTodoTaskOrchestratorPromptIncludesSharedCodeExecutionSection(t *testing
 		"Prefer calling these sub-agent tools directly when they are actually available as provider-callable tools in this session.",
 		"**CODE EXECUTION MODE — Access MCP Tools via HTTP API:**",
 		"{{TOOL_STRUCTURE}}",
-		"MCP_API_URL and MCP_API_TOKEN env vars are pre-set",
+		"MCP_CUSTOM and MCP_AUTH",
 		"get_api_spec(server_name=\"...\", tool_name=\"...\")",
 	}
 	for _, snippet := range requiredSnippets {

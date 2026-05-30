@@ -71,7 +71,7 @@ var shellCommandSecretReplacements = []struct {
 	{regexp.MustCompile(`(?i)sk_[0-9A-Za-z]{20,}`), "[REDACTED]"},
 	{regexp.MustCompile(`(?i)sk-[0-9A-Za-z_-]{20,}`), "[REDACTED]"},
 	{regexp.MustCompile(`(?i)(Bearer\s+)[0-9A-Za-z._~+/=-]{20,}`), `${1}[REDACTED]`},
-	{regexp.MustCompile(`(?i)((?:api[_-]?key|token|secret|authorization)\s*[:=]\s*["']?)[^"'\s,}]{8,}`), `${1}[REDACTED]`},
+	{regexp.MustCompile(`(?i)((?:api[_-]?key|token|secret|authorization)\s*[:=]\s*["']?)[^"'\\\s,}]{8,}`), `${1}[REDACTED]`},
 }
 
 func redactShellCommandForLog(command string) string {
@@ -261,6 +261,7 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			}
 		}
 	}
+	common.PopulateMCPBridgeShortEnv(params.ExtraEnv)
 
 	path := "/api/execute"
 	// Use a no-timeout HTTP client for shell execution. Shell commands can run

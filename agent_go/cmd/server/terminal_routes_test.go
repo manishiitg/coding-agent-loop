@@ -328,7 +328,7 @@ func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T
 		ownerID,
 		"call-1",
 		"mcp_api-bridge_execute_shell_command",
-		`{"stdout":"MCP_API_TOKEN=secret-token\nCDP status check successful. Version: Chrome/148.0.7778.169"}`,
+		`{"stdout":"MCP_API_TOKEN=secret-token\nMCP_AUTH=Authorization: Bearer secret-token\nCDP status check successful. Version: Chrome/148.0.7778.169"}`,
 		metadata,
 	))
 	store.HandleEvent(sessionID, terminalRouteStructuredChunkEvent(
@@ -376,6 +376,9 @@ func TestTerminalRoutesStructuredWorkflowSnapshotIncludesToolEvents(t *testing.T
 	}
 	if !strings.Contains(terminal.Content, "MCP_API_TOKEN=[redacted]") {
 		t.Fatalf("terminal content missing redacted token marker:\n%s", terminal.Content)
+	}
+	if !strings.Contains(terminal.Content, "MCP_AUTH=Authorization: Bearer [redacted]") {
+		t.Fatalf("terminal content missing redacted auth marker:\n%s", terminal.Content)
 	}
 	if len(terminal.Rows) == 0 {
 		t.Fatalf("terminal rows were empty")

@@ -158,7 +158,7 @@ Prefer calling these sub-agent tools directly when they are actually available a
 
 If the runtime says one of these tools is not found, not registered, or not directly callable in this provider session:
 - call get_api_spec for server_name="sub_agent_tools" and the specific tool name
-- then invoke the returned custom endpoint via MCP_API_URL and MCP_API_TOKEN from execute_shell_command
+- then invoke the returned custom endpoint via execute_shell_command using MCP_CUSTOM and MCP_AUTH
 
 Do not guess tool names or invent bridge-prefixed variants. Discover the exact callable shape first, then use either the direct tool or the documented HTTP endpoint.
 

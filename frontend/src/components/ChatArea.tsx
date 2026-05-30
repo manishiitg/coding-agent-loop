@@ -3068,7 +3068,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             )}
 
             {activeTab?.sessionId && activeEventViewMode === 'terminal' && (
-              <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} railMinimizedDefault={compact} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || isStreaming || !!activeTab?.isStreaming)} />
+              <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || isStreaming || !!activeTab?.isStreaming)} />
             )}
             {activeTab?.sessionId && activeEventViewMode !== 'terminal' && (
               <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
@@ -3100,7 +3100,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             )}
 
             {activeTab?.sessionId && activeEventViewMode === 'terminal' && (
-              <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} railMinimizedDefault={compact} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || isStreaming || !!activeTab?.isStreaming)} />
+              <TerminalCenter currentSessionId={activeTab.sessionId} compact={false} hasConversationActivity={!suppressTerminalPane && (hasConversationContent || isStreaming || !!activeTab?.isStreaming)} />
             )}
             {activeTab?.sessionId && activeEventViewMode !== 'terminal' && (
               <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />

@@ -836,18 +836,18 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     effectiveTier === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
     : effectiveTier === 'tablet' ? 'md:grid-cols-[minmax(0,1fr)_880px]'
     : 'md:grid-cols-[360px_minmax(0,1fr)]'
+  // Animate the GRID TRACK widths on the container so the chat↔report resize
+  // glides — the panes just follow their grid column instead of fighting it with
+  // per-tier explicit widths. (grid-template-columns animation is supported by
+  // the Electron Chromium runtime.)
   const splitLayoutClassName = !showChatArea || !workspacePaneVisible
     ? 'flex-1 min-h-0 flex flex-col'
-    : `flex-1 min-h-0 flex flex-col md:grid ${splitGridCols} md:grid-rows-[auto_minmax(0,1fr)]`
+    : `flex-1 min-h-0 flex flex-col md:grid ${splitGridCols} md:grid-rows-[auto_minmax(0,1fr)] md:transition-[grid-template-columns] md:duration-300 md:ease-in-out`
   const canvasPaneClassName = !showChatArea
-    ? 'flex-1 min-h-0 min-w-0 transition-all duration-300'
+    ? 'flex-1 min-h-0 min-w-0'
     : !workspacePaneVisible
       ? 'hidden'
-      : effectiveTier === 'mobile'
-        ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:row-start-2 md:w-[480px] md:flex-none'
-        : effectiveTier === 'tablet'
-          ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:row-start-2 md:w-[880px] md:flex-none'
-          : 'min-h-0 min-w-0 transition-all duration-300 md:col-start-2 md:row-start-2'
+      : 'min-h-0 min-w-0 w-full md:w-auto md:col-start-2 md:row-start-2'
 
   // Load execution_defaults from workflow.json when workspace changes
   useEffect(() => {

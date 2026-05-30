@@ -86,6 +86,9 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
   hideToolbar = false,
 }, ref) => {
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  // Report renders mobile-framed ONLY when chat is focused (report sits in the
+  // narrow 480px pane). When report-focused it fills the wide laptop pane.
+  const reportFocusMobile = useWorkflowStore(state => state.focusedPane === 'chat')
   const planData = usePlanData(workspacePath)
   const plan = planData.plan
   const loadPlanRefresh = planData.refresh
@@ -152,7 +155,7 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
       <div data-tour="workflow-canvas-pane" data-testid="tour-workflow-canvas-pane" className={`${sharedToolbar && showChatArea ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
         {toolbarOnly ? null : (
           <div className="h-full min-h-0 relative">
-            {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={showChatArea} />}
+            {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={reportFocusMobile} />}
           </div>
         )}
       </div>
@@ -1174,6 +1177,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Workflow store actions
   const setVariablesManifestInStore = useWorkflowStore.getState().setVariablesManifest
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  // Report renders mobile-framed ONLY when chat is focused (report in the narrow
+  // 480px pane); report-focused fills the wide laptop pane.
+  const reportFocusMobile = useWorkflowStore(state => state.focusedPane === 'chat')
   // Highlight execution folder in workspace when selectedRunFolder changes
   // This ensures workspace shows the correct group folder during multi-group execution
   const { highlightFile } = useWorkspaceStore()
@@ -2611,7 +2617,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
         {toolbarOnly ? null : effectiveCanvasViewMode === 'report' ? (
           <div className="h-full min-h-0 relative">
-            {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={showChatArea} />}
+            {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={reportFocusMobile} />}
           </div>
         ) : <div className="h-full min-h-0 relative flex">
           <div className={`flex-1 min-h-0 h-full transition-all duration-300 ${showVariablesSidebar ? 'mr-[450px]' : ''}`}>

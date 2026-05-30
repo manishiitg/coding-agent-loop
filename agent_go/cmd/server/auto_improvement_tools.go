@@ -70,7 +70,7 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 				"description": "Required when changing an existing metric id. The top-level id must match amend_existing.id. The previous active definition is copied to metrics.json::archive and the new definition gets version+1.",
 				"properties": map[string]interface{}{
 					"id":     map[string]interface{}{"type": "string", "description": "Existing active metric id to amend. Must match top-level id."},
-					"reason": map[string]interface{}{"type": "string", "description": "Why this definition/source/threshold is changing. Stored in metrics.json::archive[].archived_reason and a structured builder/improve.md decision entry."},
+					"reason": map[string]interface{}{"type": "string", "description": "Why this definition/source/threshold is changing. Stored in metrics.json::archive[].archived_reason. Narrate the change in builder/improve.html yourself."},
 				},
 				"required": []string{"id", "reason"},
 			},
@@ -116,7 +116,7 @@ func RegisterRetireMetricTool(agent *mcpagent.Agent, workspacePath, triggerSourc
 	desc := "Retire a metric defined in planning/metrics.json. Removes the " +
 		"metric from the active list and archives its final definition. Subsequent runs skip the metric in the " +
 		"snapshot pipeline. Past db/metrics_history.jsonl rows are preserved " +
-		"as-is — metrics.json::archive plus the structured improve.md decision entry created by this call are the audit " +
+		"as-is — the metrics.json::archive entry is the audit " +
 		"trail for what those historical values represented." +
 		"\n\nCommon use cases: (1) the metric is broken — its latest snapshot " +
 		"rows in db/metrics_history.jsonl all show resolve_error (e.g. wrong " +
@@ -124,7 +124,7 @@ func RegisterRetireMetricTool(agent *mcpagent.Agent, workspacePath, triggerSourc
 		"when the same metric id should keep representing the same outcome with a corrected source. (2) the metric is no " +
 		"longer relevant. (3) the metric is being replaced by a better-defined " +
 		"alternative. Always pass a reason that cites the resolve_error or " +
-		"superseding metric — the improve.md ledger is the trace future readers " +
+		"superseding metric — metrics.json::archive is the trace future readers " +
 		"have for why historical rows under this id should be interpreted." +
 		"\n\nReturns { metric_id, status }."
 	params := map[string]interface{}{
@@ -165,12 +165,12 @@ func RegisterRetireMetricTool(agent *mcpagent.Agent, workspacePath, triggerSourc
 
 // RegisterCaptureContextTool exposes capture_context to the optimizer/builder.
 // It is the privileged, structured path for durable user-supplied runtime
-// context. The tool validates target metric anchoring and writes both the
-// context file and a structured improve.md audit entry.
+// context. The tool validates target metric anchoring and writes the context
+// file; narrating the capture into builder/improve.html is the agent's job.
 func RegisterCaptureContextTool(agent *mcpagent.Agent, workspacePath string, logger loggerv2.Logger) {
 	desc := "Capture durable user-supplied runtime business context for this workflow. " +
 		"Use only after the user confirms the item should be remembered across runs, and only when the Workflow Profile allows business-context accumulation. " +
-		"Writes to knowledgebase/context/context.md and appends a source=user, trigger=capture-context entry to builder/improve.md. " +
+		"Writes to knowledgebase/context/context.md. Narrate the capture in builder/improve.html yourself (source=user, trigger=capture-context). " +
 		"Every capture must name target_metrics so context stays tied to measurable outcomes. " +
 		"Use for persistent rules, preferences, constraints, assumptions, examples, ICP filters, approval rules, brand voice, or domain context that workflow steps must respect. " +
 		"Do not use for one-off instructions, general chat memory, workflow-discovered facts that belong in knowledgebase/notes, or execution recipes that belong in learnings."

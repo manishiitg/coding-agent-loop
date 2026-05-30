@@ -58,7 +58,8 @@ Grow useful social-media reach.
 
 	api.mu.Lock()
 	metricsJSON := api.files[workspacePath+"/planning/metrics.json"]
-	improveLog := api.files[workspacePath+"/builder/improve.md"]
+	improveMD := api.files[workspacePath+"/builder/improve.md"]
+	improveHTML := api.files[workspacePath+"/builder/improve.html"]
 	api.mu.Unlock()
 
 	var file MetricsFile
@@ -90,8 +91,10 @@ Grow useful social-media reach.
 	if archived.Definition.Version != 1 || archived.Definition.Target == nil || *archived.Definition.Target != oldTarget {
 		t.Fatalf("prior definition not preserved: %+v", archived.Definition)
 	}
-	if !strings.Contains(improveLog, "```improve-decision") || !strings.Contains(improveLog, "metric amended: builder.follow_count") {
-		t.Fatalf("improve.md missing structured amendment entry: %s", improveLog)
+	// propose_metric must NOT touch the improvement ledger; narrating the
+	// change into builder/improve.html is the agent's job.
+	if improveMD != "" || improveHTML != "" {
+		t.Fatalf("propose_metric should not write the improve ledger; md=%q html=%q", improveMD, improveHTML)
 	}
 }
 

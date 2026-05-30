@@ -1539,7 +1539,7 @@ func workshopWritePaths(workspacePath string) []string {
 		fmt.Sprintf("%s/memory", workspacePath),
 		fmt.Sprintf("%s/execution", workspacePath),
 		fmt.Sprintf("%s/variables", workspacePath),
-		fmt.Sprintf("%s/builder", workspacePath), // improve.md, review.md
+		fmt.Sprintf("%s/builder", workspacePath), // improve.html, review.html
 	}
 }
 
@@ -1729,7 +1729,7 @@ The workflow has a **live frontend report viewer** at the top toolbar's "Report"
 
 	Run mode can execute workflow-backed work directly, run individual/orphan steps, run the full workflow, and inspect results. It may read KB/learnings/db/report/run artifacts whenever they are needed to answer correctly, but it does not edit plan/config/eval/metrics/report artifacts. One exception is durable user-owned runtime context. If the user says something that future workflow runs should remember — rules, preferences, constraints, ICP filters, approval rules, brand voice, examples, or domain assumptions — ask whether to capture it.
 
-	If confirmed, call `+"`capture_context`"+` with a concise `+"`context_text`"+`, a section name, and existing `+"`target_metrics`"+`. Do not manually edit `+"`knowledgebase/context/context.md`"+`; the tool writes the structured improve.md audit entry. If there are no metrics yet, tell the user setup is needed before context can be anchored and suggest switching to Workshop for `+"`/define-success`"+`.
+	If confirmed, call `+"`capture_context`"+` with a concise `+"`context_text`"+`, a section name, and existing `+"`target_metrics`"+`. Do not manually edit `+"`knowledgebase/context/context.md`"+`; the tool writes that file for you. If there are no metrics yet, tell the user setup is needed before context can be anchored and suggest switching to Workshop for `+"`/define-success`"+`.
 	{{end}}
 
 {{if eq .WorkshopMode "workshop"}}
@@ -5210,7 +5210,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7f1: review_artifact_sync — background audit of plan changelog vs dependent artifacts
 	if err := mcpAgent.RegisterCustomTool(
 		"review_artifact_sync",
-		"Start a background agent that audits recent planning/changelog entries against dependent artifacts: planning/step_config.json, learnings, saved main.py, KB notes, db files, reports/report_plan.json, and evaluation/evaluation_plan.json. It uses builder/review.md as the Artifact Sync Cursor and appends findings there. Returns execution_id immediately — you will be automatically notified when it completes.",
+		"Start a background agent that audits recent planning/changelog entries against dependent artifacts: planning/step_config.json, learnings, saved main.py, KB notes, db files, reports/report_plan.json, and evaluation/evaluation_plan.json. It uses builder/review.html as the Artifact Sync Cursor and appends findings there. Returns execution_id immediately — you will be automatically notified when it completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5220,7 +5220,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"step_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional step id to limit the audit to. If omitted, audits all changed steps since the Artifact Sync Cursor in builder/review.md.",
+					"description": "Optional step id to limit the audit to. If omitted, audits all changed steps since the Artifact Sync Cursor in builder/review.html.",
 				},
 			},
 		},
@@ -5838,7 +5838,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// that should instead have been hardened in place.
 	if err := mcpAgent.RegisterCustomTool(
 		"replan_workflow_from_results",
-		"Start a background agent that reads actual outputs, validation failures, evaluation results, and metric evidence from the retained run window (latest iteration-0 plus older iteration-N runs selected by improve.md/decision timestamps), then rewrites planning/plan.json so the workflow path better satisfies the existing objective, success criteria, and outcome metrics. When replanning keeps or converts a step to agentic, it also removes any stale learnings/{step-id}/main.py so future agents do not confuse ephemeral agentic with reusable scripted. Use this when the workflow is aimed at the wrong result or cannot satisfy a success criterion through local hardening alone. This is result-driven alignment replanning, not static structural review. Returns execution_id immediately — you will be automatically notified when it completes. Precondition: call get_reference_doc(kind=\"optimize-playbook\") first.",
+		"Start a background agent that reads actual outputs, validation failures, evaluation results, and metric evidence from the retained run window (latest iteration-0 plus older iteration-N runs selected by improve.html/decision timestamps), then rewrites planning/plan.json so the workflow path better satisfies the existing objective, success criteria, and outcome metrics. When replanning keeps or converts a step to agentic, it also removes any stale learnings/{step-id}/main.py so future agents do not confuse ephemeral agentic with reusable scripted. Use this when the workflow is aimed at the wrong result or cannot satisfy a success criterion through local hardening alone. This is result-driven alignment replanning, not static structural review. Returns execution_id immediately — you will be automatically notified when it completes. Precondition: call get_reference_doc(kind=\"optimize-playbook\") first.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5965,7 +5965,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Without it, harden risks producing changes that violate those rules.
 	if err := mcpAgent.RegisterCustomTool(
 		"harden_workflow",
-		"Start a background agent that reads retained run evidence (latest iteration-0 plus older iteration-N runs selected by improve.md/decision timestamps), identifies failing local reliability/contract regressions, runs a best-practice sweep over workflow artifacts, and applies targeted fixes: adds pre-validation rules, tightens descriptions, deletes stale agentic main.py files, patches main.py for scripted steps, fixes learning/KB/db/report/eval wiring when evidence or hard invariants justify it, and updates step config. Use this for reliability repair when the workflow path is basically sound. Use replan_workflow_from_results when primary metrics or success criteria show a strategy/path gap that local repair is unlikely to close. Precondition: call get_reference_doc(kind=\"optimize-playbook\") first.",
+		"Start a background agent that reads retained run evidence (latest iteration-0 plus older iteration-N runs selected by improve.html/decision timestamps), identifies failing local reliability/contract regressions, runs a best-practice sweep over workflow artifacts, and applies targeted fixes: adds pre-validation rules, tightens descriptions, deletes stale agentic main.py files, patches main.py for scripted steps, fixes learning/KB/db/report/eval wiring when evidence or hard invariants justify it, and updates step config. Use this for reliability repair when the workflow path is basically sound. Use replan_workflow_from_results when primary metrics or success criteria show a strategy/path gap that local repair is unlikely to close. Precondition: call get_reference_doc(kind=\"optimize-playbook\") first.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8293,7 +8293,7 @@ Review these files/directories when present. Stay read-only:
 - `+"`knowledgebase/notes/_index.json`"+` and relevant `+"`knowledgebase/notes/*.md`"+`: check topic registry, stale/duplicated notes, and whether steps that produce domain facts have matching KB contribution contracts.
 - `+"`db/README.md`"+`, `+"`db/*.json`"+`, and `+"`db/assets/`"+`: check schema documentation, stable row shape, primary keys, merge/upsert rules, writer ownership, group separation, durable asset metadata/provenance, and report compatibility.
 - `+"`reports/report_plan.json`"+`: check whether widgets source durable `+"`db/*.json`"+`, `+"`db/assets/`"+` references, KB context/notes, or built-in APIs rather than volatile run paths, whether referenced fields exist, and whether derived report helper files could be collapsed into widget-level JSONata `+"`query`"+` expressions.
-- `+"`builder/review.md`"+`: read if present to avoid repeating already-known findings and to see unresolved prior review items.
+- `+"`builder/review.html`"+`: read if present to avoid repeating already-known findings and to see unresolved prior review items.
 
 {{if .TargetRunFolder}}## OPTIONAL RUN EVIDENCE
 If useful, read:
@@ -8349,14 +8349,14 @@ var reviewPlanAgentUserTemplate = MustRegisterTemplate("reviewPlanAgentUser", `C
 
 var reviewArtifactSyncAgentSystemTemplate = MustRegisterTemplate("reviewArtifactSyncAgentSystem", `# Artifact Sync Review Agent
 
-You audit whether recent plan/config changes have been propagated to dependent artifacts. The source of truth for changes is `+"`planning/changelog/changelog-*.json`"+`. The checkpoint and human-facing findings live in `+"`builder/review.md`"+` under an **Artifact Sync Cursor** block. Do not create a new state file.
+You audit whether recent plan/config changes have been propagated to dependent artifacts. The source of truth for changes is `+"`planning/changelog/changelog-*.json`"+`. The checkpoint and human-facing findings live in `+"`builder/review.html`"+` under an **Artifact Sync Cursor** block. Do not create a new state file.
 
 You have a harden-like tool surface so you can inspect workflow state deeply. For this tool, you are still a reviewer:
 - do not update the plan
 - do not update step_config
 - do not patch main.py
 - do not change reports/evals/KB/db
-- the only file you may write is `+"`builder/review.md`"+`, to maintain the cursor and append findings
+- the only file you may write is `+"`builder/review.html`"+`, to maintain the cursor and append findings
 
 ## Context
 - Workspace: {{.WorkspacePath}}
@@ -8379,7 +8379,7 @@ For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`
 
 ## Required Procedure
 
-1. Read `+"`builder/review.md`"+`. If it does not exist, create it.
+1. Read `+"`builder/review.html`"+`. If it does not exist, create it.
 2. Ensure exactly one cursor block near the top:
 
 `+"```md"+`
@@ -8422,9 +8422,9 @@ Create a finding when:
 
 Do not flag artifacts that you inspected and found aligned. Include clean checks briefly.
 
-## Writing builder/review.md
+## Writing builder/review.html
 
-Use `+"`diff_patch_workspace_file`"+` to update `+"`builder/review.md`"+`. Preserve existing findings and resolved markers.
+Use `+"`diff_patch_workspace_file`"+` to update `+"`builder/review.html`"+`. Preserve existing findings and resolved markers.
 
 Append:
 
@@ -8443,7 +8443,7 @@ Clean checks:
 - <step-id> — <artifact(s)> matched the current contract.
 `+"```"+`
 
-Finding IDs must continue today's highest `+"`F-YYYY-MM-DD-NNN`"+` sequence already in `+"`builder/review.md`"+`.
+Finding IDs must continue today's highest `+"`F-YYYY-MM-DD-NNN`"+` sequence already in `+"`builder/review.html`"+`.
 
 Rewrite only the Artifact Sync Cursor block to the latest fully inspected changelog entry. If the audit is interrupted or skips entries due to missing files/errors, do not advance past the last fully inspected entry.
 
@@ -8457,7 +8457,7 @@ Return a concise summary:
 - next recommended fix owner
 `)
 
-var reviewArtifactSyncAgentUserTemplate = MustRegisterTemplate("reviewArtifactSyncAgentUser", `Run the artifact drift review. Read planning/changelog entries after the Artifact Sync Cursor in builder/review.md, audit changed step artifacts, append findings to builder/review.md, and update the cursor.{{if .StepID}} Limit to step "{{.StepID}}" and do not advance past uninspected entries.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var reviewArtifactSyncAgentUserTemplate = MustRegisterTemplate("reviewArtifactSyncAgentUser", `Run the artifact drift review. Read planning/changelog entries after the Artifact Sync Cursor in builder/review.html, audit changed step artifacts, append findings to builder/review.html, and update the cursor.{{if .StepID}} Limit to step "{{.StepID}}" and do not advance past uninspected entries.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 var reviewWorkflowResultsAgentSystemTemplate = MustRegisterTemplate("reviewWorkflowResultsAgentSystem", `# Workflow Results Review Agent
 
@@ -8995,16 +8995,16 @@ This tool is **evidence-driven and mutating**:
 - Cleanup stale step configs: `+"`cleanup_orphan_step_configs`"+`
 - Update validation/config: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`
 
-Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`builder/improve.md`"+`, `+"`builder/review.md`"+`, `+"`learnings/_global/SKILL.md`"+`, scripted `+"`main.py`"+`, KB notes, db schema docs, or report plans.
+Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`builder/improve.html`"+`, `+"`builder/review.html`"+`, `+"`learnings/_global/SKILL.md`"+`, scripted `+"`main.py`"+`, KB notes, db schema docs, or report plans.
 
 ## SOURCE-OF-TRUTH HIERARCHY
 Use this hierarchy before changing the plan:
 1. `+"`soul/soul.md`"+` is the truth: objective and success criteria define what the workflow must achieve.
 2. `+"`planning/metrics.json`"+` and `+"`db/metrics_history.jsonl`"+` operationalize `+"`soul.md`"+`: metrics are numeric evidence, but they do not override the objective or success criteria.
-3. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.md actions helped.
+3. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.html actions helped.
 4. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
 5. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
-6. `+"`builder/improve.md`"+` and `+"`builder/review.md`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current run/eval/metric evidence.
+6. `+"`builder/improve.html`"+` and `+"`builder/review.html`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current run/eval/metric evidence.
 
 ## RULES
 1. **Use real evidence first**: Base every structural change on what actually happened in the selected retained run window, with latest `+"`iteration-0`"+` weighted highest. Do not make speculative edits when the artifacts do not support them.
@@ -9040,7 +9040,7 @@ For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`
 
 Build an evidence window before changing the plan:
 - Always include latest `+"`{{.TargetRunFolder}}`"+`.
-- Read `+"`builder/improve.md`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps to decide which older `+"`iteration-{N}`"+` folders matter.
+- Read `+"`builder/improve.html`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps to decide which older `+"`iteration-{N}`"+` folders matter.
 - Include older iterations since the last relevant harden/replan/eval/metric change, plus 1-2 runs immediately before that change when you need before/after comparison.
 - Ignore older iterations when they predate a material plan/config/eval change and no longer represent the current workflow, except as regression context.
 
@@ -9097,7 +9097,7 @@ Return a short markdown summary with:
 - What the builder should run next to test the new plan
 `)
 
-var replanWorkflowFromResultsAgentUserTemplate = MustRegisterTemplate("replanWorkflowFromResultsAgentUser", `Replan the workflow from retained run evidence. Start with latest "{{.TargetRunFolder}}", then include older iterations selected by improve.md / decisions / changelog timestamps when they show relevant trends, regressions, or before-after evidence. Read the evidence, update the plan through workflow plan modification tools, remove stale learnings/{step-id}/main.py for any step that remains or becomes agentic, and summarize what changed. Do not patch planning/plan.json directly.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var replanWorkflowFromResultsAgentUserTemplate = MustRegisterTemplate("replanWorkflowFromResultsAgentUser", `Replan the workflow from retained run evidence. Start with latest "{{.TargetRunFolder}}", then include older iterations selected by improve.html / decisions / changelog timestamps when they show relevant trends, regressions, or before-after evidence. Read the evidence, update the plan through workflow plan modification tools, remove stale learnings/{step-id}/main.py for any step that remains or becomes agentic, and summarize what changed. Do not patch planning/plan.json directly.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 // ============================================================================
 // Harden Workflow Agent — eval-driven hardening plus invariant cleanup
@@ -9117,10 +9117,10 @@ Every evaluation failure should leave behind a **structural artifact** — a pre
 Use this hierarchy before fixing:
 1. `+"`soul/soul.md`"+` is the truth: objective and success criteria define what the workflow must achieve.
 2. `+"`planning/metrics.json`"+` and `+"`db/metrics_history.jsonl`"+` operationalize `+"`soul.md`"+`: metrics are numeric evidence, but they do not override the objective or success criteria.
-3. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.md actions helped.
+3. `+"`runs/iteration-{N}/<group>/...`"+` proves runtime reality: actual outputs, tool/execution logs, validation results, and eval reports show what the workflow really did. `+"`iteration-0`"+` is latest/current; older retained iterations are supporting evidence for trends, regressions, and whether previous improve.html actions helped.
 4. `+"`evaluation/evaluation_plan.json`"+` explains measurement: use it to understand scores, but if eval conflicts with `+"`soul.md`"+`, fix eval instead of optimizing to a bad rubric.
 5. `+"`planning/plan.json`"+` is only the current implementation attempt. Judge it against `+"`soul.md`"+` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
-6. `+"`builder/improve.md`"+` and `+"`builder/review.md`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current run/eval/metric evidence.
+6. `+"`builder/improve.html`"+` and `+"`builder/review.html`"+` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `+"`soul.md`"+` or current run/eval/metric evidence.
 
 ## PERSISTENT STORES (READ BEFORE FIXING)
 
@@ -9143,7 +9143,7 @@ Per-step KB config:
 - Cleanup stale step configs: `+"`cleanup_orphan_step_configs`"+`
 - Validation/config edits: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`
 
-Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`learnings/_global/SKILL.md`"+`, scripted `+"`main.py`"+`, KB notes, db schema docs, report plans, `+"`builder/improve.md`"+`, or `+"`builder/review.md`"+`.
+Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`learnings/_global/SKILL.md`"+`, scripted `+"`main.py`"+`, KB notes, db schema docs, report plans, `+"`builder/improve.html`"+`, or `+"`builder/review.html`"+`.
 
 ## RULES
 1. **Evidence-first, invariant-aware**: Fix every actual failure. You may also fix objective best-practice violations even on passing steps when the violation is deterministic and non-speculative: stale `+"`agentic`"+` main.py, invalid lock state, KB/db/report contract mismatch, missing pre-validation for a produced output, hardcoded secrets/paths, or config that runtime validation would reject. Do not redesign passing behavior without evidence.
@@ -9220,13 +9220,13 @@ For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`
 
 	Before building the failure map, select the retained runs that matter:
 	- Always include latest `+"`{{.TargetRunFolder}}`"+`.
-	- Read `+"`builder/improve.md`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps.
+	- Read `+"`builder/improve.html`"+`, `+"`planning/changelog/`"+`, and run/eval `+"`run_metadata.json`"+` timestamps.
 	- Include older iterations since the last relevant harden/replan/eval/metric change, plus 1-2 runs immediately before that change when you need before/after comparison.
 	- Use older runs to identify recurring failures, regressions, and whether a previous fix helped. Do not let stale runs override latest evidence after a material plan/config/eval change.
 
 	## DATA LAYOUT
 
-Path examples below are relative to the workflow root for readability. In actual tool calls, prefix them with `+"`{{.WorkspacePath}}/`"+` unless a tool explicitly requires workflow-root-relative paths. Replace {iter} with a selected retained iteration folder (always include latest `+"`{{.TargetRunFolder}}`"+`; include older `+"`iteration-{N}`"+` folders when improve.md/decision timestamps make them relevant) and {group} with the group subfolder name.
+Path examples below are relative to the workflow root for readability. In actual tool calls, prefix them with `+"`{{.WorkspacePath}}/`"+` unless a tool explicitly requires workflow-root-relative paths. Replace {iter} with a selected retained iteration folder (always include latest `+"`{{.TargetRunFolder}}`"+`; include older `+"`iteration-{N}`"+` folders when improve.html/decision timestamps make them relevant) and {group} with the group subfolder name.
 
 ### Per-group execution data
 | Path | Contents |
@@ -9372,7 +9372,7 @@ When adding pre-validation rules, follow this priority:
 Always prefer specific checks over generic ones. A check that catches the actual failure is worth more than ten generic existence checks.
 `)
 
-var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from retained run/evaluation evidence. Start with latest "{{.TargetRunFolder}}"{{if .GroupName}}, scoped to group "{{.GroupName}}" only{{end}}, then include older iterations selected by improve.md / decisions / changelog timestamps when they show relevant trends, regressions, or before-after evidence. {{if .GroupName}}Read this group's eval reports across the selected run window{{else}}Read all current group eval reports across the selected run window{{end}}, identify every failing or regressing step, run the required best-practice sweep over plan/config/learnings metadata/KB/db/reports/variables/eval artifacts, and apply targeted fixes (pre-validation rules, description tightening via workflow plan tools, stale-script cleanup, config fixes, code patches for scripted). For any step that is agentic and has learnings/{step-id}/main.py, remove that stale main.py and clear lock_code if set. Do not patch planning/plan.json directly. Update review_notes and locks only when the evidence supports them. Summarize all changes made and any best-practice findings left for later.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from retained run/evaluation evidence. Start with latest "{{.TargetRunFolder}}"{{if .GroupName}}, scoped to group "{{.GroupName}}" only{{end}}, then include older iterations selected by improve.html / decisions / changelog timestamps when they show relevant trends, regressions, or before-after evidence. {{if .GroupName}}Read this group's eval reports across the selected run window{{else}}Read all current group eval reports across the selected run window{{end}}, identify every failing or regressing step, run the required best-practice sweep over plan/config/learnings metadata/KB/db/reports/variables/eval artifacts, and apply targeted fixes (pre-validation rules, description tightening via workflow plan tools, stale-script cleanup, config fixes, code patches for scripted). For any step that is agentic and has learnings/{step-id}/main.py, remove that stale main.py and clear lock_code if set. Do not patch planning/plan.json directly. Update review_notes and locks only when the evidence supports them. Summarize all changes made and any best-practice findings left for later.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 // HardenWorkflowAgent applies eval-driven fixes to failing steps
 type HardenWorkflowAgent struct {
@@ -9810,7 +9810,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 	return result, nil
 }
 
-// runReviewArtifactSyncAgent audits plan changelog entries against dependent artifacts and updates builder/review.md.
+// runReviewArtifactSyncAgent audits plan changelog entries against dependent artifacts and updates builder/review.html.
 func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Context, stepID string, focus string) (string, error) {
 	workspacePath := iwm.controller.GetWorkspacePath()
 	logger := iwm.controller.GetLogger()

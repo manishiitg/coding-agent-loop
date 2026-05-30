@@ -13,8 +13,9 @@ import (
 //   <workflow>/knowledgebase/context/context.md
 //   <workflow>/knowledgebase/context/examples/
 //
-// Audit trail is folded into the unified builder/improve.md ledger with
-// Source=user + Trigger=capture-context.
+// This helper only writes context.md. It does not touch the improvement
+// ledger — the agent narrates context captures into builder/improve.html on
+// its turn.
 //
 // `knowledgebase/context/` is intentionally excluded from
 // reorganize_knowledgebase / consolidate_knowledgebase passes — user-supplied
@@ -88,11 +89,11 @@ func AppendContextRule(ctx context.Context, workspacePath, section, ruleText str
 	return writeFileToWorkspace(ctx, contextRulesPath(workspacePath), body)
 }
 
-// CaptureContext is the high-level helper used by the capture_context tool
-// and the /api/workflow/capture-context endpoint. It (a) appends the rule
-// text to knowledgebase/context/context.md, (b) writes a single structured
-// builder/improve.md decision entry with Source=user + Trigger=capture-context
-// + the rule-specific fields populated. Returns the persisted entry.
+// CaptureContext is the high-level helper used by the capture_context tool.
+// It appends the rule text to knowledgebase/context/context.md and returns a
+// summary of what was written (section, target metrics, applied changes). It
+// does NOT write to the improvement ledger — the agent narrates context
+// captures into builder/improve.html on its turn.
 //
 // Non-empty target_metrics is the mandatory validation gate for
 // business-context capture: every persisted rule must declare what metric(s)
@@ -130,11 +131,7 @@ func CaptureContext(ctx context.Context, workspacePath, section, ruleText string
 		RuleAdded:      ruleText,
 		RuleSection:    section,
 	}
-	persistedDec, err := AppendDecisionEntry(ctx, workspacePath, dec)
-	if err != nil {
-		return dec, fmt.Errorf("append improve.md decision: %w", err)
-	}
-	return persistedDec, nil
+	return dec, nil
 }
 
 type CaptureContextInput struct {

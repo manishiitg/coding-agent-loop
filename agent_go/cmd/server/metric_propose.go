@@ -63,10 +63,12 @@ type ProposeMetricOutput struct {
 }
 
 // ProposeMetric is the system entrypoint for defining or amending a metric.
-// Amending requires amend_existing so the agent has to supply an audit reason.
+// Amending requires amend_existing so the agent has to supply an audit reason
+// (recorded in metrics.json::archive).
 //
-// Trigger is the originating slash command name (used in the structured
-// improve.md decision entry).
+// Trigger is the originating slash command name, retained for call-site
+// context. The tool mutates only metrics.json; narrating the change into
+// builder/improve.html is the agent's job.
 func ProposeMetric(ctx context.Context, workspacePath, trigger string, input ProposeMetricInput) (*ProposeMetricOutput, error) {
 	// Soul precondition: an objective and success_criteria must exist before
 	// metrics are defined against them. Without that anchor, metrics are
@@ -153,17 +155,6 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 			return nil, fmt.Errorf("write metrics.json: %w", err)
 		}
 
-		dec := DecisionEntry{
-			Source:         DecisionSourceAgent,
-			Trigger:        trigger,
-			Rationale:      fmt.Sprintf("metric amended: %s v%d -> v%d - %s", candidate.ID, priorVersion, candidate.Version, reason),
-			AppliedChanges: []string{"planning/metrics.json"},
-			TargetMetrics:  []string{candidate.ID},
-		}
-		if _, err := AppendDecisionEntry(ctx, workspacePath, dec); err != nil {
-			return nil, fmt.Errorf("append improve.md decision: %w", err)
-		}
-
 		return &ProposeMetricOutput{
 			MetricID:        candidate.ID,
 			Status:          "amended",
@@ -186,17 +177,6 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 	}
 	if err := WriteMetricsFile(ctx, workspacePath, file); err != nil {
 		return nil, fmt.Errorf("write metrics.json: %w", err)
-	}
-
-	dec := DecisionEntry{
-		Source:         DecisionSourceAgent,
-		Trigger:        trigger,
-		Rationale:      fmt.Sprintf("metric added: %s", candidate.ID),
-		AppliedChanges: []string{"planning/metrics.json"},
-		TargetMetrics:  []string{candidate.ID},
-	}
-	if _, err := AppendDecisionEntry(ctx, workspacePath, dec); err != nil {
-		return nil, fmt.Errorf("append improve.md decision: %w", err)
 	}
 
 	return &ProposeMetricOutput{
@@ -355,10 +335,11 @@ type RetireMetricOutput struct {
 
 // RetireMetric removes a metric from metrics.json::metrics[]. The metric stops
 // being collected on subsequent runs. Existing rows in db/metrics_history.jsonl
-// that reference the id are kept as-is — the improve.md decision entry created here
-// is the audit trail for what those historical values represented.
+// that reference the id are kept as-is — the metrics.json::archive entry is the
+// audit trail for what those historical values represented.
 //
-// Reason is required so the improve.md decision entry traces why the metric was removed.
+// Reason is required and recorded in metrics.json::archive so the removal is
+// traceable; the agent narrates the change into builder/improve.html.
 func RetireMetric(ctx context.Context, workspacePath, trigger string, input RetireMetricInput) (*RetireMetricOutput, error) {
 	if strings.TrimSpace(input.ID) == "" {
 		return nil, fmt.Errorf("retire_metric: id is required")
@@ -405,17 +386,6 @@ func RetireMetric(ctx context.Context, workspacePath, trigger string, input Reti
 	}
 	if err := WriteMetricsFile(ctx, workspacePath, file); err != nil {
 		return nil, fmt.Errorf("write metrics.json: %w", err)
-	}
-
-	dec := DecisionEntry{
-		Source:         DecisionSourceAgent,
-		Trigger:        trigger,
-		Rationale:      fmt.Sprintf("metric retired: %s — %s", prior.ID, input.Reason),
-		AppliedChanges: []string{"planning/metrics.json"},
-		TargetMetrics:  []string{prior.ID},
-	}
-	if _, err := AppendDecisionEntry(ctx, workspacePath, dec); err != nil {
-		return nil, fmt.Errorf("append improve.md decision: %w", err)
 	}
 
 	return &RetireMetricOutput{

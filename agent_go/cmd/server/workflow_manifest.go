@@ -43,8 +43,8 @@ type WorkflowManifest struct {
 	//
 	// Only fields that drive HARD behavioral gates live here. Workflow profile
 	// (deterministic / exploratory / contextual classification, plan-stability
-	// guidance, dual-mode declarations) lives as prose in builder/improve.md
-	// — the agent reads improve.md on every improvement turn anyway, and prose
+	// guidance, dual-mode declarations) lives as prose in builder/improve.html
+	// — the agent reads improve.html on every improvement turn anyway, and prose
 	// captures nuance that enums can't.
 	OversightMode         OversightMode         `json:"oversight_mode,omitempty"`
 	DecisionLogMutability DecisionLogMutability `json:"decision_log_mutability,omitempty"`
@@ -370,7 +370,7 @@ func applyManifestDefaults(m *WorkflowManifest) {
 
 	// Auto-improvement framework defaults. Only the two hard-gate fields
 	// default-fill — typology and plan-stability live as prose in
-	// builder/improve.md, not as manifest enums.
+	// builder/improve.html, not as manifest enums.
 	if m.OversightMode == "" {
 		m.OversightMode = OversightSupervised
 	}

@@ -19,15 +19,15 @@ const (
 )
 
 // Workflow typology and plan stability are NOT enums anymore. They live as
-// prose in builder/improve.md under the "Workflow Profile" section. The agent
-// reads improve.md on every improvement turn and adjusts behavior; the
+// prose in builder/improve.html under the "Workflow Profile" section. The agent
+// reads improve.html on every improvement turn and adjusts behavior; the
 // framework no longer hard-gates on a workflow_type value. Three reasons:
 //
 //   1. Real workflows mix axes the enum couldn't express (Twitter is both
 //      exploratory AND deterministic in dual-mode).
 //   2. The hard gates that did matter (allow-list filtering of plan-mod tools)
 //      added kernel-level enforcement nobody actually needed — the agent
-//      respects guidance in improve.md.
+//      respects guidance in improve.html.
 //   3. Prose captures nuance enums can't ("mostly stable but new tactics
 //      monthly", "frozen except during compliance reviews").
 
@@ -42,7 +42,7 @@ const (
 	PlanStabilityFrozen  PlanStability = "frozen"
 )
 
-// DecisionLogMutability — controls whether structured improve.md decision
+// DecisionLogMutability — controls whether structured improve.html decision
 // entries can be edited.
 type DecisionLogMutability string
 
@@ -60,11 +60,11 @@ const (
 	DecisionSourceSystem DecisionSource = "system"
 )
 
-// DecisionEntry is one structured fenced block in builder/improve.md. Append-only.
+// DecisionEntry is one structured fenced block in builder/improve.html. Append-only.
 //
 // User context captures land here too with `Source: user` +
 // `Trigger: capture-context` + the context-specific fields below (RuleAdded,
-// RuleSection, ExamplePaths). One improve.md ledger, one place to read. Agents
+// RuleSection, ExamplePaths). One improve.html ledger, one place to read. Agents
 // append these through capture_context when the user confirms durable context
 // in chat.
 type DecisionEntry struct {

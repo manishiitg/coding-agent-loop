@@ -190,6 +190,9 @@ interface PreviousChatHistoryPanelProps {
   actionLabel?: string
   onHasChatsChange?: (hasChats: boolean, isLoaded?: boolean) => void
   onSelectSession: (session: ChatHistorySession) => void | Promise<void>
+  /** Dense layout for the narrow ~360px chat rail: icon-only filters + actions,
+   *  single tight meta line, no runtime/workshop chips or message preview. */
+  compact?: boolean
 }
 
 export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> = ({
@@ -200,6 +203,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   actionLabel = 'Open',
   onHasChatsChange,
   onSelectSession,
+  compact = false,
 }) => {
   const [sessions, setSessions] = useState<ChatHistorySession[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -437,11 +441,15 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   return (
     <div className="shrink-0 border-b border-border bg-background">
       <div className="w-full">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2 text-sm">
-            <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground/80" />
-            <span className="truncate font-medium text-foreground">{title}</span>
-          </div>
+        <div className={`flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 ${compact ? 'justify-end' : 'justify-between'}`}>
+          {/* The "Previous … chats" heading is redundant in the compact rail —
+              the filter pills + list make the purpose obvious — so hide it there. */}
+          {!compact && (
+            <div className="flex min-w-0 items-center gap-2 text-sm">
+              <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground/80" />
+              <span className="truncate font-medium text-foreground">{title}</span>
+            </div>
+          )}
 
           {isLoading ? (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
@@ -462,7 +470,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                     }`}
                   >
                     <Icon className="h-3.5 w-3.5" />
-                    <span>{label}</span>
+                    {!compact && <span>{label}</span>}
                     <span className={`min-w-4 rounded-full px-1 py-0.5 text-center text-[10px] leading-none ${
                       isActive
                         ? 'bg-muted text-foreground'
@@ -506,7 +514,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
               return (
                 <div key={session.session_id} className="group bg-background transition-colors hover:bg-muted/20">
-                  <div className="flex items-start gap-2 px-3 py-2.5">
+                  <div className={`flex items-start gap-2 ${compact ? 'px-2.5 py-2' : 'px-3 py-2.5'}`}>
                     <button
                       type="button"
                       onClick={() => toggleExpanded(session)}
@@ -523,23 +531,31 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                       className="min-w-0 flex-1 text-left"
                     >
                       <div className="line-clamp-1 text-sm font-medium text-foreground">{chatHistorySessionTitle(session)}</div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                      <div className={`mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
                         <span>{formatChatTime(session.updated_at || session.created_at)}</span>
                         {typeof session.message_count === 'number' && <span>{session.message_count} messages</span>}
                         {session.agent_mode && <span>{session.agent_mode.replace(/_/g, ' ')}</span>}
-                        {workshopModeLabel && (
+                        {!compact && workshopModeLabel && (
                           <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-medium text-foreground">
                             {workshopModeLabel}
                           </span>
                         )}
-                        {runtimeLabel && (
+                        {!compact && runtimeLabel && (
                           <span className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-1.5 py-0.5 font-medium text-foreground">
                             <Code2 className="h-3 w-3" />
                             {runtimeLabel}
                           </span>
                         )}
                       </div>
-                      {showLastUserMessage && (
+                      {/* Compact rail: CLI + model on their own line, allowed to
+                          wrap to multiple lines so the full provider·model is legible. */}
+                      {compact && runtimeLabel && (
+                        <div className="mt-1 flex items-start gap-1 text-[10px] leading-snug text-muted-foreground">
+                          <Code2 className="mt-0.5 h-3 w-3 shrink-0" />
+                          <span className="min-w-0 break-words font-medium text-foreground/90">{runtimeLabel}</span>
+                        </div>
+                      )}
+                      {!compact && showLastUserMessage && (
                         <div className="mt-1 space-y-0.5 text-[11px] leading-snug text-muted-foreground">
                           <div className="flex min-w-0 gap-1">
                             <span className="shrink-0 font-medium text-foreground/80">Last user:</span>
@@ -566,7 +582,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                         className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground opacity-80 transition-colors hover:border-primary/40 hover:text-foreground group-hover:opacity-100"
                       >
                         <ActionIcon className="h-3.5 w-3.5" />
-                        <span>{actionLabel}</span>
+                        {!compact && <span>{actionLabel}</span>}
                       </button>
                     </div>
                   </div>

@@ -89,11 +89,16 @@ function removeWorkflowStorageItem(key: string): void {
   window.localStorage.removeItem(workflowStorageKey(key))
 }
 
+// Which pane gets ~75% of the split. 'preview' = report/plan/workspace canvas,
+// 'chat' = the chat/agents/terminal column. Drives focus-follows-click sizing.
+export type FocusedPane = 'chat' | 'preview'
+
 type PersistedWorkflowUIState = {
   showChatArea?: boolean
   showWorkspacePane?: boolean
   workflowWorkspaceView?: WorkflowWorkspaceView
   canvasViewMode?: CanvasViewMode
+  focusedPane?: FocusedPane
 }
 
 function normalizeWorkflowWorkspaceView(view: unknown): WorkflowWorkspaceView {
@@ -166,6 +171,10 @@ function loadWorkflowUIStateByPreset(): Record<string, PersistedWorkflowUIState>
             : candidate.canvasViewMode === 'plan'
               ? 'flow'
             : undefined,
+        focusedPane:
+          candidate.focusedPane === 'chat' || candidate.focusedPane === 'preview'
+            ? candidate.focusedPane as FocusedPane
+            : undefined,
       }
     }
     return out
@@ -223,6 +232,7 @@ export interface PresetWorkflowState {
   showWorkspacePane: boolean
   chatAreaExpanded: boolean
   workflowWorkspaceView: WorkflowWorkspaceView
+  focusedPane: FocusedPane
   workflowChatTabs: Record<string, WorkflowChatTab>
   activeWorkflowTabId: string | null
   selectedGroupIds: string[]
@@ -245,10 +255,15 @@ function createDefaultPresetState(): PresetWorkflowState {
   return {
     selectedRunFolder: null,
     activePhase: null,
-    showChatArea: false,
-    showWorkspacePane: false,
+    // First open shows BOTH the chat column and the preview canvas, with the
+    // preview (report/plan) focused at ~75%. focus-follows-click swaps which
+    // side gets 75% (see WorkflowLayout). showWorkspacePane true so the canvas
+    // pane renders alongside chat rather than being hidden.
+    showChatArea: true,
+    showWorkspacePane: true,
     chatAreaExpanded: true,
     workflowWorkspaceView: null,
+    focusedPane: 'preview',
     workflowChatTabs: {},
     activeWorkflowTabId: null,
     selectedGroupIds: [],
@@ -268,6 +283,7 @@ function snapshotPresetState(state: WorkflowStore): PresetWorkflowState {
     showWorkspacePane: state.showWorkspacePane,
     chatAreaExpanded: state.chatAreaExpanded,
     workflowWorkspaceView: state.workflowWorkspaceView,
+    focusedPane: state.focusedPane,
     workflowChatTabs: state.workflowChatTabs,
     activeWorkflowTabId: state.activeWorkflowTabId,
     selectedGroupIds: state.selectedGroupIds,
@@ -335,6 +351,7 @@ interface WorkflowStore {
   showWorkspacePane: boolean
   chatAreaExpanded: boolean
   workflowWorkspaceView: WorkflowWorkspaceView
+  focusedPane: FocusedPane // Which pane gets ~75% — 'preview' (canvas) or 'chat'
   layoutDirection: LayoutDirection // Canvas layout direction ('LR' = horizontal, 'TB' = vertical)
   canvasViewMode: CanvasViewMode // 'flow' = React Flow diagram, 'report' = report preview
 
@@ -405,6 +422,7 @@ interface WorkflowStore {
   setShowChatArea: (show: boolean) => void
   setShowWorkspacePane: (show: boolean) => void
   setChatAreaExpanded: (expanded: boolean) => void
+  setFocusedPane: (pane: FocusedPane) => void
   setWorkflowWorkspaceView: (view: WorkflowWorkspaceView) => void
   setLayoutDirection: (direction: LayoutDirection) => void
   setCanvasViewMode: (mode: CanvasViewMode) => void
@@ -544,6 +562,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       showWorkspacePane: false,
       chatAreaExpanded: true,
       workflowWorkspaceView: null,
+      focusedPane: 'preview',
       // Layout direction (persists across page refreshes via localStorage)
       layoutDirection: (() => {
         try {
@@ -1213,6 +1232,13 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }))
       },
 
+      setFocusedPane: (pane: FocusedPane) => {
+        if (get().focusedPane === pane) return
+        // Transient — intentionally NOT persisted; every workflow open defaults
+        // back to 'preview' (report-large) regardless of last session's focus.
+        set({ focusedPane: pane })
+      },
+
       setChatAreaExpanded: (expanded: boolean) => {
         set({ chatAreaExpanded: expanded })
       },
@@ -1684,13 +1710,12 @@ export const useWorkflowStore = create<WorkflowStore>()(
               batchProgress: null,
               workflowChatTabs: {},
               activeWorkflowTabId: null,
-              showChatArea: persistedUIState.showChatArea ?? false,
-              showWorkspacePane: persistedUIState.showChatArea
-                ? (persistedUIState.showWorkspacePane ?? false)
-                : true,
+              showChatArea: true,
+              showWorkspacePane: true,
               workflowWorkspaceView:
                 persistedUIState.workflowWorkspaceView ??
                 (loadWorkspaceViewByPreset()[presetId] ?? null),
+              focusedPane: 'preview',
               ...(persistedUIState.canvasViewMode ? { canvasViewMode: persistedUIState.canvasViewMode } : {}),
               workshopMode: restoredWorkshopMode,
               workflowMode: 'plan',
@@ -1712,12 +1737,16 @@ export const useWorkflowStore = create<WorkflowStore>()(
               ? restored.workflowWorkspaceView
               : (persistedUIState.workflowWorkspaceView ??
                 (loadWorkspaceViewByPreset()[presetId] ?? null))
-          const persistedShowChatArea =
-            persistedUIState.showChatArea ?? restored.showChatArea
-          const persistedShowWorkspacePane =
-            persistedShowChatArea
-              ? (persistedUIState.showWorkspacePane ?? restored.showWorkspacePane)
-              : true
+          // New adaptive layout: workflows always open with BOTH the chat rail
+          // and the preview canvas visible (focus-follows-click sizes them).
+          // Force them on so a stale persisted showChatArea:false from the
+          // pre-adaptive default can't pin the workflow to chat-only on open.
+          const persistedShowChatArea = true
+          const persistedShowWorkspacePane = true
+          // Always open report-large (laptop view). The chat-focus (mobile)
+          // state is transient within a session — never remembered across opens,
+          // so a workflow always greets you with the report front-and-centre.
+          const persistedFocusedPane: FocusedPane = 'preview'
           const persistedCanvasViewMode =
             persistedUIState.canvasViewMode
           // When the effective workspace view is flow/report, keep canvasViewMode
@@ -1738,6 +1767,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             showWorkspacePane: persistedShowWorkspacePane,
             chatAreaExpanded: restored.chatAreaExpanded,
             workflowWorkspaceView: persistedWorkspaceView,
+            focusedPane: persistedFocusedPane,
             ...(syncedCanvasMode ? { canvasViewMode: syncedCanvasMode } : {}),
             workflowChatTabs: restored.workflowChatTabs,
             activeWorkflowTabId: restored.activeWorkflowTabId,

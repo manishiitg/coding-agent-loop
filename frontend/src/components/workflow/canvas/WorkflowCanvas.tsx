@@ -10,7 +10,7 @@ import {
   type NodeChange,
   type OnNodeDrag
 } from '@xyflow/react'
-import { Braces, Download, FileText, GitBranch, Laptop, ListOrdered, Loader2, RefreshCw, Route, Settings, Smartphone, TabletSmartphone, X } from 'lucide-react'
+import { Braces, Download, FileText, GitBranch, Laptop, ListOrdered, Loader2, PanelRightClose, RefreshCw, Route, Settings, SlidersHorizontal, Smartphone, TabletSmartphone, X } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
@@ -71,6 +71,161 @@ interface WorkflowCanvasProps {
   readOnly?: boolean
 }
 
+// On-pane controls for the preview (canvas) pane: a Plan/Report segmented switch
+// plus a collapse button that hides the whole preview (chat goes full-width).
+// Replaces the old top-toolbar Chat/Plan/Report view-switcher; the right-edge
+// re-open tab (in WorkflowLayout) brings the pane back.
+// Events the on-pane bar dispatches; ReportView listens and runs its own
+// export / refresh. Keeps the report's handlers encapsulated while letting the
+// shared bar trigger them.
+export const WORKFLOW_REPORT_EXPORT_EVENT = 'workflow-report-export-requested'
+export const WORKFLOW_REPORT_REFRESH_EVENT = 'workflow-report-refresh-requested'
+
+const PREVIEW_DEVICE_OPTS = [
+  { mode: 'mobile' as const, Icon: Smartphone, label: 'Mobile preview' },
+  { mode: 'tablet' as const, Icon: TabletSmartphone, label: 'Tablet preview' },
+  { mode: 'desktop' as const, Icon: Laptop, label: 'Laptop preview' },
+]
+type PreviewDevice = 'mobile' | 'tablet' | 'desktop'
+
+// Shared device-width preference, synced across the on-pane bar, the report
+// shell, and the plan/flow shell via REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT.
+export function usePreviewDevice(): PreviewDevice {
+  const [pref, setPref] = React.useState<PreviewDevice>(() => {
+    try {
+      const v = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
+      return v === 'mobile' || v === 'tablet' || v === 'desktop' ? v : 'desktop'
+    } catch { return 'desktop' }
+  })
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      const p = (e as CustomEvent).detail?.preference
+      if (p === 'mobile' || p === 'tablet' || p === 'desktop') setPref(p)
+    }
+    window.addEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, handler)
+    return () => window.removeEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, handler)
+  }, [])
+  return pref
+}
+function setPreviewDevice(mode: PreviewDevice) {
+  try { localStorage.setItem(REPORT_PREVIEW_PREFERENCE_KEY, mode) } catch { /* ignore */ }
+  window.dispatchEvent(new CustomEvent(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, { detail: { preference: mode } }))
+}
+// Tailwind shell width for a device preview (centered, constrained).
+export function previewDeviceShellClass(device: PreviewDevice): string {
+  return device === 'mobile'
+    ? 'mx-auto w-full max-w-[480px]'
+    : device === 'tablet'
+      ? 'mx-auto w-full max-w-[880px]'
+      : 'w-full'
+}
+
+function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan }: { hasPlan: boolean; onExportPlan?: () => void; onRefreshPlan?: () => void }) {
+  const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
+  const isReport = canvasViewMode === 'report'
+  const devicePref = usePreviewDevice()
+  const setDevice = (mode: PreviewDevice) => setPreviewDevice(mode)
+  const showReport = () => {
+    const s = useWorkflowStore.getState()
+    s.setWorkflowWorkspaceView('report')
+    s.setCanvasViewMode('report')
+  }
+  const showPlan = () => {
+    const s = useWorkflowStore.getState()
+    s.setWorkflowWorkspaceView('flow')
+    s.setCanvasViewMode('flow')
+  }
+  const hidePane = () => useWorkflowStore.getState().setShowWorkspacePane(false)
+  const download = () => {
+    if (isReport) window.dispatchEvent(new CustomEvent(WORKFLOW_REPORT_EXPORT_EVENT))
+    else onExportPlan?.()
+  }
+  const refresh = () => {
+    if (isReport) window.dispatchEvent(new CustomEvent(WORKFLOW_REPORT_REFRESH_EVENT))
+    else onRefreshPlan?.()
+  }
+  const canDownload = isReport || Boolean(onExportPlan)
+  const canRefresh = isReport || Boolean(onRefreshPlan)
+  const tabCls = (active: boolean) =>
+    `rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+      active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+    }`
+  const iconBtnCls =
+    'inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-background/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground'
+
+  // Minimized by default — the bar grew large, so collapse to a small pill (the
+  // current view + a controls glyph) and reveal the full controls on hover/focus.
+  const [expanded, setExpanded] = React.useState(false)
+  if (!expanded) {
+    return (
+      <div className="absolute right-2 top-2 z-20 flex items-center gap-1">
+        <button
+          type="button"
+          onMouseEnter={() => setExpanded(true)}
+          onFocus={() => setExpanded(true)}
+          onClick={() => setExpanded(true)}
+          title="View controls"
+          aria-label="View controls"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2 py-1 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <span>{isReport ? 'Report' : 'Plan'}</span>
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+        </button>
+        {canRefresh && (
+          <button type="button" onClick={refresh} title="Refresh" aria-label="Refresh" className={iconBtnCls}>
+            <RefreshCw className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+    )
+  }
+  return (
+    <div
+      className="absolute right-2 top-2 z-20 flex flex-wrap items-center justify-end gap-1"
+      onMouseLeave={() => setExpanded(false)}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setExpanded(false) }}
+    >
+      <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
+        {hasPlan && (
+          <button type="button" onClick={showPlan} className={tabCls(canvasViewMode === 'flow')}>Plan</button>
+        )}
+        <button type="button" onClick={showReport} className={tabCls(isReport)}>Report</button>
+      </div>
+      {(
+        <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
+          {PREVIEW_DEVICE_OPTS.map(({ mode, Icon, label }) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setDevice(mode)}
+              title={label}
+              aria-label={label}
+              className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors ${
+                devicePref === mode ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+            </button>
+          ))}
+        </div>
+      )}
+      {canRefresh && (
+        <button type="button" onClick={refresh} title="Refresh" aria-label="Refresh" className={iconBtnCls}>
+          <RefreshCw className="h-4 w-4" />
+        </button>
+      )}
+      {canDownload && (
+        <button type="button" onClick={download} title={`Download ${isReport ? 'report' : 'plan'} (PNG)`} aria-label="Download" className={iconBtnCls}>
+          <Download className="h-4 w-4" />
+        </button>
+      )}
+      <button type="button" onClick={hidePane} title="Hide panel" aria-label="Hide panel" className={iconBtnCls}>
+        <PanelRightClose className="h-4 w-4" />
+      </button>
+    </div>
+  )
+}
+
 const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(({
   workspacePath,
   presetQueryId,
@@ -86,6 +241,9 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
   hideToolbar = false,
 }, ref) => {
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  // Report renders mobile-framed ONLY when chat is focused (report sits in the
+  // narrow 480px pane). When report-focused it fills the wide laptop pane.
+  const reportFocusMobile = useWorkflowStore(state => state.focusedPane === 'chat')
   const planData = usePlanData(workspacePath)
   const plan = planData.plan
   const loadPlanRefresh = planData.refresh
@@ -152,7 +310,8 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
       <div data-tour="workflow-canvas-pane" data-testid="tour-workflow-canvas-pane" className={`${sharedToolbar && showChatArea ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
         {toolbarOnly ? null : (
           <div className="h-full min-h-0 relative">
-            {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={showChatArea} />}
+            <PreviewPaneControls hasPlan={Boolean(plan?.steps?.length)} />
+            {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={reportFocusMobile} />}
           </div>
         )}
       </div>
@@ -161,158 +320,6 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
 })
 
 WorkflowReportCanvasInner.displayName = 'WorkflowReportCanvasInner'
-
-function FloatingWorkflowViewControls({
-  viewLabel,
-  showPreviewControls,
-  onRefresh,
-  onExportImage,
-  isExportingImage,
-}: {
-  viewLabel: string
-  showPreviewControls: boolean
-  onRefresh: () => void
-  onExportImage?: (format: WorkflowImageExportFormat) => void
-  isExportingImage?: boolean
-}) {
-  const [previewPreference, setPreviewPreference] = React.useState<'auto' | WorkflowPreviewMode>(() => {
-    try {
-      const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
-      return saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'auto'
-    } catch {
-      return 'auto'
-    }
-  })
-  const [previewControlsExpanded, setPreviewControlsExpanded] = React.useState(false)
-  const [exportControlsExpanded, setExportControlsExpanded] = React.useState(false)
-
-  const previewMode: WorkflowPreviewMode = previewPreference === 'auto' ? 'desktop' : previewPreference
-
-  const setPreviewMode = (mode: WorkflowPreviewMode) => {
-    setPreviewPreference(() => {
-      try {
-        localStorage.setItem(REPORT_PREVIEW_PREFERENCE_KEY, mode)
-        window.dispatchEvent(new CustomEvent(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, { detail: { preference: mode } }))
-      } catch {
-        // ignore
-      }
-      return mode
-    })
-  }
-
-  return (
-    <>
-      {onExportImage && (
-        <div
-          role="group"
-          aria-label="Export flow image"
-          onMouseEnter={() => setExportControlsExpanded(true)}
-          onMouseLeave={() => setExportControlsExpanded(false)}
-          onFocus={() => setExportControlsExpanded(true)}
-          onBlur={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-              setExportControlsExpanded(false)
-            }
-          }}
-          className="absolute right-3 top-3 z-20 inline-flex items-center rounded-full border border-border/70 bg-background/95 p-0.5 shadow-lg backdrop-blur-sm focus-within:ring-1 focus-within:ring-ring sm:right-4 sm:top-4"
-        >
-          <button
-            onClick={() => onExportImage('svg')}
-            disabled={isExportingImage}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-            title="Export flow as SVG"
-            aria-label="Export flow as SVG"
-          >
-            {isExportingImage ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-          </button>
-          <button
-            onClick={() => onExportImage('svg')}
-            disabled={isExportingImage}
-            className="inline-flex h-6 items-center justify-center overflow-hidden rounded-full px-0 text-[9px] font-semibold text-muted-foreground transition-[width,opacity,background-color,color] duration-150 ease-out hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-            style={{
-              width: exportControlsExpanded ? 30 : 0,
-              opacity: exportControlsExpanded ? 1 : 0,
-              pointerEvents: exportControlsExpanded ? 'auto' : 'none',
-            }}
-            title="Export flow as SVG"
-            aria-label="Export flow as SVG"
-          >
-            SVG
-          </button>
-          <button
-            onClick={() => onExportImage('png')}
-            disabled={isExportingImage}
-            className="inline-flex h-6 items-center justify-center overflow-hidden rounded-full px-0 text-[9px] font-semibold text-muted-foreground transition-[width,opacity,background-color,color] duration-150 ease-out hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-            style={{
-              width: exportControlsExpanded ? 34 : 0,
-              opacity: exportControlsExpanded ? 1 : 0,
-              pointerEvents: exportControlsExpanded ? 'auto' : 'none',
-            }}
-            title="Export flow as PNG"
-            aria-label="Export flow as PNG"
-          >
-            PNG
-          </button>
-        </div>
-      )}
-    <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2 sm:bottom-5 sm:right-5">
-      {showPreviewControls && (
-        <div
-          role="group"
-          aria-label={`${viewLabel} preview width`}
-          onMouseEnter={() => setPreviewControlsExpanded(true)}
-          onMouseLeave={() => setPreviewControlsExpanded(false)}
-          onFocus={() => setPreviewControlsExpanded(true)}
-          onBlur={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-              setPreviewControlsExpanded(false)
-            }
-          }}
-          className="inline-flex items-center rounded-full border border-border/70 bg-background/95 p-0.5 shadow-lg backdrop-blur-sm focus-within:ring-1 focus-within:ring-ring"
-        >
-          {([
-            { mode: 'mobile', Icon: Smartphone, label: 'Mobile preview (≈480px)' },
-            { mode: 'tablet', Icon: TabletSmartphone, label: 'Tablet preview (50/50 split)' },
-            { mode: 'desktop', Icon: Laptop, label: 'Laptop preview (full width)' },
-          ] as const).map(({ mode, Icon, label }) => {
-            const active = previewMode === mode
-            const visible = active || previewControlsExpanded
-            return (
-              <button
-                key={mode}
-                onClick={() => setPreviewMode(mode)}
-                className={`inline-flex h-8 items-center justify-center overflow-hidden rounded-full transition-[width,opacity] duration-150 ease-out ${
-                  active
-                    ? 'bg-muted text-foreground'
-                    : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                }`}
-                style={{
-                  width: visible ? 32 : 0,
-                  opacity: visible ? 1 : 0,
-                  pointerEvents: visible ? 'auto' : 'none',
-                }}
-                title={label}
-                aria-label={label}
-                aria-pressed={active}
-              >
-                <Icon className="h-3.5 w-3.5 flex-shrink-0" />
-              </button>
-            )
-          })}
-        </div>
-      )}
-      <button
-        onClick={onRefresh}
-        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-lg backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:bg-muted hover:text-foreground"
-        title={`Refresh ${viewLabel}`}
-        aria-label={`Refresh ${viewLabel}`}
-      >
-        <RefreshCw className="h-3.5 w-3.5" />
-      </button>
-    </div>
-    </>
-  )
-}
 
 function formatJson(value: unknown): string {
   return JSON.stringify(value, null, 2)
@@ -1174,6 +1181,20 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Workflow store actions
   const setVariablesManifestInStore = useWorkflowStore.getState().setVariablesManifest
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  // Report renders mobile-framed ONLY when chat is focused (report in the narrow
+  // 480px pane); report-focused fills the wide laptop pane.
+  const reportFocusMobile = useWorkflowStore(state => state.focusedPane === 'chat')
+  // Device-width preview also constrains the plan/flow pane (centered shell).
+  const previewDevice = usePreviewDevice()
+  // Changing the device width resizes the flow pane; re-fit the diagram after the
+  // CSS width transition (~300ms) so it recenters into the new width.
+  useEffect(() => {
+    if (effectiveCanvasViewMode === 'report' || toolbarOnly) return
+    const t = setTimeout(() => {
+      try { void fitView({ padding: 0.18, duration: 350, minZoom: 0.15, maxZoom: 1.1 }) } catch { /* ignore */ }
+    }, 360)
+    return () => clearTimeout(t)
+  }, [previewDevice, effectiveCanvasViewMode, fitView, toolbarOnly])
   // Highlight execution folder in workspace when selectedRunFolder changes
   // This ensures workspace shows the correct group folder during multi-group execution
   const { highlightFile } = useWorkspaceStore()
@@ -2611,10 +2632,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
         {toolbarOnly ? null : effectiveCanvasViewMode === 'report' ? (
           <div className="h-full min-h-0 relative">
-            {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={showChatArea} />}
+            <PreviewPaneControls hasPlan={hasPlan} onExportPlan={() => { void handleExportImage('png') }} onRefreshPlan={() => { void handleRefresh() }} />
+            {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={reportFocusMobile} />}
           </div>
         ) : <div className="h-full min-h-0 relative flex">
-          <div className={`flex-1 min-h-0 h-full transition-all duration-300 ${showVariablesSidebar ? 'mr-[450px]' : ''}`}>
+          <PreviewPaneControls hasPlan={hasPlan} />
+          <div className={`min-h-0 h-full transition-all duration-300 ${showVariablesSidebar ? 'mr-[450px]' : ''} ${previewDevice === 'desktop' ? 'flex-1' : previewDeviceShellClass(previewDevice)}`}>
         <ReactFlow
           className="w-full h-full bg-gray-50 dark:bg-gray-900"
           style={{ width: '100%', height: '100%' }}
@@ -2654,13 +2677,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {/* Batch Progress Header */}
         <BatchProgressHeader position="canvas" />
 
-        <FloatingWorkflowViewControls
-          viewLabel="flow"
-          showPreviewControls={showChatArea}
-          onRefresh={() => { void handleRefresh() }}
-          onExportImage={(format) => { void handleExportImage(format) }}
-          isExportingImage={isExportingImage}
-        />
+        {/* The old floating flow controls (top-right export + bottom device/refresh)
+            were removed — plan export, device-width, and refresh now live in the
+            shared on-pane bar (PreviewPaneControls). */}
         </div>
 
         {selectedFlowNode && (

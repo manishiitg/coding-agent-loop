@@ -1,5 +1,7 @@
 import React, { useMemo, useCallback, useRef, useEffect, forwardRef, useState } from 'react'
+import { PanelRightOpen } from 'lucide-react'
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
+import { usePreviewDevice } from './canvas/WorkflowCanvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
 import { normalizeEventViewMode, useChatStore, waitForChatStoreHydration, type ChatTab } from '../../stores/useChatStore'
@@ -262,6 +264,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
       emptyText="No previous workflow chats yet."
       onHasChatsChange={onHasChatsChange}
       onSelectSession={handleResumePreviousChat}
+      compact
     />
   )
 }
@@ -553,6 +556,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const showChatArea = useWorkflowStore(state => state.showChatArea)
   const showWorkspacePane = useWorkflowStore(state => state.showWorkspacePane)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
+  const setShowWorkspacePane = useWorkflowStore(state => state.setShowWorkspacePane)
+  const focusedPane = useWorkflowStore(state => state.focusedPane)
+  const setFocusedPane = useWorkflowStore(state => state.setFocusedPane)
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const setWorkflowWorkspaceView = useWorkflowStore(state => state.setWorkflowWorkspaceView)
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
@@ -814,25 +820,33 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     workspacePaneVisible && isWorkspaceViewActive
       ? 'hidden md:flex'
       : 'flex'
-  const splitLayoutClassName = !showChatArea
+  // The device selection (mobile/tablet/laptop) drives BOTH the outer pane width
+  // and the inner content width, together:
+  //   laptop → report fills, chat ~360px rail (the report column flexes)
+  //   tablet → report pane 880px, chat fills the rest
+  //   mobile → report pane 480px, chat fills the rest
+  // Clicking into chat overrides to a mobile-style split so chat gets the room.
+  // Report is always grid col 2 (right), chat is col 1 (left).
+  const previewDevice = usePreviewDevice()
+  const effectiveTier: 'mobile' | 'tablet' | 'laptop' =
+    focusedPane === 'chat'
+      ? 'mobile'
+      : previewDevice === 'mobile' ? 'mobile' : previewDevice === 'tablet' ? 'tablet' : 'laptop'
+  const splitGridCols =
+    effectiveTier === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
+    : effectiveTier === 'tablet' ? 'md:grid-cols-[minmax(0,1fr)_880px]'
+    : 'md:grid-cols-[360px_minmax(0,1fr)]'
+  const splitLayoutClassName = !showChatArea || !workspacePaneVisible
     ? 'flex-1 min-h-0 flex flex-col'
-    : !workspacePaneVisible
-      ? 'flex-1 min-h-0 flex flex-col'
-      : previewPaneTier === 'mobile'
-        ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_480px] md:grid-rows-[auto_minmax(0,1fr)]'
-        : previewPaneTier === 'tablet'
-          ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]'
-          : previewPaneTier === 'laptop'
-            ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]'
-            : 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(320px,0.9fr)_minmax(360px,1.1fr)] md:grid-rows-[auto_minmax(0,1fr)]'
+    : `flex-1 min-h-0 flex flex-col md:grid ${splitGridCols} md:grid-rows-[auto_minmax(0,1fr)]`
   const canvasPaneClassName = !showChatArea
     ? 'flex-1 min-h-0 min-w-0 transition-all duration-300'
     : !workspacePaneVisible
-    ? 'hidden'
-    : previewPaneTier === 'mobile'
+      ? 'hidden'
+      : effectiveTier === 'mobile'
         ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:row-start-2 md:w-[480px] md:flex-none'
-        : previewPaneTier === 'tablet'
-          ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:row-start-2 md:w-full md:flex-none'
+        : effectiveTier === 'tablet'
+          ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:row-start-2 md:w-[880px] md:flex-none'
           : 'min-h-0 min-w-0 transition-all duration-300 md:col-start-2 md:row-start-2'
 
   // Load execution_defaults from workflow.json when workspace changes
@@ -1937,13 +1951,39 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   )
 
   return (
-    <div className={`flex flex-col h-full ${className}`}>
+    <div className={`relative flex flex-col h-full ${className}`}>
+      {/* Right-edge tab to re-open the preview pane after it's been collapsed
+          (the on-pane collapse button hides it). Only when chat is shown and the
+          pane is hidden. */}
+      {showChatArea && !workspacePaneVisible && (
+        <button
+          type="button"
+          onClick={() => setShowWorkspacePane(true)}
+          title="Show report / plan panel"
+          aria-label="Show report / plan panel"
+          className="absolute right-0 top-1/2 z-30 hidden -translate-y-1/2 flex-col items-center gap-1.5 rounded-l-lg border border-r-0 border-border bg-background/95 py-3 pl-1.5 pr-1 text-muted-foreground shadow-md backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground md:flex"
+        >
+          <PanelRightOpen className="h-4 w-4" />
+          <span className="[writing-mode:vertical-rl] text-[10px] font-semibold uppercase tracking-wider">Panel</span>
+        </button>
+      )}
       {/* Main Content */}
-      <div className={splitLayoutClassName}>
+      {/* Focus-follows-click: a mousedown anywhere in the split focuses the preview
+          (gives it ~75%); the chat pane's own capture handler below overrides to
+          'chat' when the click lands inside it. Capture fires outer→inner, so the
+          deeper chat handler wins for chat clicks while canvas clicks stay 'preview'. */}
+      <div
+        className={splitLayoutClassName}
+        onMouseDownCapture={showChatArea && workspacePaneVisible ? () => setFocusedPane('preview') : undefined}
+      >
         {showChatArea && !workspacePaneVisible && canvasElement}
 
         {showChatArea && (
-          <div data-tour="workflow-chat-pane" data-testid="tour-workflow-chat-pane" className={`${chatPaneVisibilityClass} min-h-0 min-w-0 overflow-hidden flex-col bg-background transition-all duration-300 ${
+          <div
+            data-tour="workflow-chat-pane"
+            data-testid="tour-workflow-chat-pane"
+            onMouseDownCapture={() => setFocusedPane('chat')}
+            className={`${chatPaneVisibilityClass} min-h-0 min-w-0 overflow-hidden flex-col bg-background transition-all duration-300 ${
             workspacePaneVisible
               ? `border-b border-border md:col-start-1 md:row-start-2 md:border-b-0 md:border-r ${shouldUseMobileReportPane ? 'flex-1 md:flex-[1.35]' : 'flex-1 basis-1/2'}`
               : 'flex-1'

@@ -8067,8 +8067,16 @@ func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 			continue
 		}
 		if api.isSessionBusyForAutoNotification(sessionID) {
-			// Session is busy — queue the completion and arm the retry backstop
-			// so it still drains even if no further turn fires the post-turn drain.
+			// Session is busy. A CLI coding agent can still receive the completion
+			// mid-turn via live steering — prefer that, since the busy session may
+			// be running the very workflow whose completion it is waiting on and so
+			// may never reach the idle window a synthetic turn needs.
+			if api.canSteerSession(sessionID) && api.steerBackgroundAgentCompletion(sessionID, agentID) {
+				continue
+			}
+			// Not steerable (or steer failed) — queue the completion and arm the
+			// retry backstop so it still drains even if no further turn fires the
+			// post-turn drain.
 			api.queuePendingCompletion(sessionID, agentID)
 			api.schedulePendingCompletionRetry(sessionID)
 			log.Printf("[BG AGENT] Session %s busy, queued completion for agent %s", sessionID, agentID)
@@ -8376,6 +8384,34 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 
 	snap = agent.GetSnapshot()
 
+	syntheticMsg := api.buildAutoNotificationMessage(sessionID, snap)
+
+	// NOTE: Don't inject syntheticMsg into conversation history here.
+	// handleQuery will add it via StreamWithEvents when the synthetic turn runs.
+
+	// Emit synthetic_turn_ready event so frontend shows amber banner before the turn fires
+	statusLabel := "completed"
+	if snap.Status == BGAgentFailed {
+		statusLabel = "failed"
+	}
+	api.emitBackgroundAgentEvent(sessionID, agentID, "synthetic_turn_ready", map[string]interface{}{
+		"message":  fmt.Sprintf("Background agent '%s' %s. The main agent will process the results.", snap.Name, statusLabel),
+		"agent_id": snap.ID,
+		"name":     snap.Name,
+		"status":   string(snap.Status),
+	})
+
+	// Trigger a synthetic turn using the stored QueryRequest
+	// Called synchronously so handleQuery sets session busy before returning,
+	// preventing concurrent synthetic turns for the same session.
+	api.executeSyntheticTurn(sessionID, syntheticMsg)
+}
+
+// buildAutoNotificationMessage formats the [AUTO-NOTIFICATION] user message for a
+// finished background agent. It is pure formatting (no dedup / no side effects) so
+// both the synthetic-turn path (idle session) and the live-steer path (busy
+// steerable CLI agent) emit byte-identical text.
+func (api *StreamingAPI) buildAutoNotificationMessage(sessionID string, snap BackgroundAgentSnapshot) string {
 	var resultText string
 	if snap.Status == BGAgentCompleted {
 		resultText = snap.Result // Full result — no truncation in auto-notification
@@ -8434,25 +8470,94 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		syntheticMsg += botAutoNotificationProgressDirective(sessionID, api.isFinalBotAutoNotification(sessionID))
 	}
 
-	// NOTE: Don't inject syntheticMsg into conversation history here.
-	// handleQuery will add it via StreamWithEvents when the synthetic turn runs.
+	return syntheticMsg
+}
 
-	// Emit synthetic_turn_ready event so frontend shows amber banner before the turn fires
-	statusLabel := "completed"
-	if snap.Status == BGAgentFailed {
-		statusLabel = "failed"
+// steerBackgroundAgentCompletion delivers a finished background agent's
+// [AUTO-NOTIFICATION] to a busy-but-steerable CLI coding agent by injecting it
+// into the turn that is already running (the same path live user chat takes via
+// handleSteerMessage), instead of starting a fresh synthetic turn.
+//
+// This exists because the synthetic-turn path (processBackgroundAgentCompletion ->
+// executeSyntheticTurn) can only fire when the session is idle. For a CLI coding
+// agent the session is frequently busy — often running the very workflow whose
+// completion it is waiting on — so the synthetic turn never gets an idle window,
+// the notification queues, the session goes stale, and the completion is dropped.
+// A steerable agent can always receive the message mid-turn, so prefer that.
+//
+// Returns true when the message was handed to the running agent (caller should
+// NOT queue). Returns false on any failure so the caller falls back to the
+// existing queue + drain-on-idle backstop.
+func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID string) bool {
+	if api.isSessionStoppedOrInactive(sessionID) {
+		return false
 	}
-	api.emitBackgroundAgentEvent(sessionID, agentID, "synthetic_turn_ready", map[string]interface{}{
-		"message":  fmt.Sprintf("Background agent '%s' %s. The main agent will process the results.", snap.Name, statusLabel),
+
+	api.runningAgentsMux.RLock()
+	runningAgent, exists := api.runningAgents[sessionID]
+	api.runningAgentsMux.RUnlock()
+	if !exists || runningAgent == nil {
+		return false
+	}
+
+	if api.bgAgentRegistry == nil {
+		return false
+	}
+	agent := api.bgAgentRegistry.Get(sessionID, agentID)
+	if agent == nil {
+		return false
+	}
+
+	snap := agent.GetSnapshot()
+	if snap.Status != BGAgentCompleted && snap.Status != BGAgentFailed {
+		return false
+	}
+
+	// Dedup without committing: do not set notified until delivery succeeds, so a
+	// failed steer can still fall through to the queue path.
+	agent.mu.Lock()
+	alreadyNotified := agent.notified
+	agent.mu.Unlock()
+	if alreadyNotified {
+		return true // nothing left to deliver; treat as handled so caller won't queue
+	}
+
+	msg := api.buildAutoNotificationMessage(sessionID, snap)
+
+	steerCtx, cancel := context.WithTimeout(context.Background(), liveCodingAgentSteerTimeout)
+	defer cancel()
+	delivery, err := runningAgent.DeliverUserMessage(steerCtx, mcpagent.UserMessageDeliveryRequest{
+		SessionID: sessionID,
+		Message:   msg,
+		Intent:    mcpagent.UserMessageDeliveryIntentLiveInput,
+	})
+	if err != nil {
+		log.Printf("[BG AGENT] Live steer delivery failed for session %s agent %s: %v — falling back to queue", sessionID, agentID, err)
+		return false
+	}
+
+	// Commit the dedup only after a successful hand-off.
+	agent.mu.Lock()
+	agent.notified = true
+	agent.mu.Unlock()
+
+	provider := string(delivery.Provider)
+	if provider == "" {
+		provider = string(runningAgent.GetProvider())
+	}
+	deliveryStatus := string(delivery.DeliveryStatus)
+	if deliveryStatus == "" {
+		deliveryStatus = "queued_for_injection"
+	}
+	api.recordLiveCodingAgentUserMessage(sessionID, msg, provider, newSteerMessageID(), deliveryStatus)
+	api.emitBackgroundAgentEvent(sessionID, agentID, "auto_notification_steered", map[string]interface{}{
 		"agent_id": snap.ID,
 		"name":     snap.Name,
 		"status":   string(snap.Status),
+		"provider": provider,
 	})
-
-	// Trigger a synthetic turn using the stored QueryRequest
-	// Called synchronously so handleQuery sets session busy before returning,
-	// preventing concurrent synthetic turns for the same session.
-	api.executeSyntheticTurn(sessionID, syntheticMsg)
+	log.Printf("[BG AGENT] Steered completion for agent %s into busy session %s (provider=%s status=%s)", agentID, sessionID, provider, deliveryStatus)
+	return true
 }
 
 func (api *StreamingAPI) isFinalBotAutoNotification(sessionID string) bool {

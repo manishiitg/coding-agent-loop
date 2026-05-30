@@ -75,6 +75,33 @@ multi-agent-only schedule cron flow, see
   Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`).
 - Schedule management is available in **builder and optimizer modes**. If the user asks in another mode, tell them to switch.
 
+### Two schedule types: cron vs calendar
+
+Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default) or `"calendar"`. They are stored side by side under the same `schedules` key; the difference is *when* they fire.
+
+- **`cron`** — a repeating pattern that fires forever on a cadence (`create_schedule`, `cron_expression`). Use for "every weekday at 9 AM", "every 30 minutes", "first of the month". This is the default; everything in *Three ways to schedule* and *Writing messages* below applies to cron schedules.
+- **`calendar`** — a fixed list of specific dated runs, each firing exactly once (`create_calendar_schedule`, `calendar_items`). Use when the user gives concrete dates/times instead of a recurring rhythm — e.g. a full-month Instagram content calendar, a launch sequence, a one-off batch on three specific days. There is no `cron_expression`; the scheduler registers **one job per future `calendar_item`** and each item fires once at its date+time, then is done.
+
+**Choosing:** if the user describes a *rhythm* ("every…", "daily", "weekly") use cron; if they enumerate *dates* ("on the 3rd, 7th, and 12th", "post these on these days") use calendar. When in doubt, ask whether the runs repeat or are a fixed set of dates.
+
+**`create_calendar_schedule` payload:**
+
+```
+{ "name": "March content calendar", "timezone": "Asia/Kolkata",
+  "group_names": ["group-1"], "mode": "workflow",
+  "calendar_items": [
+    { "date": "2026-03-03", "time": "09:00", "description": "Optional note" },
+    { "date": "2026-03-07", "time": "18:30" }
+  ] }
+```
+
+- `calendar_items` (required): each needs `date` (`YYYY-MM-DD`) and `time` (`HH:MM`), both interpreted in the schedule's `timezone`. `description` is an optional per-item note; `messages` is an optional per-item message queue used **only** when `mode="workshop"`.
+- `timezone` (required, IANA — e.g. `Asia/Kolkata`, not `IST`) and `group_names` (required) work exactly as for cron schedules.
+- **Modes are the same as cron**: defaults to `mode="workflow"` (direct orchestrator, no LLM, no messages needed). Use `mode="workshop"` only for an explicit builder/optimizer/evaluation/hardening calendar — then supply per-item `messages` or a top-level default `messages` array plus `workshop_mode` (`run` or `optimizer`), following all the *Writing messages* and unattended-run rules below.
+- Past-dated items are skipped — only future items get registered. To change a calendar schedule, update its `calendar_items` (add/remove dates); editing tools (`update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs`) work on calendar schedules too.
+
+> The cron flow for **multi-agent chat** schedules (`multiagent-schedules.json`, edited via shell) is separate and cron-only — see `get_reference_doc(kind="schedule-management")`. Calendar schedules are a **workflow-schedule** feature and live in `workflow.json`.
+
 ### Three ways to schedule a workflow
 
 1. **Execute** (`mode=workflow`, default) — runs the orchestrator directly, no LLM involved. Fast, no messages needed.

@@ -2,6 +2,8 @@
 
 You can create scheduled tasks that run automatically on a cron schedule. Schedules are stored in `_users/<user-id>/multiagent-schedules.json` (default user-id is "default" unless the multi-tenant runtime has set one).
 
+> Scope: this doc covers **multi-agent chat** schedules only, which are **cron-only** (repeating cadence). To schedule a **workflow** — including dated, one-time **calendar** schedules (a fixed list of specific date/time runs, e.g. a content calendar) — use the workflow-schedule tools (`create_schedule` / `create_calendar_schedule`) documented in `get_reference_doc(kind="workflow-tools")`; those live in the workflow's `workflow.json`, not here.
+
 ### File Format
 
 ```json

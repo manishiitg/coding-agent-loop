@@ -5,6 +5,7 @@ import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useChatStore } from '../stores/useChatStore'
+import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
@@ -99,6 +100,9 @@ interface TerminalCenterProps {
   currentSessionId?: string
   compact?: boolean
   hasConversationActivity?: boolean
+  /** Start the agent rail/tree minimized (main agent only) — used in the
+   *  workflow's narrow chat rail where the full tree is cramped. */
+  railMinimizedDefault?: boolean
 }
 
 const TERMINAL_REFRESH_HISTORY_LINES = 10000
@@ -2221,7 +2225,7 @@ function writeDismissedTerminalErrorIDs(sessionId: string | undefined, ids: Set<
   }
 }
 
-export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId, compact, hasConversationActivity = false }) => {
+export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId, compact, hasConversationActivity = false, railMinimizedDefault = false }) => {
   // terminalCenterOpen was the legacy toggle gate (separate sidekick
   // panel); kept here for any callers that still pass the flag but no
   // longer affects rendering — Debug-mode mount is the only gate.
@@ -2245,11 +2249,15 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [dismissedErrorIDs, setDismissedErrorIDs] = useState<Set<string>>(() => readDismissedTerminalErrorIDs(currentSessionId))
   const [expandedErrorIDs, setExpandedErrorIDs] = useState<Set<string>>(() => new Set())
   const [terminalColorScheme, setTerminalColorScheme] = useState<TerminalColorScheme>(() => readStoredTerminalColorScheme())
+  // Slim each agent rail card to one line ONLY when the report/plan pane is up
+  // and the chat is the narrow rail (preview-focused). When chat is full-width
+  // (no preview, or chat-focused) the cards render with their full meta row.
+  const slimAgentRail = useWorkflowStore(s => s.showChatArea && s.showWorkspacePane && s.focusedPane === 'preview')
   const [terminalRailFilter, setTerminalRailFilter] = useState<TerminalRailFilter>('all')
-  // In the workflow's narrow (compact) chat rail the agent tree is cramped, so
-  // start it minimized (main agent only, sub-agent terminals hidden below it).
-  // The +/- toggle still expands it on demand.
-  const [terminalRailMinimized, setTerminalRailMinimized] = useState(Boolean(compact))
+  // In the workflow's narrow chat rail the agent tree is cramped, so start it
+  // minimized (main agent only, sub-agent terminals hidden below it). The +/-
+  // toggle still expands it on demand.
+  const [terminalRailMinimized, setTerminalRailMinimized] = useState(Boolean(railMinimizedDefault))
   const [error, setError] = useState<string | null>(null)
   const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
   const [debugPanelOpenForID, setDebugPanelOpenForID] = useState<string | null>(null)
@@ -3303,6 +3311,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               </button>
             )}
           </div>
+          {/* The provider/start-time meta row is the bulk of the card height;
+              hide it when the chat is the narrow report/plan rail to slim each
+              card to one line (info stays on hover via title attrs / when the
+              chat is given more room). */}
+          {!slimAgentRail && (
           <div className={`mt-0.5 flex items-center gap-1.5 opacity-70 ${terminalTheme.railMetaText}`}>
             {stepTypeLabel && (
               <span className="shrink-0 text-neutral-400">{stepTypeLabel}</span>
@@ -3334,6 +3347,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               </span>
             )}
           </div>
+          )}
           {latestTerminalError && (
             <div
               className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] leading-4 text-red-300"
@@ -3429,7 +3443,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 independently of the right pane so the user can navigate
                 a long list without losing the selected terminal's
                 content. Hidden below sm breakpoint to save space. */}
-            <div className="hidden w-48 shrink-0 flex-col overflow-y-auto overflow-x-hidden border-r border-neutral-700/70 bg-[#141615] sm:flex">
+            <div className={`hidden shrink-0 flex-col overflow-y-auto overflow-x-hidden border-r border-neutral-700/70 bg-[#141615] sm:flex ${slimAgentRail ? 'w-14' : 'w-48'}`}>
               {(() => {
                 let controlsRendered = false
                 const rows = groupedTerminals.tree.flatMap(item => {

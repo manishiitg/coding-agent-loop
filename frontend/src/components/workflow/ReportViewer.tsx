@@ -535,25 +535,34 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     setLoading(true)
     setError(null)
 
-    loadReportDataSnapshot(workspacePath, isExplicitRefreshForWorkspace)
-      .then(snapshot => {
-        if (cancelled) return
-        setPlanSource(snapshot.planSource)
-        setSources(snapshot.sources)
-      })
-      .catch(error => {
-        if (cancelled) return
-        const message = error instanceof Error ? error.message : String(error)
-        setError(message || 'Failed to load report.')
-        setPlanSource(null)
-        setSources({})
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+    // Debounce the heavy fetch+parse so flicking through workflows (Ctrl+K /
+    // header pills) only loads the report you actually LAND on — not every one
+    // you pass through. The skeleton shows immediately; cached workflows above
+    // skip this entirely and stay instant. An explicit refresh skips the wait.
+    const loadDelayMs = isExplicitRefreshForWorkspace ? 0 : 250
+    const loadTimer = setTimeout(() => {
+      if (cancelled) return
+      loadReportDataSnapshot(workspacePath, isExplicitRefreshForWorkspace)
+        .then(snapshot => {
+          if (cancelled) return
+          setPlanSource(snapshot.planSource)
+          setSources(snapshot.sources)
+        })
+        .catch(error => {
+          if (cancelled) return
+          const message = error instanceof Error ? error.message : String(error)
+          setError(message || 'Failed to load report.')
+          setPlanSource(null)
+          setSources({})
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    }, loadDelayMs)
 
     return () => {
       cancelled = true
+      clearTimeout(loadTimer)
     }
   }, [workspacePath, refreshNonce, mobilePreview])
 

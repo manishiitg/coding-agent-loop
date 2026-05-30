@@ -1058,9 +1058,31 @@ function createWindow(initialUrl) {
     shell.openExternal(url).catch(err => {
       console.error('[main] Failed to open external URL:', err);
     });
-    
+
     return { action: 'deny' };
   });
+
+  // Same-window navigations — a plain <a href> click (e.g. a URL printed in
+  // terminal output) would otherwise REPLACE the app in the Electron window.
+  // Intercept external http(s) navigations and open them in the system browser;
+  // let internal app / dev-server navigation proceed normally.
+  const isInternalNavUrl = (u) =>
+    u.startsWith('http://127.0.0.1') ||
+    u.startsWith('http://localhost') ||
+    u.startsWith('file://') ||
+    u.startsWith('app://') ||
+    u.startsWith('about:');
+  const redirectExternalNavigation = (event, url) => {
+    if (!isInternalNavUrl(url) && /^https?:\/\//i.test(url)) {
+      event.preventDefault();
+      console.log('[main] will-navigate → opening external URL in system browser:', url);
+      shell.openExternal(url).catch(err => {
+        console.error('[main] Failed to open external URL:', err);
+      });
+    }
+  };
+  mainWindow.webContents.on('will-navigate', redirectExternalNavigation);
+  mainWindow.webContents.on('will-redirect', redirectExternalNavigation);
 
   const devUrl = process.env.DEV_URL;
   if (devUrl && process.env.ELECTRON_OPEN_DEVTOOLS === '1') {

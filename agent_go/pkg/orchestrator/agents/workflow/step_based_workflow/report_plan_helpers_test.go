@@ -499,3 +499,42 @@ func diagnosticsContain(diags []reportPlanDiagnostic, want string) bool {
 	}
 	return false
 }
+
+// Locks in bracket / $-root path resolution so validate_report_plan and
+// preview_report_render stay in parity with the frontend renderer. The classic
+// alert form "$[0].login_success" must resolve against an array source rather
+// than silently returning undefined (which used to keep the alert hidden).
+func TestResolveReportPlanPathBracketAndRootSigil(t *testing.T) {
+	t.Parallel()
+	rows := []interface{}{
+		map[string]interface{}{"login_success": false, "pan": "AAA"},
+		map[string]interface{}{"login_success": true, "pan": "BBB"},
+	}
+	cases := []struct {
+		path string
+		data interface{}
+		want interface{}
+		ok   bool
+	}{
+		{"$[0].login_success", rows, false, true},
+		{"$.0.pan", rows, "AAA", true},
+		{"[1].pan", rows, "BBB", true},
+		{"entities.0.label", map[string]interface{}{"entities": []interface{}{map[string]interface{}{"label": "x"}}}, "x", true},
+		{"rows[0].login_success", map[string]interface{}{"rows": rows}, false, true},
+		{"$[9].pan", rows, nil, false},
+	}
+	for _, c := range cases {
+		got, ok := resolveReportPlanPath(c.data, c.path)
+		if ok != c.ok || (ok && got != c.want) {
+			t.Errorf("resolveReportPlanPath(%q) = (%v, %v), want (%v, %v)", c.path, got, ok, c.want, c.ok)
+		}
+	}
+
+	// show_if must now evaluate the same expression instead of failing open.
+	if !reportPlanEvaluateShowIf(rows, "$[0].login_success == false") {
+		t.Error(`show_if "$[0].login_success == false" should be true when row 0 login failed`)
+	}
+	if reportPlanEvaluateShowIf(rows, "$[1].login_success == false") {
+		t.Error(`show_if "$[1].login_success == false" should be false when row 1 login succeeded`)
+	}
+}

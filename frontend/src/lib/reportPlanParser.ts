@@ -748,12 +748,31 @@ function parseRowBlock(body: string[]): ReportWidgetRow {
 // Kept next to the parser since both live in the "widget plumbing" layer.
 // ---------------------------------------------------------------------------
 
-// Resolves `path` (dot-separated) into `data`. Returns undefined for missing keys.
-// Supports object keys; array indices can be written as numeric segments
-// (e.g. "entities.0.label").
+// Splits a path into segments, understanding dot keys, bracket indices, and a
+// leading `$` / `$.` document-root sigil (JSONPath/JSONata style). Examples:
+//   "entities.0.label" -> ["entities","0","label"]
+//   "rows[0].login_success" -> ["rows","0","login_success"]
+//   "$[0].login_success" -> ["0","login_success"]   (the classic alert showIf form)
+//   "$.foo.bar" -> ["foo","bar"]
+function parsePathSegments(path: string): string[] {
+  let p = path.trim()
+  if (p.startsWith('$')) p = p.slice(1)
+  const segments: string[] = []
+  // Each token is either a bracketed numeric index [123] or a bare key.
+  const re = /\[(\d+)\]|([^.[\]]+)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(p)) !== null) {
+    segments.push(m[1] !== undefined ? m[1] : m[2])
+  }
+  return segments
+}
+
+// Resolves `path` into `data`. Returns undefined for missing keys. Supports
+// object keys, array indices as numeric dot segments ("entities.0.label") OR
+// bracket notation ("entities[0].label"), and a leading `$`/`$.` root sigil.
 export function resolveJSONPath(data: unknown, path: string): unknown {
   if (data == null || !path) return data
-  const segments = path.split('.').filter(s => s.length > 0)
+  const segments = parsePathSegments(path)
   let current: unknown = data
   for (const segment of segments) {
     if (current == null) return undefined

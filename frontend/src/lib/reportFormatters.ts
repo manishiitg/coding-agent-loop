@@ -34,13 +34,38 @@ function asNumber(value: unknown): number | null {
   return null
 }
 
+// Parses the date shapes that actually appear in workspace db files:
+//   ISO with zone (2026-05-04T01:49:01Z / ...+05:30), naive ISO (2026-05-04T01:49:01),
+//   space-separated (2026-05-04 01:49:01), and date-only (2026-05-04).
+// Date-only and zone-less datetimes are interpreted in LOCAL time so a value
+// never shifts a day across the UTC boundary (the bare `new Date('2026-05-04')`
+// trap, which parses as UTC midnight). Anything carrying an explicit zone is
+// passed to the native parser unchanged.
 function asDate(value: unknown): Date | null {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value
-  if (typeof value === 'string' || typeof value === 'number') {
-    const d = new Date(value as string | number)
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value
+  if (typeof value === 'number') {
+    const d = new Date(value)
     return Number.isNaN(d.getTime()) ? null : d
   }
-  return null
+  if (typeof value !== 'string') return null
+  const s = value.trim()
+  if (s === '') return null
+  // Date-only YYYY-MM-DD → local midnight.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  if (dateOnly) {
+    return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+  }
+  // Zone-less datetime "YYYY-MM-DD[ T]HH:MM[:SS]" → local.
+  const naive = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(s)
+  if (naive) {
+    return new Date(
+      Number(naive[1]), Number(naive[2]) - 1, Number(naive[3]),
+      Number(naive[4]), Number(naive[5]), Number(naive[6] ?? '0'),
+    )
+  }
+  // Explicit zone (Z / ±HH:MM) or any other format → native parse.
+  const d = new Date(s)
+  return Number.isNaN(d.getTime()) ? null : d
 }
 
 const EM_DASH: FormatResult = { text: '—', isNumeric: false }

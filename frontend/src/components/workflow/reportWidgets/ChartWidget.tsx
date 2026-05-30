@@ -134,7 +134,7 @@ export function ChartWidget({ value, widget }: { value: unknown; widget: ReportW
   return (
     <div ref={widgetRef} className="flex flex-col text-muted-foreground">
       {header}
-      <div className="rounded-lg bg-background/55 px-0.5 py-1.5" style={chartFrameStyle}>
+      <div className="rounded-lg px-0.5 py-1.5" style={chartFrameStyle}>
         <ResponsiveContainer>
           <ChartContainer data={points} margin={{ top: 8, right: isCompact ? 8 : 16, left: isCompact ? -12 : 0, bottom: 8 }}>
             <defs>

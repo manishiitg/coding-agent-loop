@@ -804,6 +804,37 @@ func parseReportPlanSourcesField(raw string) map[string]string {
 	return out
 }
 
+// parseReportPlanPathSegments splits a path into segments, understanding dot
+// keys, bracket indices, and a leading "$"/"$." document-root sigil. Mirrors the
+// frontend parsePathSegments (reportPlanParser.ts) so validate_report_plan and
+// preview_report_render agree with the renderer. Examples:
+//
+//	"entities.0.label"      -> ["entities","0","label"]
+//	"rows[0].login_success" -> ["rows","0","login_success"]
+//	"$[0].login_success"    -> ["0","login_success"]   (the classic alert show_if form)
+//	"$.foo.bar"             -> ["foo","bar"]
+func parseReportPlanPathSegments(path string) []string {
+	p := strings.TrimPrefix(strings.TrimSpace(path), "$")
+	var segments []string
+	var token strings.Builder
+	flush := func() {
+		if token.Len() > 0 {
+			segments = append(segments, token.String())
+			token.Reset()
+		}
+	}
+	for i := 0; i < len(p); i++ {
+		switch p[i] {
+		case '.', '[', ']':
+			flush()
+		default:
+			token.WriteByte(p[i])
+		}
+	}
+	flush()
+	return segments
+}
+
 func resolveReportPlanPath(data interface{}, path string) (interface{}, bool) {
 	if data == nil {
 		return nil, false
@@ -812,7 +843,7 @@ func resolveReportPlanPath(data interface{}, path string) (interface{}, bool) {
 		return data, true
 	}
 	current := data
-	for _, seg := range strings.Split(path, ".") {
+	for _, seg := range parseReportPlanPathSegments(path) {
 		if seg == "" {
 			continue
 		}
@@ -3194,7 +3225,7 @@ func registerReportPlanManagementTools(
 	mcpAgent.RegisterCustomTool(
 		"set_report_theme",
 		"Set the plan-level theme on reports/report_plan.json. Two ways to use this:\n\n"+
-			"1. **Named theme** — pass theme: \"brand\" / \"warm\" / \"cool\". The bundled CSS blocks override --chart-1..5, --primary, --accent, and surface tints across the report. Quickest path; no color authoring needed.\n\n"+
+			"1. **Named theme** — pass theme: \"anthropic\" / \"brand\" / \"warm\" / \"cool\". The bundled CSS blocks override --chart-1..5, --primary, --accent, and surface tints across the report. Quickest path; no color authoring needed. \"anthropic\" is the recommended default: a warm editorial \"paper\" palette (ivory surfaces, warm near-black text, a single clay/terracotta accent, muted earthy charts) that overrides the full surface + semantic token set.\n\n"+
 			"2. **Inline custom palette** — pass colors: { primary, accent, card, muted, border, chart: [c1,c2,c3,c4,c5] } with hex strings (e.g. \"#cc0000\"). The renderer converts each hex to HSL and injects them as CSS variables on the report root, overriding any named theme. Use this for brand-specific palettes (e.g. \"HDFC red\", \"Citi blue\") that no bundled theme matches. All fields are optional — anything you omit falls through to the named theme (if set) or the workspace default.\n\n"+
 			"You can pass both — theme provides the baseline, colors fine-tune individual variables on top. Pass theme: null and colors: null to clear everything and revert to workspace defaults. Themes scope to the report subtree only; surrounding app chrome is unaffected.",
 		themeParams,

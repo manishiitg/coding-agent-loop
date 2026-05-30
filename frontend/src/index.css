@@ -145,6 +145,78 @@
     --primary: 250 70% 55%;
   }
 
+  /* Anthropic — warm "paper" editorial palette: ivory surfaces, warm near-black
+     text, a single clay/terracotta accent, and a muted earthy chart palette.
+     Overrides the full surface + semantic token set (not just charts) so even a
+     stat/table-only report reads as warm paper. The base font-family switches to
+     a humanist sans; serif-heading application lands in the widget components
+     (which read --report-font-serif). */
+  [data-report-theme="anthropic"] {
+    --background: 48 33% 95%;        /* #F5F4EE warm ivory */
+    --foreground: 40 8% 12%;         /* #1A1915 warm near-black */
+    --card: 45 30% 98%;              /* #FCFBF8 */
+    --card-foreground: 40 8% 12%;
+    --popover: 45 30% 98%;
+    --popover-foreground: 40 8% 12%;
+    --primary: 16 52% 50%;           /* #C2613F clay */
+    --primary-foreground: 45 30% 98%;
+    --secondary: 45 22% 92%;         /* #EEEDE6 */
+    --secondary-foreground: 40 8% 16%;
+    --muted: 45 22% 92%;
+    --muted-foreground: 40 6% 42%;   /* #8A867A warm gray */
+    --accent: 16 52% 50%;
+    --accent-foreground: 45 30% 98%;
+    --destructive: 10 56% 42%;       /* #A8432F brick */
+    --destructive-foreground: 45 30% 98%;
+    --border: 42 18% 86%;            /* #E3E0D6 hairline */
+    --input: 42 18% 86%;
+    --ring: 16 52% 50%;
+    --chart-1: 16 52% 50%;           /* clay */
+    --chart-2: 36 60% 58%;           /* sand */
+    --chart-3: 85 18% 48%;           /* sage */
+    --chart-4: 202 22% 45%;          /* slate */
+    --chart-5: 353 25% 59%;          /* dusty rose */
+    --chart-6: 39 16% 54%;           /* taupe */
+    --report-font-serif: "Newsreader", "Tiempos Headline", Georgia, "Times New Roman", serif;
+    --report-font-sans: "Styrene", "Inter", system-ui, -apple-system, sans-serif;
+    font-family: var(--report-font-sans);
+  }
+  .dark [data-report-theme="anthropic"],
+  [data-report-theme="anthropic"].dark {
+    --background: 45 9% 10%;         /* #1C1B17 warm dark */
+    --foreground: 44 22% 90%;        /* #ECEAE0 */
+    --card: 42 12% 13%;              /* #26241E */
+    --card-foreground: 44 22% 90%;
+    --popover: 42 12% 13%;
+    --popover-foreground: 44 22% 90%;
+    --primary: 15 52% 58%;           /* #CC785C brighter clay */
+    --primary-foreground: 45 12% 10%;
+    --secondary: 40 12% 16%;
+    --secondary-foreground: 44 22% 90%;
+    --muted: 40 12% 16%;
+    --muted-foreground: 40 10% 62%;
+    --accent: 15 52% 58%;
+    --accent-foreground: 45 12% 10%;
+    --destructive: 10 50% 52%;
+    --destructive-foreground: 44 22% 90%;
+    --border: 40 9% 20%;             /* #383530 */
+    --input: 40 9% 20%;
+    --ring: 15 52% 58%;
+    --chart-1: 15 55% 62%;
+    --chart-2: 36 58% 64%;
+    --chart-3: 85 20% 58%;
+    --chart-4: 202 26% 58%;
+    --chart-5: 353 30% 66%;
+    --chart-6: 39 20% 62%;
+  }
+  /* Serif section + widget headings, scoped to the Anthropic theme. .report-heading
+     is added to the section <h3> and widget titles; other themes keep their sans. */
+  [data-report-theme="anthropic"] .report-heading {
+    font-family: var(--report-font-serif);
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+
   /* Warm — sunset reds/oranges. Tints primary, accent, and the card/muted
      surfaces so the theme is visible even in chart-light reports (a report
      with only stat + table widgets still picks up the warm accents). */

@@ -83,12 +83,11 @@ export function StatWidget({
   const deltaArrow = trendArrow[direction]
 
   return (
-    <div className="relative flex h-full flex-col gap-2 overflow-hidden rounded-xl bg-card/75 px-3 py-3 transition-shadow sm:border sm:border-border/60 sm:bg-gradient-to-br sm:from-card sm:via-card sm:to-muted/25 sm:shadow-sm sm:hover:shadow-md">
+    <div className="relative flex h-full flex-col gap-2 overflow-hidden rounded-xl border border-border bg-card px-4 py-3.5 sm:gap-2.5 sm:px-5 sm:py-4">
       {onToggleHidden && <WidgetVisibilityButton onToggle={onToggleHidden} />}
-      <span className="absolute inset-x-0 top-0 hidden h-[2px] bg-gradient-to-r from-primary/0 via-primary/60 to-primary/0 sm:block" aria-hidden />
       <WidgetHeader widget={widget} mode="metric" />
       <div className="flex items-baseline gap-2">
-        <div className="text-2xl font-semibold tabular-nums tracking-tight text-foreground sm:text-3xl">
+        <div className="text-[1.75rem] font-semibold tabular-nums tracking-tight text-foreground sm:text-[2rem]">
           {widget.prefix ?? ''}{formatted.text}{widget.suffix ?? ''}
         </div>
         {deltaFormatted !== undefined && (

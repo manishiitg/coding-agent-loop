@@ -54,11 +54,11 @@ export function AlertWidget({
   const title = interpolate(widget.title)
   const message = interpolate(widget.message)
   return (
-    <div className={`relative flex items-start gap-3 rounded-xl px-3 py-2.5 sm:border sm:shadow-sm ${tone}`}>
+    <div className={`relative flex items-start gap-3 rounded-xl border border-l-[3px] px-4 py-3 ${tone}`}>
       {onToggleHidden && <WidgetVisibilityButton onToggle={onToggleHidden} />}
       <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-current/15 bg-background/60 text-sm leading-5" aria-hidden>{icon}</div>
       <div className="flex flex-col gap-0.5">
-        {title && <div className="text-sm font-semibold">{title}</div>}
+        {title && <div className="report-heading text-[15px] font-semibold">{title}</div>}
         {message && <div className="text-sm leading-6">{message}</div>}
         {!title && !message && (
           <div className="text-sm leading-6">

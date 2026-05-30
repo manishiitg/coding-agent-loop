@@ -175,7 +175,7 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
       <div className="flex flex-col gap-1.5 text-xs sm:flex-row sm:flex-wrap sm:items-center">
         {enableSearch && (
           <div className="relative w-full sm:max-w-xs sm:flex-1">
-            <Search className="absolute left-2 top-1.5 w-3.5 h-3.5 text-muted-foreground" />
+            <Search className="absolute left-2.5 top-1/2 w-3.5 h-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
               placeholder="Search…"
@@ -184,14 +184,14 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
                 setSearch(e.target.value)
                 setPage(0)
               }}
-              className="w-full rounded-md border border-input bg-muted/30 py-1.5 pl-7 pr-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+              className="w-full rounded-md border border-input bg-muted/30 py-2 pl-7 pr-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary sm:py-1.5"
             />
           </div>
         )}
-        <div className="inline-flex items-center self-start rounded-full border border-border bg-background/80 px-2 py-1 text-muted-foreground sm:self-auto">{rowCountText}</div>
+        <div className="inline-flex items-center self-start rounded-full border border-border bg-background/80 px-2.5 py-1 text-muted-foreground sm:self-auto">{rowCountText}</div>
         <button
           onClick={handleExport}
-          className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-border bg-background/80 px-2 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:ml-auto sm:w-auto sm:justify-start"
+          className="inline-flex min-h-[36px] w-full items-center justify-center gap-1 rounded-md border border-border bg-background/80 px-2.5 py-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:min-h-0 sm:ml-auto sm:w-auto sm:justify-start sm:py-1.5"
           title="Export CSV"
         >
           <Download className="w-3.5 h-3.5" />
@@ -215,7 +215,7 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
             return (
               <div
                 key={safePage * pageSize + i}
-                className="rounded-xl border border-border/55 bg-card/90 px-3 py-3 shadow-sm"
+                className="rounded-xl border border-border bg-card px-4 py-3.5"
                 style={rowStyle}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -264,9 +264,9 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
           })}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-border/60 bg-background/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] [scrollbar-gutter:stable]">
+        <div className="overflow-x-auto rounded-xl border border-border bg-card [scrollbar-gutter:stable]">
           <table className="w-full border-collapse text-sm">
-            <thead className="sticky top-0 bg-muted/60 backdrop-blur-sm z-10 shadow-[0_1px_0_0_var(--border)]">
+            <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur-sm">
               <tr>
                 {columns.map(c => {
                   const isSorted = sortField === c
@@ -274,7 +274,7 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
                   return (
                     <th
                       key={c}
-                      className={`px-2.5 py-2 border-b-2 border-border font-semibold text-xs uppercase tracking-wide text-muted-foreground select-none cursor-pointer hover:bg-muted hover:text-foreground transition-colors ${align} ${isSorted ? 'text-primary' : ''}`}
+                      className={`px-3 py-2.5 font-semibold text-[11px] uppercase tracking-[0.12em] text-muted-foreground select-none cursor-pointer hover:text-foreground transition-colors ${align} ${isSorted ? 'text-primary' : ''}`}
                       onClick={() => onSortClick(c)}
                     >
                       <span className="inline-flex items-center gap-1">
@@ -301,7 +301,7 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
                 return (
                 <tr
                   key={safePage * pageSize + i}
-                  className={`group/row transition-colors ${rowColor ? 'hover:bg-muted/40' : 'even:bg-muted/20 hover:bg-muted/40'} hover:shadow-[inset_2px_0_0_0_hsl(var(--primary))]`}
+                  className={`group/row transition-colors ${rowColor ? 'hover:bg-muted/30' : 'hover:bg-muted/25'}`}
                   style={rowStyle}
                 >
                   {columns.map(c => {
@@ -311,7 +311,7 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
                     return (
                       <td
                         key={c}
-                        className={`px-2.5 py-1.5 border-b border-border/40 align-top text-foreground break-words whitespace-pre-wrap ${align}`}
+                        className={`px-3 py-2.5 border-b border-border/60 align-top text-foreground break-words whitespace-pre-wrap ${align}`}
                       >
                         {renderTableValueContent(formatted)}
                       </td>
@@ -330,13 +330,13 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
           <button
             onClick={() => setPage(p => Math.max(0, p - 1))}
             disabled={safePage === 0}
-            className="inline-flex items-center gap-0.5 pl-1 pr-2 py-1 rounded-md border border-border bg-background disabled:opacity-30 hover:bg-muted hover:text-foreground transition-colors"
+            className="inline-flex min-h-[36px] items-center gap-0.5 pl-2 pr-2.5 py-1.5 rounded-md border border-border bg-background disabled:opacity-30 hover:bg-muted hover:text-foreground transition-colors sm:min-h-0 sm:py-1"
             aria-label="Previous page"
           >
             <ChevronLeft className="w-3.5 h-3.5" />
             Prev
           </button>
-          <span className="inline-flex items-center px-2 py-1 rounded-md bg-primary/10 text-primary font-medium tabular-nums">
+          <span className="inline-flex items-center px-2.5 py-1.5 rounded-md bg-primary/10 text-primary font-medium tabular-nums sm:py-1">
             {safePage + 1}
             <span className="opacity-60 mx-1">/</span>
             {totalPages}
@@ -344,7 +344,7 @@ export function TableWidget({ value, widget }: { value: unknown; widget: ReportW
           <button
             onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
             disabled={safePage >= totalPages - 1}
-            className="inline-flex items-center gap-0.5 pl-2 pr-1 py-1 rounded-md border border-border bg-background disabled:opacity-30 hover:bg-muted hover:text-foreground transition-colors"
+            className="inline-flex min-h-[36px] items-center gap-0.5 pl-2.5 pr-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-30 hover:bg-muted hover:text-foreground transition-colors sm:min-h-0 sm:py-1"
             aria-label="Next page"
           >
             Next

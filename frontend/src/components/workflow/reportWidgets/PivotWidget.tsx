@@ -106,7 +106,9 @@ export function PivotWidget({ source, widget }: { source: unknown; widget: Repor
 
   const heatmap = widget.heatmap === true
   const [heatLow, heatHigh] = widget.heatmapColors ?? (
-    theme === 'dark' ? ['#1e293b', '#60a5fa'] : ['#eff6ff', '#2563eb']
+    // Warm "paper → clay" default ramp so heatmaps sit in the earthy report palette
+    // instead of a generic blue. Authors can override via widget.heatmapColors.
+    theme === 'dark' ? ['#2E2B24', '#CC785C'] : ['#F1EEE6', '#C2613F']
   )
 
   const tintFor = (n: number | undefined): string | undefined => {
@@ -121,7 +123,7 @@ export function PivotWidget({ source, widget }: { source: unknown; widget: Repor
       {isCompact ? (
         <div className="flex flex-col gap-2">
           {rowKeys.map(rk => (
-            <div key={rk} className="rounded-xl border border-border/55 bg-card/90 px-3 py-3 shadow-sm">
+            <div key={rk} className="rounded-xl border border-border bg-card px-4 py-3.5">
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 {rowsField}: <span className="text-foreground">{rk}</span>
               </div>
@@ -154,15 +156,15 @@ export function PivotWidget({ source, widget }: { source: unknown; widget: Repor
           ))}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-border/60 bg-background/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] [scrollbar-gutter:stable]">
+        <div className="overflow-x-auto rounded-xl border border-border bg-card [scrollbar-gutter:stable]">
           <table className="border-collapse text-sm">
-            <thead className="sticky top-0 bg-muted/60 backdrop-blur-sm z-10 shadow-[0_1px_0_0_var(--border)]">
+            <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur-sm">
               <tr>
-                <th className="px-2.5 py-2 border-b-2 border-border font-semibold text-xs uppercase tracking-wide text-left text-muted-foreground">
+                <th className="px-3 py-2.5 font-semibold text-[11px] uppercase tracking-[0.12em] text-left text-muted-foreground">
                   {rowsField} ╲ {columnsField}
                 </th>
                 {colKeys.map(ck => (
-                  <th key={ck} className="px-2.5 py-2 border-b-2 border-border font-semibold text-xs uppercase tracking-wide text-right text-muted-foreground">
+                  <th key={ck} className="px-3 py-2.5 font-semibold text-[11px] uppercase tracking-[0.12em] text-right text-muted-foreground">
                     {ck}
                   </th>
                 ))}
@@ -170,8 +172,8 @@ export function PivotWidget({ source, widget }: { source: unknown; widget: Repor
             </thead>
             <tbody>
               {rowKeys.map(rk => (
-                <tr key={rk} className="hover:bg-muted/30 transition-colors">
-                  <th className="px-2.5 py-1.5 border-b border-border/40 font-medium text-left text-foreground bg-muted/20 sticky left-0">
+                <tr key={rk} className="hover:bg-muted/25 transition-colors">
+                  <th className="px-3 py-2.5 border-b border-border/60 font-medium text-left text-foreground bg-muted/20 sticky left-0">
                     {rk}
                   </th>
                   {colKeys.map(ck => {
@@ -185,7 +187,7 @@ export function PivotWidget({ source, widget }: { source: unknown; widget: Repor
                     return (
                       <td
                         key={ck}
-                        className="px-2.5 py-1.5 border-b border-border/40 text-right tabular-nums text-foreground"
+                        className="px-3 py-2.5 border-b border-border/60 text-right tabular-nums text-foreground"
                         style={bg ? { backgroundColor: bg } : undefined}
                       >
                         {text}

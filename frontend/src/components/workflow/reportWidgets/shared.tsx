@@ -58,7 +58,7 @@ export function WidgetHeader({
   }
   return (
     <div className={`flex flex-col gap-1 ${className}`}>
-      {widget.title && <div className="text-sm font-semibold text-foreground">{widget.title}</div>}
+      {widget.title && <div className="report-heading text-[15px] font-semibold leading-snug text-foreground">{widget.title}</div>}
       {widget.description && <div className="text-xs leading-5 text-muted-foreground">{widget.description}</div>}
     </div>
   )
@@ -78,7 +78,7 @@ export function WidgetVisibilityButton({
     <button
       type="button"
       onClick={onToggle}
-      className={`absolute right-2 top-2 z-20 inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/70 bg-background/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground ${className}`}
+      className={`absolute right-2 top-2 z-20 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border/70 bg-background/90 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground sm:h-7 sm:w-7 ${className}`}
       title={hidden ? 'Show widget' : 'Hide widget'}
       aria-label={hidden ? 'Show widget' : 'Hide widget'}
     >
@@ -97,15 +97,16 @@ export function StandaloneWidgetNotice({
   onToggleHidden?: () => void
 }) {
   return (
-    <div className="relative rounded-xl bg-card/70 px-4 py-3 sm:border sm:border-border/60 sm:bg-card/80 sm:shadow-sm">
+    <div className="relative rounded-xl bg-card px-4 py-3.5 sm:border sm:border-border">
       {onToggleHidden && <WidgetVisibilityButton hidden={hidden} onToggle={onToggleHidden} />}
       {children}
     </div>
   )
 }
 
-// Adds a soft card around table/chart/pivot widgets. Hover lifts the shadow
-// slightly so the dashboard feels interactive even when the content is static.
+// Wraps table/chart/pivot widgets in a calm, flat "paper" card — a single
+// hairline border, generous padding, no gradient fill or hover shadow-lift.
+// Editorial restraint over dashboard flourish.
 export function WidgetShell({
   widget,
   children,
@@ -118,12 +119,11 @@ export function WidgetShell({
   if (widget.kind === 'stat' || widget.kind === 'alert') return <>{children}</>
   const shellClassName =
     widget.kind === 'text'
-      ? 'group relative px-0 py-0 transition-all duration-200 sm:rounded-xl sm:border sm:border-border/60 sm:bg-background/85 sm:px-3 sm:py-3 sm:shadow-sm sm:hover:border-border sm:hover:shadow-md'
-      : 'group relative px-0 py-0 transition-all duration-200 sm:overflow-hidden sm:rounded-xl sm:border sm:border-border/60 sm:bg-gradient-to-b sm:from-card sm:to-muted/15 sm:px-3 sm:py-3 sm:shadow-sm sm:hover:border-border sm:hover:shadow-md'
+      ? 'group relative px-0 py-0 transition-colors duration-200 sm:rounded-xl sm:border sm:border-border sm:bg-card sm:px-5 sm:py-4'
+      : 'group relative px-0 py-0 transition-colors duration-200 sm:overflow-hidden sm:rounded-xl sm:border sm:border-border sm:bg-card sm:px-5 sm:py-4'
   return (
     <div className={shellClassName}>
       {onToggleHidden && <WidgetVisibilityButton onToggle={onToggleHidden} />}
-      <span className="absolute inset-x-0 top-0 hidden h-[2px] bg-gradient-to-r from-primary/0 via-primary/60 to-primary/0 opacity-60 transition-opacity group-hover:opacity-100 sm:block" aria-hidden />
       {children}
     </div>
   )

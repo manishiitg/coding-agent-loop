@@ -743,7 +743,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
             )}
 
             {!loading && !error && hasAnyContent && (
-              <div className="flex flex-col gap-5 animate-in fade-in duration-200">
+              <div className="flex flex-col gap-8 animate-in fade-in duration-200 sm:gap-10">
                 {visibleSections.map(({ section, sectionIndex, entries }) => (
                   <SectionContainer
                     key={sectionIndex}
@@ -907,13 +907,13 @@ function SectionHeader({
   heading: string
 }) {
   return (
-    <div className="flex flex-col gap-2 border-b border-border/50 pb-2.5 sm:flex-row sm:flex-wrap sm:items-end">
+    <div className="flex flex-col gap-2 border-b border-border pb-3 sm:flex-row sm:flex-wrap sm:items-end">
       <div className="flex min-w-0 items-center gap-2.5">
         <div className="min-w-0">
           <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
             Report Section
           </div>
-          <h3 className="m-0 truncate text-lg font-semibold tracking-tight text-foreground">
+          <h3 className="report-heading m-0 truncate text-xl font-semibold text-foreground">
             {heading}
           </h3>
         </div>

@@ -176,6 +176,9 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan }: { hasPlan
             <RefreshCw className="h-4 w-4" />
           </button>
         )}
+        <button type="button" onClick={hidePane} title="Hide panel" aria-label="Hide panel" className={iconBtnCls}>
+          <PanelRightClose className="h-4 w-4" />
+        </button>
       </div>
     )
   }

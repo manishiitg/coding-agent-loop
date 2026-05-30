@@ -1768,7 +1768,7 @@ function App() {
                           height="100%"
                         />
                       </div>
-                    ) : (selectedFile?.path && isCodeFile(selectedFile.path)) ? (
+                    ) : (selectedFile?.path && isCodeFile(selectedFile.path) && !/\.html?$/i.test(selectedFile.path)) ? (
                       <div className="h-full overflow-hidden">
                         <FileEditor
                           value={fileContent}

@@ -5,7 +5,41 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
+
+// TestMessageSequenceAbsPath_IncludesWorkflowRoot guards the forward-pipe bug:
+// the absolute path the message_sequence agent is handed (StepExecutionPath,
+// item/code dirs) MUST include the workflow root (GetWorkspacePath, e.g.
+// "Workflow/social-media"). Without it the agent writes to <docsRoot>/runs/...,
+// outside its workflow folder, where downstream context_dependencies can't see
+// the file.
+func TestMessageSequenceAbsPath_IncludesWorkflowRoot(t *testing.T) {
+	docsRoot := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", docsRoot)
+
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(), nil, orchestrator.OrchestratorTypeWorkflow, "", 0, "",
+		[]string{"test-server"}, nil, false, &orchestrator.LLMConfig{}, 1, nil, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator: %v", err)
+	}
+	base.SetWorkspacePath("Workflow/social-media")
+	hcpo := &StepBasedWorkflowOrchestrator{BaseOrchestrator: base, selectedRunFolder: "iteration-0"}
+
+	stepExecRel := hcpo.messageSequenceExecutionRelPath("step-5", "step-report") // runs/iteration-0/execution/step-report
+	got := hcpo.messageSequenceAbsPath(stepExecRel)
+	want := filepath.Join(docsRoot, "Workflow/social-media", "runs", "iteration-0", "execution", "step-report")
+	if got != want {
+		t.Fatalf("messageSequenceAbsPath = %q, want %q (must include docsRoot + workflow root)", got, want)
+	}
+	if !strings.Contains(filepath.ToSlash(got), "Workflow/social-media") {
+		t.Fatalf("agent-facing path is missing the workflow root: %q", got)
+	}
+}
 
 func TestMessageSequenceExecutionRelPath_UsesNormalStepFolder(t *testing.T) {
 	hcpo := &StepBasedWorkflowOrchestrator{selectedRunFolder: "iteration-0"}

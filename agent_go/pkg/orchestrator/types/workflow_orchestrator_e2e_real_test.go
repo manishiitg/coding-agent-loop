@@ -101,7 +101,7 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 	//
 	// Step IDs are stable so the per-step assertions below can
 	// address each one.
-	stepIDs := []string{"step-compute", "step-classify", "step-verify-even", "step-double-check", "step-report"}
+	stepIDs := []string{"step-compute", "step-classify", "step-verify-even", "step-double-check", "step-report", "step-consume-handoff"}
 	plan := map[string]interface{}{
 		"steps": []map[string]interface{}{
 			{
@@ -183,16 +183,36 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 				"title":                "Final report",
 				"description":          "Multi-turn final report",
 				"context_dependencies": []string{},
-				"context_output":       "step5.json",
+				// A message_sequence MUST hand off its context_output the same
+				// way every other step does: by writing it into the step's
+				// normal execution folder (execution/<stepID>/) so a downstream
+				// step's context_dependencies can resolve it. This file + the
+				// step-consume-handoff step below exercise that contract end to
+				// end (it used to land in an isolated message_sequences/ folder
+				// and was unresolvable downstream).
+				"context_output": "step5.json",
 				"items": []map[string]interface{}{
 					{
 						"id":      "msg-1",
 						"type":    "user_message",
 						"title":   "Final report",
-						"message": "All earlier steps computed and verified the value 42. Reply with EXACTLY the single line WORKFLOW_DONE_42 on a line by itself and stop.",
+						"message": "All earlier steps computed and verified the value 42. Write the file step5.json into your step output dir ($STEP_OUTPUT_DIR) containing exactly this JSON: {\"handoff_token\": \"7F3A9C\", \"status\": \"done\"}. Then reply with EXACTLY the single line WORKFLOW_DONE_42 on a line by itself and stop.",
 					},
 				},
-				"next_step_id": "end",
+				"next_step_id": stepIDs[5],
+			},
+			{
+				// Downstream consumer: depends on the message_sequence's
+				// context_output. It can only echo the token if step5.json was
+				// written to the normal step folder AND resolved as a dependency
+				// — i.e. the message_sequence handed off like a regular step.
+				"type":                 "regular",
+				"id":                   stepIDs[5],
+				"title":                "Consume the report handoff",
+				"description":          "Read the dependency file step5.json. It is a JSON object with a `handoff_token` field. Reply with EXACTLY the line HANDOFF=<value of handoff_token> on a line by itself and stop.",
+				"context_dependencies": []string{"step5.json"},
+				"context_output":       "step6.json",
+				"next_step_id":         "end",
 			},
 		},
 	}
@@ -309,6 +329,22 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 	// step-report uses the message_sequence path — the final LLM
 	// reply lands in conversation_history; this token is exact.
 	assertStepExecutionResultContains(t, walkRoot, "step-report", "WORKFLOW_DONE_42")
+	// FOLDER FIX (deterministic): the message_sequence must write its declared
+	// context_output into the NORMAL step folder (execution/step-report/step5.json),
+	// not an isolated message_sequences/ folder. Assert it landed there with the token.
+	if matches, _ := filepath.Glob(filepath.Join(walkRoot, "runs", "*", "*", "execution", "step-report", "step5.json")); len(matches) > 0 {
+		body, _ := os.ReadFile(matches[len(matches)-1])
+		if !strings.Contains(string(body), "7F3A9C") {
+			t.Errorf("step-report: step5.json in normal step folder is missing handoff token 7F3A9C\n  file: %s\n  body: %s", matches[len(matches)-1], string(body))
+		}
+	} else {
+		t.Errorf("step-report: message_sequence context_output step5.json not found in normal step folder execution/step-report/ — handoff is broken")
+	}
+	// HANDOFF (end-to-end): the downstream regular step resolved step5.json as a
+	// context_dependency and echoed its token. It can only produce 7F3A9C if the
+	// message_sequence wrote step5.json where dependency resolution looks — i.e.
+	// it handed off like a normal step.
+	assertStepExecutionResultContains(t, walkRoot, "step-consume-handoff", "7F3A9C")
 	// Sub-agents under todo_task don't get the code_exec preamble
 	// and DO follow the literal-token instruction. These are the
 	// strongest assertions in this test — they prove the orchestrator

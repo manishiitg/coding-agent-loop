@@ -435,7 +435,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceCodeRepair(ctx 
 	if err != nil {
 		return err
 	}
-	message := failureContext + "\n\nRepair the working copy at " + messageSequenceAbsPath(filepath.Join(codeRel, "main.py")) + ". Keep the fix narrowly scoped. Do not announce success; the runtime will rerun the script after your edit."
+	message := failureContext + "\n\nRepair the working copy at " + hcpo.messageSequenceAbsPath(filepath.Join(codeRel, "main.py")) + ". Keep the fix narrowly scoped. Do not announce success; the runtime will rerun the script after your edit."
 	templateVars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, stepPath, message, override.ReadPaths, override.WritePaths)
 	_, history, err := agent.Execute(agentCtx, templateVars, session.ConversationHistory)
 	if err != nil {
@@ -544,7 +544,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	stepFolderPath := hcpo.messageSequenceExecutionRelPath(stepPath, stepID)
+	// Build from executionWorkspacePath (which includes baseWorkspacePath, the
+	// workflow root) so the guard's writable step folder matches downloadsPath /
+	// getDBPath and the agent-facing StepExecutionPath. messageSequenceExecutionRelPath
+	// is workflow-root-RELATIVE (for the workspace-file API) and must NOT be used
+	// directly as a guard path or it omits the workflow root.
+	stepFolderPath := filepath.Join(executionWorkspacePath, getArtifactFolderName(stepID, stepPath))
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 
 	readPaths = []string{
@@ -585,12 +590,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step
 		"OrchestratorInstructions": message,
 		"StepContextDependencies":  strings.Join(step.GetContextDependencies(), "\n"),
 		"StepContextOutput":        contextOutput,
-		"WorkspacePath":            messageSequenceAbsPath(filepath.Join(hcpo.GetWorkspacePath(), "runs", hcpo.selectedRunFolder, "execution")),
-		"WorkflowRoot":             messageSequenceAbsPath(hcpo.GetWorkspacePath()),
+		"WorkspacePath":            hcpo.messageSequenceAbsPath(filepath.Join("runs", hcpo.selectedRunFolder, "execution")),
+		"WorkflowRoot":             hcpo.messageSequenceAbsPath(""),
 		"DocsRoot":                 docsRoot,
-		"StepExecutionPath":        messageSequenceAbsPath(stepExecRel),
-		"DBPath":                   messageSequenceAbsPath(getDBPath(hcpo.GetWorkspacePath())),
-		"KnowledgebasePath":        messageSequenceAbsPath(getKnowledgebasePath(hcpo.GetWorkspacePath())),
+		"StepExecutionPath":        hcpo.messageSequenceAbsPath(stepExecRel),
+		"DBPath":                   hcpo.messageSequenceAbsPath(DBFolderName),
+		"KnowledgebasePath":        hcpo.messageSequenceAbsPath(KnowledgebaseFolderName),
 		"FolderGuardReadPaths":     strings.Join(toAbsPaths(docsRoot, readPaths), ", "),
 		"FolderGuardWritePaths":    strings.Join(toAbsPaths(docsRoot, writePaths), ", "),
 		"StepNumber":               fmt.Sprintf("%d", stepIndex+1),
@@ -608,18 +613,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step
 func (hcpo *StepBasedWorkflowOrchestrator) runMessageSequencePython(ctx context.Context, stepPath string, stepID string, item MessageSequenceItem, mainRel string, codeRel string, itemRel string) (string, int, error) {
 	writeAccess := resolveMessageSequenceItemWriteAccess(item)
 	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard(stepPath, stepID, writeAccess)
-	itemAbs := messageSequenceAbsPath(itemRel)
-	codeAbs := messageSequenceAbsPath(codeRel)
-	mainAbs := messageSequenceAbsPath(mainRel)
-	readPaths = append(readPaths, itemRel, codeRel)
-	writePaths = append(writePaths, itemRel, codeRel)
+	itemAbs := hcpo.messageSequenceAbsPath(itemRel)
+	codeAbs := hcpo.messageSequenceAbsPath(codeRel)
+	mainAbs := hcpo.messageSequenceAbsPath(mainRel)
+	// Guard paths are docs-root-relative (workflow-root-inclusive), matching the
+	// other entries from setupMessageSequenceFolderGuard — so prefix the
+	// workflow-root-relative item/code rels with the workflow root.
+	itemGuard := filepath.Join(hcpo.GetWorkspacePath(), itemRel)
+	codeGuard := filepath.Join(hcpo.GetWorkspacePath(), codeRel)
+	readPaths = append(readPaths, itemGuard, codeGuard)
+	writePaths = append(writePaths, itemGuard, codeGuard)
 
 	var cmd strings.Builder
 	cmd.WriteString("python3 -B ")
 	cmd.WriteString(shellQuotePath(mainAbs))
 	for _, input := range item.InputFiles {
 		cmd.WriteString(" ")
-		cmd.WriteString(shellQuotePath(messageSequenceAbsPath(input)))
+		cmd.WriteString(shellQuotePath(hcpo.messageSequenceAbsPath(input)))
 	}
 	timeout := 0
 	useShell := true
@@ -727,7 +737,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildCodeItemFailureContext(item Mess
 		sb.WriteString(fmt.Sprintf("Runtime error: %s\n", execErr.Error()))
 	}
 	sb.WriteString(fmt.Sprintf("Working script:\n%s\n", scriptPath))
-	sb.WriteString(fmt.Sprintf("Input contract:\n%s\n", messageSequenceAbsPath(filepath.Join(itemRel, "input.json"))))
+	sb.WriteString(fmt.Sprintf("Input contract:\n%s\n", hcpo.messageSequenceAbsPath(filepath.Join(itemRel, "input.json"))))
 	if len(item.OutputFiles) > 0 {
 		sb.WriteString("Expected outputs:\n")
 		for _, outputFile := range item.OutputFiles {
@@ -750,12 +760,23 @@ func truncateMessageSequenceLog(output string, maxChars int) string {
 	return snippet[:half] + "\n... (truncated) ...\n" + snippet[len(snippet)-half:]
 }
 
-func messageSequenceAbsPath(path string) string {
+// messageSequenceAbsPath lifts a WORKFLOW-ROOT-RELATIVE path (e.g.
+// "runs/<run>/execution/<stepID>", as returned by messageSequenceExecutionRelPath
+// and friends) to the absolute on-disk path the step agent uses:
+// <docsRoot>/<workflowRoot>/<path>. The workflow root (GetWorkspacePath, e.g.
+// "Workflow/social-media") MUST be included — otherwise the agent is told to
+// write to <docsRoot>/runs/... , OUTSIDE its workflow folder, where the normal
+// context system can't see the file (this was the message_sequence forward-pipe
+// bug). The *Rel helpers stay workflow-root-relative for the workspace-file API
+// (which resolves relative to the workflow root); this is the single place that
+// converts them to absolute.
+func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceAbsPath(workflowRel string) string {
+	full := filepath.Join(hcpo.GetWorkspacePath(), workflowRel)
 	docsRoot := GetPromptDocsRoot()
-	if path == "" || docsRoot == "" {
-		return path
+	if docsRoot == "" {
+		return full
 	}
-	return filepath.Join(docsRoot, path)
+	return filepath.Join(docsRoot, full)
 }
 
 // messageSequenceExecutionRelPath returns the step's execution folder — the SAME

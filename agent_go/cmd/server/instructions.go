@@ -666,6 +666,7 @@ func buildEmployeesWorkflowsContext() string {
 	var sb strings.Builder
 	sb.WriteString("\n## Current Employees & Workflow Assignments\n\n")
 	sb.WriteString("This workspace has the following employees with their assigned workflows. **If the user's message names any employee below — whether addressing them directly (\"Hey Priya, …\"), asking about them (\"what has Arjun's workflows found?\"), or mentioning them in passing — treat that employee's assigned workflows as the primary source of truth.** Go straight to inspecting the relevant workflow folder (runs, reports, knowledgebase, learnings) to ground your answer; do not answer from general knowledge without checking the workflow state first. Match names case-insensitively and accept first-name-only references.\n\n")
+	sb.WriteString("**To run an employee's work**, call `run_workflow(workflow_path, group_name)` (or `run_step`) on their assigned workflow — that runs the workflow with its own config. Use `delegate` only for ad-hoc tasks you do yourself with skills/MCP servers, not to run a built workflow. **To report what an employee did**, sweep each of their assigned workflows: `runs/iteration-0/<group>/execution/` (latest outputs), `db/*.json` (accumulated results), and `reports/` (`report_plan.json` + the `db/*.json` it binds to for the live dashboard, or `reports/<group>/<timestamp>.md` for finished reports), then summarize per employee. See `get_reference_doc(kind=\"employee-management\")` for the full playbook.\n\n")
 
 	for _, emp := range sortedEmployees {
 		name := strings.TrimSpace(emp.Name)

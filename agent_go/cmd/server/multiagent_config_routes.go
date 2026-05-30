@@ -1,0 +1,70 @@
+package server
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/gorilla/mux"
+)
+
+// MultiAgentConfigRoutes mounts the per-user multi-agent chat capabilities API.
+// The frontend POSTs the user's selected skills/servers/etc. here ("save as
+// chat defaults"); bot-channel sessions read the same file so they start with
+// the user's chosen setup. GET returns the current saved config.
+func MultiAgentConfigRoutes(router *mux.Router) {
+	sub := router.PathPrefix("/multiagent/chat-capabilities").Subrouter()
+	sub.HandleFunc("", getMultiAgentChatCapabilitiesHandler()).Methods("GET", "OPTIONS")
+	sub.HandleFunc("", saveMultiAgentChatCapabilitiesHandler()).Methods("POST", "OPTIONS")
+}
+
+// resolveChatConfigUserID prefers an explicit ?user_id, then the authenticated
+// user from context, then "default" — mirroring the schedule routes.
+func resolveChatConfigUserID(r *http.Request) string {
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		userID = GetUserIDFromContext(r.Context())
+	}
+	if userID == "" {
+		userID = "default"
+	}
+	return userID
+}
+
+func getMultiAgentChatCapabilitiesHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == "OPTIONS" {
+			return
+		}
+		userID := resolveChatConfigUserID(r)
+		cfg, _, err := ReadMultiAgentChatConfig(r.Context(), userID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(cfg)
+	}
+}
+
+func saveMultiAgentChatCapabilitiesHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == "OPTIONS" {
+			return
+		}
+		userID := resolveChatConfigUserID(r)
+
+		var caps WorkflowCapabilities
+		if err := json.NewDecoder(r.Body).Decode(&caps); err != nil {
+			http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := WriteMultiAgentChatConfig(r.Context(), userID, caps); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "user_id": userID})
+	}
+}

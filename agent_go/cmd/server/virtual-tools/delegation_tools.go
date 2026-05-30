@@ -749,7 +749,7 @@ Run a workflow or single step in the background. Returns an agent_id visible in 
 
 ### Reading workflow state
 
-When the user asks "what did the workflow extract / produce / know?", each workflow has six places where state lives. Pick the right one for the question:
+When the user asks "what did the workflow extract / produce / know?", each workflow has seven places where state lives. Pick the right one for the question:
 
 | User question | Where to look |
 |---|---|
@@ -759,6 +759,7 @@ When the user asks "what did the workflow extract / produce / know?", each workf
 | "What's the workflow's narrative on <topic>?" (summaries, patterns, explanations) | ` + "`Workflow/<name>/knowledgebase/notes/`" + `. Start with ` + "`_index.json`" + ` to discover available topics, then ` + "`cat notes/<id>.md`" + `. Never glob ` + "`notes/*.md`" + ` — the folder can be large. |
 | "How does the workflow do X?" (HOW-to-run notes) | ` + "`Workflow/<name>/learnings/_global/SKILL.md`" + ` (written by each step agent during its post-completion turn when learnings_access=read-write) |
 | "Why does the workflow do X?" (objective / success criteria / rationale) | ` + "`Workflow/<name>/soul/soul.md`" + ` (author-written "why" — objective, success criteria, key decisions & constraints) |
+| "What does the workflow's report / dashboard show?" | ` + "`Workflow/<name>/reports/`" + ` — the live dashboard is ` + "`reports/report_plan.json`" + ` (widget definitions) bound to ` + "`db/*.json`" + ` (the data); finished-run reports are ` + "`reports/<group>/<timestamp>.md`" + `. To summarize results, read the ` + "`db/*.json`" + ` the widgets bind to plus any ` + "`<timestamp>.md`" + ` report. |
 
 **Schema hints** (so you can write correct ` + "`jq`" + ` queries without sniffing first):
 - ` + "`graph.json`" + `: ` + "`{schema_version, entities: [{id, type, label, properties, provenance}], relationships: [{from_id, to_id, type, properties, provenance}]}`" + `. Query examples:

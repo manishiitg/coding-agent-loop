@@ -176,6 +176,43 @@ func LoadDelegationTierConfig(ctx context.Context, workspaceURL string) (map[str
 	return cfg, true, nil
 }
 
+// MultiAgentChatCapabilities is the typed view of the `capabilities` block in
+// _users/<userID>/multiagent-config.json. JSON tags mirror the server-side
+// WorkflowCapabilities so the same file round-trips; the services package keeps
+// its own struct to avoid importing the server package.
+type MultiAgentChatCapabilities struct {
+	SelectedServers      []string `json:"selected_servers"`
+	SelectedTools        []string `json:"selected_tools"`
+	SelectedSkills       []string `json:"selected_skills"`
+	SelectedSecrets      []string `json:"selected_secrets"`
+	BrowserMode          string   `json:"browser_mode"`
+	UseCodeExecutionMode bool     `json:"use_code_execution_mode"`
+}
+
+// LoadMultiAgentChatCapabilities reads the user's saved multi-agent chat
+// capabilities from _users/<userID>/multiagent-config.json via the workspace
+// API so bot sessions can start with the user's chosen setup. Returns
+// (nil, false, nil) when no config is saved.
+func LoadMultiAgentChatCapabilities(ctx context.Context, workspaceURL, userID string) (*MultiAgentChatCapabilities, bool, error) {
+	if userID == "" {
+		return nil, false, nil
+	}
+	content, exists, err := readWorkspaceFile(ctx, workspaceURL, "_users/"+userID+"/multiagent-config.json")
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+	var parsed struct {
+		Capabilities *MultiAgentChatCapabilities `json:"capabilities"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return nil, false, fmt.Errorf("failed to parse multiagent-config.json: %w", err)
+	}
+	if parsed.Capabilities == nil {
+		return nil, false, nil
+	}
+	return parsed.Capabilities, true, nil
+}
+
 // LoadPublishedLLMs reads published LLM metadata (plain JSON) from the workspace.
 // Returns (nil, false, nil) if the file doesn't exist.
 func LoadPublishedLLMs(ctx context.Context, workspaceURL string) ([]PublishedLLM, bool, error) {

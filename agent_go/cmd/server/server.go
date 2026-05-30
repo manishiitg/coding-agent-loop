@@ -1369,6 +1369,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Employee API routes (in employee_routes.go)
 	EmployeeRoutes(apiRouter)
 
+	// Per-user multi-agent chat capabilities (skills/servers) — read by bots
+	MultiAgentConfigRoutes(apiRouter)
+
 	// Workspace API reverse proxy (auth-protected) — frontend calls /api/wp/* instead of /workspace/*
 	apiRouter.PathPrefix("/wp/").Handler(workspaceProxyHandler())
 

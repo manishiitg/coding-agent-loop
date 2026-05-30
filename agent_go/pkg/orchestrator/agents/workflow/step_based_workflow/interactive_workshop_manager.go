@@ -4023,6 +4023,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
+			// Nudge: write access + a contribution are set but write-method is
+			// omitted, so runtime silently falls back to the separate post-step
+			// "agent" writer. Surface it (non-blocking) so the inline ("direct")
+			// vs separate ("agent") writer choice is explicit, not defaulted.
+			if kbWriteMethodRaw == "" &&
+				kbAccessAllowsWrite(targetConfig.AgentConfigs.KnowledgebaseAccess) &&
+				strings.TrimSpace(targetConfig.AgentConfigs.KnowledgebaseContribution) != "" {
+				warnings = append(warnings, "knowledgebase_write_method is unset while KB write access is granted; runtime defaults to the separate post-step \"agent\" writer. Set it to \"direct\" for inline writes by the step agent, or \"agent\" to make that choice explicit.")
+			}
+
 			// 9. Validate learnings write-method enum + direct-mode pairing.
 			// SKILL.md writes always happen through the step agent's own
 			// post-completion turn (resolveLearningsWriteMethod is hardcoded to
@@ -7949,7 +7959,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 	// set_workflow_llm_config — saves tiered LLM config directly to workflow.json
 	if err := mcpAgent.RegisterCustomTool(
 		"set_workflow_llm_config",
-		"Save the workflow's tiered LLM configuration to workflow.json capabilities.llm_config. Use list_published_llms to see available models first. Each tier accepts provider and model_id (both required if setting a tier). Fallbacks are optional ordered lists. phase_llm is the model used for planning, eval design, and debugging phases.",
+		"Save the workflow's tiered LLM configuration to workflow.json capabilities.llm_config. Requires get_reference_doc(kind=\"llm-selection\") to be loaded first. Use list_published_llms to see available models first. Each tier accepts provider and model_id (both required if setting a tier). Fallbacks are optional ordered lists. phase_llm is the model used for planning, eval design, and debugging phases.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8031,7 +8041,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 				},
 			},
 		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
+		guidance.WithDocPrecondition([]string{"llm-selection"}, guidance.DefaultTracker(), func(ctx context.Context, args map[string]interface{}) (string, error) {
 			wsPath := iwm.controller.GetWorkspacePath()
 			if wsPath == "" {
 				return "Cannot determine workspace path.", nil
@@ -8113,7 +8123,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 
 			logger.Info(fmt.Sprintf("✅ Workshop: workflow LLM config updated: %s", strings.Join(updated, ", ")))
 			return fmt.Sprintf("Saved to workflow.json capabilities.llm_config:\n%s\n\nChanges take effect on the next workflow run.", strings.Join(updated, "\n")), nil
-		},
+		}),
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register set_workflow_llm_config tool: %v", err))

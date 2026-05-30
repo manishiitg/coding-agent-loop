@@ -2061,20 +2061,45 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 		}
 	}
 
-	// No default servers — bot starts with no MCP servers (agent has workspace, delegation, and shell tools).
-	req["servers"] = []string{}
-
-	// Auto-discover all available skills.
-	var defaultSkills []string
-	if m.workspaceURL != "" {
-		discoveredSkills, err := skills.DiscoverSkills(m.workspaceURL)
-		if err == nil {
-			for _, s := range discoveredSkills {
-				defaultSkills = append(defaultSkills, s.FolderName)
-			}
+	// Capabilities: prefer the user's saved multi-agent chat config
+	// (_users/<id>/multiagent-config.json) so bot sessions match the UI setup.
+	// Falls back to the previous defaults (no servers, auto-discover all skills)
+	// when the user hasn't saved a config.
+	var savedCaps *MultiAgentChatCapabilities
+	if m.workspaceURL != "" && userID != "" {
+		if caps, exists, err := LoadMultiAgentChatCapabilities(context.Background(), m.workspaceURL, userID); err != nil {
+			log.Printf("[BOT_MANAGER] Warning: failed to load multiagent-config for user %s: %v", userID, err)
+		} else if exists {
+			savedCaps = caps
 		}
 	}
-	req["selected_skills"] = defaultSkills
+
+	if savedCaps != nil {
+		req["servers"] = savedCaps.SelectedServers
+		req["selected_skills"] = savedCaps.SelectedSkills
+		if len(savedCaps.SelectedTools) > 0 {
+			req["selected_tools"] = savedCaps.SelectedTools
+		}
+		if savedCaps.BrowserMode != "" {
+			req["browser_mode"] = savedCaps.BrowserMode
+		}
+		req["use_code_execution_mode"] = savedCaps.UseCodeExecutionMode
+		log.Printf("[BOT_MANAGER] Loaded saved chat capabilities for user %s: skills=%d servers=%d", userID, len(savedCaps.SelectedSkills), len(savedCaps.SelectedServers))
+	} else {
+		// No saved config — previous defaults: no MCP servers, auto-discover all skills
+		// (agent still has workspace, delegation, and shell tools).
+		req["servers"] = []string{}
+		var defaultSkills []string
+		if m.workspaceURL != "" {
+			discoveredSkills, err := skills.DiscoverSkills(m.workspaceURL)
+			if err == nil {
+				for _, s := range discoveredSkills {
+					defaultSkills = append(defaultSkills, s.FolderName)
+				}
+			}
+		}
+		req["selected_skills"] = defaultSkills
+	}
 
 	// Load delegation tier config from workspace file — same source as multiagent chat.
 	// server.go resolves the orchestrator model from this at request time via resolveDelegationTierConfig.
@@ -2111,8 +2136,8 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 		}
 	}
 
-	log.Printf("[BOT_MANAGER] buildQueryRequest: query=%s skills=%v",
-		botTruncate(query, 60), defaultSkills)
+	log.Printf("[BOT_MANAGER] buildQueryRequest: query=%s skills=%v servers=%v",
+		botTruncate(query, 60), req["selected_skills"], req["servers"])
 
 	return req
 }

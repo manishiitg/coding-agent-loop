@@ -55,7 +55,7 @@ Create or update a schedule for recurring improvement with:
 - workshop_mode="optimizer"
 - valid group_names
 - a clear name and description that make it obvious this is the frequent lightweight optimizer schedule
-- a single scheduled message whose purpose is to improve workflow quality, eval/metric quality, KB hygiene, and learning hygiene over time by calling the canonical `improve-workflow` guided flow
+- a single scheduled message whose purpose is to improve workflow quality, eval/metric quality, KB hygiene, learning hygiene, and db/data-contract hygiene over time by calling the canonical `improve-workflow` guided flow
 
 The optimizer schedule message must be a short wrapper around `improve-workflow`, not a duplicate copy of the improve decision model. Write the wrapper explicitly into the schedule message; the agent that fires has no other context.
 

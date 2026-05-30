@@ -70,7 +70,13 @@ Use this decision model. Classify the evidence first, then choose the smallest a
    Examples: selectors/tool patterns are obsolete, repeated run failures show a reusable recovery pattern missing from global learnings, recent plan changes made old HOW guidance misleading, or step learning objectives are not reflected in the shared skill.
    Action: call `improve_learnings(mode="auto", instruction="<specific learning cleanup/consolidation instruction>", focus="<brief>")`. Keep workflow-discovered WHAT facts out of learnings; those belong in KB notes or db.
 
-7. **No action** when there is no new evidence since the last improvement pass, an unresolved dependency blocks action, or the current issue needs human input. Log that explicitly in builder/improve.html.
+7. **Data / DB contract hygiene** when `db/*.json` has drifted from the plan's writer/consumer steps or from report widgets. `db/`, the plan, and reports are one data-contract triangle — fix the corner that is actually wrong; do not bend db to cover for a broken step or report.
+   Examples: invalid JSON, broken or undocumented data contracts, write/read drift, missing or stale `db/README.md`, report-incompatible row shapes, duplicate helper files that should be report JSONata queries, base64 blobs that should live under `db/assets/` with reference rows, or fields whose writer steps no longer exist.
+   - If the **db shape/schema/contract** itself is wrong while the plan and reports are right, action: call `improve_db(mode="auto", instruction="<specific db contract/schema/report-compatibility fix>", focus="<brief>")`. `improve_db` reads `planning/plan.json` and `reports/report_plan.json` but edits only `db/` to stay compatible with them, and never deletes or rewrites row data unless explicitly asked.
+   - If a **writer step produces the wrong data at the source**, that is a Harden (#1) or Replan (#2) signal — fix the contract where it originates, not in db.
+   - If the **report layout/wiring** misrepresents otherwise-correct data, that belongs to the manual `/improve-report` flow, not this pass.
+
+8. **No action** when there is no new evidence since the last improvement pass, an unresolved dependency blocks action, or the current issue needs human input. Log that explicitly in builder/improve.html.
 
 If unclear, call `review_plan({{if .Focus}}focus="{{.Focus}}"{{end}})` first, wait/query until it completes, then classify. Review is diagnosis only; it does not apply changes.
 
@@ -86,7 +92,7 @@ For each enabled group with meaningful evidence in the selected run window:
    - `replan_workflow_from_results(group_name="{group}", focus="<brief>")`, or
    - eval-plan edits plus `validate_evaluation_plan` when the primary issue is measurement quality, or
    - metric tool calls if the only issue is metric definition, or
-   - `improve_kb(...)` / `improve_learnings(...)` when the issue is persistent-store hygiene rather than workflow behavior.
+   - `improve_kb(...)` / `improve_learnings(...)` / `improve_db(...)` when the only issue is persistent-store hygiene (KB notes, global learnings, or db/data contracts) rather than workflow behavior.
 4. Do not loop. At most one replan per command run. Harden can be scoped per group, but stop once the meaningful evidence-backed fixes are applied.
 
 PHASE 4 — OPTIONAL VERIFICATION
@@ -103,12 +109,12 @@ After each applied change:
    **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
    ```
    Use PARTIALLY RESOLVED or INVALID when appropriate. Never delete or rewrite the original finding.
-2. Ensure builder/improve.html has one structured `improve-decision` fenced JSON block for the action. If the underlying tool does not write one, append one via diff_patch_workspace_file with trigger `improve-workflow`, applied_changes, target_metrics, evidence_paths, linked_review_finding, linked_improve_entry, and action_type (`harden`, `replan`, `eval_update`, `metric_update`, `kb_update`, `learning_update`, or `no_action`).
+2. Ensure builder/improve.html has one structured `improve-decision` fenced JSON block for the action. If the underlying tool does not write one, append one via diff_patch_workspace_file with trigger `improve-workflow`, applied_changes, target_metrics, evidence_paths, linked_review_finding, linked_improve_entry, and action_type (`harden`, `replan`, `eval_update`, `metric_update`, `kb_update`, `learning_update`, `db_update`, or `no_action`).
 3. Update builder/improve.html with:
    - timestamp
    - evidence reviewed
    - metrics/eval/run findings
-   - action chosen: harden / replan / eval_update / metric_update / kb_update / learning_update / no_action
+   - action chosen: harden / replan / eval_update / metric_update / kb_update / learning_update / db_update / no_action
    - tool call made and why
    - expected metric or success-criteria impact
    - remaining gaps and next hypotheses
@@ -131,7 +137,7 @@ Use this markdown shape for new entries so future scheduled fires can parse the 
 **Findings:**
 - **F-YYYY-MM-DD-NNN (<severity>)** — <finding and evidence>
 
-**Action chosen: <harden|replan|eval_update|metric_update|kb_update|learning_update|no_action>** — <one-line reason>
+**Action chosen: <harden|replan|eval_update|metric_update|kb_update|learning_update|db_update|no_action>** — <one-line reason>
 
 ```improve-decision
 {
@@ -139,7 +145,7 @@ Use this markdown shape for new entries so future scheduled fires can parse the 
   "id": "dec-<workflow>-YYYYMMDD-001",
   "source": "agent",
   "trigger": "improve-workflow",
-  "action_type": "<harden|replan|eval_update|metric_update|kb_update|learning_update|no_action>",
+  "action_type": "<harden|replan|eval_update|metric_update|kb_update|learning_update|db_update|no_action>",
   "applied_changes": [],
   "target_metrics": [],
   "evidence_paths": [],

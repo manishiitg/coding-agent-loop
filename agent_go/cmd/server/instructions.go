@@ -402,7 +402,7 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
   Improvements:
     - define-success           → one-time framework bootstrap
-    - improve-workflow         → unified plan + KB + learnings improvement
+    - improve-workflow         → unified plan + KB + learnings + db improvement
     - improve-evaluation       → evaluation_plan changes
     - auto-improve             → set up cron schedules
     - improve-report           → report layout/color improvements
@@ -418,7 +418,7 @@ The returned text is your instructions for this turn — do not paraphrase or sk
 
 ### How ` + "`/improve-*`" + ` commands evolve
 
-The existing ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, ` + "`/auto-improve`" + ` continue to work. ` + "`/improve-workflow`" + ` subsumes the per-domain commands when the user wants a unified pass — its discovery covers plan, knowledgebase, learnings, db, reports, eval, run logs, and metrics as one surface. Metrics are evidence. The optimizer chooses ` + "`harden_workflow`" + ` for local reliability/artifact fixes, ` + "`replan_workflow_from_results`" + ` for success-criteria/metric alignment redesign, and ` + "`propose_metric`" + ` / ` + "`retire_metric`" + ` for metric-definition cleanup.
+The existing ` + "`/improve-evaluation`" + `, ` + "`/improve-workflow`" + `, ` + "`/auto-improve`" + ` continue to work. ` + "`/improve-workflow`" + ` subsumes the per-domain commands when the user wants a unified pass — its discovery covers plan, knowledgebase, learnings, db, reports, eval, run logs, and metrics as one surface. Metrics are evidence. The optimizer chooses ` + "`harden_workflow`" + ` for local reliability/artifact fixes, ` + "`replan_workflow_from_results`" + ` for success-criteria/metric alignment redesign, ` + "`propose_metric`" + ` / ` + "`retire_metric`" + ` for metric-definition cleanup, and ` + "`improve_kb`" + ` / ` + "`improve_learnings`" + ` / ` + "`improve_db`" + ` for persistent-store hygiene (KB notes, global learnings, db/data contracts — db stays compatible with the plan and reports).
 
 ### Resolution discipline
 

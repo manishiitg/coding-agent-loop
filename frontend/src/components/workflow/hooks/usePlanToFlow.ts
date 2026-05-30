@@ -1,8 +1,8 @@
 import { useMemo, useRef, useEffect } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
-import type { PlanStep, PlanningResponse, AgentLLMConfig, ValidationSchema, RoutingRoute } from '../../../utils/stepConfigMatching'
-import { isConditionalStep, isHumanInputStep, isTodoTaskStep, isRoutingStep } from '../../../utils/stepConfigMatching'
+import type { PlanStep, PlanningResponse, AgentLLMConfig, ValidationSchema, RoutingRoute, MessageSequenceItem } from '../../../utils/stepConfigMatching'
+import { isConditionalStep, isHumanInputStep, isTodoTaskStep, isRoutingStep, isMessageSequenceStep } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
@@ -90,6 +90,21 @@ export interface RoutingStepNodeData extends Record<string, unknown> {
   routing_question?: string
   routes?: RoutingRoute[]
   status: 'pending' | 'running' | 'completed' | 'failed' | 'executing' | 'evaluating' | 'routed'
+  stepIndex: number
+  step: PlanStep
+  changeType?: ChangeType
+  workspacePath?: string | null
+  selectedRunFolder?: string
+  validation_schema?: ValidationSchema
+  isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
+}
+
+export interface MessageSequenceNodeData extends Record<string, unknown> {
+  id: string
+  title: string
+  description?: string
+  items?: MessageSequenceItem[]   // Ordered queue of user_message / code / prevalidation / foreach items
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'executing'
   stepIndex: number
   step: PlanStep
   changeType?: ChangeType
@@ -944,6 +959,19 @@ function stepToNode(
     }
   }
 
+  if (isMessageSequenceStep(step)) {
+    return {
+      id: nodeId,
+      type: 'message_sequence',
+      position: { x: 0, y: 0 },
+      data: {
+        ...baseData,
+        items: step.items
+        // Note: status is inherited from baseData (computed based on completedStepIndices)
+      } as MessageSequenceNodeData
+    }
+  }
+
   return {
     id: nodeId,
     type: 'step',
@@ -1724,8 +1752,8 @@ function processSteps(
 /**
  * Check if a node is a step-type node (has step data)
  */
-function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | TodoTaskNodeData | HumanInputNodeData } {
-  return node.type === 'step' || node.type === 'conditional' || node.type === 'todo_task' || node.type === 'human_input'
+function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | TodoTaskNodeData | HumanInputNodeData | MessageSequenceNodeData } {
+  return node.type === 'step' || node.type === 'conditional' || node.type === 'todo_task' || node.type === 'human_input' || node.type === 'message_sequence'
 }
 
 /**

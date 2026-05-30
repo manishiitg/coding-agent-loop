@@ -508,15 +508,22 @@ func captureTerminalPaneLines(ctx context.Context, tmuxSession string, lines int
 	return collapseBlankRuns(content), nil
 }
 
-// collapseBlankRuns squeezes any run of blank/whitespace-only lines down to a
-// single blank line and trims trailing whitespace from each line. Agy and
-// other CLIs use cursor positioning to repaint loading spinners ("Generating
-// ...") in place; with `capture-pane -e`, every frame leaves its current pane
-// state in scrollback — typically the spinner row followed by ~25 empty rows
-// of pane area. Across thousands of frames this turns a useful snapshot into
-// a near-empty scroll with the actual content scattered between huge gaps.
-// Collapsing here loses no signal — paragraph breaks need only one blank line
-// — and fixes the loading-state-looks-broken rendering bug.
+// terminalMaxConsecutiveBlankLines caps how many blank rows survive a collapse.
+// Agy and other CLIs use cursor positioning to repaint loading spinners
+// ("Generating...") in place; with `capture-pane -e`, every frame leaves its
+// current pane state in scrollback — typically the spinner row followed by ~25
+// empty rows of pane area — so the runs must be capped or the snapshot becomes
+// a near-empty scroll. But the TUIs deliberately separate sections with 2–3
+// blank rows; capping at 1 stacked those sections directly together and made
+// the re-captured (inactive/suspended) pane hard to read. Keeping up to 2
+// preserves that separation while still squashing the spinner gaps. Must match
+// paneview.CollapseBlankRuns so the active stream and the re-captured snapshot
+// render with identical spacing.
+const terminalMaxConsecutiveBlankLines = 2
+
+// collapseBlankRuns squeezes any run of blank/whitespace-only lines down to at
+// most terminalMaxConsecutiveBlankLines and trims trailing whitespace from each
+// line.
 func collapseBlankRuns(s string) string {
 	if s == "" {
 		return s
@@ -528,7 +535,7 @@ func collapseBlankRuns(s string) string {
 		trimmed := strings.TrimRight(line, " \t\r")
 		if strings.TrimSpace(trimmed) == "" {
 			blankRun++
-			if blankRun <= 1 {
+			if blankRun <= terminalMaxConsecutiveBlankLines {
 				out = append(out, "")
 			}
 			continue

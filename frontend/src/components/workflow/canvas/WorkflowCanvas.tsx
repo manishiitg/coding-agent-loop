@@ -17,7 +17,6 @@ import { useModeStore } from '../../../stores/useModeStore'
 import { nodeTypes } from '../nodes'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { VariablesSidebar } from './VariablesSidebar'
-import { StepLegend } from './StepLegend'
 import { BatchProgressHeader } from '../BatchProgressHeader'
 import {
   REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
@@ -1372,7 +1371,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   } = useWorkflowExecution()
 
   // Current step and status from store (set by ChatArea polling when step_progress_updated events arrive)
-  const currentStepId = useWorkflowStore(state => state.currentStepId)
   const stepStatusMap = useWorkflowStore(state => state.stepStatusMap)
 
   // React Flow state (need to define before usePlanToFlow to use in callbacks)
@@ -1747,12 +1745,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }, delay)
   }, [getNode, setViewport])
 
-  // Handle navigating to a step from legend (without opening sidebar)
-  const handleNavigateToStep = useCallback((nodeId: string) => {
-    focusNode(nodeId, { topPadding: 150, delay: 100 })
-    console.log('[WorkflowCanvas] Navigated to step from legend:', nodeId)
-  }, [focusNode])
-
   // Stabilize stepStatusMap by serializing it - Maps are compared by reference, so we need to serialize
   // to detect actual content changes. This prevents unnecessary recalculations in usePlanToFlow.
   const stableStepStatusMap = React.useMemo(() => {
@@ -1868,8 +1860,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [focusNode])
 
-  // Auto-focus disabled - running step name is now shown in StepLegend instead
-  // This prevents the canvas from jumping around during workflow execution
+  // Auto-focus disabled - this prevents the canvas from jumping around during workflow execution
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
@@ -2660,20 +2651,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           />
         </ReactFlow>
 
-        {/* Batch Progress Header - Above Legend */}
+        {/* Batch Progress Header */}
         <BatchProgressHeader position="canvas" />
-
-        {/* Step Legend - Bottom Left */}
-        {plan && plan.steps && plan.steps.length > 0 && (
-          <StepLegend
-            plan={plan}
-            nodes={nodes}
-            selectedNodeId={null}
-            onStepClick={handleNavigateToStep}
-            workspacePath={workspacePath}
-            currentStepId={currentStepId}
-          />
-        )}
 
         <FloatingWorkflowViewControls
           viewLabel="flow"

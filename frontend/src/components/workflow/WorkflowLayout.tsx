@@ -368,7 +368,7 @@ function withWorkflowRestoreTimeout<T>(promise: Promise<T>, label: string, timeo
 /**
  * Helper function to restore workflow state from loaded events
  * Called during workflow reconnection to restore:
- * - Current running step ID (for StepLegend)
+ * - Current running step ID
  * - Step statuses (running, completed, failed)
  * - Batch progress (for BatchProgressHeader)
  * This ensures the UI shows the correct state immediately after page refresh

@@ -100,6 +100,7 @@ Treat plan, config, learning, KB, db, reports, variables, and eval as one workfl
     - **Report compatibility**: widget source paths, expected fields, aggregation/grouping keys, and chart/table fields exist in the sampled data.
      - **Asset discipline**: durable binary/media files live under `db/assets/`, with metadata/provenance/reference rows in `db/*.json`; no base64 blobs or large binaries embedded inside JSON rows.
      - **Data hygiene**: no duplicate primary keys, stale test rows, impossible nulls, mixed date formats, or fields that silently changed names across rows.
+   - **Message-sequence item write access**: for every `message_sequence` step, check each item whose `message` or `output_files` writes to `db/` or `knowledgebase/`. That item MUST declare the matching `write_access` (`{"db": true}` and/or `{"knowledgebase": true}`) or an inferring `kind` (`db` / `knowledgebase` / `code`). Item writes are default-deny and folder-scoped — booleans only, a per-file `paths` list is invalid and ignored — while reads are always open, so a missing grant is easy to overlook and the write is silently blocked at runtime (the step then loops or fails late). Flag CRITICAL: name the item id and the file it tries to write.
    - For each step that writes `db/`, check that its description references the `db/README.md` contract and names the file, primary key, and merge rule. If it only says "save the result" or writes to a run folder, flag it.
 5. **Report audit**:
    - Check `reports/report_plan.json` widgets source durable `db/*.json`, `db/assets/` references, KB context/notes, or built-in APIs rather than volatile run folders.
@@ -121,7 +122,7 @@ OUTPUT FORMAT
 For each step, produce a per-step report:
 
 ```
-### step-id: <name> (type: <regular|todo_task|routing|human_input|orphan>)
+### step-id: <name> (type: <regular|todo_task|routing|human_input|message_sequence|orphan>)
 **Description summary:** <one-line>
 **Lens 0 — Durable boundary fit:** <findings or "clean">
 **Lens A — Description vs Skill:** <findings or "clean">

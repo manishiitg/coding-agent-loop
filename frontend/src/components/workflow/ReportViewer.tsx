@@ -589,6 +589,30 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     }
   }
 
+  // The shared on-pane toolbar (PreviewPaneControls) triggers report export by
+  // dispatching this window event (string matches WORKFLOW_REPORT_EXPORT_EVENT
+  // in WorkflowCanvas). A ref keeps the latest handler without re-subscribing.
+  const exportReportRef = useRef(handleExportReport)
+  exportReportRef.current = handleExportReport
+  const refreshReportRef = useRef(handleRefresh)
+  refreshReportRef.current = handleRefresh
+  useEffect(() => {
+    const onExport = () => { void exportReportRef.current('png') }
+    const onRefresh = () => { void refreshReportRef.current() }
+    const onPref = (e: Event) => {
+      const p = (e as CustomEvent).detail?.preference
+      if (p === 'mobile' || p === 'tablet' || p === 'desktop' || p === 'auto') setPreviewPreference(p)
+    }
+    window.addEventListener('workflow-report-export-requested', onExport)
+    window.addEventListener('workflow-report-refresh-requested', onRefresh)
+    window.addEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, onPref)
+    return () => {
+      window.removeEventListener('workflow-report-export-requested', onExport)
+      window.removeEventListener('workflow-report-refresh-requested', onRefresh)
+      window.removeEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, onPref)
+    }
+  }, [])
+
   const handleToggleWidgetHidden = (widgetKey: string) => {
     setHiddenWidgetKeys(prev => {
       const next = new Set(prev)
@@ -630,16 +654,15 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     }
     return false
   }, [planExists, plan, sources, hiddenWidgetKeys])
-  const canUseSplitPreview = mobilePreview
-  // Resolve 'auto' down to the concrete tier the layout would otherwise apply.
-  // 'auto' picks 'mobile' when the layout is in mobile-preview mode, otherwise
-  // 'desktop' (the laptop-class shell).
-  const previewMode: 'desktop' | 'tablet' | 'mobile' = canUseSplitPreview
-    ? previewPreference === 'auto'
-      ? mobilePreview ? 'mobile' : 'desktop'
-      : previewPreference
-    : 'desktop'
-  const isRefreshing = loading
+  // Report renders at the selected device width (default laptop = full width).
+  // When the pane is chat-focused it sits in the narrow 480px column, so force
+  // mobile regardless. Device selection + refresh now live in the shared on-pane
+  // bar (PreviewPaneControls); this component just reacts to the preference.
+  const previewMode: 'desktop' | 'tablet' | 'mobile' = mobilePreview
+    ? 'mobile'
+    : (previewPreference === 'mobile' || previewPreference === 'tablet' || previewPreference === 'desktop'
+        ? previewPreference
+        : 'desktop')
   // Per-mode shell width. Mobile mimics a phone (~480px), tablet mimics an
   // iPad-class device (~880px), laptop fills available space. Content width
   // mirrors the shell so widget reflow tests against the right container size.
@@ -654,26 +677,6 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       ? 'w-full max-w-full'
       : 'mx-auto w-full max-w-5xl'
 
-  // Three-state segmented control selects a preview mode directly. Falls back
-  // to 'desktop' as the safe default when toggling out of any state.
-  const setPreviewMode = (mode: 'desktop' | 'tablet' | 'mobile') => {
-    setPreviewPreference(() => {
-      try {
-        localStorage.setItem(REPORT_PREVIEW_PREFERENCE_KEY, mode)
-        window.dispatchEvent(new CustomEvent(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, { detail: { preference: mode } }))
-      } catch {
-        // ignore
-      }
-      return mode
-    })
-  }
-
-  // Collapsed-by-default preview controls — show only the active mode's icon
-  // until the user hovers/focuses the cluster. JS state instead of CSS
-  // group-hover so the expansion is predictable on touch devices and
-  // tolerates Tailwind purge edge cases.
-  const [previewControlsExpanded, setPreviewControlsExpanded] = useState(false)
-  const [exportControlsExpanded, setExportControlsExpanded] = useState(false)
 
   // Inline custom palette → CSS variables on the report root. Hex values get
   // converted to "H S% L%" triplets because Tailwind variables are HSL-shaped
@@ -761,118 +764,15 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
         </div>
       </div>
 
-      <div
-        className="absolute right-3 top-3 z-20 inline-flex items-center rounded-full border border-border/70 bg-background/95 p-0.5 shadow-lg backdrop-blur-sm focus-within:ring-1 focus-within:ring-ring sm:right-4 sm:top-4"
-        role="group"
-        aria-label="Export report"
-        onMouseEnter={() => setExportControlsExpanded(true)}
-        onMouseLeave={() => setExportControlsExpanded(false)}
-        onFocus={() => setExportControlsExpanded(true)}
-        onBlur={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-            setExportControlsExpanded(false)
-          }
-        }}
-      >
-        <button
-          onClick={() => { void handleExportReport('svg') }}
-          disabled={isExportingReport}
-          className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-          title="Export report as SVG"
-          aria-label="Export report as SVG"
-        >
-          {isExportingReport ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-        </button>
-        <button
-          onClick={() => { void handleExportReport('svg') }}
-          disabled={isExportingReport}
-          className="inline-flex h-6 items-center justify-center overflow-hidden rounded-full px-0 text-[9px] font-semibold text-muted-foreground transition-[width,opacity,background-color,color] duration-150 ease-out hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-          style={{
-            width: exportControlsExpanded ? 30 : 0,
-            opacity: exportControlsExpanded ? 1 : 0,
-            pointerEvents: exportControlsExpanded ? 'auto' : 'none',
-          }}
-          title="Export report as SVG"
-          aria-label="Export report as SVG"
-        >
-          SVG
-        </button>
-        <button
-          onClick={() => { void handleExportReport('png') }}
-          disabled={isExportingReport}
-          className="inline-flex h-6 items-center justify-center overflow-hidden rounded-full px-0 text-[9px] font-semibold text-muted-foreground transition-[width,opacity,background-color,color] duration-150 ease-out hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-          style={{
-            width: exportControlsExpanded ? 34 : 0,
-            opacity: exportControlsExpanded ? 1 : 0,
-            pointerEvents: exportControlsExpanded ? 'auto' : 'none',
-          }}
-          title="Export report as PNG"
-          aria-label="Export report as PNG"
-        >
-          PNG
-        </button>
-      </div>
+      {/* Report export (SVG/PNG) is triggered from the shared on-pane toolbar's
+          download button (PreviewPaneControls) via WORKFLOW_REPORT_EXPORT_EVENT —
+          see the listener effect below. The old top-right export cluster was
+          removed because it overlapped that bar. */}
 
-      <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2 sm:bottom-5 sm:right-5">
-        {canUseSplitPreview && (
-          // Three-state preview-width control. Collapsed by default to just the
-          // active-mode icon; expands on mouse-enter or focus to reveal the
-          // other two. The cluster's outer padding gives the hover affordance
-          // a comfortable target — pointer doesn't need to land on the icon.
-          <div
-            role="group"
-            aria-label="Report preview width"
-            onMouseEnter={() => setPreviewControlsExpanded(true)}
-            onMouseLeave={() => setPreviewControlsExpanded(false)}
-            onFocus={() => setPreviewControlsExpanded(true)}
-            onBlur={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                setPreviewControlsExpanded(false)
-              }
-            }}
-            className="inline-flex items-center rounded-full border border-border/70 bg-background/95 p-0.5 shadow-lg backdrop-blur-sm focus-within:ring-1 focus-within:ring-ring"
-          >
-            {([
-              { mode: 'mobile', Icon: Smartphone, label: 'Mobile preview (≈480px)' },
-              { mode: 'tablet', Icon: TabletSmartphone, label: 'Tablet preview (50/50 split)' },
-              { mode: 'desktop', Icon: Laptop, label: 'Laptop preview (full width)' },
-            ] as const).map(({ mode, Icon, label }) => {
-              const active = previewMode === mode
-              const visible = active || previewControlsExpanded
-              return (
-                <button
-                  key={mode}
-                  onClick={() => setPreviewMode(mode)}
-                  className={`inline-flex h-8 items-center justify-center overflow-hidden rounded-full transition-[width,opacity] duration-150 ease-out ${
-                    active
-                      ? 'bg-muted text-foreground'
-                      : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                  }`}
-                  style={{
-                    width: visible ? 32 : 0,
-                    opacity: visible ? 1 : 0,
-                    pointerEvents: visible ? 'auto' : 'none',
-                  }}
-                  title={label}
-                  aria-label={label}
-                  aria-pressed={active}
-                >
-                  <Icon className="h-3.5 w-3.5 flex-shrink-0" />
-                </button>
-              )
-            })}
-          </div>
-        )}
-        <button
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-lg backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:bg-muted hover:text-foreground disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
-          title={isRefreshing ? 'Refreshing…' : 'Refresh report'}
-          aria-label="Refresh report"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-        </button>
-      </div>
+      {/* Device-width selection + refresh moved to the shared on-pane bar
+          (PreviewPaneControls); preference changes arrive via the
+          REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT listener, refresh via
+          WORKFLOW_REPORT_REFRESH_EVENT. */}
     </div>
   )
 }

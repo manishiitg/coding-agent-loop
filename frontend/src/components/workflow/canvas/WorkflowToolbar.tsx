@@ -11,7 +11,6 @@ import {
   Table2,
   Beaker,
   ShieldCheck,
-  HelpCircle,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
@@ -367,80 +366,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     `}>
       {/* Left side - primary workflow views */}
       <div className="flex min-w-0 flex-1 items-center gap-x-3 gap-y-1.5 flex-wrap">
-        <div className="flex min-w-full items-center gap-2 sm:min-w-0">
-          <div
-            data-tour="workflow-view-switcher"
-            data-testid="tour-workflow-view-switcher"
-            className="inline-flex w-full items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm sm:w-auto"
-          >
-            <button
-              onClick={() => {
-                const store = useWorkflowStore.getState()
-                store.setWorkflowWorkspaceView('builder')
-                store.setShowWorkspacePane(false)
-                store.setShowChatArea(true)
-                onStartPhase('workflow-builder')
-              }}
-              className={`min-w-0 flex-1 rounded-md px-3 py-1 text-xs font-medium transition-all sm:flex-none ${
-                isBuilderModeActive
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-              }`}
-            >
-              Chat
-            </button>
-            {hasPlan && (
-              <button
-                onClick={() => {
-                  const store = useWorkflowStore.getState()
-                  // Clicking the active Plan tab closes the workspace
-                  // pane (toggle behavior). Skip when chat is also off
-                  // so the layout never goes empty.
-                  if (isFlowWorkspace) {
-                    if (!showChatArea) return
-                    store.setShowWorkspacePane(false)
-                    return
-                  }
-                  store.setWorkflowWorkspaceView('flow')
-                  store.setShowWorkspacePane(true)
-                  store.setCanvasViewMode('flow')
-                }}
-                className={`min-w-0 flex-1 rounded-md px-3 py-1 text-xs font-medium transition-all sm:flex-none ${
-                  isFlowWorkspace
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                }`}
-              >
-                Plan
-              </button>
-            )}
-            {workspacePath && (
-              <button
-                onClick={() => {
-                  const store = useWorkflowStore.getState()
-                  // Toggle off when Report is already showing.
-                  if (isReportWorkspace) {
-                    if (!showChatArea) return
-                    store.setShowWorkspacePane(false)
-                    return
-                  }
-                  store.setWorkflowWorkspaceView('report')
-                  store.setShowWorkspacePane(true)
-                  store.setCanvasViewMode('report')
-                }}
-                className={`min-w-0 flex-1 rounded-md px-3 py-1 text-xs font-medium transition-all sm:flex-none ${
-                  isReportWorkspace
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                }`}
-              >
-                Report
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="hidden h-5 w-px shrink-0 bg-border sm:block" />
+        {/* The Chat/Plan/Report view-switcher was removed from the top bar.
+            Plan/Report now live as an on-pane segmented switch (PreviewPaneControls);
+            the chat pane's "New chat" covers starting a builder conversation. */}
 
         <div className="flex shrink-0 items-center gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
@@ -486,18 +414,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => window.dispatchEvent(new Event('open-workflow-walkthrough'))}
-              className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-            >
-              <HelpCircle className="w-3.5 h-3.5" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom"><p>Walkthrough</p></TooltipContent>
-        </Tooltip>
-
         {/* Auto-improvement framework — metrics, trajectory, decisions (read-only safe for run users) */}
         {workspacePath && (
           <Tooltip>

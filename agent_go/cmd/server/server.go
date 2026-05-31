@@ -302,9 +302,10 @@ type StreamingAPI struct {
 	// Pending start notifications — background agent IDs that started while
 	// the main session was busy. These are synthetic user messages just like
 	// completion notifications, so they must be serialized with completions.
-	pendingStartNotifications map[string][]string
-	pendingStartMu            sync.RWMutex
-	autoNotificationMu        sync.Mutex
+	pendingStartNotifications          map[string][]string
+	startNotificationRetryScheduled    map[string]bool // singleton guard — at most one retry timer per session; guarded by pendingStartMu
+	pendingStartMu                     sync.RWMutex
+	autoNotificationMu                 sync.Mutex
 
 	// Last query request per session — used to construct synthetic turns
 	lastQueryRequests       map[string]QueryRequest
@@ -888,7 +889,8 @@ func runServer(cmd *cobra.Command, args []string) {
 		sessionBusySince:          make(map[string]time.Time),
 		pendingCompletions:        make(map[string][]string),
 		completionRetryScheduled:  make(map[string]bool),
-		pendingStartNotifications: make(map[string][]string),
+		pendingStartNotifications:       make(map[string][]string),
+		startNotificationRetryScheduled: make(map[string]bool),
 		lastQueryRequests:         make(map[string]QueryRequest),
 		sessionWorkspaceFolders:   make(map[string]string),
 		sessionAgents:             make(map[string]*agent.LLMAgentWrapper),
@@ -896,6 +898,13 @@ func runServer(cmd *cobra.Command, args []string) {
 		completionLoopStarted:     make(map[string]bool),
 		lastWorkshopModeBySession: make(map[string]string),
 		stoppedSessions:           make(map[string]bool),
+	}
+
+	// BG-001: Wire the onDropped callback so a full notification channel re-queues
+	// the completion instead of silently losing it permanently.
+	api.bgAgentRegistry.onDropped = func(sessionID, agentID string) {
+		api.queuePendingCompletion(sessionID, agentID)
+		api.schedulePendingCompletionRetry(sessionID)
 	}
 
 	// Kill any orphaned browser processes from a previous run.
@@ -5809,6 +5818,13 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	delete(api.completionRetryScheduled, sessionID)
 	api.pendingMu.Unlock()
 
+	// Clear pending start notifications so they don't leak across stop/restart
+	// (pending-start-notifications-leak fix).
+	api.pendingStartMu.Lock()
+	delete(api.pendingStartNotifications, sessionID)
+	delete(api.startNotificationRetryScheduled, sessionID)
+	api.pendingStartMu.Unlock()
+
 	api.lastQueryMu.Lock()
 	delete(api.lastQueryRequests, sessionID)
 	api.lastQueryMu.Unlock()
@@ -7512,6 +7528,19 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, name stri
 	if err != nil {
 		if strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded") {
 			agent.SetCanceled()
+			// Emit a terminal event for context-canceled sub-agents so the
+			// completion loop has a consistent signal — mirrors OnExecutionComplete
+			// (finding-onsubagentcomplete-context-cancel-silent-drop fix).
+			if !n.api.isSessionMarkedStopped(n.sessionID) {
+				if agent.MarkTerminalNotified() {
+					n.api.emitBackgroundAgentEvent(n.sessionID, agentID, "background_agent_terminated", map[string]interface{}{
+						"agent_id": agentID,
+						"name":     name,
+						"status":   "canceled",
+					})
+					n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, agentID)
+				}
+			}
 			return
 		}
 		agent.SetError(err.Error())
@@ -7807,6 +7836,27 @@ func (api *StreamingAPI) hasActiveTurnCancel(sessionID string) bool {
 	return ok
 }
 
+// clearStaleBusyIfNeeded atomically checks whether the busy flag is stale and,
+// if so, clears it. It holds sessionBusyMu.Lock() for the entire read-and-clear
+// sequence so two concurrent callers cannot both pass the staleness check and
+// then both clear it (isSessionBusyForAutoNotification TOCTOU fix).
+// Returns true when the flag was stale and has been cleared.
+func (api *StreamingAPI) clearStaleBusyIfNeeded(sessionID string) bool {
+	api.sessionBusyMu.Lock()
+	defer api.sessionBusyMu.Unlock()
+	if !api.sessionBusy[sessionID] {
+		return false // already cleared or never set
+	}
+	since := api.sessionBusySince[sessionID]
+	if since.IsZero() || time.Since(since) < autoNotificationStaleBusyAfter {
+		return false // not stale yet
+	}
+	// Stale: clear atomically under the write lock.
+	api.sessionBusy[sessionID] = false
+	delete(api.sessionBusySince, sessionID)
+	return true
+}
+
 // isSessionBusyForAutoNotification is intentionally narrower than isSessionBusy.
 // Auto-notifications must be serialized behind real user/synthetic turns, but a
 // stale busy flag should not permanently strand workflow step start/completion
@@ -7820,16 +7870,11 @@ func (api *StreamingAPI) isSessionBusyForAutoNotification(sessionID string) bool
 		return true
 	}
 
-	api.sessionBusyMu.RLock()
-	since := api.sessionBusySince[sessionID]
-	api.sessionBusyMu.RUnlock()
-	if since.IsZero() || time.Since(since) < autoNotificationStaleBusyAfter {
-		return true
+	if api.clearStaleBusyIfNeeded(sessionID) {
+		log.Printf("[BG AGENT] Session %s busy flag looks stale; clearing so queued auto-notification can resume main agent", sessionID)
+		return false
 	}
-
-	log.Printf("[BG AGENT] Session %s busy flag looks stale; clearing so queued auto-notification can resume main agent", sessionID)
-	api.setSessionBusy(sessionID, false)
-	return false
+	return true
 }
 
 // isSessionStoppedOrInactive returns true when a session has been explicitly stopped
@@ -7972,7 +8017,23 @@ func (api *StreamingAPI) filterUnsentStartNotifications(sessionID string, agentI
 }
 
 func (api *StreamingAPI) schedulePendingStartNotificationRetry(sessionID string) {
+	// Singleton guard: at most one retry timer per session (mirrors completionRetryScheduled).
+	api.pendingStartMu.Lock()
+	if api.startNotificationRetryScheduled == nil {
+		api.startNotificationRetryScheduled = make(map[string]bool)
+	}
+	if api.startNotificationRetryScheduled[sessionID] {
+		api.pendingStartMu.Unlock()
+		return
+	}
+	api.startNotificationRetryScheduled[sessionID] = true
+	api.pendingStartMu.Unlock()
+
 	time.AfterFunc(5*time.Second, func() {
+		api.pendingStartMu.Lock()
+		delete(api.startNotificationRetryScheduled, sessionID)
+		api.pendingStartMu.Unlock()
+
 		if api.isSessionStoppedOrInactive(sessionID) {
 			return
 		}
@@ -7995,21 +8056,21 @@ func (api *StreamingAPI) drainPendingAutoNotificationsAfterTurn(sessionID string
 	if len(pendingStarts) > 0 && len(pendingCompletions) > 0 {
 		// Both pending at once (e.g. a parallel step completed while another
 		// step was starting). Fire completions first — they carry actual results
-		// the main agent needs — then starts. Sequential goroutine chaining
-		// avoids concurrent StreamWithEvents calls: starts run only after the
-		// completion synthetic turn has finished (the completion turn's own
-		// post-turn drain will NOT see the starts again because we already
-		// drained them here, so we re-queue them for that drain cycle).
+		// the main agent needs — then starts. Called synchronously: executeSyntheticTurn
+		// sets sessionBusy=true before returning, preventing a concurrent
+		// StreamWithEvents from being spawned before this one finishes (timing-gap fix).
+		// Re-queue starts for the completion turn's own post-turn drain.
 		api.queuePendingStartNotifications(sessionID, pendingStarts)
-		go api.processBatchedBackgroundAgentCompletions(sessionID, pendingCompletions)
+		api.schedulePendingStartNotificationRetry(sessionID)
+		api.processBatchedBackgroundAgentCompletions(sessionID, pendingCompletions)
 		return
 	}
 	if len(pendingStarts) > 0 {
-		go api.processBatchedBackgroundAgentStarts(sessionID, pendingStarts)
+		api.processBatchedBackgroundAgentStarts(sessionID, pendingStarts)
 		return
 	}
 	if len(pendingCompletions) > 0 {
-		go api.processBatchedBackgroundAgentCompletions(sessionID, pendingCompletions)
+		api.processBatchedBackgroundAgentCompletions(sessionID, pendingCompletions)
 	}
 }
 
@@ -8078,6 +8139,14 @@ func (api *StreamingAPI) schedulePendingCompletionRetry(sessionID string) {
 		api.pendingMu.Unlock()
 
 		if api.isSessionStoppedOrInactive(sessionID) {
+			// Log a warning so the discard is observable rather than silent
+			// (race-inactive-pending-completion fix).
+			api.pendingMu.RLock()
+			nPending := len(api.pendingCompletions[sessionID])
+			api.pendingMu.RUnlock()
+			if nPending > 0 {
+				log.Printf("[BG AGENT] WARNING: session %s is stopped/inactive but has %d pending completion(s) — discarding (session was stopped before retry could fire)", sessionID, nPending)
+			}
 			return
 		}
 		if api.isSessionBusyForAutoNotification(sessionID) {
@@ -8296,26 +8365,34 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 	}
 
 	// Multiple completions: build a batched [AUTO-NOTIFICATION] message.
+	// agentRefs tracks the BackgroundAgent pointers for agents we include in the
+	// batch so we can mark them notified=true only after the synthetic turn
+	// actually dispatches (notified-before-executeSyntheticTurn fix).
 	var parts []string
 	var emittedIDs []string
+	var agentRefs []*BackgroundAgent
 	var batchBackupDirective string // set once if any completed part is a full workflow run
 	for _, agentID := range agentIDs {
 		agent := api.bgAgentRegistry.Get(sessionID, agentID)
 		if agent == nil {
 			continue
 		}
+
+		// Snapshot and canceled check BEFORE setting notified=true
+		// (bg-agent-notified-before-canceled-check fix: match single-agent path).
+		snap := agent.GetSnapshot()
+		if snap.Status == BGAgentCanceled {
+			continue
+		}
+
 		agent.mu.Lock()
 		if agent.notified {
 			agent.mu.Unlock()
 			continue
 		}
-		agent.notified = true
+		// Do NOT set notified=true yet — commit only after dispatch succeeds.
 		agent.mu.Unlock()
 
-		snap := agent.GetSnapshot()
-		if snap.Status == BGAgentCanceled {
-			continue
-		}
 		var resultText string
 		if snap.Status == BGAgentCompleted {
 			resultText = snap.Result // Full result — no truncation in auto-notification
@@ -8356,6 +8433,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 			batchBackupDirective = workflowRunBackupDirective(snap)
 		}
 		emittedIDs = append(emittedIDs, agentID)
+		agentRefs = append(agentRefs, agent)
 	}
 
 	if len(parts) == 0 {
@@ -8376,7 +8454,14 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		})
 	}
 
-	api.executeSyntheticTurn(sessionID, syntheticMsg)
+	// Mark notified=true only for agents whose turn was actually dispatched.
+	if api.executeSyntheticTurn(sessionID, syntheticMsg) {
+		for _, a := range agentRefs {
+			a.mu.Lock()
+			a.notified = true
+			a.mu.Unlock()
+		}
+	}
 }
 
 // buildWorkshopActionHint returns a mode-specific instruction appended to AUTO-NOTIFICATION messages
@@ -8441,22 +8526,24 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		return
 	}
 
+	// Snapshot once; reused below to avoid a second lock acquisition that could
+	// observe inconsistent state (LOW bug fix: single-item-two-snapshot).
 	snap := agent.GetSnapshot()
 	if snap.Status == BGAgentCanceled {
 		log.Printf("[BG AGENT] Agent %s for session %s was canceled, suppressing synthetic turn", agentID, sessionID)
 		return
 	}
 
-	// Prevent duplicate processing
+	// Prevent duplicate processing — but do NOT set notified=true yet.
+	// We commit notified only after executeSyntheticTurn succeeds so a
+	// short-circuit (no stored agent) doesn't permanently strand the agent
+	// (notified-before-executeSyntheticTurn fix).
 	agent.mu.Lock()
 	if agent.notified {
 		agent.mu.Unlock()
 		return
 	}
-	agent.notified = true
 	agent.mu.Unlock()
-
-	snap = agent.GetSnapshot()
 
 	syntheticMsg := api.buildAutoNotificationMessage(sessionID, snap)
 
@@ -8475,10 +8562,13 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		"status":   string(snap.Status),
 	})
 
-	// Trigger a synthetic turn using the stored QueryRequest
-	// Called synchronously so handleQuery sets session busy before returning,
-	// preventing concurrent synthetic turns for the same session.
-	api.executeSyntheticTurn(sessionID, syntheticMsg)
+	// Trigger a synthetic turn using the stored QueryRequest.
+	// Set notified=true only when the turn was actually dispatched.
+	if api.executeSyntheticTurn(sessionID, syntheticMsg) {
+		agent.mu.Lock()
+		agent.notified = true
+		agent.mu.Unlock()
+	}
 }
 
 // workflowRunBackupDirective returns a directive asking the builder to back up the
@@ -8624,19 +8714,31 @@ func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID strin
 		return false
 	}
 
-	// Commit the dedup only after a successful hand-off.
-	agent.mu.Lock()
-	agent.notified = true
-	agent.mu.Unlock()
-
 	provider := string(delivery.Provider)
 	if provider == "" {
 		provider = string(runningAgent.GetProvider())
 	}
 	deliveryStatus := string(delivery.DeliveryStatus)
 	if deliveryStatus == "" {
-		deliveryStatus = "queued_for_injection"
+		deliveryStatus = string(mcpagent.UserMessageDeliveryStatusQueuedForInjection)
 	}
+
+	// steer-bg-agent-completion-queued-injection-loss fix:
+	// Only mark notified=true when the message was definitively sent to the CLI
+	// (SentToCLI). For QueuedForInjection the foreground turn may exit before
+	// injecting it, which would orphan the notification permanently. Fall back
+	// to the queue path so the completion is reliably re-delivered.
+	if delivery.DeliveryStatus != mcpagent.UserMessageDeliveryStatusSentToCLI {
+		log.Printf("[BG AGENT] Steer for agent %s in session %s returned status=%s — falling back to queue", agentID, sessionID, deliveryStatus)
+		api.recordLiveCodingAgentUserMessage(sessionID, msg, provider, newSteerMessageID(), deliveryStatus)
+		return false
+	}
+
+	// Commit the dedup only after a confirmed SentToCLI hand-off.
+	agent.mu.Lock()
+	agent.notified = true
+	agent.mu.Unlock()
+
 	api.recordLiveCodingAgentUserMessage(sessionID, msg, provider, newSteerMessageID(), deliveryStatus)
 	api.emitBackgroundAgentEvent(sessionID, agentID, "auto_notification_steered", map[string]interface{}{
 		"agent_id": snap.ID,
@@ -8690,10 +8792,12 @@ func botPlatformFromSessionID(sessionID string) string {
 // it reuses the agent stored after the last plan-mode turn via StreamWithEvents().
 // This is called synchronously from processBackgroundAgentCompletion — it sets session busy
 // before spawning the goroutine, preventing concurrent synthetic turns.
-func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
+// Returns true when the synthetic turn was successfully dispatched (goroutine spawned),
+// false when the session has no stored agent or is stopped/inactive.
+func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bool {
 	if api.isSessionStoppedOrInactive(sessionID) {
 		log.Printf("[BG AGENT] Session %s is stopped/inactive, suppressing synthetic turn", sessionID)
-		return
+		return false
 	}
 	if api.botManager != nil {
 		api.botManager.PrepareSyntheticTurn(sessionID)
@@ -8705,7 +8809,7 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 
 	if !ok || llmAgent == nil {
 		log.Printf("[BG AGENT] No stored agent for session %s, cannot trigger synthetic turn", sessionID)
-		return
+		return false
 	}
 
 	// Get stored query request for user ID context
@@ -8884,6 +8988,7 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 		// Update session status to completed
 		api.updateSessionStatus(sessionID, "completed")
 	}()
+	return true
 }
 
 // buildCapabilitiesContext creates a CapabilitiesContext from the chat request
@@ -9215,9 +9320,23 @@ func (api *StreamingAPI) cleanupInactiveSessions() {
 		sessionsToDelete := make([]string, 0)
 
 		for sessionID, session := range api.activeSessions {
-			// Mark as inactive if no activity for 10 minutes and status is still "running"
+			// Mark as inactive if no activity for 10 minutes and status is still "running",
+			// but only when there are no pending completions or running background agents
+			// (race-inactive-pending-completion fix: avoid stranding completions by
+			// marking the session inactive before they can be drained).
 			if session.Status == "running" && now.Sub(session.LastActivity) >= inactivityTimeout {
-				sessionsToMarkInactive = append(sessionsToMarkInactive, sessionID)
+				hasPending := false
+				api.pendingMu.RLock()
+				if len(api.pendingCompletions[sessionID]) > 0 || api.completionRetryScheduled[sessionID] {
+					hasPending = true
+				}
+				api.pendingMu.RUnlock()
+				if !hasPending && api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID) {
+					hasPending = true
+				}
+				if !hasPending {
+					sessionsToMarkInactive = append(sessionsToMarkInactive, sessionID)
+				}
 			}
 			isTerminal := session.Status == "completed" || session.Status == "inactive" || session.Status == "stopped" || session.Status == "error"
 			age := now.Sub(session.LastActivity)

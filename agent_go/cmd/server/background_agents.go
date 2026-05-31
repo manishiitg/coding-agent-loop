@@ -282,6 +282,11 @@ type BackgroundAgentRegistry struct {
 	mu                  sync.RWMutex
 	completionNotifiers map[string]chan string // sessionID → completion channel
 	idCounter           atomic.Uint64          // monotonic counter for short agent IDs
+
+	// onDropped is called when NotifyCompletion cannot send because the channel is
+	// full. It must re-queue the completion so it is not permanently lost.
+	// Set at construction time by StreamingAPI.
+	onDropped func(sessionID, agentID string)
 }
 
 // NewBackgroundAgentRegistry creates a new registry
@@ -398,24 +403,30 @@ func (r *BackgroundAgentRegistry) CancelAll(sessionID string) {
 	}
 }
 
-// NotifyCompletion sends a completion notification for a session
+// NotifyCompletion sends a completion notification for a session.
+// Holds a write lock for the entire read-check-send sequence to prevent a
+// concurrent Cleanup from closing the channel between the channel lookup and
+// the send (which would panic with "send on closed channel" — BG-002).
+// The non-blocking select is safe under a write lock because the send cannot
+// block indefinitely.
 func (r *BackgroundAgentRegistry) NotifyCompletion(sessionID, agentID string) {
-	r.mu.RLock()
+	r.mu.Lock()
 	ch, ok := r.completionNotifiers[sessionID]
-	r.mu.RUnlock()
-
-	if ok {
-		// Non-blocking send to avoid blocking the (often synchronous) caller.
-		// If the buffered channel is full the send is dropped here, but the
-		// completion is NOT lost: the agent's terminal status + unset `notified`
-		// flag remain in the registry, and the session-level retry backstop
-		// (schedulePendingCompletionRetry) re-sweeps the registry and re-queues
-		// any terminal-but-unnotified agent. We log the drop so saturation is
-		// visible rather than silent.
-		select {
-		case ch <- agentID:
-		default:
-			log.Printf("[BG AGENT] completion channel full for session %s; dropping immediate notify for agent %s (retry backstop will recover it)", sessionID, agentID)
+	if !ok {
+		r.mu.Unlock()
+		return
+	}
+	select {
+	case ch <- agentID:
+		r.mu.Unlock()
+	default:
+		// Channel is full. Unlock before invoking the callback to avoid
+		// holding the registry lock while the callback acquires pendingMu.
+		onDropped := r.onDropped
+		r.mu.Unlock()
+		log.Printf("[BG AGENT] completion channel full for session %s; invoking onDropped for agent %s", sessionID, agentID)
+		if onDropped != nil {
+			onDropped(sessionID, agentID)
 		}
 	}
 }

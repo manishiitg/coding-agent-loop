@@ -21,4 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   printToPDF: (filename) => ipcRenderer.invoke('print-to-pdf', filename),
   saveFlowImage: (payload) => ipcRenderer.invoke('save-flow-image', payload),
   captureFlowImage: (payload) => ipcRenderer.invoke('capture-flow-image', payload),
+  // Forward uncaught renderer errors to the main process so they land in the
+  // main log file even when DevTools can't be opened (blank-screen post-mortem).
+  logRendererError: (payload) => ipcRenderer.send('renderer-error', payload),
 });

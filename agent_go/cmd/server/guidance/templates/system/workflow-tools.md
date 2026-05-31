@@ -172,8 +172,8 @@ Skills are reusable instruction sets injected into step agents at runtime. They 
 
 1. **Find**: `list_skills` to see installed skills, or `search_skills(query)` to search the public registry.
 2. **Install**: `install_skill(source)` (e.g. `owner/repo@skill-name`) or `import_skill(github_url)` — downloads into `{{"{{"}}.AbsDocsRoot{{"}}"}}/skills/{folder}/`. If a skill folder exists but has no `SKILL.md`, reinstall it using the same method it was originally installed with — **never write `SKILL.md` content manually**.
-3. **Add to workflow**: `update_workflow_config(add_skills=["folder-name"])` — all steps inherit it. **Do NOT edit `workflow.json` manually.**
-4. **Restrict to specific steps**: By default all steps inherit all workflow-level skills. To limit a step: `update_step_config(step_id, enabled_skills=["skill-a"])`. Empty array = no skills for that step.
+3. **Select for workflow/builder context**: `update_workflow_config(add_skills=["folder-name"])` — makes the skill visible as a selected workflow capability for workshop/builder discovery. **Do NOT edit `workflow.json` manually.**
+4. **Enable for runtime steps**: `update_step_config(step_id, enabled_skills=["skill-a"])`. Step execution only receives the skills listed in that step's `enabled_skills`; workflow-selected skills do not cascade into runtime agents.
 5. **Remove from workflow**: `update_workflow_config(remove_skills=["folder-name"])`.
 6. **Uninstall**: `uninstall_skill(folder_name)` — removes files from workspace entirely.
 

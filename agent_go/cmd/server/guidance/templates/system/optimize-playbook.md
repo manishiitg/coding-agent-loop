@@ -124,6 +124,16 @@ For steps in scripted mode, the saved Python script at `learnings/{step-id}/main
 ### 4. Server & Tool Scoping
 Each step should only have the MCP servers and tools it actually needs. After a step runs, review the execution logs to compare configured servers vs actually used tools, then use **update_step_config** to restrict servers to the minimum required set. This reduces tool discovery noise and speeds up execution.
 
+### 4a. Skill Scoping
+
+Installed skills are reusable capability instructions under `<workspace-root>/skills/{folder}/SKILL.md`. They are separate from `learnings/_global/SKILL.md`, which is workflow-specific HOW learned from this workflow's runs.
+
+- Workflow-selected skills from `update_workflow_config(add_skills=[...])` are builder/workshop discovery context. They do not automatically reach runtime step agents.
+- Runtime step agents receive only skills listed in that step's `enabled_skills`. Use `update_step_config(step_id, enabled_skills=[...])` when a step actually needs an installed skill.
+- If a failing step is doing ad-hoc work covered by an installed skill, enable the skill on that step and keep the step description focused on task, inputs, outputs, and validation contract.
+- If a skill is enabled but irrelevant to the step, remove it from that step to reduce prompt noise.
+- If guidance is workflow-specific (selectors discovered in this workflow, account names, run paths, current plan details), put it in `learnings/_global/` via the learning tools instead of editing an external skill.
+
 ### 4b. LLM Tier Selection
 In tiered mode, prefer a persistent `execution_tier` when a step should usually run on a cheaper or faster tier, instead of pinning an exact model.
 

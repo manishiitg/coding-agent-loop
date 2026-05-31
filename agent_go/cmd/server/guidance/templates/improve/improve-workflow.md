@@ -1,4 +1,4 @@
-Improve this workflow using actual retained run evidence. Metrics are evidence, not a separate action path. Your job is to decide whether the next action is `harden_workflow`, `replan_workflow_from_results`, eval-plan improvement, metric-definition cleanup (`propose_metric` / `retire_metric`), KB cleanup (`improve_kb`), learning cleanup (`improve_learnings`), or no action. Use builder/improve.html as the shared improvement ledger entry point: read it first if it exists, create it if it does not, read referenced archive files only when they matter, and update the ledger before finishing.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Improve this workflow using actual retained run evidence. Metrics are evidence, not a separate action path. Your job is to decide whether the next action is `harden_workflow`, `replan_workflow_from_results`, eval-plan improvement, metric-definition cleanup (`propose_metric` / `retire_metric`), skill scoping cleanup, KB cleanup (`improve_kb`), learning cleanup (`improve_learnings`), or no action. Use builder/improve.html as the shared improvement ledger entry point: read it first if it exists, create it if it does not, read referenced archive files only when they matter, and update the ledger before finishing.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 MENTAL MODEL
 Think like a sharp business analyst auditing the workflow's actual outputs against soul.md success criteria and metric trajectory. These are business-process workflows, not software systems. The important question is: "What change would make the workflow better satisfy its goal on the next runs?"
@@ -23,8 +23,9 @@ SETUP
 3. Read builder/review.html if present. Carry unresolved `F-...` findings into your decision.
 4. Read planning/metrics.json and recent db/metrics_history.jsonl rows. Metrics reveal drift, failures, missing values, and whether previous changes are moving the workflow in the right direction.
 5. Read evaluation/evaluation_plan.json so you understand how metrics and eval reports are produced.
-6. Read variables/variables.json to get enabled group names.
-7. Build an evidence window from retained runs:
+6. Read get_workflow_config, list_skills, and planning/step_config.json to understand workflow-selected skills, installed skills, and per-step `enabled_skills`. Step execution only receives skills listed in `enabled_skills`; workflow-selected skills are builder/workshop context and do not cascade into runtime steps.
+7. Read variables/variables.json to get enabled group names.
+8. Build an evidence window from retained runs:
    - Always include `runs/iteration-0` and paired `evaluation/runs/iteration-0`.
    - Read `builder/improve.html`, `planning/changelog/`, and run/eval `run_metadata.json` timestamps to decide which older `iteration-{N}` folders matter.
    - Include older iterations since the last relevant harden/replan/eval/metric change, plus 1-2 runs immediately before that change when you need a before/after comparison.
@@ -36,7 +37,10 @@ PHASE 1 — OUTPUT + METRIC REVIEW
 3. Read evaluation reports for the same groups and iterations. Pay attention to rationale text, not just scores.
 4. Read db/metrics_history.jsonl. For each active metric, check recent values, target/floor/ceiling status, and `has_value=false` / `resolve_error` rows. Start with `role=primary`, then use `role=secondary` metrics to explain root cause or guardrail risk.
 5. Compare the outputs and metrics against soul.md. Where is the workflow missing the success criteria or primary outcome metrics? Which secondary metrics explain the miss?
-6. Inspect KB/learnings/report/db only when the evidence points there:
+6. Inspect skills/KB/learnings/report/db only when the evidence points there:
+   - workflow-selected skills from get_workflow_config and per-step `enabled_skills` from planning/step_config.json; use list_skills and read `skills/{folder}/SKILL.md` for every selected/enabled skill relevant to the failure
+   - missing installed skill on a step that is using ad-hoc instructions for a reusable capability; the fix is step-level `enabled_skills`, not more description bloat
+   - selected/enabled skills that no step uses, skills whose folder/SKILL.md is missing, or external skills containing workflow-specific selectors, account names, run paths, current-plan instructions, or learned quirks that belong in `learnings/_global/`
    - knowledgebase/context/context.md for user-supplied runtime context that steps may be ignoring; when a step needs it, the fix must update both `knowledgebase_access` and the step description so it names the relevant context section/path
    - knowledgebase/notes/_index.json + topic files for stale, duplicate, missing, or contradictory workflow-discovered context
    - learnings/_global/SKILL.md and learnings/<step-id>/script_metadata.json for stale rules, missing learning objectives, or agentic steps with leftover main.py
@@ -51,7 +55,7 @@ The core question is always the same: **would executing the CURRENT plan *perfec
 
 Harden and replan have the **same plan tools**; the difference is intent, not capability. Harden is the cheaper bet — try it first. Replan is the escalation: reach for it when hardening has **plateaued** (reliability/guardrail metrics are healthy yet the primary metric / success criteria stay short) or when the approach is structurally wrong for the goal. Be honest about which the evidence calls for.
 
-1. **Harden — exploit: refine the current strategy.** The approach is right; execution quality or artifact wiring is weak. You are NOT redesigning the path — you are making the existing steps work. Examples: bad tool args, prompt ambiguity, missing validation, stale agentic main.py, invalid lock state, missing learning objective, KB/db/report contract mismatch, metric source resolve_error from eval/config drift, hardcoded user-specific values.
+1. **Harden — exploit: refine the current strategy.** The approach is right; execution quality or artifact wiring is weak. You are NOT redesigning the path — you are making the existing steps work. Examples: bad tool args, prompt ambiguity, missing validation, missing/mis-scoped step skill, stale agentic main.py, invalid lock state, missing learning objective, KB/db/report contract mismatch, metric source resolve_error from eval/config drift, hardcoded user-specific values.
    Action: call `harden_workflow(group_name?, focus?)`.
 
 2. **Replan — explore: a different strategy for better success.** The current approach is **capped** — even executed perfectly it would not reach the success criteria / primary metric — OR run evidence reveals a clearly better, out-of-the-box approach. This is where you think differently and restructure: change the business work, add a missing capability, change the output artifact or the evidence collected, reorder/redraw step boundaries, take a fundamentally different path. Trigger it when: hardening has already been tried and the metric/success stays short while reliability is healthy (strategy plateau); the path is structurally wrong for the goal; or you can **evidence** a materially better different approach. Keep it disciplined — replan rewrites `plan.json`, so the bet must be evidence-backed, not speculative; do not thrash a working workflow on a hunch.
@@ -72,13 +76,17 @@ Harden and replan have the **same plan tools**; the difference is intent, not ca
    Examples: selectors/tool patterns are obsolete, repeated run failures show a reusable recovery pattern missing from global learnings, recent plan changes made old HOW guidance misleading, or step learning objectives are not reflected in the shared skill.
    Action: call `improve_learnings(mode="auto", instruction="<specific learning cleanup/consolidation instruction>", focus="<brief>")`. Keep workflow-discovered WHAT facts out of learnings; those belong in KB notes or db.
 
-7. **Data / DB contract hygiene** when `db/*.json` has drifted from the plan's writer/consumer steps or from report widgets. `db/`, the plan, and reports are one data-contract triangle — fix the corner that is actually wrong; do not bend db to cover for a broken step or report.
+7. **Skill scoping cleanup** when installed skills are missing from the steps that need them, selected/enabled skills add prompt noise, or reusable skill content is confused with workflow-specific learnings.
+   Examples: a browser/API/document/spreadsheet skill is installed and matches a failing step but `enabled_skills` is empty; a description says "use skill X" but the step does not enable X; a workflow-selected skill is assumed to affect runtime but no step has it in `enabled_skills`; an external skill contains this workflow's selectors/run paths/account names; a step has three broad skills but only one is relevant.
+   Action: use `update_step_config(step_id, enabled_skills=[...])` for step runtime skills and `update_workflow_config(add_skills/remove_skills=[...])` only for builder/workshop selected skills. If the cleanup is workflow-specific HOW, call `improve_learnings(...)` instead of editing an external skill. Do not manually edit `workflow.json`.
+
+8. **Data / DB contract hygiene** when `db/*.json` has drifted from the plan's writer/consumer steps or from report widgets. `db/`, the plan, and reports are one data-contract triangle — fix the corner that is actually wrong; do not bend db to cover for a broken step or report.
    Examples: invalid JSON, broken or undocumented data contracts, write/read drift, missing or stale `db/README.md`, report-incompatible row shapes, duplicate helper files that should be report JSONata queries, base64 blobs that should live under `db/assets/` with reference rows, or fields whose writer steps no longer exist.
    - If the **db shape/schema/contract** itself is wrong while the plan and reports are right, action: call `improve_db(mode="auto", instruction="<specific db contract/schema/report-compatibility fix>", focus="<brief>")`. `improve_db` reads `planning/plan.json` and `reports/report_plan.json` but edits only `db/` to stay compatible with them, and never deletes or rewrites row data unless explicitly asked.
    - If a **writer step produces the wrong data at the source**, that is a Harden (#1) or Replan (#2) signal — fix the contract where it originates, not in db.
    - If the **report layout/wiring** misrepresents otherwise-correct data, that belongs to the manual `/improve-report` flow, not this pass.
 
-8. **No action** when there is no new evidence since the last improvement pass, an unresolved dependency blocks action, or the current issue needs human input. Log that explicitly in builder/improve.html.
+9. **No action** when there is no new evidence since the last improvement pass, an unresolved dependency blocks action, or the current issue needs human input. Log that explicitly in builder/improve.html.
 
 If unclear, call `review_plan({{if .Focus}}focus="{{.Focus}}"{{end}})` first, wait/query until it completes, then classify. Review is diagnosis only; it does not apply changes.
 
@@ -94,6 +102,7 @@ For each enabled group with meaningful evidence in the selected run window:
    - `replan_workflow_from_results(group_name="{group}", focus="<brief>")`, or
    - eval-plan edits plus `validate_evaluation_plan` when the primary issue is measurement quality, or
    - metric tool calls if the only issue is metric definition, or
+   - skill scoping/config changes if the only issue is missing/noisy installed skills, or
    - `improve_kb(...)` / `improve_learnings(...)` / `improve_db(...)` when the only issue is persistent-store hygiene (KB notes, global learnings, or db/data contracts) rather than workflow behavior.
 4. Do not loop. At most one replan per command run. Harden can be scoped per group, but stop once the meaningful evidence-backed fixes are applied.
 
@@ -111,12 +120,12 @@ After each applied change:
    **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
    ```
    Use PARTIALLY RESOLVED or INVALID when appropriate. Never delete or rewrite the original finding.
-2. Ensure builder/improve.html has one structured `improve-decision` fenced JSON block for the action. If the underlying tool does not write one, append one via diff_patch_workspace_file with trigger `improve-workflow`, applied_changes, target_metrics, evidence_paths, linked_review_finding, linked_improve_entry, and action_type (`harden`, `replan`, `eval_update`, `metric_update`, `kb_update`, `learning_update`, `db_update`, or `no_action`).
+2. Ensure builder/improve.html has one structured `improve-decision` fenced JSON block for the action. If the underlying tool does not write one, append one via diff_patch_workspace_file with trigger `improve-workflow`, applied_changes, target_metrics, evidence_paths, linked_review_finding, linked_improve_entry, and action_type (`harden`, `replan`, `eval_update`, `metric_update`, `skill_update`, `kb_update`, `learning_update`, `db_update`, or `no_action`).
 3. Update builder/improve.html with:
    - timestamp
    - evidence reviewed
    - metrics/eval/run findings
-   - action chosen: harden / replan / eval_update / metric_update / kb_update / learning_update / db_update / no_action
+   - action chosen: harden / replan / eval_update / metric_update / skill_update / kb_update / learning_update / db_update / no_action
    - tool call made and why
    - expected metric or success-criteria impact
    - remaining gaps and next hypotheses
@@ -139,7 +148,7 @@ Use this markdown shape for new entries so future scheduled fires can parse the 
 **Findings:**
 - **F-YYYY-MM-DD-NNN (<severity>)** — <finding and evidence>
 
-**Action chosen: <harden|replan|eval_update|metric_update|kb_update|learning_update|db_update|no_action>** — <one-line reason>
+**Action chosen: <harden|replan|eval_update|metric_update|skill_update|kb_update|learning_update|db_update|no_action>** — <one-line reason>
 
 ```improve-decision
 {
@@ -147,7 +156,7 @@ Use this markdown shape for new entries so future scheduled fires can parse the 
   "id": "dec-<workflow>-YYYYMMDD-001",
   "source": "agent",
   "trigger": "improve-workflow",
-  "action_type": "<harden|replan|eval_update|metric_update|kb_update|learning_update|db_update|no_action>",
+  "action_type": "<harden|replan|eval_update|metric_update|skill_update|kb_update|learning_update|db_update|no_action>",
   "applied_changes": [],
   "target_metrics": [],
   "evidence_paths": [],

@@ -1942,7 +1942,7 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 - **Schedule management**: `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, the three scheduling modes (`+"`workflow`"+` vs `+"`workshop+run`"+` vs `+"`workshop+optimizer`"+`), `+"`/auto-improve`"+` exception, infinite-loop prevention rules, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
 {{end}}
 - **Shell & discovery**: `+"`execute_shell_command`"+`, `+"`human_feedback`"+`.
-- **Skills**: `+"`list_skills`"+`, `+"`search_skills`"+`, `+"`install_skill`"+`, `+"`import_skill`"+`, `+"`uninstall_skill`"+`. Skills live at `+"`{{.AbsDocsRoot}}/skills/{folder}/SKILL.md`"+` (workspace root, shared across workflows). Add via `+"`update_workflow_config(add_skills=[...])`"+`; restrict per-step via `+"`update_step_config(step_id, enabled_skills=[...])`"+`.
+- **Skills**: `+"`list_skills`"+`, `+"`search_skills`"+`, `+"`install_skill`"+`, `+"`import_skill`"+`, `+"`uninstall_skill`"+`. Skills live at `+"`{{.AbsDocsRoot}}/skills/{folder}/SKILL.md`"+` (workspace root, shared across workflows). `+"`update_workflow_config(add_skills=[...])`"+` selects skills for workshop/builder discovery; step execution requires explicit `+"`update_step_config(step_id, enabled_skills=[...])`"+`. Shared workflow-specific HOW belongs in `+"`learnings/_global/SKILL.md`"+`.
 - **Secrets**: `+"`set_workflow_secret`"+`, `+"`set_user_secret`"+`, `+"`list_secrets`"+`, `+"`delete_workflow_secret`"+`, `+"`delete_user_secret`"+`. **Two-step flow**: (1) `+"`set_workflow_secret(name, value)`"+` then (2) `+"`update_workflow_config(add_secrets=[name])`"+`. Doing only step 2 attaches an orphan name and `+"`$SECRET_<NAME>`"+` is empty at runtime. Three buckets (workflow / user / global). Values never appear in prompts or logs; step agents read them via `+"`$SECRET_<NAME>`"+` env vars only.
 
 ## File layout
@@ -3471,7 +3471,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_step_config",
-		"Update step_config.json for a specific workflow or evaluation step. The tool auto-detects whether step_id belongs to planning/plan.json or evaluation/evaluation_plan.json, then writes planning/step_config.json or evaluation/step_config.json accordingly. Changes take effect on the next execute_step or run_full_evaluation call. To REMOVE a field (so the step falls back to preset/default behavior), list its name in clear_fields — sending null in a value field does NOT clear; it's ignored.",
+		"Update step_config.json for a specific workflow or evaluation step. The tool auto-detects whether step_id belongs to planning/plan.json or evaluation/evaluation_plan.json, then writes planning/step_config.json or evaluation/step_config.json accordingly. Changes take effect on the next execute_step or run_full_evaluation call. To REMOVE a field (so the step falls back to preset/default behavior where that field has a fallback, or removes the explicit setting otherwise), list its name in clear_fields — sending null in a value field does NOT clear; it's ignored.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3482,7 +3482,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"clear_fields": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Field names to CLEAR (remove from step_config.json) so the step inherits preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, coding_agent_tmux_lifecycle, transport, description_reviewed, knowledgebase_access, knowledgebase_contribution, knowledgebase_write_method, learnings_access, learnings_write_method, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
+					"description": "Field names to CLEAR (remove from step_config.json) so the step uses preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Clearing enabled_skills removes explicit step skills; step execution does not inherit workflow-selected skills, so set enabled_skills explicitly when the step needs installed skills. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, coding_agent_tmux_lifecycle, transport, description_reviewed, knowledgebase_access, knowledgebase_contribution, knowledgebase_write_method, learnings_access, learnings_write_method, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
 				},
 				"servers": map[string]interface{}{
 					"type":        "array",
@@ -3514,7 +3514,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"enabled_skills": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Skill folder names to enable for this step (overrides workflow-level skills). Use list_skills to see installed skills and get_workflow_config to see the workflow's currently selected skills. Set to empty array to use workflow defaults.",
+					"description": "Skill folder names to enable for this step. Step execution only receives skills listed here; workflow-level selected skills are builder/workshop context and do not cascade into runtime steps. Use list_skills to see installed skills and get_workflow_config to see the workflow's currently selected skills for discovery/reference.",
 				},
 				"knowledgebase_access": map[string]interface{}{
 					"type":        "string",
@@ -8287,7 +8287,7 @@ This is a **read-only review**:
 1. **Read-Only**: Do NOT modify any files.
 2. **Findings first**: Lead with concrete problems, ordered by severity. Do not hide important issues under summaries.
 3. **Be specific**: Always reference exact step IDs, and nested IDs as `+"`parent-id > sub-id`"+`.
-4. **Review current decisions**: Critique the decisions that exist now: step boundaries, step types, mode declarations, context dependencies, context outputs, validation shape, portability, eval coverage, learning configuration, KB configuration, db schema contracts, report wiring, and variables.
+4. **Review current decisions**: Critique the decisions that exist now: step boundaries, step types, mode declarations, context dependencies, context outputs, validation shape, portability, eval coverage, skill selection/scoping, learning configuration, KB configuration, db schema contracts, report wiring, and variables.
 5. **Challenge assumptions**: If a decision appears to depend on unstated assumptions, call that out explicitly.
 6. **Use evidence when available**: If a target run folder is provided, use run outputs/logs/eval reports to test whether the current workflow decisions were actually justified.
 7. **Do not drift into full redesign**: You may suggest a concrete correction, but the primary task is to review and explain what is wrong with the current decision.
@@ -8296,7 +8296,8 @@ This is a **read-only review**:
 10. **Check learning discipline**: A step should write learnings only when it has reusable HOW-to-run knowledge worth capturing across runs, and it must have a concrete `+"`"+`learning_objective`+"`"+`. `+"`"+`learnings_write_method`+"`"+` is compatibility-only; do not add it to new plans. Browser-based steps should not be promoted to `+"`"+`scripted`+"`"+`. `+"`"+`scripted`+"`"+` should appear only after explicit user request, highly deterministic behavior, 10+ scenario-covering successful runs, and no recent harden/replan pass still changing the behavior.
 11. **Check KB discipline**: KB writes require a useful `+"`"+`knowledgebase_contribution`+"`"+`, correct read/write access, and preferably `+"`"+`knowledgebase_write_method=\"direct\"`+"`"+`. `+"`knowledgebase/context/`"+` should contain user-supplied runtime context; `+"`knowledgebase/notes/`"+` should contain workflow-discovered durable narrative observations, not execution recipes, raw rows, or volatile run state. If `+"`"+`knowledgebase/notes/_index.json`+"`"+` exists, it must point to coherent topic notes.
 12. **Check db discipline**: `+"`"+`db/*.json`+"`"+` should look like a small database surface, not loose dumps: documented in `+"`"+`db/README.md`+"`"+`, stable JSON shape, primary key, merge/upsert rule, writer ownership, group separation, compatible report consumers, and correct references to durable assets under `+"`db/assets/`"+`.
-13. **Check lock consistency**: Three locks freeze workflow state — `+"`"+`lock_learnings`+"`"+` (per-step: freezes SKILL.md writes), `+"`"+`lock_code`+"`"+` (per-step, scripted only: freezes `+"`"+`learnings/{step-id}/main.py`+"`"+` against fix-loop rewrites), `+"`"+`lock_knowledgebase`+"`"+` (workflow-level: freezes post-step KB update agent). Flag inconsistency like `+"`"+`lock_code=true`+"`"+` without the scripted evidence gate or `+"`"+`lock_learnings=true`+"`"+` with stale/mismatched learning metadata. If a step description has meaningfully changed since the last review, recommend clearing `+"`"+`description_reviewed`+"`"+` and re-reviewing before keeping the locks.
+13. **Check skill discipline**: Installed skills live under `+"`skills/{folder}/SKILL.md`"+` and are reusable capability instructions shared across workflows. Review workflow-selected skills and per-step `+"`enabled_skills`"+` against the actual plan. Flag missing needed skills, selected-but-unused skills, descriptions that reference skills not enabled for the execution agent, malformed skill folders, and skills that duplicate workflow-specific learnings or contain workflow-specific secrets/paths/run state. Do not assume workflow-level selected skills automatically reach step execution; verify step-level `+"`enabled_skills`"+` when runtime requires explicit scoping.
+14. **Check lock consistency**: Three locks freeze workflow state — `+"`"+`lock_learnings`+"`"+` (per-step: freezes SKILL.md writes), `+"`"+`lock_code`+"`"+` (per-step, scripted only: freezes `+"`"+`learnings/{step-id}/main.py`+"`"+` against fix-loop rewrites), `+"`"+`lock_knowledgebase`+"`"+` (workflow-level: freezes post-step KB update agent). Flag inconsistency like `+"`"+`lock_code=true`+"`"+` without the scripted evidence gate or `+"`"+`lock_learnings=true`+"`"+` with stale/mismatched learning metadata. If a step description has meaningfully changed since the last review, recommend clearing `+"`"+`description_reviewed`+"`"+` and re-reviewing before keeping the locks.
 
 ## STEP BOUNDARY STANDARD
 
@@ -8313,6 +8314,7 @@ Boundary truth: many tool calls can belong in one step; many durable contracts s
 - **Workspace**: {{.WorkspacePath}}
 {{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ NOT SET — treat missing objective as a top-level review finding{{end}}
 {{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ NOT SET — treat missing success criteria as a top-level review finding{{end}}
+{{if .WorkflowSelectedSkills}}- **Workflow-Selected Skills**: {{.WorkflowSelectedSkills}}{{else}}- **Workflow-Selected Skills**: none configured{{end}}
 {{if .TargetRunFolder}}- **Target Run Folder**: {{.TargetRunFolder}}{{end}}
 
 ## PATH DISCIPLINE
@@ -8333,6 +8335,7 @@ Read `+"`evaluation/evaluation_plan.json`"+` using shell commands if it exists. 
 ## DEPENDENT ARTIFACTS
 Review these files/directories when present. Stay read-only:
 - `+"`variables/variables.json`"+`: check whether plan-visible hardcoded values should be variables and whether required variables are declared.
+- `+"`skills/{folder}/SKILL.md`"+`: read every skill selected at workflow level or enabled per step. Check whether the skill is actually needed, scoped to the right step(s), and not duplicating workflow-specific learnings.
 - `+"`learnings/_global/SKILL.md`"+`: check whether HOW-to-run learnings match current step descriptions and do not duplicate task instructions.
 - `+"`learnings/{step-id}/.learning_metadata.json`"+`: inspect for every step with learning writes or `+"`lock_learnings=true`"+`. Check `+"`successful_runs`"+`, `+"`description_hash_runs`"+`, and latest detection history. Flag locks that look stale, lack a clear builder/user rationale in review_notes, or contradict the current step description/config.
 - `+"`learnings/{step-id}/main.py`"+` and `+"`learnings/{step-id}/script_metadata.json`"+`: inspect for scripted steps. For `+"`agentic`"+` steps, verify `+"`learnings/{step-id}/main.py`"+` does NOT exist; if it does, flag it as a stale artifact that should be deleted because agentic never runs or maintains persistent main.py.
@@ -8365,11 +8368,12 @@ Review the plan through these lenses:
 5. **Context flow** — Are dependencies/output contracts minimal, correct, and sufficient? Are there artificial file handoffs or missing dependencies?
 6. **Validation & evaluation** — Is the workflow validating and evaluating the things that actually matter for success?
 7. **Portability & secrecy** — Does the current plan leak secrets or overfit to one user, machine, run, or folder structure?
-8. **Learning quality** — For every learning-enabled step, is there a good reason, a concrete objective, direct write method unless explicitly requested otherwise, and no stale/stretched learning scope?
-9. **KB quality** — Are KB producer/consumer steps correctly declared, and do notes/index files contain durable domain knowledge rather than run logs or execution recipes?
-10. **DB quality** — Are `+"`"+`db/*.json`+"`"+` files documented, keyed, merge-safe, group-safe, connected to report consumers, and correctly referencing durable files under `+"`db/assets/`"+` when assets exist?
-11. **Report wiring** — Are report widgets backed by durable sources with matching fields and clear ownership? Are widgets using the JSONata `+"`query`"+` feature where it would avoid helper files like `+"`*_rows.json`"+`, `+"`*_summary.json`"+`, `+"`flat_*.json`"+`, or a `+"`step-generate-report`"+` flatten step?
-12. **Operational risk** — Which current choices are most likely to fail, confuse the agent, or create maintenance burden later?
+8. **Skill quality** — Are installed/selected skills the right reusable capabilities for the steps, scoped correctly via `+"`enabled_skills`"+` where needed, and free of workflow-specific learned state that belongs in `+"`learnings/_global/`"+`?
+9. **Learning quality** — For every learning-enabled step, is there a good reason, a concrete objective, direct write method unless explicitly requested otherwise, and no stale/stretched learning scope?
+10. **KB quality** — Are KB producer/consumer steps correctly declared, and do notes/index files contain durable domain knowledge rather than run logs or execution recipes?
+11. **DB quality** — Are `+"`"+`db/*.json`+"`"+` files documented, keyed, merge-safe, group-safe, connected to report consumers, and correctly referencing durable files under `+"`db/assets/`"+` when assets exist?
+12. **Report wiring** — Are report widgets backed by durable sources with matching fields and clear ownership? Are widgets using the JSONata `+"`query`"+` feature where it would avoid helper files like `+"`*_rows.json`"+`, `+"`*_summary.json`"+`, `+"`flat_*.json`"+`, or a `+"`step-generate-report`"+` flatten step?
+13. **Operational risk** — Which current choices are most likely to fail, confuse the agent, or create maintenance burden later?
 
 ## OUTPUT FORMAT
 
@@ -8379,7 +8383,7 @@ List only real findings, ordered by severity. If there are none, say so explicit
 For each finding use:
 - **[severity: high|medium|low] [actual-step-id or plan-wide]**: <what decision is weak or risky>
   - **Why this is a problem**: <impact on objective / success criteria / maintainability>
-  - **Evidence**: <plan field, mode setting, step config, learning/KB/db/report/eval artifact, run evidence, hardcoded value, etc.>
+  - **Evidence**: <plan field, mode setting, step config, skill selection/SKILL.md, learning/KB/db/report/eval artifact, run evidence, hardcoded value, etc.>
   - **Better decision**: <what decision should likely replace it, briefly>
 
 ### Decisions That Look Sound
@@ -9173,6 +9177,7 @@ Use this hierarchy before fixing:
 
 Workflows have three separate stores that survive across runs. Don't move content between them sideways when fixing:
 - **learnings/** — HOW to run (selectors, tool patterns, quirks). Managed by the learning agent; injected as '## Skill' into every step's prompt.
+- **skills/** — reusable external capability instructions installed at the workspace root. Workflow-selected skills help the builder discover capabilities; runtime step agents receive only the skill folders explicitly listed in that step's `+"`enabled_skills`"+`.
 - **knowledgebase/context/** — user-supplied runtime business context (rules, preferences, constraints, assumptions, examples). Read-only for harden/optimizer unless the user explicitly asks to curate captured context.
 - **knowledgebase/notes/** — per-topic narrative markdown the workflow has built up about its subject matter (entity-scoped or `+"`"+`pattern-*`+"`"+` topics). Plus `+"`"+`notes/_index.json`+"`"+` as a registry. Normally written by step agents in direct-write mode; written by the post-step KB update agent only when the user explicitly asked for agent mode.
 - **db/*.json** — workflow state/results (rows produced or consumed this run). Step-owned; upsert-by-key; never overwrite wholesale.
@@ -9188,7 +9193,7 @@ Per-step KB config:
 - Description/step edits: `+"`update_regular_step`"+`, `+"`update_message_sequence_step`"+`, `+"`update_routing_step`"+`, `+"`update_human_input_step`"+`, `+"`update_todo_task_step`"+`, `+"`update_todo_task_route`"+`
 - Structural edits: `+"`add_regular_step`"+`, `+"`add_message_sequence_step`"+`, `+"`add_routing_step`"+`, `+"`add_human_input_step`"+`, `+"`add_todo_task_step`"+`, `+"`add_todo_task_route`"+`, `+"`delete_plan_steps`"+`, `+"`delete_todo_task_route`"+`
 - Cleanup stale step configs: `+"`cleanup_orphan_step_configs`"+`
-- Validation/config edits: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`
+- Validation/config edits: `+"`update_validation_schema`"+`, `+"`update_step_config`"+`, `+"`update_workflow_config`"+`
 
 Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are intentionally file-authored, such as `+"`learnings/_global/SKILL.md`"+`, scripted `+"`main.py`"+`, KB notes, db schema docs, report plans, `+"`builder/improve.html`"+`, or `+"`builder/review.html`"+`.
 
@@ -9199,7 +9204,8 @@ Use `+"`diff_patch_workspace_file`"+` only for non-plan artifacts that are inten
    a. **Pre-validation rules** — Add json_checks to validation_schema that would have CAUGHT this failure before evaluation. Use update_validation_schema.
    b. **Description tightening** — Make the step description more explicit about what the agent must/must not do. Use plan modification tools (`+"`update_regular_step`"+`, `+"`update_todo_task_route`"+`, etc.); never patch `+"`planning/plan.json`"+` by file.
    c. **Code/learning fixes** — If the step uses `+"`scripted`"+` and has `+"`learnings/{step-id}/main.py`"+`, patch the script directly with diff_patch_workspace_file. For `+"`agentic`"+` steps, fix the description, validation schema, tool/server config, or global learnings instead; agentic does not write a persistent main.py. If a `+"`agentic`"+` step still has `+"`learnings/{step-id}/main.py`"+`, delete that stale script (and clear lock_code if set) rather than patching it — leaving it behind creates drift and confuses future reviewers. Update `+"`learnings/_global/SKILL.md`"+` for supplemental notes when the fix is reusable HOW-knowledge. Every patch MUST follow the authoring rules below — violations will regress at the next learning pass.
-   d. **KB config fixes** — If the failure stems from a step consuming KB facts that don't exist (bad `+"`"+`knowledgebase_access`+"`"+`, or missing `+"`"+`knowledgebase_contribution`+"`"+` on an upstream producer step), use update_step_config to correct it.
+   d. **Skill config fixes** — If the failure stems from missing reusable capability guidance, use `+"`list_skills`"+` and read matching `+"`skills/{folder}/SKILL.md`"+`. Enable the skill on the affected step with `+"`update_step_config(step_id, enabled_skills=[...])`"+`; do not assume workflow-selected skills cascade into runtime steps. If a selected/enabled skill is irrelevant, malformed, or duplicating workflow-specific learnings, remove or re-scope it. Put workflow-specific HOW in `+"`learnings/_global/SKILL.md`"+`, not in an external skill.
+   e. **KB config fixes** — If the failure stems from a step consuming KB facts that don't exist (bad `+"`"+`knowledgebase_access`+"`"+`, or missing `+"`"+`knowledgebase_contribution`+"`"+` on an upstream producer step), use update_step_config to correct it.
 
 {{.MainPyAuthoringRules}}
 4. **Structural fixes are allowed when evidence demands them** — If the failure is caused by a missing step, obsolete step, wrong boundary, or bad ordering, use the plan modification tools (`+"`add_regular_step`"+`, `+"`add_todo_task_route`"+`, `+"`update_*`"+`, `+"`delete_*`"+`) to apply the smallest evidence-backed structural fix. If the exact plan edit cannot be expressed by the available tools, stop and report the limitation instead of patching `+"`planning/plan.json`"+` by file. Use `+"`replan_workflow_from_results`"+` only when the run/eval/metric evidence shows the workflow path itself is misaligned with the objective or success criteria and needs broader redesign across multiple steps/routes.
@@ -9221,22 +9227,28 @@ Run this sweep on every harden pass. For a single-group harden, use that group's
    - Steps with `+"`learnings_access=\"read-write\"`"+` need a concrete `+"`learning_objective`"+`. `+"`learnings_write_method`"+` is compatibility-only and should be omitted from new plans.
    - For `+"`lock_learnings=true`"+`, read `+"`learnings/{step-id}/.learning_metadata.json`"+` and review_notes. Keep the lock only when a builder/user rationale is clear and still matches the current step description; otherwise unlock or correct config with review_notes.
    - For `+"`scripted`"+` steps, avoid duplicate global learning writes unless there is HOW knowledge outside the script.
-3. **Knowledgebase**
+3. **Skills**
+   - Read `+"`get_workflow_config`"+` and `+"`planning/step_config.json`"+` to compare workflow-selected skills with per-step `+"`enabled_skills`"+`. Use `+"`list_skills`"+` to verify every selected/enabled skill exists, then read each relevant `+"`skills/{folder}/SKILL.md`"+`.
+   - A runtime step that needs an installed skill must list it in `+"`enabled_skills`"+`. Workflow-selected skills alone are not enough for execution.
+   - If a failing step is using ad-hoc description text for a capability already covered by an installed skill, enable the skill on that step and simplify only the duplicated HOW text; keep the task/output contract explicit in the description.
+   - If a skill is selected/enabled but no current step needs it, remove it from the workflow or the step to reduce prompt noise.
+   - If a skill contains workflow-specific selectors, account names, run paths, current plan steps, or learned quirks from this workflow, move that content into `+"`learnings/_global/`"+` via `+"`improve_learnings`"+` or a focused learning patch, and leave the external skill reusable.
+4. **Knowledgebase**
    - If a step needs user-supplied context from `+"`knowledgebase/context/context.md`"+`, it must have KB read access AND its step description must name the relevant section/path so the runtime agent knows to read and apply it. Fix both together.
    - KB write/read-write access requires a useful `+"`knowledgebase_contribution`"+`.
    - Prefer `+"`knowledgebase_write_method=\"direct\"`"+`; use `+"`agent`"+` only when the user explicitly requested a separate KB writer/reviewer.
    - KB notes should contain workflow-discovered durable domain observations, not raw rows, run logs, execution recipes, or user-owned runtime context that belongs under `+"`knowledgebase/context/`"+`.
-4. **Database**
+5. **Database**
    - Any step writing `+"`db/*.json`"+` must reference the target file and its schema contract in `+"`db/README.md`"+`.
    - `+"`db/*.json`"+` files need stable shape, primary key, merge/upsert rule, writer ownership, and group separation where groups can run.
    - Durable images, PDFs, screenshots, audio, or other media/files must live under `+"`db/assets/`"+` with references and metadata in `+"`db/*.json`"+`; do not embed large base64 blobs in JSON.
    - If a failing/touched step overwrites rows wholesale or writes report data only to run folders, fix the description/code/config so it writes durable, keyed db rows.
-5. **Reports**
+6. **Reports**
    - `+"`reports/report_plan.json`"+` widgets should source durable `+"`db/*.json`"+`, `+"`db/assets/`"+` references, KB context/notes, or built-in APIs, not volatile `+"`runs/`"+` paths.
    - Prefer widget-level JSONata `+"`query`"+` expressions over derived report helper files. The report pipeline is `+"`source/sources -> query -> path -> filter -> render`"+`; with `+"`sources`"+`, the query input is an alias-keyed object so one widget can join multiple `+"`db/*.json`"+` files. When `+"`query`"+` returns the final array/scalar, leave `+"`path`"+` empty or `+"`$`"+`.
    - If a widget reads `+"`*_rows.json`"+`, `+"`*_summary.json`"+`, `+"`flat_*.json`"+`, or depends on a `+"`step-generate-report`"+` / flatten-data step, collapse it to the canonical `+"`db/*.json`"+` source plus `+"`query`"+` when the transformation is deterministic and does not need a workflow step.
    - When a harden fix changes output/db field names, update report wiring or flag the required report change.
-6. **Evaluation and variables**
+7. **Evaluation and variables**
    - If eval missed a clear output/schema failure, add or tighten pre-validation and, when appropriate, evaluation coverage.
    - User-specific values belong in `+"`variables/variables.json`"+` / secrets, not descriptions, scripts, SKILL.md, KB, db rows, or reports.
 
@@ -9246,6 +9258,7 @@ Run this sweep on every harden pass. For a single-group harden, use that group's
 - **Latest Iteration**: {{.TargetRunFolder}}
 {{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{end}}
 {{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{end}}
+{{if .WorkflowSelectedSkills}}- **Workflow-Selected Skills**: {{.WorkflowSelectedSkills}}{{else}}- **Workflow-Selected Skills**: none configured{{end}}
 
 ## PATH DISCIPLINE
 
@@ -9333,6 +9346,7 @@ Analysis rules:
 |------|----------|
 | `+"`planning/plan.json`"+` | Step definitions, descriptions, validation schemas |
 | `+"`planning/step_config.json`"+` | Per-step config overrides |
+| `+"`skills/{folder}/SKILL.md`"+` | Installed reusable skills selected at workflow level or enabled per step |
 | `+"`variables/variables.json`"+` | Variable groups and user-specific values that descriptions/scripts should reference by placeholder |
 | `+"`knowledgebase/notes/_index.json`"+` | KB topic registry; read this before reading topic notes |
 | `+"`knowledgebase/notes/*.md`"+` | Durable narrative domain observations |
@@ -9368,7 +9382,7 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
 
 	3. **Build a failure list for {{.GroupName}}** — per-step pass/fail with failure reasons across selected iterations. No cross-group aggregation.
 
-	4. **Run the best-practice sweep** — read plan/config/learnings metadata/KB/db/report/eval/variables artifacts and fix hard invariant violations using the rules above.{{else}}1. **Discover current groups** — List the subdirectories under `+"`runs/{{.TargetRunFolder}}/`"+` to find current group folders (e.g., vikas, rohit, atul). Ignore `+"`run_metadata.json`"+`. Then select older retained iterations using the evidence-window rules.
+4. **Run the best-practice sweep** — read plan/config/skills/learnings metadata/KB/db/report/eval/variables artifacts and fix hard invariant violations using the rules above.{{else}}1. **Discover current groups** — List the subdirectories under `+"`runs/{{.TargetRunFolder}}/`"+` to find current group folders (e.g., vikas, rohit, atul). Ignore `+"`run_metadata.json`"+`. Then select older retained iterations using the evidence-window rules.
 
 	2. **Read evaluation reports** — For each current group and selected iteration, read:
 	   - `+"`evaluation/runs/{iteration}/{group}/evaluation_report.json`"+`
@@ -9379,7 +9393,7 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
 	3. **Build a failure map** — For each step, aggregate failures across all current groups and selected iterations:
 	   | Step ID | Iterations reviewed | Groups that passed | Groups that failed | Failure reasons | Trend/regression note |{{end}}
 
-4. **Run the best-practice sweep** — read plan/config/learnings metadata/KB/db/report/eval/variables artifacts and fix hard invariant violations using the rules above.
+4. **Run the best-practice sweep** — read plan/config/skills/learnings metadata/KB/db/report/eval/variables artifacts and fix hard invariant violations using the rules above.
 
 5. **For each failing step** (ordered by failure count, worst first):
    a. Read the current step description, validation_schema, learnings, and main.py (if scripted)
@@ -9402,6 +9416,7 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
    - Steps hardened (with specific changes made)
    - Best-practice violations cleaned up
    - Best-practice concerns intentionally left as findings only
+   - Skill scoping changes made or left as recommendations
    - Steps with learnings/code locks updated
    - Structural fixes applied, or broader success-criteria/metric alignment redesign still recommended for replan_workflow_from_results
    - Remaining risk areas
@@ -9419,7 +9434,7 @@ When adding pre-validation rules, follow this priority:
 Always prefer specific checks over generic ones. A check that catches the actual failure is worth more than ten generic existence checks.
 `)
 
-var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from retained run/evaluation evidence. Start with latest "{{.TargetRunFolder}}"{{if .GroupName}}, scoped to group "{{.GroupName}}" only{{end}}, then include older iterations selected by improve.html / decisions / changelog timestamps when they show relevant trends, regressions, or before-after evidence. {{if .GroupName}}Read this group's eval reports across the selected run window{{else}}Read all current group eval reports across the selected run window{{end}}, identify every failing or regressing step, run the required best-practice sweep over plan/config/learnings metadata/KB/db/reports/variables/eval artifacts, and apply targeted fixes (pre-validation rules, description tightening via workflow plan tools, stale-script cleanup, config fixes, code patches for scripted). For any step that is agentic and has learnings/{step-id}/main.py, remove that stale main.py and clear lock_code if set. Do not patch planning/plan.json directly. Update review_notes and locks only when the evidence supports them. Summarize all changes made and any best-practice findings left for later.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from retained run/evaluation evidence. Start with latest "{{.TargetRunFolder}}"{{if .GroupName}}, scoped to group "{{.GroupName}}" only{{end}}, then include older iterations selected by improve.html / decisions / changelog timestamps when they show relevant trends, regressions, or before-after evidence. {{if .GroupName}}Read this group's eval reports across the selected run window{{else}}Read all current group eval reports across the selected run window{{end}}, identify every failing or regressing step, run the required best-practice sweep over plan/config/skills/learnings metadata/KB/db/reports/variables/eval artifacts, and apply targeted fixes (pre-validation rules, description tightening via workflow plan tools, skill scoping via update_step_config, stale-script cleanup, config fixes, code patches for scripted). For any step that is agentic and has learnings/{step-id}/main.py, remove that stale main.py and clear lock_code if set. Do not patch planning/plan.json directly. Update review_notes and locks only when the evidence supports them. Summarize all changes made and any best-practice findings left for later.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 // HardenWorkflowAgent applies eval-driven fixes to failing steps
 type HardenWorkflowAgent struct {
@@ -9755,6 +9770,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 			kbAccess := ""
 			kbContribution := ""
 			kbWriteMethod := ""
+			enabledSkills := []string{}
 			reviewNotes := ""
 			descriptionReviewed := false
 			if sc.AgentConfigs != nil {
@@ -9778,12 +9794,13 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 				kbAccess = sc.AgentConfigs.KnowledgebaseAccess
 				kbContribution = sc.AgentConfigs.KnowledgebaseContribution
 				kbWriteMethod = resolveKnowledgebaseWriteMethod(sc.AgentConfigs)
+				enabledSkills = append([]string(nil), sc.AgentConfigs.EnabledSkills...)
 				reviewNotes = sc.AgentConfigs.ReviewNotes
 				if sc.AgentConfigs.DescriptionReviewed != nil {
 					descriptionReviewed = *sc.AgentConfigs.DescriptionReviewed
 				}
 			}
-			sb.WriteString(fmt.Sprintf("- %s: mode=%s, declared_mode=%s, successful_runs=%d, lock_learnings=%v, lock_code=%v, learnings_access=%s, learning_objective=%q, learnings_write_method=%s, learning_opted_in=%v, kb_access=%s, kb_contribution=%q, kb_write_method=%s, description_reviewed=%v, review_notes=%q\n", sc.ID, mode, declaredMode, successfulRuns, lockLearnings, lockCode, learningAccess, learningObjective, learningsWriteMethod, learningOptedIn, kbAccess, kbContribution, kbWriteMethod, descriptionReviewed, reviewNotes))
+			sb.WriteString(fmt.Sprintf("- %s: mode=%s, declared_mode=%s, successful_runs=%d, lock_learnings=%v, lock_code=%v, enabled_skills=%v, learnings_access=%s, learning_objective=%q, learnings_write_method=%s, learning_opted_in=%v, kb_access=%s, kb_contribution=%q, kb_write_method=%s, description_reviewed=%v, review_notes=%q\n", sc.ID, mode, declaredMode, successfulRuns, lockLearnings, lockCode, enabledSkills, learningAccess, learningObjective, learningsWriteMethod, learningOptedIn, kbAccess, kbContribution, kbWriteMethod, descriptionReviewed, reviewNotes))
 		}
 		stepConfigSummary = sb.String()
 	}
@@ -9836,6 +9853,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 		return "", fmt.Errorf("failed to create review_plan agent: %w", err)
 	}
 
+	workflowSelectedSkills := strings.Join(iwm.controller.GetSelectedSkills(), ", ")
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
 		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
@@ -9844,6 +9862,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 		"StepConfigSummary":       stepConfigSummary,
 		"WorkflowObjective":       workflowObjective,
 		"WorkflowSuccessCriteria": workflowSuccessCriteria,
+		"WorkflowSelectedSkills":  workflowSelectedSkills,
 		"Focus":                   focus,
 		"SessionID":               iwm.sessionID,
 		"WorkflowID":              iwm.workflowID,
@@ -10590,6 +10609,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 			kbAccess := ""
 			kbContribution := ""
 			kbWriteMethod := ""
+			enabledSkills := []string{}
 			reviewNotes := ""
 			if sc.AgentConfigs != nil {
 				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
@@ -10611,9 +10631,10 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 				kbAccess = sc.AgentConfigs.KnowledgebaseAccess
 				kbContribution = sc.AgentConfigs.KnowledgebaseContribution
 				kbWriteMethod = resolveKnowledgebaseWriteMethod(sc.AgentConfigs)
+				enabledSkills = append([]string(nil), sc.AgentConfigs.EnabledSkills...)
 				reviewNotes = sc.AgentConfigs.ReviewNotes
 			}
-			sb.WriteString(fmt.Sprintf("- %s: mode=%s, declared_mode=%s, successful_runs=%d, lock_learnings=%v, lock_code=%v, learnings_access=%s, learning_objective=%q, learnings_write_method=%s, kb_access=%s, kb_contribution=%q, kb_write_method=%s, review_notes=%q\n", sc.ID, mode, declaredMode, successfulRuns, lockLearnings, lockCode, learningsAccess, learningObjective, learningsWriteMethod, kbAccess, kbContribution, kbWriteMethod, reviewNotes))
+			sb.WriteString(fmt.Sprintf("- %s: mode=%s, declared_mode=%s, successful_runs=%d, lock_learnings=%v, lock_code=%v, enabled_skills=%v, learnings_access=%s, learning_objective=%q, learnings_write_method=%s, kb_access=%s, kb_contribution=%q, kb_write_method=%s, review_notes=%q\n", sc.ID, mode, declaredMode, successfulRuns, lockLearnings, lockCode, enabledSkills, learningsAccess, learningObjective, learningsWriteMethod, kbAccess, kbContribution, kbWriteMethod, reviewNotes))
 		}
 		stepConfigSummary = sb.String()
 	}
@@ -10665,6 +10686,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 	}
 	iwm.registerWorkshopMutationToolsForToolAgent(agent, workspacePath, "harden-workflow", allowedToolNames, logger)
 
+	workflowSelectedSkills := strings.Join(iwm.controller.GetSelectedSkills(), ", ")
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
 		"AbsWorkspacePath":        absPromptWorkspacePath(workspacePath),
@@ -10674,6 +10696,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 		"StepConfigSummary":       stepConfigSummary,
 		"WorkflowObjective":       workflowObjective,
 		"WorkflowSuccessCriteria": workflowSuccessCriteria,
+		"WorkflowSelectedSkills":  workflowSelectedSkills,
 		"Focus":                   focus,
 		"SessionID":               iwm.sessionID,
 		"WorkflowID":              iwm.workflowID,

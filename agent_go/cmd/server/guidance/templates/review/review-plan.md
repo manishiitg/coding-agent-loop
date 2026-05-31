@@ -1,4 +1,4 @@
-Critical audit of the workflow design — the comprehensive review. Where /design-flow asks "what would a designer make better," this asks "what's wrong, weak, risky, stale, or unjustified, and which steps or artifacts need attention." Review the plan plus the dependent artifacts that make it executable: step config, learnings, saved scripts, KB notes, db JSON files, report wiring, variables, and evaluation coverage.{{if eq .WorkshopMode "run"}} In Run mode, return findings in chat only; do not write files.{{else}} Findings go to builder/review.html as recommendations; nothing is applied here.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Critical audit of the workflow design — the comprehensive review. Where /design-flow asks "what would a designer make better," this asks "what's wrong, weak, risky, stale, or unjustified, and which steps or artifacts need attention." Review the plan plus the dependent artifacts that make it executable: step config, skills, learnings, saved scripts, KB notes, db JSON files, report wiring, variables, and evaluation coverage.{{if eq .WorkshopMode "run"}} In Run mode, return findings in chat only; do not write files.{{else}} Findings go to builder/review.html as recommendations; nothing is applied here.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 Before writing builder/review.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Findings use .badge.fail for CRITICAL, .badge.warn for WARNING, .badge.pass for INFO/resolved. The file is regenerated (not appended) each run — read the existing file first to carry forward unresolved findings.
 
@@ -13,9 +13,9 @@ PHASE 1 — STRUCTURAL ANALYSIS
 3. Read its output carefully. Group findings by severity: CRITICAL (broken structure, missing required fields, contradictions vs soul.md), WARNING (questionable choices that need defense), INFO (style/minor).
 4. Compare against soul.md's objective + success_criteria explicitly: for each weak structural choice, name which criterion it fails or under-serves.
 
-PHASE 2 — PER-STEP DESCRIPTION AUDIT
+PHASE 2 — PER-STEP DESCRIPTION AND SKILL-FIT AUDIT
 
-For every executable step in plan.json, read the description. This includes top-level steps, todo_task routes, routing routes, and referenced orphan_steps. Read learnings/_global/SKILL.md once as the shared HOW-to-run source. For steps with learning writes or locked learning, inspect learnings/{step-id}/.learning_metadata.json when present. For scripted steps, inspect learnings/{step-id}/main.py when present. For agentic steps, verify learnings/{step-id}/main.py does not exist; if it does, flag it for deletion as a stale script. Apply each lens; skip a lens when it doesn't fire.
+For every executable step in plan.json, read the description. This includes top-level steps, todo_task routes, routing routes, and referenced orphan_steps. Read learnings/_global/SKILL.md once as the shared HOW-to-run source. Use get_workflow_config and list_skills to inspect workflow-selected skills and installed skills; read the SKILL.md for every skill selected at workflow level or enabled per step. For steps with learning writes or locked learning, inspect learnings/{step-id}/.learning_metadata.json when present. For scripted steps, inspect learnings/{step-id}/main.py when present. For agentic steps, verify learnings/{step-id}/main.py does not exist; if it does, flag it for deletion as a stale script. Apply each lens; skip a lens when it doesn't fire.
 
 LENS 0 — Durable Boundary Fit
 - **Do not flag size alone**: modern agents can handle long context and many tool calls. A step is not wrong just because it performs many screen actions, file reads, API calls, or small transformations.
@@ -28,6 +28,14 @@ LENS A — Description vs Skill Confusion
 - **Skill contains task instructions**: SKILL.md should capture *reusable patterns and pitfalls discovered during execution*, not restate what the step is supposed to do. If the skill reads like a task description, it's confused.
 - **Duplication**: same guidance appearing in both description and skill — pick one home.
 - **Description defers to skill**: phrases like "follow the skill" or "see learnings" instead of giving clear instructions.
+
+LENS A2 — Installed / Selected Skill Fit
+- **Needed skill missing**: if an installed skill clearly matches a step's task (for example browser/site skill, API integration skill, document/spreadsheet/media/domain skill) but the step has no matching enabled_skills and the description relies on ad-hoc instructions, flag it. Recommendation should name the skill folder and whether to enable it per step.
+- **Enabled skill unused or noisy**: if a workflow-selected or step-enabled skill has no clear step consumer, creates broad irrelevant builder/runtime context, or overlaps another skill, flag it for removal or per-step scoping.
+- **Skill referenced but not enabled**: if a description, learnings, KB note, or script says to use a skill that is not enabled in that step's `enabled_skills`, flag CRITICAL because the execution agent will not receive it.
+- **Skill folder missing or malformed**: if a selected/enabled skill has no `skills/{folder}/SKILL.md`, has no clear description, or is not discoverable via `list_skills`, flag CRITICAL.
+- **Workflow-level vs step-level mismatch**: workflow-selected skills are builder/workshop context and do not cascade into runtime step agents. If a selected skill is intended to affect step execution, each relevant step must list it in `enabled_skills`; otherwise flag the mismatch and recommend explicit per-step `enabled_skills` or moving shared workflow-specific HOW to `learnings/_global/`.
+- **Skill vs learnings ownership**: external reusable capability docs belong in `skills/{folder}/SKILL.md`; workflow-specific discovered HOW belongs in `learnings/_global/`. Flag duplicate or misplaced content in either direction.
 
 LENS B — Hardcoded Values
 - **Hardcoded paths**: absolute paths like `/app/workspace-docs/...`, `/Users/...`, `/home/...`, or specific local paths. Should use workspace-relative or workspace-rooted paths instead.
@@ -64,10 +72,17 @@ LENS G — Sub-Agent Hardcoded Values
 
 PHASE 4 — DEPENDENT ARTIFACT AUDIT
 
-Treat plan, config, learning, KB, db, reports, variables, and eval as one workflow contract. A plan review is incomplete if a step change leaves one of these surfaces stale or underspecified.
+Treat plan, config, skills, learning, KB, db, reports, variables, and eval as one workflow contract. A plan review is incomplete if a step change leaves one of these surfaces stale or underspecified.
 
-1. Read `planning/step_config.json`, `variables/variables.json`, `evaluation/evaluation_plan.json`, `reports/report_plan.json`, `builder/review.html`, `learnings/_global/SKILL.md`, `knowledgebase/context/context.md`, `knowledgebase/notes/_index.json`, `db/README.md`, and relevant files under `learnings/{step-id}/`, `knowledgebase/notes/`, `db/`, and `db/assets/` when present. If a file is absent, decide whether absence is acceptable for this workflow.
-2. **Learning audit**:
+1. Read `planning/step_config.json`, `variables/variables.json`, `evaluation/evaluation_plan.json`, `reports/report_plan.json`, `builder/review.html`, `learnings/_global/SKILL.md`, `knowledgebase/context/context.md`, `knowledgebase/notes/_index.json`, `db/README.md`, and relevant files under `skills/{skill}/`, `learnings/{step-id}/`, `knowledgebase/notes/`, `db/`, and `db/assets/` when present. If a file is absent, decide whether absence is acceptable for this workflow.
+2. **Skill audit**:
+   - Use `get_workflow_config` for workflow-selected skills and `planning/step_config.json` for per-step `enabled_skills`. Use `list_skills` to verify selected/enabled skill folders exist.
+   - For each selected/enabled skill, read `skills/{folder}/SKILL.md` and decide which step(s) need it. If no step needs it, flag it as prompt noise.
+   - For each step, decide whether the best execution design needs a skill that is installed but not enabled. Flag missing skill scoping as a design issue, not just a config nit.
+   - Verify descriptions do not say "use skill X" unless X is selected/enabled for the execution agent. Verify selected/enabled skills are not compensating for vague descriptions; the step must still state the task and output contract.
+   - Flag skills that duplicate workflow-specific learnings or contain workflow-specific secrets, paths, run folders, account IDs, or current-plan task instructions.
+   - If a workflow-level selected skill is expected to reach step execution, flag workflow-level-only selection for affected steps and recommend explicit per-step `enabled_skills`.
+3. **Learning audit**:
    - Check every step with `learnings_access=read-write` has a real reason and a concrete `learning_objective`. SKILL.md is written by the step agent itself during a dedicated post-completion turn — `learning_objective` is the instruction the step agent uses to know what to extract, so it must be specific (selectors, timings, auth flows, tool-call patterns, API quirks) rather than generic ("learn from the run").
    - For every step with learning writes or `lock_learnings=true`, read `learnings/{step-id}/.learning_metadata.json` when present. Check `successful_runs`, `description_hash_runs`, and recent detection history.
    - Flag `lock_learnings=true` when there is no clear builder/user rationale in `review_notes`, the lock looks stale against the current step description, or step_config successful_runs/lock state contradicts metadata.
@@ -78,14 +93,14 @@ Treat plan, config, learning, KB, db, reports, variables, and eval as one workfl
    - Check `learnings/_global/SKILL.md` for stale step names, task descriptions masquerading as learnings, duplicated plan instructions, hardcoded values, and advice that contradicts current descriptions.
    - Flag bloated `SKILL.md` content: the root skill should be a lean index/overview (roughly under 80-100 lines) that links to focused files under `learnings/_global/references/`. Detailed selectors, auth/API quirks, browser timing, file-format rules, retry patterns, and step-specific HOW guidance should be moved into reference files.
    - For scripted steps, inspect `learnings/{step-id}/main.py` and `learnings/{step-id}/script_metadata.json` when present. Flag stale code, missing lock rationale, brittle hardcoded values, browser automation scripts, and code writing to the wrong store.
-3. **Knowledgebase audit**:
+4. **Knowledgebase audit**:
    - Steps that produce durable narrative domain observations should declare `knowledgebase_access` plus a useful `knowledgebase_contribution`.
    - Steps that need user-provided runtime context from `knowledgebase/context/context.md` should declare `knowledgebase_access=read` or `read-write` AND their descriptions should explicitly name the relevant context section/path to read and apply. Flag either half missing: KB access without a description mention, description mention without KB read access, or reliance on chat memory instead of this file.
    - Prefer `knowledgebase_write_method=direct`; `agent` is only when the user explicitly wants a separate KB writer/reviewer.
    - Check `knowledgebase/context/context.md` contains user-supplied runtime rules/preferences/context, not workflow-discovered notes or execution recipes. It is user-owned; do not recommend optimizer rewrites except explicit user-requested cleanup.
    - Check `knowledgebase/notes/_index.json` points to coherent topic files and that topic notes contain durable WHAT-we-know facts discovered by the workflow, not execution recipes, run logs, raw rows, or user-owned runtime context that belongs in `knowledgebase/context/context.md`.
    - Flag steps that read KB without a clear need, write KB without a contribution contract, or store KB-worthy domain facts only in context outputs/db/learnings.
-4. **Database audit**:
+5. **Database audit**:
    - From `planning/plan.json`, find every step description that says it writes, saves, tracks, stores, accumulates, appends, caches, deduplicates, or reports data. Map those steps to concrete `db/*.json` files.
    - Read `db/README.md` if it exists. Then list `db/*.json` files and sample each non-empty file.
    - Read `reports/report_plan.json` if present and map which widgets consume which `db/*.json` paths.
@@ -102,17 +117,18 @@ Treat plan, config, learning, KB, db, reports, variables, and eval as one workfl
      - **Data hygiene**: no duplicate primary keys, stale test rows, impossible nulls, mixed date formats, or fields that silently changed names across rows.
    - **Message-sequence item write access**: for every `message_sequence` step, check each item whose `message` or `output_files` writes to `db/` or `knowledgebase/`. That item MUST declare the matching `write_access` (`{"db": true}` and/or `{"knowledgebase": true}`) or an inferring `kind` (`db` / `knowledgebase` / `code`). Item writes are default-deny and folder-scoped — booleans only, a per-file `paths` list is invalid and ignored — while reads are always open, so a missing grant is easy to overlook and the write is silently blocked at runtime (the step then loops or fails late). Flag CRITICAL: name the item id and the file it tries to write.
    - For each step that writes `db/`, check that its description references the `db/README.md` contract and names the file, primary key, and merge rule. If it only says "save the result" or writes to a run folder, flag it.
-5. **Report audit**:
+6. **Report audit**:
    - Check `reports/report_plan.json` widgets source durable `db/*.json`, `db/assets/` references, KB context/notes, or built-in APIs rather than volatile run folders.
    - Check every referenced field exists in sampled source data and each widget has a clear owner/source step.
    - Flag report widgets whose source data is not produced by any step or whose data contract is undocumented.
    - Check whether widgets are using the Report UI's JSONata `query` feature where appropriate. The pipeline is `source -> query -> path -> filter -> render`; when `query` returns the final array/scalar, `path` should be empty or `$`.
    - Flag derived/helper report files like `*_rows.json`, `*_summary.json`, `flat_*.json`, or a `step-generate-report` / "flatten data" step when the same result can be expressed as a widget `query` against the canonical `db/*.json` source.
    - For report findings, recommend collapsing helper sources into canonical db source + `query` when this would reduce duplicated data, stale helper files, or extra workflow steps.
-6. **Evaluation and variables audit**:
+7. **Evaluation and variables audit**:
    - Check `evaluation/evaluation_plan.json` covers the objective and success criteria with measurable rubrics, and that eval step IDs do not collide with execution step IDs.
    - Check `variables/variables.json` contains user-specific values that should not be hardcoded in descriptions, scripts, KB, db rows, or reports.
-7. For every artifact finding, route ownership:
+8. For every artifact finding, route ownership:
+   - Builder owns skill selection/scoping, missing skill enablement, vague descriptions, and misplaced workflow-specific content.
    - Builder owns schema contract, step descriptions, context/output wiring, report widget source changes, and `db/README.md`.
    - Optimizer owns evidence-backed hardening when real runs show a step is violating the schema/merge contract.
    - Run mode only reports findings in chat.
@@ -126,6 +142,7 @@ For each step, produce a per-step report:
 **Description summary:** <one-line>
 **Lens 0 — Durable boundary fit:** <findings or "clean">
 **Lens A — Description vs Skill:** <findings or "clean">
+**Lens A2 — Installed / selected skill fit:** <needed/missing/noisy skill findings or "clean">
 **Lens B — Hardcoded:** <findings or "clean">
 **Lens C — Browser:** <findings or "n/a (no browser capability)" or "clean">
 **Lens D — Validation:** <findings or "clean">
@@ -133,6 +150,7 @@ For each step, produce a per-step report:
 **Lens F — Orchestrator/sub-agent boundary:** <findings or "n/a" or "clean">
 **Lens G — Sub-agent hardcoded:** <findings or "n/a" or "clean">
 **Learning contract:** <learning objective/method/.learning_metadata/script issues, or "n/a">
+**Skill contract:** <workflow-selected skills, enabled_skills, missing skill opportunities, or "n/a">
 **KB contract:** <KB access/contribution/topic issues, or "n/a">
 **DB contract:** <db files written/read, schema/merge issues, or "n/a">
 **Report/eval/variable contract:** <wiring, eval, or variable issues, or "n/a">
@@ -144,6 +162,7 @@ Then a cross-step summary:
 
 - **Phase 1 structural findings** (from review_plan tool): list by severity.
 - **Steps with boundary/description issues** (Lens 0/A/B/C/D): per-step, which lenses fired.
+- **Skill findings** (Lens A2 / Phase 4): list missing needed skills, selected-but-unused skills, step scoping mistakes, malformed skill folders, and skill-vs-learning ownership problems.
 - **Todo_task/routing/orchestration steps with parent/route issues** (Lens E/F/G): per-step, which lenses fired.
 - **Learning findings** (Phase 4): list steps with unjustified learning, missing objective, wrong write method, missing/stale `.learning_metadata.json`, unsupported learning locks, agentic steps with leftover main.py, stale global skill content, stale main.py, or browser scripted.
 - **Knowledgebase findings** (Phase 4): list missing or unjustified KB access/contribution, stale/malformed topic notes, and facts stored in the wrong place.

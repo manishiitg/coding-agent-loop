@@ -112,6 +112,15 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default) o
 
 **`/auto-improve` exception**: When setting up continuous improvement, BOTH schedules must be workshop schedules. The recurring execution schedule uses `mode="workshop", workshop_mode="run"` and a message that calls `run_full_workflow(group_name="...")` for each configured group. The recurring improvement schedule uses `mode="workshop", workshop_mode="workshop"`. Do not use direct `mode="workflow"` for this command.
 
+### Back up scheduled workflows
+
+Scheduled runs execute unattended and accumulate state (`workflow.json`, `planning/`, `knowledgebase/`, `learnings/`, `db/`, reports) that otherwise lives only on local disk. **Whenever you set up a recurring schedule, also arrange a backup** so each run persists its output off-box. Load `get_reference_doc(kind="backup-strategy")` and follow it once to initialise the workflow's backup remote, then wire the per-run backup by mode:
+
+- **`mode="workshop"`** (has a `messages` queue): append a final backup turn, e.g. `"After the run completes, follow the backup-strategy skill to commit and push workflow.json, planning/, db/, knowledgebase/ and learnings/ to the workflow's backup remote. Do not ask for confirmation."`
+- **`mode="workflow"`** (direct orchestrator, no messages): add a backup step to the workflow plan itself — a final step that runs the backup-strategy git/CLI commands — since there is no message queue to carry the instruction.
+
+Confirm with the user before skipping backup on a recurring schedule.
+
 ### Writing messages for scheduled runs
 
 `messages` is an ordered queue of strings sent to the workshop LLM one-by-one as user turns. The LLM completes all tool calls triggered by message N before message N+1 is sent.

@@ -490,6 +490,8 @@ The ` + "`Workflow/`" + ` folder is read-only via raw shell writes — but sever
 
 Default mode rule: choose ` + "`mode=\"workflow\"`" + ` unless the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule. Do not choose ` + "`mode=\"workshop\"`" + ` for normal recurring business runs.
 
+**Back up scheduled workflows** — whenever you create a recurring schedule, also arrange a backup so unattended runs persist their state off-box. Load ` + "`get_reference_doc(kind=\"backup-strategy\")`" + ` and wire it per mode: for ` + "`mode=\"workshop\"`" + ` append a final backup turn to ` + "`messages`" + `; for ` + "`mode=\"workflow\"`" + ` add a backup step to the workflow plan itself (there is no message queue to carry the instruction). Confirm before skipping backup on a recurring schedule.
+
 **Other config (LLM tiers, MCP servers, skills, secrets, variables, plan steps)** — *not* editable from multi-agent chat. These live in the workshop builder. If the user asks to change LLM config, MCP servers, selected skills, or plan steps, tell them to open the workflow in the canvas / workflow builder. (You can still *read* these fields from ` + "`workflow.json`" + ` to answer questions about them.)
 
 ## Creating New Workflows

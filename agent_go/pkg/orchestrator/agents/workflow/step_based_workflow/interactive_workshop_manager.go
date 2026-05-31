@@ -1917,7 +1917,7 @@ For the full debugging playbook (workshop vs run investigation workflow steps, r
 
 Priority order when reviewing a step: (1) Correctness — description precision, validation schema completeness, context I/O wiring. (2) Knowledge — learnings quality, lock lifecycle. (3) Efficiency — tool-call waste, workflow structure (merge/split/reorder).
 
-Hard rules: `+"`validation_schema`"+` is the only automated gate (catch stale files, field completeness, constraints); default `+"`learnings_access`"+` = `+"`\"read\"`"+` (opt into writes with `+"`\"read-write\"`"+` + `+"`learning_objective`"+`); auto-lock fires automatically — don't pre-set `+"`lock_learnings: true`"+`; `+"`lock_code=true`"+` only after user-explicit scripted + 10+ scenario-covering runs; workshop-created steps arrive as `+"`agentic`"+`, promote to `+"`scripted`"+` only with explicit ask + determinism + 10+ runs. Three locks: `+"`lock_learnings`"+` (per-step, freezes SKILL.md), `+"`lock_code`"+` (per-step scripted, freezes main.py), `+"`lock_knowledgebase`"+` (workflow-wide, freezes notes/ auto-updates).
+	Hard rules: `+"`validation_schema`"+` is the only automated gate (catch stale files, field completeness, constraints); default `+"`learnings_access`"+` = `+"`\"read\"`"+` (opt into writes with `+"`\"read-write\"`"+` + `+"`learning_objective`"+`); `+"`lock_learnings=true`"+` is a deliberate builder/user decision, never a runtime side effect; `+"`lock_code=true`"+` only after user-explicit scripted + 10+ scenario-covering runs; workshop-created steps arrive as `+"`agentic`"+`, promote to `+"`scripted`"+` only with explicit ask + determinism + 10+ runs. Three locks: `+"`lock_learnings`"+` (per-step, freezes SKILL.md), `+"`lock_code`"+` (per-step scripted, freezes main.py), `+"`lock_knowledgebase`"+` (workflow-wide, freezes notes/ auto-updates).
 
 For the full playbook (validation design, learning config, three-locks decision tree, scripted debugging, mode promotion gates, evidence-based locking, orchestrator design + fast path, KB curation modes): `+"`get_reference_doc(kind=\"optimize-playbook\")`"+`. When patching `+"`learnings/{step-id}/main.py`"+`: also load `+"`code-authoring`"+`.
 {{end}}
@@ -2748,7 +2748,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						InputData:            inputData,
 						Iteration:            parseWorkshopIterationNumber(execOpts.Iteration),
 						UseCodeExecutionMode: true,
-						UseScriptedMode:     isScriptedStep,
+						UseScriptedMode:      isScriptedStep,
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -3097,7 +3097,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q completed.\n\n%s", stepID, result), nil
 				}
-				return fmt.Sprintf("Step %q completed.\nexecution_id: %s\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read shared workflow guidance: 'cat learnings/_global/SKILL.md'. If this is a scripted step, also inspect 'cat learnings/%s/main.py'.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — only consider locking SKILL.md after the step has at least 3 successful runs on the same description hash and repeated no-new-learning outcomes. For scripted, lock_code requires explicit user intent plus 10+ scenario-covering successful runs.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, execID, result, stepID, stepID, stepID, stepID), nil
+				return fmt.Sprintf("Step %q completed.\nexecution_id: %s\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read shared workflow guidance: 'cat learnings/_global/SKILL.md'. If this is a scripted step, also inspect 'cat learnings/%s/main.py'.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json'. If the builder/user decides this step should stop writing SKILL.md, set lock_learnings=true intentionally with review_notes. For scripted, lock_code requires explicit user intent plus 10+ scenario-covering successful runs.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, execID, result, stepID, stepID, stepID, stepID), nil
 			case WorkshopStepFailed:
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q failed: %v", stepID, execErr), nil
@@ -3499,7 +3499,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"lock_learnings": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Freeze SKILL.md writes for this step. Existing SKILL.md still flows into execution prompts. AUTO-SET when learnings converge after 3 successful runs against the same step-description hash plus 2 consecutive no-new-learning outcomes from the direct learnings turn. AUTO-CLEARED when the description changes (for auto-locked steps only — manual locks are preserved). Set this manually only when you hand-edited SKILL.md and want your edits preserved across description changes. Does NOT affect saved main.py — use lock_code for that.",
+					"description": "Freeze SKILL.md writes for this step. Existing SKILL.md still flows into execution prompts. Runtime execution never auto-sets or auto-clears this field; set it only as an intentional builder/user decision, and include review_notes explaining why learning should stop. Does NOT affect saved main.py — use lock_code for that.",
 				},
 				"lock_code": map[string]interface{}{
 					"type":        "boolean",
@@ -8333,7 +8333,7 @@ Read `+"`evaluation/evaluation_plan.json`"+` using shell commands if it exists. 
 Review these files/directories when present. Stay read-only:
 - `+"`variables/variables.json`"+`: check whether plan-visible hardcoded values should be variables and whether required variables are declared.
 - `+"`learnings/_global/SKILL.md`"+`: check whether HOW-to-run learnings match current step descriptions and do not duplicate task instructions.
-- `+"`learnings/{step-id}/.learning_metadata.json`"+`: inspect for every step with learning writes or `+"`lock_learnings=true`"+`. Check `+"`successful_runs`"+`, `+"`description_hash_runs`"+`, `+"`consecutive_no_new_learning_runs`"+`, `+"`auto_locked_at`"+`, `+"`auto_lock_reason`"+`, `+"`auto_unlocked_at`"+`, and latest detection history. Flag locks without enough same-description evidence, locks whose metadata was auto-unlocked, missing metadata for locked learning, or metadata whose description hash/streak contradicts step_config.
+- `+"`learnings/{step-id}/.learning_metadata.json`"+`: inspect for every step with learning writes or `+"`lock_learnings=true`"+`. Check `+"`successful_runs`"+`, `+"`description_hash_runs`"+`, and latest detection history. Flag locks that look stale, lack a clear builder/user rationale in review_notes, or contradict the current step description/config.
 - `+"`learnings/{step-id}/main.py`"+` and `+"`learnings/{step-id}/script_metadata.json`"+`: inspect for scripted steps. For `+"`agentic`"+` steps, verify `+"`learnings/{step-id}/main.py`"+` does NOT exist; if it does, flag it as a stale artifact that should be deleted because agentic never runs or maintains persistent main.py.
 - `+"`knowledgebase/context/context.md`"+`: check whether user-supplied runtime context is present when steps appear to rely on chat memory, and verify optimizer-owned notes did not absorb user-owned rules/preferences that belong here.
 - `+"`knowledgebase/notes/_index.json`"+` and relevant `+"`knowledgebase/notes/*.md`"+`: check topic registry, stale/duplicated notes, and whether steps that produce domain facts have matching KB contribution contracts.
@@ -9218,7 +9218,7 @@ Run this sweep on every harden pass. For a single-group harden, use that group's
    - `+"`scripted`"+` steps should have `+"`script_metadata.json`"+` evidence with 10+ successful runs across the relevant scenarios/groups before `+"`lock_code=true`"+`.
 2. **Learning state**
    - Steps with `+"`learnings_access=\"read-write\"`"+` need a concrete `+"`learning_objective`"+`. `+"`learnings_write_method`"+` is compatibility-only and should be omitted from new plans.
-   - For `+"`lock_learnings=true`"+`, read `+"`learnings/{step-id}/.learning_metadata.json`"+`. Check `+"`description_hash_runs >= 3`"+`; for direct learning, also require repeated no-new-learning outcomes. If metadata is missing, auto-unlocked, or contradicts step_config, unlock or correct config with review_notes.
+   - For `+"`lock_learnings=true`"+`, read `+"`learnings/{step-id}/.learning_metadata.json`"+` and review_notes. Keep the lock only when a builder/user rationale is clear and still matches the current step description; otherwise unlock or correct config with review_notes.
    - For `+"`scripted`"+` steps, avoid duplicate global learning writes unless there is HOW knowledge outside the script.
 3. **Knowledgebase**
    - If a step needs user-supplied context from `+"`knowledgebase/context/context.md`"+`, it must have KB read access AND its step description must name the relevant section/path so the runtime agent knows to read and apply it. Fix both together.
@@ -9324,7 +9324,7 @@ Analysis rules:
 |------|----------|
 | `+"`learnings/{step-id}/main.py`"+` | Saved Python script for scripted steps — **this is what gets executed on each scripted run** |
 | `+"`learnings/_global/SKILL.md`"+` | Global prose learnings shared across all steps |
-| `+"`learnings/{step-id}/.learning_metadata.json`"+` | Learning convergence metadata: description hash runs, successful runs, no-new-learning streak, auto-lock/unlock reason |
+| `+"`learnings/{step-id}/.learning_metadata.json`"+` | Learning observability metadata: description hash runs, successful runs, latest detection history |
 | `+"`learnings/{step-id}/script_metadata.json`"+` | Script version, run counts, per-group stats, duration stats, recent run history, last failure details, streak |
 
 ### Plan and config
@@ -9393,8 +9393,8 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
 
 	6. **For each passing step** ({{if .GroupName}}passed for `+"`{{.GroupName}}`"+` in the selected run window{{else}}passed ALL current groups in the selected run window{{end}}):
    - If successful_runs < 3, increment via update_step_config
-   - If successful_runs >= 3, set lock_learnings=true when the learning notes are stable. For scripted steps, set lock_code=true only when the user explicitly wanted scripted, the step is highly deterministic, and script/eval evidence shows 10+ successful runs across the relevant scenario/group surface.
-   - **Unlock guard**: If you suspect the step description changed since the last review (description_reviewed may no longer reflect the current description), do NOT auto-lock. Instead flag the step as "description may have changed since last review — re-review before locking" and leave lock_learnings / lock_code at their previous values.{{if .GroupName}}
+   - If successful_runs >= 3, recommend lock_learnings=true only when the builder/user wants to stop SKILL.md writes for this step and the learning notes are stable; include review_notes. For scripted steps, set lock_code=true only when the user explicitly wanted scripted, the step is highly deterministic, and script/eval evidence shows 10+ successful runs across the relevant scenario/group surface.
+   - **Lock guard**: If you suspect the step description changed since the last review (description_reviewed may no longer reflect the current description), flag the step as "description may have changed since last review — re-review before locking" and leave lock_learnings / lock_code at their previous values.{{if .GroupName}}
    - **Single-group caution**: locking after only one group passing is weaker evidence than after all-groups passing. Be more conservative — prefer incrementing successful_runs to locking outright unless the count is already at 3+.{{end}}
 
 7. **Produce a summary** with:

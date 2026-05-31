@@ -95,31 +95,28 @@ Important current details:
 - learning detection via a separate LLM-based “did we learn something new?” phase has been removed
 - metadata is updated using a rule-based path instead
 
-### Auto-locking (description-hash scoped)
+### Learning metadata
 
-Auto-locking is driven by a **description-hash-scoped counter**, not a raw total-runs counter.
+Runtime learning metadata is observational. It gives the workflow builder and
+review tools evidence for deciding whether a step's learning writes are still
+useful, but it does not mutate `lock_learnings`.
 
 Current metadata logic in [`controller_learning_detection.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_learning_detection.go):
 
 - the step description is hashed (SHA256 of trimmed `step.GetDescription()`) on every successful run
 - if the hash matches the previously-stored `last_description_hash`, `description_hash_runs` increments
 - if the hash differs, `description_hash_runs` resets to 1 and the stored hash is updated
-- per-step learnings auto-lock when `description_hash_runs` reaches **3** — i.e. three successful runs in a row against the *same* description
-- fallback safety lock at **15 total iterations**
-- global learning (`_global`) does **not** auto-lock
 
-Editing the step description invalidates the "converged" signal: the next run resets the counter, and the step must accumulate 3 fresh successful runs against the new description before re-locking.
+Editing the step description resets the description-hash run counter. This is
+review evidence only; runtime execution does not auto-lock or auto-unlock
+learning.
 
-### Auto-unlock on description change
+### Manual lock lifecycle
 
-If a step was **auto-locked** (metadata has `auto_locked_at`) and its description later changes, the next successful run will:
-
-- detect the hash change
-- clear `auto_locked_at` in metadata, set `auto_unlocked_at`
-- clear auto-managed `lock_learnings` in `step_config.json`
-- emit a step-config-updated event so the frontend reflects the unlock
-
-Manual locks — steps where `lock_learnings: true` was set by a human without an `auto_locked_at` record — are **never** auto-unlocked. Auto-unlock is strictly the inverse of auto-lock.
+`lock_learnings` is owned by the builder/user. Set it when the workflow should
+keep reading the current global skill but stop accepting automatic SKILL.md
+writes from that step. Clear it explicitly after a material description change
+or when the builder/user wants that step to learn again.
 
 ### Locking and disabling learning
 
@@ -130,7 +127,7 @@ The important current controls on `AgentConfigs`:
   - `"read-write"` — step reads AND contributes. Requires `learning_objective` to be non-empty.
   - `"none"` — step neither reads nor contributes. The true disable.
 - `learning_objective` (string) — the **extraction instruction** for the post-step learning agent. Required when access is `"read-write"`. No longer a gate.
-- `lock_learnings` (bool) — freezes the learning agent for this step even while access is `"read-write"`. Existing `SKILL.md` still flows into execution prompts. Auto-unlock clears this when the description changes (for auto-locked steps only).
+- `lock_learnings` (bool) — freezes the learning agent for this step even while access is `"read-write"`. Existing `SKILL.md` still flows into execution prompts. Runtime never auto-sets or auto-clears this; it is a builder/user decision.
 - `global_skill_objective` (workflow-level, not per-step) — describes what domain knowledge the global skill should accumulate.
 
 Auto-migration for legacy configs (runtime-only, no file rewrites): if `learnings_access` is unset, `learning_objective` non-empty infers `"read-write"`; empty infers `"read"`.
@@ -140,7 +137,7 @@ Recommended usage:
 - leave `learnings_access` unset (defaults to `"read"`) for most steps — they benefit from cross-step context.
 - set `learnings_access: "read-write"` + a non-empty `learning_objective` on steps that produce durable HOW-knowledge about the target system.
 - set `learnings_access: "none"` for steps that are truly throwaway or whose context would pollute the global skill (e.g. pure file moves, human-input steps — the latter is forced to `"none"` automatically).
-- let auto-lock + auto-unlock handle the lifecycle of `lock_learnings` — manual locks are for curated SKILL.md content the human wants frozen regardless of description changes.
+- set `lock_learnings: true` only when the builder/user intentionally decides the step should stop writing SKILL.md; include `review_notes` explaining why.
 
 ### Failure learning
 
@@ -208,7 +205,7 @@ When editing related workflow docs, keep these rules consistent:
 - describe learning as global-skill-first
 - gate read access and write contribution through `learnings_access` — `lock_learnings` is a freeze switch, not the enable/disable mechanism
 - for scripted steps, describe `main.py` as the executable source of truth
-- auto-lock is scoped to the **description hash**; editing the description invalidates the lock countdown and auto-unlocks previously-auto-locked steps
+- description-hash metadata is review evidence only; runtime does not auto-lock or auto-unlock learnings
 - leave validation details to the dedicated pre-validation docs
 
 ## Code references
@@ -216,7 +213,7 @@ When editing related workflow docs, keep these rules consistent:
 - [`controller_execution.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go): learning triggers and post-execution flow
 - [`controller_learning.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_learning.go): success learning and global-skill write path
 - [`learning_agent.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/learning_agent.go): global skill prompt and skill-structured output
-- [`controller_learning_detection.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_learning_detection.go): metadata and auto-lock rules
+- [`controller_learning_detection.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_learning_detection.go): learning metadata updates
 - [`interactive_workshop_manager.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go): current user-facing guidance for global learning
 
 ## Related docs

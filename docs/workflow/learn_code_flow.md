@@ -202,7 +202,7 @@ There are two separate locks plus the access-level gate:
 | Setting | Controls | Effect |
 |---|---|---|
 | `learnings_access` (`"read"\|"read-write"\|"none"`) | SKILL.md read/write at a coarse level | Default `"read"` — step sees `_global/SKILL.md` but doesn't contribute. `"read-write"` (+ non-empty `learning_objective`) opts into contribution. `"none"` opts out of both. Mirrors `knowledgebase_access`. |
-| `lock_learnings: true` | SKILL.md writes | Freezes the learning agent for this step. Existing SKILL.md still flows into execution prompts. **Auto-set after 3 successful runs against the same step-description hash; auto-cleared on description change** for steps that were auto-locked (manual locks stay put). |
+| `lock_learnings: true` | SKILL.md writes | Freezes the learning agent for this step. Existing SKILL.md still flows into execution prompts. Runtime execution never auto-sets or auto-clears this field; set it only as an intentional builder/user decision. |
 | `lock_code: true` | main.py | Prevents LLM-rewritten scripts from being saved back to learnings. Skips the fix loop entirely (falls back directly to code_exec mode). |
 
 When `lock_code: true` is set on a step:

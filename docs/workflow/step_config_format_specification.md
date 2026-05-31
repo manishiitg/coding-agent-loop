@@ -197,7 +197,7 @@ content, err := json.MarshalIndent(file, "", "  ")
 |-------|------|---------|---------|
 | `learnings_access` | `"read"\|"read-write"\|"none"` | `"read"` (auto-migrated from `learning_objective` if unset) | Primary gate for the global learnings store. `"read"` — step sees `learnings/_global/SKILL.md` in its prompt; `"read-write"` — step also contributes (requires non-empty `learning_objective`); `"none"` — step neither reads nor contributes. Mirrors `knowledgebase_access`. |
 | `learning_objective` | `string` | `""` | Extraction instruction for the post-step learning agent — describes what patterns/selectors/recipes should land in `SKILL.md`. Required when `learnings_access="read-write"`; the validator rejects the combination of write access with an empty objective. |
-| `lock_learnings` | `boolean` | `false` (nil = unlocked) | Freeze the learning agent for this step. Existing `SKILL.md` still flows into execution prompts, but no new writes. Auto-set to `true` after **3 successful runs with the same step-description hash** (see `description_hash_runs` in `.learning_metadata.json`). Auto-cleared on description change for auto-locked steps; manual locks (no `auto_locked_at` in metadata) are preserved. |
+| `lock_learnings` | `boolean` | `false` (nil = unlocked) | Freeze SKILL.md writes for this step. Existing `SKILL.md` still flows into execution prompts, but no new writes. Runtime execution never auto-sets or auto-clears this field; it is a builder/user decision and should be paired with `review_notes`. |
 
 ### Execution Mode Configuration
 

@@ -222,6 +222,6 @@ Non-browser workflows (workflow config has no browser server/skill/CDP) skip the
 
 ## Related docs
 
-- [learning_architecture.md](learning_architecture.md) — how learnings get written + auto-locked per description hash.
+- [learning_architecture.md](learning_architecture.md) — how learnings get written and manually locked.
 - [step_config_format_specification.md](step_config_format_specification.md) — `learnings_access` field governing read/write of global SKILL.md.
 - [learn_code_flow.md](learn_code_flow.md) — the full learn-code lifecycle (fast path, fix loop, save-back).

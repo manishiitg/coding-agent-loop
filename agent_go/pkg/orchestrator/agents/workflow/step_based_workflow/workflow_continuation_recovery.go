@@ -369,7 +369,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) queueRecoveredDirectLearning(state *W
 			return "", err
 		}
 		hasNewLearning, reasoning, confidence := inferHasNewLearningFromResult(result)
-		if _, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
+		if metadataErr := hcpo.updateLearningMetadataWithTurnCount(
 			execCtx,
 			runtime.StepIndex,
 			runtime.StepPath,
@@ -382,7 +382,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) queueRecoveredDirectLearning(state *W
 			true,
 			runtime.ExecutionLLM,
 			runtime.ExecutionLLM,
-			true,
 		); metadataErr != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update recovered direct-learning metadata for %s: %v", state.StepID, metadataErr))
 		}

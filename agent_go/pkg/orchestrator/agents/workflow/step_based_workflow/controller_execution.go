@@ -1461,14 +1461,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"FolderGuardWritePaths":     strings.Join(toAbsPathSlice(folderGuardWritePaths), ", "),                           // Absolute folder guard write paths
 			"IsEvaluationMode":          fmt.Sprintf("%v", hcpo.isEvaluationMode),                                            // Evaluation mode flag for eval-specific prompt guidance
 			"WorkflowRoot":              toAbsPath(workflowRoot),                                                             // Absolute workflow root path (e.g., "/app/workspace-docs/Workflow/HRMS")
-			"IsScriptedMode":           fmt.Sprintf("%v", isScriptedMode),
-			"IsScriptedLocked":         fmt.Sprintf("%v", isScriptedMode && getAgentConfigs(step) != nil && getAgentConfigs(step).LockCode != nil && *getAgentConfigs(step).LockCode),
+			"IsScriptedMode":            fmt.Sprintf("%v", isScriptedMode),
+			"IsScriptedLocked":          fmt.Sprintf("%v", isScriptedMode && getAgentConfigs(step) != nil && getAgentConfigs(step).LockCode != nil && *getAgentConfigs(step).LockCode),
 			"IsRelearnMode":             fmt.Sprintf("%v", isScriptedMode && learnCodePriorScript != ""),
-			"ScriptedPriorScript":      learnCodePriorScript,
-			"ScriptedPriorError":       learnCodePriorError,
-			"ScriptedInputArgs":        learnCodeInputArgsForPrompt,
-			"ScriptedEnvVarNames":      buildScriptedEnvVarNamesForPrompt(isScriptedMode, hcpo.snapshotWorkspaceEnv()),
-			"ScriptedVarMapping":       buildScriptedVarMappingForPrompt(isCodeExecutionMode || isScriptedMode, hcpo.variablesManifest),
+			"ScriptedPriorScript":       learnCodePriorScript,
+			"ScriptedPriorError":        learnCodePriorError,
+			"ScriptedInputArgs":         learnCodeInputArgsForPrompt,
+			"ScriptedEnvVarNames":       buildScriptedEnvVarNamesForPrompt(isScriptedMode, hcpo.snapshotWorkspaceEnv()),
+			"ScriptedVarMapping":        buildScriptedVarMappingForPrompt(isCodeExecutionMode || isScriptedMode, hcpo.variablesManifest),
 			"GroupName":                 hcpo.currentGroupName,
 		}
 
@@ -2474,11 +2474,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 										hcpo.recordWorkflowContinuationPhase(context.Background(), artifactStepID, artifactStepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusCompleted, "", executionAgent)
 
 										// Direct-mode learnings are the only runtime write path, so
-										// metadata + auto-lock bookkeeping happens here.
+										// metadata bookkeeping happens here. Runtime execution never
+										// auto-locks learnings; builder/user decisions own lock_learnings.
 										directLearningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, stepCfgForLearn)
 										hasNewLearning, directLearningReasoning, directLearningConfidence := inferHasNewLearningFromResult(learnResult)
 										directLearningLLM := executionLLM
-										result, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
+										if metadataErr := hcpo.updateLearningMetadataWithTurnCount(
 											ctx,
 											stepIndex,
 											stepPath,
@@ -2491,30 +2492,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 											true, // pre-validation already passed
 											executionLLM,
 											directLearningLLM,
-											true, // direct-mode rule: require repeated no-new-learning outcomes
-										)
-										if metadataErr != nil {
+										); metadataErr != nil {
 											hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update direct-learnings metadata for step %s: %v", step.GetID(), metadataErr))
-										} else if result.ShouldAutoLock {
-											if lockErr := hcpo.autoLockStepLearningsInConfig(ctx, step.GetID(), result.AutoLockReason); lockErr != nil {
-												hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-lock direct learnings for step %s: %v", step.GetID(), lockErr))
-											} else {
-												hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-locked direct learnings for step %s (%s)", step.GetID(), result.AutoLockReason))
-											}
-										} else if result.ShouldAutoUnlock {
-											if unlockErr := hcpo.autoUnlockStepLearningsInConfig(ctx, step.GetID(), result.AutoUnlockReason); unlockErr != nil {
-												hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock direct learnings for step %s: %v", step.GetID(), unlockErr))
-											}
-										} else if result.MetadataAutoLocked && hcpo.shouldBackfillAutoLockToConfig(ctx, step.GetID()) {
-											backfillReason := result.AutoLockReason
-											if backfillReason == "" {
-												backfillReason = "backfill_existing_metadata_auto_lock"
-											}
-											if lockErr := hcpo.autoLockStepLearningsInConfig(ctx, step.GetID(), backfillReason); lockErr != nil {
-												hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to backfill auto-locked direct learnings for step %s: %v", step.GetID(), lockErr))
-											} else {
-												hcpo.GetLogger().Info(fmt.Sprintf("🔒 Backfilled auto-locked direct learnings into step_config for step %s", step.GetID()))
-											}
 										}
 									}
 								}

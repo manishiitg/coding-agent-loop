@@ -2489,5 +2489,24 @@ func TestStoreHandlesStatusLineUpdate(t *testing.T) {
 	if snapshot.Status.CostUSD != 0.0088 {
 		t.Errorf("got CostUSD = %f, want 0.0088", snapshot.Status.CostUSD)
 	}
+
+	// Now refresh terminal content to simulate a constant pane update and verify telemetry is preserved!
+	refreshed, ok := store.RefreshContent("session-1:exec-1", "active terminal pane - newly refreshed content")
+	if !ok {
+		t.Fatalf("expected RefreshContent to succeed")
+	}
+
+	if refreshed.Status.ProviderLabel != "agy-cli · claude-3-5-sonnet" {
+		t.Errorf("after RefreshContent: got ProviderLabel = %q, want 'agy-cli · claude-3-5-sonnet'", refreshed.Status.ProviderLabel)
+	}
+	if refreshed.Status.InputTokens != 1200 {
+		t.Errorf("after RefreshContent: got InputTokens = %d, want 1200", refreshed.Status.InputTokens)
+	}
+	if refreshed.Status.OutputTokens != 350 {
+		t.Errorf("after RefreshContent: got OutputTokens = %d, want 350", refreshed.Status.OutputTokens)
+	}
+	if refreshed.Status.CostUSD != 0.0088 {
+		t.Errorf("after RefreshContent: got CostUSD = %f, want 0.0088", refreshed.Status.CostUSD)
+	}
 }
 

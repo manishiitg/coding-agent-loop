@@ -7989,11 +7989,24 @@ func (api *StreamingAPI) schedulePendingStartNotificationRetry(sessionID string)
 
 func (api *StreamingAPI) drainPendingAutoNotificationsAfterTurn(sessionID string) {
 	pendingStarts := api.filterUnsentStartNotifications(sessionID, api.drainPendingStartNotifications(sessionID))
+	pendingCompletions := api.drainPendingCompletions(sessionID)
+
+	if len(pendingStarts) > 0 && len(pendingCompletions) > 0 {
+		// Both pending at once (e.g. a parallel step completed while another
+		// step was starting). Fire completions first — they carry actual results
+		// the main agent needs — then starts. Sequential goroutine chaining
+		// avoids concurrent StreamWithEvents calls: starts run only after the
+		// completion synthetic turn has finished (the completion turn's own
+		// post-turn drain will NOT see the starts again because we already
+		// drained them here, so we re-queue them for that drain cycle).
+		api.queuePendingStartNotifications(sessionID, pendingStarts)
+		go api.processBatchedBackgroundAgentCompletions(sessionID, pendingCompletions)
+		return
+	}
 	if len(pendingStarts) > 0 {
 		go api.processBatchedBackgroundAgentStarts(sessionID, pendingStarts)
 		return
 	}
-	pendingCompletions := api.drainPendingCompletions(sessionID)
 	if len(pendingCompletions) > 0 {
 		go api.processBatchedBackgroundAgentCompletions(sessionID, pendingCompletions)
 	}

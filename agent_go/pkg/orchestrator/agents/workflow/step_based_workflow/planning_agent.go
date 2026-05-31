@@ -4217,7 +4217,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_regular_step",
-		"Update a regular step in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, description, context fields, loop fields). The plan.json file is updated immediately when this tool is called.",
+		"Update a regular step in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, description, context fields, loop fields). The plan.json file is updated immediately when this tool is called. After a substantive change, review whether the step's saved artifacts (SKILL.md learnings, scripted main.py, validation schema) still match the new plan — they can drift out of sync; run get_workflow_command_guidance(kind=\"review-artifact-drift\").",
 		regularUpdateParams,
 		createUpdateRegularStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
@@ -4236,7 +4236,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_human_input_step",
-		"Update a human input step in the plan. Provide existing_step_id (required) to identify which human input step to update, and only include the fields you want to change (question, response_type, options, variable_name, context_output, next_step_id, if_yes_next_step_id/if_no_next_step_id, option_routes). The plan.json file is updated immediately when this tool is called.",
+		"Update a human input step in the plan. Provide existing_step_id (required) to identify which human input step to update, and only include the fields you want to change (question, response_type, options, variable_name, context_output, next_step_id, if_yes_next_step_id/if_no_next_step_id, option_routes). The plan.json file is updated immediately when this tool is called. After a substantive change, review whether the step's saved artifacts still match the new plan — they can drift out of sync; run get_workflow_command_guidance(kind=\"review-artifact-drift\").",
 		humanInputUpdateParams,
 		createUpdateHumanInputStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
@@ -4369,7 +4369,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_routing_step",
-		"Update a routing step in the plan. Provide existing_step_id (required) to identify which routing step to update, and only include the fields you want to change (title, description, routing_question, routes, default_route_id, context_dependencies, context_output). The plan.json file is updated immediately when this tool is called.",
+		"Update a routing step in the plan. Provide existing_step_id (required) to identify which routing step to update, and only include the fields you want to change (title, description, routing_question, routes, default_route_id, context_dependencies, context_output). The plan.json file is updated immediately when this tool is called. After a substantive change, review whether the step's saved artifacts still match the new plan — they can drift out of sync; run get_workflow_command_guidance(kind=\"review-artifact-drift\").",
 		routingUpdateParams,
 		createUpdateRoutingStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
@@ -4384,7 +4384,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_message_sequence_step",
-		"Update a message_sequence step in the plan. Provide existing_step_id and only the fields to change. Replacing items changes the configured queue; an existing runtime session will still resume unless explicitly restarted by execution controls.",
+		"Update a message_sequence step in the plan. Provide existing_step_id and only the fields to change. Replacing items changes the configured queue; an existing runtime session will still resume unless explicitly restarted by execution controls. After a substantive change, review whether the step's saved artifacts still match the new plan — they can drift out of sync; run get_workflow_command_guidance(kind=\"review-artifact-drift\").",
 		messageSequenceUpdateParams,
 		createUpdateMessageSequenceStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
@@ -4407,7 +4407,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_todo_task_step",
-		"Update an Orchestrator step (todo_task type) in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, todo_task_step, predefined_routes, next_step_id). The plan.json file is updated immediately when this tool is called.",
+		"Update an Orchestrator step (todo_task type) in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, todo_task_step, predefined_routes, next_step_id). The plan.json file is updated immediately when this tool is called. After a substantive change, review whether the step's saved artifacts still match the new plan — they can drift out of sync; run get_workflow_command_guidance(kind=\"review-artifact-drift\").",
 		todoTaskUpdateParams,
 		createUpdateTodoTaskStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",

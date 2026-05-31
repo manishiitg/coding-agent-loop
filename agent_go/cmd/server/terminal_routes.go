@@ -581,6 +581,13 @@ func sendTerminalKey(ctx context.Context, tmuxSession, key string) error {
 		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "C-c")
 	case "ctrl-o", "ctrl_o", "expand":
 		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "C-o")
+	case "tab":
+		// e.g. allowlist a gated MCP-tool prompt, accept a menu selection.
+		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "Tab")
+	case "up", "arrow-up", "arrow_up":
+		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "Up")
+	case "down", "arrow-down", "arrow_down":
+		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "Down")
 	default:
 		return fmt.Errorf("unsupported terminal key %q", key)
 	}

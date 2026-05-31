@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowDownToLine, Braces, Bug, Check, ChevronsLeft, ChevronsRight, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Palette, Plus, Power, RefreshCw, Square, Terminal, Trash2, X } from 'lucide-react'
+import { AlertTriangle, ArrowDownToLine, ArrowRightToLine, Braces, Bug, Check, ChevronDown, ChevronsLeft, ChevronsRight, ChevronUp, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Palette, Plus, Power, RefreshCw, Square, Terminal, Trash2, X } from 'lucide-react'
 import { AnsiUp } from 'ansi_up'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
@@ -113,7 +113,7 @@ const TERMINAL_FAST_POLL_INTERVAL_MS = 300
 const TERMINAL_FAST_POLL_DURATION_MS = 7000
 
 type TerminalColorScheme = 'neon' | 'mono' | 'homebrew' | 'catppuccin' | 'nord' | 'gruvbox' | 'solarized' | 'tokyo'
-type TerminalDebugKey = 'enter' | 'esc' | 'ctrl-c' | 'ctrl-o'
+type TerminalDebugKey = 'enter' | 'esc' | 'ctrl-c' | 'ctrl-o' | 'tab' | 'up' | 'down'
 type TerminalRailFilter = 'all' | 'running' | 'non-running'
 
 const DEFAULT_TERMINAL_COLOR_SCHEME: TerminalColorScheme = 'homebrew'
@@ -1018,7 +1018,13 @@ function canForceCompleteTerminal(terminal: TerminalSnapshot): boolean {
 }
 
 function canSendTerminalDebugInput(terminal: TerminalSnapshot): boolean {
-  return Boolean(terminal.tmux_session) && terminalState(terminal) === 'running'
+  // Allow key input whenever a tmux pane exists — not only while the terminal
+  // reports "running". A pane can be alive and waiting at a prompt even when the
+  // terminal state is idle/completed (e.g. a turn mis-detected as "completed"
+  // while actually stalled on an MCP-tool approval prompt), and sending
+  // Tab/Enter/Esc is exactly what unblocks it. If the pane is truly gone the
+  // backend send-keys fails gracefully and surfaces an error.
+  return Boolean(terminal.tmux_session)
 }
 
 function hasTerminalDebugActions(terminal: TerminalSnapshot): boolean {
@@ -3645,6 +3651,39 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                                   >
                                     <Braces className="h-3.5 w-3.5 shrink-0" />
                                     <span>Send Ctrl+O (expand)</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onMouseDown={event => event.preventDefault()}
+                                    onClick={() => { setDebugPanelOpenForID(null); void sendTerminalDebugKey(selectedTerminalView, 'tab') }}
+                                    disabled={terminalActionBusy === 'tab'}
+                                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80 disabled:cursor-wait disabled:opacity-50"
+                                  >
+                                    <ArrowRightToLine className="h-3.5 w-3.5 shrink-0" />
+                                    <span>Send Tab (allowlist / select)</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onMouseDown={event => event.preventDefault()}
+                                    onClick={() => { setDebugPanelOpenForID(null); void sendTerminalDebugKey(selectedTerminalView, 'up') }}
+                                    disabled={terminalActionBusy === 'up'}
+                                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80 disabled:cursor-wait disabled:opacity-50"
+                                  >
+                                    <ChevronUp className="h-3.5 w-3.5 shrink-0" />
+                                    <span>Send Up arrow</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onMouseDown={event => event.preventDefault()}
+                                    onClick={() => { setDebugPanelOpenForID(null); void sendTerminalDebugKey(selectedTerminalView, 'down') }}
+                                    disabled={terminalActionBusy === 'down'}
+                                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-neutral-800/80 disabled:cursor-wait disabled:opacity-50"
+                                  >
+                                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                                    <span>Send Down arrow</span>
                                   </button>
                                   <div className="my-1 h-px bg-neutral-800/80" role="none" />
                                   <button

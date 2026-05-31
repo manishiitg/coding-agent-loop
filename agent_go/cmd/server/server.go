@@ -7296,7 +7296,7 @@ type workshopExecutionBgNotifier struct {
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human.WorkshopExecutionStart) {
-	if n.api.isSessionMarkedStopped(n.sessionID) || n.api.isSessionStoppedOrInactive(n.sessionID) {
+	if n.api.autoNotificationSessionUnreachable(n.sessionID) {
 		log.Printf("[BG AGENT] OnExecutionStart ignored for stopped session %s (exec=%s)", n.sessionID, start.ID)
 		if start.Cancel != nil {
 			start.Cancel()
@@ -7360,7 +7360,7 @@ func isWorkflowStepTrackingExecution(id, name string, meta map[string]string) bo
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result string, meta map[string]string, err error) {
-	if n.api.isSessionMarkedStopped(n.sessionID) || n.api.isSessionStoppedOrInactive(n.sessionID) {
+	if n.api.autoNotificationSessionUnreachable(n.sessionID) {
 		n.api.completeTrackedExecution(execID, trackedExecutionStatusCanceled, "session stopped", meta)
 		log.Printf("[BG AGENT] OnExecutionComplete ignored for stopped session %s (exec=%s)", n.sessionID, execID)
 		return
@@ -7434,7 +7434,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result s
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionTerminated(execID, name string) {
-	if n.api.isSessionMarkedStopped(n.sessionID) || n.api.isSessionStoppedOrInactive(n.sessionID) {
+	if n.api.autoNotificationSessionUnreachable(n.sessionID) {
 		n.api.completeTrackedExecution(execID, trackedExecutionStatusCanceled, "session stopped", nil)
 		return
 	}
@@ -7467,7 +7467,7 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentStart(start todo_creation_h
 	if n == nil || n.api == nil || strings.TrimSpace(start.ID) == "" {
 		return
 	}
-	if n.api.isSessionMarkedStopped(n.sessionID) || n.api.isSessionStoppedOrInactive(n.sessionID) {
+	if n.api.autoNotificationSessionUnreachable(n.sessionID) {
 		if start.Cancel != nil {
 			start.Cancel()
 		}
@@ -7515,7 +7515,7 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, name stri
 	if n == nil || n.api == nil || strings.TrimSpace(agentID) == "" {
 		return
 	}
-	if n.api.isSessionMarkedStopped(n.sessionID) || n.api.isSessionStoppedOrInactive(n.sessionID) {
+	if n.api.autoNotificationSessionUnreachable(n.sessionID) {
 		return
 	}
 	agent := n.api.bgAgentRegistry.Get(n.sessionID, agentID)
@@ -7887,6 +7887,46 @@ func (api *StreamingAPI) isSessionStoppedOrInactive(sessionID string) bool {
 		return false
 	}
 	return session.Status == "stopped" || session.Status == "inactive"
+}
+
+// autoNotificationSessionUnreachable decides whether a background-completion
+// auto-notification must be dropped. It is the auto-notification-specific guard:
+// a session is unreachable ONLY when it was explicitly stopped, or it is idle
+// ("inactive") with no agent left in memory to wake. A merely-idle session
+// (marked "inactive" by the 10-minute cleanup) whose agent is still resident is
+// NOT unreachable — a pending completion should REACTIVATE the main agent rather
+// than be lost. In that case we clear the inactive mark (back to "running", which
+// also refreshes LastActivity) so the synthetic turn can resume it. Without this,
+// any background step that outlived the 10-minute idle window had its completion
+// silently dropped even though the main agent was alive, stalling the workflow.
+func (api *StreamingAPI) autoNotificationSessionUnreachable(sessionID string) bool {
+	if api.isSessionMarkedStopped(sessionID) {
+		return true
+	}
+	api.activeSessionsMux.RLock()
+	status := ""
+	if session, exists := api.activeSessions[sessionID]; exists {
+		status = session.Status
+	}
+	api.activeSessionsMux.RUnlock()
+
+	switch status {
+	case "stopped":
+		return true
+	case "inactive":
+		api.sessionAgentsMux.RLock()
+		_, hasAgent := api.sessionAgents[sessionID]
+		api.sessionAgentsMux.RUnlock()
+		if !hasAgent {
+			return true // agent already evicted (e.g. after restart) — nothing to wake here
+		}
+		// Idle but alive: reactivate so the completion notification can resume it.
+		api.updateSessionStatus(sessionID, "running")
+		log.Printf("[BG AGENT] Session %s was inactive but its agent is live; reactivating so the auto-notification can resume it", sessionID)
+		return false
+	default:
+		return false
+	}
 }
 
 // markSessionStopped records that a user explicitly stopped this session.

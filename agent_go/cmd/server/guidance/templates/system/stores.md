@@ -76,10 +76,10 @@ If a step needs business context while running, explicitly wire it in BOTH place
 
 Every non-trivial step has a `context_output` file (e.g. `extracted_data.json`). That's the forward-pipe to the next step and the target of `validation_schema`. It lives under `runs/{iteration}/{group}/execution/{step-id}/` and is **volatile** — deleted on re-execution.
 
-`db/*.json` is different: workspace-level, persistent across runs and groups, and the **only** place report widgets can bind to (`reports/report_plan.json` sources must be `db/*.json` — never `runs/...`).
+`db/*.json` is different: workspace-level, persistent across runs and groups, and the default source for data-backed report widgets (`table`, `cards`, `chart`, `stat`, `alert`, `pivot`). Artifact report widgets are the exception: `kind: "file"` and `kind: "file-list"` may render durable files from `db/`, `knowledgebase/`, or `docs/`. Do not point report widgets at volatile `runs/...` paths.
 
 **When to introduce a db/ file:**
-- (a) You want (or might plausibly want) this data to appear in the Report UI — db/ is the only option; migrating later means rewriting step code + schema notes, so lean toward db/ up front.
+- (a) You want (or might plausibly want) structured data to appear in the Report UI — db/ is the default durable option; migrating later means rewriting step code + schema notes, so lean toward db/ up front. For human-readable documents or media artifacts, use durable `docs/`, `knowledgebase/`, or `db/assets/` paths with `file` / `file-list` widgets.
 - (b) Cross-run persistence matters — cursors ("last-processed date"), processed-ID sets for dedup, cumulative rows that grow across runs.
 - (c) Cross-group aggregation matters — combined tallies, per-group rows unified into one view.
 

@@ -214,6 +214,33 @@ const NODE_DIMENSIONS = {
   'workflow-artifact': { width: 220, height: 120 }
 }
 
+const SUB_AGENT_LAYOUT = {
+  parentGap: 72,
+  cellGap: 32,
+  cellWidth: Math.max(NODE_DIMENSIONS.step.width, NODE_DIMENSIONS.todo_task.width),
+  cellHeight: NODE_DIMENSIONS.step.height
+}
+
+function getSubAgentGridMetrics(count: number, direction: 'LR' | 'TB') {
+  if (count <= 0) {
+    return { columns: 0, rows: 0, width: 0, height: 0 }
+  }
+
+  const columns = direction === 'TB'
+    ? count
+    : Math.ceil(count / (count >= 5 ? 2 : 1))
+  const rows = direction === 'TB'
+    ? 1
+    : (count >= 5 ? 2 : 1)
+
+  return {
+    columns,
+    rows,
+    width: (columns * SUB_AGENT_LAYOUT.cellWidth) + ((columns - 1) * SUB_AGENT_LAYOUT.cellGap),
+    height: (rows * SUB_AGENT_LAYOUT.cellHeight) + ((rows - 1) * SUB_AGENT_LAYOUT.cellGap)
+  }
+}
+
 /**
  * Estimate node height based on content
  * Simplified version - nodes no longer show description, success criteria, or validation schema
@@ -254,7 +281,11 @@ function estimateNodeHeight(node: WorkflowNode): number {
   if (node.type === 'todo_task') {
     const todoData = data as TodoTaskNodeData
     if (todoData.predefined_routes && todoData.predefined_routes.length > 0) {
-      contentHeight += 25
+      contentHeight += 36 + Math.min(todoData.predefined_routes.length, 4) * 32
+    }
+    const step = todoData.step
+    if (step && 'messages' in step && Array.isArray(step.messages) && step.messages.length > 0) {
+      contentHeight += 30 + Math.min(step.messages.length, 20) * 28
     }
     if (todoData.enable_generic_agent) {
       contentHeight += 20
@@ -269,9 +300,7 @@ function estimateNodeHeight(node: WorkflowNode): number {
     }
     contentHeight += 25 // route count badge
     if (routingData.routes && routingData.routes.length > 0) {
-      // Route labels wrap ~3 per row, each row ~22px
-      const rows = Math.ceil(routingData.routes.length / 3)
-      contentHeight += (rows * 22) + 12
+      contentHeight += (routingData.routes.length * 34) + 12
     }
   }
 
@@ -285,6 +314,228 @@ function estimateNodeHeight(node: WorkflowNode): number {
   estimatedHeight = Math.max(estimatedHeight, baseDimensions.height)
 
   return estimatedHeight
+}
+
+function getNodeLayoutDimensions(node: WorkflowNode): { width: number; height: number } {
+  const baseDimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+  return {
+    width: baseDimensions.width,
+    height: Math.max(baseDimensions.height, estimateNodeHeight(node))
+  }
+}
+
+function getImmediateSubAgentParentId(nodeId: string, parentIds: Set<string>): string | null {
+  if (!nodeId.includes('-sub-agent-')) {
+    return null
+  }
+
+  return Array.from(parentIds)
+    .filter(parentId => nodeId.startsWith(`${parentId}-sub-agent-`))
+    .sort((a, b) => b.length - a.length)[0] || null
+}
+
+function getSubAgentGridMetricsFromDimensions(dimensions: Array<{ width: number; height: number }>, direction: 'LR' | 'TB') {
+  const count = dimensions.length
+  const base = getSubAgentGridMetrics(count, direction)
+  if (count <= 0) {
+    return { ...base, columnWidths: [], rowHeights: [] }
+  }
+
+  const columnWidths = Array.from({ length: base.columns }, (_, column) => {
+    return dimensions.reduce((max, dims, index) => {
+      return index % base.columns === column ? Math.max(max, dims.width) : max
+    }, SUB_AGENT_LAYOUT.cellWidth)
+  })
+  const rowHeights = Array.from({ length: base.rows }, (_, row) => {
+    return dimensions.reduce((max, dims, index) => {
+      return Math.floor(index / base.columns) === row ? Math.max(max, dims.height) : max
+    }, SUB_AGENT_LAYOUT.cellHeight)
+  })
+  const width = columnWidths.reduce((sum, value) => sum + value, 0) + Math.max(0, base.columns - 1) * SUB_AGENT_LAYOUT.cellGap
+  const height = rowHeights.reduce((sum, value) => sum + value, 0) + Math.max(0, base.rows - 1) * SUB_AGENT_LAYOUT.cellGap
+
+  return {
+    ...base,
+    width,
+    height,
+    columnWidths,
+    rowHeights
+  }
+}
+
+function getNodeFootprintDimensions(
+  node: WorkflowNode,
+  allNodes: WorkflowNode[],
+  parentIds: Set<string>,
+  direction: 'LR' | 'TB',
+  visited: Set<string> = new Set()
+): { width: number; height: number } {
+  const ownDimensions = getNodeLayoutDimensions(node)
+  if (visited.has(node.id) || node.type !== 'todo_task') {
+    return ownDimensions
+  }
+
+  const nextVisited = new Set(visited)
+  nextVisited.add(node.id)
+
+  const childFootprints = allNodes
+    .filter(candidate => getImmediateSubAgentParentId(candidate.id, parentIds) === node.id)
+    .map(child => getNodeFootprintDimensions(child, allNodes, parentIds, direction, nextVisited))
+
+  if (childFootprints.length === 0) {
+    return ownDimensions
+  }
+
+  const childGrid = getSubAgentGridMetricsFromDimensions(childFootprints, direction)
+  if (direction === 'TB') {
+    return {
+      width: Math.max(ownDimensions.width, childGrid.width),
+      height: ownDimensions.height + SUB_AGENT_LAYOUT.parentGap + childGrid.height
+    }
+  }
+
+  return {
+    width: ownDimensions.width + SUB_AGENT_LAYOUT.parentGap + childGrid.width,
+    height: Math.max(ownDimensions.height, childGrid.height)
+  }
+}
+
+function getRoutingChildren(nodeId: string, nodes: WorkflowNode[], edges: WorkflowEdge[]): string[] {
+  const node = nodes.find(candidate => candidate.id === nodeId)
+  if (node?.type === 'routing') {
+    const step = (node.data as RoutingStepNodeData).step
+    if (step && isRoutingStep(step)) {
+      const stepIdToNodeId = new Map<string, string>()
+      nodes.forEach(candidate => {
+        const candidateStep = (candidate.data as { step?: PlanStep }).step
+        if (candidateStep?.id) {
+          stepIdToNodeId.set(candidateStep.id, candidate.id)
+        }
+      })
+
+      return step.routes
+        .map(route => stepIdToNodeId.get(route.next_step_id))
+        .filter((targetId): targetId is string => Boolean(targetId))
+    }
+  }
+
+  const children: string[] = []
+  const seen = new Set<string>()
+
+  edges.forEach(edge => {
+    if (
+      edge.source === nodeId &&
+      typeof edge.sourceHandle === 'string' &&
+      edge.sourceHandle.startsWith('route-') &&
+      edge.target !== 'end' &&
+      !seen.has(edge.target)
+    ) {
+      seen.add(edge.target)
+      children.push(edge.target)
+    }
+  })
+
+  return children
+}
+
+function getWorkflowBranchFootprint(
+  nodeId: string,
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[],
+  todoParentIds: Set<string>,
+  visited: Set<string> = new Set()
+): { width: number; height: number } {
+  const node = nodes.find(candidate => candidate.id === nodeId)
+  if (!node || visited.has(nodeId)) {
+    return { width: 0, height: 0 }
+  }
+
+  const nextVisited = new Set(visited)
+  nextVisited.add(nodeId)
+  const ownFootprint = getNodeFootprintDimensions(node, nodes, todoParentIds, 'TB')
+  if (node.type !== 'routing') {
+    return ownFootprint
+  }
+
+  const childFootprints = getRoutingChildren(node.id, nodes, edges)
+    .map(childId => getWorkflowBranchFootprint(childId, nodes, edges, todoParentIds, nextVisited))
+    .filter(footprint => footprint.width > 0 && footprint.height > 0)
+
+  if (childFootprints.length === 0) {
+    return ownFootprint
+  }
+
+  const childrenWidth = childFootprints.reduce((sum, footprint) => sum + footprint.width, 0) +
+    Math.max(0, childFootprints.length - 1) * SUB_AGENT_LAYOUT.cellGap
+  const childrenHeight = Math.max(...childFootprints.map(footprint => footprint.height))
+
+  return {
+    width: Math.max(ownFootprint.width, childrenWidth),
+    height: ownFootprint.height + SUB_AGENT_LAYOUT.parentGap + childrenHeight
+  }
+}
+
+function applyVerticalRoutingTreeLayout(nodes: WorkflowNode[], edges: WorkflowEdge[]): WorkflowNode[] {
+  const positionedNodes = nodes.map(node => ({ ...node, position: { ...node.position } }))
+  const nodeIndexById = new Map(positionedNodes.map((node, index) => [node.id, index]))
+  const todoParentIds = new Set(positionedNodes.filter(node => node.type === 'todo_task').map(node => node.id))
+  const routedTargets = new Set(
+    positionedNodes
+      .filter(node => node.type === 'routing')
+      .flatMap(node => getRoutingChildren(node.id, positionedNodes, edges))
+  )
+
+  const setNodePosition = (nodeId: string, x: number, y: number) => {
+    const nodeIndex = nodeIndexById.get(nodeId)
+    if (nodeIndex === undefined) return
+    positionedNodes[nodeIndex] = {
+      ...positionedNodes[nodeIndex],
+      position: { x, y }
+    }
+  }
+
+  const placeBranch = (nodeId: string, left: number, top: number, visited: Set<string> = new Set()) => {
+    const nodeIndex = nodeIndexById.get(nodeId)
+    if (nodeIndex === undefined || visited.has(nodeId)) return
+
+    const node = positionedNodes[nodeIndex]
+    const nextVisited = new Set(visited)
+    nextVisited.add(nodeId)
+    const footprint = getWorkflowBranchFootprint(nodeId, positionedNodes, edges, todoParentIds, visited)
+    const ownFootprint = getNodeFootprintDimensions(node, positionedNodes, todoParentIds, 'TB')
+    const ownDimensions = getNodeLayoutDimensions(node)
+    const nodeLeft = left + (footprint.width - ownFootprint.width) / 2 + (ownFootprint.width - ownDimensions.width) / 2
+    setNodePosition(nodeId, nodeLeft, top)
+
+    if (node.type !== 'routing') return
+
+    const childIds = getRoutingChildren(node.id, positionedNodes, edges)
+    if (childIds.length === 0) return
+
+    const childFootprints = childIds.map(childId =>
+      getWorkflowBranchFootprint(childId, positionedNodes, edges, todoParentIds, nextVisited)
+    )
+    const totalChildrenWidth = childFootprints.reduce((sum, childFootprint) => sum + childFootprint.width, 0) +
+      Math.max(0, childFootprints.length - 1) * SUB_AGENT_LAYOUT.cellGap
+    let childLeft = left + (footprint.width - totalChildrenWidth) / 2
+    const childTop = top + ownFootprint.height + SUB_AGENT_LAYOUT.parentGap
+
+    childIds.forEach((childId, index) => {
+      placeBranch(childId, childLeft, childTop, nextVisited)
+      childLeft += childFootprints[index].width + SUB_AGENT_LAYOUT.cellGap
+    })
+  }
+
+  positionedNodes
+    .filter(node => node.type === 'routing' && !routedTargets.has(node.id))
+    .forEach(node => {
+      const footprint = getWorkflowBranchFootprint(node.id, positionedNodes, edges, todoParentIds)
+      const nodeDimensions = getNodeLayoutDimensions(node)
+      const left = node.position.x + (nodeDimensions.width / 2) - (footprint.width / 2)
+      placeBranch(node.id, left, node.position.y)
+    })
+
+  return positionedNodes
 }
 
 /**
@@ -389,7 +640,7 @@ function positionBranchNodes(nodes: WorkflowNode[], direction: 'LR' | 'TB'): Wor
             }
           })
         }
-      }
+    }
     }
 
     // Shift True Branch (Offset Multiplier: -1 for Top/Left)
@@ -414,13 +665,12 @@ function detectAndResolveCollisions(nodes: WorkflowNode[], direction: 'LR' | 'TB
 
   // Get bounding box for a node (using estimated height based on content)
   const getBounds = (node: WorkflowNode): { left: number; right: number; top: number; bottom: number } => {
-    const baseDimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-    const estimatedHeight = estimateNodeHeight(node)
+    const dimensions = getNodeLayoutDimensions(node)
     return {
       left: node.position.x,
-      right: node.position.x + baseDimensions.width,
+      right: node.position.x + dimensions.width,
       top: node.position.y,
-      bottom: node.position.y + estimatedHeight
+      bottom: node.position.y + dimensions.height
     }
   }
 
@@ -481,7 +731,7 @@ function detectAndResolveCollisions(nodes: WorkflowNode[], direction: 'LR' | 'TB
           ? -(hOverlapAmount + MIN_SEPARATION)  // Move a left
           : (hOverlapAmount + MIN_SEPARATION)   // Move a right
         return { dx: shiftX, dy: 0 }
-      }
+    }
     }
 
     // Partial overlap or too close - determine best direction based on overlap axis
@@ -570,7 +820,7 @@ function detectAndResolveCollisions(nodes: WorkflowNode[], direction: 'LR' | 'TB
         right: otherBounds.right + otherShift.dx,
         top: otherBounds.top + otherShift.dy,
         bottom: otherBounds.bottom + otherShift.dy
-      }
+    }
 
       // Check for overlap
       if (boxesOverlap(adjustedCurrentBounds, adjustedOtherBounds)) {
@@ -665,45 +915,31 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
     }
   }
 
+  const todoTaskNodeIds = new Set(nodes.filter(node => node.type === 'todo_task').map(node => node.id))
+
   // Add all nodes except excluded nodes to Dagre graph
   nodes.forEach(node => {
     if (!excludedNodeIds.has(node.id)) {
-      let width = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS]?.width || NODE_DIMENSIONS.step.width
-      let height = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS]?.height || NODE_DIMENSIONS.step.height
+      const layoutDimensions = getNodeLayoutDimensions(node)
+      let width = layoutDimensions.width
+      let height = layoutDimensions.height
 
       // For todo tasks, use compound dimensions to reserve space for sub-agents
       if (node.type === 'todo_task') {
-        const data = node.data as TodoTaskNodeData
-        const routes = (data as TodoTaskNodeData).predefined_routes
-        const numSubAgents = routes?.length || 0
-        
+        const immediateSubAgentDimensions = nodes
+          .filter(candidate => getImmediateSubAgentParentId(candidate.id, todoTaskNodeIds) === node.id)
+          .map(candidate => getNodeFootprintDimensions(candidate, nodes, todoTaskNodeIds, direction))
+        const numSubAgents = immediateSubAgentDimensions.length
+
         if (numSubAgents > 0) {
-          const GAP = 60
-          const SUB_AGENT_GAP = 20
-          
+          const subAgentGrid = getSubAgentGridMetricsFromDimensions(immediateSubAgentDimensions, direction)
+
           if (direction === 'LR') {
-            // LR: Row Below
-            // Compound Height = Orch + Gap + SubAgents
-            // Compound Width = Max(Orch, SubAgents) - Actually, for LR we want the node to be centered 
-            // relative to its sub-agents. So the compound node's width effectively covers the whole sub-agent row.
-            const subAgentRowWidth = (numSubAgents * 280) + ((numSubAgents - 1) * SUB_AGENT_GAP)
-            const subAgentRowHeight = 120 // standard step height
-            
-            height = height + GAP + subAgentRowHeight
-            // Use full sub-agent row width for the compound node in Dagre
-            // This forces Dagre to leave enough space on left/right for the sub-agents
-            width = Math.max(width, subAgentRowWidth)
-            console.log(`[Compound Layout] Node ${node.id} (${node.type}, LR): Compound Size ${width}x${height} (SubAgents: ${numSubAgents}, RowWidth: ${subAgentRowWidth})`)
+            height = height + SUB_AGENT_LAYOUT.parentGap + subAgentGrid.height
+            width = Math.max(width, subAgentGrid.width)
           } else {
-            // TB: Column Right
-            // Compound Width = Orch + Gap + SubAgents
-            // Compound Height = Max(Orch, SubAgents)
-            const subAgentColWidth = 280 // standard step width
-            const subAgentColHeight = (numSubAgents * 120) + ((numSubAgents - 1) * SUB_AGENT_GAP)
-            
-            width = width + GAP + subAgentColWidth
-            height = Math.max(height, subAgentColHeight)
-            console.log(`[Compound Layout] Node ${node.id} (${node.type}, TB): Compound Size ${width}x${height} (SubAgents: ${numSubAgents}, ColHeight: ${subAgentColHeight})`)
+            width = Math.max(width, subAgentGrid.width)
+            height = height + SUB_AGENT_LAYOUT.parentGap + subAgentGrid.height
           }
         }
       }
@@ -747,54 +983,36 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
       return node
     }
 
-    const dims = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-    
+    const dims = getNodeLayoutDimensions(node)
+
     // Calculate position based on Compound vs Standard dimensions
     let x = nodeWithPosition.x
     let y = nodeWithPosition.y
-    
+
     // Default centering (Dagre returns center)
     x -= dims.width / 2
     y -= dims.height / 2
 
     // Adjust for TodoTask Compound positioning
     if (node.type === 'todo_task') {
-      const data = node.data as TodoTaskNodeData
-      const routes = (data as TodoTaskNodeData).predefined_routes
-      const numSubAgents = routes?.length || 0
-      
-      if (numSubAgents > 0) {
-        const GAP = 60
-        
-        if (direction === 'LR') {
-          // LR: Orchestrator is at Top Center of compound block
-          const subAgentRowHeight = 120
-          const compoundHeight = dims.height + GAP + subAgentRowHeight
-          const SUB_AGENT_GAP = 20
-          // Calculate compound width for potential future layout adjustments
-          void ((numSubAgents * 280) + ((numSubAgents - 1) * SUB_AGENT_GAP))
-          
-          // Re-calculate Y: Top of compound
-          const compoundTop = nodeWithPosition.y - (compoundHeight / 2)
-          y = compoundTop // Orch/Todo is at top
+      const immediateSubAgentDimensions = nodes
+        .filter(candidate => getImmediateSubAgentParentId(candidate.id, todoTaskNodeIds) === node.id)
+        .map(candidate => getNodeFootprintDimensions(candidate, nodes, todoTaskNodeIds, direction))
+      const numSubAgents = immediateSubAgentDimensions.length
 
-          // Re-calculate X: Center of compound
-          // If sub-agents are wider than parent, Dagre center is center of sub-agents
-          // We want parent to be centered relative to sub-agents
-          // nodeWithPosition.x is center of compound block
+      if (numSubAgents > 0) {
+        const subAgentGrid = getSubAgentGridMetricsFromDimensions(immediateSubAgentDimensions, direction)
+
+        if (direction === 'LR') {
+          const compoundHeight = dims.height + SUB_AGENT_LAYOUT.parentGap + subAgentGrid.height
+          const compoundTop = nodeWithPosition.y - (compoundHeight / 2)
+          y = compoundTop
           x = nodeWithPosition.x - (dims.width / 2)
-          
-          console.log(`[Compound Layout] Adjusting ${node.id} (${node.type}, LR): DagreY=${nodeWithPosition.y}, CompoundH=${compoundHeight}, NewY=${y}, NewX=${x}`)
         } else {
-          // TB: Orchestrator is at Left Center of compound block
-          const subAgentColWidth = 280
-          const compoundWidth = dims.width + GAP + subAgentColWidth
-          
-          // Re-calculate X: Left of compound
-          const compoundLeft = nodeWithPosition.x - (compoundWidth / 2)
-          x = compoundLeft // Orch/Todo is at left
-          
-          console.log(`[Compound Layout] Adjusting ${node.id} (${node.type}, TB): DagreX=${nodeWithPosition.x}, CompoundW=${compoundWidth}, NewX=${x}`)
+          const compoundHeight = dims.height + SUB_AGENT_LAYOUT.parentGap + subAgentGrid.height
+          const compoundTop = nodeWithPosition.y - (compoundHeight / 2)
+          y = compoundTop
+          x = nodeWithPosition.x - (dims.width / 2)
         }
       }
     }
@@ -1043,7 +1261,7 @@ function processSteps(
               source: todoTaskNodeId,
               sourceHandle: route.route_id,
               target: 'end',
-              type: 'smoothstep',
+              type: 'step',
               style: { stroke: '#ef4444', strokeWidth: 2 },
               animated: false
             })
@@ -1135,7 +1353,7 @@ function processSteps(
           sourceHandle: route.route_id,
           target: subAgentNodeId,
           targetHandle: 'top',
-          type: 'smoothstep',
+          type: 'step',
           style: { stroke: '#8b5cf6', strokeWidth: 2, strokeDasharray: '5,5' },
           animated: false
         })
@@ -1546,33 +1764,43 @@ function processSteps(
           const targetNodeId = stepIdToNodeIdMap?.get(route.next_step_id)
 
           if (targetNodeId) {
+            const isSelectedRoute = !step.selected_route_id || route.route_id === step.selected_route_id
             routingEdges.push({
               id: `${sourceNodeId}-routing-${route.route_id}-to-${targetNodeId}`,
               source: sourceNodeId,
               sourceHandle: `route-${route.route_id}`,
               target: targetNodeId,
-              type: 'smoothstep',
+              type: 'step',
               label: route.route_name || route.route_id,
-              labelStyle: ROUTE_EDGE_LABEL_STYLE,
+              labelStyle: { ...ROUTE_EDGE_LABEL_STYLE, opacity: isSelectedRoute ? 1 : 0.5 },
               labelBgStyle: EDGE_LABEL_BG_STYLE,
               labelBgPadding: [3, 3] as [number, number],
               labelBgBorderRadius: 4,
-              style: { stroke: '#14b8a6', strokeWidth: 1.5 },
+              style: {
+                stroke: isSelectedRoute ? '#0f766e' : '#94a3b8',
+                strokeWidth: isSelectedRoute ? 2.5 : 1.25,
+                opacity: isSelectedRoute ? 1 : 0.4
+              },
               animated: false
             })
           } else if (route.next_step_id === 'end') {
+            const isSelectedRoute = !step.selected_route_id || route.route_id === step.selected_route_id
             routingEdges.push({
               id: `${sourceNodeId}-routing-${route.route_id}-to-end`,
               source: sourceNodeId,
               sourceHandle: `route-${route.route_id}`,
               target: 'end',
-              type: 'smoothstep',
+              type: 'step',
               label: route.route_name || route.route_id,
-              labelStyle: ROUTE_EDGE_LABEL_STYLE,
+              labelStyle: { ...ROUTE_EDGE_LABEL_STYLE, opacity: isSelectedRoute ? 1 : 0.5 },
               labelBgStyle: EDGE_LABEL_BG_STYLE,
               labelBgPadding: [3, 3] as [number, number],
               labelBgBorderRadius: 4,
-              style: { stroke: '#14b8a6', strokeWidth: 1.5 },
+              style: {
+                stroke: isSelectedRoute ? '#0f766e' : '#94a3b8',
+                strokeWidth: isSelectedRoute ? 2.5 : 1.25,
+                opacity: isSelectedRoute ? 1 : 0.4
+              },
               animated: false
             })
           }
@@ -2283,8 +2511,7 @@ export function usePlanToFlow(
           const numSubAgents = routes?.length || 0
           
           if (numSubAgents > 0 && layoutDirection === 'LR') {
-            const SUB_AGENT_GAP = 20
-            const subAgentRowWidth = (numSubAgents * 280) + ((numSubAgents - 1) * SUB_AGENT_GAP)
+            const subAgentRowWidth = getSubAgentGridMetrics(numSubAgents, layoutDirection).width
             const parentWidth = 300
             if (subAgentRowWidth > parentWidth) {
               // Sub-agents extend further left than the parent card
@@ -2360,12 +2587,15 @@ export function usePlanToFlow(
           })
         }
       }
-
     }
 
-    // Position sub-agents relative to their parent nodes (todo_task)
-    // LR layout: horizontal row BELOW parent
-    // TB layout: vertical column to the RIGHT of parent
+    if (layoutDirection === 'TB') {
+      layoutedResult.nodes = applyVerticalRoutingTreeLayout(layoutedResult.nodes, layoutedResult.edges)
+    }
+
+    // Position sub-agents relative to their parent todo_task nodes.
+    // TB is the active canvas layout: children form a vertical tree, with
+    // sibling branches spread horizontally by their recursive footprint.
     const parentNodeMap = new Map<string, { nodeIndex: number; subAgentIndices: number[] }>()
 
     // Pass 1: Find all todo task nodes first to initialize map
@@ -2374,100 +2604,77 @@ export function usePlanToFlow(
         parentNodeMap.set(node.id, { nodeIndex: index, subAgentIndices: [] })
       }
     })
-    console.log(`[SubAgent Mapping] Pass 1: Found ${parentNodeMap.size} parents`)
 
-    // Pass 2: Find all sub-agents and attach to parent
-    let subAgentsFound = 0
+    // Pass 2: Find all sub-agents and attach to their immediate parent
+    const todoTaskParentIds = new Set(parentNodeMap.keys())
     layoutedResult.nodes.forEach((node, index) => {
       if (node.id.includes('-sub-agent-')) {
-        // Extract parent node ID from sub-agent ID
-        const parentId = node.id.split('-sub-agent-')[0]
+        const parentId = getImmediateSubAgentParentId(node.id, todoTaskParentIds)
+        if (!parentId) return
         const parentInfo = parentNodeMap.get(parentId)
         if (parentInfo) {
           parentInfo.subAgentIndices.push(index)
-          subAgentsFound++
-        } else {
-          console.warn(`[SubAgent Mapping] Orphan sub-agent found: ${node.id} (Parent ${parentId} not found)`)
         }
       }
     })
-    console.log(`[SubAgent Mapping] Pass 2: Mapped ${subAgentsFound} sub-agents to parents`)
 
     // Position sub-agents based on layout direction
     parentNodeMap.forEach(({ nodeIndex: parentNodeIndex, subAgentIndices }) => {
       const parentNode = layoutedResult.nodes[parentNodeIndex]
-      const parentDimensions = (NODE_DIMENSIONS[parentNode.type as keyof typeof NODE_DIMENSIONS]) || NODE_DIMENSIONS.step
+      const parentDimensions = getNodeLayoutDimensions(parentNode)
 
       if (subAgentIndices.length === 0) return
 
-      const GAP = 60
-      const SUB_AGENT_GAP = 20
-      
+      const subAgentDimensions = subAgentIndices.map(index => getNodeLayoutDimensions(layoutedResult.nodes[index]))
+      const subAgentFootprints = subAgentIndices.map(index =>
+        getNodeFootprintDimensions(layoutedResult.nodes[index], layoutedResult.nodes, todoTaskParentIds, layoutDirection)
+      )
 
       if (layoutDirection === 'LR') {
-        // LR layout: Horizontal row BELOW parent
-        // Calculate total width needed for all sub-agents
-        let totalWidth = 0
-        subAgentIndices.forEach((idx, i) => {
-          const dims = NODE_DIMENSIONS[layoutedResult.nodes[idx].type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-          totalWidth += dims.width
-          if (i < subAgentIndices.length - 1) {
-            totalWidth += SUB_AGENT_GAP
-          }
-        })
+        const subAgentGrid = getSubAgentGridMetricsFromDimensions(subAgentFootprints, layoutDirection)
+        const columnWidths = subAgentGrid.columnWidths
+        const rowHeights = subAgentGrid.rowHeights
+        const startX = parentNode.position.x + (parentDimensions.width - subAgentGrid.width) / 2
+        const startY = parentNode.position.y + parentDimensions.height + SUB_AGENT_LAYOUT.parentGap
 
-        // Center sub-agents under parent
-        const startX = parentNode.position.x + (parentDimensions.width - totalWidth) / 2
-        const subAgentY = parentNode.position.y + parentDimensions.height + GAP
-
-        let currentX = startX
-        subAgentIndices.forEach((subAgentIndex) => {
+        subAgentIndices.forEach((subAgentIndex, index) => {
           const subAgent = layoutedResult.nodes[subAgentIndex]
-          const subAgentDimensions = NODE_DIMENSIONS[subAgent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+          const dimensions = subAgentDimensions[index]
+          const footprint = subAgentFootprints[index]
+          const column = index % subAgentGrid.columns
+          const row = Math.floor(index / subAgentGrid.columns)
+          const cellX = startX + columnWidths.slice(0, column).reduce((sum, width) => sum + width, 0) + (column * SUB_AGENT_LAYOUT.cellGap)
+          const cellY = startY + rowHeights.slice(0, row).reduce((sum, height) => sum + height, 0) + (row * SUB_AGENT_LAYOUT.cellGap)
 
-          // Update position - same Y, different X (horizontal row)
           layoutedResult.nodes[subAgentIndex] = {
             ...subAgent,
             position: {
-              x: currentX,
-              y: subAgentY
+              x: cellX + (footprint.width - dimensions.width) / 2,
+              y: cellY
             }
           }
-
-          currentX += subAgentDimensions.width + SUB_AGENT_GAP
         })
       } else {
-        // TB layout: Vertical column to the RIGHT of parent
-        // Calculate total height needed for all sub-agents
-        let totalHeight = 0
-        subAgentIndices.forEach((idx, i) => {
-          const dims = NODE_DIMENSIONS[layoutedResult.nodes[idx].type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-          totalHeight += dims.height
-          if (i < subAgentIndices.length - 1) {
-            totalHeight += SUB_AGENT_GAP
-          }
-        })
+        const totalWidth = subAgentFootprints.reduce((sum, footprint) => sum + footprint.width, 0) +
+          Math.max(0, subAgentFootprints.length - 1) * SUB_AGENT_LAYOUT.cellGap
+        const startX = parentNode.position.x + (parentDimensions.width - totalWidth) / 2
+        const startY = parentNode.position.y + parentDimensions.height + SUB_AGENT_LAYOUT.parentGap
 
-        // Center sub-agents vertically relative to parent
-        const subAgentX = parentNode.position.x + parentDimensions.width + GAP
-        const startY = parentNode.position.y + (parentDimensions.height - totalHeight) / 2
-        
-
-        let currentY = startY
-        subAgentIndices.forEach((subAgentIndex) => {
+        let cursorX = startX
+        subAgentIndices.forEach((subAgentIndex, index) => {
           const subAgent = layoutedResult.nodes[subAgentIndex]
-          const subAgentDimensions = NODE_DIMENSIONS[subAgent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+          const dimensions = subAgentDimensions[index]
+          const footprint = subAgentFootprints[index]
 
-          // Update position - same X, different Y (vertical column)
           layoutedResult.nodes[subAgentIndex] = {
             ...subAgent,
             position: {
-              x: subAgentX,
-              y: currentY
+              x: cursorX + (footprint.width - dimensions.width) / 2,
+              y: startY
             }
           }
 
-          currentY += subAgentDimensions.height + SUB_AGENT_GAP
+          cursorX += footprint.width + SUB_AGENT_LAYOUT.cellGap
         })
       }
     })

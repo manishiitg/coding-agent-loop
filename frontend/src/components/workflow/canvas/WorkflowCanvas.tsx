@@ -44,6 +44,10 @@ const SVG_EXPORT_SCALE = 3
 const PNG_EXPORT_SCALE = 1
 const PNG_EXPORT_MAX_SIDE = 16000
 const PNG_EXPORT_MAX_PIXELS = 64_000_000
+const WORKFLOW_LAYOUT_VERSION = '2.0-tree'
+const FLOW_FIT_PADDING = 0.24
+const FLOW_FIT_MIN_ZOOM = 0.08
+const FLOW_FIT_MAX_ZOOM = 0.95
 
 import type { ExecutionOptions } from '../../../services/api-types'
 
@@ -1130,6 +1134,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       const response = await agentApi.getPlannerFileContent(layoutPath)
       if (response.success && response.data?.content) {
         const layout = JSON.parse(response.data.content)
+        if (layout.version !== WORKFLOW_LAYOUT_VERSION) {
+          console.log('[WorkflowCanvas] Ignoring saved layout from older algorithm:', layout.version || 'unknown')
+          return null
+        }
         const positions = new Map<string, { x: number; y: number }>()
         const offsets = new Map<string, { parentId: string; dx: number; dy: number }>()
         let savedDirection: 'LR' | 'TB' | undefined
@@ -1194,7 +1202,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   useEffect(() => {
     if (effectiveCanvasViewMode === 'report' || toolbarOnly) return
     const t = setTimeout(() => {
-      try { void fitView({ padding: 0.18, duration: 350, minZoom: 0.15, maxZoom: 1.1 }) } catch { /* ignore */ }
+      try { void fitView({ padding: FLOW_FIT_PADDING, duration: 350, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM }) } catch { /* ignore */ }
     }, 360)
     return () => clearTimeout(t)
   }, [previewDevice, effectiveCanvasViewMode, fitView, toolbarOnly])
@@ -1423,7 +1431,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       if (flowElement) {
         flowElement.setAttribute('data-flow-exporting', 'true')
         try {
-          await fitView({ padding: 0.18, duration: 0, minZoom: 0.15, maxZoom: 1.1 })
+          await fitView({ padding: FLOW_FIT_PADDING, duration: 0, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })
           await waitForAnimationFrames(3)
           if (format === 'svg' || format === 'png') {
             const svgDataUrl = renderFlowElementToSvg(flowElement)
@@ -1499,7 +1507,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     })
 
     const layout = {
-      version: '1.2',
+      version: WORKFLOW_LAYOUT_VERSION,
       updatedAt: new Date().toISOString(),
       layoutDirection,
       nodePositions,
@@ -2378,7 +2386,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       const fitTimer = window.setTimeout(() => {
         window.requestAnimationFrame(() => {
           Promise.resolve(
-            fitView({ padding: 0.18, duration: 350, minZoom: 0.15, maxZoom: 1.1 })
+            fitView({ padding: FLOW_FIT_PADDING, duration: 350, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })
           ).finally(() => {
             viewportStateRef.current = getViewport()
             hasInitializedView.current = true
@@ -2662,8 +2670,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           onViewportChange={onViewportChange}
           nodeTypes={nodeTypes}
           fitView={false}
-          fitViewOptions={{ padding: 0.18, minZoom: 0.15, maxZoom: 1.1 }}
-          minZoom={0.1}
+          fitViewOptions={{ padding: FLOW_FIT_PADDING, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM }}
+          minZoom={FLOW_FIT_MIN_ZOOM}
           maxZoom={2}
           defaultViewport={{ x: 100, y: 0, zoom: 0.9 }}
           attributionPosition="bottom-right"

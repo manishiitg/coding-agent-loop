@@ -39,6 +39,9 @@ const statusIcons: Record<string, ReactElement | null> = {
 
 export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) => {
   const { title, routing_question, routes, status, stepIndex, changeType, isOrphan } = data
+  const selectedRouteId = data.step && 'selected_route_id' in data.step
+    ? data.step.selected_route_id
+    : undefined
 
   const borderColor = statusBorderColors[status] || statusBorderColors.pending
   const statusIcon = statusIcons[status] || null
@@ -104,27 +107,42 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
             <div className="text-[10px] font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-300">
               {routes.length} route{routes.length === 1 ? '' : 's'}
             </div>
-            {routes.map((route, index) => (
-              <div
-                key={route.route_id}
-                className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-700/80 dark:bg-slate-800/70"
-                title={route.condition || route.route_name || route.route_id}
-              >
-                <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-teal-600 text-[9px] font-bold text-white dark:bg-teal-500/80 dark:text-teal-50">
-                  {index + 1}
-                </span>
-                <div className="min-w-0">
-                  <div className="truncate text-[11px] font-semibold text-slate-800 dark:text-slate-200">
-                    {route.route_name || route.route_id}
-                  </div>
-                  {route.condition && (
-                    <div className="line-clamp-1 text-[10px] text-slate-500 dark:text-slate-400">
-                      {route.condition}
+            {routes.map((route, index) => {
+              const isSelectedRoute = selectedRouteId === route.route_id
+              return (
+                <div
+                  key={route.route_id}
+                  className={`flex items-start gap-2 rounded-md border px-2 py-1.5 ${
+                    isSelectedRoute
+                      ? 'border-teal-300 bg-teal-50 dark:border-teal-500/70 dark:bg-teal-500/15'
+                      : 'border-slate-200 bg-slate-50 dark:border-slate-700/80 dark:bg-slate-800/70'
+                  }`}
+                  title={route.condition || route.route_name || route.route_id}
+                >
+                  <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${
+                    isSelectedRoute
+                      ? 'bg-teal-700 text-white dark:bg-teal-400 dark:text-teal-950'
+                      : 'bg-teal-600 text-white dark:bg-teal-500/80 dark:text-teal-50'
+                  }`}>
+                    {isSelectedRoute ? <CheckCircle className="h-3 w-3" /> : index + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <div className={`truncate text-[11px] font-semibold ${
+                      isSelectedRoute
+                        ? 'text-teal-900 dark:text-teal-100'
+                        : 'text-slate-800 dark:text-slate-200'
+                    }`}>
+                      {route.route_name || route.route_id}
                     </div>
-                  )}
+                    {route.condition && (
+                      <div className="line-clamp-1 text-[10px] text-slate-500 dark:text-slate-400">
+                        {route.condition}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 

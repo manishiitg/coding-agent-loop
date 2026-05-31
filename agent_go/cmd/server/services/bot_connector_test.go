@@ -111,6 +111,111 @@ func TestThreadlessRunningSessionInjectsWhenBuilderFree(t *testing.T) {
 	}
 }
 
+func TestWhatsAppResumeCommandBindsExistingSession(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &testBotConnector{}
+	manager.RegisterConnector(connector)
+
+	manager.SetResumeTargetFunc(func(_ context.Context, userID, selector string, filter BotResumeFilter) (*BotResumeTarget, error) {
+		if userID != "user-1" {
+			t.Fatalf("resume userID = %q, want user-1", userID)
+		}
+		if selector != "latest" {
+			t.Fatalf("resume selector = %q, want latest", selector)
+		}
+		if filter.WorkspacePath != "" || filter.PresetQueryID != "" {
+			t.Fatalf("resume filter = %+v, want empty", filter)
+		}
+		return &BotResumeTarget{
+			SessionID:     "chat-1",
+			UserID:        "user-1",
+			AgentMode:     "workflow_phase",
+			Status:        "running",
+			Query:         "Build the report workflow",
+			WorkspacePath: "Workflow/report",
+			PresetQueryID: "preset-report",
+			PhaseID:       "workflow-builder",
+			WorkshopMode:  "run",
+		}, nil
+	})
+
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:        "whatsapp",
+		UserID:          "phone",
+		WorkspaceUserID: "user-1",
+		UserName:        "User",
+		ChannelID:       "dm",
+		Text:            "@resume",
+		IsMention:       true,
+	})
+
+	if len(connector.sent) != 1 || !strings.Contains(connector.sent[0], "chat-1") {
+		t.Fatalf("resume ack = %#v, want one ack mentioning chat-1", connector.sent)
+	}
+	threadID := ThreadID{Platform: "whatsapp", ChannelID: "dm", ThreadTS: "dm"}
+	manager.mu.RLock()
+	active := manager.sessions[threadID.Key()]
+	manager.mu.RUnlock()
+	if active == nil {
+		t.Fatal("expected resumed session to be bound to WhatsApp thread")
+	}
+	if active.SessionID != "chat-1" || active.AgentMode != "workflow_phase" || active.PresetQueryID != "preset-report" || active.WorkspacePath != "Workflow/report" {
+		t.Fatalf("active metadata = %+v", active)
+	}
+}
+
+func TestBuildQueryRequestForActivePreservesWorkflowMetadata(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	active := &activeBotSession{
+		SessionID:     "chat-1",
+		UserID:        "user-1",
+		AgentMode:     "workflow_phase",
+		PresetQueryID: "preset-report",
+		WorkspacePath: "Workflow/report",
+		PhaseID:       "workflow-builder",
+		WorkshopMode:  "run",
+	}
+
+	req := manager.buildQueryRequestForActive(active, "continue", "user-1", "whatsapp", ThreadID{
+		Platform:  "whatsapp",
+		ChannelID: "dm",
+		ThreadTS:  "dm",
+	})
+
+	if req["agent_mode"] != "workflow_phase" || req["preset_query_id"] != "preset-report" || req["selected_folder"] != "Workflow/report" || req["phase_id"] != "workflow-builder" {
+		t.Fatalf("request did not preserve workflow metadata: %#v", req)
+	}
+	execOpts, ok := req["execution_options"].(map[string]interface{})
+	if !ok || execOpts["workshop_mode"] != "run" {
+		t.Fatalf("execution_options = %#v, want workshop_mode run", req["execution_options"])
+	}
+}
+
+func TestStatusShowsNumberedResumableChats(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	manager.SetResumeListFunc(func(_ context.Context, userID string, filter BotResumeFilter) ([]BotResumeTarget, error) {
+		if userID != "user-1" {
+			t.Fatalf("resume list userID = %q, want user-1", userID)
+		}
+		if filter.WorkspacePath != "Workflow/report" || filter.PresetQueryID != "preset-report" {
+			t.Fatalf("resume list filter = %+v, want report filter", filter)
+		}
+		return []BotResumeTarget{
+			{SessionID: "chat-1", Query: "newer report chat", Status: "running"},
+			{SessionID: "chat-2", Query: "older report chat", Status: "completed"},
+		}, nil
+	})
+
+	reply := manager.formatBotStatusReply("user-1", "", false, "", false, BotResumeFilter{
+		WorkspacePath: "Workflow/report",
+		PresetQueryID: "preset-report",
+	})
+
+	if !strings.Contains(reply, "Resumable chats for this workflow:") || !strings.Contains(reply, "1. newer report chat - running") || !strings.Contains(reply, "Use `@resume 1`") {
+		t.Fatalf("status reply = %q, want numbered resumable chat list", reply)
+	}
+}
+
 func TestAddRestoredConversationSessionID(t *testing.T) {
 	req := map[string]interface{}{"query": "continue"}
 	addRestoredConversationSessionID(req, " old-session-1 ")

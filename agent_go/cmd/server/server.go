@@ -164,6 +164,8 @@ type ActiveSessionInfo struct {
 	WorkspacePath               string     `json:"workspace_path,omitempty"`
 	PresetName                  string     `json:"preset_name,omitempty"`
 	PresetQueryID               string     `json:"preset_query_id,omitempty"`
+	PhaseID                     string     `json:"phase_id,omitempty"`
+	WorkshopMode                string     `json:"workshop_mode,omitempty"`
 	BotPlatform                 string     `json:"bot_platform,omitempty"`
 	TriggeredBy                 string     `json:"triggered_by,omitempty"`
 	LLMGuidance                 string     `json:"llm_guidance,omitempty"`  // LLM guidance message for this session
@@ -1233,6 +1235,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Wire startSessionInternal after api is created (closure captures api)
 	botManager.SetStartSessionFunc(api.startSessionInternal)
 	botManager.SetFollowUpFunc(api.sendFollowUpInternal)
+	botManager.SetResumeTargetFunc(api.resolveBotResumeTarget)
+	botManager.SetResumeListFunc(api.listBotResumeTargets)
 	botManager.SetRunningWorkflowsFunc(func(userID string) []slackservice.BotRunningWorkflow {
 		running := api.listRunningWorkflowExecutions(userID)
 		out := make([]slackservice.BotRunningWorkflow, 0, len(running))
@@ -2479,6 +2483,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Track active session for page refresh recovery (no observer needed)
 	api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID, req.BotPlatform, req.TriggeredBy)
+	api.activeSessionsMux.Lock()
+	if sess, ok := api.activeSessions[sessionID]; ok {
+		if strings.TrimSpace(req.PresetQueryID) != "" {
+			sess.PresetQueryID = strings.TrimSpace(req.PresetQueryID)
+		}
+		if strings.TrimSpace(req.SelectedFolder) != "" {
+			sess.WorkspacePath = strings.TrimSpace(req.SelectedFolder)
+		}
+		if strings.TrimSpace(req.PhaseID) != "" {
+			sess.PhaseID = strings.TrimSpace(req.PhaseID)
+		}
+		if req.ExecutionOptions != nil && strings.TrimSpace(req.ExecutionOptions.WorkshopMode) != "" {
+			sess.WorkshopMode = strings.TrimSpace(req.ExecutionOptions.WorkshopMode)
+		}
+	}
+	api.activeSessionsMux.Unlock()
 
 	// Per-user memory and chat folders. Both live under _users/<userID>/ so different users
 	// don't share each other's persistent memory or chat output files. If a prior LLMGuidance

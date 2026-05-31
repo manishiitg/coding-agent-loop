@@ -221,6 +221,26 @@ type BotRunningWorkflow struct {
 
 type RunningWorkflowsFunc func(userID string) []BotRunningWorkflow
 
+type BotResumeTarget struct {
+	SessionID     string
+	UserID        string
+	AgentMode     string
+	Status        string
+	Query         string
+	WorkspacePath string
+	PresetQueryID string
+	PhaseID       string
+	WorkshopMode  string
+}
+
+type BotResumeFilter struct {
+	WorkspacePath string
+	PresetQueryID string
+}
+
+type BotResumeTargetFunc func(ctx context.Context, userID, selector string, filter BotResumeFilter) (*BotResumeTarget, error)
+type BotResumeListFunc func(ctx context.Context, userID string, filter BotResumeFilter) ([]BotResumeTarget, error)
+
 type BotThreadStatus struct {
 	HasSession bool
 	Status     string
@@ -250,6 +270,8 @@ type BotConversationManager struct {
 	followUpSession  SessionFollowUpFunc
 	loadUserSecrets  UserSecretsLoaderFunc
 	runningWorkflows RunningWorkflowsFunc
+	resumeTarget     BotResumeTargetFunc
+	resumeList       BotResumeListFunc
 	mcpConfigPath    string
 	workspaceURL     string
 }
@@ -286,6 +308,11 @@ type activeBotSession struct {
 	activeWorkflows  map[string]bool // wfSessionID set, for idempotent NotifyWorkflowEnded
 	queuedMessages   []BotIncomingMessage
 	sendFullDetails  bool
+	AgentMode        string
+	PresetQueryID    string
+	WorkspacePath    string
+	PhaseID          string
+	WorkshopMode     string
 }
 
 // NewBotConversationManager creates a new manager.
@@ -342,6 +369,14 @@ func (m *BotConversationManager) SetFollowUpFunc(fn SessionFollowUpFunc) {
 // SetRunningWorkflowsFunc sets the server-backed running workflow snapshot used by status commands.
 func (m *BotConversationManager) SetRunningWorkflowsFunc(fn RunningWorkflowsFunc) {
 	m.runningWorkflows = fn
+}
+
+func (m *BotConversationManager) SetResumeTargetFunc(fn BotResumeTargetFunc) {
+	m.resumeTarget = fn
+}
+
+func (m *BotConversationManager) SetResumeListFunc(fn BotResumeListFunc) {
+	m.resumeList = fn
 }
 
 func (m *BotConversationManager) BotThreadStatus(threadID ThreadID) BotThreadStatus {
@@ -565,6 +600,11 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	threadKey := threadID.Key()
 	log.Printf("[BOT_MANAGER] Incoming message from %s user=%s thread=%s: %s", msg.Platform, msg.UserID, threadKey, botTruncate(msg.Text, 100))
 
+	if selector, ok := parseBotResumeCommand(msg.Text, !supportsThreads); ok {
+		m.handleBotResumeCommand(msg, threadID, threadKey, selector, botResumeFilterFromRoute(msg.PresetWorkflow))
+		return
+	}
+
 	// Check if there's an existing in-memory session for this thread.
 	// Bot sessions are pure in-memory now — a reply that arrives after a
 	// server restart simply starts a new session.
@@ -728,7 +768,8 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	requireControlPrefix := !supportsThreads
 	if isSessionStatusCommand(msg.Text, requireControlPrefix) {
 		if connector := m.GetConnector(active.Platform); connector != nil {
-			connector.SendThreadMessage(context.Background(), active.ThreadID, m.formatBotStatusReply(oldUserID, status, awaiting, blockingEventType, sendFullDetails))
+			filter := botResumeFilterFromActive(active)
+			connector.SendThreadMessage(context.Background(), active.ThreadID, m.formatBotStatusReply(oldUserID, status, awaiting, blockingEventType, sendFullDetails, filter))
 		}
 		return
 	}
@@ -878,9 +919,98 @@ func (m *BotConversationManager) handleBotControlWithoutSession(msg BotIncomingM
 	reply := "No active bot session in this thread."
 	if _, ok := parseBotDetailModeCommand(msg.Text, requireControlPrefix); ok {
 		reply = "No active bot session in this thread. Start a workflow run first, then use `@full` or `@concise` to change message detail for that run."
+	} else if isSessionStatusCommand(msg.Text, requireControlPrefix) {
+		reply = m.formatBotStatusReply(m.resolveWorkspaceUserID(msg), "", false, "", false, botResumeFilterFromRoute(msg.PresetWorkflow))
 	}
 	connector.SendThreadMessage(context.Background(), threadID, reply)
 	return true
+}
+
+func (m *BotConversationManager) handleBotResumeCommand(msg BotIncomingMessage, threadID ThreadID, threadKey, selector string, filter BotResumeFilter) {
+	connector := m.GetConnector(msg.Platform)
+	if connector == nil {
+		return
+	}
+	if m.resumeTarget == nil {
+		connector.SendThreadMessage(context.Background(), threadID, "Resume is not available for this bot connector.")
+		return
+	}
+	workspaceUserID := m.resolveWorkspaceUserID(msg)
+	target, err := m.resumeTarget(context.Background(), workspaceUserID, selector, filter)
+	if err != nil {
+		connector.SendThreadMessage(context.Background(), threadID, fmt.Sprintf("Could not resume that chat: %v", err))
+		return
+	}
+	if target == nil || strings.TrimSpace(target.SessionID) == "" {
+		connector.SendThreadMessage(context.Background(), threadID, "No matching active chat found. Use `@resume <session-id>` or open a chat in the dashboard first.")
+		return
+	}
+
+	status := botSessionStatusFromActiveStatus(target.Status)
+	active := &activeBotSession{
+		SessionID:     strings.TrimSpace(target.SessionID),
+		UserID:        firstNonEmpty(strings.TrimSpace(target.UserID), workspaceUserID),
+		Status:        status,
+		Platform:      msg.Platform,
+		ThreadID:      threadID,
+		Metadata:      botMetaFromMsg(msg, threadID),
+		LastActivity:  time.Now(),
+		AgentMode:     strings.TrimSpace(target.AgentMode),
+		PresetQueryID: strings.TrimSpace(target.PresetQueryID),
+		WorkspacePath: strings.TrimSpace(target.WorkspacePath),
+		PhaseID:       strings.TrimSpace(target.PhaseID),
+		WorkshopMode:  strings.TrimSpace(target.WorkshopMode),
+	}
+
+	m.mu.Lock()
+	if previous := m.sessions[threadKey]; previous != nil {
+		previous.mu.Lock()
+		cancel := previous.cancel
+		previous.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+	}
+	m.sessions[threadKey] = active
+	m.mu.Unlock()
+
+	if status == chathistory.BotSessionStatusRunning || status == chathistory.BotSessionStatusAwaitingPlanApproval {
+		m.startMirroringExistingSession(active)
+	}
+
+	connector.SendThreadMessage(context.Background(), threadID, formatBotResumeAck(target))
+	log.Printf("[BOT_MANAGER] Bound %s thread %s to existing session %s (status=%s mode=%s)",
+		msg.Platform, threadKey, active.SessionID, target.Status, target.AgentMode)
+}
+
+func botSessionStatusFromActiveStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "inactive", "dismissed", "stopped":
+		return chathistory.BotSessionStatusCompleted
+	case "failed", "error":
+		return chathistory.BotSessionStatusFailed
+	case "awaiting_plan_approval":
+		return chathistory.BotSessionStatusAwaitingPlanApproval
+	default:
+		return chathistory.BotSessionStatusRunning
+	}
+}
+
+func formatBotResumeAck(target *BotResumeTarget) string {
+	label := strings.TrimSpace(target.Query)
+	if label == "" {
+		label = strings.TrimSpace(target.WorkspacePath)
+	}
+	if label == "" {
+		label = strings.TrimSpace(target.AgentMode)
+	}
+	if len([]rune(label)) > 120 {
+		label = string([]rune(label)[:120]) + "..."
+	}
+	if label == "" {
+		return fmt.Sprintf("Connected this chat to session `%s`. Send your next message here to continue it.", target.SessionID)
+	}
+	return fmt.Sprintf("Connected this chat to session `%s` (%s). Send your next message here to continue it.", target.SessionID, label)
 }
 
 func (m *BotConversationManager) setActiveBotDetailMode(active *activeBotSession, full bool) {
@@ -927,7 +1057,7 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		threadID := active.ThreadID
 		platform := active.Platform
 		active.mu.Unlock()
-		err := m.followUpSession(followCtx, m.buildQueryRequest(m.withBotRuntimeState(active, msg.Text), userID, "", nil, platform, threadID), sessionID, userID)
+		err := m.followUpSession(followCtx, m.buildQueryRequestForActive(active, m.withBotRuntimeState(active, msg.Text), userID, platform, threadID), sessionID, userID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
 		}
@@ -1025,7 +1155,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 				go func() {
 					followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer followCancel()
-					err := m.followUpSession(followCtx, m.buildQueryRequest("Approved. Execute the plan.", uid, "", nil, platform, threadID), sid, uid)
+					err := m.followUpSession(followCtx, m.buildQueryRequestForActive(active, "Approved. Execute the plan.", uid, platform, threadID), sid, uid)
 					if err != nil {
 						log.Printf("[BOT_MANAGER] Plan approval follow-up failed: %v", err)
 					}
@@ -1043,7 +1173,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, platform, threadID), sid, uid)
+				err := m.followUpSession(followCtx, m.buildQueryRequestForActive(active, msg.Text, uid, platform, threadID), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Plan feedback follow-up failed: %v", err)
 				}
@@ -1062,7 +1192,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, platform, threadID), sid, uid)
+				err := m.followUpSession(followCtx, m.buildQueryRequestForActive(active, msg.Text, uid, platform, threadID), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Blocking response follow-up failed: %v", err)
 				}
@@ -1113,7 +1243,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 			log.Printf("[BOT_MANAGER] HandleMessageSync: plan approved for session %s", sid)
 			m.clearBlockingState(active)
 			if m.followUpSession != nil {
-				err := m.followUpSession(ctx, m.buildQueryRequest("Approved. Execute the plan.", uid, "", nil, platform, activeThreadID), sid, uid)
+				err := m.followUpSession(ctx, m.buildQueryRequestForActive(active, "Approved. Execute the plan.", uid, platform, activeThreadID), sid, uid)
 				if err != nil {
 					return nil, fmt.Errorf("plan approval follow-up failed: %w", err)
 				}
@@ -1137,7 +1267,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		}
 		// Not a clear approve/reject — send as feedback
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, platform, activeThreadID), sid, uid)
+			err := m.followUpSession(ctx, m.buildQueryRequestForActive(active, msg.Text, uid, platform, activeThreadID), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("plan feedback follow-up failed: %w", err)
 			}
@@ -1163,7 +1293,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		log.Printf("[BOT_MANAGER] HandleMessageSync: responding to %s for session %s", blockingEvt, sid)
 		m.clearBlockingState(active)
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, platform, activeThreadID), sid, uid)
+			err := m.followUpSession(ctx, m.buildQueryRequestForActive(active, msg.Text, uid, platform, activeThreadID), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("blocking response follow-up failed: %w", err)
 			}
@@ -1229,6 +1359,26 @@ func parseBotDetailModeCommand(text string, requirePrefix bool) (string, bool) {
 	}
 }
 
+func parseBotResumeCommand(text string, requirePrefix bool) (string, bool) {
+	normalized, ok := botControlText(text, requirePrefix)
+	if !ok {
+		return "", false
+	}
+	if normalized == "resume" || normalized == "continue" {
+		return "latest", true
+	}
+	for _, prefix := range []string{"resume ", "continue "} {
+		if strings.HasPrefix(normalized, prefix) {
+			selector := strings.TrimSpace(strings.TrimPrefix(normalized, prefix))
+			if selector == "" {
+				selector = "latest"
+			}
+			return selector, true
+		}
+	}
+	return "", false
+}
+
 func botControlText(text string, requirePrefix bool) (string, bool) {
 	trimmed := strings.TrimSpace(text)
 	if requirePrefix && !strings.HasPrefix(trimmed, "@") {
@@ -1238,18 +1388,80 @@ func botControlText(text string, requirePrefix bool) (string, bool) {
 	return botNormalizeText(trimmed), true
 }
 
-func (m *BotConversationManager) formatBotStatusReply(userID, status string, awaiting bool, blockingEventType string, sendFullDetails bool) string {
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func (m *BotConversationManager) formatBotStatusReply(userID, status string, awaiting bool, blockingEventType string, sendFullDetails bool, filter BotResumeFilter) string {
 	detail := "concise"
 	if sendFullDetails {
 		detail = "full"
 	}
 	suffix := fmt.Sprintf("\nDetail mode: %s. Use `@full` or `@concise` to switch.", detail)
+	resumeList := m.formatResumeList(userID, filter)
 	if m.runningWorkflows != nil {
 		if workflows := m.runningWorkflows(userID); len(workflows) > 0 {
-			return formatRunningWorkflowsStatus(workflows) + suffix
+			return formatRunningWorkflowsStatus(workflows) + resumeList + suffix
 		}
 	}
-	return formatThreadlessSessionStatus(status, awaiting, blockingEventType) + suffix
+	return formatThreadlessSessionStatus(status, awaiting, blockingEventType) + resumeList + suffix
+}
+
+func (m *BotConversationManager) formatResumeList(userID string, filter BotResumeFilter) string {
+	if m.resumeList == nil || strings.TrimSpace(userID) == "" {
+		return ""
+	}
+	targets, err := m.resumeList(context.Background(), userID, filter)
+	if err != nil {
+		log.Printf("[BOT_MANAGER] Failed to list resumable bot sessions: %v", err)
+		return ""
+	}
+	if len(targets) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	if strings.TrimSpace(filter.WorkspacePath) != "" || strings.TrimSpace(filter.PresetQueryID) != "" {
+		sb.WriteString("\n\nResumable chats for this workflow:")
+	} else {
+		sb.WriteString("\n\nResumable chats:")
+	}
+	for i, target := range targets {
+		if i >= 5 {
+			sb.WriteString(fmt.Sprintf("\n+%d more", len(targets)-i))
+			break
+		}
+		label := botResumeTargetLabel(target)
+		status := strings.TrimSpace(target.Status)
+		if status == "" {
+			status = "active"
+		}
+		sb.WriteString(fmt.Sprintf("\n%d. %s - %s", i+1, label, status))
+	}
+	sb.WriteString("\nUse `@resume 1` to continue one here.")
+	return sb.String()
+}
+
+func botResumeTargetLabel(target BotResumeTarget) string {
+	label := strings.TrimSpace(target.Query)
+	if label == "" {
+		label = strings.TrimSpace(target.WorkspacePath)
+	}
+	if label == "" {
+		label = strings.TrimSpace(target.AgentMode)
+	}
+	if label == "" {
+		label = strings.TrimSpace(target.SessionID)
+	}
+	runes := []rune(label)
+	if len(runes) > 72 {
+		label = string(runes[:72]) + "..."
+	}
+	return label
 }
 
 func formatRunningWorkflowsStatus(workflows []BotRunningWorkflow) string {
@@ -1382,7 +1594,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		if m.followUpSession != nil {
 			log.Printf("[BOT_MANAGER] HandleMessageSync: injecting follow-up into session %s: %s", sessionID, botTruncate(msg.Text, 80))
 			m.resetActiveForNewTurn(active)
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, msg.Platform, threadID), sessionID, uid)
+			err := m.followUpSession(ctx, m.buildQueryRequestForActive(active, msg.Text, uid, msg.Platform, threadID), sessionID, uid)
 			if err != nil {
 				return nil, fmt.Errorf("follow-up failed: %w", err)
 			}
@@ -1426,6 +1638,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		sendFullDetails: sendFullDetails,
 		RouteKey:        botRouteKey(msg.PresetWorkflow),
 	}
+	applyBotRequestMetadata(activeTask, queryReq)
 	m.sessions[threadID.Key()] = activeTask
 	m.mu.Unlock()
 
@@ -1481,6 +1694,7 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		sendFullDetails: sendFullDetails,
 		RouteKey:        botRouteKey(msg.PresetWorkflow),
 	}
+	applyBotRequestMetadata(active, queryReq)
 	m.sessions[threadID.Key()] = active
 	m.mu.Unlock()
 
@@ -1511,6 +1725,60 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	}
 
 	m.runSession(active, queryReq)
+}
+
+func (m *BotConversationManager) startMirroringExistingSession(active *activeBotSession) {
+	if active == nil {
+		return
+	}
+	connector := m.GetConnector(active.Platform)
+	if connector == nil {
+		return
+	}
+	sessionCtx, cancel := context.WithCancel(context.Background())
+	active.mu.Lock()
+	if active.cancel != nil {
+		active.cancel()
+	}
+	active.cancel = cancel
+	active.eventFilter = NewBotEventFilter(connector, active.ThreadID, active.SessionID, os.Getenv("PUBLIC_URL"), active.UserID)
+	active.eventFilter.SetSendFullDetails(active.sendFullDetails)
+	sessionID := active.SessionID
+	active.mu.Unlock()
+
+	active.eventFilter.SetBlockingEventCallback(func(eventType, requestID string) {
+		active.mu.Lock()
+		active.awaitingUserInput = true
+		active.blockingEventType = eventType
+		active.blockingRequestID = requestID
+		active.Status = chathistory.BotSessionStatusRunning
+		active.mu.Unlock()
+	})
+	active.eventFilter.SetSessionDoneCallback(func() {
+		active.mu.Lock()
+		active.builderDone = true
+		pending := active.pendingWorkflows
+		active.mu.Unlock()
+		if m.startNextQueuedMessage(active) {
+			return
+		}
+		if pending == 0 {
+			cancel()
+		}
+	})
+
+	if m.eventSubscriber != nil {
+		go active.eventFilter.Start(sessionCtx, m.eventSubscriber, sessionID)
+	}
+	go func() {
+		<-sessionCtx.Done()
+		active.mu.Lock()
+		if active.Status != chathistory.BotSessionStatusFailed {
+			active.Status = chathistory.BotSessionStatusCompleted
+		}
+		active.LastActivity = time.Now()
+		active.mu.Unlock()
+	}()
 }
 
 // runSession runs the agent session with event filtering and lifecycle management
@@ -2018,6 +2286,9 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 	}
 	if route != nil {
 		req["preset_query_id"] = route.WorkflowID
+		if strings.TrimSpace(route.WorkspacePath) != "" {
+			req["selected_folder"] = strings.TrimSpace(route.WorkspacePath)
+		}
 		if route.SendFullDetails {
 			req["bot_send_full_details"] = true
 		}
@@ -2142,6 +2413,68 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 	return req
 }
 
+func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSession, query, userID, platform string, threadID ThreadID) map[string]interface{} {
+	req := m.buildQueryRequest(query, userID, "", nil, platform, threadID)
+	if active == nil {
+		return req
+	}
+	active.mu.Lock()
+	agentMode := strings.TrimSpace(active.AgentMode)
+	presetQueryID := strings.TrimSpace(active.PresetQueryID)
+	workspacePath := strings.TrimSpace(active.WorkspacePath)
+	phaseID := strings.TrimSpace(active.PhaseID)
+	workshopMode := strings.TrimSpace(active.WorkshopMode)
+	active.mu.Unlock()
+
+	if agentMode != "" {
+		req["agent_mode"] = agentMode
+	}
+	if presetQueryID != "" {
+		req["preset_query_id"] = presetQueryID
+	}
+	if workspacePath != "" {
+		req["selected_folder"] = workspacePath
+	}
+	if phaseID != "" {
+		req["phase_id"] = phaseID
+	}
+	if workshopMode != "" {
+		req["workshop_mode"] = workshopMode
+		execOpts, _ := req["execution_options"].(map[string]interface{})
+		if execOpts == nil {
+			execOpts = map[string]interface{}{}
+		}
+		execOpts["workshop_mode"] = workshopMode
+		req["execution_options"] = execOpts
+	}
+	return req
+}
+
+func applyBotRequestMetadata(active *activeBotSession, req map[string]interface{}) {
+	if active == nil || req == nil {
+		return
+	}
+	active.AgentMode = stringValue(req["agent_mode"])
+	active.PresetQueryID = stringValue(req["preset_query_id"])
+	active.WorkspacePath = stringValue(req["selected_folder"])
+	active.PhaseID = stringValue(req["phase_id"])
+	active.WorkshopMode = stringValue(req["workshop_mode"])
+	if active.WorkshopMode == "" {
+		if execOpts, ok := req["execution_options"].(map[string]interface{}); ok {
+			active.WorkshopMode = stringValue(execOpts["workshop_mode"])
+		}
+	}
+}
+
+func stringValue(v interface{}) string {
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t)
+	default:
+		return ""
+	}
+}
+
 func addRestoredConversationSessionID(req map[string]interface{}, sessionID string) {
 	sessionID = strings.TrimSpace(sessionID)
 	if req == nil || sessionID == "" {
@@ -2160,6 +2493,28 @@ func botRouteKey(route *ChannelRoute) string {
 		strings.ToLower(strings.TrimSpace(route.WorkshopMode)),
 	}
 	return strings.Join(parts, "|")
+}
+
+func botResumeFilterFromRoute(route *ChannelRoute) BotResumeFilter {
+	if route == nil {
+		return BotResumeFilter{}
+	}
+	return BotResumeFilter{
+		WorkspacePath: strings.TrimSpace(route.WorkspacePath),
+		PresetQueryID: strings.TrimSpace(route.WorkflowID),
+	}
+}
+
+func botResumeFilterFromActive(active *activeBotSession) BotResumeFilter {
+	if active == nil {
+		return BotResumeFilter{}
+	}
+	active.mu.Lock()
+	defer active.mu.Unlock()
+	return BotResumeFilter{
+		WorkspacePath: strings.TrimSpace(active.WorkspacePath),
+		PresetQueryID: strings.TrimSpace(active.PresetQueryID),
+	}
 }
 
 // isMultiUserThread checks if a thread has multiple distinct human users.

@@ -2223,10 +2223,12 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [dismissedErrorIDs, setDismissedErrorIDs] = useState<Set<string>>(() => readDismissedTerminalErrorIDs(currentSessionId))
   const [expandedErrorIDs, setExpandedErrorIDs] = useState<Set<string>>(() => new Set())
   const [terminalColorScheme, setTerminalColorScheme] = useState<TerminalColorScheme>(() => readStoredTerminalColorScheme())
-  // Slim each agent rail card to one line ONLY when the report/plan pane is up
-  // and the chat is the narrow rail (preview-focused). When chat is full-width
-  // (no preview, or chat-focused) the cards render with their full meta row.
-  const slimAgentRail = useWorkflowStore(s => s.showChatArea && s.showWorkspacePane && s.focusedPane === 'preview')
+  // Slim each agent rail card to one line whenever the report/plan pane is up
+  // (chat sits in the side-by-side split). When the workspace pane is hidden and
+  // chat is full-width, the cards render with their full meta row. NOTE: this is
+  // deliberately NOT keyed off focusedPane — clicking into the chat input must
+  // not resize the agent tree; only opening/closing the report/plan view does.
+  const slimAgentRail = useWorkflowStore(s => s.showChatArea && s.showWorkspacePane)
   // Manual width override for the agent rail: null = follow the auto narrow
   // behavior (slim in the report/plan rail), true/false = user-pinned narrow/wide.
   // A toggle in the rail controls lets the user resize it themselves.

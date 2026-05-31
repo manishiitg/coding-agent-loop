@@ -49,6 +49,38 @@ Briefer variants: **Plan-then-Execute** (turn 1 plans, optional prevalidation of
 
 **Constraint:** the item queue is linear and runs once — no branching, no conditional skip, and no "loop until prevalidation passes" inside a single sequence (a failed prevalidation hard-stops the step after configured code-repair attempts). Iteration comes only from orchestrator re-entry / `message_sequence_restart` (the route patterns above) or the code-item repair loop. For retry-until-green, use the **Test/Fix Loop** route pattern, not a standalone sequence.
 
+## IN-BETWEEN PREVALIDATION AND LEARNINGS
+
+Yes for **prevalidation**: add an item like `{ "type": "prevalidation", "validation_schema": {...} }` anywhere in `items[]`. It runs against the message_sequence step execution folder (`runs/<iteration>/execution/<step-id>/`) and blocks the next item if the required files/fields are not present. Prefer several small gates after the item that should have produced each artifact instead of one giant final schema.
+
+Learning is different: there is no automatic "learning phase" between sequence items. The normal learning system is step-level and runs after the whole step when `learnings_access="read-write"` plus `learning_objective` are configured on the step. If you need a deliberate in-sequence learning write, use a `user_message` item with `kind: "learning"` or `write_access: {"learnings": true}` and tell it exactly what durable HOW guidance to update under `learnings/_global/`. Keep this rare and explicit; do not use it for observations that belong in KB or db.
+
+Example:
+
+```jsonc
+{
+  "id": "draft",
+  "type": "user_message",
+  "message": "Draft the outreach copy and write output/draft.json."
+},
+{
+  "id": "draft-schema",
+  "type": "prevalidation",
+  "validation_schema": {
+    "files": [
+      { "file_name": "output/draft.json", "must_exist": true,
+        "json_checks": [{ "path": "$.subject", "must_exist": true, "value_type": "string" }] }
+    ]
+  }
+},
+{
+  "id": "capture-how",
+  "type": "user_message",
+  "kind": "learning",
+  "message": "If this run exposed a reusable HOW pattern for drafting subject lines, update learnings/_global/SKILL.md with the minimal durable rule. If there is no durable pattern, say no learning update is needed."
+}
+```
+
 ## DATA-DRIVEN ITERATION (`foreach`)
 
 Items are usually fixed at design time. A **`foreach`** item instead generates turns at **runtime** from a db file — a reliable for-loop. Use it for the producer/consumer pattern: an earlier step writes rows to `db/<file>.json`, and this step processes **every** row.

@@ -566,6 +566,7 @@ var messageSequenceWriteVerbStem = `\b(writ|sav|append|updat|persist|stor|record
 var messageSequenceDBWriteIntentRe = regexp.MustCompile(messageSequenceWriteVerbStem + `[^\n.;!?]{0,40}?\bdb/`)
 
 var messageSequenceKBWriteIntentRe = regexp.MustCompile(messageSequenceWriteVerbStem + `[^\n.;!?]{0,40}?\b(knowledgebase|kb)/`)
+var messageSequenceLearningWriteIntentRe = regexp.MustCompile(messageSequenceWriteVerbStem + `[^\n.;!?]{0,40}?\blearnings/`)
 
 // messageSequenceItemWriteIntent reports whether an item is going to WRITE to
 // db/ or the knowledgebase, inferred from its declared output_files (definitive)
@@ -597,7 +598,7 @@ func messageSequenceItemReportedFailure(summary string) (reason string, failed b
 	return "", false
 }
 
-func messageSequenceItemWriteIntent(item MessageSequenceItem) (needsDB, needsKB bool) {
+func messageSequenceItemWriteIntent(item MessageSequenceItem) (needsDB, needsKB, needsLearnings bool) {
 	for _, out := range item.OutputFiles {
 		clean := filepath.ToSlash(filepath.Clean(strings.TrimSpace(out)))
 		if clean == "" || clean == "." {
@@ -609,6 +610,9 @@ func messageSequenceItemWriteIntent(item MessageSequenceItem) (needsDB, needsKB 
 		if strings.HasPrefix(clean, KnowledgebaseFolderName+"/notes/") || strings.Contains(clean, "/"+KnowledgebaseFolderName+"/notes/") {
 			needsKB = true
 		}
+		if clean == LearningsFolderName || strings.HasPrefix(clean, LearningsFolderName+"/") || strings.Contains(clean, "/"+LearningsFolderName+"/") {
+			needsLearnings = true
+		}
 	}
 	if msg := strings.ToLower(item.Message); msg != "" {
 		if messageSequenceDBWriteIntentRe.MatchString(msg) {
@@ -617,8 +621,11 @@ func messageSequenceItemWriteIntent(item MessageSequenceItem) (needsDB, needsKB 
 		if messageSequenceKBWriteIntentRe.MatchString(msg) {
 			needsKB = true
 		}
+		if messageSequenceLearningWriteIntentRe.MatchString(msg) {
+			needsLearnings = true
+		}
 	}
-	return needsDB, needsKB
+	return needsDB, needsKB, needsLearnings
 }
 
 func resolveMessageSequenceItemWriteAccess(item MessageSequenceItem) MessageSequenceWriteAccess {

@@ -108,6 +108,7 @@ func TestMessageSequenceItemWriteIntent(t *testing.T) {
 		item    MessageSequenceItem
 		wantDB  bool
 		wantKB  bool
+		wantLRN bool
 	}{
 		{
 			name:   "write verb + db path in message",
@@ -140,15 +141,25 @@ func TestMessageSequenceItemWriteIntent(t *testing.T) {
 			wantKB: true,
 		},
 		{
+			name:    "learning write in message",
+			item:    MessageSequenceItem{ID: "a", Type: "user_message", Message: "Update learnings/_global/SKILL.md with this durable selector pattern"},
+			wantLRN: true,
+		},
+		{
+			name:    "output_files into learnings is definitive",
+			item:    MessageSequenceItem{ID: "a", Type: "code", ScriptPath: "s.py", OutputFiles: []string{"learnings/_global/SKILL.md"}},
+			wantLRN: true,
+		},
+		{
 			name: "no write intent",
 			item: MessageSequenceItem{ID: "a", Type: "user_message", Message: "Think about the plan and outline next steps"},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			gotDB, gotKB := messageSequenceItemWriteIntent(tc.item)
-			if gotDB != tc.wantDB || gotKB != tc.wantKB {
-				t.Fatalf("messageSequenceItemWriteIntent(%q) = (db=%v, kb=%v), want (db=%v, kb=%v)", tc.item.Message, gotDB, gotKB, tc.wantDB, tc.wantKB)
+			gotDB, gotKB, gotLRN := messageSequenceItemWriteIntent(tc.item)
+			if gotDB != tc.wantDB || gotKB != tc.wantKB || gotLRN != tc.wantLRN {
+				t.Fatalf("messageSequenceItemWriteIntent(%q) = (db=%v, kb=%v, learnings=%v), want (db=%v, kb=%v, learnings=%v)", tc.item.Message, gotDB, gotKB, gotLRN, tc.wantDB, tc.wantKB, tc.wantLRN)
 			}
 		})
 	}
@@ -190,6 +201,33 @@ func TestValidateMessageSequence_DBWriteWithKindDBOK(t *testing.T) {
 	})
 	if err := validateMessageSequenceStepFieldsTyped(step); err != nil {
 		t.Fatalf("expected no error with kind=db, got: %v", err)
+	}
+}
+
+func TestValidateMessageSequence_LearningWriteWithoutAccessRejected(t *testing.T) {
+	step := msgSeqStep(MessageSequenceItem{
+		ID:      "capture-how",
+		Type:    "user_message",
+		Message: "Update learnings/_global/SKILL.md with the durable login selector rule",
+	})
+	err := validateMessageSequenceStepFieldsTyped(step)
+	if err == nil {
+		t.Fatal("expected validation error for learning write without write_access, got nil")
+	}
+	if !strings.Contains(err.Error(), "learnings write access") {
+		t.Fatalf("error should explain the missing learnings grant, got: %v", err)
+	}
+}
+
+func TestValidateMessageSequence_LearningWriteWithKindOK(t *testing.T) {
+	step := msgSeqStep(MessageSequenceItem{
+		ID:      "capture-how",
+		Type:    "user_message",
+		Kind:    "learning",
+		Message: "Update learnings/_global/SKILL.md with the durable login selector rule",
+	})
+	if err := validateMessageSequenceStepFieldsTyped(step); err != nil {
+		t.Fatalf("expected no error with kind=learning, got: %v", err)
 	}
 }
 

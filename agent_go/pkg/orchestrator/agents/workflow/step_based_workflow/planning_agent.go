@@ -1144,13 +1144,13 @@ func getAddMessageSequenceStepSchema() string {
 			"context_output": {"type": "string", "description": "REQUIRED: Summary/result file contract for later steps."},
 			"items": {
 				"type": "array",
-				"description": "REQUIRED: Ordered queue of follow-up turns (turns 1..N; the step description is turn 0). Prefer multiple short user_message items over one large prompt. Add dedicated learning/kb/db/check items where useful.",
+				"description": "REQUIRED: Ordered queue of follow-up turns (turns 1..N; the step description is turn 0). Prefer multiple short user_message items over one large prompt. Use prevalidation items between turns as hard gates. Use kind=\"learning\" or write_access.learnings=true only for an intentional in-sequence learning write to learnings/_global/; the normal learning phase still runs only after the whole step based on step_config.",
 				"items": {
 					"type": "object",
 					"properties": {
 						"id": {"type": "string"},
 						"type": {"type": "string", "description": "user_message, code, prevalidation, or foreach"},
-						"kind": {"type": "string", "description": "Drives item-scoped write access. One of: learning, knowledgebase, db, or code (when code, db/kb write access is auto-inferred from output_files paths). Omit for a plain user_message item with no extra write access. Explicit write_access overrides kind."},
+						"kind": {"type": "string", "description": "Drives item-scoped write access. One of: learning, knowledgebase, db, or code (when code, db/kb/learnings write access is auto-inferred from output_files paths). Omit for a plain user_message item with no extra write access. Explicit write_access overrides kind."},
 						"title": {"type": "string"},
 						"message": {"type": "string", "description": "For user_message items: concise instruction for one turn, run in the same persistent conversation. Use plain work turns, or self-validation/interrogation turns (e.g. \"Did you actually call X? Quote its exact output. Did you actually produce Y?\") to make the step check its own work before a prevalidation gate. For foreach items: a Go text/template rendered once per row of source, with the row bound to '.' (e.g. 'Process {{.id}}: {{.task}}')."},
 						"runtime": {"type": "string", "description": "For code items: python."},
@@ -1160,7 +1160,7 @@ func getAddMessageSequenceStepSchema() string {
 						"output_files": {"type": "array", "items": {"type": "string"}},
 						"write_access": {
 							"type": "object",
-							"description": "Item-scoped writes only. Reads for kb/db/learnings are always open. Folder-level booleans only — NO per-file path scoping (a \"paths\" list is rejected); db:true grants the whole db/ folder.",
+							"description": "Item-scoped writes only. Reads for kb/db/learnings are always open. Folder-level booleans only — NO per-file path scoping (a \"paths\" list is rejected); db:true grants the whole db/ folder. Use learnings:true sparingly for deliberate in-sequence writes to learnings/_global/; prefer normal step-level learning for automatic post-step extraction.",
 							"properties": {
 								"knowledgebase": {"type": "boolean"},
 								"db": {"type": "boolean"},
@@ -3769,18 +3769,21 @@ func validateMessageSequenceStepFieldsTyped(step *MessageSequencePlanStep) error
 
 		// Writes are item-scoped and default-deny; reads of db/kb/learnings are
 		// always open. An item whose message or output_files say it writes to
-		// db/ or the knowledgebase but that has no matching write_access (or
-		// inferred kind) would silently fail at execution — the file write is
-		// blocked by the folder guard. Reject it at plan time with an actionable
-		// message so the grant is added up front.
-		needsDB, needsKB := messageSequenceItemWriteIntent(item)
-		if needsDB || needsKB {
+		// db/, the knowledgebase, or learnings but that has no matching
+		// write_access (or inferred kind) would silently fail at execution — the
+		// file write is blocked by the folder guard. Reject it at plan time with
+		// an actionable message so the grant is added up front.
+		needsDB, needsKB, needsLearnings := messageSequenceItemWriteIntent(item)
+		if needsDB || needsKB || needsLearnings {
 			access := resolveMessageSequenceItemWriteAccess(item)
 			if needsDB && !access.DB {
 				return fmt.Errorf("message_sequence step %q item %q writes to db/ (per its message or output_files) but has no db write access; add \"write_access\": {\"db\": true} to the item (or set \"kind\": \"db\"). Reads are always open; writes are item-scoped.", step.ID, item.ID)
 			}
 			if needsKB && !access.Knowledgebase {
 				return fmt.Errorf("message_sequence step %q item %q writes to the knowledgebase but has no kb write access; add \"write_access\": {\"knowledgebase\": true} to the item (or set \"kind\": \"knowledgebase\"). Reads are always open; writes are item-scoped.", step.ID, item.ID)
+			}
+			if needsLearnings && !access.Learnings {
+				return fmt.Errorf("message_sequence step %q item %q writes to learnings/ (per its message or output_files) but has no learnings write access; add \"write_access\": {\"learnings\": true} to the item (or set \"kind\": \"learning\"). Reads are always open; writes are item-scoped.", step.ID, item.ID)
 			}
 		}
 	}

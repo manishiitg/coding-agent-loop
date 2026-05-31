@@ -2059,9 +2059,6 @@ export interface SchedulerConfig {
   paused_at?: string
   paused_by?: string
   updated_at?: string
-  execution_enabled?: boolean
-  disabled_via_env?: boolean
-  disabled_reason?: string
 }
 
 // --- Workflow Manifest Types (file-backed workflow definitions) ---

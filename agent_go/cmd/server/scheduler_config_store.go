@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -19,15 +18,6 @@ type SchedulerConfig struct {
 	PausedAt         *time.Time `json:"paused_at,omitempty"`
 	PausedBy         string     `json:"paused_by,omitempty"`
 	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
-	// ExecutionEnabled controls automatic cron firing on this machine.
-	// Driven entirely by the SCHEDULER_ENABLED env var at runtime — the JSON
-	// field is treated as a transient "what does the server currently report"
-	// for the UI, never persisted from the file. Per-machine (not workspace-
-	// shared) so two machines on the same workspace can have different values.
-	ExecutionEnabled bool       `json:"execution_enabled"`
-	DisabledViaEnv   bool       `json:"disabled_via_env,omitempty"`
-	DisabledReason   string     `json:"disabled_reason,omitempty"`
-
 	// Per-workflow env filter — populated from SCHEDULER_ALLOWED_WORKFLOWS /
 	// SCHEDULER_BLOCKED_WORKFLOWS so the UI can show which crons run on this
 	// machine when sharing workspace files across multiple machines.
@@ -69,20 +59,6 @@ func applySchedulerRuntimeState(cfg *SchedulerConfig) *SchedulerConfig {
 		cfg = &SchedulerConfig{}
 	}
 
-	// ExecutionEnabled is per-machine, driven by SCHEDULER_ENABLED env var.
-	// Defaults to true; env var "false" disables. Never persisted to JSON.
-	cfg.ExecutionEnabled = true
-	cfg.DisabledViaEnv = false
-	cfg.DisabledReason = ""
-
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCHEDULER_ENABLED")), "false") {
-		cfg.ExecutionEnabled = false
-		cfg.DisabledViaEnv = true
-		cfg.DisabledReason = "Automatic cron execution is disabled on this machine because SCHEDULER_ENABLED=false. Manual runs still work."
-	}
-
-	// Workflow/user filters: JSON values win, fall back to env vars when JSON
-	// is empty. loadSchedulerWorkflowFilter() reads scheduler.json directly.
 	filter := loadSchedulerWorkflowFilter()
 	cfg.AllowedWorkflows = filter.rawAllow
 	cfg.BlockedWorkflows = filter.rawBlock

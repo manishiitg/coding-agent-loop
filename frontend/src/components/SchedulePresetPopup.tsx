@@ -76,8 +76,6 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
   const cronDescription = describeCron(cronExpr)
   const isValidCron = cronDescription !== ''
   const schedulerEntityType = entityType === 'workflow' ? 'workflow' : 'chat'
-  const isSchedulerExecutionEnabled = schedulerConfig?.execution_enabled !== false
-
   const allGroupsSelected = availableGroups.length > 0 && selectedGroupIds.length === availableGroups.length
   const hasGroupSelection = availableGroups.length === 0 || selectedGroupIds.length > 0
   const hasValidCalendarItems = calendarItems.length > 0 && calendarItems.every((item) => item.date && item.time)
@@ -290,21 +288,6 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
             <p className="text-sm text-gray-500 dark:text-gray-400">Loading...</p>
           ) : (
             <>
-              {!isSchedulerExecutionEnabled && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900/40 dark:bg-red-950/30">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-500" />
-                    <div>
-                      <div className="text-xs font-semibold text-red-700 dark:text-red-300">
-                        Automatic schedules are disabled on this server
-                      </div>
-                      <p className="mt-1 text-xs text-red-600 dark:text-red-200/90">
-                        {schedulerConfig?.disabled_reason || 'Timed cron executions are currently turned off. You can still save this schedule and run it manually.'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* Status badge */}
               {existingJob && (

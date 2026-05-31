@@ -518,7 +518,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [selectedWorkflowFilter, setSelectedWorkflowFilter] = useState('all')
   const [schedulerConfig, setSchedulerConfig] = useState<SchedulerConfig | null>(null)
   const [isUpdatingSchedulerPause, setIsUpdatingSchedulerPause] = useState(false)
-  const [showSchedulerDisabledNotice, setShowSchedulerDisabledNotice] = useState(false)
 
   // Keep a running workflow expanded so its live run history stays visible.
   useEffect(() => {
@@ -711,8 +710,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const hasRunningJob = jobs.some(j => j.last_status === 'running')
   const activeJobs = jobs.filter(j => j.enabled).length
   const isSchedulerPaused = !!schedulerConfig?.globally_paused
-  const isSchedulerExecutionEnabled = schedulerConfig?.execution_enabled !== false
-  const schedulerDisabledReason = schedulerConfig?.disabled_reason
 
   const previousHasRunningJobRef = useRef(hasRunningJob)
 
@@ -724,12 +721,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     }
     previousHasRunningJobRef.current = hasRunningJob
   }, [hasRunningJob, expandedJobIds, loadRunsForJob])
-
-  useEffect(() => {
-    if (schedulerConfig?.execution_enabled === false) {
-      setShowSchedulerDisabledNotice(true)
-    }
-  }, [schedulerConfig?.execution_enabled])
 
   const summary = useMemo(() => {
     const running = jobs.filter(j => j.last_status === 'running').length
@@ -1135,11 +1126,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   }
 
   const handleToggleGlobalPause = async () => {
-    if (!isSchedulerExecutionEnabled) {
-      setShowSchedulerDisabledNotice(true)
-      return
-    }
-
     setIsUpdatingSchedulerPause(true)
     try {
       const updated = await schedulerApi.updateConfig({
@@ -1219,33 +1205,28 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             </h2>
             {!isLoading && (
               <span className="text-xs text-muted-foreground ml-1">
-                {summary.running} running · {summary.missed} missed · {!isSchedulerExecutionEnabled ? 'server scheduler disabled' : isSchedulerPaused ? 'globally paused' : `${activeJobs} active`} · {jobs.length} total
+                {summary.running} running · {summary.missed} missed · {isSchedulerPaused ? 'globally paused' : `${activeJobs} active`} · {jobs.length} total
               </span>
             )}
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={handleToggleGlobalPause}
-              disabled={isUpdatingSchedulerPause || !isSchedulerExecutionEnabled}
+              disabled={isUpdatingSchedulerPause}
               className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 ${
-                !isSchedulerExecutionEnabled
-                  ? 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300'
-                  : isSchedulerPaused
+                isSchedulerPaused
                   ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
                   : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20'
               }`}
-              title={!isSchedulerExecutionEnabled ? 'Automatic schedules are disabled on this server' : undefined}
             >
               {isUpdatingSchedulerPause ? (
                 <Loader className="w-3.5 h-3.5 animate-spin" />
-              ) : !isSchedulerExecutionEnabled ? (
-                <AlertTriangle className="w-3.5 h-3.5" />
               ) : isSchedulerPaused ? (
                 <Play className="w-3.5 h-3.5" />
               ) : (
                 <Pause className="w-3.5 h-3.5" />
               )}
-              {!isSchedulerExecutionEnabled ? 'Server disabled' : isSchedulerPaused ? 'Resume schedules' : 'Pause all schedules'}
+              {isSchedulerPaused ? 'Resume schedules' : 'Pause all schedules'}
             </button>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -1345,27 +1326,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             </div>
           ) : activeView === 'overview' ? (
             <div className="px-5 py-4 space-y-4">
-              {!isSchedulerExecutionEnabled && (
-                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-500" />
-                      <div>
-                        <div className="text-sm font-medium text-foreground">Automatic schedules are disabled on this server</div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {schedulerDisabledReason || 'Timed cron executions will not start until the server scheduler is re-enabled. Manual runs still work.'}
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setShowSchedulerDisabledNotice(true)}
-                      className="text-xs font-medium text-red-700 hover:text-red-800 dark:text-red-300 dark:hover:text-red-200 whitespace-nowrap"
-                    >
-                      View details
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {isSchedulerPaused && (
                 <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
@@ -2344,35 +2304,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         )
       })()}
 
-      {showSchedulerDisabledNotice && !isSchedulerExecutionEnabled && (
-        <div
-          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 px-4"
-          onClick={(e) => { if (e.target === e.currentTarget) setShowSchedulerDisabledNotice(false) }}
-        >
-          <div className="w-full max-w-md rounded-xl border border-red-500/30 bg-card p-5 shadow-2xl">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-500" />
-              <div className="min-w-0">
-                <h3 className="text-base font-semibold text-foreground">Automatic schedules are disabled</h3>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {schedulerDisabledReason || 'Timed cron executions are turned off on this server.'}
-                </p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Users can still edit schedules and trigger workflows manually, but scheduled runs will not start until the server setting is re-enabled and the app is restarted.
-                </p>
-                <div className="mt-4 flex justify-end">
-                  <button
-                    onClick={() => setShowSchedulerDisabledNotice(false)}
-                    className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 transition-colors"
-                  >
-                    Got it
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
     </TooltipProvider>,
     document.body

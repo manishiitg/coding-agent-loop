@@ -136,7 +136,7 @@ function loadSettings() {
   } catch (e) {
     console.error('Failed to load settings:', e);
   }
-  return { docsDir: '', authSecret: '', schedulerEnabled: true, schedulerAllowedWorkflows: '', logAgentPrompts: false };
+  return { docsDir: '', authSecret: '', schedulerAllowedWorkflows: '', logAgentPrompts: false };
 }
 
 // Show a modal asking the user for the AUTH_SECRET used to encrypt provider keys.
@@ -796,9 +796,6 @@ function spawnAgent(userDataPath) {
       NATIVE_WORKSPACE: 'true'
     };
 
-    // Per-machine scheduler toggle. When the user disables this in Settings,
-    // automatic cron execution stops on this machine; manual runs still work.
-    if (settings.schedulerEnabled === false) env.SCHEDULER_ENABLED = 'false';
     if (settings.schedulerAllowedWorkflows) env.SCHEDULER_ALLOWED_WORKFLOWS = settings.schedulerAllowedWorkflows;
 
     // Debug: persist the final system prompt + user message + tool calls for

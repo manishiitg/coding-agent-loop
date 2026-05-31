@@ -703,6 +703,10 @@ export const agentApi = {
     await api.post(`/api/terminals/${encodeURIComponent(terminalId)}/resize`, { cols, rows })
   },
 
+  reportTerminalSizeHint: async (cols: number, rows: number): Promise<void> => {
+    await api.post('/api/terminals/size-hint', { cols, rows })
+  },
+
   // Observer APIs removed - no longer needed
 
   // Stop session/agent execution (preserves conversation history)

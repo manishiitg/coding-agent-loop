@@ -1184,6 +1184,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/terminals/{terminal_id}/input", api.handleSendTerminalInput).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/terminals/{terminal_id}/key", api.handleSendTerminalKey).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/terminals/{terminal_id}/resize", api.handleResizeTerminal).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/terminals/size-hint", api.handleTerminalSizeHint).Methods("POST", "OPTIONS")
 
 	// LLM Guidance API routes
 	apiRouter.HandleFunc("/sessions/{session_id}/llm-guidance", api.handleSetLLMGuidance).Methods("POST", "OPTIONS")

@@ -386,6 +386,26 @@ func (api *StreamingAPI) handleSendTerminalKey(w http.ResponseWriter, r *http.Re
 	_ = json.NewEncoder(w).Encode(terminalActionResponse{OK: true, Terminal: api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)})
 }
 
+// handleTerminalSizeHint records the operator's viewport size as the preferred
+// tmux launch size WITHOUT needing an existing terminal. Called by the frontend
+// at startup so the very first coding-agent session launches at the correct
+// width rather than the default 120×36.
+// POST /api/terminals/size-hint  body: {"cols": int, "rows": int}
+func (api *StreamingAPI) handleTerminalSizeHint(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	var req resizeTerminalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Cols <= 0 || req.Rows <= 0 {
+		http.Error(w, "cols and rows must be positive integers", http.StatusBadRequest)
+		return
+	}
+	llmproviders.SetCodingAgentTmuxSize(req.Cols, req.Rows)
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
 // handleResizeTerminal resizes the backing tmux window and records the size
 // as the process-wide preferred size so subsequent coding-agent tmux launches
 // match the operator's viewport.

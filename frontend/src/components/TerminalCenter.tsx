@@ -1303,13 +1303,19 @@ function StepTypeIcon({ stepType, labelPrefix }: { stepType?: string; labelPrefi
   }
 
   return (
-    <span
-      className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-neutral-700/70 bg-neutral-900/80 text-neutral-400"
-      title={label}
-      aria-label={label}
-    >
-      {icon}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-neutral-700/70 bg-neutral-900/80 text-neutral-400"
+          aria-label={label}
+        >
+          {icon}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="text-xs">
+        {label}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -2774,6 +2780,12 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     const allRunningCount = railTerminals.filter(terminal => !isMainAgentTerminal(terminal) && terminalState(terminal) === 'running').length
     const allNonRunningCount = railTerminals.filter(terminal => !isMainAgentTerminal(terminal) && terminalState(terminal) !== 'running').length
     const clearableNonRunningCount = railTerminals.filter(terminal => !isMainAgentTerminal(terminal) && canDismissTerminal(terminal)).length
+    // Stable number map: assign #1, #2, #3… based on all rail terminals
+    // sorted by creation time. Never changes as terminals are filtered or dismissed.
+    const stableNumberMap = new Map<string, number>()
+    sortTerminalsForRail(railTerminals).forEach((t, i) => {
+      stableNumberMap.set(terminalPaneKey(t), i + 1)
+    })
     return {
       activeTerminals,
       finishedTerminals,
@@ -2783,6 +2795,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       allRunningCount,
       allNonRunningCount,
       clearableNonRunningCount,
+      stableNumberMap,
     }
   }, [terminals, terminalRailFilter, terminalRailMinimized, routingDecisionByNextStepID, routingDecisions])
   const currentMainTerminal = useMemo(
@@ -3070,11 +3083,38 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     return () => window.cancelAnimationFrame(frame)
   }, [selectedTerminalKey, selectedTerminalDisplayContent])
 
+  // Startup size hint: report the terminal viewport size to the backend as soon
+  // as the TerminalCenter mounts — even before any session exists — so the very
+  // first coding-agent tmux session launches at the correct width instead of the
+  // 120×36 default. Best-effort (fires once, silently ignored if it fails).
+  const sizeHintSentRef = useRef(false)
+  useEffect(() => {
+    if (sizeHintSentRef.current) return
+    const el = terminalOutputRef.current as HTMLElement | null
+    if (!el) return
+    const ruler = document.createElement('span')
+    ruler.textContent = '0'.repeat(100)
+    ruler.setAttribute('aria-hidden', 'true')
+    ruler.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;top:0;left:0;pointer-events:none;'
+    el.appendChild(ruler)
+    const charWidth = ruler.getBoundingClientRect().width / 100
+    const lineHeight = ruler.getBoundingClientRect().height || 16
+    ruler.remove()
+    if (!charWidth || !lineHeight) return
+    const style = window.getComputedStyle(el)
+    const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
+    const padY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
+    const cols = Math.max(40, Math.floor((el.clientWidth - padX) / charWidth) - 1)
+    const rows = Math.max(10, Math.floor((el.clientHeight - padY) / lineHeight))
+    sizeHintSentRef.current = true
+    void agentApi.reportTerminalSizeHint(cols, rows).catch(() => { /* best-effort */ })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Dynamic tmux resize: measure the terminal viewport in monospace chars and
   // POST the dimensions to /api/terminals/{id}/resize. The backend runs
   // `tmux resize-window` on the live pane AND records the size as the
   // process-wide preferred size, so the next CLI-agent tmux session launches
-  // at the operator's actual viewport instead of the 160×48 default. Only
+  // at the operator's actual viewport instead of the 120×36 default. Only
   // fires for terminals backed by a tmux session.
   const lastResizeSentRef = useRef<{ terminalId: string; cols: number; rows: number } | null>(null)
   useEffect(() => {
@@ -3204,17 +3244,6 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         <div className={`flex min-w-0 items-center gap-0.5 text-[10px] leading-4 ${terminalTheme.microText}`}>
           <button
             type="button"
-            onClick={() => setTerminalRailMinimized(value => !value)}
-            className={`inline-flex h-4 w-4 shrink-0 items-center justify-center transition-colors ${
-              terminalRailMinimized ? 'text-emerald-300' : 'text-neutral-500 hover:text-emerald-300'
-            }`}
-            title={terminalRailMinimized ? 'Show terminals below main agent' : 'Minimize terminals below main agent'}
-            aria-label={terminalRailMinimized ? 'Show terminals below main agent' : 'Minimize terminals below main agent'}
-          >
-            {terminalRailMinimized ? <Plus className="h-2.5 w-2.5" /> : <Minus className="h-2.5 w-2.5" />}
-          </button>
-          <button
-            type="button"
             onClick={() => setRailManualNarrow(!railNarrow)}
             className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-neutral-500 transition-colors hover:text-emerald-300"
             title={railNarrow ? 'Widen agent tree' : 'Narrow agent tree'}
@@ -3264,7 +3293,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     )
   }
 
-  const renderRailItem = (terminal: TerminalSnapshot, depth: number = 0) => (
+  const renderRailItem = (terminal: TerminalSnapshot, depth: number = 0, index?: number) => (
     (() => {
       const preValidationChip = terminalPreValidationChip(terminal, terminalTheme)
       const state = terminalState(terminal)
@@ -3345,12 +3374,12 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
               chat is given more room). */}
           {!railNarrow && (
           <div className={`mt-0.5 flex items-center gap-1.5 opacity-70 ${terminalTheme.railMetaText}`}>
-            {stepTypeLabel && (
-              <span className="shrink-0 text-neutral-400">{stepTypeLabel}</span>
+            {index !== undefined && (
+              <span className="shrink-0 font-mono text-[9px] text-neutral-600">#{index}</span>
             )}
             {railTransport && (
               <span className="min-w-0 truncate text-neutral-500" title={formatTransportChip(terminal)}>
-                {stepTypeLabel ? `· ${railTransport}` : railTransport}
+                {railTransport}
               </span>
             )}
             {railAge && (
@@ -3477,7 +3506,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 const rows = groupedTerminals.tree.flatMap(item => {
                   if (item.kind === 'route') return [renderRouteRailItem(item.decision, item.depth)]
 
-                  const rendered = renderRailItem(item.terminal, item.depth)
+                  const rendered = renderRailItem(item.terminal, item.depth, groupedTerminals.stableNumberMap.get(terminalPaneKey(item.terminal)))
                   if (!controlsRendered && isMainAgentTerminal(item.terminal) && !isArchivedTurnTerminal(item.terminal)) {
                     controlsRendered = true
                     return [rendered, renderRailControls()]

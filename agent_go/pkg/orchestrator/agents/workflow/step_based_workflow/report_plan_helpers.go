@@ -132,7 +132,7 @@ type reportPlanDocumentDefaultSort struct {
 type reportPlanDocumentWidget struct {
 	ID           string                         `json:"id,omitempty"`
 	Hidden       bool                           `json:"hidden,omitempty"`
-	Kind         string                         `json:"kind" jsonschema:"required,enum=text,enum=markdown,enum=chart,enum=table,enum=cards,enum=stat,enum=alert,enum=pivot"`
+	Kind         string                         `json:"kind" jsonschema:"required,enum=text,enum=markdown,enum=chart,enum=table,enum=cards,enum=stat,enum=alert,enum=pivot,enum=file,enum=file-list"`
 	Source       string                         `json:"source,omitempty"`
 	Sources      map[string]string              `json:"sources,omitempty"`
 	Path         string                         `json:"path,omitempty"`
@@ -184,6 +184,11 @@ type reportPlanDocumentWidget struct {
 	Series               []string                        `json:"series,omitempty"`
 	SeriesColors         []string                        `json:"seriesColors,omitempty"`
 	Stacked              *bool                           `json:"stacked,omitempty"`
+	RenderFormat         string                          `json:"renderFormat,omitempty" jsonschema:"enum=auto,enum=markdown,enum=html,enum=text,enum=code,enum=json,enum=image,enum=video,enum=audio,enum=pdf,enum=link"`
+	ListFormat           string                          `json:"listFormat,omitempty" jsonschema:"enum=list,enum=cards,enum=table,enum=gallery"`
+	Recursive            *bool                           `json:"recursive,omitempty"`
+	Extensions           []string                        `json:"extensions,omitempty"`
+	MaxItems             int                             `json:"maxItems,omitempty"`
 	Layout               *reportPlanDocumentWidgetLayout `json:"layout,omitempty"`
 }
 
@@ -350,7 +355,8 @@ func parseReportPlanJSONDocument(raw string) (*reportPlanDocument, error) {
 func reportPlanDocumentWidgetKindAllowed(kind string) bool {
 	return kind == "text" || kind == "markdown" ||
 		kind == "table" || kind == "cards" || kind == "chart" ||
-		kind == "stat" || kind == "alert" || kind == "pivot"
+		kind == "stat" || kind == "alert" || kind == "pivot" ||
+		kind == "file" || kind == "file-list"
 }
 
 func normalizeReportPlanDocument(doc *reportPlanDocument) *reportPlanDocument {
@@ -572,6 +578,17 @@ func reportPlanLegacyWidgetFromDocumentWidget(widget reportPlanDocumentWidget, s
 	if widget.Stacked != nil {
 		fields["stacked"] = strconv.FormatBool(*widget.Stacked)
 	}
+	add("render_format", widget.RenderFormat)
+	add("list_format", widget.ListFormat)
+	if widget.Recursive != nil {
+		fields["recursive"] = strconv.FormatBool(*widget.Recursive)
+	}
+	if len(widget.Extensions) > 0 {
+		fields["extensions"] = strings.Join(widget.Extensions, ", ")
+	}
+	if widget.MaxItems > 0 {
+		fields["max_items"] = strconv.Itoa(widget.MaxItems)
+	}
 	if widget.Hidden {
 		fields["hidden"] = "true"
 	}
@@ -664,8 +681,7 @@ func parseReportPlan(markdown string) []reportPlanSection {
 				}
 				continue
 			}
-			if kind != "text" && kind != "table" && kind != "chart" &&
-				kind != "stat" && kind != "alert" && kind != "pivot" {
+			if !reportPlanDocumentWidgetKindAllowed(kind) {
 				continue
 			}
 			w := parseReportPlanKeyValue(kind, body)
@@ -737,8 +753,7 @@ func parseReportPlanRow(body []string) []*reportPlanWidget {
 			continue
 		}
 		kind := strings.ToLower(cleaned[0])
-		if kind != "text" && kind != "table" && kind != "chart" &&
-			kind != "stat" && kind != "alert" && kind != "pivot" {
+		if !reportPlanDocumentWidgetKindAllowed(kind) {
 			continue
 		}
 		fields := map[string]string{}
@@ -925,6 +940,37 @@ func reportPlanWidgetSourcePaths(w *reportPlanWidget) []string {
 	return out
 }
 
+func reportPlanIsFileWidgetKind(kind string) bool {
+	return kind == "file" || kind == "file-list"
+}
+
+func reportPlanValidFileWidgetSource(source string) bool {
+	source = strings.TrimSpace(strings.ReplaceAll(source, "\\", "/"))
+	if source == "" || strings.HasPrefix(source, "/") || strings.Contains(source, "\x00") {
+		return false
+	}
+	for _, part := range strings.Split(source, "/") {
+		if part == ".." {
+			return false
+		}
+	}
+	cleaned := filepath.Clean(source)
+	if cleaned == "." || strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, "/../") {
+		return false
+	}
+	cleaned = strings.TrimPrefix(cleaned, "./")
+	return strings.HasPrefix(cleaned, "db/") ||
+		strings.HasPrefix(cleaned, "knowledgebase/") ||
+		strings.HasPrefix(cleaned, "docs/")
+}
+
+func reportPlanValidSourceForWidget(w *reportPlanWidget, source string) bool {
+	if w != nil && reportPlanIsFileWidgetKind(w.Kind) {
+		return reportPlanValidFileWidgetSource(source)
+	}
+	return reportPlanValidSourceRE.MatchString(source)
+}
+
 func reportPlanWidgetSourceLabel(w *reportPlanWidget) string {
 	if w == nil {
 		return ""
@@ -1055,7 +1101,7 @@ func validateReportPlan(
 			// 1. Source path allowlist.
 			invalidSource := ""
 			for _, source := range reportPlanWidgetSourcePaths(w) {
-				if !reportPlanValidSourceRE.MatchString(source) {
+				if !reportPlanValidSourceForWidget(w, source) {
 					invalidSource = source
 					break
 				}
@@ -1072,8 +1118,12 @@ func validateReportPlan(
 				result.Errors = append(result.Errors, reportPlanDiagnostic{
 					Severity: "error", Section: section.Heading, Line: w.LineNum, Widget: locator,
 					Message: message,
-					Hint:    "Use source: db/<file>.json for simple widgets, or sources: alias=db/<file>.json, other=db/<file>.json for JSONata joins.",
+					Hint:    "Use source: db/<file>.json for JSON widgets. For file/file-list widgets, use source under db/, knowledgebase/, or docs/.",
 				})
+				continue
+			}
+			if reportPlanIsFileWidgetKind(w.Kind) {
+				validateReportPlanOptions(w, section.Heading, locator, result)
 				continue
 			}
 			trackReportPlanSourceRequirement(sourceRequirements, w, locator)
@@ -1999,6 +2049,40 @@ func parseReportPlanBool(v string) bool {
 func validateReportPlanOptions(
 	w *reportPlanWidget, section, locator string, result *reportPlanValidationResult,
 ) {
+	if raw := strings.ToLower(reportPlanFirstNonEmpty(w.Fields["render_format"], w.Fields["renderformat"])); raw != "" {
+		switch raw {
+		case "auto", "markdown", "html", "text", "code", "json", "image", "video", "audio", "pdf", "link":
+		default:
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: fmt.Sprintf("unknown render_format %q — file widget will fall back to auto.", raw),
+				Hint:    "Use one of: auto, markdown, html, text, code, json, image, video, audio, pdf, link.",
+			})
+		}
+		if !reportPlanIsFileWidgetKind(w.Kind) {
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: "render_format has no effect except on file widgets.",
+			})
+		}
+	}
+	if raw := strings.ToLower(reportPlanFirstNonEmpty(w.Fields["list_format"], w.Fields["listformat"])); raw != "" {
+		switch raw {
+		case "list", "cards", "table", "gallery":
+		default:
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: fmt.Sprintf("unknown list_format %q — file-list widget will fall back to list.", raw),
+				Hint:    "Use one of: list, cards, table, gallery.",
+			})
+		}
+		if w.Kind != "file-list" {
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: "list_format has no effect except on file-list widgets.",
+			})
+		}
+	}
 	if ct := strings.ToLower(reportPlanFirstNonEmpty(w.Fields["chart_type"], w.Fields["charttype"])); ct != "" {
 		if _, ok := reportPlanKnownChartTypes[ct]; !ok {
 			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
@@ -2059,10 +2143,10 @@ func validateReportPlanOptions(
 	validateReportPlanColorList(w, w.Fields["colors"], "colors", section, locator, result)
 	validateReportPlanColorList(w, reportPlanFirstNonEmpty(w.Fields["colors_dark"], w.Fields["colorsdark"]), "colors_dark", section, locator, result)
 	if colorBy := reportPlanFirstNonEmpty(w.Fields["color_by"], w.Fields["colorby"]); colorBy != "" {
-		if w.Kind == "text" {
+		if w.Kind == "text" || reportPlanIsFileWidgetKind(w.Kind) {
 			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
 				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-				Message: "color_by has no effect on widget:text — only chart and table use it.",
+				Message: fmt.Sprintf("color_by has no effect on widget:%s — only chart and table use it.", w.Kind),
 			})
 		}
 	}
@@ -2101,10 +2185,10 @@ func validateReportPlanColorList(
 	if raw == "" {
 		return
 	}
-	if w.Kind == "text" {
+	if w.Kind == "text" || reportPlanIsFileWidgetKind(w.Kind) {
 		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
 			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-			Message: fmt.Sprintf("%s has no effect on widget:text.", fieldName),
+			Message: fmt.Sprintf("%s has no effect on widget:%s.", fieldName, w.Kind),
 		})
 		return
 	}
@@ -2319,6 +2403,33 @@ func buildReportPlanWidgetPreview(
 		out.RenderState = "hidden"
 		out.Reason = "widget is hidden"
 		out.Summary = "hidden"
+		return out
+	}
+
+	if reportPlanIsFileWidgetKind(w.Kind) {
+		if !reportPlanValidFileWidgetSource(w.Source) {
+			out.Visible = false
+			out.RenderState = "error"
+			out.Reason = "file widget source must be under db/, knowledgebase/, or docs/"
+			out.Summary = out.Reason
+			return out
+		}
+		if w.Kind == "file-list" {
+			out.Summary = fmt.Sprintf("file list for folder %s", w.Source)
+			if format := reportPlanFirstNonEmpty(w.Fields["list_format"], w.Fields["listformat"]); format != "" {
+				out.Summary += fmt.Sprintf(" (%s)", format)
+			}
+		} else {
+			out.Summary = fmt.Sprintf("file artifact %s", w.Source)
+			if format := reportPlanFirstNonEmpty(w.Fields["render_format"], w.Fields["renderformat"]); format != "" {
+				out.Summary += fmt.Sprintf(" (%s)", format)
+			}
+		}
+		out.DataPreview = map[string]interface{}{
+			"source":        w.Source,
+			"render_format": reportPlanFirstNonEmpty(w.Fields["render_format"], w.Fields["renderformat"]),
+			"list_format":   reportPlanFirstNonEmpty(w.Fields["list_format"], w.Fields["listformat"]),
+		}
 		return out
 	}
 
@@ -2870,7 +2981,7 @@ func registerReportPlanManagementTools(
 		"properties": {
 			"id": { "type": "string" },
 			"hidden": { "type": "boolean" },
-			"source": { "type": "string", "description": "Single db source path, e.g. db/orders.json. Use this for simple widgets." },
+			"source": { "type": "string", "description": "Single source path. JSON widgets use db/<file>.json. file/file-list widgets use db/, knowledgebase/, or docs/ paths." },
 			"sources": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Named db sources for JSONata joins, e.g. {\"runs\":\"db/runs.json\",\"costs\":\"db/costs.json\"}. The JSONata input becomes {runs: <runs JSON>, costs: <costs JSON>}. Every source must be covered by step validation_schema." },
 			"path": { "type": "string", "description": "Dot-notation path into the source JSON. For collection widgets (table, chart, cards, pivot) this should resolve to an array. For stat / alert widgets the renderer applies filter first and then resolves path against the matched row, so when filter is set, path must be a bare field name on the row (e.g. \"balance\"), NOT \"0.balance\". Use a leading numeric index only when there is no filter and you intend to pick by position." },
 			"filter": { "type": "string", "description": "Narrows an array source to matching rows. Format: \"key=value\" (string equality). For stat / alert widgets, filter is the right way to pick one row by name — it narrows the array to a single row that path resolves against. For collection widgets, filter narrows the array passed to the renderer (table rows, chart points, etc.)." },
@@ -2925,6 +3036,11 @@ func registerReportPlanManagementTools(
 			"series": { "type": "array", "items": { "type": "string" } },
 			"seriesColors": { "type": "array", "items": { "type": "string" } },
 			"stacked": { "type": "boolean" },
+			"renderFormat": { "type": "string", "enum": ["auto", "markdown", "html", "text", "code", "json", "image", "video", "audio", "pdf", "link"], "description": "file widget only. auto infers from extension; explicit formats render markdown/html/text/code/json/image/video/audio/pdf or a link tile." },
+			"listFormat": { "type": "string", "enum": ["list", "cards", "table", "gallery"], "description": "file-list widget only. gallery is best for image/video evidence; table is best for dense inventories." },
+			"recursive": { "type": "boolean", "description": "file-list widget only. Whether to include nested folder files." },
+			"extensions": { "type": "array", "items": { "type": "string" }, "description": "file-list widget only. Optional extension allowlist, e.g. [\"png\", \"jpg\", \"pdf\"]." },
+			"maxItems": { "type": "integer", "description": "file-list widget only. Caps displayed files." },
 			"layout": {
 				"type": "object",
 				"properties": {
@@ -2945,7 +3061,7 @@ func registerReportPlanManagementTools(
 			"row_id": { "type": "string" },
 			"widget_id": { "type": "string" },
 			"tab": { "type": "string", "description": "Optional tab label for this widget entry when the section layout mode is tabs. Use the user-facing route name, e.g. \"Happy path\" or \"Fallback route\". Prefer setting this for widgets tied to todo_task/orchestration/routing outputs so each route has its own tab. Updating an existing widget with tab sets or clears the containing entry tab." },
-			"kind": { "type": "string", "enum": ["text", "markdown", "table", "cards", "chart", "stat", "alert", "pivot"] },
+			"kind": { "type": "string", "enum": ["text", "markdown", "table", "cards", "chart", "stat", "alert", "pivot", "file", "file-list"] },
 			"index": { "type": "integer" },
 			"config": %s
 		},
@@ -2957,8 +3073,8 @@ func registerReportPlanManagementTools(
 	mcpAgent.RegisterCustomTool(
 		"upsert_report_widget",
 		"Create or update one report widget in reports/report_plan.json. If widget_id exists, this merges the provided config into the existing widget. If widget_id is omitted, it creates a new widget in the target section; pass row_id to insert into an existing row entry.\n\n"+
-			"Supported widget kinds: text, markdown (formatted text/markdown body), table, cards (record tiles with title/subtitle/description/image fields — set cardTitleField etc.), chart (bar/line/area/pie), stat (KPI tile + delta + sparkline), alert (severity callout), pivot (rows × cols × aggregate).\n\n"+
-			"Data binding: use `source: \"db/file.json\"` for one JSON file. Use `sources: {\"alias\":\"db/file.json\", ...}` plus `query` for JSONata joins across multiple db files; the query input is an object keyed by alias. Do not create helper db files only to join/filter/sum report data when JSONata can do it in the widget.\n\n"+
+			"Supported widget kinds: text, markdown (formatted text/markdown body), table, cards (record tiles with title/subtitle/description/image fields — set cardTitleField etc.), chart (bar/line/area/pie), stat (KPI tile + delta + sparkline), alert (severity callout), pivot (rows × cols × aggregate), file (render one stored artifact), file-list (list a folder of artifacts).\n\n"+
+			"Data binding: use `source: \"db/file.json\"` for one JSON file. Use `sources: {\"alias\":\"db/file.json\", ...}` plus `query` for JSONata joins across multiple db files; the query input is an object keyed by alias. Do not create helper db files only to join/filter/sum report data when JSONata can do it in the widget. For artifacts, use `kind:\"file\"` with source under db/, knowledgebase/, or docs/ and optional `renderFormat`; for multiple images/videos/PDFs/etc use `kind:\"file-list\"` with source folder plus `listFormat`, `recursive`, `extensions`, and `maxItems`.\n\n"+
 			"Chart configuration: single-series uses xAxis + yAxis (or relies on canonical {label,value} keys). For multi-series — overlaying multiple lines/bars on the same axes — set `series: [\"field_a\", \"field_b\", ...]` and `xAxis` (each row in the source contributes one x-tick; each series field becomes one plotted line/bar). Optional: `seriesColors` (hex parallel to series), `stacked: true` for bar/area to stack instead of group. Tooltip and legend render automatically.\n\n"+
 			"Per-widget grid layout: when the parent section has section.layout.columns set, pass `layout: { span: N, minWidth: 320 }` in config to span N grid columns. For route dashboards, prefer set_section_layout(mode=\"tabs\") on one shared conceptual section and pass `tab: \"Route name\"` so entries with the same route label render together. Use tabs by default for todo_task predefined routes, orchestration/routing branches, or any plan where route outputs would otherwise be mixed in one long section; use a combined table only when the user explicitly wants cross-route comparison or the route outputs share one schema. Use set_report_theme to swap the chart palette report-wide.",
 		upsertParams,

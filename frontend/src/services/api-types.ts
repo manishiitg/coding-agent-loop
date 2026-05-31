@@ -670,6 +670,10 @@ export interface PlannerFile {
   children?: PlannerFile[];
   depth?: number;
   is_image?: boolean;
+  is_binary?: boolean;
+  size?: number;
+  mime_type?: string;
+  encoding?: string;
   // Store original path when filepath is adjusted for display (e.g., in workflow mode)
   originalFilepath?: string;
 }
@@ -680,6 +684,10 @@ export interface PlannerFileContent {
   last_modified?: string;
   folder?: string;
   is_image?: boolean;
+  is_binary?: boolean;
+  size?: number;
+  mime_type?: string;
+  encoding?: string;
 }
 
 export interface PlannerFilesResponse {
@@ -1610,7 +1618,9 @@ import type {
 // consuming field, so these are independently useful where callsites need
 // to name an enum (function args, switch exhaustiveness checks, etc.). They
 // must mirror the Go enum tags; if these drift, callsites will break.
-export type ReportWidgetKind = 'text' | 'markdown' | 'chart' | 'table' | 'cards' | 'stat' | 'alert' | 'pivot';
+export type ReportWidgetKind = 'text' | 'markdown' | 'chart' | 'table' | 'cards' | 'stat' | 'alert' | 'pivot' | 'file' | 'file-list';
+export type ReportFileRenderFormat = 'auto' | 'markdown' | 'html' | 'text' | 'code' | 'json' | 'image' | 'video' | 'audio' | 'pdf' | 'link';
+export type ReportFileListFormat = 'list' | 'cards' | 'table' | 'gallery';
 export type ReportAlertSeverity = 'info' | 'warning' | 'error' | 'success';
 export type ReportPivotAggregate = 'sum' | 'avg' | 'count' | 'min' | 'max' | 'first';
 export type ReportFormatterName =

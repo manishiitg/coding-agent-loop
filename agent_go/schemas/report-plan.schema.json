@@ -148,7 +148,9 @@
             "cards",
             "stat",
             "alert",
-            "pivot"
+            "pivot",
+            "file",
+            "file-list"
           ]
         },
         "source": {
@@ -377,6 +379,43 @@
         },
         "stacked": {
           "type": "boolean"
+        },
+        "renderFormat": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "markdown",
+            "html",
+            "text",
+            "code",
+            "json",
+            "image",
+            "video",
+            "audio",
+            "pdf",
+            "link"
+          ]
+        },
+        "listFormat": {
+          "type": "string",
+          "enum": [
+            "list",
+            "cards",
+            "table",
+            "gallery"
+          ]
+        },
+        "recursive": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "maxItems": {
+          "type": "integer"
         },
         "layout": {
           "$ref": "#/$defs/reportPlanDocumentWidgetLayout"

@@ -12,6 +12,7 @@ import { CardsWidget } from './reportWidgets/CardsWidget'
 import { TableWidget } from './reportWidgets/TableWidget'
 import { PivotWidget } from './reportWidgets/PivotWidget'
 import { ChartWidget } from './reportWidgets/ChartWidget'
+import { FileListWidget, FileWidget } from './reportWidgets/FileWidget'
 import {
   StandaloneWidgetNotice,
   WidgetError,
@@ -327,6 +328,7 @@ function useJSONataQuery(source: unknown, query: string): JSONataQueryState {
 }
 
 function widgetSourcePaths(widget: ReportWidget): string[] {
+  if (isFileArtifactWidget(widget)) return []
   const paths = new Set<string>()
   if (widget.source) paths.add(widget.source)
   if (widget.sources) {
@@ -335,6 +337,10 @@ function widgetSourcePaths(widget: ReportWidget): string[] {
     }
   }
   return Array.from(paths).sort()
+}
+
+function isFileArtifactWidget(widget: ReportWidget): boolean {
+  return widget.kind === 'file' || widget.kind === 'file-list'
 }
 
 function collectReportSourcePaths(planSource: string | null): string[] {
@@ -446,6 +452,7 @@ function widgetInstanceKey(
 
 function widgetShouldRender(widget: ReportWidget, raw: unknown) {
   if (widget.hidden) return false
+  if (isFileArtifactWidget(widget)) return Boolean(widget.source)
   if (raw === undefined || raw === null) return true
   if (!evaluateShowIf(raw, widget.showIf)) return false
   if (widget.kind === 'stat' || widget.kind === 'alert' || widget.kind === 'pivot') return true
@@ -761,6 +768,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
                     key={sectionIndex}
                     section={section}
                     sectionIndex={sectionIndex}
+                    workspacePath={workspacePath}
                     entries={entries}
                     sources={sources}
                     hiddenWidgetKeys={hiddenWidgetKeys}
@@ -841,6 +849,7 @@ function SectionHeader({
 function SectionContainer({
   section,
   sectionIndex,
+  workspacePath,
   entries,
   sources,
   hiddenWidgetKeys,
@@ -848,6 +857,7 @@ function SectionContainer({
 }: {
   section: ReportSection
   sectionIndex: number
+  workspacePath: string
   entries: Array<{ entry: ReportEntry; entryIndex: number }>
   sources: SourceCache
   hiddenWidgetKeys: Set<string>
@@ -969,6 +979,7 @@ function SectionContainer({
               entry={entry}
               entryIndex={entryIndex}
               sectionIndex={sectionIndex}
+              workspacePath={workspacePath}
               sources={sources}
               hiddenWidgetKeys={hiddenWidgetKeys}
               onToggleWidgetHidden={handleToggleWidgetHidden}
@@ -989,6 +1000,7 @@ function EntryRenderer({
   entry,
   entryIndex,
   sectionIndex,
+  workspacePath,
   sources,
   hiddenWidgetKeys,
   onToggleWidgetHidden,
@@ -996,6 +1008,7 @@ function EntryRenderer({
   entry: ReportEntry
   entryIndex: number
   sectionIndex: number
+  workspacePath: string
   sources: SourceCache
   hiddenWidgetKeys: Set<string>
   onToggleWidgetHidden: (widgetKey: string) => void
@@ -1009,6 +1022,7 @@ function EntryRenderer({
         sources={sources}
         hidden={hiddenWidgetKeys.has(widgetKey)}
         onToggleHidden={() => onToggleWidgetHidden(widgetKey)}
+        workspacePath={workspacePath}
       />
     )
   }
@@ -1028,6 +1042,7 @@ function EntryRenderer({
             sources={sources}
             hidden={Boolean(hidden)}
             onToggleHidden={() => onToggleWidgetHidden(widgetKey)}
+            workspacePath={workspacePath}
           />
         </div>
       ))}
@@ -1052,6 +1067,8 @@ const WIDGET_SOURCE_MODE: Record<ReportWidgetKind, WidgetSourceMode> = {
   table: 'collection',
   cards: 'collection',
   chart: 'collection',
+  file: 'collection',
+  'file-list': 'collection',
 }
 
 // Standalone widgets render their own outer container; everything else gets
@@ -1072,10 +1089,12 @@ type SingularWidgetRenderer = React.FC<{
   onToggleHidden?: () => void
 }>
 type PivotWidgetRenderer = React.FC<{ source: unknown; widget: ReportWidget }>
+type FileWidgetRenderer = React.FC<{ widget: ReportWidget; workspacePath: string }>
 
 const COLLECTION_WIDGET_RENDERERS: Partial<Record<ReportWidgetKind, CollectionWidgetRenderer>> = {}
 const SINGULAR_WIDGET_RENDERERS: Partial<Record<ReportWidgetKind, SingularWidgetRenderer>> = {}
 const PIVOT_WIDGET_RENDERERS: Partial<Record<ReportWidgetKind, PivotWidgetRenderer>> = {}
+const FILE_WIDGET_RENDERERS: Partial<Record<ReportWidgetKind, FileWidgetRenderer>> = {}
 
 function HiddenWidgetCard({
   widget,
@@ -1104,11 +1123,13 @@ function WidgetCard({
   sources,
   hidden = false,
   onToggleHidden,
+  workspacePath,
 }: {
   widget: ReportWidget
   sources: SourceCache
   hidden?: boolean
   onToggleHidden?: () => void
+  workspacePath: string
 }) {
   const query = widget.query?.trim() ?? ''
   const sourceInput = useMemo(() => resolveWidgetSourceInput(widget, sources), [widget, sources])
@@ -1127,6 +1148,25 @@ function WidgetCard({
     ) : (
       <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>{content}</WidgetShell>
     )
+
+  if (isFileArtifactWidget(widget)) {
+    const Renderer = FILE_WIDGET_RENDERERS[widget.kind]
+    if (!Renderer) return null
+    if (!widget.source) {
+      return wrapNotice(
+        <WidgetError
+          widget={widget}
+          message="File widget has no source."
+          hint="Set source to a path under db/, knowledgebase/, or docs/."
+        />,
+      )
+    }
+    return (
+      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
+        <Renderer widget={widget} workspacePath={workspacePath} />
+      </WidgetShell>
+    )
+  }
 
   if (!widget.source && !widget.sources) {
     return (
@@ -1242,6 +1282,8 @@ COLLECTION_WIDGET_RENDERERS.markdown = MarkdownWidget
 COLLECTION_WIDGET_RENDERERS.table = TableWidget
 COLLECTION_WIDGET_RENDERERS.cards = CardsWidget
 COLLECTION_WIDGET_RENDERERS.chart = ChartWidget
+FILE_WIDGET_RENDERERS.file = FileWidget
+FILE_WIDGET_RENDERERS['file-list'] = FileListWidget
 
 SINGULAR_WIDGET_RENDERERS.stat = StatWidget
 SINGULAR_WIDGET_RENDERERS.alert = AlertWidget

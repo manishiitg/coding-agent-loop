@@ -35,7 +35,7 @@ export interface ReportPlanDocumentEntry {
 export interface ReportPlanDocumentWidget {
   id?: string;
   hidden?: boolean;
-  kind: "text" | "markdown" | "chart" | "table" | "cards" | "stat" | "alert" | "pivot";
+  kind: "text" | "markdown" | "chart" | "table" | "cards" | "stat" | "alert" | "pivot" | "file" | "file-list";
   source?: string;
   sources?: {
     [k: string]: string;
@@ -114,6 +114,11 @@ export interface ReportPlanDocumentWidget {
   series?: string[];
   seriesColors?: string[];
   stacked?: boolean;
+  renderFormat?: "auto" | "markdown" | "html" | "text" | "code" | "json" | "image" | "video" | "audio" | "pdf" | "link";
+  listFormat?: "list" | "cards" | "table" | "gallery";
+  recursive?: boolean;
+  extensions?: string[];
+  maxItems?: number;
   layout?: ReportPlanDocumentWidgetLayout;
 }
 export interface ReportPlanDocumentDefaultSort {

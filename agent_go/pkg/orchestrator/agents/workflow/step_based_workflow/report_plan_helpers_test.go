@@ -500,6 +500,59 @@ func diagnosticsContain(diags []reportPlanDiagnostic, want string) bool {
 	return false
 }
 
+func TestValidateReportPlanFileWidgetsAllowArtifactsWithoutJSONParsing(t *testing.T) {
+	t.Parallel()
+	workspacePath := "Workflow/artifacts"
+	files := map[string]string{
+		"Workflow/artifacts/reports/report_plan.json": `{
+		  "version": 1,
+		  "sections": [{
+		    "heading": "Artifacts",
+		    "entries": [
+		      {"kind": "single", "widget": {"kind": "file", "source": "docs/report.md", "renderFormat": "markdown"}},
+		      {"kind": "single", "widget": {"kind": "file-list", "source": "docs/evidence", "listFormat": "gallery", "extensions": ["png", "pdf"]}}
+		    ]
+		  }]
+		}`,
+	}
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	if err != nil {
+		t.Fatalf("validateReportPlan returned error: %v", err)
+	}
+	if !result.Valid {
+		t.Fatalf("expected file widgets to validate without JSON source parsing; errors=%+v warnings=%+v", result.Errors, result.Warnings)
+	}
+	if result.Widgets != 2 {
+		t.Fatalf("expected 2 widgets, got %d", result.Widgets)
+	}
+}
+
+func TestValidateReportPlanFileWidgetRejectsOutsideRoots(t *testing.T) {
+	t.Parallel()
+	workspacePath := "Workflow/artifacts"
+	files := map[string]string{
+		"Workflow/artifacts/reports/report_plan.json": `{
+		  "version": 1,
+		  "sections": [{
+		    "heading": "Artifacts",
+		    "entries": [
+		      {"kind": "single", "widget": {"kind": "file", "source": "runs/iteration-0/default/report.md"}}
+		    ]
+		  }]
+		}`,
+	}
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	if err != nil {
+		t.Fatalf("validateReportPlan returned error: %v", err)
+	}
+	if result.Valid {
+		t.Fatalf("expected file widget outside allowed roots to be invalid")
+	}
+	if !diagnosticsContain(result.Errors, "not a valid widget source") {
+		t.Fatalf("expected invalid source diagnostic, got %+v", result.Errors)
+	}
+}
+
 // Locks in bracket / $-root path resolution so validate_report_plan and
 // preview_report_render stay in parity with the frontend renderer. The classic
 // alert form "$[0].login_success" must resolve against an array source rather

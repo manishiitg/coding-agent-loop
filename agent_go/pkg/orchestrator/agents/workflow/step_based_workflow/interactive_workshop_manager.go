@@ -537,6 +537,13 @@ const (
 // Returns a formatted string summary of tool calls. Nil means the feature is unavailable.
 type ToolCallQueryFunc func(sessionID, correlationID, stepID, toolCallID string) string
 
+// TmuxLookupFunc resolves the live tmux session for a workshop step running a
+// coding-CLI provider (tmux transport). Given the terminal-store session key and
+// stepID, it returns the tmux session name and a freshly-captured tail of the pane
+// (the latest terminal output), plus ok=true when the step is tmux-backed. paneTail
+// may be empty if the live capture failed. Nil func means the feature is unavailable.
+type TmuxLookupFunc func(ctx context.Context, mainSessionID, stepID string) (tmuxSession, paneTail string, ok bool)
+
 // WorkshopStepExecution tracks a single background step execution
 type WorkshopStepExecution struct {
 	ID             string
@@ -816,6 +823,7 @@ type InteractiveWorkshopManager struct {
 	stepRegistry           *WorkshopStepRegistry
 	sessionCtx             context.Context                             // long-lived ctx for background goroutines
 	toolCallQueryFunc      ToolCallQueryFunc                           // optional: query live tool calls for running steps
+	tmuxLookupFunc         TmuxLookupFunc                              // optional: resolve live tmux session name for a coding-CLI step
 	mainSessionID          string                                      // event store session ID for tool call queries
 	schedulerWorkspacePath string                                      // workspace path for schedule management
 	schedulerFuncs         *SchedulerCallbacks                         // schedule CRUD callbacks from server.go
@@ -2943,7 +2951,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// When done/failed/cancelled: shows result
 	if err := mcpAgent.RegisterCustomTool(
 		"query_step",
-		"Check the status of a workflow step by step_id. The backend resolves the latest matching execution_id automatically, preferring a running execution. When running, shows registry status and structured MCP tool calls captured so far. Important: coding CLI providers can show terminal/TUI activity before structured tool_call events exist, so 'no tool calls observed yet' does NOT mean the step failed to start or is stuck. Do not stop or re-run solely because query_step has no tool calls; wait for the completion notification unless the user explicitly asks to stop/retry. Pass tool_call_id to get full input/output for a specific tool call. Use debug_step for file-based insights.",
+		"Check the status of a workflow step by step_id. The backend resolves the latest matching execution_id automatically, preferring a running execution. When running, shows registry status and structured MCP tool calls captured so far. Important: coding CLI providers can show terminal/TUI activity before structured tool_call events exist, so 'no tool calls observed yet' does NOT mean the step failed to start or is stuck. When the step is a coding-CLI provider running in tmux, query_step ALSO captures and inlines the latest lines of the live terminal pane, plus the tmux session name and a read-only `tmux capture-pane` command for deeper history (the same session shown in the UI terminal). Do not stop or re-run solely because query_step has no tool calls; wait for the completion notification unless the user explicitly asks to stop/retry. Pass tool_call_id to get full input/output for a specific tool call. Use debug_step for file-based insights.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3033,19 +3041,35 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			switch status {
 			case WorkshopStepRunning:
+				mainSessID := iwm.mainSessionID
+				if mainSessID == "" {
+					mainSessID = iwm.sessionID
+				}
+
 				// Auto-enrich with live tool calls when running
 				var toolCallInfo string
 				if iwm.toolCallQueryFunc != nil {
-					mainSessID := iwm.mainSessionID
-					if mainSessID == "" {
-						mainSessID = iwm.sessionID
-					}
 					summary := iwm.toolCallQueryFunc(mainSessID, agentSessID, stepID, toolCallID)
 					if toolCallID != "" && summary != "" {
 						return fmt.Sprintf("Step %q (execution_id: %s) — tool call detail:\n%s", stepID, execID, summary), nil
 					}
 					if summary != "" {
 						toolCallInfo = fmt.Sprintf("\n\n**Structured MCP tool calls:**\n%s", summary)
+					}
+				}
+
+				// If the step runs a coding CLI in tmux, surface the live tmux session
+				// (the same name shown in the UI terminal panes) so the builder can
+				// inspect the actual terminal pane via execute_shell_command. Coding-CLI
+				// progress is terminal/TUI output that does NOT show up as MCP tool calls.
+				var tmuxInfo string
+				if iwm.tmuxLookupFunc != nil {
+					if tmuxSession, paneTail, ok := iwm.tmuxLookupFunc(ctx, mainSessID, stepID); ok && tmuxSession != "" {
+						tmuxInfo = fmt.Sprintf("\n\n**Live tmux session:** `%s` (coding CLI in tmux).", tmuxSession)
+						if strings.TrimSpace(paneTail) != "" {
+							tmuxInfo += fmt.Sprintf(" Latest terminal output:\n```\n%s\n```", paneTail)
+						}
+						tmuxInfo += fmt.Sprintf("\nFor more history, run `tmux capture-pane -pt %s -S -200` via execute_shell_command (read-only; do NOT use `tmux attach`, it blocks).", tmuxSession)
 					}
 				}
 
@@ -3057,9 +3081,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 
 				if toolCallInfo == "" {
-					return fmt.Sprintf("Step %q is registered and running.\nexecution_id: %s\n\nNo structured MCP tool calls have been captured for this execution yet. This is normal for coding CLI providers while they are booting, thinking, using terminal/TUI output, or before they make their first api-bridge call. It does not mean the step failed to start or is stuck.\n\nDo not stop or re-run this execution solely because no tool calls are listed; wait for the automatic completion notification unless the user explicitly asks you to stop/retry.%s", stepID, execID, hint), nil
+					return fmt.Sprintf("Step %q is registered and running.\nexecution_id: %s\n\nNo structured MCP tool calls have been captured for this execution yet. This is normal for coding CLI providers while they are booting, thinking, using terminal/TUI output, or before they make their first api-bridge call. It does not mean the step failed to start or is stuck.\n\nDo not stop or re-run this execution solely because no tool calls are listed; wait for the automatic completion notification unless the user explicitly asks you to stop/retry.%s%s", stepID, execID, tmuxInfo, hint), nil
 				}
-				return fmt.Sprintf("Step %q is still running.\nexecution_id: %s%s%s", stepID, execID, toolCallInfo, hint), nil
+				return fmt.Sprintf("Step %q is still running.\nexecution_id: %s%s%s%s", stepID, execID, toolCallInfo, tmuxInfo, hint), nil
 
 			case WorkshopStepDone:
 				// Background tasks get a generic completion response (no step-specific hints)

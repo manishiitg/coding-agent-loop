@@ -166,6 +166,7 @@ type WorkshopChatSession struct {
 	sessionCtx             context.Context
 	cancelFunc             context.CancelFunc
 	toolCallQueryFunc      ToolCallQueryFunc
+	tmuxLookupFunc         TmuxLookupFunc
 	mainSessionID          string
 	config                 *WorkshopConfig // Original config for creating fresh controllers
 	schedulerWorkspacePath string
@@ -457,6 +458,9 @@ type WorkshopConfig struct {
 	// ToolCallQueryFunc provides live tool call query capability for query_step_tools.
 	// Set by server.go which has access to the EventStore.
 	ToolCallQueryFunc ToolCallQueryFunc
+	// TmuxLookupFunc resolves the live tmux session name for a tmux-backed (coding-CLI)
+	// step so query_step can surface it. Set by server.go (has the terminal store).
+	TmuxLookupFunc TmuxLookupFunc
 	// IsEvaluationMode when true, the controller uses evaluation/ paths for step_config, learnings, etc.
 	IsEvaluationMode bool
 	// SchedulerWorkspacePath is the workspace folder path (needed for schedule management)
@@ -649,6 +653,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		sessionCtx:             sessionCtx,
 		cancelFunc:             cancelFunc,
 		toolCallQueryFunc:      cfg.ToolCallQueryFunc,
+		tmuxLookupFunc:         cfg.TmuxLookupFunc,
 		mainSessionID:          cfg.SessionID,
 		config:                 cfg,
 		schedulerWorkspacePath: cfg.SchedulerWorkspacePath,
@@ -807,6 +812,7 @@ func RegisterWorkshopChatTools(
 		stepRegistry:           session.StepRegistry,
 		sessionCtx:             session.sessionCtx,
 		toolCallQueryFunc:      session.toolCallQueryFunc,
+		tmuxLookupFunc:         session.tmuxLookupFunc,
 		mainSessionID:          session.mainSessionID,
 		schedulerWorkspacePath: session.schedulerWorkspacePath,
 		schedulerFuncs:         session.schedulerFuncs,

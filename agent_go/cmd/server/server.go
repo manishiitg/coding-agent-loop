@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -5132,7 +5133,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Fatalf("[WORKFLOW_PHASE] FATAL: phase tools install failed: %v", err)
 				}
 
-
 				log.Printf("[WORKFLOW_PHASE] Phase chat setup complete: phase=%s workspace=%s", workflowPhaseID, phaseWorkspacePath)
 			}
 		}
@@ -9950,6 +9950,8 @@ func (api *StreamingAPI) buildWorkshopConfig(
 
 	// Wire up live tool call query for query_step_tools
 	cfg.ToolCallQueryFunc = formatToolCallSummaries(api)
+	// Wire up live tmux session lookup so query_step can surface the coding-CLI terminal
+	cfg.TmuxLookupFunc = makeStepTmuxLookup(api)
 
 	// Wire up schedule management callbacks
 	// Set workspace path for schedule management — prefer SelectedFolder, fall back to resolving from preset
@@ -11126,6 +11128,63 @@ type queryToolCallSummary struct {
 	Args       string
 	Result     string
 	SessionID  string
+}
+
+// queryStepTmuxCaptureLines bounds how many lines of the live tmux pane query_step
+// inlines. Enough to see what the coding agent is doing now without flooding the
+// response; deeper history is available via the capture-pane command it also emits.
+const queryStepTmuxCaptureLines = 80
+
+// agentTerminalANSIPattern strips terminal escape sequences before inlining pane
+// content into an LLM-facing response (mirrors terminals.ansiEscapePattern).
+var agentTerminalANSIPattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+// cleanTerminalTailForAgent strips ANSI escapes, trims trailing blank padding that
+// capture-pane adds, and byte-bounds the result for inclusion in a query_step reply.
+func cleanTerminalTailForAgent(content string) string {
+	stripped := agentTerminalANSIPattern.ReplaceAllString(content, "")
+	lines := strings.Split(stripped, "\n")
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return terminalContentTail(strings.Join(lines, "\n"), 4000)
+}
+
+// makeStepTmuxLookup returns a TmuxLookupFunc that resolves the live tmux session
+// for a workshop step running a coding-CLI provider (tmux transport) and captures a
+// fresh tail of its pane. It scans the terminal store for a tmux-backed snapshot
+// matching the step (the same session shown in the UI terminal), then runs a live
+// `tmux capture-pane` so query_step returns CURRENT output — the store's cached
+// Content is only refreshed when the UI views the pane, so it can be stale for a
+// headless builder. The capture result is also written back to keep the store warm.
+func makeStepTmuxLookup(api *StreamingAPI) todo_creation_human.TmuxLookupFunc {
+	return func(ctx context.Context, mainSessionID, stepID string) (string, string, bool) {
+		if api == nil || api.terminalStore == nil {
+			return "", "", false
+		}
+		if strings.TrimSpace(mainSessionID) == "" || strings.TrimSpace(stepID) == "" {
+			return "", "", false
+		}
+		for _, snap := range api.terminalStore.List(mainSessionID) {
+			if snap.StepID != stepID {
+				continue
+			}
+			ts := strings.TrimSpace(snap.TmuxSession)
+			if ts == "" || !strings.EqualFold(snap.StepTransport, "tmux") {
+				continue
+			}
+			var tail string
+			cctx, cancel := context.WithTimeout(ctx, terminalTmuxActionTimeout)
+			content, err := captureTerminalPaneLines(cctx, ts, queryStepTmuxCaptureLines)
+			cancel()
+			if err == nil && strings.TrimSpace(content) != "" {
+				api.terminalStore.RefreshContent(snap.TerminalID, content)
+				tail = cleanTerminalTailForAgent(content)
+			}
+			return ts, tail, true
+		}
+		return "", "", false
+	}
 }
 
 // formatToolCallSummaries returns a ToolCallQueryFunc that formats event-store

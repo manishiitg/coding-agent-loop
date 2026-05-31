@@ -567,6 +567,7 @@ func collapseBlankRuns(s string) string {
 	}
 	lines := strings.Split(s, "\n")
 	lines = stripInputBoxTrailerLines(lines)
+	lines = pruneTerminalSpinnerWordFragments(lines)
 	out := make([]string, 0, len(lines))
 	blankRun := 0
 	for i, line := range lines {
@@ -643,6 +644,113 @@ func isAllDashRunes(s string) bool {
 		}
 	}
 	return true
+}
+
+// terminalSpinnerStatusWords mirrors paneview.spinnerStatusWords: the words CLI
+// agents animate in their in-place spinner. When tmux flattens that animation,
+// the leading Braille glyph can land on a different column than the text,
+// leaving bare staggered fragments ("oading", "king..", "enerat", "worki").
+var terminalSpinnerStatusWords = []string{
+	"loading", "working", "generating", "thinking", "analyzing", "exploring",
+	"reviewing", "confirming", "refining", "investigating", "searching",
+	"reading", "writing", "calling", "running", "navigating", "examining",
+	"identifying", "saving", "extracting", "discovering", "processing",
+	"waiting", "fetching", "building", "planning", "composing", "retrieving",
+	"downloading", "uploading", "connecting", "preparing", "finalizing",
+}
+
+// terminalSpinnerFragmentKind classifies a line as a spinner-word frame:
+// "strong" (multi-char status-word piece), "weak" (dots-only or single letter),
+// or "" (real content). Mirrors paneview.spinnerFragmentKind.
+func terminalSpinnerFragmentKind(line string) string {
+	t := strings.TrimSpace(line)
+	if t != "" {
+		r := []rune(t)
+		if r[0] >= 0x2800 && r[0] <= 0x28FF {
+			t = strings.TrimSpace(string(r[1:]))
+		}
+	}
+	if t == "" {
+		return ""
+	}
+	core := strings.Trim(t, ". ")
+	if core == "" {
+		return "weak"
+	}
+	if len(core) > 14 {
+		return ""
+	}
+	lower := strings.ToLower(core)
+	for _, r := range lower {
+		if r < 'a' || r > 'z' {
+			return ""
+		}
+	}
+	matched := false
+	for _, w := range terminalSpinnerStatusWords {
+		if strings.Contains(w, lower) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return ""
+	}
+	if len(core) == 1 {
+		return "weak"
+	}
+	return "strong"
+}
+
+// pruneTerminalSpinnerWordFragments drops runs of flattened spinner-word
+// fragments. A region with 2+ strong fragments (blanks allowed between) is
+// spinner noise; its strong and weak fragments are removed. Isolated short words
+// are kept so real content is never eaten. Mirrors paneview.pruneSpinnerWordFragments.
+func pruneTerminalSpinnerWordFragments(lines []string) []string {
+	n := len(lines)
+	kind := make([]string, n)
+	for i, l := range lines {
+		kind[i] = terminalSpinnerFragmentKind(l)
+	}
+	drop := make([]bool, n)
+	i := 0
+	for i < n {
+		if kind[i] == "" {
+			i++
+			continue
+		}
+		j := i
+		strongCount := 0
+		last := i
+		for j < n {
+			if kind[j] != "" {
+				if kind[j] == "strong" {
+					strongCount++
+				}
+				last = j
+				j++
+			} else if strings.TrimSpace(lines[j]) == "" {
+				j++
+			} else {
+				break
+			}
+		}
+		if strongCount >= 2 {
+			for k := i; k <= last; k++ {
+				if kind[k] != "" {
+					drop[k] = true
+				}
+			}
+		}
+		i = j
+	}
+	out := make([]string, 0, n)
+	for i, l := range lines {
+		if !drop[i] {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 func wantsDeepTerminalContent(r *http.Request) bool {

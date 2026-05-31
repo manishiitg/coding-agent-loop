@@ -66,6 +66,43 @@ let mainWindow = null;
 let settingsWindow = null;
 let tray = null;
 
+// --- Diagnostic logging -----------------------------------------------------
+// Console output is lost when the renderer blanks out and DevTools/terminal
+// can't be opened. Mirror crash/error diagnostics to <userData>/logs/main.log
+// so a post-mortem is always available. Best-effort; the logger never throws.
+let diagLogStream = null;
+function safeStringify(value) {
+  try { return JSON.stringify(value); } catch (_e) { return String(value); }
+}
+function diagLog(...args) {
+  const text = args.map((a) => (typeof a === 'string' ? a : safeStringify(a))).join(' ');
+  const line = `[${new Date().toISOString()}] ${text}\n`;
+  console.error(line.trimEnd());
+  try {
+    if (!diagLogStream) {
+      const logsDir = path.join(app.getPath('userData'), 'logs');
+      if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+      diagLogStream = fs.createWriteStream(path.join(logsDir, 'main.log'), { flags: 'a' });
+    }
+    diagLogStream.write(line);
+  } catch (_e) {
+    /* best-effort: never let logging crash the app */
+  }
+}
+
+// Renderer forwards uncaught errors / unhandled rejections / React error-boundary
+// catches here (via the electronAPI.logRendererError preload bridge), so a blank
+// screen leaves a trace even with no DevTools.
+ipcMain.on('renderer-error', (_event, payload) => {
+  diagLog('[renderer-error]', payload);
+});
+
+// Opt-in out-of-band debugging: launch with ELECTRON_REMOTE_DEBUG_PORT=9222 and
+// attach Chrome at http://localhost:9222 even when the window is wedged/blank.
+if (process.env.ELECTRON_REMOTE_DEBUG_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.ELECTRON_REMOTE_DEBUG_PORT);
+}
+
 function migrateLegacyUserData() {
   const userDataPath = app.getPath('userData');
   const legacyProductName = ['Agent', 'Forge'].join('');
@@ -1033,15 +1070,31 @@ function createWindow(initialUrl) {
   });
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
-    console.error('[main] Window failed to load:', { errorCode, errorDescription, validatedURL });
+    // -3 is ERR_ABORTED (benign — e.g. a canceled/replaced subframe load).
+    if (errorCode === -3) return;
+    diagLog('[main] Window failed to load:', { errorCode, errorDescription, validatedURL });
   });
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
-    console.error('[main] Renderer process gone:', details);
+    diagLog('[main] Renderer process gone:', details);
+    // Auto-recover a crashed renderer so the user isn't stranded on a blank
+    // screen having to discover Ctrl+R themselves.
+    if (details && details.reason !== 'clean-exit' && mainWindow && !mainWindow.isDestroyed()) {
+      diagLog('[main] Auto-reloading renderer after crash');
+      try { mainWindow.webContents.reload(); } catch (e) { diagLog('[main] auto-reload failed:', String(e)); }
+    }
   });
 
   mainWindow.webContents.on('unresponsive', () => {
-    console.error('[main] Window became unresponsive');
+    diagLog('[main] Window became unresponsive');
+  });
+
+  mainWindow.webContents.on('responsive', () => {
+    diagLog('[main] Window became responsive again');
+  });
+
+  mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
+    diagLog('[main] Preload error:', preloadPath, String((error && error.stack) || error));
   });
 
   // Handle new window requests (e.g. target="_blank" or window.open)

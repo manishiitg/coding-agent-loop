@@ -8516,6 +8516,15 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 			a.notified = true
 			a.mu.Unlock()
 		}
+	} else if !api.isSessionStoppedOrInactive(sessionID) {
+		// Dispatch failed but the session is still reachable. Leave every batched
+		// agent notified=false and arm the retry backstop so they are redelivered
+		// rather than dropped (no-stored-agent / stream-error drop fix).
+		for _, agentID := range emittedIDs {
+			api.queuePendingCompletion(sessionID, agentID)
+		}
+		api.schedulePendingCompletionRetry(sessionID)
+		log.Printf("[BG AGENT] Batched synthetic turn for session %s did not dispatch %d agent(s) — queued for retry", sessionID, len(emittedIDs))
 	}
 }
 
@@ -8623,6 +8632,14 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		agent.mu.Lock()
 		agent.notified = true
 		agent.mu.Unlock()
+	} else if !api.isSessionStoppedOrInactive(sessionID) {
+		// Dispatch failed but the session is still reachable (no stored agent yet,
+		// or StreamWithEvents errored). Leave notified=false and arm the retry
+		// backstop so requeueUnnotifiedCompletions redelivers this completion
+		// instead of dropping it (no-stored-agent / stream-error drop fix).
+		api.queuePendingCompletion(sessionID, agentID)
+		api.schedulePendingCompletionRetry(sessionID)
+		log.Printf("[BG AGENT] Synthetic turn for session %s did not dispatch agent %s — queued for retry", sessionID, agentID)
 	}
 }
 
@@ -8902,6 +8919,26 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 
 	log.Printf("[BG AGENT] Executing synthetic turn for session %s via stored agent", sessionID)
 
+	// Start the stream SYNCHRONOUSLY so the bool we return reflects whether the
+	// turn actually dispatched. Previously StreamWithEvents ran inside the goroutine
+	// and we returned true on spawn; a stream error there left the caller having
+	// already committed notified=true, so the completion was permanently lost
+	// (notified-only-after-stream-start fix). On error we undo the busy/synthetic
+	// setup and return false; the caller leaves notified=false and arms the retry
+	// backstop so requeueUnnotifiedCompletions redelivers it.
+	textChan, err := llmAgent.StreamWithEvents(agentCtx, syntheticMsg)
+	if err != nil {
+		log.Printf("[BG AGENT] StreamWithEvents error for synthetic turn on session %s: %v", sessionID, err)
+		agentCancel()
+		api.agentCancelMux.Lock()
+		delete(api.agentCancelFuncs, sessionID)
+		api.agentCancelMux.Unlock()
+		api.setSyntheticTurn(sessionID, false)
+		api.setSessionBusy(sessionID, false)
+		api.updateSessionStatus(sessionID, "error")
+		return false
+	}
+
 	go func() {
 		defer func() {
 			// Clean up cancel function
@@ -8927,16 +8964,8 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 			api.drainPendingAutoNotificationsAfterTurn(sessionID)
 		}()
 
-		// Stream the synthetic message through the stored agent
-		// Events flow through already-attached EventObservers (in-memory + DB)
-		textChan, err := llmAgent.StreamWithEvents(agentCtx, syntheticMsg)
-		if err != nil {
-			log.Printf("[BG AGENT] StreamWithEvents error for synthetic turn on session %s: %v", sessionID, err)
-			api.updateSessionStatus(sessionID, "error")
-			return
-		}
-
-		// Consume text chunks and save conversation history incrementally
+		// Stream already started above; events flow through already-attached
+		// EventObservers (in-memory + DB). Consume text chunks and save history.
 		for range textChan {
 			api.conversationMux.Lock()
 			api.conversationHistory[sessionID] = llmAgent.GetHistory()

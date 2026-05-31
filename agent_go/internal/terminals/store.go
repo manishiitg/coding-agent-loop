@@ -355,16 +355,8 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 		snapshot.ChunkIndex++
 	}
 	previousStatus := snapshot.Status
-	if snapshot.Status.ProviderLabel != "" {
-		providerLabel := snapshot.Status.ProviderLabel
-		snapshot.Status = DeriveStatus(content, nil)
-		if snapshot.Status.ProviderLabel == "" {
-			snapshot.Status.ProviderLabel = providerLabel
-		}
-	} else {
-		snapshot.Status = DeriveStatus(content, nil)
-	}
-	preservePreValidationStatus(&snapshot.Status, previousStatus)
+	snapshot.Status = DeriveStatus(content, nil)
+	preserveEphemeralStatusFields(&snapshot.Status, previousStatus)
 	if _, forced := s.forcedInactive[terminalID]; !forced {
 		if snapshot.Active {
 			snapshot.State = terminalStateFromContent(content, true)
@@ -525,7 +517,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.RetentionSeconds = 0
 	previousStatus := current.Status
 	current.Status = DeriveStatus(content, metadata)
-	preservePreValidationStatus(&current.Status, previousStatus)
+	preserveEphemeralStatusFields(&current.Status, previousStatus)
 	if contentChanged || current.UpdatedAt.IsZero() {
 		current.UpdatedAt = now
 	}
@@ -626,7 +618,9 @@ func (s *Store) upsertToolLine(sessionID string, event storeevents.Event, metada
 		return
 	}
 	snapshot.Content = s.contentWithToolLinesLocked(terminalID, snapshot.Content)
+	previousStatus := snapshot.Status
 	snapshot.Status = DeriveStatus(snapshot.Content, metadata)
+	preserveEphemeralStatusFields(&snapshot.Status, previousStatus)
 	snapshot.UpdatedAt = now
 	s.byID[terminalID] = snapshot
 }
@@ -1310,17 +1304,34 @@ func eventDataMap(event storeevents.Event) (map[string]interface{}, bool) {
 	return decoded, true
 }
 
-func preservePreValidationStatus(status *Status, previous Status) {
-	if status == nil || previous.PreValidationStatus == "" {
+func preserveEphemeralStatusFields(status *Status, previous Status) {
+	if status == nil {
 		return
 	}
-	status.PreValidationStatus = previous.PreValidationStatus
-	status.PreValidationSummary = previous.PreValidationSummary
-	status.PreValidationPassedChecks = previous.PreValidationPassedChecks
-	status.PreValidationFailedChecks = previous.PreValidationFailedChecks
-	status.PreValidationTotalChecks = previous.PreValidationTotalChecks
-	if strings.TrimSpace(status.StatusText) == "" && strings.HasPrefix(previous.StatusText, "Pre-validation ") {
-		status.StatusText = previous.StatusText
+	// Preserve pre-validation
+	if previous.PreValidationStatus != "" {
+		status.PreValidationStatus = previous.PreValidationStatus
+		status.PreValidationSummary = previous.PreValidationSummary
+		status.PreValidationPassedChecks = previous.PreValidationPassedChecks
+		status.PreValidationFailedChecks = previous.PreValidationFailedChecks
+		status.PreValidationTotalChecks = previous.PreValidationTotalChecks
+		if strings.TrimSpace(status.StatusText) == "" && strings.HasPrefix(previous.StatusText, "Pre-validation ") {
+			status.StatusText = previous.StatusText
+		}
+	}
+	// Preserve real-time telemetry (tokens/cost/label)
+	if status.InputTokens == 0 {
+		status.InputTokens = previous.InputTokens
+	}
+	if status.OutputTokens == 0 {
+		status.OutputTokens = previous.OutputTokens
+	}
+	if status.CostUSD == 0 {
+		status.CostUSD = previous.CostUSD
+	}
+	// Keep previous ProviderLabel if current is empty or if previous has more details (model)
+	if status.ProviderLabel == "" || (previous.ProviderLabel != "" && len(previous.ProviderLabel) > len(status.ProviderLabel)) {
+		status.ProviderLabel = previous.ProviderLabel
 	}
 }
 
@@ -1872,10 +1883,16 @@ func (s *Store) handleStatusLine(sessionID string, event storeevents.Event) {
 		snapshot.Status.InputTokens = inputTokens
 		snapshot.Status.OutputTokens = outputTokens
 		snapshot.Status.CostUSD = costUSD
+		prov := provider
+		if prov == "agy" {
+			prov = "agy-cli"
+		} else if prov == "" {
+			prov = "agy-cli"
+		}
 		if model != "" {
-			snapshot.Status.ProviderLabel = fmt.Sprintf("agy-cli · %s", model)
-		} else if provider != "" {
-			snapshot.Status.ProviderLabel = provider
+			snapshot.Status.ProviderLabel = fmt.Sprintf("%s · %s", prov, model)
+		} else {
+			snapshot.Status.ProviderLabel = prov
 		}
 		snapshot.UpdatedAt = time.Now()
 		s.byID[terminalID] = snapshot

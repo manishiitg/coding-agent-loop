@@ -291,6 +291,18 @@ async function restoreReadOnlyWorkflowRunChat(
   }
   const desiredName = options.tabName
 
+  // If the user already converted this run into an interactive chat (same
+  // sessionId, view-only cleared via WorkflowChatTabs.handleMakeInteractive),
+  // don't recreate a read-only run tab or revert it back to view-only — just
+  // focus the existing interactive tab. Otherwise the header pill / activity
+  // monitor would spawn a duplicate 'Schedule' tab for the same session.
+  const interactiveTab = findTabForSession(chatStore.chatTabs, session.session_id)
+  if (interactiveTab && !interactiveTab.metadata?.isViewOnly) {
+    activateTab(interactiveTab.tabId)
+    if (options.scrollToBottom !== false) requestChatScrollToBottom()
+    return interactiveTab.tabId
+  }
+
   if (presetId) {
     const emptyBuilderTabs = Object.values(chatStore.chatTabs).filter(tab =>
       tab.metadata?.mode === 'workflow' &&

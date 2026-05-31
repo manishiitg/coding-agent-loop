@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { ArrowDown, ListTree, Plus, Terminal, X } from 'lucide-react'
+import { ArrowDown, ListTree, MessageSquare, Plus, Terminal, X } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../../stores/useChatStore'
 import { activateTab } from '../../utils/activateTab'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
@@ -17,6 +17,7 @@ interface WorkflowTabItemProps {
   canClose: boolean
   onTabClick: (tabId: string) => void
   onCloseTab: (tabId: string) => void
+  onMakeInteractive: (tabId: string) => void
 }
 
 const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
@@ -25,6 +26,7 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   canClose,
   onTabClick,
   onCloseTab,
+  onMakeInteractive,
 }) => {
   const displayName = tab.metadata?.phaseId === 'workflow-builder' && tab.name === 'Workflow Builder'
     ? 'Chat'
@@ -46,6 +48,23 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
     >
       {/* Tab Name */}
       <span className="min-w-0 max-w-[14rem] truncate whitespace-nowrap">{displayName}</span>
+
+      {/* Convert a read-only scheduled/bot run into an interactive Workflow Builder chat */}
+      {tab.metadata?.isViewOnly && (tab.metadata?.isScheduledRun || tab.metadata?.isBotRun) && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onMakeInteractive(tab.tabId)
+          }}
+          className="ml-0.5 rounded p-0.5 text-blue-600 opacity-80 hover:bg-blue-100 hover:opacity-100 dark:text-blue-300 dark:hover:bg-blue-900/40"
+          title="Interact in Workflow Builder"
+          aria-label="Interact in Workflow Builder"
+        >
+          <MessageSquare className="w-3 h-3" />
+        </button>
+      )}
+
       {canClose && (
         <button
           type="button"
@@ -170,6 +189,38 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat })
     })
   }, [activeTabId, activeWorkflowTabs, closeTab])
 
+  // Convert a read-only scheduled/bot run tab into an interactive Workflow
+  // Builder chat: strip the view-only/scheduled metadata, rename it, and focus.
+  const handleMakeInteractive = useCallback((tabId: string) => {
+    const chatStore = useChatStore.getState()
+    const tab = chatStore.getTab(tabId)
+    if (!tab) return
+
+    chatStore.setTabMetadata(tabId, {
+      mode: 'workflow',
+      phaseId: 'workflow-builder',
+      phaseName: 'Workflow Builder',
+      presetQueryId: tab.metadata?.presetQueryId,
+      isViewOnly: false,
+      isScheduledRun: false,
+      scheduledJobName: undefined,
+      isBotRun: false,
+      botPlatform: undefined,
+    })
+    useChatStore.setState((state) => {
+      const current = state.chatTabs[tabId]
+      if (!current) return state
+      return {
+        chatTabs: {
+          ...state.chatTabs,
+          [tabId]: { ...current, name: 'Workflow Builder' },
+        },
+      }
+    })
+    activateTab(tabId)
+    setShowChatArea(true)
+  }, [setShowChatArea])
+
   // Close chat area when all workflow tabs are closed (but not on first render)
   useEffect(() => {
     if (!hasRenderedRef.current) {
@@ -198,6 +249,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat })
               canClose={activeWorkflowTabs.length > 1}
               onTabClick={handleTabClick}
               onCloseTab={handleCloseTab}
+              onMakeInteractive={handleMakeInteractive}
             />
           ))}
         </div>

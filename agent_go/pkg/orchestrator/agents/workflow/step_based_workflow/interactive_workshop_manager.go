@@ -2782,12 +2782,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if groupName != "" {
 				groupInfo = fmt.Sprintf(", group=%q", groupName)
 			}
-			learningInfo := "Post-step learning follows the step's persistent config (`learnings_access`, `learning_objective`, `lock_learnings`). When writes are enabled, SKILL.md updates run as the step agent's direct post-completion continuation before the step is fully finalized."
-			if isScriptedStep {
-				learningInfo = "Code exec scripted mode: this step does not use a separate post-step SKILL learning phase. The saved Python script is the learning artifact, and the run may create/update that script directly."
-			}
 			logger.Info(fmt.Sprintf("🚀 Workshop: step %q started in background, execution_id=%q%s, fast_path_only=%v", stepID, execID, groupInfo, fastPathOnly))
-			return fmt.Sprintf("Step %q started in background.\nexecution_id: %q\nUse query_step(step_id=%q) to inspect live status.\n%s\nYou will be automatically notified when it completes.", stepID, execID, stepID, learningInfo), nil
+			return fmt.Sprintf("Step %q started in background.\nexecution_id: %q\nUse query_step(step_id=%q) to inspect live status.\nYou will be automatically notified when it completes.", stepID, execID, stepID), nil
 		},
 		"workflow",
 	); err != nil {

@@ -1139,12 +1139,12 @@ func getAddMessageSequenceStepSchema() string {
 		"properties": {
 			"id": {"type": "string", "description": "REQUIRED: Stable URL-friendly step ID."},
 			"title": {"type": "string", "description": "REQUIRED: Short title for the message sequence step."},
-			"description": {"type": "string", "description": "REQUIRED: Overall objective for the sequence. Keep the detailed work split into items[]."},
+			"description": {"type": "string", "description": "REQUIRED: The opening instruction AND objective. This IS EXECUTED as the first user turn (turn 0): it leads items[0] inside the same conversation — identical to how a todo_task's description is its first turn. Write it as an actionable opening instruction, not throwaway metadata (anything you put here runs). Then split the follow-up work into items[] (turns 1..N)."},
 			"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "REQUIRED: Prior context files this sequence depends on. Use [] if none."},
 			"context_output": {"type": "string", "description": "REQUIRED: Summary/result file contract for later steps."},
 			"items": {
 				"type": "array",
-				"description": "REQUIRED: Ordered queue. Prefer multiple short user_message items over one large prompt. Add dedicated learning/kb/db/check items where useful.",
+				"description": "REQUIRED: Ordered queue of follow-up turns (turns 1..N; the step description is turn 0). Prefer multiple short user_message items over one large prompt. Add dedicated learning/kb/db/check items where useful.",
 				"items": {
 					"type": "object",
 					"properties": {
@@ -1423,7 +1423,7 @@ func getAddTodoTaskStepSchema() string {
 			},
 			"description": {
 				"type": "string",
-				"description": "REQUIRED: Description of the overall objective - the orchestrator will break this into tasks"
+				"description": "REQUIRED: The overall objective AND the orchestrator's opening instruction. This IS EXECUTED as the orchestrator's first user turn (turn 0) — write it as an actionable task framing, not throwaway metadata. The orchestrator breaks it into tasks and delegates via routes."
 			},
 			"context_dependencies": {
 				"type": "array",
@@ -1475,7 +1475,7 @@ func getAddTodoTaskStepSchema() string {
 								"type": {"type": "string", "description": "REQUIRED: Step type. Supported values for todo task routes: 'regular' or 'todo_task'. Nested todo_task routes may not contain another todo_task route."},
 								"id": {"type": "string", "description": "REQUIRED: Stable step ID for the sub-agent step"},
 								"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
-								"description": {"type": "string", "description": "REQUIRED: Description of what this specialized agent does"},
+								"description": {"type": "string", "description": "REQUIRED: What this specialized agent does AND its standing brief. This IS EXECUTED as the agent's opening instruction (turn 0) on the first call — the orchestrator's per-call call_sub_agent instructions are added on top. Write it as an actionable brief, not throwaway metadata."},
 								"context_dependencies": {"type": "array", "items": {"type": "string"}},
 								"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
 								"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
@@ -1660,7 +1660,7 @@ func getAddTodoTaskRouteSchema() string {
 							"type": {"type": "string", "description": "REQUIRED: Step type. Use 'regular' for standard execution. Use 'todo_task' for a nested orchestrator that manages multiple phases via its own routes. Maximum 1 level of todo_task nesting — a nested todo_task's sub_agent_step routes must always be 'regular'."},
 							"id": {"type": "string", "description": "REQUIRED: Stable step ID for the sub-agent step"},
 							"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
-							"description": {"type": "string", "description": "REQUIRED: Description of what this specialized agent does"},
+							"description": {"type": "string", "description": "REQUIRED: What this specialized agent does AND its standing brief. This IS EXECUTED as the agent's opening instruction (turn 0) on the first call — the orchestrator's per-call call_sub_agent instructions are added on top. Write it as an actionable brief, not throwaway metadata."},
 							"context_dependencies": {"type": "array", "items": {"type": "string"}},
 							"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
 							"todo_task_step": {"type": "object", "description": "When type='todo_task': the nested orchestrator's inner regular step metadata."},

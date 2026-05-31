@@ -134,8 +134,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 			CreatedAt: time.Now(),
 		}
 		plannedItems = sequenceStep.Items
-		if strings.TrimSpace(opts.ReentryMessage) != "" {
-			session.LastRuntimeContext = "Builder/orchestrator initial instruction:\n" + opts.ReentryMessage
+		// description = turn 0 (consistent across all sequence-like steps): the step
+		// description is the opening instruction and leads the first conversational
+		// turn — it is prepended to items[0] in executeMessageSequenceUserMessage.
+		// For a ROUTE the orchestrator supplies that opening instruction dynamically
+		// via ReentryMessage (the route's description + the call_sub_agent
+		// instructions), so it takes precedence. For a STANDALONE run we fall back to
+		// the step's own description so it is no longer silently dropped — matching the
+		// todo_task orchestrator, whose description is likewise its first user turn.
+		if reentry := strings.TrimSpace(opts.ReentryMessage); reentry != "" {
+			session.LastRuntimeContext = "Builder/orchestrator initial instruction:\n" + reentry
+		} else if desc := strings.TrimSpace(sequenceStep.GetDescription()); desc != "" {
+			session.LastRuntimeContext = "Step description (opening instruction):\n" + desc
 		}
 		source = "configured_queue"
 	}

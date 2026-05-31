@@ -1109,6 +1109,20 @@ function formatStartedTimestamp(terminal: TerminalSnapshot): { label: string; ti
   }
 }
 
+function formatRailAge(terminal: TerminalSnapshot): { label: string; title: string } | null {
+  const startedAt = terminalCreatedTime(terminal)
+  if (!startedAt) return null
+  const date = new Date(startedAt)
+  const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+  const title = `Started ${date.toLocaleString()}`
+  if (seconds < 10) return { label: 'now', title }
+  if (seconds < 60) return { label: `${seconds}s ago`, title }
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return { label: `${minutes}m ago`, title }
+  const hours = Math.floor(minutes / 60)
+  return { label: `${hours}h ago`, title }
+}
+
 function formatFallbackSeconds(seconds: number): string {
   if (seconds <= 0) return 'now'
   if (seconds < 60) return `${seconds}s`
@@ -2240,7 +2254,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   // A toggle in the rail controls lets the user resize it themselves.
   const [railManualNarrow, setRailManualNarrow] = useState<boolean | null>(null)
   const railNarrow = railManualNarrow !== null ? railManualNarrow : slimAgentRail
-  const [terminalRailFilter, setTerminalRailFilter] = useState<TerminalRailFilter>('all')
+  const [terminalRailFilter, setTerminalRailFilter] = useState<TerminalRailFilter>('running')
   // Sub-agent terminals are shown by default (the +/- toggle hides them on
   // demand). In the narrow report/plan rail the cards are *slimmed* (see
   // slimAgentRail) rather than hidden.
@@ -2248,6 +2262,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const [error, setError] = useState<string | null>(null)
   const [terminalActionBusy, setTerminalActionBusy] = useState<string | null>(null)
   const [debugPanelOpenForID, setDebugPanelOpenForID] = useState<string | null>(null)
+  const [debugText, setDebugText] = useState<string>('')
   const debugMenuRef = useRef<HTMLDivElement | null>(null)
 
   const activeWorkflowPath = useGlobalPresetStore(state => {
@@ -2531,6 +2546,20 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       setError(err instanceof Error ? err.message : `Failed to send ${key}`)
     } finally {
       setTerminalActionBusy(current => current === key ? null : current)
+    }
+  }, [])
+
+  const sendTerminalDebugText = useCallback(async (terminal: TerminalSnapshot, text: string, submit: boolean) => {
+    if (!canSendTerminalDebugInput(terminal) || !text.trim()) return
+    setTerminalActionBusy('send-text')
+    try {
+      await agentApi.sendTerminalInput(terminal.terminal_id, text, submit)
+      setDebugText('')
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send text')
+    } finally {
+      setTerminalActionBusy(current => current === 'send-text' ? null : current)
     }
   }, [])
 
@@ -3241,6 +3270,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       const state = terminalState(terminal)
       const isRunning = state === 'running'
       const startedTimestamp = formatStartedTimestamp(terminal)
+      const railAge = formatRailAge(terminal)
       const stepTypeLabel = terminalRailStepTypeLabel(terminal)
       const railTransport = formatRailTransportChip(terminal)
       const terminalErrors = terminalErrorsByID.get(terminalPaneKey(terminal)) || []
@@ -3323,9 +3353,9 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                 {stepTypeLabel ? `· ${railTransport}` : railTransport}
               </span>
             )}
-            {startedTimestamp && (
-              <span className="shrink-0 text-neutral-500" title={startedTimestamp.title}>
-                · {startedTimestamp.label}
+            {railAge && (
+              <span className="shrink-0 text-neutral-500" title={railAge.title}>
+                {railAge.label}
               </span>
             )}
             {preValidationChip && (
@@ -3685,6 +3715,45 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                                     <ChevronDown className="h-3.5 w-3.5 shrink-0" />
                                     <span>Send Down arrow</span>
                                   </button>
+                                  <div className="my-1 h-px bg-neutral-800/80" role="none" />
+                                  <div className="px-2 py-1.5">
+                                    <div className="flex items-center gap-1.5">
+                                      <input
+                                        type="text"
+                                        value={debugText}
+                                        onChange={e => setDebugText(e.target.value)}
+                                        onKeyDown={e => {
+                                          if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault()
+                                            void sendTerminalDebugText(selectedTerminalView, debugText, true)
+                                          }
+                                        }}
+                                        onMouseDown={e => e.stopPropagation()}
+                                        placeholder="Send text…"
+                                        className="h-6 flex-1 rounded border border-neutral-700/80 bg-neutral-900 px-2 text-xs text-neutral-200 placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+                                      />
+                                      <button
+                                        type="button"
+                                        onMouseDown={e => e.preventDefault()}
+                                        onClick={() => { void sendTerminalDebugText(selectedTerminalView, debugText, false) }}
+                                        disabled={terminalActionBusy === 'send-text' || !debugText.trim()}
+                                        title="Send without Enter"
+                                        className="flex h-6 items-center rounded border border-neutral-700/80 bg-neutral-900 px-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-40"
+                                      >
+                                        <Terminal className="h-3 w-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onMouseDown={e => e.preventDefault()}
+                                        onClick={() => { void sendTerminalDebugText(selectedTerminalView, debugText, true) }}
+                                        disabled={terminalActionBusy === 'send-text' || !debugText.trim()}
+                                        title="Send + Enter"
+                                        className="flex h-6 items-center rounded border border-neutral-700/80 bg-neutral-900 px-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 disabled:cursor-wait disabled:opacity-40"
+                                      >
+                                        <CornerDownLeft className="h-3 w-3" />
+                                      </button>
+                                    </div>
+                                  </div>
                                   <div className="my-1 h-px bg-neutral-800/80" role="none" />
                                   <button
                                     type="button"

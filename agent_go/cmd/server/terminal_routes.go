@@ -523,7 +523,9 @@ const terminalMaxConsecutiveBlankLines = 2
 
 // collapseBlankRuns squeezes any run of blank/whitespace-only lines down to at
 // most terminalMaxConsecutiveBlankLines and trims trailing whitespace from each
-// line.
+// line. It also deduplicates consecutive Braille-spinner lines (⠀–⣿), keeping
+// only the last frame so the animated "Generating…" indicator doesn't stack up
+// as dozens of separate lines in the captured scrollback.
 func collapseBlankRuns(s string) string {
 	if s == "" {
 		return s
@@ -531,7 +533,7 @@ func collapseBlankRuns(s string) string {
 	lines := strings.Split(s, "\n")
 	out := make([]string, 0, len(lines))
 	blankRun := 0
-	for _, line := range lines {
+	for i, line := range lines {
 		trimmed := strings.TrimRight(line, " \t\r")
 		if strings.TrimSpace(trimmed) == "" {
 			blankRun++
@@ -541,9 +543,27 @@ func collapseBlankRuns(s string) string {
 			continue
 		}
 		blankRun = 0
+		// Skip Braille-spinner lines that are immediately followed by another
+		// Braille-spinner line — only the last frame in a run is kept.
+		if isTerminalSpinnerLine(trimmed) {
+			next := i + 1
+			for next < len(lines) && strings.TrimSpace(lines[next]) == "" {
+				next++
+			}
+			if next < len(lines) && isTerminalSpinnerLine(strings.TrimRight(lines[next], " \t\r")) {
+				continue // earlier frame — skip
+			}
+		}
 		out = append(out, trimmed)
 	}
 	return strings.Join(out, "\n")
+}
+
+// isTerminalSpinnerLine returns true when a line begins with a Braille block
+// character (U+2800–U+28FF), which CLIs like agy use for spinner animations.
+func isTerminalSpinnerLine(line string) bool {
+	r, _ := utf8.DecodeRuneInString(line)
+	return r >= 0x2800 && r <= 0x28FF
 }
 
 func wantsDeepTerminalContent(r *http.Request) bool {

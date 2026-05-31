@@ -327,59 +327,160 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceItem(ctx contex
 		if schema == nil {
 			return "prevalidation skipped: no schema", nil
 		}
-		results, err := RunPreValidation(ctx, schema, hcpo.messageSequenceExecutionRelPath(stepPath, step.GetID()), hcpo.BaseOrchestrator)
-		if err != nil {
-			results = &WorkspaceVerificationResult{
-				OverallPass:  false,
-				FilesChecked: []FileCheckResult{},
-				Summary: ValidationSummary{
-					TotalChecks:  0,
-					PassedChecks: 0,
-					FailedChecks: 1,
-					SchemaErrors: 0,
-					Errors: []ValidationError{{
-						File:      "",
-						Path:      "",
-						CheckType: "pre_validation_error",
-						Expected:  "pre-validation to run successfully",
-						Actual:    "error occurred",
-						Message:   fmt.Sprintf("Pre-validation failed to run for message sequence item %q: %v", item.ID, err),
-					}},
-					SchemaWarnings: []ValidationError{},
-				},
+		// Prevalidation is a self-validation gate with a repair loop, mirroring the
+		// retry-with-feedback behavior of regular steps: on failure we send the
+		// concrete validation errors back to the SAME conversation as a fix-it turn
+		// (the session continues, so the agent keeps full context and can re-create
+		// or correct the required output files), then re-run the same checks. Only
+		// after maxMessageSequencePrevalidationRepairs failed repair turns does the
+		// gate fail the sequence. A prevalidation that cannot even RUN (err != nil)
+		// is a terminal infrastructure failure, not retried.
+		const maxMessageSequencePrevalidationRepairs = 3
+		for attempt := 0; ; attempt++ {
+			results, err := RunPreValidation(ctx, schema, hcpo.messageSequenceExecutionRelPath(stepPath, step.GetID()), hcpo.BaseOrchestrator)
+			if err != nil {
+				results = &WorkspaceVerificationResult{
+					OverallPass:  false,
+					FilesChecked: []FileCheckResult{},
+					Summary: ValidationSummary{
+						TotalChecks:  0,
+						PassedChecks: 0,
+						FailedChecks: 1,
+						Errors: []ValidationError{{
+							CheckType: "pre_validation_error",
+							Expected:  "pre-validation to run successfully",
+							Actual:    "error occurred",
+							Message:   fmt.Sprintf("Pre-validation failed to run for message sequence item %q: %v", item.ID, err),
+						}},
+						SchemaWarnings: []ValidationError{},
+					},
+				}
+				hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, results)
+				return "", err
 			}
-			hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, results)
-			return "", err
-		}
-		if results == nil {
-			results = &WorkspaceVerificationResult{
-				OverallPass:  false,
-				FilesChecked: []FileCheckResult{},
-				Summary: ValidationSummary{
-					TotalChecks:  0,
-					PassedChecks: 0,
-					FailedChecks: 1,
-					SchemaErrors: 0,
-					Errors: []ValidationError{{
-						File:      "",
-						Path:      "",
-						CheckType: "pre_validation_error",
-						Expected:  "pre-validation to return a result",
-						Actual:    "no result returned",
-						Message:   fmt.Sprintf("Pre-validation returned no result for message sequence item %q", item.ID),
-					}},
-					SchemaWarnings: []ValidationError{},
-				},
+			if results == nil {
+				results = &WorkspaceVerificationResult{
+					OverallPass:  false,
+					FilesChecked: []FileCheckResult{},
+					Summary: ValidationSummary{
+						TotalChecks:  0,
+						PassedChecks: 0,
+						FailedChecks: 1,
+						Errors: []ValidationError{{
+							CheckType: "pre_validation_error",
+							Expected:  "pre-validation to return a result",
+							Actual:    "no result returned",
+							Message:   fmt.Sprintf("Pre-validation returned no result for message sequence item %q", item.ID),
+						}},
+						SchemaWarnings: []ValidationError{},
+					},
+				}
+			}
+			hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, results.OverallPass, results)
+			if results.OverallPass {
+				if attempt == 0 {
+					return "prevalidation passed", nil
+				}
+				return fmt.Sprintf("prevalidation passed after %d repair turn(s)", attempt), nil
+			}
+			if attempt >= maxMessageSequencePrevalidationRepairs {
+				return "", fmt.Errorf("message sequence prevalidation failed for item %q after %d repair attempt(s): %s",
+					item.ID, maxMessageSequencePrevalidationRepairs, summarizeMessageSequencePrevalidationErrors(results))
+			}
+			// Send the failure back as a fix-it turn on the same conversation, then loop to re-validate.
+			feedback := formatMessageSequencePrevalidationFeedback(item.ID, results)
+			repairItem := MessageSequenceItem{
+				ID:      fmt.Sprintf("%s-repair-%d", item.ID, attempt+1),
+				Type:    "user_message",
+				Kind:    "execution",
+				Message: feedback,
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("🔁 message_sequence prevalidation %q failed — sending repair turn %d/%d", item.ID, attempt+1, maxMessageSequencePrevalidationRepairs))
+			if _, rerr := hcpo.executeMessageSequenceUserMessage(ctx, step, repairItem, stepIndex, stepPath, session); rerr != nil {
+				return "", fmt.Errorf("message sequence prevalidation %q repair turn %d failed: %w", item.ID, attempt+1, rerr)
 			}
 		}
-		hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, results)
-		if !results.OverallPass {
-			return "", fmt.Errorf("message sequence prevalidation failed for item %q", item.ID)
-		}
-		return "prevalidation passed", nil
 	default:
 		return "", fmt.Errorf("unsupported message_sequence item type %q", item.Type)
 	}
+}
+
+// summarizeMessageSequencePrevalidationErrors renders a one-line, comma-joined
+// summary of a failed prevalidation result for inclusion in the terminal error.
+func summarizeMessageSequencePrevalidationErrors(results *WorkspaceVerificationResult) string {
+	if results == nil {
+		return "no validation result"
+	}
+	parts := make([]string, 0, len(results.Summary.Errors))
+	for _, e := range results.Summary.Errors {
+		msg := strings.TrimSpace(e.Message)
+		if msg == "" {
+			msg = strings.TrimSpace(fmt.Sprintf("%s check failed (expected %s, got %s)", e.CheckType, e.Expected, e.Actual))
+		}
+		loc := strings.TrimSpace(strings.TrimSpace(e.File) + " " + strings.TrimSpace(e.Path))
+		if loc != "" {
+			parts = append(parts, loc+": "+msg)
+		} else {
+			parts = append(parts, msg)
+		}
+	}
+	if len(parts) == 0 {
+		return "validation did not pass (no specific errors reported)"
+	}
+	return strings.Join(parts, "; ")
+}
+
+// formatMessageSequencePrevalidationFeedback builds the fix-it instruction sent
+// back to the agent when a prevalidation gate fails. It mirrors the regular-step
+// "## Pre-Validation Failed" feedback: name the failing checks concretely and
+// instruct the agent to actually correct/recreate the output files (not merely
+// re-report success), since the same checks run again afterward.
+func formatMessageSequencePrevalidationFeedback(itemID string, results *WorkspaceVerificationResult) string {
+	var b strings.Builder
+	b.WriteString("## Pre-Validation Failed (Previous Attempt)\n\n")
+	b.WriteString(fmt.Sprintf("The output validation gate %q did not pass. Fix the issues below by inspecting and correcting the required output files (create missing files, set every required field to the correct value/type), then finish. The exact same validation will run again immediately after this turn.\n\n", itemID))
+	b.WriteString("Failing checks:\n")
+	wrote := false
+	if results != nil {
+		for _, fc := range results.FilesChecked {
+			if !fc.Exists {
+				b.WriteString(fmt.Sprintf("- Missing file: %s — create it.\n", fc.FileName))
+				wrote = true
+				continue
+			}
+			for _, jc := range fc.JSONChecks {
+				if jc.Passed {
+					continue
+				}
+				detail := strings.TrimSpace(jc.ErrorMsg)
+				if detail == "" {
+					detail = fmt.Sprintf("%s check failed (expected %v, got %v)", jc.CheckType, jc.Expected, jc.Actual)
+				}
+				b.WriteString(fmt.Sprintf("- %s @ %s: %s\n", fc.FileName, jc.Path, detail))
+				wrote = true
+			}
+		}
+		if !wrote {
+			for _, e := range results.Summary.Errors {
+				msg := strings.TrimSpace(e.Message)
+				if msg == "" {
+					msg = fmt.Sprintf("%s check failed (expected %s, got %s)", e.CheckType, e.Expected, e.Actual)
+				}
+				loc := strings.TrimSpace(strings.TrimSpace(e.File) + " " + strings.TrimSpace(e.Path))
+				if loc != "" {
+					b.WriteString(fmt.Sprintf("- %s: %s\n", loc, msg))
+				} else {
+					b.WriteString(fmt.Sprintf("- %s\n", msg))
+				}
+				wrote = true
+			}
+		}
+	}
+	if !wrote {
+		b.WriteString("- Validation did not pass; no specific error detail was reported. Re-check that every required output file exists with the correct structure.\n")
+	}
+	b.WriteString("\nDo NOT just reply that it is done — actually read the files, correct the data, and write them so every required field is present with the correct type and value.")
+	return b.String()
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceUserMessage(ctx context.Context, step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, session *messageSequenceSession) (string, error) {

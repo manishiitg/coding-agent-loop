@@ -8178,15 +8178,20 @@ func (api *StreamingAPI) schedulePendingCompletionRetry(sessionID string) {
 		delete(api.completionRetryScheduled, sessionID)
 		api.pendingMu.Unlock()
 
-		if api.isSessionStoppedOrInactive(sessionID) {
-			// Log a warning so the discard is observable rather than silent
-			// (race-inactive-pending-completion fix).
+		if api.isSessionMarkedStopped(sessionID) {
+			// Explicitly stopped — discard pending completions.
 			api.pendingMu.RLock()
 			nPending := len(api.pendingCompletions[sessionID])
 			api.pendingMu.RUnlock()
 			if nPending > 0 {
-				log.Printf("[BG AGENT] WARNING: session %s is stopped/inactive but has %d pending completion(s) — discarding (session was stopped before retry could fire)", sessionID, nPending)
+				log.Printf("[BG AGENT] WARNING: session %s stopped with %d pending completion(s) — discarding", sessionID, nPending)
 			}
+			return
+		}
+		if api.isSessionStoppedOrInactive(sessionID) {
+			// Inactive but not explicitly stopped — re-arm so completions drain
+			// when the user next sends a message and the session becomes active.
+			api.schedulePendingCompletionRetry(sessionID)
 			return
 		}
 		if api.isSessionBusyForAutoNotification(sessionID) {
@@ -8241,8 +8246,18 @@ func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 	}()
 
 	for agentID := range ch {
+		if api.isSessionMarkedStopped(sessionID) {
+			// Explicitly stopped — user cancelled the session. Drop the completion.
+			log.Printf("[BG AGENT] Session %s is stopped, dropping completion for agent %s", sessionID, agentID)
+			continue
+		}
 		if api.isSessionStoppedOrInactive(sessionID) {
-			log.Printf("[BG AGENT] Session %s is stopped/inactive, dropping completion for agent %s", sessionID, agentID)
+			// Session timed out to inactive but was NOT explicitly stopped — it can
+			// become active again when the user sends a new message. Queue so the
+			// completion drains on the next post-turn drain instead of being lost.
+			log.Printf("[BG AGENT] Session %s is inactive (not stopped), queuing completion for agent %s for later delivery", sessionID, agentID)
+			api.queuePendingCompletion(sessionID, agentID)
+			api.schedulePendingCompletionRetry(sessionID)
 			continue
 		}
 		if api.isSessionBusyForAutoNotification(sessionID) {

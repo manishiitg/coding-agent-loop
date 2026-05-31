@@ -674,15 +674,20 @@ function terminalTaskLabel(terminal: TerminalSnapshot): string {
   const rawLabel = terminal.label || terminal.execution_id || terminal.owner_id || ''
   const kind = terminal.execution_kind || terminal.scope
   if (kind === 'workflow_step' || kind === 'step' || kind === 'execution_only') {
-    return terminal.step_id || terminal.step_name || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
+    // Prefer the human step title / agent name over the raw step_id. The ID
+    // (e.g. "_global" for the global-learnings skill) is a folder/lookup key,
+    // not a display name; it remains the last-resort fallback.
+    return terminal.step_name || terminal.agent_name || terminal.step_id || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
   }
   return terminal.step_name || terminal.agent_name || visibleStepID(terminal) || (isOpaqueID(rawLabel) ? '' : humanizeIdentifier(rawLabel))
 }
 
 function formatTerminalTitle(terminal: TerminalSnapshot): string {
-  // Title is just the step_id (the most useful identifier). Everything
-  // else — parent, chip, workflow name, kind — moves to the meta row
-  // so the title stays minimal and scannable in dense lists.
+  // Prefer a human title (step title, or the agent's own name for step-less
+  // maintenance agents like learning/organize) over the raw step_id. The ID —
+  // e.g. "_global" for the global-learnings skill — is a folder/lookup key, not
+  // a display name, so it's the last-resort fallback. Everything else — parent,
+  // chip, workflow name, kind — lives in the meta row so the title stays minimal.
   const kind = (terminal.execution_kind || terminal.scope || '').toLowerCase()
   if (isMainAgentTerminal(terminal)) {
     return terminal.agent_name || terminal.step_name || 'Main agent'
@@ -690,7 +695,7 @@ function formatTerminalTitle(terminal: TerminalSnapshot): string {
   if (kind === 'background_agent' || kind === 'background' || kind === 'delegation' || kind === 'todo_task' || kind === 'sub_agent') {
     return terminal.agent_name || terminal.step_name || terminal.display_title || visibleStepID(terminal) || formatTerminalKindLabel(terminal) || 'Terminal'
   }
-  return visibleStepID(terminal) || terminal.step_name || formatTerminalKindLabel(terminal) || terminal.display_title || 'Terminal'
+  return terminal.step_name || terminal.agent_name || visibleStepID(terminal) || formatTerminalKindLabel(terminal) || 'Terminal'
 }
 
 function visibleStepID(terminal: TerminalSnapshot): string {
@@ -1821,218 +1826,190 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
   const isStreaming = !!terminal?.active && (terminal.state === 'running' || terminal.state === 'idle' || terminal.state === undefined)
   const spinner = useSpinnerFrame(isStreaming)
   return (
-    <div className="min-h-0 min-w-0 flex-1 flex flex-col overflow-hidden bg-[#0b0d0c]">
-      <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        onWheel={onWheel}
-        className={`min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-2.5 font-mono ${theme.contentText} ${theme.selection}`}
-      >
-        {rows.map((row, idx) => {
-          // Subtle divider between turns: a new banner (other than the first
-          // row) marks a fresh turn boundary in the aggregated scrollback.
-          const showDivider = row.kind === 'banner' && idx > 0
-          switch (row.kind) {
-            case 'banner':
-              return (
-                <div key={idx}>
-                  {showDivider && <div className="my-2 border-t border-dashed border-neutral-700/60" />}
-                  <div className={theme.prompt}>
-                    <span className="text-neutral-500">$ </span>
-                    {row.rawText !== undefined
-                      ? <ColoredText rawText={row.rawText} />
-                      : row.text}
-                  </div>
-                </div>
-              )
-            case 'context':
-              return (
-                <div key={idx} className="text-neutral-500">
-                  ↳ {row.rawText !== undefined
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      onWheel={onWheel}
+      className={`min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-2.5 font-mono bg-[#0b0d0c] ${theme.contentText} ${theme.selection}`}
+    >
+      {rows.map((row, idx) => {
+        // Subtle divider between turns: a new banner (other than the first
+        // row) marks a fresh turn boundary in the aggregated scrollback.
+        const showDivider = row.kind === 'banner' && idx > 0
+        switch (row.kind) {
+          case 'banner':
+            return (
+              <div key={idx}>
+                {showDivider && <div className="my-2 border-t border-dashed border-neutral-700/60" />}
+                <div className={theme.prompt}>
+                  <span className="text-neutral-500">$ </span>
+                  {row.rawText !== undefined
                     ? <ColoredText rawText={row.rawText} />
                     : row.text}
                 </div>
-              )
-            case 'user':
-              {
-                const message = terminalUserMessageMeta(row.text)
-                const longUserMessage = shouldCollapseUserMessage(message.body)
-                const isOpen = expanded.has(idx) || !longUserMessage
-                const preview = compactTerminalPreview(message.body)
-                const labelClass = message.isAuto ? theme.userAuto : theme.user
-                return (
-                  <div key={idx} className="my-0.5">
-                    {longUserMessage ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => toggle(idx)}
-                          className="group flex w-full min-w-0 items-start gap-1.5 rounded px-0.5 py-0.5 text-left hover:bg-white/[0.04]"
-                        >
-                          <span className="shrink-0 text-neutral-500">&gt;</span>
-                          <span className={`shrink-0 font-semibold ${labelClass}`}>{message.label}</span>
-                          <span className="min-w-0 flex-1 truncate text-neutral-300">
-                            {isOpen ? 'message' : preview}
-                          </span>
-                          <span className="shrink-0 font-mono text-[10px] text-neutral-600 group-hover:text-neutral-400">
-                            {isOpen ? '[-]' : '[+]'}
-                          </span>
-                        </button>
-                        {isOpen && (
-                          <pre className={`ml-5 border-l border-neutral-800/80 pl-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono text-neutral-200 ${theme.contentText}`}>
-                            {message.body}
-                          </pre>
-                        )}
-                      </>
-                    ) : (
-                      <div className="flex min-w-0 items-start gap-1.5 whitespace-pre-wrap break-words px-0.5 py-0.5 text-neutral-200">
+              </div>
+            )
+          case 'context':
+            return (
+              <div key={idx} className="text-neutral-500">
+                ↳ {row.rawText !== undefined
+                  ? <ColoredText rawText={row.rawText} />
+                  : row.text}
+              </div>
+            )
+          case 'user':
+            {
+              const message = terminalUserMessageMeta(row.text)
+              const longUserMessage = shouldCollapseUserMessage(message.body)
+              const isOpen = expanded.has(idx) || !longUserMessage
+              const preview = compactTerminalPreview(message.body)
+              const labelClass = message.isAuto ? theme.userAuto : theme.user
+              return (
+                <div key={idx} className="my-0.5">
+                  {longUserMessage ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => toggle(idx)}
+                        className="group flex w-full min-w-0 items-start gap-1.5 rounded px-0.5 py-0.5 text-left hover:bg-white/[0.04]"
+                      >
                         <span className="shrink-0 text-neutral-500">&gt;</span>
                         <span className={`shrink-0 font-semibold ${labelClass}`}>{message.label}</span>
-                        <span className="min-w-0 flex-1">{message.body}</span>
-                      </div>
-                    )}
-                  </div>
-                )
-              }
-            case 'asst':
-              return (
-                <div key={idx} className="my-1.5">
-                  <div className={`mb-0.5 flex items-center gap-1.5 px-0.5 ${theme.assistantLabelText}`}>
-                    <span className="text-neutral-500">&lt;</span>
-                    <span className={`font-semibold ${theme.assistant}`}>AI</span>
-                  </div>
-                  <div className={`border-l border-neutral-700/70 pl-3 ${theme.assistantBodyText}`}>
-                    <TerminalAssistantMarkdown text={row.text} theme={theme} />
-                  </div>
-                </div>
-              )
-            case 'tool': {
-              const hasResult = row.result !== undefined
-              const isError = row.resultPrefix === '✗'
-              const longResult = (row.result?.length ?? 0) > 80
-              const isOpen = expanded.has(idx)
-              const argsDetail = row.args ? formatToolDetail(row.args) : null
-              const resultDetail = hasResult ? formatToolDetail(row.result || '') : null
-              const hasJsonDetail = !!(argsDetail?.isJson || resultDetail?.isJson)
-              const statusColor = !hasResult
-                ? theme.toolPending
-                : isError
-                  ? 'text-red-400'
-                  : 'text-neutral-500'
-              return (
-                <div key={idx} className={`my-px ${theme.toolText}`}>
-                  <button
-                    type="button"
-                    onClick={() => toggle(idx)}
-                    className="w-full rounded px-0.5 -mx-0.5 text-left text-neutral-500 hover:bg-white/[0.035] hover:text-neutral-300"
-                  >
-                    <span className={statusColor}>
-                      {hasResult ? (isError ? '✗' : '·') : '→'}
-                    </span>
-                    <span className="ml-1 text-neutral-400">{row.name}</span>
-                    {hasJsonDetail && (
-                      <Braces className="ml-1 inline h-3 w-3 align-[-2px] text-neutral-500" aria-hidden />
-                    )}
-                    {row.args && (
-                      <span className="ml-1 text-neutral-600">
-                        ({compactTerminalPreview(row.args, TERMINAL_TOOL_ARGS_PREVIEW_CHARS)})
-                      </span>
-                    )}
-                    <span className="text-neutral-600 ml-1">{isOpen ? '▾' : '▸'}</span>
-                  </button>
-                  {isOpen && (argsDetail || resultDetail) && (
-                    <div className="ml-3 mt-1 space-y-1 border-l border-neutral-800/80 pl-2">
-                      {argsDetail && (
-                        <div>
-                          <div className="mb-0.5 text-[10px] uppercase tracking-wide text-neutral-600">
-                            args{argsDetail.isJson ? ' · json' : ''}
-                            {argsDetail.isJson && <Braces className="ml-1 inline h-3 w-3 align-[-2px]" aria-hidden />}
-                          </div>
-                          <pre className="max-h-72 overflow-auto rounded border border-neutral-800/80 bg-black/25 p-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-neutral-300">
-                            {argsDetail.text}
-                          </pre>
-                        </div>
+                        <span className="min-w-0 flex-1 truncate text-neutral-300">
+                          {isOpen ? 'message' : preview}
+                        </span>
+                        <span className="shrink-0 font-mono text-[10px] text-neutral-600 group-hover:text-neutral-400">
+                          {isOpen ? '[-]' : '[+]'}
+                        </span>
+                      </button>
+                      {isOpen && (
+                        <pre className={`ml-5 border-l border-neutral-800/80 pl-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono text-neutral-200 ${theme.contentText}`}>
+                          {message.body}
+                        </pre>
                       )}
-                      {resultDetail && (
-                        <div>
-                          <div className={`mb-0.5 text-[10px] uppercase tracking-wide ${isError ? 'text-red-400/70' : 'text-neutral-600'}`}>
-                            {isError ? 'error' : 'result'}{resultDetail.isJson ? ' · json' : ''}
-                            {resultDetail.isJson && <Braces className="ml-1 inline h-3 w-3 align-[-2px]" aria-hidden />}
-                          </div>
-                          <pre className={`max-h-72 overflow-auto rounded border p-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${isError ? 'border-red-900/45 bg-red-950/15 text-red-200' : 'border-neutral-800/80 bg-black/25 text-neutral-400'}`}>
-                            {resultDetail.text}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {!isOpen && hasResult && !longResult && row.result && (
-                    <div className={`ml-1 flex whitespace-pre-wrap break-words ${isError ? 'text-red-300' : 'text-neutral-500'}`}>
-                      <span className="text-neutral-600 select-none mr-1">└─</span>
-                      <span className="flex-1">{row.result}</span>
+                    </>
+                  ) : (
+                    <div className="flex min-w-0 items-start gap-1.5 whitespace-pre-wrap break-words px-0.5 py-0.5 text-neutral-200">
+                      <span className="shrink-0 text-neutral-500">&gt;</span>
+                      <span className={`shrink-0 font-semibold ${labelClass}`}>{message.label}</span>
+                      <span className="min-w-0 flex-1">{message.body}</span>
                     </div>
                   )}
                 </div>
               )
             }
-            case 'attachment':
-              return (
-                <div key={idx} className="text-neutral-500">
-                  {row.rawText !== undefined ? <ColoredText rawText={row.rawText} /> : row.text}
+          case 'asst':
+            return (
+              <div key={idx} className="my-1.5">
+                <div className={`mb-0.5 flex items-center gap-1.5 px-0.5 ${theme.assistantLabelText}`}>
+                  <span className="text-neutral-500">&lt;</span>
+                  <span className={`font-semibold ${theme.assistant}`}>AI</span>
                 </div>
-              )
-            case 'done':
-              return (
-                <div key={idx} className={`${theme.done} mt-1 ${theme.doneText} font-mono`}>
-                  {row.rawText !== undefined ? <ColoredText rawText={row.rawText} /> : row.text}
+                <div className={`border-l border-neutral-700/70 pl-3 ${theme.assistantBodyText}`}>
+                  <TerminalAssistantMarkdown text={row.text} theme={theme} />
                 </div>
-              )
-            case 'error':
-              return (
-                <div key={idx} className="text-red-400">
-                  [error] {row.rawText !== undefined ? <ColoredText rawText={row.rawText} /> : row.text}
-                </div>
-              )
-            case 'plain':
-              return (
-                <div key={idx} className="text-neutral-300 whitespace-pre-wrap break-words">
-                  {row.rawText !== undefined ? <ColoredText rawText={row.rawText} /> : row.text}
-                </div>
-              )
+              </div>
+            )
+          case 'tool': {
+            const hasResult = row.result !== undefined
+            const isError = row.resultPrefix === '✗'
+            const longResult = (row.result?.length ?? 0) > 80
+            const isOpen = expanded.has(idx)
+            const argsDetail = row.args ? formatToolDetail(row.args) : null
+            const resultDetail = hasResult ? formatToolDetail(row.result || '') : null
+            const hasJsonDetail = !!(argsDetail?.isJson || resultDetail?.isJson)
+            const statusColor = !hasResult
+              ? theme.toolPending
+              : isError
+                ? 'text-red-400'
+                : 'text-neutral-500'
+            return (
+              <div key={idx} className={`my-px ${theme.toolText}`}>
+                <button
+                  type="button"
+                  onClick={() => toggle(idx)}
+                  className="w-full rounded px-0.5 -mx-0.5 text-left text-neutral-500 hover:bg-white/[0.035] hover:text-neutral-300"
+                >
+                  <span className={statusColor}>
+                    {hasResult ? (isError ? '✗' : '·') : '→'}
+                  </span>
+                  <span className="ml-1 text-neutral-400">{row.name}</span>
+                  {hasJsonDetail && (
+                    <Braces className="ml-1 inline h-3 w-3 align-[-2px] text-neutral-500" aria-hidden />
+                  )}
+                  {row.args && (
+                    <span className="ml-1 text-neutral-600">
+                      ({compactTerminalPreview(row.args, TERMINAL_TOOL_ARGS_PREVIEW_CHARS)})
+                    </span>
+                  )}
+                  <span className="text-neutral-600 ml-1">{isOpen ? '▾' : '▸'}</span>
+                </button>
+                {isOpen && (argsDetail || resultDetail) && (
+                  <div className="ml-3 mt-1 space-y-1 border-l border-neutral-800/80 pl-2">
+                    {argsDetail && (
+                      <div>
+                        <div className="mb-0.5 text-[10px] uppercase tracking-wide text-neutral-600">
+                          args{argsDetail.isJson ? ' · json' : ''}
+                          {argsDetail.isJson && <Braces className="ml-1 inline h-3 w-3 align-[-2px]" aria-hidden />}
+                        </div>
+                        <pre className="max-h-72 overflow-auto rounded border border-neutral-800/80 bg-black/25 p-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-neutral-300">
+                          {argsDetail.text}
+                        </pre>
+                      </div>
+                    )}
+                    {resultDetail && (
+                      <div>
+                        <div className={`mb-0.5 text-[10px] uppercase tracking-wide ${isError ? 'text-red-400/70' : 'text-neutral-600'}`}>
+                          {isError ? 'error' : 'result'}{resultDetail.isJson ? ' · json' : ''}
+                          {resultDetail.isJson && <Braces className="ml-1 inline h-3 w-3 align-[-2px]" aria-hidden />}
+                        </div>
+                        <pre className={`max-h-72 overflow-auto rounded border p-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${isError ? 'border-red-900/45 bg-red-950/15 text-red-200' : 'border-neutral-800/80 bg-black/25 text-neutral-400'}`}>
+                          {resultDetail.text}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!isOpen && hasResult && !longResult && row.result && (
+                  <div className={`ml-1 flex whitespace-pre-wrap break-words ${isError ? 'text-red-300' : 'text-neutral-500'}`}>
+                    <span className="text-neutral-600 select-none mr-1">└─</span>
+                    <span className="flex-1">{row.result}</span>
+                  </div>
+                )}
+              </div>
+            )
           }
-        })}
-        {isStreaming && (
-          <div className={`mt-1 font-mono ${theme.streaming}`} aria-label="Running">
-            {spinner}
-          </div>
-        )}
-      </div>
-      {terminal && (() => {
-        const st = terminal.status || {}
-        const tokensIn = formatTokens(st.input_tokens)
-        const tokensOut = formatTokens(st.output_tokens)
-        const cost = formatStatusFooterCost(st.cost_usd)
-        const dur = typeof st.duration_ms === 'number' && st.duration_ms > 0
-          ? `${(st.duration_ms / 1000).toFixed(st.duration_ms < 10_000 ? 1 : 0)}s`
-          : ''
-        const toolCount = typeof st.tool_count === 'number' ? st.tool_count : 0
-        const tools = toolCount > 0 ? `${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}` : ''
-        const segments = [
-          st.provider_label || terminal.label || terminal.execution_kind || 'pane',
-          tools,
-          tokensIn !== '–' || tokensOut !== '–' ? `${tokensIn} in · ${tokensOut} out` : '',
-          cost,
-          dur,
-        ].filter(Boolean)
-        return (
-          <div className={`flex items-center gap-2 border-t border-neutral-700/70 bg-[#101211] px-3 py-1 font-mono text-neutral-500 ${theme.footerText}`}>
-            <span className={isStreaming ? theme.streaming : 'text-neutral-600'}>
-              {isStreaming ? spinner : '·'}
-            </span>
-            <span className="truncate">{segments.join('  ·  ')}</span>
-          </div>
-        )
-      })()}
+          case 'attachment':
+            return (
+              <div key={idx} className="text-neutral-500">
+                {row.rawText !== undefined ? <ColoredText rawText={row.rawText} /> : row.text}
+              </div>
+            )
+          case 'done':
+            return (
+              <div key={idx} className={`${theme.done} mt-1 ${theme.doneText} font-mono`}>
+                {row.rawText !== undefined ? <ColoredText rawText={row.rawText} /> : row.text}
+              </div>
+            )
+          case 'error':
+            return (
+              <div key={idx} className="text-red-400">
+                [error] {row.rawText !== undefined ? <ColoredText rawText={row.rawText} /> : row.text}
+              </div>
+            )
+          case 'plain':
+            return (
+              <div key={idx} className="text-neutral-300 whitespace-pre-wrap break-words">
+                {row.rawText !== undefined ? <ColoredText rawText={row.rawText} /> : row.text}
+              </div>
+            )
+        }
+      })}
+      {isStreaming && (
+        <div className={`mt-1 font-mono ${theme.streaming}`} aria-label="Running">
+          {spinner}
+        </div>
+      )}
     </div>
   )
 }
@@ -2924,6 +2901,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     ? terminalErrorsByID.get(terminalPaneKey(selectedTerminalView)) || []
     : []
   const railSpinner = useSpinnerFrame(groupedTerminals.activeTerminals.length > 0)
+  const isSelectedTerminalStreaming = !!selectedTerminalView?.active && (selectedTerminalView.state === 'running' || selectedTerminalView.state === 'idle' || selectedTerminalView.state === undefined)
+  const selectedTerminalSpinner = useSpinnerFrame(isSelectedTerminalStreaming)
 
   useEffect(() => {
     if (!selectedTerminal) {
@@ -3783,6 +3762,39 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       className={`min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-[#0b0d0c] p-2.5 font-mono whitespace-pre-wrap break-words text-neutral-100 ${terminalTheme.contentText} ${terminalTheme.selection}`}
                     />
                   )}
+                  {selectedTerminalView && (() => {
+                    const st = selectedTerminalView.status || {}
+                    const tokensIn = formatTokens(st.input_tokens)
+                    const tokensOut = formatTokens(st.output_tokens)
+                    const cost = formatStatusFooterCost(st.cost_usd)
+                    // Surface cache read/write tokens when the provider reports
+                    // them, so this real-time telemetry isn't silently dropped.
+                    const cacheParts: string[] = []
+                    if (st.cache_read_input_tokens) cacheParts.push(`${formatTokens(st.cache_read_input_tokens)} cache`)
+                    if (st.cache_creation_input_tokens) cacheParts.push(`${formatTokens(st.cache_creation_input_tokens)} cache-w`)
+                    const cacheSeg = cacheParts.join(' · ')
+                    const dur = typeof st.duration_ms === 'number' && st.duration_ms > 0
+                      ? `${(st.duration_ms / 1000).toFixed(st.duration_ms < 10_000 ? 1 : 0)}s`
+                      : ''
+                    const toolCount = typeof st.tool_count === 'number' ? st.tool_count : 0
+                    const tools = toolCount > 0 ? `${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}` : ''
+                    const segments = [
+                      st.provider_label || selectedTerminalView.label || selectedTerminalView.execution_kind || 'pane',
+                      tools,
+                      tokensIn !== '–' || tokensOut !== '–' ? `${tokensIn} in · ${tokensOut} out` : '',
+                      cacheSeg,
+                      cost,
+                      dur,
+                    ].filter(Boolean)
+                    return (
+                      <div className={`flex items-center gap-2 border-t border-neutral-700/70 bg-[#101211] px-3 py-1 font-mono text-neutral-500 ${terminalTheme.footerText}`}>
+                        <span className={isSelectedTerminalStreaming ? terminalTheme.streaming : 'text-neutral-600'}>
+                          {isSelectedTerminalStreaming ? selectedTerminalSpinner : '·'}
+                        </span>
+                        <span className="truncate">{segments.join('  ·  ')}</span>
+                      </div>
+                    )
+                  })()}
                 </>
               ) : (
                 <div className="flex flex-1 items-center justify-center text-xs text-neutral-500">

@@ -58,6 +58,7 @@ type BackgroundAgent struct {
 	mu                sync.RWMutex
 	startNotified     bool
 	notified          bool
+	terminalNotified  bool             // a terminal event (background_agent_terminated) has been emitted; prevents duplicates across OnExecutionTerminated / OnExecutionComplete
 	getHistory        HistoryFunc      // returns last N conversation entries from the running sub-agent
 	toolCalls         []ToolCallRecord // tracked tool calls with timing
 	activeToolCall    map[string]int   // toolCallID → index in toolCalls (for matching start/end)
@@ -73,6 +74,20 @@ func (a *BackgroundAgent) MarkStartNotified() bool {
 		return false
 	}
 	a.startNotified = true
+	return true
+}
+
+// MarkTerminalNotified records that a terminal event (background_agent_terminated)
+// has been emitted for this agent. It returns false when one was already emitted,
+// so the OnExecutionTerminated (explicit stop) and OnExecutionComplete (context
+// cancel / timeout) paths can each attempt emission without producing duplicates.
+func (a *BackgroundAgent) MarkTerminalNotified() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.terminalNotified {
+		return false
+	}
+	a.terminalNotified = true
 	return true
 }
 

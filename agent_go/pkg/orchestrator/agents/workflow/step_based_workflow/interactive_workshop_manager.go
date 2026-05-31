@@ -621,7 +621,18 @@ func finalizeExecStatus(exec *WorkshopStepExecution, ctx context.Context, result
 		return true // stop_step already called OnExecutionTerminated
 	}
 	if *execErr != nil {
-		if ctx.Err() != nil || errors.Is(*execErr, context.Canceled) || errors.Is(*execErr, context.DeadlineExceeded) {
+		errStr := strings.ToLower((*execErr).Error())
+		isTimeout := errors.Is(*execErr, context.DeadlineExceeded) ||
+			(ctx.Err() != nil && errors.Is(ctx.Err(), context.DeadlineExceeded)) ||
+			strings.Contains(errStr, "timed out") ||
+			strings.Contains(errStr, "timeout") ||
+			strings.Contains(errStr, "deadline exceeded")
+
+		if isTimeout {
+			exec.Status = WorkshopStepFailed
+			exec.Err = *execErr
+			log.Printf("[FINALIZE_EXEC] exec=%s step=%s — timeout detected (err=%v), status=Failed, skipNotify=false", exec.ID, exec.StepID, *execErr)
+		} else if ctx.Err() == context.Canceled || errors.Is(*execErr, context.Canceled) {
 			exec.Status = WorkshopStepCancelled
 			exec.Err = *execErr
 			log.Printf("[FINALIZE_EXEC] exec=%s step=%s — context cancelled (err=%v), status=Cancelled, skipNotify=false (OnExecutionComplete will fire)", exec.ID, exec.StepID, *execErr)
@@ -4911,8 +4922,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				// Create learning agent with write access to _global folder
-				agentName := fmt.Sprintf("%s-organize-global-skill", GlobalLearningID)
+				// Create learning agent with write access to _global folder.
+				// Use a human-readable name (not the "_global-…" slug): it surfaces as
+				// the terminal/agent label, and the folder/lookup identity is carried
+				// separately by the stepID (GlobalLearningID), not this name.
+				agentName := "Organize Global Learnings"
 				phaseLLM := iwm.controller.selectPhaseLLM("organize global learnings agent")
 				if phaseLLM == nil {
 					execErr = fmt.Errorf("no valid LLM configuration found for organize global learnings agent")

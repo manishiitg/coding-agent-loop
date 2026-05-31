@@ -3962,6 +3962,37 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 		processExecutionFolder(execListingResp.Data)
 	}
 
+	// Filter out steps that are no longer in the plan
+	if exists {
+		filteredStepsLogs := make(map[string]map[string]interface{})
+		for stepId, stepLog := range stepsLogs {
+			// Check if the stepId or its base ID is in stepMetadata
+			meta := stepMetadata[stepId]
+			if meta == nil {
+				// Check for -i-{N} suffix
+				if idx := strings.LastIndex(stepId, "-i-"); idx > 0 {
+					baseId := stepId[:idx]
+					suffix := stepId[idx+3:]
+					isDigit := true
+					for _, c := range suffix {
+						if c < '0' || c > '9' {
+							isDigit = false
+							break
+						}
+					}
+					if isDigit && len(suffix) > 0 {
+						meta = stepMetadata[baseId]
+					}
+				}
+			}
+
+			if meta != nil {
+				filteredStepsLogs[stepId] = stepLog
+			}
+		}
+		stepsLogs = filteredStepsLogs
+	}
+
 	response := map[string]interface{}{
 		"success": true,
 		"steps":   stepsLogs,

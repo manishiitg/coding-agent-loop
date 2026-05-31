@@ -1362,9 +1362,10 @@ function latestCachedTerminalDetail(
   return latest
 }
 
-function terminalWithCachedBody(base: TerminalSnapshot, detail: TerminalSnapshot): TerminalSnapshot {
+function terminalWithCachedBody(base: TerminalSnapshot, detail: TerminalSnapshot, includeDetailState = false): TerminalSnapshot {
+  const snapshot = includeDetailState ? { ...base, ...detail } : base
   return {
-    ...base,
+    ...snapshot,
     content: detail.content || base.content || '',
     rows: Array.isArray(detail.rows) && detail.rows.length > 0 ? detail.rows : base.rows,
   }
@@ -2894,7 +2895,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     if (!selectedTerminal) return null
     const cachedDetail = selectedTerminalDetailCacheKey ? terminalDetailCache[selectedTerminalDetailCacheKey] : undefined
     if (cachedDetail && terminalPaneKey(cachedDetail) === selectedTerminalKey) {
-      return terminalWithCachedBody(selectedTerminal, cachedDetail)
+      return terminalWithCachedBody(selectedTerminal, cachedDetail, true)
     }
     const staleDetail = latestCachedTerminalDetail(selectedTerminal, terminalDetailCache)
     if (staleDetail && terminalPaneKey(staleDetail) === selectedTerminalKey) {

@@ -68,6 +68,7 @@ import {
 
 import {
   SystemPromptEventDisplay,
+  StatusLineEventDisplay,
   UserMessageEventDisplay
 } from './system'
 import type { UserMessageEvent } from '../../generated/events'
@@ -908,6 +909,11 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   // System Events
   if (isEventType(event, 'system_prompt')) {
     return <CompactWrapper compact={compact}><WithContext Component={SystemPromptEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+  }
+  if (event.type === 'status_line') {
+    const agentEvent = event.data as { data?: Record<string, unknown> } | undefined
+    const data = (agentEvent?.data || event.data || {}) as Record<string, unknown>
+    return <CompactWrapper compact={compact}><StatusLineEventDisplay event={data} compact={compact} /></CompactWrapper>
   }
   if (event.type === 'conversation_resumed') {
     const agentEvent = event.data as { data?: { previous_event_count?: number } } | undefined

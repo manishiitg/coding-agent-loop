@@ -601,6 +601,41 @@ func TestTerminalRoutesGetTerminalCanDeepRefreshSelectedPane(t *testing.T) {
 	}
 }
 
+func TestTerminalRoutesGetTerminalRecapturesCompletedActiveTmuxPane(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-completed"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-codex-cli-int-completed"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "STATUS: COMPLETED\nold plain pane", 2))
+
+	var gotArgs []string
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		gotArgs = append([]string(nil), args...)
+		return "\x1b[32mSTATUS: COMPLETED\x1b[0m\nfresh colored pane", nil
+	}
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID, nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleGetTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -e -J -t "+tmuxSession+" -S -10000" {
+		t.Fatalf("tmux args = %q, want completed-pane capture", got)
+	}
+	var response terminals.Snapshot
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode completed response: %v", err)
+	}
+	if !strings.Contains(response.Content, "\x1b[32mSTATUS: COMPLETED\x1b[0m") {
+		t.Fatalf("terminal content = %q, want ANSI-preserved completed capture", response.Content)
+	}
+}
+
 func TestTerminalRoutesKillTerminalKillsTmuxAndMarksFailed(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}

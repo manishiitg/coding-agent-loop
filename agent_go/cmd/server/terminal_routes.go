@@ -140,8 +140,7 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 	// as a lightweight refresh — if the pane content changed (e.g. after Claude
 	// Code context compaction), ChunkIndex increments, the list-poll returns the
 	// new value, and the frontend re-fetches automatically.
-	shouldCaptureTmux := strings.TrimSpace(snapshot.TmuxSession) != "" &&
-		(wantsDeepTerminalContent(r) || !snapshot.Active)
+	shouldCaptureTmux := shouldCaptureTerminalPaneForDetail(snapshot, r)
 	if shouldCaptureTmux {
 		lines := terminalCaptureLinesFromRequest(r, terminalDefaultDetailHistoryLines)
 		ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
@@ -162,6 +161,22 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 	}
 
 	_ = json.NewEncoder(w).Encode(api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot))
+}
+
+func shouldCaptureTerminalPaneForDetail(snapshot terminals.Snapshot, r *http.Request) bool {
+	if strings.TrimSpace(snapshot.TmuxSession) == "" {
+		return false
+	}
+	if wantsDeepTerminalContent(r) || !snapshot.Active {
+		return true
+	}
+	return terminalSnapshotHasPromptCompletionFallback(snapshot.Content)
+}
+
+func terminalSnapshotHasPromptCompletionFallback(content string) bool {
+	lower := strings.ToLower(content)
+	return strings.Contains(lower, "status: completed") ||
+		strings.Contains(lower, "status: complete")
 }
 
 // handleDismissTerminal removes one terminal snapshot from the UI.

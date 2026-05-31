@@ -175,8 +175,11 @@ func TestWorkflowStartAutoNotificationPayloadAndDrain(t *testing.T) {
 	agent.mu.RLock()
 	startNotified := agent.startNotified
 	agent.mu.RUnlock()
-	if !startNotified {
-		t.Fatal("expected start notification to be marked notified after drain")
+	if startNotified {
+		t.Fatal("expected start notification to remain unmarked when no synthetic turn dispatches")
+	}
+	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 1 || pending[0] != agentID {
+		t.Fatalf("expected start notification to be requeued after dispatch failure, got %#v", pending)
 	}
 }
 
@@ -219,8 +222,11 @@ func TestWorkflowStartAutoNotificationClearsStaleBusyWithoutActiveTurn(t *testin
 	agent.mu.RLock()
 	startNotified := agent.startNotified
 	agent.mu.RUnlock()
-	if !startNotified {
-		t.Fatal("expected stale-busy start notification to be marked notified")
+	if startNotified {
+		t.Fatal("expected stale-busy start notification to remain unmarked when no synthetic turn dispatches")
+	}
+	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 1 || pending[0] != agentID {
+		t.Fatalf("expected stale-busy start notification to be requeued after dispatch failure, got %#v", pending)
 	}
 }
 

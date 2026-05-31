@@ -563,6 +563,7 @@ type WorkshopExecutionStart struct {
 	ParentExecutionID string
 	Name              string
 	Kind              string
+	Metadata          map[string]string
 	Cancel            context.CancelFunc
 }
 

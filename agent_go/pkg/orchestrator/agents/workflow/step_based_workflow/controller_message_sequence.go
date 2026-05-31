@@ -152,6 +152,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 
 	for _, item := range plannedItems {
 		started := time.Now()
+		notificationID, notificationName, notificationMeta, notifyItem := hcpo.startMessageSequenceItemNotification(ctx, sequenceStep, item, stepIndex, stepPath, source, started)
 		summary, err := hcpo.executeMessageSequenceItem(ctx, sequenceStep, item, stepIndex, stepPath, session)
 		ended := time.Now()
 		entry := messageSequenceEntry{
@@ -164,6 +165,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 			StartedAt: started,
 			EndedAt:   ended,
 		}
+		terminalErr := err
 		if err != nil {
 			entry.Status = "failed"
 			entry.Summary = err.Error()
@@ -174,29 +176,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 				hcpo.storeMsgSeqRouteSession(routeKey, session)
 			}
 			_ = hcpo.saveMessageSequenceSession(ctx, sessionRelPath, session)
-			return "", session.ConversationHistory, err
+			hcpo.completeMessageSequenceItemNotification(ctx, notificationID, notificationName, entry.Summary, notificationMeta, notifyItem, terminalErr)
+			return "", session.ConversationHistory, terminalErr
 		}
-		// A user_message/foreach turn that self-reported STATUS: FAILED is a
-		// terminal failure — stop the queue here instead of running the
-		// remaining items (e.g. a prevalidation gate that would just re-confirm
-		// the failure). The reported reason flows out as the step error → the
-		// failed auto-notification.
+		// A user_message/foreach turn that self-reported STATUS: FAILED is a terminal
+		// item failure — stop the queue here instead of running the remaining items.
 		if itemType := item.Type; itemType == "" || itemType == "user_message" || itemType == "foreach" {
 			if reason, failedStatus := messageSequenceItemReportedFailure(summary); failedStatus {
 				entry.Status = "failed"
 				session.Status = "failed"
+				terminalErr = fmt.Errorf("message_sequence step %q item %q reported STATUS: FAILED: %s", sequenceStep.GetID(), item.ID, reason)
 				session.Entries = append(session.Entries, entry)
 				session.UpdatedAt = time.Now()
 				if isRoute {
 					hcpo.storeMsgSeqRouteSession(routeKey, session)
 				}
 				_ = hcpo.saveMessageSequenceSession(ctx, sessionRelPath, session)
-				return "", session.ConversationHistory, fmt.Errorf("message_sequence step %q item %q reported STATUS: FAILED: %s", sequenceStep.GetID(), item.ID, reason)
+				hcpo.completeMessageSequenceItemNotification(ctx, notificationID, notificationName, summary, notificationMeta, notifyItem, terminalErr)
+				return "", session.ConversationHistory, terminalErr
 			}
 		}
 		session.Entries = append(session.Entries, entry)
 		session.UpdatedAt = time.Now()
 		_ = hcpo.saveMessageSequenceSession(ctx, sessionRelPath, session)
+		hcpo.completeMessageSequenceItemNotification(ctx, notificationID, notificationName, summary, notificationMeta, notifyItem, nil)
 	}
 
 	session.Status = "completed"
@@ -206,6 +209,103 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 	}
 	_ = hcpo.saveMessageSequenceSession(ctx, sessionRelPath, session)
 	return hcpo.summarizeMessageSequenceSession(session), session.ConversationHistory, nil
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) startMessageSequenceItemNotification(ctx context.Context, step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, source string, started time.Time) (string, string, map[string]string, bool) {
+	if hcpo == nil || hcpo.workshopExecutionNotifier == nil || step == nil {
+		return "", "", nil, false
+	}
+	execID := messageSequenceItemExecutionID(step.GetID(), item.ID, started)
+	name := messageSequenceItemExecutionName(step, item)
+	meta := hcpo.messageSequenceItemNotificationMeta(step, item, stepIndex, stepPath, source)
+	hcpo.workshopExecutionNotifier.OnExecutionStart(WorkshopExecutionStart{
+		ID:                execID,
+		ParentExecutionID: currentWorkshopParentExecutionID(ctx),
+		Name:              name,
+		Kind:              "message_sequence_item",
+		Metadata:          meta,
+	})
+	return execID, name, meta, true
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) completeMessageSequenceItemNotification(_ context.Context, execID string, name string, summary string, meta map[string]string, active bool, err error) {
+	if hcpo == nil || hcpo.workshopExecutionNotifier == nil || !active {
+		return
+	}
+	result := strings.TrimSpace(summary)
+	if result == "" && err != nil {
+		result = err.Error()
+	}
+	if result == "" {
+		result = "message sequence item completed"
+	}
+	hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, name, result, meta, err)
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceItemNotificationMeta(step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, source string) map[string]string {
+	itemType := strings.TrimSpace(item.Type)
+	if itemType == "" {
+		itemType = "user_message"
+	}
+	meta := map[string]string{
+		"execution_type": "message-sequence-item",
+		"step_id":        step.GetID(),
+		"step_index":     fmt.Sprintf("%d", stepIndex),
+		"step_path":      stepPath,
+		"item_id":        item.ID,
+		"item_type":      itemType,
+		"source":         source,
+	}
+	if title := strings.TrimSpace(step.GetTitle()); title != "" {
+		meta["step_title"] = title
+	}
+	if kind := strings.TrimSpace(item.Kind); kind != "" {
+		meta["item_kind"] = kind
+	}
+	if runFolder := strings.TrimSpace(hcpo.selectedRunFolder); runFolder != "" {
+		meta["run_folder"] = runFolder
+		meta["iteration"] = runFolder
+	}
+	if groupName := strings.TrimSpace(hcpo.currentGroupName); groupName != "" {
+		meta["group_name"] = groupName
+	}
+	return meta
+}
+
+func messageSequenceItemExecutionName(step *MessageSequencePlanStep, item MessageSequenceItem) string {
+	stepLabel := strings.TrimSpace(step.GetTitle())
+	if stepLabel == "" {
+		stepLabel = step.GetID()
+	}
+	itemType := strings.TrimSpace(item.Type)
+	if itemType == "" {
+		itemType = "user_message"
+	}
+	itemID := strings.TrimSpace(item.ID)
+	if itemID == "" {
+		itemID = "item"
+	}
+	return fmt.Sprintf("Message sequence item -> %s / %s (%s)", stepLabel, itemID, itemType)
+}
+
+func messageSequenceItemExecutionID(stepID string, itemID string, started time.Time) string {
+	return fmt.Sprintf("msgseq-%s-%s-%d", sanitizeMessageSequenceExecutionIDPart(stepID), sanitizeMessageSequenceExecutionIDPart(itemID), started.UnixNano())
+}
+
+func sanitizeMessageSequenceExecutionIDPart(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return "item"
+	}
+	s = regexp.MustCompile(`[^a-z0-9_-]+`).ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-_")
+	if s == "" {
+		return "item"
+	}
+	if len(s) > 48 {
+		return s[:48]
+	}
+	return s
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceItem(ctx context.Context, step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, session *messageSequenceSession) (string, error) {

@@ -302,10 +302,10 @@ type StreamingAPI struct {
 	// Pending start notifications — background agent IDs that started while
 	// the main session was busy. These are synthetic user messages just like
 	// completion notifications, so they must be serialized with completions.
-	pendingStartNotifications          map[string][]string
-	startNotificationRetryScheduled    map[string]bool // singleton guard — at most one retry timer per session; guarded by pendingStartMu
-	pendingStartMu                     sync.RWMutex
-	autoNotificationMu                 sync.Mutex
+	pendingStartNotifications       map[string][]string
+	startNotificationRetryScheduled map[string]bool // singleton guard — at most one retry timer per session; guarded by pendingStartMu
+	pendingStartMu                  sync.RWMutex
+	autoNotificationMu              sync.Mutex
 
 	// Last query request per session — used to construct synthetic turns
 	lastQueryRequests       map[string]QueryRequest
@@ -884,20 +884,20 @@ func runServer(cmd *cobra.Command, args []string) {
 		// Initialize workflow step ID storage
 		workflowStepIDs: make(map[string]string),
 		// Initialize background agent infrastructure
-		bgAgentRegistry:           NewBackgroundAgentRegistry(),
-		sessionBusy:               make(map[string]bool),
-		sessionBusySince:          make(map[string]time.Time),
-		pendingCompletions:        make(map[string][]string),
-		completionRetryScheduled:  make(map[string]bool),
+		bgAgentRegistry:                 NewBackgroundAgentRegistry(),
+		sessionBusy:                     make(map[string]bool),
+		sessionBusySince:                make(map[string]time.Time),
+		pendingCompletions:              make(map[string][]string),
+		completionRetryScheduled:        make(map[string]bool),
 		pendingStartNotifications:       make(map[string][]string),
 		startNotificationRetryScheduled: make(map[string]bool),
-		lastQueryRequests:         make(map[string]QueryRequest),
-		sessionWorkspaceFolders:   make(map[string]string),
-		sessionAgents:             make(map[string]*agent.LLMAgentWrapper),
-		runningAgents:             make(map[string]*mcpagent.Agent),
-		completionLoopStarted:     make(map[string]bool),
-		lastWorkshopModeBySession: make(map[string]string),
-		stoppedSessions:           make(map[string]bool),
+		lastQueryRequests:               make(map[string]QueryRequest),
+		sessionWorkspaceFolders:         make(map[string]string),
+		sessionAgents:                   make(map[string]*agent.LLMAgentWrapper),
+		runningAgents:                   make(map[string]*mcpagent.Agent),
+		completionLoopStarted:           make(map[string]bool),
+		lastWorkshopModeBySession:       make(map[string]string),
+		stoppedSessions:                 make(map[string]bool),
 	}
 
 	// BG-001: Wire the onDropped callback so a full notification channel re-queues
@@ -7307,8 +7307,19 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 	if kind == "" {
 		kind = "workshop_background"
 	}
-	if isWorkflowStepTrackingExecution(start.ID, start.Name, nil) {
+	if isWorkflowStepTrackingExecution(start.ID, start.Name, start.Metadata) {
 		kind = "workflow_step"
+	}
+	metadata := map[string]string{
+		"workflow_path":    n.workspacePath,
+		"preset_query_id":  n.presetQueryID,
+		"execution_source": trackedExecutionSourceWorkshopBackground,
+	}
+	for k, v := range start.Metadata {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		metadata[k] = v
 	}
 	bgAgent := &BackgroundAgent{
 		ID:                start.ID,
@@ -7319,11 +7330,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 		Status:            BGAgentRunning,
 		CreatedAt:         time.Now(),
 		cancel:            start.Cancel,
-		Metadata: map[string]string{
-			"workflow_path":    n.workspacePath,
-			"preset_query_id":  n.presetQueryID,
-			"execution_source": trackedExecutionSourceWorkshopBackground,
-		},
+		Metadata:          metadata,
 	}
 	n.api.bgAgentRegistry.Register(n.sessionID, bgAgent)
 	n.api.trackWorkshopExecutionStart(n.sessionID, n.workspacePath, n.presetQueryID, n.userID, start.ID, start.Name)
@@ -7980,7 +7987,7 @@ func (api *StreamingAPI) notifyBackgroundAgentStarted(sessionID, agentID string)
 	if sessionID == "" || agentID == "" || api == nil {
 		return
 	}
-	if api.isSessionStoppedOrInactive(sessionID) {
+	if api.autoNotificationSessionUnreachable(sessionID) {
 		return
 	}
 
@@ -8074,7 +8081,7 @@ func (api *StreamingAPI) schedulePendingStartNotificationRetry(sessionID string)
 		delete(api.startNotificationRetryScheduled, sessionID)
 		api.pendingStartMu.Unlock()
 
-		if api.isSessionStoppedOrInactive(sessionID) {
+		if api.autoNotificationSessionUnreachable(sessionID) {
 			return
 		}
 		if api.isSessionBusyForAutoNotification(sessionID) {
@@ -8178,23 +8185,34 @@ func (api *StreamingAPI) schedulePendingCompletionRetry(sessionID string) {
 		delete(api.completionRetryScheduled, sessionID)
 		api.pendingMu.Unlock()
 
-		if api.isSessionMarkedStopped(sessionID) {
-			// Explicitly stopped — discard pending completions.
+		if api.autoNotificationSessionUnreachable(sessionID) {
+			// Explicitly stopped, or inactive with no resident agent left to wake:
+			// log a warning so the discard is observable rather than silent.
 			api.pendingMu.RLock()
 			nPending := len(api.pendingCompletions[sessionID])
 			api.pendingMu.RUnlock()
 			if nPending > 0 {
-				log.Printf("[BG AGENT] WARNING: session %s stopped with %d pending completion(s) — discarding", sessionID, nPending)
+				log.Printf("[BG AGENT] WARNING: session %s unreachable with %d pending completion(s) — discarding", sessionID, nPending)
 			}
 			return
 		}
-		if api.isSessionStoppedOrInactive(sessionID) {
-			// Inactive but not explicitly stopped — re-arm so completions drain
-			// when the user next sends a message and the session becomes active.
-			api.schedulePendingCompletionRetry(sessionID)
-			return
-		}
 		if api.isSessionBusyForAutoNotification(sessionID) {
+			if api.canSteerSession(sessionID) {
+				api.requeueUnnotifiedCompletions(sessionID)
+				pending := api.drainPendingCompletions(sessionID)
+				remaining := make([]string, 0, len(pending))
+				for _, agentID := range pending {
+					if api.steerBackgroundAgentCompletion(sessionID, agentID) {
+						continue
+					}
+					remaining = append(remaining, agentID)
+				}
+				if len(remaining) > 0 {
+					api.queuePendingCompletions(sessionID, remaining)
+					api.schedulePendingCompletionRetry(sessionID)
+				}
+				return
+			}
 			// Still busy — re-arm and check again later.
 			api.schedulePendingCompletionRetry(sessionID)
 			return
@@ -8246,18 +8264,8 @@ func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 	}()
 
 	for agentID := range ch {
-		if api.isSessionMarkedStopped(sessionID) {
-			// Explicitly stopped — user cancelled the session. Drop the completion.
-			log.Printf("[BG AGENT] Session %s is stopped, dropping completion for agent %s", sessionID, agentID)
-			continue
-		}
-		if api.isSessionStoppedOrInactive(sessionID) {
-			// Session timed out to inactive but was NOT explicitly stopped — it can
-			// become active again when the user sends a new message. Queue so the
-			// completion drains on the next post-turn drain instead of being lost.
-			log.Printf("[BG AGENT] Session %s is inactive (not stopped), queuing completion for agent %s for later delivery", sessionID, agentID)
-			api.queuePendingCompletion(sessionID, agentID)
-			api.schedulePendingCompletionRetry(sessionID)
+		if api.autoNotificationSessionUnreachable(sessionID) {
+			log.Printf("[BG AGENT] Session %s is unreachable, dropping completion for agent %s", sessionID, agentID)
 			continue
 		}
 		if api.isSessionBusyForAutoNotification(sessionID) {
@@ -8283,7 +8291,7 @@ func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 func (api *StreamingAPI) processBatchedBackgroundAgentStarts(sessionID string, agentIDs []string) {
 	api.autoNotificationMu.Lock()
 	defer api.autoNotificationMu.Unlock()
-	if api.isSessionStoppedOrInactive(sessionID) {
+	if api.autoNotificationSessionUnreachable(sessionID) {
 		return
 	}
 	if api.isSessionBusyForAutoNotification(sessionID) {
@@ -8301,6 +8309,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentStartsLocked(sessionID str
 
 	var parts []string
 	var emittedIDs []string
+	var agentRefs []*BackgroundAgent
 	for _, agentID := range agentIDs {
 		agentID = strings.TrimSpace(agentID)
 		if agentID == "" {
@@ -8319,6 +8328,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentStartsLocked(sessionID str
 		}
 		parts = append(parts, backgroundAgentStartNotificationPart(snap))
 		emittedIDs = append(emittedIDs, agentID)
+		agentRefs = append(agentRefs, agent)
 	}
 	if len(parts) == 0 {
 		return
@@ -8336,7 +8346,15 @@ func (api *StreamingAPI) processBatchedBackgroundAgentStartsLocked(sessionID str
 			"status":   "started",
 		})
 	}
-	api.executeSyntheticTurn(sessionID, syntheticMsg)
+	if !api.executeSyntheticTurn(sessionID, syntheticMsg) && !api.autoNotificationSessionUnreachable(sessionID) {
+		for _, agent := range agentRefs {
+			agent.mu.Lock()
+			agent.startNotified = false
+			agent.mu.Unlock()
+		}
+		api.queuePendingStartNotifications(sessionID, emittedIDs)
+		api.schedulePendingStartNotificationRetry(sessionID)
+	}
 }
 
 func backgroundAgentStartNotificationPart(snap BackgroundAgentSnapshot) string {
@@ -8360,6 +8378,9 @@ func buildBackgroundAgentStartSyntheticMessage(_ string, parts []string) string 
 func backgroundAgentStartLabel(snap BackgroundAgentSnapshot) string {
 	kind := strings.TrimSpace(snap.Kind)
 	if snap.Metadata != nil {
+		if executionType := strings.TrimSpace(snap.Metadata["execution_type"]); executionType == "message-sequence-item" {
+			return "Message sequence item"
+		}
 		if stepID := strings.TrimSpace(snap.Metadata["step_id"]); stepID != "" {
 			return "Workflow step"
 		}
@@ -8372,6 +8393,8 @@ func backgroundAgentStartLabel(snap BackgroundAgentSnapshot) string {
 		return "Workflow sub-agent"
 	case strings.Contains(kind, "delegation"):
 		return "Background sub-agent"
+	case strings.Contains(kind, "message_sequence_item"):
+		return "Message sequence item"
 	case strings.Contains(kind, "workflow"):
 		return "Workflow run"
 	case strings.Contains(kind, "route"):
@@ -8395,6 +8418,13 @@ func backgroundAgentStartContext(snap BackgroundAgentSnapshot) string {
 	if stepID := strings.TrimSpace(snap.Metadata["step_id"]); stepID != "" {
 		fields = append(fields, "step="+stepID)
 	}
+	if itemID := strings.TrimSpace(snap.Metadata["item_id"]); itemID != "" {
+		itemContext := "item=" + itemID
+		if itemType := strings.TrimSpace(snap.Metadata["item_type"]); itemType != "" {
+			itemContext += "/" + itemType
+		}
+		fields = append(fields, itemContext)
+	}
 	if len(fields) == 0 {
 		return ""
 	}
@@ -8408,7 +8438,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 	if len(agentIDs) == 0 {
 		return
 	}
-	if api.isSessionStoppedOrInactive(sessionID) {
+	if api.autoNotificationSessionUnreachable(sessionID) {
 		log.Printf("[BG AGENT] Session %s is stopped/inactive, skipping %d batched completion(s)", sessionID, len(agentIDs))
 		return
 	}
@@ -8473,16 +8503,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 			lockCodeNeedsReview = snap.Metadata["lock_code_needs_review"] == "true"
 		}
 		actionHint := buildWorkshopActionHint(workshopMode, isLockCode, isLockLearnings, lockCodeConsecutiveFailures, lockCodeNeedsReview, snap.Status == BGAgentFailed)
-		batchContext := ""
-		if snap.Metadata != nil {
-			if iter, ok := snap.Metadata["iteration"]; ok && iter != "" {
-				batchContext += fmt.Sprintf(" [%s", iter)
-				if gid, ok := snap.Metadata["group_name"]; ok && gid != "" {
-					batchContext += "/" + gid
-				}
-				batchContext += "]"
-			}
-		}
+		batchContext := autoNotificationBracketContext(snap.Metadata)
 		parts = append(parts, fmt.Sprintf("- **%s** (ID: %s)%s: %s\n  Result: %s%s", snap.Name, snap.ID, batchContext, snap.Status, resultText, actionHint))
 		if batchBackupDirective == "" {
 			batchBackupDirective = workflowRunBackupDirective(snap)
@@ -8516,7 +8537,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 			a.notified = true
 			a.mu.Unlock()
 		}
-	} else if !api.isSessionStoppedOrInactive(sessionID) {
+	} else if !api.autoNotificationSessionUnreachable(sessionID) {
 		// Dispatch failed but the session is still reachable. Leave every batched
 		// agent notified=false and arm the retry backstop so they are redelivered
 		// rather than dropped (no-stored-agent / stream-error drop fix).
@@ -8580,7 +8601,7 @@ func buildWorkshopActionHint(workshopMode string, isLockCode, isLockLearnings bo
 
 // processBackgroundAgentCompletion injects a synthetic message and triggers a new main agent turn
 func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID string) {
-	if api.isSessionStoppedOrInactive(sessionID) {
+	if api.autoNotificationSessionUnreachable(sessionID) {
 		log.Printf("[BG AGENT] Session %s is stopped/inactive, skipping completion for agent %s", sessionID, agentID)
 		return
 	}
@@ -8632,7 +8653,7 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		agent.mu.Lock()
 		agent.notified = true
 		agent.mu.Unlock()
-	} else if !api.isSessionStoppedOrInactive(sessionID) {
+	} else if !api.autoNotificationSessionUnreachable(sessionID) {
 		// Dispatch failed but the session is still reachable (no stored agent yet,
 		// or StreamWithEvents errored). Leave notified=false and arm the retry
 		// backstop so requeueUnnotifiedCompletions redelivers this completion
@@ -8695,15 +8716,7 @@ func (api *StreamingAPI) buildAutoNotificationMessage(sessionID string, snap Bac
 	// to a single line — cursor-cli's tmux paste-compression collapses any
 	// multi-line user-message into a "[Pasted text +N lines]" placeholder,
 	// which hides the actual notification text from the operator.
-	contextInfo := ""
-	if snap.Metadata != nil {
-		if iter, ok := snap.Metadata["iteration"]; ok && iter != "" {
-			contextInfo += fmt.Sprintf(", iter=%s", iter)
-		}
-		if gid, ok := snap.Metadata["group_name"]; ok && gid != "" {
-			contextInfo += fmt.Sprintf(", group=%s", gid)
-		}
-	}
+	contextInfo := autoNotificationInlineContext(snap.Metadata)
 	syntheticMsg := fmt.Sprintf(
 		"[AUTO-NOTIFICATION] Agent '%s' (id=%s) completed — status=%s%s.\nResult: %s%s%s",
 		snap.Name, snap.ID, snap.Status, contextInfo, resultText, actionHint, workflowRunBackupDirective(snap))
@@ -8723,6 +8736,41 @@ func (api *StreamingAPI) buildAutoNotificationMessage(sessionID string, snap Bac
 	return syntheticMsg
 }
 
+func autoNotificationInlineContext(meta map[string]string) string {
+	if meta == nil {
+		return ""
+	}
+	var fields []string
+	if iter := strings.TrimSpace(meta["iteration"]); iter != "" {
+		fields = append(fields, "iter="+iter)
+	}
+	if groupName := strings.TrimSpace(meta["group_name"]); groupName != "" {
+		fields = append(fields, "group="+groupName)
+	}
+	if stepID := strings.TrimSpace(meta["step_id"]); stepID != "" {
+		fields = append(fields, "step="+stepID)
+	}
+	if itemID := strings.TrimSpace(meta["item_id"]); itemID != "" {
+		itemContext := "item=" + itemID
+		if itemType := strings.TrimSpace(meta["item_type"]); itemType != "" {
+			itemContext += "/" + itemType
+		}
+		fields = append(fields, itemContext)
+	}
+	if len(fields) == 0 {
+		return ""
+	}
+	return ", " + strings.Join(fields, ", ")
+}
+
+func autoNotificationBracketContext(meta map[string]string) string {
+	inline := strings.TrimPrefix(autoNotificationInlineContext(meta), ", ")
+	if inline == "" {
+		return ""
+	}
+	return " [" + inline + "]"
+}
+
 // steerBackgroundAgentCompletion delivers a finished background agent's
 // [AUTO-NOTIFICATION] to a busy-but-steerable CLI coding agent by injecting it
 // into the turn that is already running (the same path live user chat takes via
@@ -8739,7 +8787,7 @@ func (api *StreamingAPI) buildAutoNotificationMessage(sessionID string, snap Bac
 // NOT queue). Returns false on any failure so the caller falls back to the
 // existing queue + drain-on-idle backstop.
 func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID string) bool {
-	if api.isSessionStoppedOrInactive(sessionID) {
+	if api.autoNotificationSessionUnreachable(sessionID) {
 		return false
 	}
 
@@ -8865,9 +8913,9 @@ func botPlatformFromSessionID(sessionID string) string {
 // This is called synchronously from processBackgroundAgentCompletion — it sets session busy
 // before spawning the goroutine, preventing concurrent synthetic turns.
 // Returns true when the synthetic turn was successfully dispatched (goroutine spawned),
-// false when the session has no stored agent or is stopped/inactive.
+// false when the session has no stored agent or is unreachable.
 func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bool {
-	if api.isSessionStoppedOrInactive(sessionID) {
+	if api.autoNotificationSessionUnreachable(sessionID) {
 		log.Printf("[BG AGENT] Session %s is stopped/inactive, suppressing synthetic turn", sessionID)
 		return false
 	}
@@ -8954,7 +9002,7 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 
 			// If the session was explicitly stopped while this synthetic turn was running,
 			// do not chain any queued completions. That would re-enter the stopped session.
-			if api.isSessionStoppedOrInactive(sessionID) {
+			if api.autoNotificationSessionUnreachable(sessionID) {
 				log.Printf("[BG AGENT] Session %s stopped/inactive after synthetic turn, skipping pending completion drain", sessionID)
 				return
 			}

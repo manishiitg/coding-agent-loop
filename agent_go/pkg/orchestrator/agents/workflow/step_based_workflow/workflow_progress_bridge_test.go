@@ -136,6 +136,49 @@ func TestWorkflowProgressBridgeNotifiesCompletionWithoutStart(t *testing.T) {
 	}
 }
 
+func TestWorkflowProgressBridgeSkipsMessageSequenceItemAgents(t *testing.T) {
+	notifier := &recordingExecutionNotifier{}
+	session := &WorkshopChatSession{
+		StepRegistry:      NewWorkshopStepRegistry(),
+		executionNotifier: notifier,
+	}
+	bridge := &workflowProgressBridge{
+		session:  session,
+		parentID: "workflow-full-123",
+	}
+
+	for _, event := range []*baseevents.AgentEvent{
+		{
+			Type:      orchestrator_events.OrchestratorAgentStart,
+			Timestamp: time.Now(),
+			Data: &orchestrator_events.OrchestratorAgentStartEvent{
+				AgentType: "todo_planner_execution",
+				AgentName: "message-sequence-step-1-item-1",
+				StepIndex: 1,
+			},
+		},
+		{
+			Type:      orchestrator_events.OrchestratorAgentEnd,
+			Timestamp: time.Now(),
+			Data: &orchestrator_events.OrchestratorAgentEndEvent{
+				AgentType: "todo_planner_execution",
+				AgentName: "message-sequence-step-1-item-1",
+				StepIndex: 1,
+				Result:    "done",
+				Success:   true,
+			},
+		},
+	} {
+		if err := bridge.HandleEvent(context.Background(), event); err != nil {
+			t.Fatalf("HandleEvent failed: %v", err)
+		}
+	}
+
+	if len(notifier.starts) != 0 || len(notifier.completes) != 0 {
+		t.Fatalf("expected message-sequence agent bridge notifications to be skipped, got starts=%d completes=%d", len(notifier.starts), len(notifier.completes))
+	}
+}
+
 func TestWorkflowProgressBridgeNotifiesExecutionPhaseCompletionBeforeEvaluation(t *testing.T) {
 	notifier := &recordingExecutionNotifier{}
 	session := &WorkshopChatSession{

@@ -184,9 +184,9 @@ type WorkshopChatSession struct {
 	hasRunningAgents      func() bool               // optional: server-level check for running background agents
 	cancelAllServerAgents func()                    // optional: cancel all running agents in server registry
 	listServerAgents      func() []ServerAgentInfo  // optional: list all agents from server registry
-	workshopModeOverride      string    // frontend-selected workshop mode
-	recoveryOnce              sync.Once // starts durable continuation replay once server notifiers are wired
-	onStepCorrelationDone     func(string)
+	workshopModeOverride  string                    // frontend-selected workshop mode
+	recoveryOnce          sync.Once                 // starts durable continuation replay once server notifiers are wired
+	onStepCorrelationDone func(string)
 }
 
 // GetConfig returns the workshop config (for accessing session-aware executors, etc.)
@@ -1321,7 +1321,7 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 	// notify the main workflow-builder agent while a full workflow runs.
 	switch event.Type {
 	case orchestrator_events.OrchestratorAgentStart:
-		if startEvent, ok := event.Data.(*orchestrator_events.OrchestratorAgentStartEvent); ok && workflowProgressTracksAgentType(startEvent.AgentType) {
+		if startEvent, ok := event.Data.(*orchestrator_events.OrchestratorAgentStartEvent); ok && workflowProgressTracksAgent(startEvent.AgentType, startEvent.AgentName) {
 			execID := b.workflowProgressExecIDForStart(startEvent.AgentType, startEvent.AgentName, startEvent.StepIndex)
 			// Register a running snapshot so query_step can find this step while it's active.
 			// AgentSessionID is intentionally empty: the prefix-scan in collectQueryToolCallSummaries
@@ -1349,7 +1349,7 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 	case orchestrator_events.OrchestratorAgentEnd:
 		if endEvent, ok := event.Data.(*orchestrator_events.OrchestratorAgentEndEvent); ok {
 			agentType := endEvent.AgentType
-			if workflowProgressTracksAgentType(agentType) {
+			if workflowProgressTracksAgent(agentType, endEvent.AgentName) {
 				stepName := endEvent.AgentName
 				// Use the plan-level step ID stamped by context_aware_bridge, falling back to
 				// the full agent name so query_step(step_id=<plan-id>) works out of the box.
@@ -1489,6 +1489,13 @@ func workflowProgressTracksAgentType(agentType string) bool {
 	default:
 		return false
 	}
+}
+
+func workflowProgressTracksAgent(agentType string, agentName string) bool {
+	if !workflowProgressTracksAgentType(agentType) {
+		return false
+	}
+	return !strings.HasPrefix(strings.TrimSpace(agentName), "message-sequence-")
 }
 
 // workflowProgressStepID extracts the actual workflow step ID from an orchestrator event's

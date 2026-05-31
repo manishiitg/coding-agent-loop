@@ -11,12 +11,11 @@ import (
 	internalevents "mcp-agent-builder-go/agent_go/internal/events"
 )
 
-// TestSteerBackgroundAgentCompletionDeliversToBusySteerableSession verifies the
-// fix for dropped auto-notifications: when the target session is busy but is a
-// steerable CLI coding agent, a finished background agent's completion is
-// injected into the running turn (live steer) instead of being queued behind an
-// idle window the session may never reach.
-func TestSteerBackgroundAgentCompletionDeliversToBusySteerableSession(t *testing.T) {
+// TestSteerBackgroundAgentCompletionFallsBackForQueuedInjection verifies that a
+// queued-for-injection steer is not treated as delivered. The queue/retry path
+// must still own delivery until the provider confirms the notification reached
+// the live CLI.
+func TestSteerBackgroundAgentCompletionFallsBackForQueuedInjection(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
@@ -48,17 +47,17 @@ func TestSteerBackgroundAgentCompletionDeliversToBusySteerableSession(t *testing
 		t.Fatal("precondition: expected session to be steerable")
 	}
 
-	if !api.steerBackgroundAgentCompletion(sessionID, bg.ID) {
-		t.Fatal("steerBackgroundAgentCompletion = false; want true (delivered via live steer)")
+	if api.steerBackgroundAgentCompletion(sessionID, bg.ID) {
+		t.Fatal("steerBackgroundAgentCompletion = true for queued injection; want false so caller queues")
 	}
 
-	// The completion must be flagged notified so the queue/drain backstop and the
-	// requeue sweep do not deliver it a second time.
+	// QueuedForInjection is not definitive delivery, so the completion must not
+	// be flagged notified. The queue/drain backstop will redeliver it later.
 	bg.mu.RLock()
 	notified := bg.notified
 	bg.mu.RUnlock()
-	if !notified {
-		t.Fatal("agent.notified = false after successful steer; want true to prevent double-delivery")
+	if notified {
+		t.Fatal("agent.notified = true after queued injection; want false so the queue path can retry")
 	}
 
 	queued := runningAgent.DrainSteerMessages()
@@ -69,13 +68,8 @@ func TestSteerBackgroundAgentCompletionDeliversToBusySteerableSession(t *testing
 		t.Fatalf("steered message missing expected content: %q", queued[0])
 	}
 
-	// Calling again must be a no-op delivery (already notified): reported handled,
-	// but nothing re-injected into the running agent.
-	if !api.steerBackgroundAgentCompletion(sessionID, bg.ID) {
-		t.Fatal("second steer call = false; an already-notified completion should report handled")
-	}
-	if got := runningAgent.DrainSteerMessages(); len(got) != 0 {
-		t.Fatalf("second steer call re-delivered %d messages; want 0", len(got))
+	if api.steerBackgroundAgentCompletion(sessionID, bg.ID) {
+		t.Fatal("second queued-injection steer call = true; want false until delivery is confirmed")
 	}
 }
 

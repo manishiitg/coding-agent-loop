@@ -2448,11 +2448,14 @@ func TestStoreHandlesStatusLineUpdate(t *testing.T) {
 
 	// Seed the terminal snapshot first so we have something to update
 	meta := map[string]interface{}{
-		"kind": "terminal",
+		"kind":         "terminal",
+		"tmux_session": "mlp-agy-int-1",
 	}
 	store.HandleEvent("session-1", terminalEventWithMetadata("exec-1", "active terminal pane", 1, meta, time.Now()))
 
-	// Create a status_line event
+	// Create a status_line event. Provider is used verbatim — the adapter owns
+	// its display name ("agy-cli"); the store must not re-map it. TmuxSession
+	// scopes the update to the owning pane.
 	statusLineEvent := storeevents.Event{
 		Type:      "status_line",
 		SessionID: "session-1",
@@ -2460,8 +2463,9 @@ func TestStoreHandlesStatusLineUpdate(t *testing.T) {
 		Data: &agentevents.AgentEvent{
 			Type: agentevents.StreamingStatusLine,
 			Data: &agentevents.StreamingStatusLineEvent{
-				Provider:     "agy",
+				Provider:     "agy-cli",
 				Model:        "claude-3-5-sonnet",
+				TmuxSession:  "mlp-agy-int-1",
 				InputTokens:  1200,
 				OutputTokens: 350,
 				CostUSD:      0.0088,
@@ -2508,5 +2512,23 @@ func TestStoreHandlesStatusLineUpdate(t *testing.T) {
 	if refreshed.Status.CostUSD != 0.0088 {
 		t.Errorf("after RefreshContent: got CostUSD = %f, want 0.0088", refreshed.Status.CostUSD)
 	}
-}
 
+	// A second pane in the same session, owned by a different tmux session, must
+	// NOT inherit the first pane's telemetry — the status_line carries a
+	// tmux_session and the update is scoped to the owning pane only.
+	otherMeta := map[string]interface{}{"kind": "terminal", "tmux_session": "mlp-agy-int-2"}
+	store.HandleEvent("session-1", terminalEventWithMetadata("exec-2", "second pane", 1, otherMeta, time.Now()))
+	store.HandleEvent("session-1", statusLineEvent) // still targets mlp-agy-int-1
+
+	other, ok := store.Get("session-1:exec-2")
+	if !ok {
+		t.Fatalf("expected to find terminal session-1:exec-2")
+	}
+	if other.Status.InputTokens != 0 || other.Status.OutputTokens != 0 || other.Status.CostUSD != 0 {
+		t.Errorf("unrelated pane received telemetry: in=%d out=%d cost=%f",
+			other.Status.InputTokens, other.Status.OutputTokens, other.Status.CostUSD)
+	}
+	if other.Status.ProviderLabel == "agy-cli · claude-3-5-sonnet" {
+		t.Errorf("unrelated pane received provider label %q", other.Status.ProviderLabel)
+	}
+}

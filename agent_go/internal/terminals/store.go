@@ -55,21 +55,29 @@ type Snapshot struct {
 
 // Status is a conservative, human-readable summary derived from the raw TUI.
 type Status struct {
-	ProviderLabel             string  `json:"provider_label,omitempty"`
-	StatusText                string  `json:"status_text,omitempty"`
-	AssistantPreview          string  `json:"assistant_preview,omitempty"`
-	ToolSummary               string  `json:"tool_summary,omitempty"`
-	ToolName                  string  `json:"tool_name,omitempty"`
-	ToolCount                 int     `json:"tool_count,omitempty"`
-	InputTokens               int     `json:"input_tokens,omitempty"`
-	OutputTokens              int     `json:"output_tokens,omitempty"`
-	CostUSD                   float64 `json:"cost_usd,omitempty"`
-	DurationMs                int64   `json:"duration_ms,omitempty"`
-	PreValidationStatus       string  `json:"pre_validation_status,omitempty"`
-	PreValidationSummary      string  `json:"pre_validation_summary,omitempty"`
-	PreValidationPassedChecks int     `json:"pre_validation_passed_checks,omitempty"`
-	PreValidationFailedChecks int     `json:"pre_validation_failed_checks,omitempty"`
-	PreValidationTotalChecks  int     `json:"pre_validation_total_checks,omitempty"`
+	ProviderLabel            string  `json:"provider_label,omitempty"`
+	StatusText               string  `json:"status_text,omitempty"`
+	AssistantPreview         string  `json:"assistant_preview,omitempty"`
+	ToolSummary              string  `json:"tool_summary,omitempty"`
+	ToolName                 string  `json:"tool_name,omitempty"`
+	ToolCount                int     `json:"tool_count,omitempty"`
+	InputTokens              int     `json:"input_tokens,omitempty"`
+	OutputTokens             int     `json:"output_tokens,omitempty"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens,omitempty"`
+	TotalInputTokens         int     `json:"total_input_tokens,omitempty"`
+	TotalOutputTokens        int     `json:"total_output_tokens,omitempty"`
+	CostUSD                  float64 `json:"cost_usd,omitempty"`
+	// StatusMeta carries raw provider statusline extras that don't have a
+	// first-class field (context window, git branch, rate limits, …) so the UI
+	// can surface them without the store needing to know each provider's schema.
+	StatusMeta                map[string]interface{} `json:"status_meta,omitempty"`
+	DurationMs                int64                  `json:"duration_ms,omitempty"`
+	PreValidationStatus       string                 `json:"pre_validation_status,omitempty"`
+	PreValidationSummary      string                 `json:"pre_validation_summary,omitempty"`
+	PreValidationPassedChecks int                    `json:"pre_validation_passed_checks,omitempty"`
+	PreValidationFailedChecks int                    `json:"pre_validation_failed_checks,omitempty"`
+	PreValidationTotalChecks  int                    `json:"pre_validation_total_checks,omitempty"`
 	// RateLimited is set when the rendered pane content matches any
 	// known provider rate-limit / quota-exhausted message (see
 	// rate_limit.go). The terminal stays "running" from the store's
@@ -1319,18 +1327,41 @@ func preserveEphemeralStatusFields(status *Status, previous Status) {
 			status.StatusText = previous.StatusText
 		}
 	}
-	// Preserve real-time telemetry (tokens/cost/label)
+	// Preserve real-time telemetry (tokens/cost/label). DeriveStatus rebuilds
+	// Status from pane content on every refresh and has no statusline data, so
+	// without this the out-of-band telemetry set by handleStatusLine is wiped.
 	if status.InputTokens == 0 {
 		status.InputTokens = previous.InputTokens
 	}
 	if status.OutputTokens == 0 {
 		status.OutputTokens = previous.OutputTokens
 	}
+	if status.CacheCreationInputTokens == 0 {
+		status.CacheCreationInputTokens = previous.CacheCreationInputTokens
+	}
+	if status.CacheReadInputTokens == 0 {
+		status.CacheReadInputTokens = previous.CacheReadInputTokens
+	}
+	if status.TotalInputTokens == 0 {
+		status.TotalInputTokens = previous.TotalInputTokens
+	}
+	if status.TotalOutputTokens == 0 {
+		status.TotalOutputTokens = previous.TotalOutputTokens
+	}
 	if status.CostUSD == 0 {
 		status.CostUSD = previous.CostUSD
 	}
-	// Keep previous ProviderLabel if current is empty or if previous has more details (model)
-	if status.ProviderLabel == "" || (previous.ProviderLabel != "" && len(previous.ProviderLabel) > len(status.ProviderLabel)) {
+	if status.StatusMeta == nil {
+		status.StatusMeta = previous.StatusMeta
+	}
+	// Keep the previous ProviderLabel when the freshly-derived one is empty, or
+	// when the previous one carries a model detail (the "provider · model" form
+	// set by handleStatusLine) that the derived one lacks. A length comparison
+	// would wrongly drop a newer-but-shorter label; checking for the " · "
+	// separator captures the actual "has model detail" intent.
+	hasModelDetail := func(s string) bool { return strings.Contains(s, " · ") }
+	if status.ProviderLabel == "" ||
+		(previous.ProviderLabel != "" && hasModelDetail(previous.ProviderLabel) && !hasModelDetail(status.ProviderLabel)) {
 		status.ProviderLabel = previous.ProviderLabel
 	}
 }
@@ -1843,25 +1874,39 @@ func (s *Store) handleStatusLine(sessionID string, event storeevents.Event) {
 		return
 	}
 
-	var provider, model string
+	var provider, model, tmuxSession string
 	var inputTokens, outputTokens int
+	var cacheCreationTokens, cacheReadTokens, totalInputTokens, totalOutputTokens int
 	var costUSD float64
+	var statusMeta map[string]interface{}
 	var found bool
 
 	switch data := event.Data.Data.(type) {
 	case *agentevents.StreamingStatusLineEvent:
 		provider = data.Provider
 		model = data.Model
+		tmuxSession = data.TmuxSession
 		inputTokens = data.InputTokens
 		outputTokens = data.OutputTokens
+		cacheCreationTokens = data.CacheCreationInputTokens
+		cacheReadTokens = data.CacheReadInputTokens
+		totalInputTokens = data.TotalInputTokens
+		totalOutputTokens = data.TotalOutputTokens
 		costUSD = data.CostUSD
+		statusMeta = data.Metadata
 		found = true
 	case *agentevents.GenericEventData:
 		provider, _ = data.Data["provider"].(string)
 		model, _ = data.Data["model"].(string)
+		tmuxSession, _ = data.Data["tmux_session"].(string)
 		inputTokens = intValue(data.Data["input_tokens"])
 		outputTokens = intValue(data.Data["output_tokens"])
+		cacheCreationTokens = intValue(data.Data["cache_creation_input_tokens"])
+		cacheReadTokens = intValue(data.Data["cache_read_input_tokens"])
+		totalInputTokens = intValue(data.Data["total_input_tokens"])
+		totalOutputTokens = intValue(data.Data["total_output_tokens"])
 		costUSD = floatValue(data.Data["cost_usd"])
+		statusMeta, _ = data.Data["metadata"].(map[string]interface{})
 		found = true
 	}
 
@@ -1869,34 +1914,46 @@ func (s *Store) handleStatusLine(sessionID string, event storeevents.Event) {
 		return
 	}
 
+	// Use the provider name verbatim — the adapter owns its display name
+	// (e.g. "agy-cli", "claudecode"); the store must not re-map provider ids.
+	providerLabel := provider
+	if model != "" {
+		if providerLabel != "" {
+			providerLabel = fmt.Sprintf("%s · %s", provider, model)
+		} else {
+			providerLabel = model
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Update all terminals for this sessionID
-	terminalIDs := s.bySession[sessionID]
-	for terminalID := range terminalIDs {
+	now := time.Now()
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	for terminalID := range s.bySession[sessionID] {
 		snapshot, exists := s.byID[terminalID]
 		if !exists {
 			continue
 		}
-		// Update status fields
+		// When the event identifies its tmux session, scope the update to the
+		// terminal that owns it — a session can host several coding-agent panes,
+		// and the telemetry belongs to exactly one. Fall back to updating every
+		// terminal only when no tmux session is carried (older producers).
+		if tmuxSession != "" && strings.TrimSpace(snapshot.TmuxSession) != tmuxSession {
+			continue
+		}
 		snapshot.Status.InputTokens = inputTokens
 		snapshot.Status.OutputTokens = outputTokens
+		snapshot.Status.CacheCreationInputTokens = cacheCreationTokens
+		snapshot.Status.CacheReadInputTokens = cacheReadTokens
+		snapshot.Status.TotalInputTokens = totalInputTokens
+		snapshot.Status.TotalOutputTokens = totalOutputTokens
 		snapshot.Status.CostUSD = costUSD
-		prov := provider
-		if prov == "agy" {
-			prov = "agy-cli"
-		} else if prov == "" {
-			prov = "agy-cli"
+		snapshot.Status.ProviderLabel = providerLabel
+		if statusMeta != nil {
+			snapshot.Status.StatusMeta = statusMeta
 		}
-		if model != "" {
-			snapshot.Status.ProviderLabel = fmt.Sprintf("%s · %s", prov, model)
-		} else {
-			snapshot.Status.ProviderLabel = prov
-		}
-		snapshot.UpdatedAt = time.Now()
+		snapshot.UpdatedAt = now
 		s.byID[terminalID] = snapshot
 	}
 }
-
-

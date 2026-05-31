@@ -505,7 +505,14 @@ export interface TerminalStatus {
   tool_count?: number
   input_tokens?: number
   output_tokens?: number
+  cache_creation_input_tokens?: number
+  cache_read_input_tokens?: number
+  total_input_tokens?: number
+  total_output_tokens?: number
   cost_usd?: number
+  // Raw provider statusline extras with no first-class field (context window,
+  // git branch, rate limits, …). Carried through so nothing is dropped.
+  status_meta?: Record<string, unknown>
   duration_ms?: number
   pre_validation_status?: 'passed' | 'failed' | string
   pre_validation_summary?: string

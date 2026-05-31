@@ -3767,6 +3767,12 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                     const tokensIn = formatTokens(st.input_tokens)
                     const tokensOut = formatTokens(st.output_tokens)
                     const cost = formatStatusFooterCost(st.cost_usd)
+                    // Surface cache read/write tokens when the provider reports
+                    // them, so this real-time telemetry isn't silently dropped.
+                    const cacheParts: string[] = []
+                    if (st.cache_read_input_tokens) cacheParts.push(`${formatTokens(st.cache_read_input_tokens)} cache`)
+                    if (st.cache_creation_input_tokens) cacheParts.push(`${formatTokens(st.cache_creation_input_tokens)} cache-w`)
+                    const cacheSeg = cacheParts.join(' · ')
                     const dur = typeof st.duration_ms === 'number' && st.duration_ms > 0
                       ? `${(st.duration_ms / 1000).toFixed(st.duration_ms < 10_000 ? 1 : 0)}s`
                       : ''
@@ -3776,6 +3782,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       st.provider_label || selectedTerminalView.label || selectedTerminalView.execution_kind || 'pane',
                       tools,
                       tokensIn !== '–' || tokensOut !== '–' ? `${tokensIn} in · ${tokensOut} out` : '',
+                      cacheSeg,
                       cost,
                       dur,
                     ].filter(Boolean)

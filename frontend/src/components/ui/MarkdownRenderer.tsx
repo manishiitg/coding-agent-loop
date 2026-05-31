@@ -410,13 +410,18 @@ const getParentPath = (path: string): string => {
 const cleanToWorkspaceRelativePath = (path: string): string => {
   const normalizedPath = path.replace(/\\/g, '/')
   const prefixes = ['Workflow/', 'skills/', 'Chats/', 'Downloads/', 'knowledgebase/', '_users/', 'learnings/']
+  // Slice from the EARLIEST-occurring prefix, not the first one in the list.
+  // A list-order match would truncate "_users/bob/Chats/x.md" to "Chats/x.md"
+  // (dropping the user scope) because "Chats/" is checked before "_users/".
+  // Picking the smallest index keeps the outermost workspace root intact.
+  let earliestIndex = -1
   for (const prefix of prefixes) {
     const index = normalizedPath.indexOf(prefix)
-    if (index !== -1) {
-      return normalizedPath.slice(index)
+    if (index !== -1 && (earliestIndex === -1 || index < earliestIndex)) {
+      earliestIndex = index
     }
   }
-  return normalizedPath
+  return earliestIndex === -1 ? normalizedPath : normalizedPath.slice(earliestIndex)
 }
 
 const resolveRelativeWorkspacePath = (href: string, basePath: string): string => {

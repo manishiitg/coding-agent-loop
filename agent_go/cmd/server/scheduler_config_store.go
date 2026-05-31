@@ -18,16 +18,6 @@ type SchedulerConfig struct {
 	PausedAt         *time.Time `json:"paused_at,omitempty"`
 	PausedBy         string     `json:"paused_by,omitempty"`
 	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
-	// Per-workflow env filter — populated from SCHEDULER_ALLOWED_WORKFLOWS /
-	// SCHEDULER_BLOCKED_WORKFLOWS so the UI can show which crons run on this
-	// machine when sharing workspace files across multiple machines.
-	AllowedWorkflows []string `json:"allowed_workflows,omitempty"`
-	BlockedWorkflows []string `json:"blocked_workflows,omitempty"`
-
-	// Per-user multi-agent env filter — populated from SCHEDULER_ALLOWED_USERS /
-	// SCHEDULER_BLOCKED_USERS for multi-agent schedules under _users/{userID}/.
-	AllowedUsers []string `json:"allowed_users,omitempty"`
-	BlockedUsers []string `json:"blocked_users,omitempty"`
 }
 
 func sanitizeSchedulerConfig(cfg *SchedulerConfig) *SchedulerConfig {
@@ -36,12 +26,8 @@ func sanitizeSchedulerConfig(cfg *SchedulerConfig) *SchedulerConfig {
 	}
 
 	sanitized := &SchedulerConfig{
-		GloballyPaused:   cfg.GloballyPaused,
-		PausedBy:         strings.TrimSpace(cfg.PausedBy),
-		AllowedWorkflows: cfg.AllowedWorkflows,
-		BlockedWorkflows: cfg.BlockedWorkflows,
-		AllowedUsers:     cfg.AllowedUsers,
-		BlockedUsers:     cfg.BlockedUsers,
+		GloballyPaused: cfg.GloballyPaused,
+		PausedBy:       strings.TrimSpace(cfg.PausedBy),
 	}
 	if cfg.GloballyPaused && cfg.PausedAt != nil {
 		pausedAt := cfg.PausedAt.UTC()
@@ -54,19 +40,6 @@ func sanitizeSchedulerConfig(cfg *SchedulerConfig) *SchedulerConfig {
 	return sanitized
 }
 
-func applySchedulerRuntimeState(cfg *SchedulerConfig) *SchedulerConfig {
-	if cfg == nil {
-		cfg = &SchedulerConfig{}
-	}
-
-	filter := loadSchedulerWorkflowFilter()
-	cfg.AllowedWorkflows = filter.rawAllow
-	cfg.BlockedWorkflows = filter.rawBlock
-	cfg.AllowedUsers = filter.rawAllowUsers
-	cfg.BlockedUsers = filter.rawBlockUsers
-
-	return cfg
-}
 
 func SaveSchedulerConfig(ctx context.Context, cfg *SchedulerConfig) error {
 	sanitized := sanitizeSchedulerConfig(cfg)
@@ -96,14 +69,14 @@ func LoadSchedulerConfig(ctx context.Context) (*SchedulerConfig, error) {
 		return nil, fmt.Errorf("failed to read scheduler config: %w", err)
 	}
 	if !exists {
-		return applySchedulerRuntimeState(&SchedulerConfig{}), nil
+		return &SchedulerConfig{}, nil
 	}
 
 	var cfg SchedulerConfig
 	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal scheduler config: %w", err)
 	}
-	return applySchedulerRuntimeState(sanitizeSchedulerConfig(&cfg)), nil
+	return sanitizeSchedulerConfig(&cfg), nil
 }
 
 func (s *SchedulerService) IsGloballyPaused(ctx context.Context) (bool, *SchedulerConfig, error) {

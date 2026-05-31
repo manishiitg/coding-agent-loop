@@ -259,8 +259,6 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                   className={`rounded-lg border p-3 transition-colors ${
                     missedDelayMs != null
                       ? 'border-amber-700/50 bg-amber-950/20'
-                      : job.env_filtered
-                      ? 'border-gray-800 bg-gray-900/50 opacity-60'
                       : job.enabled
                       ? 'border-gray-700 bg-gray-800/50'
                       : 'border-gray-800 bg-gray-900/50 opacity-60'
@@ -303,18 +301,12 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                   {/* Meta row: next run, last run, actions */}
                   <div className="flex items-center justify-between mt-2">
                     <div className="flex items-center gap-3 text-[10px] text-gray-500">
-                      {job.env_filtered ? (
-                        <span title="Cron not registered on this machine — gated by SCHEDULER_ALLOWED_USERS / SCHEDULER_BLOCKED_USERS in agent_go/.env. Manual trigger still works.">
-                          won't fire on this machine (env-filtered)
+                      {job.next_run_at && job.enabled && (
+                        <span>
+                          {missedDelayMs != null
+                            ? `Missed by ${formatDurationShort(missedDelayMs)}`
+                            : `Next: ${formatRelativeTime(job.next_run_at)}`}
                         </span>
-                      ) : (
-                        job.next_run_at && job.enabled && (
-                          <span>
-                            {missedDelayMs != null
-                              ? `Missed by ${formatDurationShort(missedDelayMs)}`
-                              : `Next: ${formatRelativeTime(job.next_run_at)}`}
-                          </span>
-                        )
                       )}
                       {job.last_run_at && (
                         <span>Last: {formatRelativeTime(job.last_run_at)}</span>

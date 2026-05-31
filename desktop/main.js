@@ -136,7 +136,7 @@ function loadSettings() {
   } catch (e) {
     console.error('Failed to load settings:', e);
   }
-  return { docsDir: '', authSecret: '', schedulerAllowedWorkflows: '', logAgentPrompts: false };
+  return { docsDir: '', authSecret: '', logAgentPrompts: false };
 }
 
 // Show a modal asking the user for the AUTH_SECRET used to encrypt provider keys.
@@ -796,7 +796,6 @@ function spawnAgent(userDataPath) {
       NATIVE_WORKSPACE: 'true'
     };
 
-    if (settings.schedulerAllowedWorkflows) env.SCHEDULER_ALLOWED_WORKFLOWS = settings.schedulerAllowedWorkflows;
 
     // Debug: persist the final system prompt + user message + tool calls for
     // every LLM call to <cwd>/logs/agent_prompts/{session_id}/. Off by default

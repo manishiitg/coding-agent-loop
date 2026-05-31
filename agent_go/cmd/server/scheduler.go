@@ -149,20 +149,6 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 	workflows := s.discoverWorkflows(ctx)
 	scheduleLogf("[SCHEDULER] Discovered %d workflows with manifests", len(workflows))
 
-	envFilter := loadSchedulerWorkflowFilter()
-	if len(envFilter.rawAllow) > 0 {
-		scheduleLogf("[SCHEDULER] Workflow allowlist active (SCHEDULER_ALLOWED_WORKFLOWS): %s", strings.Join(envFilter.rawAllow, ", "))
-	}
-	if len(envFilter.rawBlock) > 0 {
-		scheduleLogf("[SCHEDULER] Workflow blocklist active (SCHEDULER_BLOCKED_WORKFLOWS): %s", strings.Join(envFilter.rawBlock, ", "))
-	}
-	if len(envFilter.rawAllowUsers) > 0 {
-		scheduleLogf("[SCHEDULER] Multi-agent user allowlist active (SCHEDULER_ALLOWED_USERS): %s", strings.Join(envFilter.rawAllowUsers, ", "))
-	}
-	if len(envFilter.rawBlockUsers) > 0 {
-		scheduleLogf("[SCHEDULER] Multi-agent user blocklist active (SCHEDULER_BLOCKED_USERS): %s", strings.Join(envFilter.rawBlockUsers, ", "))
-	}
-
 	// Mark any stale "running" runs as "error" — they were interrupted by a server restart
 	for _, wf := range workflows {
 		runs, err := ReadScheduleRuns(ctx, wf.WorkspacePath)
@@ -336,17 +322,8 @@ func (s *SchedulerService) rescanMultiAgentSchedules(ctx context.Context) {
 
 	// Build set of all discovered schedule IDs
 	discovered := make(map[string]bool)
-	envFilter := loadSchedulerWorkflowFilter()
 
 	for _, ma := range maScheds {
-		// Skip users excluded by env filter to avoid log spam every rescan tick.
-		if !envFilter.IsUserAllowed(ma.UserID) {
-			for _, sched := range MergeBuiltinSchedules(ma.ScheduleFile.Schedules) {
-				discovered[sched.ID] = true
-			}
-			continue
-		}
-
 		for _, sched := range MergeBuiltinSchedules(ma.ScheduleFile.Schedules) {
 			discovered[sched.ID] = true
 
@@ -458,23 +435,6 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 
 	if !sched.Enabled {
 		return nil
-	}
-
-	// Env filter: skip registration for workflows or users excluded on this
-	// machine. Manual TriggerNow still works (mirrors SCHEDULER_ENABLED=false).
-	envFilter := loadSchedulerWorkflowFilter()
-	if sctx.SourceType == "workflow" {
-		if !envFilter.IsWorkflowAllowed(sctx.WorkflowID, sctx.WorkflowLabel, sctx.WorkspacePath) {
-			s.logf(sctx, "[SCHEDULER] Skipping schedule %s (%s) — workflow %q filtered by env (SCHEDULER_ALLOWED_WORKFLOWS / SCHEDULER_BLOCKED_WORKFLOWS)",
-				sched.ID, sched.Name, sctx.WorkflowLabel)
-			return nil
-		}
-	} else if sctx.SourceType == "multi-agent" {
-		if !envFilter.IsUserAllowed(sctx.UserID) {
-			s.logf(sctx, "[SCHEDULER] Skipping multi-agent schedule %s (%s) — user %q filtered by env (SCHEDULER_ALLOWED_USERS / SCHEDULER_BLOCKED_USERS)",
-				sched.ID, sched.Name, sctx.UserID)
-			return nil
-		}
 	}
 
 	scheduleType := scheduleTypeOrDefault(sched.ScheduleType)

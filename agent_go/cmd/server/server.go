@@ -8284,6 +8284,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 	// Multiple completions: build a batched [AUTO-NOTIFICATION] message.
 	var parts []string
 	var emittedIDs []string
+	var batchBackupDirective string // set once if any completed part is a full workflow run
 	for _, agentID := range agentIDs {
 		agent := api.bgAgentRegistry.Get(sessionID, agentID)
 		if agent == nil {
@@ -8337,6 +8338,9 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 			}
 		}
 		parts = append(parts, fmt.Sprintf("- **%s** (ID: %s)%s: %s\n  Result: %s%s", snap.Name, snap.ID, batchContext, snap.Status, resultText, actionHint))
+		if batchBackupDirective == "" {
+			batchBackupDirective = workflowRunBackupDirective(snap)
+		}
 		emittedIDs = append(emittedIDs, agentID)
 	}
 
@@ -8344,7 +8348,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		return
 	}
 
-	syntheticMsg := fmt.Sprintf("[AUTO-NOTIFICATION] Multiple step completions:\n%s", strings.Join(parts, "\n"))
+	syntheticMsg := fmt.Sprintf("[AUTO-NOTIFICATION] Multiple step completions:\n%s%s", strings.Join(parts, "\n"), batchBackupDirective)
 	if strings.HasPrefix(sessionID, "bot-") {
 		syntheticMsg += botAutoNotificationProgressDirective(sessionID, api.isFinalBotAutoNotification(sessionID))
 	}
@@ -8463,6 +8467,20 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	api.executeSyntheticTurn(sessionID, syntheticMsg)
 }
 
+// workflowRunBackupDirective returns a directive asking the builder to back up the
+// workflow after a full run (run_full_workflow) completes successfully, or "" when
+// this completion isn't a finished workflow run. The builder decides what and where
+// to back up based on the backup-strategy skill — we only ask, we don't prescribe.
+func workflowRunBackupDirective(snap BackgroundAgentSnapshot) string {
+	if snap.Status != BGAgentCompleted || snap.Metadata == nil {
+		return ""
+	}
+	if snap.Kind != "workflow_run_tool" && snap.Metadata["type"] != "workflow_run" {
+		return ""
+	}
+	return "\n\nThe workflow run is complete — now back up this workflow per the backup-strategy skill: call get_reference_doc(kind=\"backup-strategy\") and do whatever it specifies for THIS workflow (e.g. commit & push state to its git remote, route large artifacts to the configured backend). If this workflow has NO backup configured yet, prompt the user to set one up (tell them backup isn't configured and offer to set it up per the skill) — do not silently skip. If the run is unattended (a scheduled/cron run with no user to answer), note the missing backup in your reply and continue without blocking."
+}
+
 // buildAutoNotificationMessage formats the [AUTO-NOTIFICATION] user message for a
 // finished background agent. It is pure formatting (no dedup / no side effects) so
 // both the synthetic-turn path (idle session) and the live-steer path (busy
@@ -8511,8 +8529,8 @@ func (api *StreamingAPI) buildAutoNotificationMessage(sessionID string, snap Bac
 		}
 	}
 	syntheticMsg := fmt.Sprintf(
-		"[AUTO-NOTIFICATION] Agent '%s' (id=%s) completed — status=%s%s.\nResult: %s%s",
-		snap.Name, snap.ID, snap.Status, contextInfo, resultText, actionHint)
+		"[AUTO-NOTIFICATION] Agent '%s' (id=%s) completed — status=%s%s.\nResult: %s%s%s",
+		snap.Name, snap.ID, snap.Status, contextInfo, resultText, actionHint, workflowRunBackupDirective(snap))
 
 	// Bot connector sessions (slack / whatsapp / discord / telegram / etc.): the
 	// builder's reply is forwarded verbatim to a chat thread, so a faithful echo

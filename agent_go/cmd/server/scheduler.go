@@ -1278,34 +1278,10 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop message %d/%d completed", i+1, len(messages))
 	}
 
-	// Auto-backup: after the run's work turns complete, run one more turn that backs
-	// up the workflow's state per the backup-strategy skill. This fires on every
-	// workshop scheduled run so unattended runs persist their state off-box without
-	// the builder having to author a backup message. Runs in the same session so the
-	// agent has full context of what it just did (e.g. for a meaningful commit message).
-	//
-	// Critical: a backup failure must NOT fail the run — the actual work already
-	// completed, so backup errors are logged and swallowed, never returned.
-	backupMsg := "The scheduled run is complete. Now back up this workflow per the backup-strategy skill: " +
-		"call get_reference_doc(kind=\"backup-strategy\") and follow it to commit and push the workflow's state " +
-		"(workflow.json, planning/, db/, knowledgebase/, learnings/, reports) to its git backup remote, routing " +
-		"any large/binary artifacts to the configured large-file backend. This run is UNATTENDED: do NOT ask for " +
-		"confirmation and make every decision autonomously. If no backup remote is configured yet, set one up per " +
-		"the playbook where possible; if a step is genuinely impossible without an operator, log what you skipped " +
-		"and finish without erroring."
-	s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop auto-backup turn for %s", sctx.Schedule.ID)
-	backupReq := make(map[string]interface{})
-	for k, v := range baseReqMap {
-		backupReq[k] = v
-	}
-	backupReq["query"] = backupMsg
-	if err := s.api.startSessionInternal(ctx, backupReq, sessionID, "", nil); err != nil {
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] ⚠️ auto-backup turn failed to start (run still complete): %v", err)
-	} else if err := s.waitForWorkshopIdle(ctx, sessionID); err != nil {
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] ⚠️ auto-backup turn idle wait failed (run still complete): %v", err)
-	} else {
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] ✅ Workshop auto-backup turn completed for %s", sctx.Schedule.ID)
-	}
+	// Note: backup-on-completion is no longer appended here. It is driven by the
+	// run_full_workflow completion AUTO-NOTIFICATION (workflowRunBackupDirective in
+	// server.go), which covers both scheduled and interactive runs — appending a
+	// backup turn here too would double-back up scheduled runs.
 
 	// Previously auto-generated a static markdown report here via the report agent.
 	// The dynamic report (design doc §2) is a live frontend view over db/ + graph.json;

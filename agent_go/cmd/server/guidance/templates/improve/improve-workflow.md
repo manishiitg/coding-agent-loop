@@ -45,14 +45,16 @@ PHASE 1 — OUTPUT + METRIC REVIEW
 7. List the top 1-3 candidate actions. Each candidate must name the evidence and the expected metric/success-criteria impact. Include eval-plan improvement as a candidate when the workflow output cannot be trusted because evaluation coverage, scoring, structured output, or metric-to-eval wiring is weak.
 
 PHASE 2 — CLASSIFY
-Use this decision model. Classify the evidence first, then choose the smallest action that matches the failure. If primary metrics stay below target after measurement and local reliability are healthy, treat that as a replan/strategy signal.
+The core question is always the same: **would executing the CURRENT plan *perfectly* satisfy the success criteria and move the primary metric enough?**
+- Yes, but it's buggy / sloppy / mis-wired → **harden** (exploit: same strategy, done better).
+- No — even executed cleanly this approach is capped → **replan** (explore: a materially different, out-of-the-box strategy).
 
-1. **Harden** when the workflow path is basically right, but execution quality or artifact wiring is weak.
-   Examples: bad tool args, prompt ambiguity, missing validation, stale agentic main.py, invalid lock state, missing learning objective, KB/db/report contract mismatch, metric source resolve_error caused by eval/config drift, hardcoded user-specific values.
+Harden and replan have the **same plan tools**; the difference is intent, not capability. Harden is the cheaper bet — try it first. Replan is the escalation: reach for it when hardening has **plateaued** (reliability/guardrail metrics are healthy yet the primary metric / success criteria stay short) or when the approach is structurally wrong for the goal. Be honest about which the evidence calls for.
+
+1. **Harden — exploit: refine the current strategy.** The approach is right; execution quality or artifact wiring is weak. You are NOT redesigning the path — you are making the existing steps work. Examples: bad tool args, prompt ambiguity, missing validation, stale agentic main.py, invalid lock state, missing learning objective, KB/db/report contract mismatch, metric source resolve_error from eval/config drift, hardcoded user-specific values.
    Action: call `harden_workflow(group_name?, focus?)`.
 
-2. **Replan** when the workflow path is misaligned with the objective, success criteria, or outcome metrics.
-   Examples: wrong business work, missing required capability, wrong output artifact, wrong evidence collected, step ordering/boundaries prevent success, outputs still miss a criterion after local hardening, or primary outcome metrics remain weak across retained runs while secondary reliability/guardrail metrics are healthy.
+2. **Replan — explore: a different strategy for better success.** The current approach is **capped** — even executed perfectly it would not reach the success criteria / primary metric — OR run evidence reveals a clearly better, out-of-the-box approach. This is where you think differently and restructure: change the business work, add a missing capability, change the output artifact or the evidence collected, reorder/redraw step boundaries, take a fundamentally different path. Trigger it when: hardening has already been tried and the metric/success stays short while reliability is healthy (strategy plateau); the path is structurally wrong for the goal; or you can **evidence** a materially better different approach. Keep it disciplined — replan rewrites `plan.json`, so the bet must be evidence-backed, not speculative; do not thrash a working workflow on a hunch.
    Action: call `replan_workflow_from_results(group_name?, focus?)`. If the replan keeps or converts any step to `agentic`, ensure stale `learnings/<step-id>/main.py` is removed so future agents do not confuse ephemeral agentic with reusable scripted.
 
 3. **Eval-plan improvement** when the workflow behavior may be fine or unknown, but the measurement layer is weak.

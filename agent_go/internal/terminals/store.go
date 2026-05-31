@@ -160,6 +160,8 @@ func (s *Store) HandleEvent(sessionID string, event storeevents.Event) {
 		s.upsertToolLine(sessionID, event, metadata)
 	case "pre_validation_completed":
 		s.updatePreValidationStatus(sessionID, event)
+	case "status_line":
+		s.handleStatusLine(sessionID, event)
 	}
 }
 
@@ -1824,3 +1826,60 @@ func intValue(value interface{}) int {
 		return 0
 	}
 }
+
+func (s *Store) handleStatusLine(sessionID string, event storeevents.Event) {
+	if event.Data == nil || event.Data.Data == nil {
+		return
+	}
+
+	var provider, model string
+	var inputTokens, outputTokens int
+	var costUSD float64
+	var found bool
+
+	switch data := event.Data.Data.(type) {
+	case *agentevents.StreamingStatusLineEvent:
+		provider = data.Provider
+		model = data.Model
+		inputTokens = data.InputTokens
+		outputTokens = data.OutputTokens
+		costUSD = data.CostUSD
+		found = true
+	case *agentevents.GenericEventData:
+		provider, _ = data.Data["provider"].(string)
+		model, _ = data.Data["model"].(string)
+		inputTokens = intValue(data.Data["input_tokens"])
+		outputTokens = intValue(data.Data["output_tokens"])
+		costUSD = floatValue(data.Data["cost_usd"])
+		found = true
+	}
+
+	if !found {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Update all terminals for this sessionID
+	terminalIDs := s.bySession[sessionID]
+	for terminalID := range terminalIDs {
+		snapshot, exists := s.byID[terminalID]
+		if !exists {
+			continue
+		}
+		// Update status fields
+		snapshot.Status.InputTokens = inputTokens
+		snapshot.Status.OutputTokens = outputTokens
+		snapshot.Status.CostUSD = costUSD
+		if model != "" {
+			snapshot.Status.ProviderLabel = fmt.Sprintf("agy-cli · %s", model)
+		} else if provider != "" {
+			snapshot.Status.ProviderLabel = provider
+		}
+		snapshot.UpdatedAt = time.Now()
+		s.byID[terminalID] = snapshot
+	}
+}
+
+

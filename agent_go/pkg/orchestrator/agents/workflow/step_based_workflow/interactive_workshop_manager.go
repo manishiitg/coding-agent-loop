@@ -621,7 +621,18 @@ func finalizeExecStatus(exec *WorkshopStepExecution, ctx context.Context, result
 		return true // stop_step already called OnExecutionTerminated
 	}
 	if *execErr != nil {
-		if ctx.Err() != nil || errors.Is(*execErr, context.Canceled) || errors.Is(*execErr, context.DeadlineExceeded) {
+		errStr := strings.ToLower((*execErr).Error())
+		isTimeout := errors.Is(*execErr, context.DeadlineExceeded) ||
+			(ctx.Err() != nil && errors.Is(ctx.Err(), context.DeadlineExceeded)) ||
+			strings.Contains(errStr, "timed out") ||
+			strings.Contains(errStr, "timeout") ||
+			strings.Contains(errStr, "deadline exceeded")
+
+		if isTimeout {
+			exec.Status = WorkshopStepFailed
+			exec.Err = *execErr
+			log.Printf("[FINALIZE_EXEC] exec=%s step=%s — timeout detected (err=%v), status=Failed, skipNotify=false", exec.ID, exec.StepID, *execErr)
+		} else if ctx.Err() == context.Canceled || errors.Is(*execErr, context.Canceled) {
 			exec.Status = WorkshopStepCancelled
 			exec.Err = *execErr
 			log.Printf("[FINALIZE_EXEC] exec=%s step=%s — context cancelled (err=%v), status=Cancelled, skipNotify=false (OnExecutionComplete will fire)", exec.ID, exec.StepID, *execErr)

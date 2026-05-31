@@ -2442,3 +2442,52 @@ func TestStoreMarkStaleClearsTmuxSession(t *testing.T) {
 		t.Fatalf("repeat MarkStale must remain stale + tmux-cleared; got state=%q tmux=%q", stale2.State, stale2.TmuxSession)
 	}
 }
+
+func TestStoreHandlesStatusLineUpdate(t *testing.T) {
+	store := NewStore()
+
+	// Seed the terminal snapshot first so we have something to update
+	meta := map[string]interface{}{
+		"kind": "terminal",
+	}
+	store.HandleEvent("session-1", terminalEventWithMetadata("exec-1", "active terminal pane", 1, meta, time.Now()))
+
+	// Create a status_line event
+	statusLineEvent := storeevents.Event{
+		Type:      "status_line",
+		SessionID: "session-1",
+		Timestamp: time.Now(),
+		Data: &agentevents.AgentEvent{
+			Type: agentevents.StreamingStatusLine,
+			Data: &agentevents.StreamingStatusLineEvent{
+				Provider:     "agy",
+				Model:        "claude-3-5-sonnet",
+				InputTokens:  1200,
+				OutputTokens: 350,
+				CostUSD:      0.0088,
+			},
+		},
+	}
+
+	store.HandleEvent("session-1", statusLineEvent)
+
+	// Fetch updated snapshot
+	snapshot, ok := store.Get("session-1:exec-1")
+	if !ok {
+		t.Fatalf("expected to find terminal session-1:exec-1")
+	}
+
+	if snapshot.Status.ProviderLabel != "agy-cli · claude-3-5-sonnet" {
+		t.Errorf("got ProviderLabel = %q, want 'agy-cli · claude-3-5-sonnet'", snapshot.Status.ProviderLabel)
+	}
+	if snapshot.Status.InputTokens != 1200 {
+		t.Errorf("got InputTokens = %d, want 1200", snapshot.Status.InputTokens)
+	}
+	if snapshot.Status.OutputTokens != 350 {
+		t.Errorf("got OutputTokens = %d, want 350", snapshot.Status.OutputTokens)
+	}
+	if snapshot.Status.CostUSD != 0.0088 {
+		t.Errorf("got CostUSD = %f, want 0.0088", snapshot.Status.CostUSD)
+	}
+}
+

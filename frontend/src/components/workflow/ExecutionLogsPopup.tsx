@@ -22,7 +22,8 @@ import {
   RefreshCw,
   ListTodo,
   Archive,
-  Search
+  Search,
+  Trash2
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { ExecutionLogsResponse } from '../../services/api-types'
@@ -105,6 +106,8 @@ const getStepIcon = (type: string) => {
       return <Bot className="w-4 h-4 text-indigo-500" />
     case 'branch':
       return <Split className="w-4 h-4 text-indigo-500" />
+    case 'message_sequence':
+      return <MessageSquare className="w-4 h-4 text-teal-500" />
     case 'regular':
       return <FileText className="w-4 h-4 text-muted-foreground" />
     default:
@@ -447,10 +450,66 @@ const StepMetricChip = ({ title, children }: { title: string; children: React.Re
   </span>
 )
 
+const getStepTypeLabel = (type: string): string => {
+  switch (type) {
+    case 'orchestration':
+      return 'Orchestration'
+    case 'todo_task':
+      return 'Todo Task'
+    case 'conditional':
+      return 'Conditional'
+    case 'human_input':
+      return 'Human Input'
+    case 'sub-agent':
+      return 'Sub-Agent'
+    case 'branch':
+      return 'Branch'
+    case 'message_sequence':
+      return 'Message Sequence'
+    case 'regular':
+    default:
+      return 'LLM Step'
+  }
+}
+
+const getStepTypeBadgeStyle = (type: string): string => {
+  switch (type) {
+    case 'orchestration':
+      return 'bg-purple-500/10 text-purple-600 border-purple-500/20 dark:bg-purple-500/20 dark:text-purple-300'
+    case 'todo_task':
+      return 'bg-fuchsia-500/10 text-fuchsia-600 border-fuchsia-500/20 dark:bg-fuchsia-500/20 dark:text-fuchsia-300'
+    case 'conditional':
+    case 'branch':
+      return 'bg-indigo-500/10 text-indigo-600 border-indigo-500/20 dark:bg-indigo-500/20 dark:text-indigo-300'
+    case 'human_input':
+      return 'bg-orange-500/10 text-orange-600 border-orange-500/20 dark:bg-orange-500/20 dark:text-orange-300'
+    case 'sub-agent':
+      return 'bg-blue-500/10 text-blue-600 border-blue-500/20 dark:bg-blue-500/20 dark:text-blue-300'
+    case 'message_sequence':
+      return 'bg-teal-500/10 text-teal-600 border-teal-500/20 dark:bg-teal-500/20 dark:text-teal-300'
+    case 'regular':
+    default:
+      return 'bg-slate-500/10 text-slate-600 border-slate-500/20 dark:bg-slate-500/20 dark:text-slate-300'
+  }
+}
+
 // Helper to determine the overall real-time status of a step
 const getStepStatus = (stepLogs: any): 'completed' | 'failed' | 'running' | 'pending' => {
   const validations = stepLogs.validations || []
   const executions = stepLogs.executions || []
+  const orchestration = stepLogs.orchestration || []
+  const conditionals = stepLogs.conditionals || []
+  const decisions = stepLogs.decisions || []
+  const todoTask = stepLogs.todo_task || []
+
+  if (stepLogs.type === 'message_sequence') {
+    const artifacts = stepLogs.artifacts || []
+    const hasSession = artifacts.some((art: any) => art.file_name === 'session.json')
+    if (hasSession) {
+      return 'completed'
+    }
+    return 'pending'
+  }
 
   // Check validations first for finality
   if (validations.length > 0) {
@@ -466,48 +525,23 @@ const getStepStatus = (stepLogs: any): 'completed' | 'failed' | 'running' | 'pen
     }
   }
 
-  // If executions exist but validations aren't finalized or present, it's currently running
+  // If executions exist but validations aren't finalized or present:
   if (executions.length > 0) {
+    // If the step has no success criteria, execution completion means the step is completed.
+    if (!stepLogs.success_criteria) {
+      return 'completed'
+    }
     return 'running'
+  }
+
+  // If orchestration, conditionals, decisions, or todo tasks exist, they are completed.
+  if (orchestration.length > 0 || conditionals.length > 0 || decisions.length > 0 || todoTask.length > 0) {
+    return 'completed'
   }
 
   return 'pending'
 }
 
-// Visual status pill with color-matched icon, background, text, and active animations
-const StepStatusBadge = ({ status }: { status: 'completed' | 'failed' | 'running' | 'pending' }) => {
-  switch (status) {
-    case 'running':
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-indigo-600 border border-indigo-500/20 dark:bg-indigo-500/20 dark:text-indigo-300 dark:border-indigo-500/30 animate-pulse shadow-[0_0_8px_rgba(99,102,241,0.15)]">
-          <Loader2 className="w-3 h-3 animate-spin text-indigo-500 dark:text-indigo-400" />
-          Running
-        </span>
-      )
-    case 'completed':
-      return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 border border-emerald-500/20 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/30">
-          <CheckCircle className="w-3 h-3 text-emerald-500 dark:text-emerald-400" />
-          Completed
-        </span>
-      )
-    case 'failed':
-      return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-600 border border-rose-500/20 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30">
-          <XCircle className="w-3 h-3 text-rose-500 dark:text-rose-400" />
-          Failed
-        </span>
-      )
-    case 'pending':
-    default:
-      return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground border border-border">
-          <Clock className="w-3 h-3 text-muted-foreground" />
-          Pending
-        </span>
-      )
-  }
-}
 
 const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   isOpen,
@@ -518,11 +552,18 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   startedAt,
   embedded = false
 }) => {
+  const [localRunFolders, setLocalRunFolders] = useState<string[]>(() => runFolders)
+
+  // Synchronize local run folders when props update
+  useEffect(() => {
+    setLocalRunFolders(runFolders)
+  }, [runFolders])
+
   const runFolderOptions = useMemo(() => {
-    const defaultRunFolder = getDefaultRunFolder(initialRunFolder, runFolders)
-    if (!defaultRunFolder || runFolders.includes(defaultRunFolder)) return runFolders
-    return [defaultRunFolder, ...runFolders]
-  }, [initialRunFolder, runFolders])
+    const defaultRunFolder = getDefaultRunFolder(initialRunFolder, localRunFolders)
+    if (!defaultRunFolder || localRunFolders.includes(defaultRunFolder)) return localRunFolders
+    return [defaultRunFolder, ...localRunFolders]
+  }, [initialRunFolder, localRunFolders])
 
   const [loading, setLoading] = useState(false)
   const [logs, setLogs] = useState<ExecutionLogsResponse | null>(null)
@@ -542,9 +583,9 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
 
   // Update selected run folder when prop changes
   useEffect(() => {
-    setSelectedRunFolder(getDefaultRunFolder(initialRunFolder, runFolders))
+    setSelectedRunFolder(getDefaultRunFolder(initialRunFolder, localRunFolders))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialRunFolder, runFolders, isOpen])
+  }, [initialRunFolder, localRunFolders, isOpen])
 
   useEffect(() => {
     if (isOpen && workspacePath && selectedRunFolder) {
@@ -573,6 +614,67 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
     return () => window.clearInterval(intervalId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, workspacePath, selectedRunFolder])
+
+  const handleDeleteFolder = async (folderName: string) => {
+    if (!workspacePath) return
+    if (!window.confirm(`Are you sure you want to delete all logs for run "${folderName}"? This cannot be undone.`)) {
+      return
+    }
+
+    try {
+      setLoading(true)
+      const res = await agentApi.deleteRunFolder(workspacePath, folderName)
+      if (res.success) {
+        // Fetch updated list of run folders
+        const foldersRes = await agentApi.getRunFolders(workspacePath)
+        const updatedFolders = (foldersRes.folders || []).map(f => f.name)
+        setLocalRunFolders(updatedFolders)
+
+        // If the deleted folder was the active one, select another
+        if (selectedRunFolder === folderName) {
+          const nextFolder = updatedFolders[0] || ''
+          setSelectedRunFolder(nextFolder)
+          if (!nextFolder) {
+            setLogs(null)
+          }
+        }
+      } else {
+        alert(`Failed to delete run folder: ${res.message || 'Unknown error'}`)
+      }
+    } catch (err) {
+      console.error('Error deleting run folder:', err)
+      alert('Failed to delete run folder')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteAllFolders = async () => {
+    if (!workspacePath || localRunFolders.length === 0) return
+    if (!window.confirm(`Are you sure you want to delete ALL execution logs across all ${localRunFolders.length} runs? This will permanently wipe all logs and cannot be undone.`)) {
+      return
+    }
+
+    try {
+      setLoading(true)
+      // Delete folders in parallel
+      const promises = localRunFolders.map(folder => agentApi.deleteRunFolder(workspacePath, folder))
+      await Promise.all(promises)
+
+      // Fetch updated list (should be empty)
+      const foldersRes = await agentApi.getRunFolders(workspacePath)
+      const updatedFolders = (foldersRes.folders || []).map(f => f.name)
+      setLocalRunFolders(updatedFolders)
+      
+      setSelectedRunFolder('')
+      setLogs(null)
+    } catch (err) {
+      console.error('Error deleting all run folders:', err)
+      alert('Failed to delete some or all run folders')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const loadLogs = async (options?: { silent?: boolean }) => {
     if (!workspacePath || !selectedRunFolder) return
@@ -1938,15 +2040,15 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 <span className="text-xs font-normal text-muted-foreground">{formatStartedAt(startedAt)}</span>
               )}
             </h2>
-            <div className="flex flex-wrap items-center gap-2 mt-1 sm:gap-4">
+            <div className="flex flex-wrap items-center gap-3 mt-2">
               {/* Run Folder Selector */}
               {runFolderOptions.length > 0 && (
-                <div className="flex min-w-0 items-center gap-2">
-                  <Filter className="w-4 h-4 text-muted-foreground" />
+                <div className="flex items-center gap-1.5 bg-muted border border-border rounded-lg px-2 py-1">
+                  <Filter className="w-3.5 h-3.5 text-muted-foreground" />
                   <select
                     value={selectedRunFolder}
                     onChange={(e) => setSelectedRunFolder(e.target.value)}
-                    className="min-w-0 max-w-full text-xs bg-muted border border-border rounded-md px-2 py-1 text-foreground sm:min-w-[200px]"
+                    className="text-xs bg-transparent border-none outline-none focus:ring-0 text-foreground pr-1 cursor-pointer font-medium"
                   >
                     <option value="">Select iteration/group...</option>
                     {runFolderOptions.map(folder => (
@@ -1955,18 +2057,15 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                   </select>
                 </div>
               )}
-              {selectedRunFolder && (
-                <p className="min-w-0 text-sm text-muted-foreground">
-                  Run: <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-foreground">{selectedRunFolder}</span>
-                </p>
-              )}
+
+              {/* Refresh Button */}
               <button
                 onClick={() => loadLogs()}
                 disabled={loading || !selectedRunFolder}
-                className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+                className="p-1.5 rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
                 title="Refresh logs"
               >
-                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
               </button>
             </div>
           </div>
@@ -2015,7 +2114,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 <div className="flex flex-col items-center justify-center py-8 text-muted-foreground border border-dashed border-border rounded-lg">
                   <FileText className="w-10 h-10 mb-2 opacity-50" />
                   <p className="text-sm">No step execution logs found for <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{selectedRunFolder}</span>.</p>
-                  {runFolders.length > 1 && (
+                  {localRunFolders.length > 1 && (
                     <p className="text-xs mt-2 opacity-70">
                       Try selecting a different iteration or group from the dropdown above.
                     </p>
@@ -2087,21 +2186,14 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                   {getStepIcon(stepLogs.type)}
                                 </span>
                                 <span className="text-sm font-semibold text-foreground truncate">{displayTitle}</span>
-                                {hasCustomTitle && (
-                                  <span className="font-mono text-[10px] bg-muted/70 text-muted-foreground border border-border px-1.5 py-0.5 rounded-md flex-shrink-0" title="Step ID">
-                                    {displayId}
-                                  </span>
-                                )}
+                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium border ${getStepTypeBadgeStyle(stepLogs.type)}`}>
+                                  {getStepTypeLabel(stepLogs.type)}
+                                </span>
                               </div>
                               {description && (
                                 <span className="text-xs text-muted-foreground line-clamp-1 truncate w-full mt-0.5 pl-6">{description}</span>
                               )}
                             </div>
-                          </div>
-                          
-                          {/* Step Status Badge on the right */}
-                          <div className="flex-shrink-0 self-center">
-                            <StepStatusBadge status={stepStatus} />
                           </div>
                         </div>
                         

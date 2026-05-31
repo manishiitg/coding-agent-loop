@@ -24,6 +24,18 @@ The two roles differ only in whether the conversation is remembered:
 
 So: need a specialist that remembers across the orchestrator's own repeated calls → **route**. Need a one-shot quality gate on a unit of work → **standalone**. Need to "rerun at a later time / resume across runs" → that does not exist here; drive it from the orchestrator (route) or a scheduler.
 
+## DESCRIPTION IS TURN 0 (consistent across every step type)
+
+A step's `description` is **the opening instruction and IS executed** — it leads the first user turn of the conversation. This is one uniform rule across the workflow, so author `description` as actionable, never as throwaway metadata:
+
+- **todo_task orchestrator**: `description` is rendered directly as the orchestrator's first user turn (the task framing).
+- **standalone `message_sequence`**: `description` leads turn 0 — it is prepended to `items[0]` in the same conversation; `items[]` are turns 1..N.
+- **route `message_sequence`**: the route's `description` plus the orchestrator's per-call `call_sub_agent` instructions form the opening instruction prepended to `items[0]` on the first call.
+
+Practical consequences for plan design:
+- Put the real opening instruction in `description`; put the follow-up turns in `items[]`. Don't leave `description` as a vague label and stuff the actual first instruction into `items[0]` — they will both run, back-to-back, in turn 0.
+- A `message_sequence` with a substantive `description` should have at least one `user_message`/`foreach` item to carry it as a turn. Description-only with no conversational item does no work.
+
 ## SINGLE-STEP QUALITY PATTERNS
 
 The patterns above use message_sequence as a todo_task route (a reusable specialist the orchestrator re-enters). message_sequence is equally useful as a **standalone step** that makes one unit of work trustworthy, using the item queue (`user_message` + `code` + `prevalidation`, all sharing one conversation):

@@ -2639,7 +2639,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={reportFocusMobile} />}
           </div>
         ) : <div className="h-full min-h-0 relative flex">
-          <PreviewPaneControls hasPlan={hasPlan} />
+          <PreviewPaneControls hasPlan={hasPlan} onExportPlan={() => { void handleExportImage('png') }} onRefreshPlan={() => { void handleRefresh() }} />
           <div className={`min-h-0 h-full transition-all duration-300 ${showVariablesSidebar ? 'mr-[450px]' : ''} ${previewDevice === 'desktop' ? 'flex-1' : previewDeviceShellClass(previewDevice)}`}>
         <ReactFlow
           className="w-full h-full bg-gray-50 dark:bg-gray-900"

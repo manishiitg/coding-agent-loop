@@ -726,7 +726,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2.5 py-3 [scrollbar-gutter:stable] sm:px-4 sm:py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2 py-2 [scrollbar-gutter:stable] sm:px-3 sm:py-3">
         <div ref={reportExportRef} className={previewShellClassName}>
           <div className={`flex flex-col gap-3 ${previewContentClassName}`}>
             {loading && <ReportSkeleton />}
@@ -769,7 +769,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
             )}
 
             {!loading && !error && hasAnyContent && (
-              <div className="flex flex-col gap-8 animate-in fade-in duration-200 sm:gap-10">
+              <div className="flex flex-col gap-4 animate-in fade-in duration-200 sm:gap-5">
                 {visibleSections.map(({ section, sectionIndex, entries }) => (
                   <SectionContainer
                     key={sectionIndex}
@@ -897,10 +897,7 @@ function MobileTabPicker({
         className="flex w-full items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted/40"
       >
         <span className="min-w-0 truncate">{active?.label}</span>
-        <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
-          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{active?.entries.length}</span>
-          <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
-        </span>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
         <div role="listbox" className="absolute left-0 right-0 z-20 mt-1 max-h-72 overflow-auto rounded-md border border-border bg-background py-1 shadow-lg">
@@ -924,7 +921,6 @@ function MobileTabPicker({
                   <Check className={`h-3.5 w-3.5 shrink-0 ${isActive ? 'opacity-100' : 'opacity-0'}`} />
                   <span className="truncate">{tab.label}</span>
                 </span>
-                <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{tab.entries.length}</span>
               </button>
             )
           })}
@@ -990,7 +986,7 @@ function SectionContainer({
   // the actual viewport.
   const [gridRef, sizeTier] = useContainerSizeTier()
   const requestedColumns = section.layout?.columns
-  const gridGap = section.layout?.gap ?? 12
+  const gridGap = section.layout?.gap ?? 8
   // Scale the user-requested column count to the active tier:
   //   phone   → 1 (always stack)
   //   tablet  → roughly half, rounded down, capped at 6 to keep cells legible
@@ -1014,7 +1010,7 @@ function SectionContainer({
   }
   const containerClassName = effectiveColumns
     ? 'grid'
-    : 'flex flex-col gap-3'
+    : 'flex flex-col gap-2'
   const containerStyle = effectiveColumns
     ? {
         gridTemplateColumns: `repeat(${effectiveColumns}, minmax(0, 1fr))`,
@@ -1026,7 +1022,7 @@ function SectionContainer({
     : null
   const renderedEntries = activeTab ? activeTab.entries : entries
   return (
-    <section className="flex flex-col gap-2.5 p-0 sm:gap-3 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3.5 sm:shadow-sm">
+    <section className="flex flex-col gap-2 p-0 sm:gap-2.5 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3 sm:shadow-sm">
       <SectionHeader heading={section.heading} />
       {tabsEnabled && tabGroups.length > 0 && (
         sizeTier === 'phone' ? (
@@ -1049,9 +1045,6 @@ function SectionContainer({
                 }`}
               >
                 <span>{tab.label}</span>
-                <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                  {tab.entries.length}
-                </span>
               </button>
             ))}
           </div>

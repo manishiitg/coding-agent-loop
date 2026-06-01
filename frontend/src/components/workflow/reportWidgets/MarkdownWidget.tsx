@@ -17,9 +17,9 @@ export function MarkdownWidget({ value, widget }: { value: unknown; widget: Repo
   // ordinary prose is untouched.
   const basePath = typeof widget.source === 'string' && widget.source.trim() !== '' ? widget.source : undefined
   return (
-    <div className="flex flex-col gap-2.5">
+    <div className="flex flex-col gap-1.5">
       <WidgetHeader widget={widget} />
-      <div className="rounded-lg bg-muted/20 px-3 py-3 text-sm text-foreground">
+      <div className="rounded-lg bg-muted/20 px-2.5 py-2 text-sm text-foreground">
         <MarkdownRenderer content={markdown} className="max-w-none" maxHeight="none" basePath={basePath} />
       </div>
     </div>

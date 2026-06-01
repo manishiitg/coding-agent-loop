@@ -7,7 +7,6 @@
 // (TextWidget.tsx, StatWidget.tsx, etc.) and import from this module.
 
 import React from 'react'
-import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { ReportWidget } from '../../../services/api-types'
 import { applyWidgetFilter } from '../../../lib/reportPlanParser'
 
@@ -64,27 +63,16 @@ export function WidgetHeader({
   )
 }
 
-export function WidgetVisibilityButton({
-  hidden = false,
-  onToggle,
-  className = '',
-}: {
+// The per-widget collapse/hide control was removed per product decision — report
+// widgets no longer show a compress/hide icon. Kept as a no-op so the existing
+// call sites (WidgetShell, StandaloneWidgetNotice, Stat/Alert) need no changes;
+// `onToggle`/`hidden` are accepted but ignored.
+export function WidgetVisibilityButton(_props: {
   hidden?: boolean
   onToggle: () => void
   className?: string
 }) {
-  const Icon = hidden ? ChevronDown : ChevronUp
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={`absolute right-2 top-2 z-20 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border/70 bg-background/90 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground sm:h-7 sm:w-7 ${className}`}
-      title={hidden ? 'Show widget' : 'Hide widget'}
-      aria-label={hidden ? 'Show widget' : 'Hide widget'}
-    >
-      <Icon className="h-3.5 w-3.5" />
-    </button>
-  )
+  return null
 }
 
 export function StandaloneWidgetNotice({
@@ -97,7 +85,7 @@ export function StandaloneWidgetNotice({
   onToggleHidden?: () => void
 }) {
   return (
-    <div className="relative rounded-xl bg-card px-4 py-3.5 sm:border sm:border-border">
+    <div className="relative rounded-xl bg-card px-3 py-2.5 sm:border sm:border-border">
       {onToggleHidden && <WidgetVisibilityButton hidden={hidden} onToggle={onToggleHidden} />}
       {children}
     </div>
@@ -119,8 +107,8 @@ export function WidgetShell({
   if (widget.kind === 'stat' || widget.kind === 'alert') return <>{children}</>
   const shellClassName =
     widget.kind === 'text'
-      ? 'group relative px-0 py-0 transition-colors duration-200 sm:rounded-xl sm:border sm:border-border sm:bg-card sm:px-5 sm:py-4'
-      : 'group relative px-0 py-0 transition-colors duration-200 sm:overflow-hidden sm:rounded-xl sm:border sm:border-border sm:bg-card sm:px-5 sm:py-4'
+      ? 'group relative px-0 py-0 transition-colors duration-200 sm:rounded-xl sm:border sm:border-border sm:bg-card sm:px-3.5 sm:py-2.5'
+      : 'group relative px-0 py-0 transition-colors duration-200 sm:overflow-hidden sm:rounded-xl sm:border sm:border-border sm:bg-card sm:px-3.5 sm:py-2.5'
   return (
     <div className={shellClassName}>
       {onToggleHidden && <WidgetVisibilityButton onToggle={onToggleHidden} />}

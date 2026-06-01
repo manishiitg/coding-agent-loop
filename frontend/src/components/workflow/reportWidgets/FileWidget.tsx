@@ -215,10 +215,10 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       <WidgetHeader widget={widget} />
       {format === 'markdown' && (
-        <div className="rounded-lg bg-muted/20 px-3 py-3 text-sm text-foreground">
+        <div className="rounded-lg bg-muted/20 px-2.5 py-2 text-sm text-foreground">
           <MarkdownRenderer content={state.content || ''} basePath={path} className="max-w-none" maxHeight="none" />
         </div>
       )}
@@ -231,7 +231,7 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
         />
       )}
       {(format === 'text' || format === 'code' || format === 'json') && (
-        <pre className="max-h-[640px] overflow-auto rounded-lg bg-muted/25 px-3 py-3 text-xs leading-6 text-foreground">
+        <pre className="max-h-[640px] overflow-auto rounded-lg bg-muted/25 px-2.5 py-2 text-xs leading-6 text-foreground">
           {format === 'json' ? formatJSONText(state.content || '') : state.content}
         </pre>
       )}
@@ -248,7 +248,7 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
         <iframe title={widget.title || name} src={state.objectUrl} className="h-[min(820px,75vh)] w-full rounded-lg border border-border bg-background" />
       )}
       {(format === 'link' || format === 'other') && (
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-3 py-3 text-sm text-foreground">
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-2.5 py-2 text-sm text-foreground">
           <ArtifactIcon kind={artifactKind(widget.source)} />
           <span className="min-w-0 truncate">{widget.source}</span>
         </div>
@@ -377,7 +377,7 @@ export function FileListWidget({ widget, workspacePath }: { widget: ReportWidget
   const grouped = groups.length > 1 || (groups.length === 1 && groups[0].group !== '')
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       <WidgetHeader widget={widget} />
       {state.files.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border px-3 py-5 text-sm text-muted-foreground">No files found.</div>

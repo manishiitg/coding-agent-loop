@@ -343,6 +343,20 @@ EOF
         echo "❌ Error: frontend package.json not found: ${FRONTEND_DIR}/package.json"
         exit 1
     fi
+    # Always run `npm install` before serving the frontend. It is idempotent:
+    # when node_modules already matches package-lock.json it just does a fast
+    # check (~1-2s) and installs nothing; when a pull added a dependency (e.g.
+    # @xterm/xterm) it installs only the missing/changed packages. This avoids
+    # the Vite "Failed to resolve import" failure after a dependency was added,
+    # without ever reinstalling everything.
+    echo "📦 Ensuring frontend dependencies (npm install)..."
+    (
+        cd "$FRONTEND_DIR" || exit 1
+        npm install
+    ) >> "$FRONTEND_LOG_PATH" 2>&1 || {
+        echo "❌ Error: frontend dependency install failed. See $FRONTEND_LOG_PATH"
+        exit 1
+    }
     if port_in_use "$FRONTEND_PORT"; then
         echo "❌ Error: Port $FRONTEND_PORT is already in use."
         if [ -n "$FRONTEND_PORT_EXPLICIT" ]; then

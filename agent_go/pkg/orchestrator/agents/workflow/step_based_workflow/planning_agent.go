@@ -2869,14 +2869,170 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 	if partialUpdate.NextStepID != "" {
 		changedFields = append(changedFields, "next_step_id")
 		oldNextStepID := ""
-		if todoTaskStep, ok := existingStep.(*TodoTaskPlanStep); ok {
-			oldNextStepID = todoTaskStep.NextStepID
+		switch step := existingStep.(type) {
+		case *TodoTaskPlanStep:
+			oldNextStepID = step.NextStepID
+		case *HumanInputPlanStep:
+			oldNextStepID = step.NextStepID
+		case *MessageSequencePlanStep:
+			oldNextStepID = step.NextStepID
 		}
 		*fieldChanges = append(*fieldChanges, PlanFieldChange{
 			StepID:   partialUpdate.ExistingStepID,
 			Field:    "next_step_id",
 			OldValue: oldNextStepID,
 			NewValue: partialUpdate.NextStepID,
+		})
+	}
+	if partialUpdate.Messages != nil {
+		changedFields = append(changedFields, "messages")
+		oldMessagesJSON := "[]"
+		if todoTaskStep, ok := existingStep.(*TodoTaskPlanStep); ok {
+			oldBytes, _ := json.Marshal(todoTaskStep.Messages)
+			oldMessagesJSON = string(oldBytes)
+		}
+		newBytes, _ := json.Marshal(partialUpdate.Messages)
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "messages",
+			OldValue: oldMessagesJSON,
+			NewValue: string(newBytes),
+		})
+	}
+	if partialUpdate.Question != "" {
+		changedFields = append(changedFields, "question")
+		oldQuestion := ""
+		if humanInputStep, ok := existingStep.(*HumanInputPlanStep); ok {
+			oldQuestion = humanInputStep.Question
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "question",
+			OldValue: oldQuestion,
+			NewValue: partialUpdate.Question,
+		})
+	}
+	if partialUpdate.VariableName != "" {
+		changedFields = append(changedFields, "variable_name")
+		oldVariableName := ""
+		if humanInputStep, ok := existingStep.(*HumanInputPlanStep); ok {
+			oldVariableName = humanInputStep.VariableName
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "variable_name",
+			OldValue: oldVariableName,
+			NewValue: partialUpdate.VariableName,
+		})
+	}
+	if partialUpdate.ResponseType != "" {
+		changedFields = append(changedFields, "response_type")
+		oldResponseType := ""
+		if humanInputStep, ok := existingStep.(*HumanInputPlanStep); ok {
+			oldResponseType = humanInputStep.ResponseType
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "response_type",
+			OldValue: oldResponseType,
+			NewValue: partialUpdate.ResponseType,
+		})
+	}
+	if partialUpdate.Options != nil {
+		changedFields = append(changedFields, "options")
+		oldOptionsJSON := "[]"
+		if humanInputStep, ok := existingStep.(*HumanInputPlanStep); ok {
+			oldBytes, _ := json.Marshal(humanInputStep.Options)
+			oldOptionsJSON = string(oldBytes)
+		}
+		newBytes, _ := json.Marshal(partialUpdate.Options)
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "options",
+			OldValue: oldOptionsJSON,
+			NewValue: string(newBytes),
+		})
+	}
+	if partialUpdate.IfYesNextStepID != "" {
+		changedFields = append(changedFields, "if_yes_next_step_id")
+		oldNextStepID := ""
+		if humanInputStep, ok := existingStep.(*HumanInputPlanStep); ok {
+			oldNextStepID = humanInputStep.IfYesNextStepID
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "if_yes_next_step_id",
+			OldValue: oldNextStepID,
+			NewValue: partialUpdate.IfYesNextStepID,
+		})
+	}
+	if partialUpdate.IfNoNextStepID != "" {
+		changedFields = append(changedFields, "if_no_next_step_id")
+		oldNextStepID := ""
+		if humanInputStep, ok := existingStep.(*HumanInputPlanStep); ok {
+			oldNextStepID = humanInputStep.IfNoNextStepID
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "if_no_next_step_id",
+			OldValue: oldNextStepID,
+			NewValue: partialUpdate.IfNoNextStepID,
+		})
+	}
+	if partialUpdate.OptionRoutes != nil {
+		changedFields = append(changedFields, "option_routes")
+		oldRoutesJSON := "{}"
+		if humanInputStep, ok := existingStep.(*HumanInputPlanStep); ok {
+			oldBytes, _ := json.Marshal(humanInputStep.OptionRoutes)
+			oldRoutesJSON = string(oldBytes)
+		}
+		newBytes, _ := json.Marshal(partialUpdate.OptionRoutes)
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "option_routes",
+			OldValue: oldRoutesJSON,
+			NewValue: string(newBytes),
+		})
+	}
+	if partialUpdate.RoutingQuestion != "" {
+		changedFields = append(changedFields, "routing_question")
+		oldQuestion := ""
+		if routingStep, ok := existingStep.(*RoutingPlanStep); ok {
+			oldQuestion = routingStep.RoutingQuestion
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "routing_question",
+			OldValue: oldQuestion,
+			NewValue: partialUpdate.RoutingQuestion,
+		})
+	}
+	if partialUpdate.Routes != nil {
+		changedFields = append(changedFields, "routes")
+		oldRoutesJSON := "[]"
+		if routingStep, ok := existingStep.(*RoutingPlanStep); ok {
+			oldBytes, _ := json.Marshal(routingStep.Routes)
+			oldRoutesJSON = string(oldBytes)
+		}
+		newBytes, _ := json.Marshal(partialUpdate.Routes)
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "routes",
+			OldValue: oldRoutesJSON,
+			NewValue: string(newBytes),
+		})
+	}
+	if partialUpdate.DefaultRouteID != "" {
+		changedFields = append(changedFields, "default_route_id")
+		oldDefaultRouteID := ""
+		if routingStep, ok := existingStep.(*RoutingPlanStep); ok {
+			oldDefaultRouteID = routingStep.DefaultRouteID
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "default_route_id",
+			OldValue: oldDefaultRouteID,
+			NewValue: partialUpdate.DefaultRouteID,
 		})
 	}
 	if partialUpdate.ValidationSchema != nil {
@@ -2925,6 +3081,182 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 	}
 
 	return topLevelIndex, changedFields, nil
+}
+
+func planStepUpdateRequiresDependentArtifactReview(fieldChanges []PlanFieldChange) bool {
+	return len(fieldChanges) > 0
+}
+
+func planStepUpdateInvalidatesDescriptionReview(fieldChanges []PlanFieldChange) bool {
+	for _, change := range fieldChanges {
+		field := change.Field
+		if field == "description" ||
+			field == "context_dependencies" ||
+			field == "context_output" ||
+			field == "items" ||
+			field == "messages" ||
+			field == "next_step_id" ||
+			field == "validation_schema" ||
+			field == "routing_question" ||
+			field == "routes" ||
+			field == "default_route_id" ||
+			field == "question" ||
+			field == "variable_name" ||
+			field == "response_type" ||
+			field == "options" ||
+			field == "if_yes_next_step_id" ||
+			field == "if_no_next_step_id" ||
+			field == "option_routes" ||
+			strings.HasPrefix(field, "predefined_routes") ||
+			strings.Contains(field, ".sub_agent_step") {
+			return true
+		}
+	}
+	return false
+}
+
+func clearDescriptionReviewedAfterPlanUpdate(ctx context.Context, workspacePath, stepID string, fieldChanges []PlanFieldChange, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) (bool, error) {
+	if !planStepUpdateInvalidatesDescriptionReview(fieldChanges) {
+		return false, nil
+	}
+
+	configs, err := readStepConfigViaFileCallback(ctx, workspacePath, readFile)
+	if err != nil {
+		return false, err
+	}
+	for i := range configs {
+		if configs[i].ID != stepID {
+			continue
+		}
+		if configs[i].AgentConfigs == nil || configs[i].AgentConfigs.DescriptionReviewed == nil {
+			return false, nil
+		}
+		clearStepConfigField(&configs[i], "description_reviewed")
+		if err := writeStepConfigViaFileCallback(ctx, workspacePath, configs, writeFile); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+func buildPlanStepDependentArtifactReviewNotice(stepID string, fieldChanges []PlanFieldChange, descriptionReviewCleared bool) string {
+	if !planStepUpdateRequiresDependentArtifactReview(fieldChanges) {
+		return ""
+	}
+
+	changed := make([]string, 0, len(fieldChanges))
+	seen := make(map[string]bool, len(fieldChanges))
+	for _, change := range fieldChanges {
+		if change.Field == "" || seen[change.Field] {
+			continue
+		}
+		seen[change.Field] = true
+		changed = append(changed, change.Field)
+	}
+
+	var b strings.Builder
+	b.WriteString("\n\nDependent artifact review required")
+	if len(changed) > 0 {
+		b.WriteString(" for changed fields: ")
+		b.WriteString(strings.Join(changed, ", "))
+	}
+	b.WriteString(".\n")
+	if descriptionReviewCleared {
+		b.WriteString("- Cleared step_config.agent_configs.description_reviewed because the reviewed step contract may now be stale.\n")
+	}
+	b.WriteString("- Pre-validation: confirm validation_schema still matches the new output files/fields; update plan validation_schema or step_config validation_schema if needed.\n")
+	b.WriteString("- Learnings: review learning_objective, learnings_access, lock_learnings, and any learnings/_global or learnings/" + stepID + " content for stale execution know-how.\n")
+	b.WriteString("- DB: if output/state shape changed, update db/README.md, db/*.json writers/merge rules, and any report widgets that read those fields.\n")
+	b.WriteString("- KB: if business context or notes consumed/produced changed, update knowledgebase_access, knowledgebase_contribution, and description references.\n")
+	b.WriteString("- Scripted code: if this step uses scripted/code execution or learnings/" + stepID + "/main.py exists, patch or regenerate main.py, or delete stale script state when returning to agentic execution.\n")
+	b.WriteString("- Downstream wiring: if semantics changed, review reports/report_plan.json, evaluation/evaluation_plan.json, routes, and downstream context_dependencies.\n")
+	b.WriteString("- Before marking the plan done, run get_workflow_command_guidance(kind=\"review-artifact-drift\", focus=\"" + stepID + "\").")
+	return b.String()
+}
+
+func handlePlanStepDependentArtifactReview(ctx context.Context, workspacePath, stepID string, fieldChanges []PlanFieldChange, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) string {
+	if !planStepUpdateRequiresDependentArtifactReview(fieldChanges) {
+		return ""
+	}
+
+	descriptionReviewCleared, err := clearDescriptionReviewedAfterPlanUpdate(ctx, workspacePath, stepID, fieldChanges, readFile, writeFile)
+	if err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to clear description_reviewed after updating step %s: %v", stepID, err))
+	}
+	return buildPlanStepDependentArtifactReviewNotice(stepID, fieldChanges, descriptionReviewCleared)
+}
+
+func buildAddedStepArtifactSetupNotice(stepID, stepType string) string {
+	var b strings.Builder
+	b.WriteString("\n\nNew step artifact setup required.\n")
+	b.WriteString("- Step config: decide execution_llm/tier, servers/tools, browser mode, skills, secrets, and description_reviewed in planning/step_config.json.\n")
+	b.WriteString("- Pre-validation: add or confirm validation_schema for required inputs/outputs and generated files.\n")
+	b.WriteString("- Learnings: decide learnings_access, learning_objective, lock_learnings, and whether this step should write reusable execution know-how.\n")
+	b.WriteString("- DB: decide whether the step reads/writes db/ files; update db/README.md and schemas/merge rules if it does.\n")
+	b.WriteString("- KB: decide knowledgebase_access and knowledgebase_contribution for business context and notes.\n")
+	b.WriteString("- Scripted code: if " + stepType + " step " + stepID + " should run code, create or review learnings/" + stepID + "/main.py and set code execution config; otherwise make sure no stale script is implied.\n")
+	b.WriteString("- Downstream wiring: connect routes/next_step_id/context_dependencies, and update reports/report_plan.json or evaluation/evaluation_plan.json if this step affects outputs.\n")
+	b.WriteString("- Before marking the plan done, run get_workflow_command_guidance(kind=\"review-artifact-drift\", focus=\"" + stepID + "\").")
+	return b.String()
+}
+
+func buildDeletedStepArtifactCleanupNotice(deletedIDs []string, prunedConfigIDs []string) string {
+	var b strings.Builder
+	b.WriteString("\n\nDeleted step artifact cleanup required")
+	if len(deletedIDs) > 0 {
+		b.WriteString(" for: ")
+		b.WriteString(strings.Join(deletedIDs, ", "))
+	}
+	b.WriteString(".\n")
+	if len(prunedConfigIDs) > 0 {
+		b.WriteString("- Removed matching planning/step_config.json entries: " + strings.Join(prunedConfigIDs, ", ") + ".\n")
+	} else {
+		b.WriteString("- Step config: confirm no stale planning/step_config.json entries remain for the deleted IDs.\n")
+	}
+	b.WriteString("- Plan wiring: remove or reroute next_step_id, routes, predefined_routes, and downstream context_dependencies that referenced deleted steps.\n")
+	b.WriteString("- Pre-validation: remove validation schemas that validate deleted-step outputs and update schemas that depended on them.\n")
+	b.WriteString("- Learnings/code: remove or archive stale learnings/<step-id>/ content and main.py scripts, unless intentionally kept as reusable docs.\n")
+	b.WriteString("- DB/KB: remove stale db writers/readers, db/README.md mentions, knowledgebase references, and contribution rules tied to deleted steps.\n")
+	b.WriteString("- Reports/evals/docs: update reports/report_plan.json, evaluation/evaluation_plan.json, docs, and widgets that referenced deleted outputs.\n")
+	b.WriteString("- Before marking the plan done, run get_workflow_command_guidance(kind=\"review-artifact-drift\", focus=\"deleted steps\").")
+	return b.String()
+}
+
+func buildTodoTaskRouteArtifactReviewNotice(parentStepID, routeID, action string, descriptionReviewCleared bool) string {
+	var b strings.Builder
+	b.WriteString("\n\nTodo route artifact review required for ")
+	b.WriteString(action)
+	b.WriteString(" route ")
+	b.WriteString(routeID)
+	b.WriteString(" under ")
+	b.WriteString(parentStepID)
+	b.WriteString(".\n")
+	if descriptionReviewCleared {
+		b.WriteString("- Cleared the parent step description_reviewed flag because its orchestration contract changed.\n")
+	}
+	switch action {
+	case "added":
+		b.WriteString("- Route setup: configure step_config, tools/servers/skills, prevalidation, learnings, KB, DB, and optional learnings/" + routeID + "/main.py for the new nested agent.\n")
+	case "deleted":
+		b.WriteString("- Route cleanup: remove stale step_config, learnings/" + routeID + ", scripted main.py, DB/KB/report/eval references, and downstream context dependencies for the removed nested agent.\n")
+	default:
+		b.WriteString("- Route update: review route condition/context_to_pass/sub-agent description against prevalidation, learnings, DB, KB, scripts, reports/evals, and downstream dependencies.\n")
+	}
+	b.WriteString("- Before marking the plan done, run get_workflow_command_guidance(kind=\"review-artifact-drift\", focus=\"" + parentStepID + "\").")
+	return b.String()
+}
+
+func handleTodoTaskRouteArtifactReview(ctx context.Context, workspacePath, parentStepID, routeID, action string, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) string {
+	fieldChanges := []PlanFieldChange{{
+		StepID: parentStepID,
+		Field:  "predefined_routes",
+	}}
+	descriptionReviewCleared, err := clearDescriptionReviewedAfterPlanUpdate(ctx, workspacePath, parentStepID, fieldChanges, readFile, writeFile)
+	if err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to clear description_reviewed after %s route %s on step %s: %v", action, routeID, parentStepID, err))
+	}
+	return buildTodoTaskRouteArtifactReviewNotice(parentStepID, routeID, action, descriptionReviewCleared)
 }
 
 // createUpdateRegularStepExecutor creates an executor function for update_regular_step tool
@@ -2993,8 +3325,10 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 			}
 		}
 
+		dependentReviewNotice := handlePlanStepDependentArtifactReview(ctx, workspacePath, partialUpdate.ExistingStepID, fieldChanges, readFile, writeFile, logger)
+
 		logger.Info(fmt.Sprintf("✅ Updated regular step '%s' in plan", partialUpdate.ExistingStepID))
-		return fmt.Sprintf("Successfully updated regular step '%s' in the plan", partialUpdate.ExistingStepID), nil
+		return fmt.Sprintf("Successfully updated regular step '%s' in the plan%s", partialUpdate.ExistingStepID, dependentReviewNotice), nil
 	}
 }
 
@@ -3061,8 +3395,9 @@ func createUpdateMessageSequenceStepExecutor(workspacePath string, logger logger
 				logger.Warn(fmt.Sprintf("⚠️ Failed to unlock learnings for updated message_sequence step %s: %v", partialUpdate.ExistingStepID, err))
 			}
 		}
+		dependentReviewNotice := handlePlanStepDependentArtifactReview(ctx, workspacePath, partialUpdate.ExistingStepID, fieldChanges, readFile, writeFile, logger)
 		logger.Info(fmt.Sprintf("✅ Updated message_sequence step '%s' in plan", partialUpdate.ExistingStepID))
-		return fmt.Sprintf("Successfully updated message_sequence step '%s' in the plan", partialUpdate.ExistingStepID), nil
+		return fmt.Sprintf("Successfully updated message_sequence step '%s' in the plan%s", partialUpdate.ExistingStepID, dependentReviewNotice), nil
 	}
 }
 
@@ -3224,12 +3559,14 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 		// the step's per-step config doesn't linger as an orphan after its plan
 		// entry is gone. Best-effort: a missing file or write failure is logged
 		// but doesn't fail the plan-deletion call (the plan was already written).
+		prunedConfigIDs := []string{}
 		if existingConfigs, cfgErr := readStepConfigViaFileCallback(ctx, workspacePath, readFile); cfgErr != nil {
 			logger.Warn(fmt.Sprintf("⚠️ Failed to read step_config.json for cascade-delete: %v", cfgErr))
 		} else if newConfigs, removed := pruneStepConfigsByID(existingConfigs, deletedSet); len(removed) > 0 {
 			if writeErr := writeStepConfigViaFileCallback(ctx, workspacePath, newConfigs, writeFile); writeErr != nil {
 				logger.Warn(fmt.Sprintf("⚠️ Failed to cascade-delete step_config entries %v: %v", removed, writeErr))
 			} else {
+				prunedConfigIDs = removed
 				logger.Info(fmt.Sprintf("🧹 Cascade-removed %d step_config entries: %v", len(removed), removed))
 			}
 		}
@@ -3248,8 +3585,10 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 			}
 		}
 
+		cleanupNotice := buildDeletedStepArtifactCleanupNotice(deletedIDs, prunedConfigIDs)
+
 		logger.Info(fmt.Sprintf("✅ Deleted %d steps from plan", len(deletedIDs)))
-		return fmt.Sprintf("Successfully deleted %d step(s) from the plan", len(deletedIDs)), nil
+		return fmt.Sprintf("Successfully deleted %d step(s) from the plan%s", len(deletedIDs), cleanupNotice), nil
 	}
 }
 
@@ -3393,8 +3732,10 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 			}
 		}
 
+		dependentReviewNotice := handlePlanStepDependentArtifactReview(ctx, workspacePath, partialUpdate.ExistingStepID, fieldChanges, readFile, writeFile, logger)
+
 		logger.Info(fmt.Sprintf("✅ Updated human input step '%s' in plan", partialUpdate.ExistingStepID))
-		return fmt.Sprintf("Successfully updated human input step '%s' in the plan", partialUpdate.ExistingStepID), nil
+		return fmt.Sprintf("Successfully updated human input step '%s' in the plan%s", partialUpdate.ExistingStepID, dependentReviewNotice), nil
 	}
 }
 
@@ -3499,8 +3840,9 @@ func createUpdateTodoTaskStepExecutor(workspacePath string, logger loggerv2.Logg
 		}
 
 		_ = todoTaskStep // Suppress unused variable warning
+		dependentReviewNotice := handlePlanStepDependentArtifactReview(ctx, workspacePath, partialUpdate.ExistingStepID, fieldChanges, readFile, writeFile, logger)
 		logger.Info(fmt.Sprintf("✅ Updated todo task step '%s' in plan", partialUpdate.ExistingStepID))
-		return fmt.Sprintf("Successfully updated todo task step '%s' in the plan", partialUpdate.ExistingStepID), nil
+		return fmt.Sprintf("Successfully updated todo task step '%s' in the plan%s", partialUpdate.ExistingStepID, dependentReviewNotice), nil
 	}
 }
 
@@ -3629,8 +3971,10 @@ func createUpdateRoutingStepExecutor(workspacePath string, logger loggerv2.Logge
 			}
 		}
 
+		dependentReviewNotice := handlePlanStepDependentArtifactReview(ctx, workspacePath, partialUpdate.ExistingStepID, fieldChanges, readFile, writeFile, logger)
+
 		logger.Info(fmt.Sprintf("✅ Updated routing step '%s' in plan", partialUpdate.ExistingStepID))
-		return fmt.Sprintf("Successfully updated routing step '%s' in the plan", partialUpdate.ExistingStepID), nil
+		return fmt.Sprintf("Successfully updated routing step '%s' in the plan%s", partialUpdate.ExistingStepID, dependentReviewNotice), nil
 	}
 }
 
@@ -4147,8 +4491,10 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 			}
 		}
 
+		setupNotice := buildAddedStepArtifactSetupNotice(typedStep.GetID(), stepType)
+
 		logger.Info(fmt.Sprintf("✅ Added %s step '%s' (ID: %s) to plan", stepType, typedStep.GetTitle(), typedStep.GetID()))
-		return fmt.Sprintf("Successfully added %s step '%s' (ID: %s) to the plan", stepType, typedStep.GetTitle(), typedStep.GetID()), nil
+		return fmt.Sprintf("Successfully added %s step '%s' (ID: %s) to the plan%s", stepType, typedStep.GetTitle(), typedStep.GetID(), setupNotice), nil
 	}
 }
 
@@ -4616,8 +4962,10 @@ func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger
 			StepIDs: []string{parentStepID, newRoute.RouteID},
 		}, readFile, writeFile, logger)
 
+		routeReviewNotice := handleTodoTaskRouteArtifactReview(ctx, workspacePath, parentStepID, newRoute.RouteID, "added", readFile, writeFile, logger)
+
 		logger.Info(fmt.Sprintf("✅ Added route '%s' (ID: %s) to todo task step '%s'", newRoute.RouteName, newRoute.RouteID, todoTaskStep.Title))
-		return fmt.Sprintf("Successfully added route '%s' (ID: %s) to todo task step '%s'", newRoute.RouteName, newRoute.RouteID, todoTaskStep.Title), nil
+		return fmt.Sprintf("Successfully added route '%s' (ID: %s) to todo task step '%s'%s", newRoute.RouteName, newRoute.RouteID, todoTaskStep.Title, routeReviewNotice), nil
 	}
 }
 
@@ -4757,8 +5105,10 @@ func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			StepIDs: []string{parentStepID, existingRouteID},
 		}, readFile, writeFile, logger)
 
+		routeReviewNotice := handleTodoTaskRouteArtifactReview(ctx, workspacePath, parentStepID, existingRouteID, "updated", readFile, writeFile, logger)
+
 		logger.Info(fmt.Sprintf("✅ Updated route '%s' (ID: %s) in todo task step '%s'", routeToUpdate.RouteName, existingRouteID, todoTaskStep.Title))
-		return fmt.Sprintf("Successfully updated route '%s' (ID: %s) in todo task step '%s'", routeToUpdate.RouteName, existingRouteID, todoTaskStep.Title), nil
+		return fmt.Sprintf("Successfully updated route '%s' (ID: %s) in todo task step '%s'%s", routeToUpdate.RouteName, existingRouteID, todoTaskStep.Title, routeReviewNotice), nil
 	}
 }
 
@@ -4853,8 +5203,21 @@ func createDeleteTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			DeletedSteps: deletedRouteJSON,
 		}, readFile, writeFile, logger)
 
+		deletedRouteSet := map[string]bool{deletedRouteID: true}
+		if existingConfigs, cfgErr := readStepConfigViaFileCallback(ctx, workspacePath, readFile); cfgErr != nil {
+			logger.Warn(fmt.Sprintf("⚠️ Failed to read step_config.json for route cascade-delete: %v", cfgErr))
+		} else if newConfigs, removed := pruneStepConfigsByID(existingConfigs, deletedRouteSet); len(removed) > 0 {
+			if writeErr := writeStepConfigViaFileCallback(ctx, workspacePath, newConfigs, writeFile); writeErr != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to cascade-delete route step_config entries %v: %v", removed, writeErr))
+			} else {
+				logger.Info(fmt.Sprintf("🧹 Cascade-removed %d route step_config entries: %v", len(removed), removed))
+			}
+		}
+
+		routeReviewNotice := handleTodoTaskRouteArtifactReview(ctx, workspacePath, parentStepID, deletedRouteID, "deleted", readFile, writeFile, logger)
+
 		logger.Info(fmt.Sprintf("✅ Deleted route '%s' (ID: %s) from todo task step '%s'", deletedRoute.RouteName, deletedRouteID, todoTaskStep.Title))
-		return fmt.Sprintf("Successfully deleted route '%s' (ID: %s) from todo task step '%s'", deletedRoute.RouteName, deletedRouteID, todoTaskStep.Title), nil
+		return fmt.Sprintf("Successfully deleted route '%s' (ID: %s) from todo task step '%s'%s", deletedRoute.RouteName, deletedRouteID, todoTaskStep.Title, routeReviewNotice), nil
 	}
 }
 

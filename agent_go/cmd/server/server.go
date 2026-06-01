@@ -542,12 +542,17 @@ func resolveWorkflowBrowserSessionID(workspacePath, groupName string) string {
 // buildChatBrowserConfig resolves the browser configuration from a QueryRequest
 // into the standardized BrowserConfig used by BuildBrowserInstructions.
 func buildChatBrowserConfig(req QueryRequest) browserinstructions.BrowserConfig {
+	mode := getBrowserMode(req)
 	cfg := browserinstructions.BrowserConfig{
 		CdpPort: getCdpPort(req),
+		Mode:    mode,
 	}
 	hasBrowserAccess := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
-	if hasBrowserAccess {
+	if hasBrowserAccess || mode == "headless" || mode == "cdp" {
 		cfg.HasAgentBrowser = true
+	}
+	if mode == "playwright" {
+		cfg.HasPlaywright = true
 	}
 	for _, s := range req.EnabledServers {
 		switch s {
@@ -556,6 +561,153 @@ func buildChatBrowserConfig(req QueryRequest) browserinstructions.BrowserConfig 
 		}
 	}
 	return cfg
+}
+
+func (api *StreamingAPI) withEffectiveBrowserMode(ctx context.Context, req QueryRequest, sessionID string) QueryRequest {
+	if mode := strings.ToLower(strings.TrimSpace(req.BrowserMode)); mode != "" && mode != "none" {
+		return req
+	}
+	if sessionMode := strings.ToLower(strings.TrimSpace(common.GetSessionBrowserMode(sessionID))); sessionMode != "" && sessionMode != "none" {
+		req.BrowserMode = sessionMode
+		return req
+	}
+
+	workspacePath := strings.TrimSpace(req.SelectedFolder)
+	if workspacePath == "" && req.PresetQueryID != "" && api != nil {
+		if resolved, err := api.resolveWorkspacePathFromPreset(ctx, req.PresetQueryID); err == nil {
+			workspacePath = strings.TrimSpace(resolved)
+		}
+	}
+	if workspacePath == "" {
+		return req
+	}
+	if caps, found, err := LoadManifestForExecution(ctx, workspacePath); err == nil && found {
+		mode := strings.ToLower(strings.TrimSpace(caps.BrowserMode))
+		if mode != "" && mode != "none" {
+			req.BrowserMode = mode
+			common.SetSessionBrowserMode(sessionID, mode)
+		}
+	}
+	return req
+}
+
+func applyMultiAgentCapabilitiesToRequest(req *QueryRequest, caps WorkflowCapabilities) {
+	if req == nil {
+		return
+	}
+
+	req.EnabledServers = append([]string(nil), caps.SelectedServers...)
+	req.Servers = nil
+	req.SelectedTools = append([]string(nil), caps.SelectedTools...)
+	req.SelectedSkills = append([]string(nil), caps.SelectedSkills...)
+	req.UseCodeExecutionMode = caps.UseCodeExecutionMode
+	req.BrowserMode = strings.ToLower(strings.TrimSpace(caps.BrowserMode))
+	if req.BrowserMode == "" {
+		req.BrowserMode = "none"
+	}
+
+	enableBrowser := req.BrowserMode == "headless" || req.BrowserMode == "cdp"
+	req.EnableBrowserAccess = &enableBrowser
+
+	if caps.SelectedGlobalSecretNames != nil {
+		copied := append([]string(nil), (*caps.SelectedGlobalSecretNames)...)
+		req.SelectedGlobalSecrets = &copied
+	}
+	if cfg := queryLLMConfigFromPreset(caps.LLMConfig); cfg != nil {
+		req.LLMConfig = cfg
+	}
+}
+
+func (api *StreamingAPI) applySavedMultiAgentChatConfig(ctx context.Context, req *QueryRequest, userID string) {
+	if req == nil || !isToolBackedChatMode(req.AgentMode) || strings.EqualFold(strings.TrimSpace(req.TriggeredBy), "cron") {
+		return
+	}
+	if userID == "" {
+		userID = "default"
+	}
+	cfg, found, err := ReadMultiAgentChatConfig(ctx, userID)
+	if err != nil {
+		log.Printf("[MULTIAGENT_CONFIG] Failed to load saved chat capabilities for user %s: %v", userID, err)
+		return
+	}
+	if !found || cfg == nil {
+		return
+	}
+
+	applyMultiAgentCapabilitiesToRequest(req, cfg.Capabilities)
+	if len(cfg.Capabilities.SelectedSecrets) > 0 {
+		req.DecryptedSecrets = api.loadSelectedSecrets(ctx, userID, "", cfg.Capabilities.SelectedSecrets)
+	}
+	log.Printf("[MULTIAGENT_CONFIG] Applied saved chat capabilities for user %s: servers=%d tools=%d skills=%d secrets=%d browser_mode=%q code_execution=%v llm=%t",
+		userID,
+		len(req.EnabledServers),
+		len(req.SelectedTools),
+		len(req.SelectedSkills),
+		len(req.DecryptedSecrets),
+		req.BrowserMode,
+		req.UseCodeExecutionMode,
+		req.LLMConfig != nil,
+	)
+}
+
+func queryLLMConfigFromPreset(preset *workflowtypes.PresetLLMConfig) *orchestrator.LLMConfig {
+	if preset == nil {
+		return nil
+	}
+	primary := presetPrimaryLLMForChat(preset)
+	if primary == nil || strings.TrimSpace(primary.Provider) == "" || strings.TrimSpace(primary.ModelID) == "" {
+		return nil
+	}
+	cfg := &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{
+			Provider: primary.Provider,
+			ModelID:  primary.ModelID,
+			Options:  primary.Options,
+		},
+	}
+	for _, fallback := range primary.Fallbacks {
+		if strings.TrimSpace(fallback.Provider) == "" || strings.TrimSpace(fallback.ModelID) == "" {
+			continue
+		}
+		cfg.Fallbacks = append(cfg.Fallbacks, orchestrator.LLMModel{
+			Provider: fallback.Provider,
+			ModelID:  fallback.ModelID,
+			Options:  fallback.Options,
+		})
+	}
+	return cfg
+}
+
+func presetPrimaryLLMForChat(preset *workflowtypes.PresetLLMConfig) *workflowtypes.AgentLLMConfig {
+	if preset == nil {
+		return nil
+	}
+	for _, candidate := range []*workflowtypes.AgentLLMConfig{
+		preset.PhaseLLM,
+		preset.LearningLLM,
+	} {
+		if candidate != nil && strings.TrimSpace(candidate.Provider) != "" && strings.TrimSpace(candidate.ModelID) != "" {
+			return candidate
+		}
+	}
+	if preset.TieredConfig != nil {
+		for _, candidate := range []*workflowtypes.AgentLLMConfig{
+			preset.TieredConfig.Tier1,
+			preset.TieredConfig.Tier2,
+			preset.TieredConfig.Tier3,
+		} {
+			if candidate != nil && strings.TrimSpace(candidate.Provider) != "" && strings.TrimSpace(candidate.ModelID) != "" {
+				return candidate
+			}
+		}
+	}
+	if strings.TrimSpace(preset.Provider) != "" && strings.TrimSpace(preset.ModelID) != "" {
+		return &workflowtypes.AgentLLMConfig{
+			Provider: preset.Provider,
+			ModelID:  preset.ModelID,
+		}
+	}
+	return nil
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -2372,6 +2524,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// every downstream branch sees the canonical name.
 	req.AgentMode = normalizeAgentMode(req.AgentMode)
 
+	// Extract sessionID from header/cookie or fallback to queryID
+	sessionID := r.Header.Get("X-Session-ID")
+	if sessionID == "" {
+		sessionID = queryID // fallback: use queryID as sessionID if not provided
+	}
+
+	// Get current user ID for session isolation
+	currentUserID := GetUserIDFromContext(r.Context())
+	queryLogCtx := requestLogContext(r.Context(), req, sessionID)
+	logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] HTTP handler: currentUserID=%q (from auth context)", currentUserID)
+
+	api.applySavedMultiAgentChatConfig(r.Context(), &req, currentUserID)
+
 	// Default maxTurns only when omitted (0). Negative values are preserved to mean "no turn cap".
 	// Multi-agent chat and the workflow builder run uncapped by default.
 	isWorkflowBuilderPhase := req.AgentMode == "workflow_phase" && req.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder
@@ -2422,17 +2587,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Convert server array to comma-separated string for agent compatibility
 		serverList = strings.Join(selectedServers, ",")
 	}
-
-	// Extract sessionID from header/cookie or fallback to queryID
-	sessionID := r.Header.Get("X-Session-ID")
-	if sessionID == "" {
-		sessionID = queryID // fallback: use queryID as sessionID if not provided
-	}
-
-	// Get current user ID for session isolation
-	currentUserID := GetUserIDFromContext(r.Context())
-	queryLogCtx := requestLogContext(r.Context(), req, sessionID)
-	logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] HTTP handler: currentUserID=%q (from auth context)", currentUserID)
 
 	if !enforceWorkflowQueryAccess(r, &req) {
 		logfWithContext(queryLogCtx, "[WORKFLOW_PERMISSION] Denied workflow query: agent_mode=%s phase=%s workshop_mode=%s", req.AgentMode, req.PhaseID, func() string {
@@ -2779,7 +2933,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				req.DecryptedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, manifestWorkspacePath, caps.SelectedSecrets)
 
 				// Browser mode from manifest
-				if caps.BrowserMode != "" && caps.BrowserMode != "none" && req.BrowserMode == "" {
+				if caps.BrowserMode != "" && caps.BrowserMode != "none" && (req.BrowserMode == "" || req.BrowserMode == "none") {
 					req.BrowserMode = caps.BrowserMode
 				}
 			}
@@ -6856,6 +7010,8 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	// Resolve conditional folder-guard grants for the sub-agent once.
 	// Used by both nested scopes below (prompt assembly + workspace tool folder guard).
 	subResolvedGrants := resolveConditionalGrants(parentReq)
+	browserReq := api.withEffectiveBrowserMode(ctx, parentReq, sessionID)
+	subBrowserCfg := buildChatBrowserConfig(browserReq)
 
 	// Add event observers to sub-agent so its events appear in the UI and
 	// its token usage lands in the global cost ledger.
@@ -6935,7 +7091,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// [BROWSER] Add browser instructions using standardized builder (same as parent chat agent).
 		// Sub-agents need their own transformer registration because each Agent instance has
 		// its own toolArgTransformers map — the parent's transformer doesn't propagate.
-		subBrowserCfg := buildChatBrowserConfig(parentReq)
 		if subBrowserPrompt := browserinstructions.BuildBrowserInstructions(subBrowserCfg); subBrowserPrompt != "" {
 			underlyingAgent.AppendSystemPrompt(subBrowserPrompt)
 			log.Printf("[BROWSER] Added browser instructions to sub-agent (playwright=%v, agent-browser=%v, cdp=%v)",
@@ -6943,9 +7098,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 
 		// Register file path transformer for browser file uploads on sub-agent
-		hasBrowserAccess := parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess
-		hasPlaywright := false
-		for _, s := range parentReq.EnabledServers {
+		hasBrowserAccess := subBrowserCfg.HasAgentBrowser
+		hasPlaywright := subBrowserCfg.HasPlaywright
+		for _, s := range browserReq.EnabledServers {
 			if s == "playwright" {
 				hasPlaywright = true
 			}
@@ -7087,9 +7242,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 
 		// Register browser tools if enabled
-		if parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess {
+		if subBrowserCfg.HasAgentBrowser {
 			browserTools := virtualtools.CreateWorkspaceBrowserTools()
-			browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(parentReq))
+			browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(browserReq))
 			browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
 			browserExtraFolders := append([]string{}, subResolvedGrants.WriteFolders...)

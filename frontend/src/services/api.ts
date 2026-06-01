@@ -71,6 +71,7 @@ import type {
   TerminalSnapshot,
   StartRestoredTerminalRequest,
   StartRestoredTerminalResponse,
+  WorkflowCapabilities,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -830,6 +831,16 @@ export const agentApi = {
   // Get server capabilities
   getCapabilities: async (): Promise<CapabilitiesResponse> => {
     const response = await api.get('/api/capabilities')
+    return response.data
+  },
+
+  getMultiAgentChatCapabilities: async (): Promise<{ capabilities: WorkflowCapabilities; updated_at?: string }> => {
+    const response = await api.get('/api/multiagent/chat-capabilities')
+    return response.data
+  },
+
+  saveMultiAgentChatCapabilities: async (capabilities: WorkflowCapabilities): Promise<{ success: boolean; user_id: string }> => {
+    const response = await api.post('/api/multiagent/chat-capabilities', capabilities)
     return response.data
   },
 

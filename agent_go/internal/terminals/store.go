@@ -367,7 +367,14 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 	preserveEphemeralStatusFields(&snapshot.Status, previousStatus)
 	if _, forced := s.forcedInactive[terminalID]; !forced {
 		if snapshot.Active {
-			snapshot.State = terminalStateFromContent(content, true)
+			if terminalCanCompleteFromCapturedIdle(snapshot) && terminalContentLooksIdle(content) {
+				snapshot.Active = false
+				snapshot.State = terminalStateFromContent(content, false)
+				snapshot.ClosesAt = nil
+				snapshot.RetentionSeconds = 0
+			} else {
+				snapshot.State = terminalStateFromContent(content, true)
+			}
 		} else if snapshot.State == "stale" {
 			snapshot.Active = terminalStateFromContent(content, true) == "running" && !terminalContentLooksIdle(content)
 			snapshot.State = terminalStateFromContent(content, snapshot.Active)
@@ -394,6 +401,18 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 	}
 	s.byID[terminalID] = snapshot
 	return snapshot, true
+}
+
+func terminalCanCompleteFromCapturedIdle(snapshot Snapshot) bool {
+	if !terminalUsesIdleTimeout(snapshot) || !boundedTerminalCanSelfComplete(snapshot) {
+		return false
+	}
+	if snapshot.ExecutionKind == "main_agent" || strings.HasPrefix(snapshot.OwnerID, "main:") {
+		return false
+	}
+	return snapshot.ExecutionKind == "workflow_step" ||
+		snapshot.Scope == "workflow_step" ||
+		strings.HasPrefix(snapshot.OwnerID, "workflow-step:")
 }
 
 func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metadata map[string]interface{}, content string, chunkIndex int) {

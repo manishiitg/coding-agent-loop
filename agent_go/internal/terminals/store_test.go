@@ -1579,6 +1579,81 @@ func TestStoreRefreshContentDoesNotRefreshUpdatedAtWhenPaneUnchanged(t *testing.
 	}
 }
 
+func TestStoreRefreshContentCompletesCapturedIdleWorkflowStep(t *testing.T) {
+	store := NewStore()
+	terminalID := "session-1:workflow-step:exec-step-check-reddit-1:step-check-reddit"
+	busyScreen := `╭─────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                        │
+╰─────────────────────────────────────────────────────────╯
+
+⠙ Generating...`
+	idleScreen := `╭─────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                        │
+╰─────────────────────────────────────────────────────────╯
+
+─ Worked for 7m 13s ──────────────────────────────────────
+
+› Use /skills to list available skills`
+
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"workflow-step:exec-step-check-reddit-1:step-check-reddit",
+		busyScreen,
+		10,
+		map[string]interface{}{
+			"execution_kind":  "workflow_step",
+			"scope":           "workflow_step",
+			"tmux_session":    "mlp-codex-cli-int-test",
+			"provider":        "codex-cli",
+			"current_step_id": "step-check-reddit",
+		},
+		time.Now(),
+	))
+
+	refreshed, ok := store.RefreshContent(terminalID, idleScreen)
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if refreshed.Active {
+		t.Fatalf("captured idle workflow-step pane should become inactive")
+	}
+	if refreshed.State != "completed" {
+		t.Fatalf("state = %q, want completed", refreshed.State)
+	}
+}
+
+func TestStoreRefreshContentDoesNotCompleteCapturedIdleMainAgent(t *testing.T) {
+	store := NewStore()
+	terminalID := "session-1:main:session-1"
+	idleScreen := `╭─────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                        │
+╰─────────────────────────────────────────────────────────╯
+
+› Use /skills to list available skills`
+
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		"⠙ Generating...",
+		10,
+		map[string]interface{}{
+			"execution_kind": "main_agent",
+			"tmux_session":   "mlp-codex-cli-main-test",
+			"provider":       "codex-cli",
+		},
+		time.Now(),
+	))
+
+	refreshed, ok := store.RefreshContent(terminalID, idleScreen)
+	if !ok {
+		t.Fatalf("expected terminal snapshot")
+	}
+	if !refreshed.Active {
+		t.Fatalf("captured idle main-agent pane should remain active")
+	}
+	if refreshed.State != "running" {
+		t.Fatalf("state = %q, want running", refreshed.State)
+	}
+}
+
 func TestStoreRepeatedIdenticalChunksBecomeCompletedAfterFiveMinutes(t *testing.T) {
 	store := NewStore()
 	oldUpdate := time.Now().Add(-(terminalInactiveAfter + time.Second))

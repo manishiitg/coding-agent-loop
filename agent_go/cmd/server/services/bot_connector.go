@@ -16,6 +16,7 @@ import (
 
 	"mcp-agent-builder-go/agent_go/pkg/chathistory"
 	"mcp-agent-builder-go/agent_go/pkg/skills"
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
 // newBotSessionID mints a session ID for a bot-initiated chat. Encoding the
@@ -57,6 +58,70 @@ func botMessageLogPreview(message string) string {
 		preview = string(runes[:maxPreviewRunes]) + "..."
 	}
 	return preview
+}
+
+func multiAgentChatLLMConfigForRequest(preset *workflowtypes.PresetLLMConfig) map[string]interface{} {
+	if preset == nil {
+		return nil
+	}
+	primary := multiAgentChatPrimaryLLM(preset)
+	if primary == nil || strings.TrimSpace(primary.Provider) == "" || strings.TrimSpace(primary.ModelID) == "" {
+		return nil
+	}
+	result := map[string]interface{}{
+		"primary": map[string]interface{}{
+			"provider": primary.Provider,
+			"model_id": primary.ModelID,
+		},
+	}
+	if len(primary.Fallbacks) > 0 {
+		fallbacks := make([]map[string]interface{}, 0, len(primary.Fallbacks))
+		for _, fallback := range primary.Fallbacks {
+			if strings.TrimSpace(fallback.Provider) == "" || strings.TrimSpace(fallback.ModelID) == "" {
+				continue
+			}
+			fallbacks = append(fallbacks, map[string]interface{}{
+				"provider": fallback.Provider,
+				"model_id": fallback.ModelID,
+			})
+		}
+		if len(fallbacks) > 0 {
+			result["fallbacks"] = fallbacks
+		}
+	}
+	return result
+}
+
+func multiAgentChatPrimaryLLM(preset *workflowtypes.PresetLLMConfig) *workflowtypes.AgentLLMConfig {
+	if preset == nil {
+		return nil
+	}
+	for _, candidate := range []*workflowtypes.AgentLLMConfig{
+		preset.PhaseLLM,
+		preset.LearningLLM,
+	} {
+		if candidate != nil && strings.TrimSpace(candidate.Provider) != "" && strings.TrimSpace(candidate.ModelID) != "" {
+			return candidate
+		}
+	}
+	if preset.TieredConfig != nil {
+		for _, candidate := range []*workflowtypes.AgentLLMConfig{
+			preset.TieredConfig.Tier1,
+			preset.TieredConfig.Tier2,
+			preset.TieredConfig.Tier3,
+		} {
+			if candidate != nil && strings.TrimSpace(candidate.Provider) != "" && strings.TrimSpace(candidate.ModelID) != "" {
+				return candidate
+			}
+		}
+	}
+	if strings.TrimSpace(preset.Provider) != "" && strings.TrimSpace(preset.ModelID) != "" {
+		return &workflowtypes.AgentLLMConfig{
+			Provider: preset.Provider,
+			ModelID:  preset.ModelID,
+		}
+	}
+	return nil
 }
 
 // ChannelRoute maps a Slack channel to a specific workflow, including the workspace path
@@ -2351,10 +2416,16 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 		if len(savedCaps.SelectedTools) > 0 {
 			req["selected_tools"] = savedCaps.SelectedTools
 		}
+		if savedCaps.SelectedGlobalSecretNames != nil {
+			req["selected_global_secrets"] = savedCaps.SelectedGlobalSecretNames
+		}
 		if savedCaps.BrowserMode != "" {
 			req["browser_mode"] = savedCaps.BrowserMode
 		}
 		req["use_code_execution_mode"] = savedCaps.UseCodeExecutionMode
+		if llmConfig := multiAgentChatLLMConfigForRequest(savedCaps.LLMConfig); llmConfig != nil {
+			req["llm_config"] = llmConfig
+		}
 		log.Printf("[BOT_MANAGER] Loaded saved chat capabilities for user %s: skills=%d servers=%d", userID, len(savedCaps.SelectedSkills), len(savedCaps.SelectedServers))
 	} else {
 		// No saved config — previous defaults: no MCP servers, auto-discover all skills
@@ -2387,7 +2458,12 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 		if apiKeys, exists, err := LoadProviderKeys(context.Background(), m.workspaceURL); err != nil {
 			log.Printf("[BOT_MANAGER] Warning: failed to load provider keys from workspace: %v", err)
 		} else if exists && len(apiKeys) > 0 {
-			req["llm_config"] = map[string]interface{}{"api_keys": apiKeys}
+			llmConfig, _ := req["llm_config"].(map[string]interface{})
+			if llmConfig == nil {
+				llmConfig = map[string]interface{}{}
+			}
+			llmConfig["api_keys"] = apiKeys
+			req["llm_config"] = llmConfig
 			log.Printf("[BOT_MANAGER] Loaded %d provider API keys from workspace file", len(apiKeys))
 		}
 	}

@@ -175,10 +175,46 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           ?.map(secretIdOrName => useSecretsStore.getState().getSecret(secretIdOrName)?.name || secretIdOrName)
           .filter((n): n is string => !!n) || []
 
-        // Only manifest-based workflow saves are supported
+        // Multi-agent chat has a single file-backed capability profile, parallel
+        // to workflow.json capabilities rather than DB presets.
         if (agentMode !== 'workflow' || !selectedFolder?.filepath) {
-          console.warn('[PRESET_STORE] savePreset called for non-workflow mode, ignoring')
-          return null
+          await agentApi.saveMultiAgentChatCapabilities({
+            selected_servers: selectedServers || [],
+            selected_tools: toolsForBackend,
+            selected_skills: selectedSkills || [],
+            selected_secrets: secretNamesForBackend,
+            selected_global_secret_names: globalSecretNamesForBackend,
+            browser_mode: browserMode || 'none',
+            use_code_execution_mode: useCodeExecutionMode ?? false,
+            llm_config: llmConfig || undefined,
+          })
+
+          const savedChatPreset: CustomPreset = {
+            id: 'multiagent-chat-config',
+            label: label || 'Multi-agent chat',
+            query,
+            createdAt: Date.now(),
+            agentMode: 'multi-agent',
+            selectedServers: selectedServers || [],
+            selectedTools: toolsForBackend,
+            selectedSkills: selectedSkills || [],
+            selectedSecrets: secretNamesForBackend,
+            selectedGlobalSecretNames: globalSecretNamesForBackend,
+            browserMode: (browserMode || 'none') as CustomPreset['browserMode'],
+            useCodeExecutionMode: useCodeExecutionMode ?? false,
+            llmConfig: llmConfig || undefined,
+          }
+          set(state => ({
+            activePresetIds: {
+              ...state.activePresetIds,
+              'multi-agent': savedChatPreset.id,
+            },
+            currentPresetServers: savedChatPreset.selectedServers || [],
+            currentPresetTools: savedChatPreset.selectedTools || [],
+            currentQuery: query || '',
+          }))
+          useSecretsStore.getState().setSelectedGlobalSecretNames(globalSecretNamesForBackend)
+          return savedChatPreset
         }
 
         try {

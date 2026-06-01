@@ -306,6 +306,61 @@ func TestStripInlineTabFromOpenArgs(t *testing.T) {
 	}
 }
 
+func TestNormalizeOpenCommandArgs(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantTab     string
+		wantCleaned []string
+		wantOK      bool
+	}{
+		{
+			name:        "url only",
+			args:        []string{"https://example.com"},
+			wantCleaned: []string{"https://example.com"},
+		},
+		{
+			name:        "inline tab",
+			args:        []string{"tab", "t1", "https://example.com"},
+			wantTab:     "t1",
+			wantCleaned: []string{"https://example.com"},
+			wantOK:      true,
+		},
+		{
+			name:        "redundant command then inline tab",
+			args:        []string{"open", "tab", "t1", "https://example.com"},
+			wantTab:     "t1",
+			wantCleaned: []string{"https://example.com"},
+			wantOK:      true,
+		},
+		{
+			name:        "redundant command then url",
+			args:        []string{"open", "https://example.com"},
+			wantCleaned: []string{"https://example.com"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotTab, gotCleaned, gotOK, err := normalizeOpenCommandArgs("open", tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gotTab != tt.wantTab || gotOK != tt.wantOK {
+				t.Fatalf("tab/ok = %q/%v, want %q/%v", gotTab, gotOK, tt.wantTab, tt.wantOK)
+			}
+			if len(gotCleaned) != len(tt.wantCleaned) {
+				t.Fatalf("cleaned len = %d, want %d (%v)", len(gotCleaned), len(tt.wantCleaned), gotCleaned)
+			}
+			for i := range tt.wantCleaned {
+				if gotCleaned[i] != tt.wantCleaned[i] {
+					t.Fatalf("cleaned[%d] = %q, want %q", i, gotCleaned[i], tt.wantCleaned[i])
+				}
+			}
+		})
+	}
+}
+
 func TestExtractCDPArg(t *testing.T) {
 	info, cleaned, err := extractCDPArg([]string{"--cdp", "http://localhost:9222", "tab", "t1", "-i"})
 	if err != nil {

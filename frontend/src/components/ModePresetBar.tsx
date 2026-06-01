@@ -466,7 +466,7 @@ export const ModePresetBar: React.FC = () => {
         return
       }
 
-      // Multi-agent mode: save to DB
+      // Multi-agent mode: save the user's chat capability profile.
       const savedPreset = await savePreset(
         label,
         query,
@@ -505,7 +505,7 @@ export const ModePresetBar: React.FC = () => {
           : error instanceof Error
             ? error.message
             : 'Unknown error'
-      useChatStore.getState().addToast(`Failed to save workflow: ${detail}`, 'error')
+      useChatStore.getState().addToast(`Failed to save configuration: ${detail}`, 'error')
     }
   }, [editingPreset, savePreset, handlePresetClick])
 

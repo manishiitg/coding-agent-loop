@@ -261,21 +261,18 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	cmdArgs = append(cmdArgs, command)
 
 	openTabArg := ""
-	if isCdpMode && isBrowserOpenCommand(command) {
-		if tab, cleaned, ok, stripErr := stripInlineTabFromOpenArgs(argsArray); stripErr != nil {
+	commandInputArgs := argsWithoutCDP
+	if isBrowserOpenCommand(command) {
+		if tab, cleaned, ok, stripErr := normalizeOpenCommandArgs(command, argsWithoutCDP); stripErr != nil {
 			return "", stripErr
 		} else if ok {
 			openTabArg = tab
-			argsArray = cleaned
+			commandInputArgs = cleaned
 			log.Printf("[BROWSER] stripped inline tab %q from %q args; agent-browser open receives URL-only args", tab, command)
 		}
 	}
-	commandInputArgs := argsArray
-	if isCdpMode {
-		commandInputArgs = argsWithoutCDP
-	}
 	tabArgs := commandInputArgs
-	commandArgs := argsArray
+	commandArgs := commandInputArgs
 	inlineCDPTab := ""
 	if isCdpMode {
 		var inlineErr error

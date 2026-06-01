@@ -15,6 +15,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
 func workspaceAPIURL() string {
@@ -181,12 +183,14 @@ func LoadDelegationTierConfig(ctx context.Context, workspaceURL string) (map[str
 // WorkflowCapabilities so the same file round-trips; the services package keeps
 // its own struct to avoid importing the server package.
 type MultiAgentChatCapabilities struct {
-	SelectedServers      []string `json:"selected_servers"`
-	SelectedTools        []string `json:"selected_tools"`
-	SelectedSkills       []string `json:"selected_skills"`
-	SelectedSecrets      []string `json:"selected_secrets"`
-	BrowserMode          string   `json:"browser_mode"`
-	UseCodeExecutionMode bool     `json:"use_code_execution_mode"`
+	SelectedServers           []string                       `json:"selected_servers"`
+	SelectedTools             []string                       `json:"selected_tools"`
+	SelectedSkills            []string                       `json:"selected_skills"`
+	SelectedSecrets           []string                       `json:"selected_secrets"`
+	SelectedGlobalSecretNames *[]string                      `json:"selected_global_secret_names"`
+	BrowserMode               string                         `json:"browser_mode"`
+	UseCodeExecutionMode      bool                           `json:"use_code_execution_mode"`
+	LLMConfig                 *workflowtypes.PresetLLMConfig `json:"llm_config,omitempty"`
 }
 
 // LoadMultiAgentChatCapabilities reads the user's saved multi-agent chat

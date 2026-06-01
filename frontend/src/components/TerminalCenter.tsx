@@ -77,6 +77,7 @@ const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
 const INACTIVE_FALLBACK_SECONDS = 120
 const EMPTY_TERMINAL_RESPONSE_GRACE_POLLS = 10
 const TERMINAL_POLL_INTERVAL_MS = 3000
+const TERMINAL_ACTIVE_RAIL_PROBE_LIMIT = 8
 const TERMINAL_FAST_POLL_INTERVAL_MS = 300
 const TERMINAL_FAST_POLL_DURATION_MS = 7000
 
@@ -3268,6 +3269,18 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
   const isSelectedTerminalStreaming = !!selectedTerminalView?.active && (selectedTerminalView.state === 'running' || selectedTerminalView.state === 'idle' || selectedTerminalView.state === undefined)
   const selectedTerminalSpinner = useSpinnerFrame(isSelectedTerminalStreaming)
 
+  const activeRailTmuxProbeTargets = useMemo(
+    () => groupedTerminals.orderedTerminals
+      .filter(terminal =>
+        terminalState(terminal) === 'running' &&
+        !!terminal.tmux_session &&
+        terminal.terminal_id !== selectedTerminalView?.terminal_id &&
+        !isMainAgentTerminal(terminal)
+      )
+      .slice(0, TERMINAL_ACTIVE_RAIL_PROBE_LIMIT),
+    [groupedTerminals.orderedTerminals, selectedTerminalView?.terminal_id],
+  )
+
   useEffect(() => {
     if (!selectedTerminal) {
       return
@@ -3300,6 +3313,56 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       cancelled = true
     }
   }, [selectedTerminal?.terminal_id, selectedTerminal?.chunk_index, selectedTerminal?.updated_at, selectedTerminalKey, cacheTerminalDetail])
+
+  // The rail/list poll is metadata-only. Without a screen probe, a workflow-step
+  // tmux pane that finished without a fresh streaming_end can keep showing the
+  // spinner until the user clicks it. Probe visible active step panes in the
+  // background so their state can settle to completed in the tree.
+  useEffect(() => {
+    if (activeRailTmuxProbeTargets.length === 0) return
+    let cancelled = false
+    let inFlight = false
+
+    const probeActiveRailTerminals = () => {
+      if (cancelled || inFlight) return
+      inFlight = true
+      void Promise.all(activeRailTmuxProbeTargets.map(async terminal => {
+        const detailOptions = terminalTmuxDetailOptions(terminal)
+        if (!detailOptions) return null
+        try {
+          return await agentApi.getTerminal(terminal.terminal_id, detailOptions)
+        } catch {
+          return null
+        }
+      })).then(details => {
+        if (cancelled) return
+        let applied = false
+        for (const detail of details) {
+          if (!detail) continue
+          const current = terminalsRef.current.find(terminal => terminal.terminal_id === detail.terminal_id)
+          const changed = !current ||
+            current.active !== detail.active ||
+            current.state !== detail.state ||
+            current.chunk_index !== detail.chunk_index ||
+            current.updated_at !== detail.updated_at
+          if (changed) {
+            cacheTerminalDetail(detail)
+            applyTerminalSnapshotUpdate(detail)
+            applied = true
+          }
+        }
+        if (applied) void fetchTerminals()
+      }).finally(() => {
+        inFlight = false
+      })
+    }
+
+    const interval = window.setInterval(probeActiveRailTerminals, TERMINAL_POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [activeRailTmuxProbeTargets, applyTerminalSnapshotUpdate, cacheTerminalDetail, fetchTerminals])
 
   // Tmux panes can change without a new streaming event: prompt text is typed
   // directly into tmux, and some CLIs redraw their screen in-place. Probe the

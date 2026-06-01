@@ -399,6 +399,15 @@ func normalizeAgentBrowserCommandArgs(command string, args []string) []string {
 	return cleaned
 }
 
+func normalizeOpenCommandArgs(command string, args []string) (tab string, cleaned []string, ok bool, err error) {
+	cleaned = stripRedundantCommandArg(command, args)
+	tab, cleaned, ok, err = stripInlineTabFromOpenArgs(cleaned)
+	if err != nil || ok {
+		return tab, cleaned, ok, err
+	}
+	return "", cleaned, false, nil
+}
+
 func stripRedundantCommandArg(command string, args []string) []string {
 	command = strings.TrimSpace(command)
 	if command == "" || len(args) <= 1 {

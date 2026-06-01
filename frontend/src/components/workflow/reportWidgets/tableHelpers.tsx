@@ -10,6 +10,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { formatAuto, formatNamed, type FormatResult } from '../../../lib/reportFormatters'
 import type { ReportFormatterName, ReportWidget } from '../../../services/api-types'
+import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
+import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 
 // Default categorical palette. Widgets override via `colors:` / `colorsDark:`.
 // Keep theme-driven so report charts follow the active app palette.
@@ -149,6 +151,59 @@ export function isURLString(value: string): boolean {
   return /^https?:\/\//i.test(value)
 }
 
+// A workspace-file link in report data. Two accepted shapes in a cell value:
+//   - markdown:  [label](file:relative/or/abs/path)
+//   - bare:      file:relative/or/abs/path   (label defaults to the basename)
+// The path is workspace-relative (resolved against the report's workspacePath)
+// or an absolute path already under the workspace docs root.
+const fileMarkdownLinkRe = /^\[([^\]]+)\]\(file:([^)]+)\)$/
+const fileBareRe = /^file:(\S.*)$/
+
+export function parseFileLink(value: unknown): { label: string; filePath: string } | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  const md = trimmed.match(fileMarkdownLinkRe)
+  if (md) {
+    return { label: md[1].trim(), filePath: md[2].trim() }
+  }
+  const bare = trimmed.match(fileBareRe)
+  if (bare) {
+    const p = bare[1].trim()
+    const base = p.split('/').filter(Boolean).pop() || p
+    return { label: base, filePath: p }
+  }
+  return null
+}
+
+// Resolve a cell's file path against the report's workspace path. Absolute paths
+// (already rooted at or under the workspace) pass through; relative paths are
+// joined under the workspace so the file viewer can locate them.
+export function resolveReportFilePath(filePath: string, workspacePath: string): string {
+  const p = filePath.trim()
+  let ws = (workspacePath || '').replace(/\/+$/, '')
+  if (!ws) {
+    ws = activeWorkflowWorkspacePath()
+  }
+  if (!ws) return p
+  if (p === ws || p.startsWith(ws + '/') || p.startsWith('/')) return p
+  return `${ws}/${p.replace(/^\/+/, '')}`
+}
+
+// activeWorkflowWorkspacePath returns the folder path of the currently-active
+// workflow preset, used to resolve workspace-relative file links in report cells
+// when the widget didn't thread an explicit workspacePath.
+function activeWorkflowWorkspacePath(): string {
+  try {
+    const ps = useGlobalPresetStore.getState()
+    const id = ps.activePresetIds?.workflow
+    if (!id) return ''
+    const preset = ps.workflowPresets?.find(p => p.id === id)
+    return (preset?.selectedFolder?.filepath || '').replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
 export function stringifyTableValue(value: unknown): string {
   if (value == null) return '—'
   if (Array.isArray(value)) {
@@ -179,6 +234,7 @@ export function stringifyTableValue(value: unknown): string {
 
 export function formatTableValue(value: unknown, preset?: ReportFormatterName): FormatResult & {
   href?: string
+  filePath?: string
   rawText: string
   prefersBlock: boolean
 } {
@@ -192,6 +248,16 @@ export function formatTableValue(value: unknown, preset?: ReportFormatterName): 
   }
 
   const rawText = stringifyTableValue(value)
+  const fileLink = parseFileLink(value)
+  if (fileLink) {
+    return {
+      text: fileLink.label,
+      filePath: fileLink.filePath,
+      isNumeric: false,
+      rawText: fileLink.label,
+      prefersBlock: false,
+    }
+  }
   if (typeof value === 'string' && isURLString(value)) {
     return {
       text: value,
@@ -219,10 +285,27 @@ export function formatTableValue(value: unknown, preset?: ReportFormatterName): 
   }
 }
 
-export function renderTableValueContent(formatted: {
-  text: string
-  href?: string
-}) {
+export function renderTableValueContent(
+  formatted: {
+    text: string
+    href?: string
+    filePath?: string
+  },
+  workspacePath?: string,
+) {
+  if (formatted.filePath) {
+    const full = resolveReportFilePath(formatted.filePath, workspacePath || '')
+    return (
+      <button
+        type="button"
+        title={full}
+        onClick={() => openReportFileInViewer(full)}
+        className="inline-flex items-center gap-1 text-primary underline underline-offset-2 break-all hover:text-primary/80"
+      >
+        {formatted.text}
+      </button>
+    )
+  }
   if (formatted.href) {
     return (
       <a
@@ -236,6 +319,15 @@ export function renderTableValueContent(formatted: {
     )
   }
   return formatted.text
+}
+
+// openReportFileInViewer opens a workspace file in the in-app file viewer — the
+// same panel that opens when a file is clicked in the workspace tree.
+export function openReportFileInViewer(fullPath: string) {
+  const ws = useWorkspaceStore.getState()
+  ws.setSelectedFile({ name: fullPath.split('/').filter(Boolean).pop() || fullPath, path: fullPath })
+  ws.setShowFileContent(true)
+  ws.expandFoldersForFile?.(fullPath)
 }
 
 export function collectVisibleColumns(rows: Array<Record<string, unknown>>, hidden: Set<string>): string[] {

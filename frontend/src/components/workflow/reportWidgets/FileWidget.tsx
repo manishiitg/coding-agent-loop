@@ -4,6 +4,7 @@ import type { PlannerFile, ReportFileListFormat, ReportFileRenderFormat, ReportW
 import { agentApi, workspaceApi } from '../../../services/api'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 import { WidgetError, WidgetHeader } from './shared'
+import { openReportFileInViewer } from './tableHelpers'
 
 type ArtifactKind = 'markdown' | 'html' | 'text' | 'code' | 'json' | 'image' | 'video' | 'audio' | 'pdf' | 'other'
 
@@ -328,11 +329,17 @@ function FileList({ files }: { files: PlannerFile[] }) {
   return (
     <div className="divide-y divide-border rounded-lg border border-border">
       {files.map(file => (
-        <div key={file.filepath} className="flex min-w-0 items-center gap-2 px-3 py-2 text-sm">
+        <button
+          key={file.filepath}
+          type="button"
+          title={`Open ${file.filepath}`}
+          onClick={() => openReportFileInViewer(file.filepath)}
+          className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted/40"
+        >
           <ArtifactIcon kind={artifactKind(file.filepath)} />
-          <span className="min-w-0 flex-1 truncate text-foreground">{file.filepath}</span>
+          <span className="min-w-0 flex-1 truncate text-primary underline underline-offset-2">{file.filepath}</span>
           {formatBytes(file.size) && <span className="text-xs text-muted-foreground">{formatBytes(file.size)}</span>}
-        </div>
+        </button>
       ))}
     </div>
   )
@@ -352,9 +359,16 @@ function FileTable({ files }: { files: PlannerFile[] }) {
         </thead>
         <tbody className="divide-y divide-border">
           {files.map(file => (
-            <tr key={file.filepath}>
+            <tr key={file.filepath} className="hover:bg-muted/40">
               <td className="max-w-[420px] px-3 py-2">
-                <span className="block truncate">{file.filepath}</span>
+                <button
+                  type="button"
+                  title={`Open ${file.filepath}`}
+                  onClick={() => openReportFileInViewer(file.filepath)}
+                  className="block max-w-full truncate text-left text-primary underline underline-offset-2 hover:text-primary/80"
+                >
+                  {file.filepath}
+                </button>
               </td>
               <td className="px-3 py-2 text-muted-foreground">{extensionFor(file.filepath) || 'file'}</td>
               <td className="px-3 py-2 text-muted-foreground">{formatBytes(file.size) || '-'}</td>
@@ -388,7 +402,12 @@ function ArtifactCard({ file, workspacePath, compact }: { file: PlannerFile; wor
   const kind = artifactKind(file.filepath)
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-background">
+    <button
+      type="button"
+      title={`Open ${file.filepath}`}
+      onClick={() => openReportFileInViewer(file.filepath)}
+      className="block w-full overflow-hidden rounded-lg border border-border bg-background text-left transition-colors hover:border-primary/50 hover:bg-muted/30"
+    >
       {!compact && (kind === 'image' || kind === 'video') ? (
         <div className="aspect-video bg-muted/30">
           <FilePreviewMedia widget={widget} workspacePath={workspacePath} kind={kind} />
@@ -399,13 +418,13 @@ function ArtifactCard({ file, workspacePath, compact }: { file: PlannerFile; wor
         </div>
       )}
       <div className="min-w-0 px-3 py-2">
-        <div className="truncate text-sm font-medium text-foreground">{basename(file.filepath)}</div>
+        <div className="truncate text-sm font-medium text-primary underline underline-offset-2">{basename(file.filepath)}</div>
         <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
           <span>{extensionFor(file.filepath) || 'file'}</span>
           {formatBytes(file.size) && <span>{formatBytes(file.size)}</span>}
         </div>
       </div>
-    </div>
+    </button>
   )
 }
 

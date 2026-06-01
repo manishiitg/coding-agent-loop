@@ -7513,7 +7513,8 @@ func isWorkflowStepTrackingExecution(id, name string, meta map[string]string) bo
 	if meta != nil && strings.TrimSpace(meta["execution_type"]) == "workflow-step" {
 		return true
 	}
-	if strings.HasPrefix(strings.TrimSpace(name), "Workflow step ->") {
+	trimmedName := strings.TrimSpace(name)
+	if strings.HasPrefix(trimmedName, "Step ->") || strings.HasPrefix(trimmedName, "Workflow step ->") {
 		return true
 	}
 	trimmedID := strings.TrimSpace(id)
@@ -8525,8 +8526,8 @@ func backgroundAgentStartNotificationPart(snap BackgroundAgentSnapshot) string {
 	label := backgroundAgentStartLabel(snap)
 	contextInfo := backgroundAgentStartContext(snap)
 	name := strings.TrimSpace(snap.Name)
-	if label == "Workflow step" {
-		name = strings.TrimPrefix(name, "Workflow step -> ")
+	if label == "Step" {
+		name = strings.TrimPrefix(name, "Step -> ")
 	}
 	if name == "" {
 		name = label
@@ -8553,21 +8554,21 @@ func backgroundAgentStartLabel(snap BackgroundAgentSnapshot) string {
 			return "Message sequence item"
 		}
 		if stepID := strings.TrimSpace(snap.Metadata["step_id"]); stepID != "" {
-			return "Workflow step"
+			return "Step"
 		}
 		if typ := strings.TrimSpace(snap.Metadata["type"]); typ == "workflow_run" {
-			return "Workflow run"
+			return "Run"
 		}
 	}
 	switch {
 	case strings.Contains(kind, "sub_agent"):
-		return "Workflow sub-agent"
+		return "Sub-agent"
 	case strings.Contains(kind, "delegation"):
 		return "Background sub-agent"
 	case strings.Contains(kind, "message_sequence_item"):
 		return "Message sequence item"
 	case strings.Contains(kind, "workflow"):
-		return "Workflow run"
+		return "Run"
 	case strings.Contains(kind, "route"):
 		return "Routing task"
 	default:
@@ -8581,7 +8582,7 @@ func backgroundAgentStartContext(snap BackgroundAgentSnapshot) string {
 	}
 	var fields []string
 	if workflowPath := strings.TrimSpace(snap.Metadata["workflow_path"]); workflowPath != "" {
-		fields = append(fields, workflowPath)
+		fields = append(fields, "space="+autoNotificationDisplayPath(workflowPath))
 	}
 	if groupName := strings.TrimSpace(snap.Metadata["group_name"]); groupName != "" {
 		fields = append(fields, "group="+groupName)
@@ -8600,6 +8601,15 @@ func backgroundAgentStartContext(snap BackgroundAgentSnapshot) string {
 		return ""
 	}
 	return " [" + strings.Join(fields, ", ") + "]"
+}
+
+func autoNotificationDisplayPath(value string) string {
+	path := strings.TrimSpace(value)
+	path = strings.TrimPrefix(path, "Workflow/")
+	path = strings.TrimPrefix(path, "workflow/")
+	path = strings.TrimPrefix(path, "/Workflow/")
+	path = strings.TrimPrefix(path, "/workflow/")
+	return path
 }
 
 // processBatchedBackgroundAgentCompletions builds a single [AUTO-NOTIFICATION] message for one or more
@@ -8675,7 +8685,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		}
 		actionHint := buildWorkshopActionHint(workshopMode, isLockCode, isLockLearnings, lockCodeConsecutiveFailures, lockCodeNeedsReview, snap.Status == BGAgentFailed)
 		batchContext := autoNotificationBracketContext(snap.Metadata)
-		parts = append(parts, fmt.Sprintf("- **%s** (ID: %s)%s: %s\n  Result: %s%s", snap.Name, snap.ID, batchContext, snap.Status, resultText, actionHint))
+		parts = append(parts, fmt.Sprintf("- **%s**%s: %s\n  Result: %s%s", strings.TrimSpace(snap.Name), batchContext, snap.Status, resultText, actionHint))
 		if batchBackupDirective == "" {
 			batchBackupDirective = workflowRunBackupDirective(snap)
 		}
@@ -8846,7 +8856,7 @@ func workflowRunBackupDirective(snap BackgroundAgentSnapshot) string {
 	if snap.Kind != "workflow_run_tool" && snap.Metadata["type"] != "workflow_run" {
 		return ""
 	}
-	return "\n\nThe workflow run is complete — now back up this workflow per the backup-strategy skill: call get_reference_doc(kind=\"backup-strategy\") and do whatever it specifies for THIS workflow (e.g. commit & push state to its git remote, route large artifacts to the configured backend). If this workflow has NO backup configured yet, prompt the user to set one up (tell them backup isn't configured and offer to set it up per the skill) — do not silently skip. If the run is unattended (a scheduled/cron run with no user to answer), note the missing backup in your reply and continue without blocking."
+	return "\n\nThe run is complete — now back up this project per the backup-strategy skill: call get_reference_doc(kind=\"backup-strategy\") and follow it for THIS project (e.g. commit & push state to its git remote, route large artifacts to the configured backend). If this project has NO backup configured yet, prompt the user to set one up (tell them backup isn't configured and offer to set it up per the skill) — do not silently skip. If the run is unattended (a scheduled/cron run with no user to answer), note the missing backup in your reply and continue without blocking."
 }
 
 // buildAutoNotificationMessage formats the [AUTO-NOTIFICATION] user message for a
@@ -8889,8 +8899,8 @@ func (api *StreamingAPI) buildAutoNotificationMessage(sessionID string, snap Bac
 	// which hides the actual notification text from the operator.
 	contextInfo := autoNotificationInlineContext(snap.Metadata)
 	syntheticMsg := fmt.Sprintf(
-		"[AUTO-NOTIFICATION] Agent '%s' (id=%s) completed — status=%s%s.\nResult: %s%s%s",
-		snap.Name, snap.ID, snap.Status, contextInfo, resultText, actionHint, workflowRunBackupDirective(snap))
+		"[AUTO-NOTIFICATION] Agent '%s' completed — status=%s%s.\nResult: %s%s%s",
+		strings.TrimSpace(snap.Name), snap.Status, contextInfo, resultText, actionHint, workflowRunBackupDirective(snap))
 
 	// Bot connector sessions (slack / whatsapp / discord / telegram / etc.): the
 	// builder's reply is forwarded verbatim to a chat thread, so a faithful echo

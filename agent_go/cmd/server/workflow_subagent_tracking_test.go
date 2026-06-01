@@ -126,7 +126,7 @@ func TestWorkflowStartAutoNotificationPayloadAndDrain(t *testing.T) {
 	}
 	api.bgAgentRegistry.Register(sessionID, &BackgroundAgent{
 		ID:        agentID,
-		Name:      "Step: collect-evidence (RCA Workflow)",
+		Name:      "Step: collect-evidence (RCA Project)",
 		SessionID: sessionID,
 		Kind:      "workflow_run_tool",
 		Status:    BGAgentRunning,
@@ -143,8 +143,8 @@ func TestWorkflowStartAutoNotificationPayloadAndDrain(t *testing.T) {
 	msg := buildBackgroundAgentStartSyntheticMessage(sessionID, []string{part})
 	for _, want := range []string{
 		"[AUTO-NOTIFICATION]",
-		"Started: Workflow step: Step: collect-evidence (RCA Workflow)",
-		"Workflow/rtsrca",
+		"Started: Step: Step: collect-evidence (RCA Project)",
+		"space=rtsrca",
 		"group=production",
 		"step=collect-evidence",
 		"Ack only. No tools; wait.",
@@ -199,7 +199,7 @@ func TestWorkflowStartAutoNotificationClearsStaleBusyWithoutActiveTurn(t *testin
 	}
 	api.bgAgentRegistry.Register(sessionID, &BackgroundAgent{
 		ID:        agentID,
-		Name:      "Workflow step -> stale-busy-start",
+		Name:      "Step -> stale-busy-start",
 		SessionID: sessionID,
 		Kind:      "workflow_run_tool",
 		Status:    BGAgentRunning,
@@ -244,7 +244,7 @@ func TestWorkflowStartAutoNotificationSkipsCompletedAgent(t *testing.T) {
 	}
 	api.bgAgentRegistry.Register(sessionID, &BackgroundAgent{
 		ID:        agentID,
-		Name:      "Workflow step -> completed-before-start",
+		Name:      "Step -> completed-before-start",
 		SessionID: sessionID,
 		Kind:      "workflow_run_tool",
 		Status:    BGAgentCompleted,
@@ -284,7 +284,7 @@ func TestWorkflowStartAutoNotificationDoesNotClearBusyWithActiveTurn(t *testing.
 	}
 	api.bgAgentRegistry.Register(sessionID, &BackgroundAgent{
 		ID:        agentID,
-		Name:      "Workflow step -> active-busy-start",
+		Name:      "Step -> active-busy-start",
 		SessionID: sessionID,
 		Kind:      "workflow_run_tool",
 		Status:    BGAgentRunning,
@@ -326,14 +326,14 @@ func TestWorkflowStepStartAndCompletionNotifyMainAgent(t *testing.T) {
 	}
 	notifier.OnExecutionStart(todo_creation_human.WorkshopExecutionStart{
 		ID:   execID,
-		Name: "Workflow step -> cdp-test",
+		Name: "Step -> cdp-test",
 	})
 
 	if pending := api.drainPendingStartNotifications(sessionID); len(pending) != 1 || pending[0] != execID {
 		t.Fatalf("expected workflow-step start notification for %q, got %#v", execID, pending)
 	}
 
-	notifier.OnExecutionComplete(execID, "Workflow step -> cdp-test", "step completed", map[string]string{
+	notifier.OnExecutionComplete(execID, "Step -> cdp-test", "step completed", map[string]string{
 		"execution_type": "workflow-step",
 	}, nil)
 
@@ -363,11 +363,11 @@ func TestWorkflowStepStartAndCompletionNotifyMainAgent(t *testing.T) {
 // Pin the compact start auto-notification trailer.
 func TestWorkflowStartAutoNotificationTrailerIsCompact(t *testing.T) {
 	singleAgent := buildBackgroundAgentStartSyntheticMessage("session-x", []string{
-		"- Workflow step: do thing [Workflow/x, group=g, step=s]",
+		"- Step: do thing [space=x, group=g, step=s]",
 	})
 	multiAgent := buildBackgroundAgentStartSyntheticMessage("session-x", []string{
-		"- Workflow step: do thing one",
-		"- Workflow step: do thing two",
+		"- Step: do thing one",
+		"- Step: do thing two",
 	})
 
 	for _, tt := range []struct {

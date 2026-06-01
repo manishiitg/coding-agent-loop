@@ -1542,9 +1542,9 @@ func workflowProgressStepID(eventData interface{}) string {
 func workflowProgressDisplayName(agentName string) string {
 	agentName = strings.TrimSpace(agentName)
 	if agentName == "" {
-		return "Workflow step"
+		return "Step"
 	}
-	return "Workflow step -> " + agentName
+	return "Step -> " + agentName
 }
 
 func workflowProgressKey(agentType, agentName string, stepIndex int) string {
@@ -1787,11 +1787,11 @@ func RegisterRunFullWorkflowTool(
 
 			// Notify workshop execution notifier so frontend keeps polling
 			// Include group and iteration in display name so notifications are unambiguous
-			workflowDisplayName := "full-workflow"
+			workflowDisplayName := "full-run"
 			if len(enabledGroupNames) > 0 && iteration != "" {
-				workflowDisplayName = fmt.Sprintf("full-workflow [%s / %s]", enabledGroupNames[0], iteration)
+				workflowDisplayName = fmt.Sprintf("full-run [%s / %s]", enabledGroupNames[0], iteration)
 			} else if len(enabledGroupNames) > 0 {
-				workflowDisplayName = fmt.Sprintf("full-workflow [%s]", enabledGroupNames[0])
+				workflowDisplayName = fmt.Sprintf("full-run [%s]", enabledGroupNames[0])
 			}
 			if session.executionNotifier != nil {
 				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{

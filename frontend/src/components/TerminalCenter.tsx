@@ -2347,8 +2347,13 @@ function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
   const transport = (terminal.step_transport || '').toLowerCase()
   if (transport === 'tmux') return false
   if (transport === 'api' || transport === 'structured' || transport === 'structured_cli' || transport === 'non_tmux') return true
-  // Fall back to tmux_session presence — pane scrapes always have one.
-  return !terminal.tmux_session
+  if (terminal.tmux_session) return false
+  // Retained tmux snapshots can lose tmux_session after the pane is removed.
+  // If the stored content still carries terminal escape sequences, keep the
+  // xterm renderer so colors, alternate-screen redraws, and terminal spacing
+  // remain close to the live pane.
+  if (hasAnsiCodes(terminal.content || '')) return false
+  return true
 }
 
 function terminalTmuxDetailOptions(terminal: TerminalSnapshot): { content: 'screen' | 'history'; lines?: number } | undefined {

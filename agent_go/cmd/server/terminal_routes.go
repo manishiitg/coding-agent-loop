@@ -1024,7 +1024,7 @@ func withTerminalRows(snapshot terminals.Snapshot) terminals.Snapshot {
 		snapshot.Rows = []terminals.Row{}
 		return snapshot
 	}
-	if strings.TrimSpace(snapshot.TmuxSession) != "" && strings.ToLower(strings.TrimSpace(snapshot.StepTransport)) == "tmux" {
+	if strings.ToLower(strings.TrimSpace(snapshot.StepTransport)) == "tmux" {
 		snapshot.Rows = []terminals.Row{}
 		return snapshot
 	}

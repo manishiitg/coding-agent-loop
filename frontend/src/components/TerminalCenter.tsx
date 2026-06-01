@@ -1990,6 +1990,26 @@ const XtermTerminalPane: React.FC<{
     term.options.cursorStyle = xtermProfile.cursorStyle
   }, [xtermProfile])
 
+  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    const term = terminalRef.current
+    if (!term) return
+
+    const lineHeightPx = xtermProfile.fontSize * xtermProfile.lineHeight
+    const rawLines = event.deltaMode === 1
+      ? event.deltaY
+      : event.deltaMode === 2
+        ? event.deltaY * term.rows
+        : event.deltaY / Math.max(1, lineHeightPx)
+    const direction = rawLines < 0 ? -1 : 1
+    const lines = Math.max(1, Math.min(12, Math.ceil(Math.abs(rawLines)))) * direction
+
+    event.preventDefault()
+    event.stopPropagation()
+    term.scrollLines(lines)
+    const distanceFromBottom = Math.max(0, term.buffer.active.baseY - term.buffer.active.viewportY)
+    onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
+  }, [xtermProfile.fontSize, xtermProfile.lineHeight])
+
   useEffect(() => {
     const term = terminalRef.current
     if (!term) return
@@ -2015,7 +2035,12 @@ const XtermTerminalPane: React.FC<{
   }, [content])
 
   return (
-    <div ref={contentRef} className={className} style={{ backgroundColor: xtermTheme.background }}>
+    <div
+      ref={contentRef}
+      className={className}
+      style={{ backgroundColor: xtermTheme.background }}
+      onWheel={handleWheel}
+    >
       <div ref={mountRef} className="h-full w-full [&_.xterm]:h-full" />
     </div>
   )
@@ -3322,6 +3347,27 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     probe()
     return () => stop()
   }, [selectedTerminalView?.terminal_id, selectedTerminalView?.tmux_session, selectedTerminalView?.active, cacheTerminalDetail, fetchTerminals])
+
+  useEffect(() => {
+    const refreshTmuxDetails = () => {
+      const candidates = [selectedTerminalView, currentMainTerminal]
+      const seen = new Set<string>()
+      for (const terminal of candidates) {
+        if (!terminal?.terminal_id || !terminal.tmux_session || seen.has(terminal.terminal_id)) continue
+        seen.add(terminal.terminal_id)
+        const detailOptions = terminalTmuxDetailOptions(terminal)
+        void agentApi.getTerminal(terminal.terminal_id, detailOptions)
+          .then(detail => {
+            cacheTerminalDetail(detail)
+            void fetchTerminals()
+          })
+          .catch(() => { /* best-effort refresh burst */ })
+      }
+    }
+
+    window.addEventListener(TERMINAL_REFRESH_REQUEST_EVENT, refreshTmuxDetails)
+    return () => window.removeEventListener(TERMINAL_REFRESH_REQUEST_EVENT, refreshTmuxDetails)
+  }, [selectedTerminalView, currentMainTerminal, cacheTerminalDetail, fetchTerminals])
 
   const handleTerminalScroll = useCallback(() => {
     const el = terminalOutputRef.current

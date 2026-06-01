@@ -30,7 +30,6 @@ func GetEffectiveSkills(stepConfig *AgentConfigs, _ *orchestrator.BaseOrchestrat
 // BuildSkillFolderGuardPaths builds the folder guard paths for skills.
 // Returns (readPaths, writePaths) - skills are read-only
 func BuildSkillFolderGuardPaths(selectedSkills []string) (readPaths []string, writePaths []string) {
-	selectedSkills = filesystemSkills(selectedSkills)
 	if len(selectedSkills) == 0 {
 		return nil, nil
 	}
@@ -47,16 +46,9 @@ func BuildSkillFolderGuardPaths(selectedSkills []string) (readPaths []string, wr
 }
 
 func filesystemSkills(skills []string) []string {
-	filtered := make([]string, 0, len(skills))
-	for _, skill := range skills {
-		if isBuiltInRuntimeSkill(skill) {
-			continue
-		}
-		filtered = append(filtered, skill)
-	}
-	return filtered
+	return skills
 }
 
-func isBuiltInRuntimeSkill(skill string) bool {
-	return skill == "agent-browser"
+func isBrowserAutomationSkill(skill string) bool {
+	return skill == "agent-browser" || skill == "playwright"
 }

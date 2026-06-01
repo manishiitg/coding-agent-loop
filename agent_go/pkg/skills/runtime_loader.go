@@ -25,9 +25,6 @@ import (
 // behavior of the old buildSkillPrompt path which silently fell back to
 // a one-line stub for unreadable skills.
 //
-// Skills whose name appears in isRuntimeOnlySkill (e.g. "agent-browser"
-// which is a tool rather than a markdown skill) are filtered out before
-// any loading happens — they had no SKILL.md under the old path either.
 // LoadGlobalSkill returns a small "pointer" skill that directs the
 // agent to read the workflow's accumulated learnings bundle at
 // learnings/_global/ (SKILL.md + references/ + any scripts/, assets/)
@@ -76,7 +73,6 @@ If a referenced file does not exist, the workflow has not accumulated that piece
 }
 
 func LoadAttachable(workspaceAPIURL string, selectedSkills []string) []*llmtypes.Skill {
-	selectedSkills = filterFilesystemSkills(selectedSkills)
 	if len(selectedSkills) == 0 {
 		return nil
 	}
@@ -93,6 +89,10 @@ func LoadAttachable(workspaceAPIURL string, selectedSkills []string) []*llmtypes
 }
 
 func loadOneAttachable(workspaceAPIURL, folderName string) (*llmtypes.Skill, error) {
+	if skill := builtinAttachableSkill(folderName); skill != nil {
+		return skill, nil
+	}
+
 	parsed, err := GetSkill(workspaceAPIURL, folderName)
 	if err != nil {
 		return nil, fmt.Errorf("read SKILL.md: %w", err)
@@ -120,20 +120,8 @@ func loadOneAttachable(workspaceAPIURL, folderName string) (*llmtypes.Skill, err
 	return skill, nil
 }
 
-// filterFilesystemSkills drops skills that don't have a filesystem
-// SKILL.md to load. Mirrors the same skip-list cmd/server uses for the
-// legacy buildSkillPrompt path: "agent-browser" is a runtime tool, not
-// a markdown skill, and trying to read its SKILL.md would log a noisy
-// "skill not found" warning.
 func filterFilesystemSkills(selectedSkills []string) []string {
-	out := make([]string, 0, len(selectedSkills))
-	for _, s := range selectedSkills {
-		if s == "agent-browser" {
-			continue
-		}
-		out = append(out, s)
-	}
-	return out
+	return selectedSkills
 }
 
 // loadSkillSupportingFiles walks workspace/skills/<folder>/ and returns

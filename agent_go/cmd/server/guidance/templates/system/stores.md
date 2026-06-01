@@ -3,7 +3,7 @@
 Every workflow has three separate stores that survive across runs. They are NOT interchangeable. Mixing them up bloats prompts with irrelevant content and makes later runs harder to debug.
 
 **learnings/_global/SKILL.md — HOW to run the task**
-- Execution know-how: selectors, API quirks, timing, auth flows, tool patterns, pitfalls the agent hit before.
+- Execution know-how: selectors, API quirks, CLI flags, SDK/tool call patterns, timing, auth flows, output parsing rules, retry/recovery rules, and pitfalls the agent hit before.
 - Written by: the step agent in its direct post-completion learning turn, or by you via diff_patch_workspace_file for manual fixes.
 - Read as: text injected into every step's system prompt under '## Skill'.
 - Shape: SKILL.md + references/ + scripts/ (Anthropic skill-creator format).
@@ -117,7 +117,33 @@ Learning writes and KB access/writes are **opt-in** for every step. Global learn
 
 **For each step, ask yourself three questions:**
 
-1. **Should this step build up SKILL.md?** — Every step by default READS `learnings/_global/SKILL.md` into its prompt (learnings_access defaults to `"read"`). The question is whether it should also WRITE. Only if the step has HOW-to-run knowledge worth capturing across runs: selectors, timings, auth/login flows, tool-call patterns, API quirks, format pitfalls. If yes, set `learnings_access: "read-write"` AND `learning_objective` to a concrete instruction naming exactly what SKILL.md should capture. The step agent then writes SKILL.md itself during a dedicated post-completion turn using shell + `diff_patch_workspace_file`; no separate learning agent runs. (`learnings_write_method` is no longer needed — omit it from new plans.) For plumbing steps (send email, generate PDF, upload to S3), leave access at `"read"`. For fully invisible steps, set `learnings_access: "none"`.
+1. **Should this step build up SKILL.md?** — Every step by default READS `learnings/_global/SKILL.md` into its prompt (learnings_access defaults to `"read"`). The question is whether it should also WRITE. Only if the step has HOW-to-run knowledge worth capturing across runs. If yes, set `learnings_access: "read-write"` AND `learning_objective` to a concrete instruction naming exactly what SKILL.md should capture. The step agent then writes SKILL.md itself during a dedicated post-completion turn using shell + `diff_patch_workspace_file`; no separate learning agent runs. (`learnings_write_method` is no longer needed — omit it from new plans.) For steps that do not discover reusable HOW, leave access at `"read"` so they can still consume shared guidance. Use `"none"` only when `_global/SKILL.md` would actively mislead the step or token isolation is important.
+
+### Learning write decision matrix
+
+Use `learnings_access="read-write"` only when the step is expected to discover reusable execution technique:
+- **Browser/UI automation**: stable selectors, tab/session rules, login/auth indicators, upload/download quirks, wait/re-snapshot timing, safe CDP vs headless behavior.
+- **APIs/MCP tools**: exact request shape, pagination cursors, response fields that prove success, retry/rate-limit behavior, idempotency keys, error envelopes, required call order.
+- **CLIs/SDKs**: command flags, working directory, required env vars, exit-code meanings, output parsing rules, generated file locations, commands to avoid.
+- **Unstable external systems**: recovery steps for known failures, temporary-state handling, deterministic checks that separate "loaded" from "actually usable".
+- **Unknown formats/parsing**: PDF/table/CSV/HTML quirks, schema variations, safe merge/read patterns discovered from real runs.
+
+Keep the step **read-only** (`learnings_access` unset or `"read"`) when it is mainly executing an already-known contract:
+- routing/condition steps,
+- validation/preflight checks that only inspect known fields,
+- mechanical transforms, aggregation, dedupe, formatting, and report-widget data shaping,
+- human input/approval/message-only steps,
+- pure db/KB consumers that do not interact with an external system,
+- mature scripted steps where `learnings/{step-id}/main.py` already encodes the HOW.
+
+Use `learnings_access="none"` rarely:
+- when shared HOW would confuse an isolated deterministic step,
+- when the step intentionally must not see target-system operating guidance,
+- or when token budget is critical and the step is completely divorced from the workflow's external systems.
+
+A good `learning_objective` is concrete: "Capture the Buffer API create-update request shape, success fields, 401/429 handling, and output id parsing." Bad: "learn from this step."
+
+Learning content should answer **"how should this step operate next time?"** It should not record facts/results such as leads found, current prices, user preferences, status history, or credentials. Put facts/results in `db/` or KB as appropriate; never put secret values in learnings.
 2. **Should this step read user-provided business context?** — If the step must respect durable user-supplied context from `knowledgebase/context/context.md`, set `knowledgebase_access` to `read` or `read-write` AND update the step description to name the relevant context section/path, e.g. *"Before deciding, read and apply `knowledgebase/context/context.md` section `ICP Filters`."* Do not copy the whole context file into the description; describe the dependency and wire read access instead. A step with KB read access but no description-level context mention is under-specified.
 3. **Should this step contribute to knowledgebase/notes/?** — Only if the step produces durable narrative knowledge about the workflow's subject matter (observations, decisions, patterns, cross-run findings). If yes, set `knowledgebase_access` to `write` or `read-write` AND set `knowledgebase_contribution` to a concrete instruction naming the topic(s) and what to record. Then set `knowledgebase_write_method: "direct"` so the step agent writes notes/ inline and self-reviews once after completion. Choose `"agent"` only when the user explicitly asks for a separate post-step KB writer/reviewer. Do not choose agent merely because the output is long, messy, or analytical. Access without a contribution is a validation error.
 4. **Should this step write to `db/` or `db/assets/`?** — Only if the step produces rows or durable assets the workflow will persist across runs/groups or bind to the Report UI. If yes, **before you set the step's description or code**, ensure `db/README.md` has an entry for the target file declaring primary_key, merge_rule, writers, and shape. For assets, store files under `db/assets/` and write metadata/reference rows in `db/*.json`. Reference that schema in the step description so the step agent reads the same contract you wrote. Skip db/ for pure forward-pipe data — use `context_output` instead. KB ≠ db: facts about the subject go through `knowledgebase_contribution`, not `db/`.

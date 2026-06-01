@@ -27,6 +27,7 @@ import { secretsApi } from '../api/secrets'
 import { useSecretsStore } from '../stores'
 import { useSessionExecutionTree } from '../hooks/useSessionExecutionTree'
 import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
+import { requestTerminalRefreshBurst } from '../utils/terminalRefresh'
 import {
   determineModeFlag,
   buildLLMConfigWithApiKeys,
@@ -1506,6 +1507,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         } else if (!msgContent.startsWith(AUTO_NOTIFICATION_PREFIX)) {
           continue
         }
+      }
+
+      if (
+        event.type === 'auto_notification_steered' ||
+        (event.type === 'user_message' && getDisplaySafeUserMessageContent(getUserMessageContent(event)).startsWith(AUTO_NOTIFICATION_PREFIX))
+      ) {
+        requestTerminalRefreshBurst()
       }
 
       if (!isSubAgentEvent && (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end' || event.type === 'conversation_error' || event.type === 'context_cancelled')) {

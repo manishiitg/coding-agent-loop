@@ -4,24 +4,40 @@ import (
 	"testing"
 )
 
-func TestAgentBrowserIsRuntimeSkillNotFilesystemSkill(t *testing.T) {
-	// agent-browser is built into the CLI runtime, not a markdown skill.
-	// It must be filtered out of every skill resolution path so we
-	// don't try to read a non-existent SKILL.md or grant filesystem
-	// guard paths for it.
-	if got := filesystemSkills([]string{"agent-browser"}); len(got) != 0 {
-		t.Fatalf("expected agent-browser to be filtered from filesystem skills, got %v", got)
+func TestBrowserAutomationSkillsAreFilesystemAttachable(t *testing.T) {
+	// Browser automation skill names also trigger runtime prompt/tool setup, but
+	// they are still real workspace skills. Do not filter them out of SKILL.md
+	// loading or folder guards.
+	browserSkills := []string{"agent-browser", "playwright"}
+	if got := filesystemSkills(browserSkills); len(got) != len(browserSkills) {
+		t.Fatalf("expected browser skills to remain filesystem skills, got %v", got)
 	}
 
-	readPaths, writePaths := BuildSkillFolderGuardPaths([]string{"agent-browser"})
-	if len(readPaths) != 0 || len(writePaths) != 0 {
-		t.Fatalf("expected no folder guard paths for agent-browser, got read=%v write=%v", readPaths, writePaths)
+	readPaths, writePaths := BuildSkillFolderGuardPaths(browserSkills)
+	want := []string{
+		"skills/agent-browser/", "skills/agent-browser",
+		"skills/playwright/", "skills/playwright",
+	}
+	if len(writePaths) != 0 {
+		t.Fatalf("expected no write folder guard paths for skills, got %v", writePaths)
+	}
+	if len(readPaths) != len(want) {
+		t.Fatalf("expected read paths %v, got %v", want, readPaths)
+	}
+	for i := range want {
+		if readPaths[i] != want[i] {
+			t.Fatalf("expected read paths %v, got %v", want, readPaths)
+		}
 	}
 }
 
-func TestAgentBrowserDoesNotFilterOtherSkills(t *testing.T) {
-	readPaths, _ := BuildSkillFolderGuardPaths([]string{"agent-browser", "custom-skill"})
-	want := []string{"skills/custom-skill/", "skills/custom-skill"}
+func TestBrowserRuntimeSkillsDoNotFilterOtherSkills(t *testing.T) {
+	readPaths, _ := BuildSkillFolderGuardPaths([]string{"agent-browser", "playwright", "custom-skill"})
+	want := []string{
+		"skills/agent-browser/", "skills/agent-browser",
+		"skills/playwright/", "skills/playwright",
+		"skills/custom-skill/", "skills/custom-skill",
+	}
 	if len(readPaths) != len(want) {
 		t.Fatalf("expected %v, got %v", want, readPaths)
 	}
@@ -32,10 +48,10 @@ func TestAgentBrowserDoesNotFilterOtherSkills(t *testing.T) {
 	}
 }
 
-func TestSystemSkillsDoNotInstallAgentBrowserFilesystemSkill(t *testing.T) {
+func TestSystemSkillsDoNotInstallStaleAgentBrowserSource(t *testing.T) {
 	for _, skill := range GetSystemSkills() {
-		if skill.Name == "agent-browser" || skill.Source == "vercel-labs/agent-browser@agent-browser" {
-			t.Fatalf("agent-browser docs are built into the CLI; do not install filesystem skill: %+v", skill)
+		if skill.Source == "vercel-labs/agent-browser@agent-browser" {
+			t.Fatalf("do not install stale external agent-browser skill source: %+v", skill)
 		}
 	}
 }

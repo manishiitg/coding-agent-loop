@@ -13,16 +13,24 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 type messageSequenceFolderGuardOverrideKey struct{}
+type messageSequenceRuntimeSessionOverrideKey struct{}
 
 type messageSequenceFolderGuardOverride struct {
 	ReadPaths  []string
 	WritePaths []string
+}
+
+type messageSequenceRuntimeSessionOverride struct {
+	SessionID string
+	KeepAlive bool
 }
 
 type messageSequenceSession struct {
@@ -34,7 +42,16 @@ type messageSequenceSession struct {
 	UpdatedAt           time.Time                 `json:"updated_at"`
 	ConversationHistory []llmtypes.MessageContent `json:"conversation_history"`
 	LastRuntimeContext  string                    `json:"last_runtime_context,omitempty"`
+	RuntimeSessionID    string                    `json:"runtime_session_id,omitempty"`
 	Entries             []messageSequenceEntry    `json:"entries,omitempty"`
+
+	runtime *messageSequenceRuntime
+}
+
+type messageSequenceRuntime struct {
+	Agent     agents.OrchestratorAgent
+	SessionID string
+	Provider  string
 }
 
 type messageSequenceEntry struct {
@@ -148,6 +165,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 			session.LastRuntimeContext = "Step description (opening instruction):\n" + desc
 		}
 		source = "configured_queue"
+	}
+
+	if !isRoute {
+		defer hcpo.closeMessageSequenceRuntime(session, "standalone message_sequence completed")
 	}
 
 	for _, item := range plannedItems {
@@ -497,11 +518,7 @@ func formatMessageSequencePrevalidationFeedback(itemID string, results *Workspac
 func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceUserMessage(ctx context.Context, step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, session *messageSequenceSession) (string, error) {
 	writeAccess := resolveMessageSequenceItemWriteAccess(item)
 	readPaths, writePaths := hcpo.setupMessageSequenceFolderGuard(stepPath, step.GetID(), writeAccess)
-	override := &messageSequenceFolderGuardOverride{ReadPaths: readPaths, WritePaths: writePaths}
-	agentCtx := context.WithValue(ctx, messageSequenceFolderGuardOverrideKey{}, override)
-
-	agentName := fmt.Sprintf("message-sequence-%s-%s", step.GetID(), item.ID)
-	agent, err := hcpo.createExecutionOnlyAgent(agentCtx, "execution_only", stepPath, agentName, step.AgentConfigs, step.GetID(), "")
+	runtime, agentCtx, err := hcpo.getMessageSequenceRuntime(ctx, step, stepPath, session, readPaths, writePaths)
 	if err != nil {
 		return "", err
 	}
@@ -511,7 +528,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceUserMessage(ctx
 		message = session.LastRuntimeContext + "\n\n## Next instruction\n" + message
 	}
 	templateVars := hcpo.buildMessageSequenceTemplateVars(step, item, stepIndex, stepPath, message, readPaths, writePaths)
-	result, history, err := agent.Execute(agentCtx, templateVars, session.ConversationHistory)
+	result, history, err := runtime.Agent.Execute(agentCtx, templateVars, session.ConversationHistory)
 	if err != nil {
 		return "", err
 	}
@@ -651,20 +668,104 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceCodeRepair(ctx 
 		ReadPaths:  common.DeduplicateStrings(append(readPaths, writePaths...)),
 		WritePaths: common.DeduplicateStrings(writePaths),
 	}
-	agentCtx := context.WithValue(ctx, messageSequenceFolderGuardOverrideKey{}, override)
-	agentName := fmt.Sprintf("message-sequence-%s-%s-repair-%d", step.GetID(), item.ID, attempt)
-	agent, err := hcpo.createExecutionOnlyAgent(agentCtx, "execution_only", stepPath, agentName, step.AgentConfigs, step.GetID(), "")
+	runtime, agentCtx, err := hcpo.getMessageSequenceRuntime(ctx, step, stepPath, session, override.ReadPaths, override.WritePaths)
 	if err != nil {
 		return err
 	}
 	message := failureContext + "\n\nRepair the working copy at " + hcpo.messageSequenceAbsPath(filepath.Join(codeRel, "main.py")) + ". Keep the fix narrowly scoped. Do not announce success; the runtime will rerun the script after your edit."
 	templateVars := hcpo.buildMessageSequenceTemplateVars(step, item, 0, stepPath, message, override.ReadPaths, override.WritePaths)
-	_, history, err := agent.Execute(agentCtx, templateVars, session.ConversationHistory)
+	_, history, err := runtime.Agent.Execute(agentCtx, templateVars, session.ConversationHistory)
 	if err != nil {
 		return err
 	}
 	session.ConversationHistory = history
 	return nil
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) getMessageSequenceRuntime(ctx context.Context, step *MessageSequencePlanStep, stepPath string, session *messageSequenceSession, readPaths, writePaths []string) (*messageSequenceRuntime, context.Context, error) {
+	if session == nil {
+		return nil, ctx, fmt.Errorf("message_sequence session is nil")
+	}
+
+	sessionID := hcpo.messageSequenceRuntimeSessionID(stepPath, step.GetID())
+	if session.runtime != nil && strings.TrimSpace(session.runtime.SessionID) != "" {
+		sessionID = strings.TrimSpace(session.runtime.SessionID)
+	}
+	session.RuntimeSessionID = sessionID
+	hcpo.configureSubAgentSessionGuard(sessionID, "message-sequence", step.GetID(), readPaths, writePaths)
+
+	folderOverride := &messageSequenceFolderGuardOverride{ReadPaths: readPaths, WritePaths: writePaths}
+	sessionOverride := &messageSequenceRuntimeSessionOverride{SessionID: sessionID, KeepAlive: true}
+	agentCtx := context.WithValue(ctx, messageSequenceFolderGuardOverrideKey{}, folderOverride)
+	agentCtx = context.WithValue(agentCtx, messageSequenceRuntimeSessionOverrideKey{}, sessionOverride)
+
+	if session.runtime != nil && session.runtime.Agent != nil {
+		return session.runtime, agentCtx, nil
+	}
+
+	agentName := fmt.Sprintf("message-sequence-%s", step.GetID())
+	agent, err := hcpo.createExecutionOnlyAgent(agentCtx, "execution_only", stepPath, agentName, step.AgentConfigs, step.GetID(), "")
+	if err != nil {
+		return nil, agentCtx, err
+	}
+	provider := ""
+	if cfg := agent.GetConfig(); cfg != nil {
+		provider = cfg.LLMConfig.Primary.Provider
+		if strings.TrimSpace(cfg.MCPSessionID) != "" {
+			sessionID = strings.TrimSpace(cfg.MCPSessionID)
+			session.RuntimeSessionID = sessionID
+			hcpo.configureSubAgentSessionGuard(sessionID, "message-sequence", step.GetID(), readPaths, writePaths)
+		}
+	}
+	session.runtime = &messageSequenceRuntime{
+		Agent:     agent,
+		SessionID: sessionID,
+		Provider:  provider,
+	}
+	return session.runtime, agentCtx, nil
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceRuntimeSessionID(stepPath string, stepID string) string {
+	parts := []string{"msgseq"}
+	if strings.TrimSpace(hcpo.selectedRunFolder) != "" {
+		parts = append(parts, sanitizeMessageSequenceExecutionIDPart(hcpo.selectedRunFolder))
+	}
+	if strings.TrimSpace(hcpo.currentGroupName) != "" {
+		parts = append(parts, sanitizeMessageSequenceExecutionIDPart(hcpo.currentGroupName))
+	}
+	parts = append(parts, sanitizeMessageSequenceExecutionIDPart(stepPath), sanitizeMessageSequenceExecutionIDPart(stepID))
+	return strings.Join(parts, "-")
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) closeMessageSequenceRuntime(session *messageSequenceSession, reason string) {
+	if session == nil || session.runtime == nil {
+		return
+	}
+	runtime := session.runtime
+	session.runtime = nil
+	if runtime.Agent != nil {
+		_ = runtime.Agent.Close()
+	}
+	closeMessageSequenceCodingSession(runtime.Provider, runtime.SessionID, reason)
+	common.ClearSessionShellConfig(runtime.SessionID)
+}
+
+func closeMessageSequenceCodingSession(provider string, ownerSessionID string, reason string) {
+	if strings.TrimSpace(ownerSessionID) == "" {
+		return
+	}
+	switch strings.TrimSpace(provider) {
+	case string(llmproviders.ProviderAgyCLI):
+		llmproviders.CloseAgyCLIInteractiveSessionForOwner(ownerSessionID, reason)
+	case string(llmproviders.ProviderClaudeCode):
+		llmproviders.CloseClaudeCodeInteractiveSessionForOwner(ownerSessionID, reason)
+	case string(llmproviders.ProviderCodexCLI):
+		llmproviders.CloseCodexCLIInteractiveSessionForOwner(ownerSessionID, reason)
+	case string(llmproviders.ProviderCursorCLI):
+		llmproviders.CloseCursorCLIInteractiveSessionForOwner(ownerSessionID, reason)
+	case string(llmproviders.ProviderGeminiCLI):
+		llmproviders.CloseGeminiCLIInteractiveSessionForOwner(ownerSessionID, reason)
+	}
 }
 
 // A write verb followed (within one sentence, a short window) by a db/ or kb/
@@ -1106,8 +1207,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) storeMsgSeqRouteSession(key string, s
 // clearMsgSeqRouteSession drops a route's in-memory conversation (used on restart).
 func (hcpo *StepBasedWorkflowOrchestrator) clearMsgSeqRouteSession(key string) {
 	hcpo.msgSeqRoutesMu.Lock()
-	defer hcpo.msgSeqRoutesMu.Unlock()
+	session := hcpo.msgSeqRoutes[key]
 	delete(hcpo.msgSeqRoutes, key)
+	hcpo.msgSeqRoutesMu.Unlock()
+	hcpo.closeMessageSequenceRuntime(session, "message_sequence route restarted")
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) saveMessageSequenceSession(ctx context.Context, relPath string, session *messageSequenceSession) error {

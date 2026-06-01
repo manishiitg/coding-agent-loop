@@ -1052,6 +1052,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupKBUpdateFolderGuard(stepID strin
 // (typically deferred in the runXxxPhase function).
 func (hcpo *StepBasedWorkflowOrchestrator) setupSubAgentSessionGuard(agentKind string, stepID string, readPaths []string, writePaths []string) string {
 	sessionID := fmt.Sprintf("sub-%s-%s-%d", agentKind, stepID, time.Now().UnixNano())
+	hcpo.configureSubAgentSessionGuard(sessionID, agentKind, stepID, readPaths, writePaths)
+	return sessionID
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) configureSubAgentSessionGuard(sessionID string, agentKind string, stepID string, readPaths []string, writePaths []string) {
 	common.SetSessionFolderGuard(sessionID, readPaths, writePaths)
 
 	// Carry the parent group session's working directory onto the dedicated
@@ -1069,7 +1074,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupSubAgentSessionGuard(agentKind s
 		"🔒 Sub-agent session %q (%s/%s) — folder guard set at session level Read=%v Write=%v",
 		sessionID, agentKind, stepID, readPaths, writePaths,
 	))
-	return sessionID
 }
 
 // createKBUpdateAgent builds the post-step KB update agent. Folder guard reads the
@@ -1497,7 +1501,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// Give each execution step its own session-level guard, just like learning/KB agents.
 	// Dedicated tool session for this execution step's shell/filesystem calls. Browser
 	// reuse is re-bound separately below, so shell isolation does not imply browser isolation.
-	execSessionID := hcpo.setupSubAgentSessionGuard("exec", stepID, readPaths, writePaths)
+	execSessionID := ""
+	if override, ok := ctx.Value(messageSequenceRuntimeSessionOverrideKey{}).(*messageSequenceRuntimeSessionOverride); ok && override != nil && strings.TrimSpace(override.SessionID) != "" {
+		execSessionID = strings.TrimSpace(override.SessionID)
+		hcpo.configureSubAgentSessionGuard(execSessionID, "message-sequence", stepID, readPaths, writePaths)
+	} else {
+		execSessionID = hcpo.setupSubAgentSessionGuard("exec", stepID, readPaths, writePaths)
+	}
 	config.MCPSessionID = execSessionID
 	// Keep browser-sharing behavior unchanged: bind the per-step execution session to the
 	// same shared browser session the group session uses. If a caller later requests
@@ -1519,6 +1529,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// Apply step-specific overrides
 	hcpo.applyStepConfigToAgentConfig(config, stepConfig, isCodeExecutionMode)
+	if override, ok := ctx.Value(messageSequenceRuntimeSessionOverrideKey{}).(*messageSequenceRuntimeSessionOverride); ok && override != nil && override.KeepAlive && common.IsCLIProvider(config.LLMConfig.Primary.Provider) && !config.ForceStructuredCodingAgent {
+		config.CodingAgentKeepAlive = true
+		hcpo.GetLogger().Info(fmt.Sprintf("🔁 message_sequence runtime will keep coding-agent session alive: %s", config.MCPSessionID))
+	}
 
 	// Enable parallel tool execution for execution agents
 	// This allows concurrent execution of multiple independent tool calls

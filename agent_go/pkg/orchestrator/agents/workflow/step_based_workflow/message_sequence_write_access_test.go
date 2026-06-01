@@ -60,6 +60,34 @@ func TestMessageSequenceExecutionRelPath_UsesNormalStepFolder(t *testing.T) {
 	}
 }
 
+func TestMessageSequenceRuntimeSessionIDStableForSequence(t *testing.T) {
+	hcpo := &StepBasedWorkflowOrchestrator{
+		selectedRunFolder: "iteration-0",
+		currentGroupName:  "Acme Group",
+	}
+
+	gotA := hcpo.messageSequenceRuntimeSessionID("step-5", "review-specialist")
+	gotB := hcpo.messageSequenceRuntimeSessionID("step-5", "review-specialist")
+	if gotA != gotB {
+		t.Fatalf("runtime session id changed between sequence items: %q vs %q", gotA, gotB)
+	}
+	if !strings.Contains(gotA, "iteration-0") || !strings.Contains(gotA, "acme-group") || !strings.Contains(gotA, "review-specialist") {
+		t.Fatalf("runtime session id missing scope parts: %q", gotA)
+	}
+	if strings.Contains(gotA, "item") {
+		t.Fatalf("runtime session id should not include sanitizer fallback for non-empty scope: %q", gotA)
+	}
+}
+
+func TestMessageSequenceRuntimeSessionIDOmitsEmptyScope(t *testing.T) {
+	hcpo := &StepBasedWorkflowOrchestrator{}
+
+	got := hcpo.messageSequenceRuntimeSessionID("step-2", "writer")
+	if got != "msgseq-step-2-writer" {
+		t.Fatalf("runtime session id = %q, want msgseq-step-2-writer", got)
+	}
+}
+
 func TestMessageSequenceWriteAccess_RejectsPerFilePaths(t *testing.T) {
 	var w MessageSequenceWriteAccess
 	err := json.Unmarshal([]byte(`{"db": true, "paths": ["db/session_health.json"]}`), &w)

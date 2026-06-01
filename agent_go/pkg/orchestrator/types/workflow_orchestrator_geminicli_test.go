@@ -99,6 +99,19 @@ func TestWorkflowE2ESingleRegularStepGeminiCLI(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("write plan.json: %v", err)
 	}
+	if err := writeJSON(filepath.Join(workspaceDisk, "planning", "step_config.json"), map[string]interface{}{
+		"steps": []map[string]interface{}{
+			{
+				"id":    stepID,
+				"title": "Compute via gemini-cli",
+				"agent_configs": map[string]interface{}{
+					"transport": "structured",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("write step_config.json: %v", err)
+	}
 
 	// LLM config: gemini-cli everywhere. The adapter shells out to
 	// the gemini binary; APIKeys.GeminiCLI is the key the orchestrator

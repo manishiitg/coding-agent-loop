@@ -327,6 +327,137 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 	t.Logf("✅ workflow e2e (%d step types, vertex): result-len=%d", len(stepIDs), len(result))
 }
 
+func TestWorkflowE2EMessageSequenceVertex(t *testing.T) {
+	if os.Getenv("RUN_WORKFLOW_REAL_E2E") == "" {
+		t.Skip("set RUN_WORKFLOW_REAL_E2E=1 to run the workflow e2e")
+	}
+	if os.Getenv("RUN_VERTEX_REAL_E2E") == "" {
+		t.Skip("set RUN_VERTEX_REAL_E2E=1 to run the vertex variant")
+	}
+	var apiKey string
+	for _, name := range []string{"GEMINI_API_KEY", "VERTEX_API_KEY", "GOOGLE_API_KEY"} {
+		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+			apiKey = v
+			break
+		}
+	}
+	if apiKey == "" {
+		t.Skip("GEMINI_API_KEY (or VERTEX_API_KEY / GOOGLE_API_KEY) required")
+	}
+	wsAPI := strings.TrimSpace(os.Getenv("WORKSPACE_API_URL"))
+	if wsAPI == "" {
+		wsAPI = "http://127.0.0.1:18744"
+		_ = os.Setenv("WORKSPACE_API_URL", wsAPI)
+	}
+	if resp, err := exec.Command("curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}", wsAPI+"/api/documents/_index.json").Output(); err != nil || len(resp) == 0 {
+		t.Skipf("workspace API at %s unreachable (is the dev server running?): %v", wsAPI, err)
+	}
+
+	wsRoot := strings.TrimSpace(os.Getenv("WORKSPACE_DOCS_PATH"))
+	if wsRoot == "" {
+		wsRoot = "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs"
+	}
+	relWorkspace := "Workflow/_e2e_msgseq_" + filepath.Base(t.TempDir())
+	workspaceDisk := filepath.Join(wsRoot, relWorkspace)
+	if os.Getenv("KEEP_E2E_WORKSPACE") == "" {
+		t.Cleanup(func() { _ = os.RemoveAll(workspaceDisk) })
+	}
+	if err := os.MkdirAll(filepath.Join(workspaceDisk, "planning"), 0o755); err != nil {
+		t.Fatalf("mkdir planning: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspaceDisk, "variables"), 0o755); err != nil {
+		t.Fatalf("mkdir variables: %v", err)
+	}
+	if err := writeJSON(filepath.Join(workspaceDisk, "variables", "variables.json"), map[string]interface{}{
+		"variables":       []interface{}{},
+		"groups":          []map[string]interface{}{{"name": "default", "values": map[string]string{}, "enabled": true}},
+		"extraction_date": time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("write variables.json: %v", err)
+	}
+	if err := writeJSON(filepath.Join(workspaceDisk, "planning", "plan.json"), map[string]interface{}{
+		"steps": []map[string]interface{}{
+			{
+				"type":                 "message_sequence",
+				"id":                   "msgseq-report",
+				"title":                "Message sequence runtime check",
+				"description":          "Two-turn message_sequence runtime check.",
+				"context_dependencies": []string{},
+				"context_output":       "out.json",
+				"items": []map[string]interface{}{
+					{"id": "remember", "type": "user_message", "message": "Remember token MS_FIRST_ALPHA. Reply with ACK_MS_FIRST_ALPHA and stop. Do not call tools."},
+					{"id": "recall", "type": "user_message", "message": "Using the previous turn, reply with MS_SECOND_SEES_FIRST_ALPHA and stop. Do not call tools."},
+				},
+				"next_step_id": "end",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("write plan.json: %v", err)
+	}
+
+	model := strings.TrimSpace(os.Getenv("VERTEX_REAL_E2E_MODEL"))
+	if model == "" {
+		model = "gemini-3.5-flash"
+	}
+	llmCfg := &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{Provider: "vertex", ModelID: model},
+		APIKeys: &llm.ProviderAPIKeys{
+			Vertex: &apiKey,
+		},
+	}
+	agentLLM := &workflowtypes.AgentLLMConfig{Provider: "vertex", ModelID: model}
+	presetCfg := &workflowtypes.PresetLLMConfig{
+		Provider:     "vertex",
+		ModelID:      model,
+		PhaseLLM:     agentLLM,
+		TieredConfig: &workflowtypes.TieredLLMConfig{Tier1: agentLLM, Tier2: agentLLM, Tier3: agentLLM},
+	}
+
+	wo, err := NewWorkflowOrchestrator("", 0.7, "workflow", loggerv2.NewNoop(), nil, nil, []string{}, []string{}, false, nil, map[string]interface{}{}, llmCfg, 10, map[string]string{}, presetCfg)
+	if err != nil {
+		t.Fatalf("NewWorkflowOrchestrator: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	if _, err := wo.Execute(ctx, "Run the message sequence runtime check.", relWorkspace, map[string]interface{}{"workflowStatus": workflowtypes.WorkflowStatusPreVerification}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(workspaceDisk, "runs", "*", "*", "execution", "msgseq-report", "session.json"))
+	if len(matches) == 0 {
+		t.Fatalf("message_sequence session.json not written under %s", workspaceDisk)
+	}
+	body, err := os.ReadFile(matches[len(matches)-1])
+	if err != nil {
+		t.Fatalf("read session.json: %v", err)
+	}
+	var session struct {
+		RuntimeSessionID string `json:"runtime_session_id"`
+		Entries          []struct {
+			Status  string `json:"status"`
+			Summary string `json:"summary"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(body, &session); err != nil {
+		t.Fatalf("parse session.json: %v", err)
+	}
+	if !strings.HasPrefix(session.RuntimeSessionID, "msgseq-") {
+		t.Fatalf("runtime_session_id = %q, want stable msgseq-* owner", session.RuntimeSessionID)
+	}
+	if len(session.Entries) != 2 {
+		t.Fatalf("message_sequence entries = %d, want 2\nsession=%s", len(session.Entries), body)
+	}
+	for i, entry := range session.Entries {
+		if entry.Status != "completed" {
+			t.Fatalf("entry %d status = %q, want completed\nsession=%s", i, entry.Status, body)
+		}
+	}
+	if !strings.Contains(string(body), "MS_FIRST_ALPHA") || !strings.Contains(string(body), "MS_SECOND_SEES_FIRST_ALPHA") {
+		t.Fatalf("session.json missing expected message sequence tokens\nsession=%s", body)
+	}
+	t.Logf("✅ message_sequence e2e: runtime_session_id=%s session=%s", session.RuntimeSessionID, matches[len(matches)-1])
+}
+
 // assertStepExecutionResultContains reads the per-step execution
 // artifact the engine writes for the given stepID and asserts the
 // LLM's actual output contains the expected token. The engine uses
@@ -343,7 +474,7 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 //     route into a concrete sub-agent execution; the route_id is
 //     embedded in the folder name.
 //  3. Message-sequence step:
-//     execution/message_sequences/*/<stepID>/session.json
+//     execution/<stepID>/session.json
 //     → token may appear anywhere in the serialized
 //     conversation_history (the engine archives the full chat, not a
 //     single "result" field). A substring scan suffices.
@@ -354,14 +485,14 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 func assertStepExecutionResultContains(t *testing.T, walkRoot, stepID, wantToken string) {
 	t.Helper()
 	// 1) Top-level / direct execution log
-	if matches, _ := filepath.Glob(filepath.Join(walkRoot, "runs", "*", "*", "logs", stepID, "execution", "execution-attempt-*-iteration-*.json")); len(matches) > 0 {
+	if matches := executionAttemptResultLogs(filepath.Join(walkRoot, "runs", "*", "*", "logs", stepID, "execution", "execution-attempt-*-iteration-*.json")); len(matches) > 0 {
 		if scanExecutionResultLog(t, stepID, matches[len(matches)-1], wantToken) {
 			return
 		}
 		return
 	}
 	// 2) Todo-task sub-agent execution log (route_id embedded in path)
-	if matches, _ := filepath.Glob(filepath.Join(walkRoot, "runs", "*", "*", "logs", "step-*-sub-"+stepID+"-todo-*", "execution", "execution-attempt-*-iteration-*.json")); len(matches) > 0 {
+	if matches := executionAttemptResultLogs(filepath.Join(walkRoot, "runs", "*", "*", "logs", "step-*-sub-"+stepID+"-todo-*", "execution", "execution-attempt-*-iteration-*.json")); len(matches) > 0 {
 		if scanExecutionResultLog(t, stepID, matches[len(matches)-1], wantToken) {
 			return
 		}
@@ -393,7 +524,7 @@ func assertStepExecutionResultContainsAny(t *testing.T, walkRoot, stepID string,
 	// Reuse the same path-resolution logic by collecting the
 	// execution_result text first, then doing the OR-of-substrings.
 	pat := filepath.Join(walkRoot, "runs", "*", "*", "logs", stepID, "execution", "execution-attempt-*-iteration-*.json")
-	matches, _ := filepath.Glob(pat)
+	matches := executionAttemptResultLogs(pat)
 	if len(matches) == 0 {
 		t.Errorf("%s: no execution log under %s", stepID, pat)
 		return
@@ -445,6 +576,19 @@ func writeJSON(path string, v interface{}) error {
 		return err
 	}
 	return os.WriteFile(path, b, 0o644)
+}
+
+func executionAttemptResultLogs(pattern string) []string {
+	matches, _ := filepath.Glob(pattern)
+	filtered := matches[:0]
+	for _, match := range matches {
+		base := strings.TrimSuffix(filepath.Base(match), ".json")
+		if strings.HasSuffix(base, "-prompts") || strings.HasSuffix(base, "-conversation") || strings.HasSuffix(base, "-timing") {
+			continue
+		}
+		filtered = append(filtered, match)
+	}
+	return filtered
 }
 
 // assertAllStepsExecutedAndDecisionsMatch is the Tier-1 assertion: for

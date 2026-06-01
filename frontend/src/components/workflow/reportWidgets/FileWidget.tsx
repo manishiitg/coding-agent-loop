@@ -265,6 +265,25 @@ function formatJSONText(content: string): string {
   }
 }
 
+// Backup / churn folders that should never clutter a report file-list. Matched
+// case-insensitively against each folder segment under the widget's source.
+const NOISE_DIR_SEGMENTS = new Set(['backups', 'stale_files_backups', 'node_modules', '__pycache__', '.git', '.cache', '.trash'])
+function isNoiseDirSegment(seg: string): boolean {
+  const s = seg.toLowerCase()
+  if (NOISE_DIR_SEGMENTS.has(s)) return true
+  if (s.startsWith('.')) return true                                  // hidden dirs
+  if (s.endsWith('_backups') || s.endsWith('-backups') || s.endsWith('.backup')) return true
+  if (s.startsWith('stale_') || s.startsWith('backup')) return true
+  return false
+}
+// Folder segments of a file relative to the source folder (excludes the filename).
+function relFolderSegments(filepath: string, sourceFolderAbs: string): string[] {
+  const fp = filepath.replace(/\\/g, '/')
+  const prefix = sourceFolderAbs.replace(/\/+$/, '') + '/'
+  const rel = fp.startsWith(prefix) ? fp.slice(prefix.length) : basename(fp)
+  return rel.split('/').filter(Boolean).slice(0, -1)
+}
+
 function useFileList(widget: ReportWidget, workspacePath: string): FileListState {
   const [state, setState] = useState<FileListState>({ status: 'loading' })
   const folder = workspaceFilePath(workspacePath, widget.source)
@@ -286,6 +305,14 @@ function useFileList(widget: ReportWidget, workspacePath: string): FileListState
           const allowed = new Set(allowedExtensions)
           files = files.filter(file => allowed.has(extensionFor(file.filepath)))
         }
+        // Drop backup/churn clutter. When not recursive, keep only files directly
+        // in the source folder (the API can over-return nested entries); when
+        // recursive, keep real subfolders but skip backup/noise dirs.
+        files = files.filter(file => {
+          const segs = relFolderSegments(file.filepath, folder)
+          if (!widget.recursive) return segs.length === 0
+          return !segs.some(isNoiseDirSegment)
+        })
         if (widget.maxItems && widget.maxItems > 0) files = files.slice(0, widget.maxItems)
         if (!cancelled) setState({ status: 'ready', files })
       } catch (error) {
@@ -296,7 +323,7 @@ function useFileList(widget: ReportWidget, workspacePath: string): FileListState
     return () => {
       cancelled = true
     }
-  }, [folder, maxDepth, widget.extensions, widget.maxItems, widget.source])
+  }, [folder, maxDepth, widget.extensions, widget.maxItems, widget.recursive, widget.source])
 
   return state
 }

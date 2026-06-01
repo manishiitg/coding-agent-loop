@@ -23,7 +23,7 @@ import {
   type SingularWidgetSourceResolution,
 } from './reportWidgets/shared'
 import { useCompactWidgetLayout, useContainerSizeTier } from './reportWidgets/tableHelpers'
-import { BarChart3, Download, Laptop, Loader2, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
+import { BarChart3, Check, ChevronDown, Download, Laptop, Loader2, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { useChatStore } from '../../stores/useChatStore'
 import {
@@ -852,6 +852,88 @@ function SectionHeader({
   )
 }
 
+type SectionTabGroup = { key: string; label: string; entries: Array<{ entry: ReportEntry; entryIndex: number }> }
+
+// MobileTabPicker collapses a section's tab strip into a dropdown on phones, so
+// every tab is reachable in one tap instead of scrolling a horizontal strip
+// that hides tabs off-screen (important when tabs are per-entity, e.g. per-PAN).
+// The strip is still used on tablet/desktop.
+function MobileTabPicker({
+  tabGroups,
+  activeKey,
+  onSelect,
+}: {
+  tabGroups: SectionTabGroup[]
+  activeKey: string
+  onSelect: (key: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const active = tabGroups.find(t => t.key === activeKey) ?? tabGroups[0]
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted/40"
+      >
+        <span className="min-w-0 truncate">{active?.label}</span>
+        <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
+          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{active?.entries.length}</span>
+          <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
+        </span>
+      </button>
+      {open && (
+        <div role="listbox" className="absolute left-0 right-0 z-20 mt-1 max-h-72 overflow-auto rounded-md border border-border bg-background py-1 shadow-lg">
+          {tabGroups.map(tab => {
+            const isActive = active?.key === tab.key
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                role="option"
+                aria-selected={isActive}
+                onClick={() => {
+                  onSelect(tab.key)
+                  setOpen(false)
+                }}
+                className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm ${
+                  isActive ? 'bg-muted/60 font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+                }`}
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <Check className={`h-3.5 w-3.5 shrink-0 ${isActive ? 'opacity-100' : 'opacity-0'}`} />
+                  <span className="truncate">{tab.label}</span>
+                </span>
+                <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{tab.entries.length}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Renders one section's heading + entries. Lives in its own component so the
 // section container can call useContainerSizeTier and collapse the grid into
 // a tier-appropriate column count: 1 on phones (<640px), ~half on tablets
@@ -947,25 +1029,33 @@ function SectionContainer({
     <section className="flex flex-col gap-2.5 p-0 sm:gap-3 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3.5 sm:shadow-sm">
       <SectionHeader heading={section.heading} />
       {tabsEnabled && tabGroups.length > 0 && (
-        <div className="flex gap-1 overflow-x-auto border-b border-border/60 pb-1 [scrollbar-width:thin]">
-          {tabGroups.map(tab => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTabKey(tab.key)}
-              className={`shrink-0 rounded-t-md border px-3 py-1.5 text-sm transition-colors ${
-                (activeTab?.key ?? tabGroups[0]?.key) === tab.key
-                  ? 'border-border border-b-background bg-background font-medium text-foreground shadow-sm'
-                  : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-              }`}
-            >
-              <span>{tab.label}</span>
-              <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                {tab.entries.length}
-              </span>
-            </button>
-          ))}
-        </div>
+        sizeTier === 'phone' ? (
+          <MobileTabPicker
+            tabGroups={tabGroups}
+            activeKey={activeTab?.key ?? tabGroups[0]?.key}
+            onSelect={setActiveTabKey}
+          />
+        ) : (
+          <div className="flex gap-1 overflow-x-auto border-b border-border/60 pb-1 [scrollbar-width:thin]">
+            {tabGroups.map(tab => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTabKey(tab.key)}
+                className={`shrink-0 rounded-t-md border px-3 py-1.5 text-sm transition-colors ${
+                  (activeTab?.key ?? tabGroups[0]?.key) === tab.key
+                    ? 'border-border border-b-background bg-background font-medium text-foreground shadow-sm'
+                    : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                }`}
+              >
+                <span>{tab.label}</span>
+                <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {tab.entries.length}
+                </span>
+              </button>
+            ))}
+          </div>
+        )
       )}
       <div ref={gridRef} className={containerClassName} style={containerStyle}>
         {renderedEntries.map(({ entry, entryIndex }) => {

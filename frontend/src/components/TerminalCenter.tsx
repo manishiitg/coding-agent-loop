@@ -1135,6 +1135,7 @@ function formatCloseCountdown(seconds: number): string {
 }
 
 function terminalState(terminal: TerminalSnapshot): string {
+  if (isArchivedTurnTerminal(terminal)) return 'completed'
   if (!terminal.active && terminalSecondsUntilClose(terminal) > 0) return 'closing'
   if (terminal.state === 'closing' && terminalSecondsUntilClose(terminal) <= 0) return 'completed'
   if (terminal.active && terminal.state === 'idle') return 'running'

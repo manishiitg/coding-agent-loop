@@ -281,10 +281,10 @@ function isRootLikeExecutionId(executionId: string): boolean {
 
 function prettyExecutionName(executionId: string): string {
   const tail = executionId.split(':').pop() || executionId;
-  if (/^workflow-full-\d+-step-\d+-\d+$/.test(tail) || /^workflow-step-\d+-\d+$/.test(tail)) {
+  if (/^workflow-full-[a-z0-9]+-step-\d+-[a-z0-9]+$/i.test(tail) || /^workflow-step-\d+-[a-z0-9]+$/i.test(tail)) {
     return 'Workflow step';
   }
-  return tail.replace(/^workflow-full-\d+-?/, 'Workflow ').replace(/-\d{12,}$/g, '').replace(/-/g, ' ').trim() || executionId;
+  return tail.replace(/^workflow-full-[a-z0-9]+-?/i, 'Workflow ').replace(/-[a-z0-9]{10,}$/gi, '').replace(/-/g, ' ').trim() || executionId;
 }
 
 function eventDerivedOwnerName(event: PollingEvent, executionId: string): string {

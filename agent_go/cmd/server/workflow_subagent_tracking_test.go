@@ -143,11 +143,11 @@ func TestWorkflowStartAutoNotificationPayloadAndDrain(t *testing.T) {
 	msg := buildBackgroundAgentStartSyntheticMessage(sessionID, []string{part})
 	for _, want := range []string{
 		"[AUTO-NOTIFICATION]",
-		"Workflow step 'Step: collect-evidence (RCA Workflow)'",
-		"workflow=Workflow/rtsrca",
+		"Started: Workflow step: Step: collect-evidence (RCA Workflow)",
+		"Workflow/rtsrca",
 		"group=production",
 		"step=collect-evidence",
-		"completion will arrive as a separate AUTO-NOTIFICATION",
+		"Ack only. No tools; wait.",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("expected start auto-notification to contain %q, got:\n%s", want, msg)
@@ -360,17 +360,14 @@ func TestWorkflowStepStartAndCompletionNotifyMainAgent(t *testing.T) {
 	}
 }
 
-// Pin the imperative "do not call tools" trailer on the start auto-notification.
-// Some agents (notably cursor-cli) interpret a softer "continue tracking …" as
-// permission to run a status-check tool, burning 30-60s of turn time before
-// the completion notification arrives. The trailer must keep them from doing that.
-func TestWorkflowStartAutoNotificationTrailerForbidsToolCalls(t *testing.T) {
+// Pin the compact start auto-notification trailer.
+func TestWorkflowStartAutoNotificationTrailerIsCompact(t *testing.T) {
 	singleAgent := buildBackgroundAgentStartSyntheticMessage("session-x", []string{
-		"- Workflow step 'do thing' (ID: id-1) [workflow=Workflow/x group=g step=s] started.",
+		"- Workflow step: do thing [Workflow/x, group=g, step=s]",
 	})
 	multiAgent := buildBackgroundAgentStartSyntheticMessage("session-x", []string{
-		"- Workflow step 'do thing one' (ID: id-1) started.",
-		"- Workflow step 'do thing two' (ID: id-2) started.",
+		"- Workflow step: do thing one",
+		"- Workflow step: do thing two",
 	})
 
 	for _, tt := range []struct {
@@ -389,9 +386,7 @@ func TestWorkflowStartAutoNotificationTrailerForbidsToolCalls(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, want := range []string{
 				"[AUTO-NOTIFICATION]",
-				"Ack briefly",
-				"Do NOT call tools",
-				"completion will arrive as a separate AUTO-NOTIFICATION",
+				"Ack only. No tools; wait.",
 			} {
 				if !strings.Contains(tt.msg, want) {
 					t.Fatalf("start trailer missing required directive %q, got:\n%s", want, tt.msg)

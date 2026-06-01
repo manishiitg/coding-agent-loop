@@ -8524,7 +8524,14 @@ func (api *StreamingAPI) processBatchedBackgroundAgentStartsLocked(sessionID str
 func backgroundAgentStartNotificationPart(snap BackgroundAgentSnapshot) string {
 	label := backgroundAgentStartLabel(snap)
 	contextInfo := backgroundAgentStartContext(snap)
-	return fmt.Sprintf("- %s '%s' (ID: %s)%s started.", label, snap.Name, snap.ID, contextInfo)
+	name := strings.TrimSpace(snap.Name)
+	if label == "Workflow step" {
+		name = strings.TrimPrefix(name, "Workflow step -> ")
+	}
+	if name == "" {
+		name = label
+	}
+	return fmt.Sprintf("- %s: %s%s", label, name, contextInfo)
 }
 
 func buildBackgroundAgentStartSyntheticMessage(_ string, parts []string) string {
@@ -8532,11 +8539,11 @@ func buildBackgroundAgentStartSyntheticMessage(_ string, parts []string) string 
 	// renders it inline rather than as "[Pasted text +N lines]".
 	// Completion will arrive as a separate AUTO-NOTIFICATION; the agent may call
 	// query_step to inspect live progress in the meantime.
-	const trailer = "Ack briefly. Do NOT call tools; completion will arrive as a separate AUTO-NOTIFICATION."
+	const trailer = "Ack only. No tools; wait."
 	if len(parts) == 1 {
-		return fmt.Sprintf("[AUTO-NOTIFICATION] %s\n%s", strings.TrimPrefix(parts[0], "- "), trailer)
+		return fmt.Sprintf("[AUTO-NOTIFICATION] Started: %s\n%s", strings.TrimPrefix(parts[0], "- "), trailer)
 	}
-	return fmt.Sprintf("[AUTO-NOTIFICATION] Background activity started:\n%s\n%s", strings.Join(parts, "\n"), trailer)
+	return fmt.Sprintf("[AUTO-NOTIFICATION] Started:\n%s\n%s", strings.Join(parts, "\n"), trailer)
 }
 
 func backgroundAgentStartLabel(snap BackgroundAgentSnapshot) string {
@@ -8574,7 +8581,7 @@ func backgroundAgentStartContext(snap BackgroundAgentSnapshot) string {
 	}
 	var fields []string
 	if workflowPath := strings.TrimSpace(snap.Metadata["workflow_path"]); workflowPath != "" {
-		fields = append(fields, "workflow="+workflowPath)
+		fields = append(fields, workflowPath)
 	}
 	if groupName := strings.TrimSpace(snap.Metadata["group_name"]); groupName != "" {
 		fields = append(fields, "group="+groupName)

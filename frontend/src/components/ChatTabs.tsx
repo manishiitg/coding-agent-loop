@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useMemo } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Plus, ArrowDown, ListTree, Terminal } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useModeStore } from '../stores/useModeStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
+import { TreeViewAlphaDialog, shouldShowTreeViewAlphaWarning } from './TreeViewAlphaDialog'
 
 interface ChatTabsProps {
   // For multi-agent mode: callback when starting a new chat (reset-in-place)
@@ -17,6 +18,7 @@ interface ChatTabsProps {
 // tab (title + view controls + New Chat). It is not a tab switcher anymore.
 // Workflow mode renders its own tabs (WorkflowChatTabs) inside the chat panel.
 export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onToggleAutoScroll }) => {
+  const [pendingTreeViewTabId, setPendingTreeViewTabId] = useState<string | null>(null)
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
   const {
@@ -44,6 +46,20 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
   const handleToggleAutoScroll = onToggleAutoScroll || (() => {
     setAutoScroll(!storeAutoScroll)
   })
+  const requestViewMode = useCallback((tabId: string, mode: 'tree' | 'terminal') => {
+    if (mode === 'tree' && activeViewMode !== 'tree' && shouldShowTreeViewAlphaWarning()) {
+      setPendingTreeViewTabId(tabId)
+      return
+    }
+    setTabViewMode(tabId, mode)
+  }, [activeViewMode, setTabViewMode])
+
+  const confirmTreeView = useCallback(() => {
+    if (pendingTreeViewTabId) {
+      setTabViewMode(pendingTreeViewTabId, 'tree')
+    }
+    setPendingTreeViewTabId(null)
+  }, [pendingTreeViewTabId, setTabViewMode])
 
   // Auto-select the single multi-agent tab if none is active (e.g. after refresh)
   useEffect(() => {
@@ -81,6 +97,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
   const chatTitle = showHeaderContent ? (activeTab?.name || 'Agent Chat') : 'Agent Chat'
 
   return (
+    <>
     <div className="flex-shrink-0 flex items-center gap-2 bg-gray-50 dark:bg-gray-800 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700">
       {/* Single-chat title */}
       <span className="text-sm font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap truncate">
@@ -118,12 +135,12 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (activeTabId) {
-                        setTabViewMode(activeTabId, mode)
-                      }
-                    }}
+	                    onClick={(e) => {
+	                      e.stopPropagation()
+	                      if (activeTabId) {
+	                        requestViewMode(activeTabId, mode)
+	                      }
+	                    }}
                     className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors ${
                       activeViewMode === mode
                         ? 'bg-blue-600 text-white shadow-sm'
@@ -159,7 +176,13 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onNewChat, autoScroll, onTog
             </button>
           )}
         </div>
+        </div>
       </div>
-    </div>
+      <TreeViewAlphaDialog
+        isOpen={pendingTreeViewTabId !== null}
+        onContinue={confirmTreeView}
+        onCancel={() => setPendingTreeViewTabId(null)}
+      />
+    </>
   )
 }

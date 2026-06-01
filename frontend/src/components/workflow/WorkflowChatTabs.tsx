@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect, useCallback, useRef } from 'react'
+import React, { useMemo, useEffect, useCallback, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { ArrowDown, ListTree, MessageSquare, Plus, Terminal, X } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../../stores/useChatStore'
@@ -6,6 +6,7 @@ import { activateTab } from '../../utils/activateTab'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
+import { TreeViewAlphaDialog, shouldShowTreeViewAlphaWarning } from '../TreeViewAlphaDialog'
 
 // ---------------------------------------------------------------------------
 // WorkflowTabItem — per-tab component with narrow store subscriptions
@@ -98,6 +99,7 @@ interface WorkflowChatTabsProps {
 }
 
 export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat }) => {
+  const [pendingTreeViewTabId, setPendingTreeViewTabId] = useState<string | null>(null)
   const {
     chatTabs,
     activeTabId,
@@ -121,6 +123,20 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat })
     return normalizeEventViewMode(tab?.viewMode)
   })
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
+  const requestViewMode = useCallback((tabId: string, mode: 'tree' | 'terminal') => {
+    if (mode === 'tree' && activeViewMode !== 'tree' && shouldShowTreeViewAlphaWarning()) {
+      setPendingTreeViewTabId(tabId)
+      return
+    }
+    setTabViewMode(tabId, mode)
+  }, [activeViewMode, setTabViewMode])
+
+  const confirmTreeView = useCallback(() => {
+    if (pendingTreeViewTabId) {
+      setTabViewMode(pendingTreeViewTabId, 'tree')
+    }
+    setPendingTreeViewTabId(null)
+  }, [pendingTreeViewTabId, setTabViewMode])
 
   // Filter to workflow tabs for the active preset, but always keep the active
   // workflow tab visible. Scheduled-run restores can briefly lack a preset match
@@ -238,6 +254,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat })
   }
 
   return (
+    <>
     <div className="shrink-0 border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800">
       <div className="flex min-w-0 items-center gap-1 px-2 py-1">
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
@@ -314,7 +331,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat })
                       onClick={(e) => {
                         e.stopPropagation()
                         if (activeTabId) {
-                          setTabViewMode(activeTabId, mode)
+                          requestViewMode(activeTabId, mode)
                         }
                       }}
                       aria-label={label}
@@ -352,5 +369,11 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat })
         )}
       </div>
     </div>
+    <TreeViewAlphaDialog
+      isOpen={pendingTreeViewTabId !== null}
+      onContinue={confirmTreeView}
+      onCancel={() => setPendingTreeViewTabId(null)}
+    />
+    </>
   )
 }

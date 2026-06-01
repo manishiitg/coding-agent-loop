@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
@@ -20,6 +22,8 @@ import (
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
+
+var workflowExecutionIDCounter atomic.Uint64
 
 // ---------------------------------------------------------------------------
 // Chat-mode system prompt templates for debugger phases
@@ -1258,7 +1262,7 @@ func RegisterRunFullEvaluationTool(
 					cfg.LLMConfig,
 					100,
 					logger,
-					nil, // tracer
+					nil,                // tracer
 					evalProgressBridge, // wrapped bridge with per-step notifications
 					cfg.CustomTools,
 					cfg.CustomToolExecutors,
@@ -1549,7 +1553,7 @@ func workflowProgressKey(agentType, agentName string, stepIndex int) string {
 
 func (b *workflowProgressBridge) workflowProgressExecIDForStart(agentType, agentName string, stepIndex int) string {
 	if b == nil {
-		return fmt.Sprintf("workflow-step-%d-%d", stepIndex, time.Now().UnixNano())
+		return fmt.Sprintf("workflow-step-%d-%s", stepIndex, workflowExecutionIDToken())
 	}
 	key := workflowProgressKey(agentType, agentName, stepIndex)
 	b.progressMu.Lock()
@@ -1560,14 +1564,14 @@ func (b *workflowProgressBridge) workflowProgressExecIDForStart(agentType, agent
 	if id := b.progressID[key]; id != "" {
 		return id
 	}
-	id := fmt.Sprintf("%s-step-%d-%d", b.parentID, stepIndex, time.Now().UnixNano())
+	id := fmt.Sprintf("%s-step-%d-%s", b.parentID, stepIndex, workflowExecutionIDToken())
 	b.progressID[key] = id
 	return id
 }
 
 func (b *workflowProgressBridge) workflowProgressExecIDForEnd(agentType, agentName string, stepIndex int) (string, bool) {
 	if b == nil {
-		return fmt.Sprintf("workflow-step-%d-%d", stepIndex, time.Now().UnixNano()), false
+		return fmt.Sprintf("workflow-step-%d-%s", stepIndex, workflowExecutionIDToken()), false
 	}
 	key := workflowProgressKey(agentType, agentName, stepIndex)
 	b.progressMu.Lock()
@@ -1578,9 +1582,18 @@ func (b *workflowProgressBridge) workflowProgressExecIDForEnd(agentType, agentNa
 	if id := b.progressID[key]; id != "" {
 		return id, true
 	}
-	id := fmt.Sprintf("%s-step-%d-%d", b.parentID, stepIndex, time.Now().UnixNano())
+	id := fmt.Sprintf("%s-step-%d-%s", b.parentID, stepIndex, workflowExecutionIDToken())
 	b.progressID[key] = id
 	return id, false
+}
+
+func workflowExecutionIDToken() string {
+	ts := strconv.FormatInt(time.Now().UnixMilli(), 36)
+	seq := strconv.FormatUint(workflowExecutionIDCounter.Add(1)%1296, 36)
+	if len(seq) == 1 {
+		seq = "0" + seq
+	}
+	return ts + seq
 }
 
 func (b *workflowProgressBridge) Name() string {
@@ -1730,10 +1743,11 @@ func RegisterRunFullWorkflowTool(
 			// Iteration is always provided — reuse the folder (creates if doesn't exist)
 			runMode := "use_same_run"
 
-			execID := fmt.Sprintf("workflow-full-%d", time.Now().UnixNano())
+			execToken := workflowExecutionIDToken()
+			execID := fmt.Sprintf("workflow-full-%s", execToken)
 			execCtx, cancel := context.WithCancel(session.sessionCtx)
 
-			agentSessionID := fmt.Sprintf("workshop-workflow-full-%d", time.Now().UnixNano())
+			agentSessionID := fmt.Sprintf("workshop-workflow-full-%s", execToken)
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
 			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
 			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)

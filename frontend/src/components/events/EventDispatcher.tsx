@@ -612,7 +612,7 @@ function getBackgroundExecutionDisplayName(rawName: string): string {
   if (!stripped.startsWith(workflowPrefix)) return titleCaseIdentifier(stripped)
 
   let stepName = stripped.slice(workflowPrefix.length).trim()
-  if (/^workflow-full-\d+-step-\d+-\d+$/.test(stepName) || /^workflow-step-\d+-\d+$/.test(stepName)) {
+  if (/^workflow-full-[a-z0-9]+-step-\d+-[a-z0-9]+$/i.test(stepName) || /^workflow-step-\d+-[a-z0-9]+$/i.test(stepName)) {
     return 'Workflow step'
   }
   const executionMarker = stepName.lastIndexOf('execution-')
@@ -621,7 +621,7 @@ function getBackgroundExecutionDisplayName(rawName: string): string {
   } else {
     stepName = stepName.replace(/^step-\d+-(sub-)?/, '')
   }
-  stepName = stepName.replace(/-\d{12,}$/g, '')
+  stepName = stepName.replace(/-[a-z0-9]{10,}$/gi, '')
 
   return titleCaseIdentifier(stepName) || 'Workflow step'
 }

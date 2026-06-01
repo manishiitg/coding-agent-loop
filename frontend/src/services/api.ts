@@ -656,7 +656,7 @@ export const agentApi = {
 
   getTerminal: async (
     terminalId: string,
-    options?: { content?: 'stored' | 'deep' | 'tmux'; lines?: number },
+    options?: { content?: 'stored' | 'screen' | 'history' | 'tmux' | 'deep'; lines?: number },
   ): Promise<TerminalSnapshot> => {
     const params: Record<string, string | number> = {}
     if (options?.content && options.content !== 'stored') params.content = options.content

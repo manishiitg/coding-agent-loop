@@ -610,7 +610,7 @@ func TestTerminalRoutesRefreshTerminalCapturesTmuxPane(t *testing.T) {
 	}
 }
 
-func TestTerminalRoutesGetTerminalCanDeepRefreshSelectedPane(t *testing.T) {
+func TestTerminalRoutesGetTerminalCanHistoryRefreshSelectedPane(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}
 	sessionID := "session-terminal-deep"
@@ -626,7 +626,7 @@ func TestTerminalRoutesGetTerminalCanDeepRefreshSelectedPane(t *testing.T) {
 	}
 	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=deep&lines=12000", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=history&lines=12000", nil)
 	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
 	rec := httptest.NewRecorder()
 	api.handleGetTerminal(rec, req)
@@ -642,6 +642,73 @@ func TestTerminalRoutesGetTerminalCanDeepRefreshSelectedPane(t *testing.T) {
 	}
 	if response.Content != "deep pane" {
 		t.Fatalf("terminal content = %q, want deep content", response.Content)
+	}
+}
+
+func TestTerminalRoutesGetTerminalCapturesRunningTmuxShortHistory(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-visible"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-agy-cli-int-visible"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "loading\nold frame", 2))
+
+	var gotArgs []string
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		gotArgs = append([]string(nil), args...)
+		return "current visible pane", nil
+	}
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=screen", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleGetTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -e -J -t "+tmuxSession+" -S -300" {
+		t.Fatalf("tmux args = %q, want short-history capture", got)
+	}
+	var response terminals.Snapshot
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode visible response: %v", err)
+	}
+	if response.Content != "current visible pane" {
+		t.Fatalf("terminal content = %q, want visible content", response.Content)
+	}
+}
+
+func TestTerminalRoutesGetTerminalStoredSkipsInactiveTmuxCapture(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-stored"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-codex-cli-int-stored"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "stored pane", 2))
+	store.HandleEvent(sessionID, terminalRouteEndEvent(sessionID, "workflow-step:review-plan", tmuxSession, 60))
+
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(ctx context.Context, args ...string) (string, error) {
+		t.Fatalf("tmux capture should not be called for content=stored, args=%v", args)
+		return "", nil
+	}
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=stored", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleGetTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var response terminals.Snapshot
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode stored response: %v", err)
+	}
+	if response.Content != "stored pane" {
+		t.Fatalf("terminal content = %q, want stored content", response.Content)
 	}
 }
 

@@ -13,8 +13,8 @@ import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
-// Module-level ansi_up singleton — instances are cheap but a single shared
-// one keeps escaping behavior consistent and avoids per-render allocations.
+// Module-level ansi_up singleton for synthetic/structured terminal rows.
+// Real tmux panes render raw ANSI through xterm.js.
 //
 // use_classes = true makes ansi_up emit CSS classes (ansi-red-fg,
 // ansi-bright-blue-fg, ansi-bold, etc.) instead of inline colors. The
@@ -69,6 +69,8 @@ interface TerminalCenterProps {
 }
 
 const TERMINAL_REFRESH_HISTORY_LINES = 10000
+const TERMINAL_ACTIVE_MAIN_HISTORY_LINES = 600
+const TERMINAL_ACTIVE_STEP_HISTORY_LINES = 1200
 const TERMINAL_DETAIL_CACHE_LIMIT = 40
 const MAX_PRIOR_ARCHIVED_TURNS_TO_INLINE = 3
 const PROMPT_COMPLETION_FALLBACK_SECONDS = 60
@@ -1623,12 +1625,10 @@ function resolveRailParentKey(
 }
 
 // ---------------------------------------------------------------------------
-// Structured terminal view — parses the synthetic terminal's plain-text
-// buffer into typed rows so we can colorize roles and fold long tool I/O
-// behind a one-line summary. Tmux pane scrapes skip this and keep the
-// raw <pre> rendering: they're literal screen captures and adding any
-// frontend interpretation breaks the "this is exactly what the CLI saw"
-// contract.
+// Structured terminal view — parses synthetic/archived terminal buffers into
+// typed rows so we can colorize roles and fold long tool I/O behind a one-line
+// summary. Real tmux pane captures skip this parser and render raw ANSI through
+// xterm.js.
 // ---------------------------------------------------------------------------
 
 // rawText carries the ANSI-colored version of `text`. The parser populates
@@ -1920,9 +1920,16 @@ const XtermTerminalPane: React.FC<{
   contentRef: React.RefObject<HTMLDivElement | null>
   xtermTheme: ITheme
   xtermProfile: (typeof XTERM_PROFILE_OPTIONS)[TerminalColorScheme]
-}> = ({ content, className, contentRef, xtermTheme, xtermProfile }) => {
+  onViewportStickChange?: (isNearBottom: boolean) => void
+}> = ({ content, className, contentRef, xtermTheme, xtermProfile, onViewportStickChange }) => {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
+  const lastContentRef = useRef<string>('')
+  const onViewportStickChangeRef = useRef(onViewportStickChange)
+
+  useEffect(() => {
+    onViewportStickChangeRef.current = onViewportStickChange
+  }, [onViewportStickChange])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -1944,6 +1951,10 @@ const XtermTerminalPane: React.FC<{
     term.loadAddon(fit)
     term.open(mount)
     terminalRef.current = term
+    const scrollDisposable = term.onScroll(viewportY => {
+      const distanceFromBottom = Math.max(0, term.buffer.active.baseY - viewportY)
+      onViewportStickChangeRef.current?.(distanceFromBottom <= 1)
+    })
 
     const fitTerminal = () => {
       try {
@@ -1957,6 +1968,7 @@ const XtermTerminalPane: React.FC<{
     resizeObserver.observe(mount)
 
     return () => {
+      scrollDisposable.dispose()
       resizeObserver.disconnect()
       terminalRef.current = null
       term.dispose()
@@ -1981,11 +1993,25 @@ const XtermTerminalPane: React.FC<{
   useEffect(() => {
     const term = terminalRef.current
     if (!term) return
+    if (content === lastContentRef.current) return
+    const buffer = term.buffer.active
+    const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY)
+    const shouldStickToBottom = distanceFromBottom <= 1
+    lastContentRef.current = content
     term.reset()
-    if (content) {
-      term.write(content.replace(/\r?\n/g, '\r\n'))
+    const restoreScroll = () => {
+      if (shouldStickToBottom) {
+        term.scrollToBottom()
+        return
+      }
+      const nextBaseY = term.buffer.active.baseY
+      term.scrollToLine(Math.max(0, nextBaseY - distanceFromBottom))
     }
-    term.scrollToBottom()
+    if (!content) {
+      restoreScroll()
+      return
+    }
+    term.write(content.replace(/\r?\n/g, '\r\n'), restoreScroll)
   }, [content])
 
   return (
@@ -1998,11 +2024,10 @@ const XtermTerminalPane: React.FC<{
 function normalizeTerminalRows(rows: TerminalSnapshot['rows'] | undefined): TerminalRow[] {
   if (!Array.isArray(rows)) return []
   const normalized: TerminalRow[] = []
-  // Server-pre-parsed rows carry their text with whatever ANSI the backend
-  // emitted. We strip ANSI for the `text` field (so existing display logic
-  // and string comparisons stay clean) but stash the colored original in
-  // `rawText` so the renderer can colorize via ansi_up. When the row has no
-  // ANSI codes, rawText stays undefined and the renderer falls back to plain.
+  // Server-pre-parsed synthetic rows can carry ANSI. We strip ANSI for the
+  // `text` field (so existing display logic and string comparisons stay clean)
+  // but stash the colored original in `rawText` so the structured renderer can
+  // colorize via ansi_up. Real tmux panes do not use this path.
   for (const row of rows) {
     switch (row.kind) {
       case 'banner':
@@ -2297,6 +2322,18 @@ function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
   if (transport === 'api' || transport === 'structured' || transport === 'structured_cli' || transport === 'non_tmux') return true
   // Fall back to tmux_session presence — pane scrapes always have one.
   return !terminal.tmux_session
+}
+
+function terminalTmuxDetailOptions(terminal: TerminalSnapshot): { content: 'screen' | 'history'; lines?: number } | undefined {
+  if (!terminal.tmux_session) return undefined
+  const state = terminalState(terminal)
+  if (terminal.active && state !== 'stale' && state !== 'failed') {
+    return {
+      content: 'screen',
+      lines: isMainAgentTerminal(terminal) ? TERMINAL_ACTIVE_MAIN_HISTORY_LINES : TERMINAL_ACTIVE_STEP_HISTORY_LINES,
+    }
+  }
+  return { content: 'history' }
 }
 
 // Error event types that should surface as a banner above the terminal
@@ -3219,7 +3256,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     detailRequestSeqRef.current = requestSeq
     let cancelled = false
     probeInFlightRef.current = true
-    const detailOptions = selectedTerminal.tmux_session ? { content: 'tmux' as const } : undefined
+    const detailOptions = terminalTmuxDetailOptions(selectedTerminal)
     agentApi.getTerminal(selectedTerminal.terminal_id, detailOptions)
       .then(detail => {
         if (!cancelled && detailRequestSeqRef.current === requestSeq && terminalPaneKey(detail) === selectedTerminalKey) {
@@ -3265,7 +3302,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       // concurrent capture-pane calls on the same tmux session race.
       if (probeInFlightRef.current) return
       probeInFlightRef.current = true
-      void agentApi.getTerminal(terminalId, { content: 'tmux' }).then(detail => {
+      const detailOptions = terminalTmuxDetailOptions(selectedTerminalView)
+      void agentApi.getTerminal(terminalId, detailOptions).then(detail => {
         cacheTerminalDetail(detail)
         // The detail carries the freshest active/state — react to it directly
         // instead of waiting a full list-poll cycle for selectedTerminalView to
@@ -3298,6 +3336,11 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
       terminalAutoScrollRef.current = false
       terminalManualScrollLockRef.current = true
     }
+  }, [])
+
+  const handleXtermViewportStickChange = useCallback((isNearBottom: boolean) => {
+    terminalAutoScrollRef.current = isNearBottom
+    terminalManualScrollLockRef.current = !isNearBottom
   }, [])
 
   const scrollSelectedTerminalToBottom = useCallback(() => {
@@ -4150,6 +4193,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       content={selectedTerminalDisplayContent}
                       xtermTheme={XTERM_THEMES[terminalColorScheme]}
                       xtermProfile={XTERM_PROFILE_OPTIONS[terminalColorScheme]}
+                      onViewportStickChange={handleXtermViewportStickChange}
                       className={`min-w-0 flex-1 overflow-hidden overscroll-contain font-mono text-neutral-100 ${XTERM_PROFILE_OPTIONS[terminalColorScheme].panePaddingClass} ${terminalTheme.selection}`}
                     />
                   )}

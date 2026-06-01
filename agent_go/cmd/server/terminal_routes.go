@@ -20,6 +20,7 @@ import (
 const listTerminalContentMaxBytes = 64 * 1024
 const terminalTmuxActionTimeout = 5 * time.Second
 const terminalDefaultRefreshLines = 2000
+const terminalActiveDetailHistoryLines = 300
 const terminalDefaultDetailHistoryLines = 10000
 const terminalMaxCaptureLines = 20000
 
@@ -134,17 +135,25 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Terminal not found", http.StatusNotFound)
 		return
 	}
-	// Capture live tmux content when: explicitly requested via content=deep/tmux,
+	// Capture live tmux content when: explicitly requested via content=screen/history,
 	// OR when the terminal is inactive (active=false) and has a tmux session.
+	// Running content=screen requests capture a short scrollback window instead of
+	// deep history: CLIs like Agy repaint loading/spinner text in place, and tmux
+	// history can flatten those old frames into repeated "loading/generating"
+	// fragments before xterm.js ever sees them. Keeping a small window preserves
+	// user scrolling without feeding old spinner history back into the terminal.
+	// Completed/inactive terminals still use deeper history so users can review
+	// the final transcript. Legacy content=tmux maps to screen/history based on
+	// active state; legacy content=deep maps to history.
+	//
 	// Inactive tmux terminals receive no event-stream updates, so every GET acts
 	// as a lightweight refresh — if the pane content changed (e.g. after Claude
 	// Code context compaction), ChunkIndex increments, the list-poll returns the
 	// new value, and the frontend re-fetches automatically.
 	shouldCaptureTmux := shouldCaptureTerminalPaneForDetail(snapshot, r)
 	if shouldCaptureTmux {
-		lines := terminalCaptureLinesFromRequest(r, terminalDefaultDetailHistoryLines)
 		ctx, cancel := context.WithTimeout(r.Context(), terminalTmuxActionTimeout)
-		content, err := captureTerminalPaneLines(ctx, snapshot.TmuxSession, lines)
+		content, err := captureTerminalPaneForDetail(ctx, snapshot, r)
 		cancel()
 		if err == nil {
 			if refreshed, ok := api.terminalStore.RefreshContent(snapshot.TerminalID, content); ok {
@@ -167,10 +176,31 @@ func shouldCaptureTerminalPaneForDetail(snapshot terminals.Snapshot, r *http.Req
 	if strings.TrimSpace(snapshot.TmuxSession) == "" {
 		return false
 	}
-	if wantsDeepTerminalContent(r) || !snapshot.Active {
+	if wantsStoredTerminalContent(r) {
+		return false
+	}
+	if wantsScreenTerminalContent(r) || wantsHistoryTerminalContent(r) || !snapshot.Active {
 		return true
 	}
 	return terminalSnapshotHasPromptCompletionFallback(snapshot.Content)
+}
+
+func captureTerminalPaneForDetail(ctx context.Context, snapshot terminals.Snapshot, r *http.Request) (string, error) {
+	lines := terminalCaptureLinesFromRequest(r, terminalDefaultDetailHistoryLines)
+	if shouldCaptureActiveTerminalHistoryForDetail(snapshot, r) {
+		lines = terminalCaptureLinesFromRequest(r, terminalActiveDetailHistoryLines)
+	}
+	return captureTerminalPaneLines(ctx, snapshot.TmuxSession, lines)
+}
+
+func shouldCaptureActiveTerminalHistoryForDetail(snapshot terminals.Snapshot, r *http.Request) bool {
+	if !snapshot.Active || terminalSnapshotHasPromptCompletionFallback(snapshot.Content) {
+		return false
+	}
+	if strings.TrimSpace(r.URL.Query().Get("lines")) != "" || wantsDeepTerminalContent(r) {
+		return false
+	}
+	return wantsScreenTerminalContent(r)
 }
 
 func terminalSnapshotHasPromptCompletionFallback(content string) bool {
@@ -524,11 +554,10 @@ func captureTerminalPaneLines(ctx context.Context, tmuxSession string, lines int
 	if lines > terminalMaxCaptureLines {
 		lines = terminalMaxCaptureLines
 	}
-	// -e preserves ANSI SGR (color, bold, dim, …) so the frontend can colorize
-	// the snapshot via ansi_up. Mirrors the captureXPaneForDisplay flag used
-	// by the live-stream path in multi-llm-provider-go; without it, terminal
-	// refresh / completion fetches would silently strip color even though the
-	// running session was emitting it.
+	// -e preserves ANSI SGR (color, bold, dim, …) so xterm.js can render the
+	// captured pane as a terminal. Without it, terminal refresh / completion
+	// fetches would silently strip color even though the running session emitted
+	// it.
 	//
 	// -J rejoins lines that tmux hard-wrapped at the pane width into a single
 	// logical line. The web pane is a whitespace-pre-wrap <pre> whose width
@@ -600,15 +629,6 @@ func collapseBlankRuns(s string) string {
 func isTerminalSpinnerLine(line string) bool {
 	r, _ := utf8.DecodeRuneInString(line)
 	return r >= 0x2800 && r <= 0x28FF
-}
-
-func isAllDashRunes(s string) bool {
-	for _, r := range s {
-		if r != '─' && r != '-' && r != '━' {
-			return false
-		}
-	}
-	return true
 }
 
 // terminalSpinnerStatusWords mirrors paneview.spinnerStatusWords: the words CLI
@@ -719,9 +739,23 @@ func pruneTerminalSpinnerWordFragments(lines []string) []string {
 }
 
 func wantsDeepTerminalContent(r *http.Request) bool {
+	return wantsHistoryTerminalContent(r)
+}
+
+func wantsStoredTerminalContent(r *http.Request) bool {
+	contentMode := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("content")))
+	return contentMode == "stored"
+}
+
+func wantsHistoryTerminalContent(r *http.Request) bool {
 	contentMode := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("content")))
 	refresh := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("refresh")))
-	return contentMode == "deep" || contentMode == "tmux" || refresh == "true" || refresh == "1"
+	return contentMode == "history" || contentMode == "deep" || refresh == "true" || refresh == "1"
+}
+
+func wantsScreenTerminalContent(r *http.Request) bool {
+	contentMode := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("content")))
+	return contentMode == "screen" || contentMode == "tmux"
 }
 
 func terminalCaptureLinesFromRequest(r *http.Request, fallback int) int {

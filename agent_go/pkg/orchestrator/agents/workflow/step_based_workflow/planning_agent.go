@@ -4667,9 +4667,6 @@ func registerPlanModificationTools(
 	// NOTE: add_orchestration_step tool removed (deprecated in favor of todo_task).
 	// Schema, executor, and execution code kept for backward compatibility with existing workflows.
 
-	// NOTE: add_loop_step tool removed (deprecated — regular steps with has_loop cover this).
-	// Schema, executor, and execution code kept for backward compatibility with existing workflows.
-
 	humanInputSchema := getAddHumanInputStepSchema()
 	humanInputParams, err := parseSchemaForToolParameters(humanInputSchema)
 	if err != nil {

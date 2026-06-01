@@ -4,7 +4,13 @@ import type { PlannerFile, ReportFileListFormat, ReportFileRenderFormat, ReportW
 import { agentApi, workspaceApi } from '../../../services/api'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 import { WidgetError, WidgetHeader } from './shared'
-import { openReportFileInViewer } from './tableHelpers'
+import { useReportFilePreviewStore } from '../../../stores/useReportFilePreviewStore'
+
+// previewReportFile opens a file-list entry in the in-report preview modal.
+// file.filepath is the absolute workspace path the planner-files API returns.
+function previewReportFile(file: PlannerFile) {
+  useReportFilePreviewStore.getState().show({ path: file.filepath, name: basename(file.filepath) })
+}
 
 type ArtifactKind = 'markdown' | 'html' | 'text' | 'code' | 'json' | 'image' | 'video' | 'audio' | 'pdf' | 'other'
 
@@ -295,6 +301,33 @@ function useFileList(widget: ReportWidget, workspacePath: string): FileListState
   return state
 }
 
+// groupFilesByFolder buckets files by the first path segment under the source
+// folder (e.g. the PAN folder under db/reports). Files directly in the source
+// root land in the "" bucket. Order of first appearance is preserved.
+function groupFilesByFolder(files: PlannerFile[], sourceFolderAbs: string): { group: string; files: PlannerFile[] }[] {
+  const prefix = sourceFolderAbs.replace(/\/+$/, '') + '/'
+  const order: string[] = []
+  const buckets = new Map<string, PlannerFile[]>()
+  for (const file of files) {
+    const fp = file.filepath.replace(/\\/g, '/')
+    const rel = fp.startsWith(prefix) ? fp.slice(prefix.length) : basename(fp)
+    const slash = rel.indexOf('/')
+    const group = slash > 0 ? rel.slice(0, slash) : ''
+    if (!buckets.has(group)) {
+      buckets.set(group, [])
+      order.push(group)
+    }
+    buckets.get(group)!.push(file)
+  }
+  return order.map(group => ({ group, files: buckets.get(group)! }))
+}
+
+function FileGroupBody({ files, format, workspacePath }: { files: PlannerFile[]; format: ReportFileListFormat; workspacePath: string }) {
+  if (format === 'table') return <FileTable files={files} />
+  if (format === 'cards' || format === 'gallery') return <FileGallery files={files} workspacePath={workspacePath} compact={format === 'cards'} />
+  return <FileList files={files} />
+}
+
 export function FileListWidget({ widget, workspacePath }: { widget: ReportWidget; workspacePath: string }) {
   const state = useFileList(widget, workspacePath)
   const format = (widget.listFormat || 'list') as ReportFileListFormat
@@ -309,17 +342,33 @@ export function FileListWidget({ widget, workspacePath }: { widget: ReportWidget
     return <WidgetError widget={widget} message={`Could not list ${widget.source}.`} hint={state.message} />
   }
 
+  // Group by subfolder (e.g. per-PAN) so a recursive listing reads as labelled
+  // sections instead of one long flat list. Falls back to a flat render when
+  // every file sits in the source root (a single empty group).
+  const sourceFolderAbs = workspaceFilePath(workspacePath, widget.source)
+  const groups = groupFilesByFolder(state.files, sourceFolderAbs)
+  const grouped = groups.length > 1 || (groups.length === 1 && groups[0].group !== '')
+
   return (
     <div className="flex flex-col gap-3">
       <WidgetHeader widget={widget} />
       {state.files.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border px-3 py-5 text-sm text-muted-foreground">No files found.</div>
-      ) : format === 'table' ? (
-        <FileTable files={state.files} />
-      ) : format === 'cards' || format === 'gallery' ? (
-        <FileGallery files={state.files} workspacePath={workspacePath} compact={format === 'cards'} />
+      ) : grouped ? (
+        <div className="flex flex-col gap-4">
+          {groups.map(({ group, files }) => (
+            <div key={group || '__root__'} className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <FolderOpen className="h-3.5 w-3.5" />
+                <span className="truncate">{group || 'Other'}</span>
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium normal-case text-muted-foreground">{files.length}</span>
+              </div>
+              <FileGroupBody files={files} format={format} workspacePath={workspacePath} />
+            </div>
+          ))}
+        </div>
       ) : (
-        <FileList files={state.files} />
+        <FileGroupBody files={state.files} format={format} workspacePath={workspacePath} />
       )}
     </div>
   )
@@ -333,11 +382,11 @@ function FileList({ files }: { files: PlannerFile[] }) {
           key={file.filepath}
           type="button"
           title={`Open ${file.filepath}`}
-          onClick={() => openReportFileInViewer(file.filepath)}
+          onClick={() => previewReportFile(file)}
           className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted/40"
         >
           <ArtifactIcon kind={artifactKind(file.filepath)} />
-          <span className="min-w-0 flex-1 truncate text-primary underline underline-offset-2">{file.filepath}</span>
+          <span className="min-w-0 flex-1 truncate text-primary underline underline-offset-2">{basename(file.filepath)}</span>
           {formatBytes(file.size) && <span className="text-xs text-muted-foreground">{formatBytes(file.size)}</span>}
         </button>
       ))}
@@ -364,10 +413,10 @@ function FileTable({ files }: { files: PlannerFile[] }) {
                 <button
                   type="button"
                   title={`Open ${file.filepath}`}
-                  onClick={() => openReportFileInViewer(file.filepath)}
+                  onClick={() => previewReportFile(file)}
                   className="block max-w-full truncate text-left text-primary underline underline-offset-2 hover:text-primary/80"
                 >
-                  {file.filepath}
+                  {basename(file.filepath)}
                 </button>
               </td>
               <td className="px-3 py-2 text-muted-foreground">{extensionFor(file.filepath) || 'file'}</td>
@@ -405,7 +454,7 @@ function ArtifactCard({ file, workspacePath, compact }: { file: PlannerFile; wor
     <button
       type="button"
       title={`Open ${file.filepath}`}
-      onClick={() => openReportFileInViewer(file.filepath)}
+      onClick={() => previewReportFile(file)}
       className="block w-full overflow-hidden rounded-lg border border-border bg-background text-left transition-colors hover:border-primary/50 hover:bg-muted/30"
     >
       {!compact && (kind === 'image' || kind === 'video') ? (
@@ -425,6 +474,126 @@ function ArtifactCard({ file, workspacePath, compact }: { file: PlannerFile; wor
         </div>
       </div>
     </button>
+  )
+}
+
+// useAbsoluteFileContent loads a workspace file by its ABSOLUTE path (the form
+// the planner-files API returns for report file-lists), mirroring useFileContent
+// but without needing a ReportWidget/source. Used by the in-report preview modal.
+function useAbsoluteFileContent(path: string, kind: ArtifactKind): FileContentState {
+  const [state, setState] = useState<FileContentState>({ status: 'loading' })
+
+  useEffect(() => {
+    let cancelled = false
+    let objectUrl: string | undefined
+    setState({ status: 'loading' })
+
+    const load = async () => {
+      try {
+        if (kind === 'image') {
+          const response = await agentApi.getPlannerFileContent(path)
+          const content = typeof response?.data?.content === 'string' ? response.data.content : ''
+          if (content.startsWith('data:image/')) {
+            if (!cancelled) setState({ status: 'ready', content })
+            return
+          }
+          objectUrl = await loadBinaryObjectUrl(path)
+          if (!cancelled) setState({ status: 'ready', objectUrl })
+          return
+        }
+        if (kind === 'pdf' || kind === 'video' || kind === 'audio') {
+          objectUrl = await loadBinaryObjectUrl(path)
+          if (!cancelled) setState({ status: 'ready', objectUrl, mimeType: mimeTypeFor(path) })
+          return
+        }
+        const response = await agentApi.getPlannerFileContent(path)
+        const content = typeof response?.data?.content === 'string' ? response.data.content : ''
+        if (!cancelled) setState({ status: 'ready', content })
+      } catch (error) {
+        if (!cancelled) setState({ status: 'error', message: error instanceof Error ? error.message : String(error) })
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [path, kind])
+
+  return state
+}
+
+// FilePreviewByPath renders a single workspace file inline given its absolute
+// path — the body of the in-report preview modal. Handles the same formats as
+// the single-file FileWidget (pdf/image/video/audio/markdown/html/text/code/json).
+export function FilePreviewByPath({ path, name }: { path: string; name?: string }) {
+  const kind = artifactKind(path)
+  const state = useAbsoluteFileContent(path, kind)
+  const label = name || basename(path)
+
+  if (state.status === 'loading') {
+    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading {label}…</div>
+  }
+  if (state.status === 'error') {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-sm">
+        <div className="text-destructive">Could not load {label}.</div>
+        <div className="text-xs text-muted-foreground">{state.message}</div>
+      </div>
+    )
+  }
+
+  if (kind === 'markdown') {
+    return (
+      <div className="h-full overflow-auto px-4 py-3 text-sm text-foreground">
+        <MarkdownRenderer content={state.content || ''} basePath={path} className="max-w-none" maxHeight="none" />
+      </div>
+    )
+  }
+  if (kind === 'html') {
+    return (
+      <iframe title={label} srcDoc={state.content || ''} sandbox="allow-same-origin allow-scripts" className="h-full w-full bg-background" />
+    )
+  }
+  if (kind === 'pdf' && state.objectUrl) {
+    return <iframe title={label} src={state.objectUrl} className="h-full w-full bg-background" />
+  }
+  if (kind === 'image') {
+    return (
+      <div className="flex h-full items-center justify-center bg-background p-3">
+        <img src={state.content || state.objectUrl} alt={label} className="max-h-full max-w-full object-contain" />
+      </div>
+    )
+  }
+  if (kind === 'video' && state.objectUrl) {
+    return (
+      <div className="flex h-full items-center justify-center bg-black p-3">
+        <video src={state.objectUrl} controls className="max-h-full max-w-full" />
+      </div>
+    )
+  }
+  if (kind === 'audio' && state.objectUrl) {
+    return (
+      <div className="flex h-full items-center justify-center p-4">
+        <audio src={state.objectUrl} controls className="w-full max-w-xl" />
+      </div>
+    )
+  }
+  if (kind === 'text' || kind === 'code' || kind === 'json') {
+    return (
+      <pre className="h-full overflow-auto bg-muted/20 px-4 py-3 text-xs leading-6 text-foreground">
+        {kind === 'json' ? formatJSONText(state.content || '') : state.content}
+      </pre>
+    )
+  }
+  // 'other' — no inline renderer; offer a hint.
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
+      <ArtifactIcon kind={kind} />
+      <div>No inline preview for this file type.</div>
+      <div className="text-xs">{label}</div>
+    </div>
   )
 }
 

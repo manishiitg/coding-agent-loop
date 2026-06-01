@@ -13,6 +13,7 @@ import { TableWidget } from './reportWidgets/TableWidget'
 import { PivotWidget } from './reportWidgets/PivotWidget'
 import { ChartWidget } from './reportWidgets/ChartWidget'
 import { FileListWidget, FileWidget } from './reportWidgets/FileWidget'
+import { FilePreviewModal } from './reportWidgets/FilePreviewModal'
 import {
   StandaloneWidgetNotice,
   WidgetError,
@@ -376,6 +377,12 @@ async function loadReportDataSnapshot(workspacePath: string, force = false): Pro
       paths.map(async (path): Promise<readonly [string, unknown]> => {
         const content = await readWorkspaceText(`${workspacePath}/${path}`)
         if (content === null || content.trim() === '') return [path, null] as const
+        // Raw-text sources (markdown / plain text) are not JSON — keep the file
+        // content verbatim so a `markdown` widget can point `source` directly at
+        // a .md file in the workspace and render it inline (no `path` needed).
+        // resolveJSONPath returns a bare string unchanged when no path is set,
+        // and relative links inside the file resolve against basePath=source.
+        if (/\.(md|markdown|txt)$/i.test(path)) return [path, content] as const
         try {
           return [path, JSON.parse(content)] as const
         } catch {
@@ -790,6 +797,12 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
           (PreviewPaneControls); preference changes arrive via the
           REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT listener, refresh via
           WORKFLOW_REPORT_REFRESH_EVENT. */}
+
+      {/* In-report file preview modal — opened from file-list rows and
+          table/cards file links via useReportFilePreviewStore. Self-contained
+          (fixed overlay) so it works inside the workflow layout without the chat
+          workspace's file-content viewer. */}
+      <FilePreviewModal />
     </div>
   )
 }

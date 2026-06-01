@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { formatAuto, formatNamed, type FormatResult } from '../../../lib/reportFormatters'
 import type { ReportFormatterName, ReportWidget } from '../../../services/api-types'
-import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
+import { useReportFilePreviewStore } from '../../../stores/useReportFilePreviewStore'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 
 // Default categorical palette. Widgets override via `colors:` / `colorsDark:`.
@@ -321,13 +321,12 @@ export function renderTableValueContent(
   return formatted.text
 }
 
-// openReportFileInViewer opens a workspace file in the in-app file viewer — the
-// same panel that opens when a file is clicked in the workspace tree.
+// openReportFileInViewer opens a workspace file in the in-report preview modal
+// (useReportFilePreviewStore). The report lives in the workflow layout, a
+// different subtree from the chat workspace's file-content overlay, so it can't
+// reuse useWorkspaceStore's viewer — that path opened an empty/invisible panel.
 export function openReportFileInViewer(fullPath: string) {
-  const ws = useWorkspaceStore.getState()
-  ws.setSelectedFile({ name: fullPath.split('/').filter(Boolean).pop() || fullPath, path: fullPath })
-  ws.setShowFileContent(true)
-  ws.expandFoldersForFile?.(fullPath)
+  useReportFilePreviewStore.getState().show({ path: fullPath })
 }
 
 export function collectVisibleColumns(rows: Array<Record<string, unknown>>, hidden: Set<string>): string[] {

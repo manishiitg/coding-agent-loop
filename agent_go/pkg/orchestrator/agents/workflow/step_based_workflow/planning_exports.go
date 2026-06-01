@@ -1234,6 +1234,19 @@ func RegisterRunFullEvaluationTool(
 					}
 				}()
 
+				// Wrap event bridge with the progress listener so eval steps send
+				// per-step notifications to the main agent — same as run_full_workflow.
+				// Without this an evaluation run was silent per-step (no step type
+				// notified the main agent until the single end-of-eval completion).
+				evalProgressBridge := &workflowProgressBridge{
+					inner:     cfg.EventBridge,
+					session:   session,
+					logger:    logger,
+					parentID:  execID,
+					iteration: iterationName,
+					groupName: groupName,
+				}
+
 				// Create a fresh controller for the full evaluation run
 				evalController, err := NewStepBasedWorkflowOrchestrator(
 					execCtx,
@@ -1246,7 +1259,7 @@ func RegisterRunFullEvaluationTool(
 					100,
 					logger,
 					nil, // tracer
-					cfg.EventBridge,
+					evalProgressBridge, // wrapped bridge with per-step notifications
 					cfg.CustomTools,
 					cfg.CustomToolExecutors,
 					cfg.ToolCategories,
@@ -1261,6 +1274,11 @@ func RegisterRunFullEvaluationTool(
 				defer evalController.CloseWorkshopGroupSessions()
 				evalController.SetSubAgentNotifier(session.combinedSubAgentNotifier())
 				evalController.SetWorkshopExecutionContext(execCtx, session.StepRegistry)
+				evalController.SetRoutingDecisionNotifier(session.executionNotifier)
+				// Wire the direct execution notifier so message_sequence items,
+				// kb-update, and continuation recovery notify during eval too
+				// (these emit via workshopExecutionNotifier, which the bridge skips).
+				evalController.SetWorkshopExecutionNotifier(session.executionNotifier)
 
 				// Propagate HTTP session ID only — do NOT overwrite MCP session ID.
 				// Same reasoning as main controller above: eval controller needs its own

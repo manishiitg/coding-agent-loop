@@ -41,23 +41,7 @@ func (api *StreamingAPI) resolveWorkflowLLMConfigForWorkspace(
 		phaseLLM := workshopExtractLLM(llmCfg.PhaseLLM, llmCfg.Provider, llmCfg.ModelID)
 		var tieredConfig *todo_creation_human.TieredLLMConfig
 		if llmCfg.LLMAllocationMode == "tiered" && llmCfg.TieredConfig != nil {
-			tieredConfig = &todo_creation_human.TieredLLMConfig{
-				Tier1: &todo_creation_human.AgentLLMConfig{
-					Provider:  llmCfg.TieredConfig.Tier1.Provider,
-					ModelID:   llmCfg.TieredConfig.Tier1.ModelID,
-					Fallbacks: workshopConvertFallbacks(llmCfg.TieredConfig.Tier1.Fallbacks),
-				},
-				Tier2: &todo_creation_human.AgentLLMConfig{
-					Provider:  llmCfg.TieredConfig.Tier2.Provider,
-					ModelID:   llmCfg.TieredConfig.Tier2.ModelID,
-					Fallbacks: workshopConvertFallbacks(llmCfg.TieredConfig.Tier2.Fallbacks),
-				},
-				Tier3: &todo_creation_human.AgentLLMConfig{
-					Provider:  llmCfg.TieredConfig.Tier3.Provider,
-					ModelID:   llmCfg.TieredConfig.Tier3.ModelID,
-					Fallbacks: workshopConvertFallbacks(llmCfg.TieredConfig.Tier3.Fallbacks),
-				},
-			}
+			tieredConfig = workshopConvertTieredLLMConfig(llmCfg.TieredConfig)
 		}
 		return phaseLLM, tieredConfig, manifest.ID, nil
 	}
@@ -268,7 +252,7 @@ func deleteWorkspaceFile(ctx context.Context, configPath string) error {
 	}
 	encodedPath := strings.Join(encodedSegments, "/")
 
-	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "?confirm=true"
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "?confirm=true&allow_workflow_metadata_delete=true"
 	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -713,8 +697,10 @@ type ExecutionOptions struct {
 
 // AgentLLMConfig represents LLM configuration for an agent (matches controller type)
 type AgentLLMConfig struct {
-	Provider string `json:"provider,omitempty"` // e.g., "openai", "bedrock", "vertex", "anthropic"
-	ModelID  string `json:"model_id,omitempty"` // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
+	PublishedLLMID string                 `json:"published_llm_id,omitempty"`
+	Provider       string                 `json:"provider,omitempty"` // e.g., "openai", "bedrock", "vertex", "anthropic"
+	ModelID        string                 `json:"model_id,omitempty"` // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
+	Options        map[string]interface{} `json:"options,omitempty"`
 }
 
 // WorkflowRequest represents a workflow creation request
@@ -4432,7 +4418,7 @@ func deleteWorkspaceFolder(ctx context.Context, folderPath string) error {
 	}
 	encodedPath := strings.Join(encodedSegments, "/")
 
-	apiURL := getWorkspaceAPIURL() + "/api/folders/" + encodedPath + "?confirm=true"
+	apiURL := getWorkspaceAPIURL() + "/api/folders/" + encodedPath + "?confirm=true&allow_workflow_root_delete=true"
 	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)

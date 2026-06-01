@@ -785,8 +785,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 			Primary: orchestrator.LLMModel{
 				Provider: stepConfig.ExecutionLLM.Provider,
 				ModelID:  stepConfig.ExecutionLLM.ModelID,
+				Options:  stepConfig.ExecutionLLM.Options,
 			},
-			APIKeys: hcpo.GetAPIKeys(),
+			Fallbacks: convertAgentFallbacks(stepConfig.ExecutionLLM.Fallbacks),
+			APIKeys:   hcpo.GetAPIKeys(),
 		}
 	}
 

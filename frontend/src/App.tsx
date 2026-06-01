@@ -54,15 +54,17 @@ const queryClient = new QueryClient();
 
 const WORKSPACE_COLLAPSING_POPUP_SELECTOR = [
   '[data-workspace-popup="true"]',
-  '[role="dialog"]',
-  '[class~="fixed"][class~="inset-0"]'
 ].join(',')
+const WORKSPACE_PRESERVING_POPUP_SELECTOR = '[data-preserve-workspace="true"]'
 
 const hasOpenWorkspaceCollapsingPopup = () => {
   if (typeof document === 'undefined') return false
 
   return Array.from(document.querySelectorAll<HTMLElement>(WORKSPACE_COLLAPSING_POPUP_SELECTOR))
     .some((element) => {
+      if (element.closest(WORKSPACE_PRESERVING_POPUP_SELECTOR)) {
+        return false
+      }
       const style = window.getComputedStyle(element)
       return (
         style.display !== 'none' &&
@@ -1383,7 +1385,7 @@ function App() {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['class', 'style', 'role', 'data-workspace-popup'],
+      attributeFilter: ['class', 'style', 'role', 'data-workspace-popup', 'data-preserve-workspace'],
     })
 
     return () => observer.disconnect()

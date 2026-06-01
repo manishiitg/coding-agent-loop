@@ -50,23 +50,35 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
 
   if (!activePreset) return null
 
+  const hasOptions = (options?: Record<string, unknown>) => Boolean(options && Object.keys(options).length > 0)
+  const llmKey = (llm: { provider?: string; model_id?: string; published_llm_id?: string }) =>
+    llm.published_llm_id ? `id:${llm.published_llm_id}` : `model:${llm.provider}/${llm.model_id}`
+  const optionKey = (opt: LLMOption) =>
+    opt.id ? `id:${opt.id}` : `model:${opt.provider}/${opt.model}`
+
   const findOption = (cfg: AgentLLMConfig | null): LLMOption | null => {
     if (!cfg) return null
+    if (cfg.published_llm_id) {
+      const byID = availableLLMs.find(o => o.id === cfg.published_llm_id)
+      if (byID) return byID
+    }
     return availableLLMs.find(o => o.provider === cfg.provider && o.model === cfg.model_id) ?? null
   }
 
   const getFallbackOptions = (primary: AgentLLMConfig | null): LLMOption[] => {
     if (!primary) return availableLLMs
     const excluded = new Set([
-      `${primary.provider}/${primary.model_id}`,
-      ...(primary.fallbacks ?? []).map(f => `${f.provider}/${f.model_id}`),
+      llmKey(primary),
+      ...(primary.fallbacks ?? []).map(f => llmKey(f)),
     ])
-    return availableLLMs.filter(o => !excluded.has(`${o.provider}/${o.model}`))
+    return availableLLMs.filter(o => !excluded.has(optionKey(o)))
   }
 
   const toAgentLLM = (opt: LLMOption, fallbacks?: AgentLLMFallback[]): AgentLLMConfig => ({
+    ...(opt.id ? { published_llm_id: opt.id } : {}),
     provider: opt.provider as AgentLLMConfig['provider'],
     model_id: opt.model,
+    ...(hasOptions(opt.options) ? { options: opt.options } : {}),
     ...(fallbacks && fallbacks.length > 0 ? { fallbacks } : {}),
   })
 
@@ -84,7 +96,12 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const addFallback = (setter: React.Dispatch<React.SetStateAction<AgentLLMConfig | null>>, opt: LLMOption) => {
     setter(prev => {
       if (!prev) return prev
-      const fb: AgentLLMFallback = { provider: opt.provider, model_id: opt.model }
+      const fb: AgentLLMFallback = {
+        ...(opt.id ? { published_llm_id: opt.id } : {}),
+        provider: opt.provider,
+        model_id: opt.model,
+        ...(hasOptions(opt.options) ? { options: opt.options } : {}),
+      }
       return { ...prev, fallbacks: [...(prev.fallbacks ?? []), fb] }
     })
   }

@@ -102,6 +102,7 @@ func (tr *TierResolver) ResolveTier(tier TierLevel) *orchestrator.LLMConfig {
 		Primary: orchestrator.LLMModel{
 			Provider: agentConfig.Provider,
 			ModelID:  agentConfig.ModelID,
+			Options:  agentConfig.Options,
 		},
 		Fallbacks: convertAgentFallbacks(agentConfig.Fallbacks),
 		APIKeys:   tr.apiKeys,
@@ -120,6 +121,7 @@ func convertAgentFallbacks(fallbacks []AgentLLMFallback) []orchestrator.LLMModel
 		models[i] = orchestrator.LLMModel{
 			Provider: fb.Provider,
 			ModelID:  fb.ModelID,
+			Options:  fb.Options,
 		}
 	}
 	return models

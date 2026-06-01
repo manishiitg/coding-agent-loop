@@ -89,15 +89,19 @@ type TieredLLMConfig struct {
 
 // AgentLLMConfig represents LLM configuration for a specific agent type.
 type AgentLLMConfig struct {
-	Provider  string             `json:"provider"`
-	ModelID   string             `json:"model_id"`
-	Fallbacks []AgentLLMFallback `json:"fallbacks,omitempty"`
+	PublishedLLMID string                 `json:"published_llm_id,omitempty"`
+	Provider       string                 `json:"provider"`
+	ModelID        string                 `json:"model_id"`
+	Options        map[string]interface{} `json:"options,omitempty"`
+	Fallbacks      []AgentLLMFallback     `json:"fallbacks,omitempty"`
 }
 
 // AgentLLMFallback represents a fallback LLM model.
 type AgentLLMFallback struct {
-	Provider string `json:"provider"`
-	ModelID  string `json:"model_id"`
+	PublishedLLMID string                 `json:"published_llm_id,omitempty"`
+	Provider       string                 `json:"provider"`
+	ModelID        string                 `json:"model_id"`
+	Options        map[string]interface{} `json:"options,omitempty"`
 }
 
 // WorkflowSelectedOption represents a selected option for a workflow phase.

@@ -337,10 +337,10 @@ func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription, chat
 	accessInfo.WriteString("\n\n📁 **DIRECTORY ACCESS RESTRICTIONS (MULTI-AGENT MODE):**")
 
 	if writeTools[toolName] {
-		accessInfo.WriteString(fmt.Sprintf("\n\n⚠️ **IMPORTANT:** You can write to '%s/' (primary). All other folders are read-only unless explicitly allowed.", chatsFolder))
+		accessInfo.WriteString(fmt.Sprintf("\n\n⚠️ **IMPORTANT:** You can write to '%s/' (primary) and 'config/' for workspace configuration. All other folders are read-only unless explicitly allowed.", chatsFolder))
 		accessInfo.WriteString(fmt.Sprintf("\nSave plan outputs inside the plan folder (e.g. '%s/{plan_id}/output.txt').", chatsFolder))
 	} else {
-		accessInfo.WriteString(fmt.Sprintf("\n\nYou have READ access to all workspace folders. WRITE access is restricted to '%s/' and any explicitly allowed subfolders.", chatsFolder))
+		accessInfo.WriteString(fmt.Sprintf("\n\nYou have READ access to all workspace folders. WRITE access is restricted to '%s/', 'config/', and any explicitly allowed subfolders.", chatsFolder))
 	}
 
 	return originalDescription + accessInfo.String()
@@ -726,7 +726,7 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 						if pathStr, ok := pathValue.(string); ok {
 							cleanedPath := filepath.Clean(pathStr)
 							if !isWriteAllowed(cleanedPath) {
-								return "", fmt.Errorf("access denied: writes restricted to %s (got: %s)", planFolderWithSlash, cleanedPath)
+								return "", fmt.Errorf("access denied: writes restricted to %v (got: %s)", allowedWriteFolders, cleanedPath)
 							}
 						}
 					}

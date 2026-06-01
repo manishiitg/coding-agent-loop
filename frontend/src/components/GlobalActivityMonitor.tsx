@@ -8,6 +8,7 @@ import { activateTab } from '../utils/activateTab'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { restoreSession } from '../utils/sessionRestore'
 import { isBotWorkflowSession, isScheduledWorkflowSession, restoreBotWorkflowRunChat, restoreScheduledWorkflowRunChat, restoreWorkflowSessionChat, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
+import { useAppStore } from '../stores/useAppStore'
 
 const ACTIVITY_DETAILS_POLL_MS = 30000
 
@@ -17,6 +18,10 @@ type RuntimeExecutionDetail = {
   status: string
   startedAt?: string
 }
+
+type ActivityMonitorItem =
+  | { type: 'session'; id: string; session: ActiveSessionInfo }
+  | { type: 'builder-tab'; id: string; tab: ChatTab }
 
 function normalizedStatus(status?: string): string {
   return (status || '').toLowerCase().trim()
@@ -148,7 +153,7 @@ function relativeTime(value?: string): string {
 }
 
 function headerStatusLabel(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo): string {
-  if (session.needs_user_input) return 'needs input'
+  if (session.needs_user_input) return 'waiting for input'
   const hasBackgroundAgents = session.has_running_background_agents === true || (session.running_background_agent_count ?? 0) > 0
   const status = normalizedStatus(workflow?.status || session.status)
   if (status === 'paused') return 'paused'
@@ -162,7 +167,7 @@ function headerStatusLabel(session: ActiveSessionInfo, workflow?: RunningWorkflo
 
 function statusTone(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo): 'running' | 'needs-input' | 'paused' | 'background' | 'idle' {
   const status = headerStatusLabel(session, workflow)
-  if (status === 'needs input') return 'needs-input'
+  if (status === 'waiting for input') return 'needs-input'
   if (status === 'idle' || status === 'waiting') return 'idle'
   if (status === 'paused') return 'paused'
   if (status === 'background running' || status === 'waiting for background agents') return 'background'
@@ -355,6 +360,30 @@ function sessionFromRunningWorkflow(workflow: RunningWorkflowInfo): ActiveSessio
   }
 }
 
+function normalizedActivityIdentity(value?: string | null): string {
+  return (value || '').trim().replace(/\/+$/, '').toLowerCase()
+}
+
+function pushActivityKey(keys: string[], prefix: string, value?: string | null): void {
+  const normalized = normalizedActivityIdentity(value)
+  if (normalized) keys.push(`${prefix}:${normalized}`)
+}
+
+function activityKeysForSession(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo): string[] {
+  const keys: string[] = []
+  pushActivityKey(keys, 'session', session.session_id)
+  pushActivityKey(keys, 'preset', session.preset_query_id || workflow?.preset_query_id)
+  pushActivityKey(keys, 'workspace', workflow?.workspace_path || session.workspace_path)
+  return keys
+}
+
+function activityKeysForTab(tab: ChatTab): string[] {
+  const keys: string[] = []
+  pushActivityKey(keys, 'session', tab.sessionId)
+  pushActivityKey(keys, 'preset', tab.metadata?.presetQueryId)
+  return keys
+}
+
 export const GlobalActivityMonitor: React.FC = () => {
   const [open, setOpen] = useState(false)
   const [runningWorkflowsBySession, setRunningWorkflowsBySession] = useState<Record<string, RunningWorkflowInfo>>({})
@@ -369,6 +398,7 @@ export const GlobalActivityMonitor: React.FC = () => {
   const activeTabId = useChatStore(state => state.activeTabId)
   const chatTabs = useChatStore(state => state.chatTabs)
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
+  const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
   const currentWorkflowPresetName = useGlobalPresetStore(state => {
     const presetId = state.activePresetIds.workflow
     return state.workflowPresets.find(preset => preset.id === presetId)?.label ?? null
@@ -464,7 +494,12 @@ export const GlobalActivityMonitor: React.FC = () => {
     return Array.from(bySession.values()).filter(isActiveSession)
   }, [activeSessionsCache, runningWorkflowsBySession])
 
-  const currentSessionId = activeTabId ? chatTabs[activeTabId]?.sessionId ?? null : null
+  const currentSessionId = useMemo(() => {
+    if (showWorkflowsOverview || !activeTabId) return null
+    const activeTab = chatTabs[activeTabId]
+    if (!activeTab || activeTab.metadata?.mode !== selectedModeCategory) return null
+    return activeTab.sessionId ?? null
+  }, [activeTabId, chatTabs, selectedModeCategory, showWorkflowsOverview])
   const visibleSessions = useMemo(() => {
     const filtered = activeSessions.filter(session => session.session_id !== currentSessionId)
 
@@ -498,16 +533,25 @@ export const GlobalActivityMonitor: React.FC = () => {
     return [...byWorkflow.values(), ...nonWorkflow]
   }, [activeSessions, currentSessionId])
 
-  // Builder-idle indicator: find any tab OTHER than the currently active one that has
-  // running background agents. We intentionally exclude the active tab because the user
-  // can already see that tab's chat directly — the indicator is only useful when the
-  // builder is running in the background while the user is looking at a different tab.
-  const builderTab = useMemo(
-    () => Object.values(chatTabs).find(tab => tab.tabId !== activeTabId && tab.hasRunningBgAgents),
-    [chatTabs, activeTabId],
+  const visibleActivityKeys = useMemo(() => {
+    const keys = new Set<string>()
+    visibleSessions.forEach(session => {
+      activityKeysForSession(session, runningWorkflowsBySession[session.session_id])
+        .forEach(key => keys.add(key))
+    })
+    return keys
+  }, [visibleSessions, runningWorkflowsBySession])
+
+  // Local tab background-agent state is only a fallback. If the backend already
+  // exposes the same session/preset/workflow, render the backend-backed item once.
+  const fallbackBuilderTabs = useMemo(
+    () => Object.values(chatTabs).filter(tab =>
+      tab.tabId !== activeTabId &&
+      tab.hasRunningBgAgents &&
+      !activityKeysForTab(tab).some(key => visibleActivityKeys.has(key))
+    ),
+    [chatTabs, activeTabId, visibleActivityKeys],
   )
-  const builderHasBgAgents = !!builderTab
-  const builderBusy = (builderTab?.isStreaming ?? false) || (builderTab?.isSyntheticTurn ?? false)
 
   const inputCount = useMemo(
     () => visibleSessions.filter(session => session.needs_user_input).length,
@@ -539,6 +583,19 @@ export const GlobalActivityMonitor: React.FC = () => {
     })
   }, [visibleSessions])
 
+  const activityItems = useMemo<ActivityMonitorItem[]>(() => [
+    ...sortedSessions.map(session => ({
+      type: 'session' as const,
+      id: `session:${session.session_id}`,
+      session,
+    })),
+    ...fallbackBuilderTabs.map(tab => ({
+      type: 'builder-tab' as const,
+      id: `builder-tab:${tab.tabId}`,
+      tab,
+    })),
+  ], [sortedSessions, fallbackBuilderTabs])
+
   const primarySession = sortedSessions[0]
 
   const primaryTab = primarySession
@@ -565,7 +622,7 @@ export const GlobalActivityMonitor: React.FC = () => {
     ? `${workflowHeaderNames.join(' · ')}${workflowCount > workflowHeaderNames.length ? ` +${workflowCount - workflowHeaderNames.length}` : ''}`
     : countLabel(workflowCount, 'workflow')
   const headerLabel = inputCount > 0
-    ? `${workflowHeaderLabel}${chatCount > 0 ? ` · ${countLabel(chatCount, 'chat')}` : ''} · ${countLabel(inputCount, 'needs input', 'need input')}`
+    ? `${workflowHeaderLabel}${chatCount > 0 ? ` · ${countLabel(chatCount, 'chat')}` : ''} · ${countLabel(inputCount, 'waiting for input', 'waiting for input')}`
     : workflowCount > 0
       ? `${workflowHeaderLabel}${chatCount > 0 ? ` · ${countLabel(chatCount, 'chat')}` : ''}`
       : countLabel(visibleSessions.length, 'active')
@@ -610,35 +667,55 @@ export const GlobalActivityMonitor: React.FC = () => {
     setOpen(false)
   }, [currentWorkflowPresetName, runningWorkflowsBySession])
 
-  if (visibleSessions.length === 0 && !builderHasBgAgents) {
+  if (activityItems.length === 0) {
     return null
   }
 
-  const builderStateLabel = builderBusy ? 'busy' : 'idle'
-  const builderWorkflowName = (builderTab?.name && builderTab.name !== 'Workflow Builder')
-    ? builderTab.name
-    : currentWorkflowPresetName
-  const builderChipLabel = builderWorkflowName
-    ? `${builderWorkflowName} · ${builderStateLabel}`
-    : `builder · ${builderStateLabel}`
-
-  // Each session + the builder tab gets its own pill. Name length shrinks as pill count grows.
-  const totalPillCount = visibleSessions.length + (builderHasBgAgents ? 1 : 0)
+  // Each active item gets its own pill. Name length shrinks as pill count grows.
+  const totalPillCount = activityItems.length
   const nameCharLimit = totalPillCount >= 3 ? 5 : totalPillCount === 2 ? 8 : 12
   const pillClasses = 'flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium transition-colors border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60'
 
   return (
     <div ref={containerRef} className="relative flex items-center gap-1">
-      {sortedSessions.map((session, i) => {
+      {activityItems.map((item, i) => {
+        if (item.type === 'builder-tab') {
+          const builderBusy = item.tab.isStreaming || item.tab.isSyntheticTurn
+          const builderWorkflowName = (item.tab.name && item.tab.name !== 'Workflow Builder')
+            ? item.tab.name
+            : currentWorkflowPresetName
+
+          return (
+            <React.Fragment key={item.id}>
+              {i > 0 && <span className="text-gray-400 dark:text-gray-600 select-none text-xs">/</span>}
+              <button
+                type="button"
+                onClick={() => activateTab(item.tab.tabId)}
+                className={pillClasses}
+                title={builderBusy ? 'Builder is processing — wait before sending a message' : 'Builder is idle — ready for your next message'}
+              >
+                {builderBusy
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 dark:bg-emerald-300 animate-pulse" />}
+                <span className="whitespace-nowrap">
+                  {shortText(builderWorkflowName || 'builder', nameCharLimit)}
+                </span>
+              </button>
+            </React.Fragment>
+          )
+        }
+
+        const session = item.session
         const tab = Object.values(chatTabs).find(t => t.sessionId === session.session_id)
         const workflowInfo = runningWorkflowsBySession[session.session_id]
         const fallbackName = selectedModeCategory === 'workflow' && !workflowInfo ? currentWorkflowPresetName : null
         const tone = statusTone(session, workflowInfo)
-        const name = shortText(displaySessionTitle(session, tab, workflowInfo, fallbackName), nameCharLimit)
+        const title = displaySessionTitle(session, tab, workflowInfo, fallbackName)
         const statusLabel = headerStatusLabel(session, workflowInfo)
-        const showStatus = statusLabel !== 'running'
+        const name = shortText(title, statusLabel === 'running' ? nameCharLimit : Math.max(5, nameCharLimit - 2))
+        const waitingTitle = session.waiting_message ? ` · ${session.waiting_message}` : ''
         return (
-          <React.Fragment key={session.session_id}>
+          <React.Fragment key={item.id}>
             {i > 0 && <span className="text-gray-400 dark:text-gray-600 select-none text-xs">/</span>}
             <button
               type="button"
@@ -646,10 +723,12 @@ export const GlobalActivityMonitor: React.FC = () => {
               data-testid={i === 0 ? 'tour-active-work-switcher' : undefined}
               onClick={() => void handleOpenSession(session)}
               className={pillClasses}
-              title={`${displaySessionTitle(session, tab, workflowInfo, fallbackName)} · ${statusLabel}`}
+              title={`${title} · ${statusLabel}${waitingTitle}`}
             >
               <span className={`h-1.5 w-1.5 rounded-full ${statusDotClasses(tone)}`} />
-              <span className="whitespace-nowrap">{name}</span>
+              <span className="whitespace-nowrap">
+                {statusLabel === 'running' ? name : `${name} · ${statusLabel}`}
+              </span>
               {tone === 'needs-input' && <AlertCircle className="w-3 h-3 text-amber-500 dark:text-amber-400" />}
               {tone === 'idle' && <Clock className="w-3 h-3 opacity-50" />}
               {tone === 'paused' && <Pause className="w-3 h-3 opacity-50" />}
@@ -658,24 +737,6 @@ export const GlobalActivityMonitor: React.FC = () => {
           </React.Fragment>
         )
       })}
-      {builderHasBgAgents && (
-        <>
-          {visibleSessions.length > 0 && <span className="text-gray-400 dark:text-gray-600 select-none text-xs">/</span>}
-          <button
-            type="button"
-            onClick={() => builderTab && activateTab(builderTab.tabId)}
-            className={pillClasses}
-            title={builderBusy ? 'Builder is processing — wait before sending a message' : 'Builder is idle — ready for your next message'}
-          >
-            {builderBusy
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 dark:bg-emerald-300 animate-pulse" />}
-            <span className="whitespace-nowrap">
-              {shortText(builderWorkflowName || 'builder', nameCharLimit)}
-            </span>
-          </button>
-        </>
-      )}
 
       {false && open && (
         <div className="absolute right-0 top-full mt-2 w-[460px] max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900 z-50 overflow-hidden">

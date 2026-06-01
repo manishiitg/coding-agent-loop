@@ -984,6 +984,25 @@ func NewInteractiveWorkshopManager(
 	}
 }
 
+func workflowAgentLLMConfig(agentConfig *AgentLLMConfig, defaultFallbacks []orchestrator.LLMModel, apiKeys *orchestrator.APIKeys) *orchestrator.LLMConfig {
+	if agentConfig == nil || agentConfig.Provider == "" || agentConfig.ModelID == "" {
+		return nil
+	}
+	fallbacks := convertAgentFallbacks(agentConfig.Fallbacks)
+	if len(fallbacks) == 0 {
+		fallbacks = defaultFallbacks
+	}
+	return &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{
+			Provider: agentConfig.Provider,
+			ModelID:  agentConfig.ModelID,
+			Options:  agentConfig.Options,
+		},
+		Fallbacks: fallbacks,
+		APIKeys:   apiKeys,
+	}
+}
+
 // SetToolCallQuery configures the live tool call query capability.
 // mainSessionID is the event store session ID; queryFunc queries tool calls by correlation ID.
 func (iwm *InteractiveWorkshopManager) SetToolCallQuery(mainSessionID string, queryFunc ToolCallQueryFunc) {
@@ -1621,14 +1640,7 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 	if iwm.presetLLM == nil || iwm.presetLLM.Provider == "" || iwm.presetLLM.ModelID == "" {
 		return nil, fmt.Errorf("no valid LLM configuration found for workflow builder agent")
 	}
-	llmConfigToUse := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{
-			Provider: iwm.presetLLM.Provider,
-			ModelID:  iwm.presetLLM.ModelID,
-		},
-		Fallbacks: iwm.controller.GetFallbacks(),
-		APIKeys:   iwm.controller.GetAPIKeys(),
-	}
+	llmConfigToUse := workflowAgentLLMConfig(iwm.presetLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 	iwm.controller.GetLogger().Info(fmt.Sprintf("🔧 Workshop agent LLM: %s/%s", iwm.presetLLM.Provider, iwm.presetLLM.ModelID))
 
 	// Agent config
@@ -3579,8 +3591,23 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "object",
 					"description": "Override the execution LLM for this step. Use get_llm_config to see available models.",
 					"properties": map[string]interface{}{
-						"provider": map[string]interface{}{"type": "string", "description": "LLM provider (e.g., 'openai', 'anthropic', 'bedrock', 'openrouter', 'vertex', 'azure')"},
-						"model_id": map[string]interface{}{"type": "string", "description": "Model ID (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')"},
+						"published_llm_id": map[string]interface{}{"type": "string", "description": "Optional published LLM id from config/published-llms.json."},
+						"provider":         map[string]interface{}{"type": "string", "description": "LLM provider (e.g., 'openai', 'anthropic', 'bedrock', 'openrouter', 'vertex', 'azure')"},
+						"model_id":         map[string]interface{}{"type": "string", "description": "Model ID (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')"},
+						"options":          map[string]interface{}{"type": "object", "description": "Provider-specific runtime options copied from the published LLM, such as reasoning_effort.", "additionalProperties": true},
+						"fallbacks": map[string]interface{}{
+							"type":        "array",
+							"description": "Optional ordered fallback models.",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"published_llm_id": map[string]interface{}{"type": "string"},
+									"provider":         map[string]interface{}{"type": "string"},
+									"model_id":         map[string]interface{}{"type": "string"},
+									"options":          map[string]interface{}{"type": "object", "additionalProperties": true},
+								},
+							},
+						},
 					},
 				},
 				"execution_tier": map[string]interface{}{
@@ -3600,8 +3627,23 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "object",
 					"description": "Override the learning LLM for this step.",
 					"properties": map[string]interface{}{
-						"provider": map[string]interface{}{"type": "string"},
-						"model_id": map[string]interface{}{"type": "string"},
+						"published_llm_id": map[string]interface{}{"type": "string", "description": "Optional published LLM id from config/published-llms.json."},
+						"provider":         map[string]interface{}{"type": "string"},
+						"model_id":         map[string]interface{}{"type": "string"},
+						"options":          map[string]interface{}{"type": "object", "description": "Provider-specific runtime options copied from the published LLM, such as reasoning_effort.", "additionalProperties": true},
+						"fallbacks": map[string]interface{}{
+							"type":        "array",
+							"description": "Optional ordered fallback models.",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"published_llm_id": map[string]interface{}{"type": "string"},
+									"provider":         map[string]interface{}{"type": "string"},
+									"model_id":         map[string]interface{}{"type": "string"},
+									"options":          map[string]interface{}{"type": "object", "additionalProperties": true},
+								},
+							},
+						},
 					},
 				},
 				"validation_schema": map[string]interface{}{
@@ -3831,6 +3873,33 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			syncDeclaredExecutionModeConfig(targetConfig.AgentConfigs)
 
 			// Parse LLM override fields
+			parseLLMFallbacks := func(raw interface{}) []AgentLLMFallback {
+				arr, ok := raw.([]interface{})
+				if !ok {
+					return nil
+				}
+				fallbacks := make([]AgentLLMFallback, 0, len(arr))
+				for _, item := range arr {
+					m, ok := item.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					provider, _ := m["provider"].(string)
+					modelID, _ := m["model_id"].(string)
+					if provider == "" || modelID == "" {
+						continue
+					}
+					publishedLLMID, _ := m["published_llm_id"].(string)
+					options, _ := m["options"].(map[string]interface{})
+					fallbacks = append(fallbacks, AgentLLMFallback{
+						PublishedLLMID: publishedLLMID,
+						Provider:       provider,
+						ModelID:        modelID,
+						Options:        options,
+					})
+				}
+				return fallbacks
+			}
 			llmFields := []struct {
 				key    string
 				target **AgentLLMConfig
@@ -3844,7 +3913,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						provider, _ := llmMap["provider"].(string)
 						modelID, _ := llmMap["model_id"].(string)
 						if provider != "" && modelID != "" {
-							*f.target = &AgentLLMConfig{Provider: provider, ModelID: modelID}
+							publishedLLMID, _ := llmMap["published_llm_id"].(string)
+							options, _ := llmMap["options"].(map[string]interface{})
+							*f.target = &AgentLLMConfig{
+								PublishedLLMID: publishedLLMID,
+								Provider:       provider,
+								ModelID:        modelID,
+								Options:        options,
+								Fallbacks:      parseLLMFallbacks(llmMap["fallbacks"]),
+							}
 						}
 					}
 				}
@@ -6662,19 +6739,19 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"update_tier_fallbacks": map[string]interface{}{
 					"type":        "object",
-					"description": "Update fallback LLMs for tiered allocation. Keys: 'tier_1', 'tier_2', 'tier_3'. Value: array of {provider, model_id} objects. Use get_workflow_config or get_llm_config to see current config.",
+					"description": "Update fallback LLMs for tiered allocation. Keys: 'tier_1', 'tier_2', 'tier_3'. Value: array of {provider, model_id, optional published_llm_id, optional options} objects. Use get_workflow_config or get_llm_config to see current config.",
 					"properties": map[string]interface{}{
 						"tier_1": map[string]interface{}{
 							"type":  "array",
-							"items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"provider": map[string]interface{}{"type": "string"}, "model_id": map[string]interface{}{"type": "string"}}, "required": []string{"provider", "model_id"}},
+							"items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"published_llm_id": map[string]interface{}{"type": "string"}, "provider": map[string]interface{}{"type": "string"}, "model_id": map[string]interface{}{"type": "string"}, "options": map[string]interface{}{"type": "object", "additionalProperties": true}}, "required": []string{"provider", "model_id"}},
 						},
 						"tier_2": map[string]interface{}{
 							"type":  "array",
-							"items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"provider": map[string]interface{}{"type": "string"}, "model_id": map[string]interface{}{"type": "string"}}, "required": []string{"provider", "model_id"}},
+							"items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"published_llm_id": map[string]interface{}{"type": "string"}, "provider": map[string]interface{}{"type": "string"}, "model_id": map[string]interface{}{"type": "string"}, "options": map[string]interface{}{"type": "object", "additionalProperties": true}}, "required": []string{"provider", "model_id"}},
 						},
 						"tier_3": map[string]interface{}{
 							"type":  "array",
-							"items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"provider": map[string]interface{}{"type": "string"}, "model_id": map[string]interface{}{"type": "string"}}, "required": []string{"provider", "model_id"}},
+							"items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"published_llm_id": map[string]interface{}{"type": "string"}, "provider": map[string]interface{}{"type": "string"}, "model_id": map[string]interface{}{"type": "string"}, "options": map[string]interface{}{"type": "object", "additionalProperties": true}}, "required": []string{"provider", "model_id"}},
 						},
 					},
 				},
@@ -6974,7 +7051,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							provider, _ := m["provider"].(string)
 							modelID, _ := m["model_id"].(string)
 							if provider != "" && modelID != "" {
-								fbs = append(fbs, AgentLLMFallback{Provider: provider, ModelID: modelID})
+								publishedLLMID, _ := m["published_llm_id"].(string)
+								options, _ := m["options"].(map[string]interface{})
+								fbs = append(fbs, AgentLLMFallback{
+									PublishedLLMID: publishedLLMID,
+									Provider:       provider,
+									ModelID:        modelID,
+									Options:        options,
+								})
 							}
 						}
 						return fbs
@@ -7975,10 +8059,6 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 					"type":        "string",
 					"description": "Optional temporary API key override. If omitted, uses workspace-backed provider auth.",
 				},
-				"temperature": map[string]interface{}{
-					"type":        "number",
-					"description": "Optional temperature for the validation request.",
-				},
 				"options": workshopLLMOptionsSchema("Optional model-specific options. Use reasoning_effort for Codex CLI and Claude Code effort control, and use list_provider_models to discover supported levels."),
 				"endpoint": map[string]interface{}{
 					"type":        "string",
@@ -8003,89 +8083,43 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register test_llm tool: %v", err))
 	}
 
+	llmEntrySchema := func(description string, fallbackDescription string) map[string]interface{} {
+		return map[string]interface{}{
+			"type":        "object",
+			"description": description,
+			"properties": map[string]interface{}{
+				"published_llm_id": map[string]interface{}{"type": "string", "description": "Optional published LLM id from config/published-llms.json."},
+				"provider":         map[string]interface{}{"type": "string", "description": "Provider id."},
+				"model_id":         map[string]interface{}{"type": "string", "description": "Model id."},
+				"options":          map[string]interface{}{"type": "object", "description": "Provider-specific runtime options copied from the published LLM, such as reasoning_effort.", "additionalProperties": true},
+				"fallbacks": map[string]interface{}{
+					"type":        "array",
+					"description": fallbackDescription,
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"published_llm_id": map[string]interface{}{"type": "string"},
+							"provider":         map[string]interface{}{"type": "string"},
+							"model_id":         map[string]interface{}{"type": "string"},
+							"options":          map[string]interface{}{"type": "object", "additionalProperties": true},
+						},
+					},
+				},
+			},
+		}
+	}
+
 	// set_workflow_llm_config — saves tiered LLM config directly to workflow.json
 	if err := mcpAgent.RegisterCustomTool(
 		"set_workflow_llm_config",
-		"Save the workflow's tiered LLM configuration to workflow.json capabilities.llm_config. Requires get_reference_doc(kind=\"llm-selection\") to be loaded first. Use list_published_llms to see available models first. Each tier accepts provider and model_id (both required if setting a tier). Fallbacks are optional ordered lists. phase_llm is the model used for planning, eval design, and debugging phases.",
+		"Save the workflow's tiered LLM configuration to workflow.json capabilities.llm_config. Requires get_reference_doc(kind=\"llm-selection\") to be loaded first. Use list_published_llms to see available models first. Each tier accepts provider and model_id (both required if setting a tier), plus optional published_llm_id and options copied from the published entry. Fallbacks are optional ordered lists. phase_llm is the model used for planning, eval design, and debugging phases.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"tier_1": map[string]interface{}{
-					"type":        "object",
-					"description": "High-reasoning tier: first-time execution and initial learning extraction.",
-					"properties": map[string]interface{}{
-						"provider": map[string]interface{}{"type": "string", "description": "Provider id."},
-						"model_id": map[string]interface{}{"type": "string", "description": "Model id."},
-						"fallbacks": map[string]interface{}{
-							"type": "array",
-							"items": map[string]interface{}{
-								"type": "object",
-								"properties": map[string]interface{}{
-									"provider": map[string]interface{}{"type": "string"},
-									"model_id": map[string]interface{}{"type": "string"},
-								},
-							},
-							"description": "Ordered fallback models tried if the primary fails.",
-						},
-					},
-				},
-				"tier_2": map[string]interface{}{
-					"type":        "object",
-					"description": "Medium-reasoning tier: execution with learnings and learning refinement.",
-					"properties": map[string]interface{}{
-						"provider": map[string]interface{}{"type": "string", "description": "Provider id."},
-						"model_id": map[string]interface{}{"type": "string", "description": "Model id."},
-						"fallbacks": map[string]interface{}{
-							"type":        "array",
-							"description": "Ordered fallback models tried if the primary fails.",
-							"items": map[string]interface{}{
-								"type": "object",
-								"properties": map[string]interface{}{
-									"provider": map[string]interface{}{"type": "string"},
-									"model_id": map[string]interface{}{"type": "string"},
-								},
-							},
-						},
-					},
-				},
-				"tier_3": map[string]interface{}{
-					"type":        "object",
-					"description": "Low-reasoning tier: validation (always) and mature learning refinement (2+ runs).",
-					"properties": map[string]interface{}{
-						"provider": map[string]interface{}{"type": "string", "description": "Provider id."},
-						"model_id": map[string]interface{}{"type": "string", "description": "Model id."},
-						"fallbacks": map[string]interface{}{
-							"type":        "array",
-							"description": "Ordered fallback models tried if the primary fails.",
-							"items": map[string]interface{}{
-								"type": "object",
-								"properties": map[string]interface{}{
-									"provider": map[string]interface{}{"type": "string"},
-									"model_id": map[string]interface{}{"type": "string"},
-								},
-							},
-						},
-					},
-				},
-				"phase_llm": map[string]interface{}{
-					"type":        "object",
-					"description": "LLM for planning, eval design, debugging, and anonymization phases. Defaults to tier_1 if not set.",
-					"properties": map[string]interface{}{
-						"provider": map[string]interface{}{"type": "string", "description": "Provider id."},
-						"model_id": map[string]interface{}{"type": "string", "description": "Model id."},
-						"fallbacks": map[string]interface{}{
-							"type":        "array",
-							"description": "Ordered fallback models tried if the phase LLM fails.",
-							"items": map[string]interface{}{
-								"type": "object",
-								"properties": map[string]interface{}{
-									"provider": map[string]interface{}{"type": "string"},
-									"model_id": map[string]interface{}{"type": "string"},
-								},
-							},
-						},
-					},
-				},
+				"tier_1":    llmEntrySchema("High-reasoning tier: first-time execution and initial learning extraction.", "Ordered fallback models tried if the primary fails."),
+				"tier_2":    llmEntrySchema("Medium-reasoning tier: execution with learnings and learning refinement.", "Ordered fallback models tried if the primary fails."),
+				"tier_3":    llmEntrySchema("Low-reasoning tier: validation (always) and mature learning refinement (2+ runs).", "Ordered fallback models tried if the primary fails."),
+				"phase_llm": llmEntrySchema("LLM for planning, eval design, debugging, and anonymization phases. Defaults to tier_1 if not set.", "Ordered fallback models tried if the phase LLM fails."),
 			},
 		},
 		guidance.WithDocPrecondition([]string{"llm-selection"}, guidance.DefaultTracker(), func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -8126,8 +8160,36 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 					return nil
 				}
 				entry := map[string]interface{}{"provider": provider, "model_id": modelID}
+				if publishedLLMID, _ := m["published_llm_id"].(string); publishedLLMID != "" {
+					entry["published_llm_id"] = publishedLLMID
+				}
+				if options, _ := m["options"].(map[string]interface{}); len(options) > 0 {
+					entry["options"] = options
+				}
 				if fbs, ok := m["fallbacks"].([]interface{}); ok && len(fbs) > 0 {
-					entry["fallbacks"] = fbs
+					fallbacks := make([]interface{}, 0, len(fbs))
+					for _, fbRaw := range fbs {
+						fbMap, ok := fbRaw.(map[string]interface{})
+						if !ok {
+							continue
+						}
+						fbProvider, _ := fbMap["provider"].(string)
+						fbModelID, _ := fbMap["model_id"].(string)
+						if fbProvider == "" || fbModelID == "" {
+							continue
+						}
+						fallback := map[string]interface{}{"provider": fbProvider, "model_id": fbModelID}
+						if publishedLLMID, _ := fbMap["published_llm_id"].(string); publishedLLMID != "" {
+							fallback["published_llm_id"] = publishedLLMID
+						}
+						if options, _ := fbMap["options"].(map[string]interface{}); len(options) > 0 {
+							fallback["options"] = options
+						}
+						fallbacks = append(fallbacks, fallback)
+					}
+					if len(fallbacks) > 0 {
+						entry["fallbacks"] = fallbacks
+					}
 				}
 				return entry
 			}
@@ -9827,14 +9889,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
 		return "", fmt.Errorf("no valid LLM configuration for review_plan agent")
 	}
-	llmConfigToUse := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{
-			Provider: iwm.controller.presetPhaseLLM.Provider,
-			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
-		},
-		Fallbacks: iwm.controller.GetFallbacks(),
-		APIKeys:   iwm.controller.GetAPIKeys(),
-	}
+	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-plan-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
@@ -9949,14 +10004,7 @@ func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Co
 	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
 		return "", fmt.Errorf("no valid LLM configuration for review_artifact_sync agent")
 	}
-	llmConfigToUse := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{
-			Provider: iwm.controller.presetPhaseLLM.Provider,
-			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
-		},
-		Fallbacks: iwm.controller.GetFallbacks(),
-		APIKeys:   iwm.controller.GetAPIKeys(),
-	}
+	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-artifact-sync-agent", 120, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = false
@@ -10060,14 +10108,7 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowResultsAgent(ctx context
 	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
 		return "", fmt.Errorf("no valid LLM configuration for review_workflow_results agent")
 	}
-	llmConfigToUse := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{
-			Provider: iwm.controller.presetPhaseLLM.Provider,
-			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
-		},
-		Fallbacks: iwm.controller.GetFallbacks(),
-		APIKeys:   iwm.controller.GetAPIKeys(),
-	}
+	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-results-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
@@ -10163,14 +10204,7 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowTimingAgent(ctx context.
 	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
 		return "", fmt.Errorf("no valid LLM configuration for review_workflow_timing agent")
 	}
-	llmConfigToUse := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{
-			Provider: iwm.controller.presetPhaseLLM.Provider,
-			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
-		},
-		Fallbacks: iwm.controller.GetFallbacks(),
-		APIKeys:   iwm.controller.GetAPIKeys(),
-	}
+	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-timing-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
@@ -10267,14 +10301,7 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowCostsAgent(ctx context.C
 	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
 		return "", fmt.Errorf("no valid LLM configuration for review_workflow_costs agent")
 	}
-	llmConfigToUse := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{
-			Provider: iwm.controller.presetPhaseLLM.Provider,
-			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
-		},
-		Fallbacks: iwm.controller.GetFallbacks(),
-		APIKeys:   iwm.controller.GetAPIKeys(),
-	}
+	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-costs-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
@@ -10440,14 +10467,7 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
 		return "", fmt.Errorf("no valid LLM configuration for review_step_code agent")
 	}
-	llmConfigToUse := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{
-			Provider: iwm.controller.presetPhaseLLM.Provider,
-			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
-		},
-		Fallbacks: iwm.controller.GetFallbacks(),
-		APIKeys:   iwm.controller.GetAPIKeys(),
-	}
+	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-step-code-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
@@ -10532,14 +10552,7 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
 		return "", fmt.Errorf("no valid LLM configuration for replan_workflow_from_results agent")
 	}
-	llmConfigToUse := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{
-			Provider: iwm.controller.presetPhaseLLM.Provider,
-			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
-		},
-		Fallbacks: iwm.controller.GetFallbacks(),
-		APIKeys:   iwm.controller.GetAPIKeys(),
-	}
+	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("replan-workflow-from-results-agent", 90, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = false
@@ -10657,14 +10670,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
 		return "", fmt.Errorf("no valid LLM configuration for harden_workflow agent")
 	}
-	llmConfigToUse := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{
-			Provider: iwm.controller.presetPhaseLLM.Provider,
-			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
-		},
-		Fallbacks: iwm.controller.GetFallbacks(),
-		APIKeys:   iwm.controller.GetAPIKeys(),
-	}
+	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("harden-workflow-agent", 120, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = false
@@ -10867,24 +10873,10 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 	// --- LLM: use phase LLM (same tier as planning/analysis agents) ---
 	var llmConfigToUse *orchestrator.LLMConfig
 	if iwm.controller.presetPhaseLLM != nil && iwm.controller.presetPhaseLLM.Provider != "" && iwm.controller.presetPhaseLLM.ModelID != "" {
-		llmConfigToUse = &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: iwm.controller.presetPhaseLLM.Provider,
-				ModelID:  iwm.controller.presetPhaseLLM.ModelID,
-			},
-			Fallbacks: iwm.controller.GetFallbacks(),
-			APIKeys:   iwm.controller.GetAPIKeys(),
-		}
+		llmConfigToUse = workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 	} else if iwm.presetLLM != nil && iwm.presetLLM.Provider != "" && iwm.presetLLM.ModelID != "" {
 		// Fallback to workshop builder LLM
-		llmConfigToUse = &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: iwm.presetLLM.Provider,
-				ModelID:  iwm.presetLLM.ModelID,
-			},
-			Fallbacks: iwm.controller.GetFallbacks(),
-			APIKeys:   iwm.controller.GetAPIKeys(),
-		}
+		llmConfigToUse = workflowAgentLLMConfig(iwm.presetLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 	} else {
 		return "", fmt.Errorf("no valid LLM configuration found for background task agent")
 	}

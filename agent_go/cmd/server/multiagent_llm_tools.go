@@ -1345,10 +1345,6 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 					"type":        "string",
 					"description": "Optional temporary API key override. If omitted, the tool uses workspace-backed provider auth when available.",
 				},
-				"temperature": map[string]interface{}{
-					"type":        "number",
-					"description": "Optional temperature to merge into validation options.",
-				},
 				"options": llmToolOptionsSchema("Optional model-specific options object. Use reasoning_effort for Codex CLI and Claude Code effort control, and use list_provider_models to discover supported levels."),
 				"endpoint": map[string]interface{}{
 					"type":        "string",
@@ -1383,12 +1379,6 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 
 			explicitAPIKeyProvided := strings.TrimSpace(apiKey) != ""
 			validationOptions := cloneOptionsMap(options)
-			if raw, ok := args["temperature"].(float64); ok {
-				if validationOptions == nil {
-					validationOptions = map[string]interface{}{}
-				}
-				validationOptions["temperature"] = raw
-			}
 
 			keys, err := LoadProviderKeys(ctx)
 			if err != nil {
@@ -1521,10 +1511,6 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 					"type":        "number",
 					"description": "Optional cache write token price snapshot in USD per 1M tokens.",
 				},
-				"temperature": map[string]interface{}{
-					"type":        "number",
-					"description": "Optional temperature override for the published LLM.",
-				},
 				"options": llmToolOptionsSchema("Optional model-specific options to persist with this published LLM. Include reasoning_effort for Codex CLI or Claude Code when you want the published entry to run at a specific effort level."),
 			},
 			"required": []string{"name", "provider", "model_id"},
@@ -1548,10 +1534,6 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 				return fmt.Sprintf("unsupported published LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, opencode-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
-			var temperature *float64
-			if raw, ok := args["temperature"].(float64); ok {
-				temperature = &raw
-			}
 			var contextWindow *int
 			if raw, ok := args["context_window"].(float64); ok {
 				value := int(raw)
@@ -1600,7 +1582,6 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 				CachedInputCostPer1M:      cachedInputCostPer1M,
 				CachedInputCostWritePer1M: cachedInputCostWritePer1M,
 				Options:                   options,
-				Temperature:               temperature,
 				CreatedAt:                 time.Now().UTC().Format(time.RFC3339),
 			}
 

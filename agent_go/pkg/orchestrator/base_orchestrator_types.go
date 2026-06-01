@@ -8,10 +8,11 @@ import (
 
 // LLMModel represents a single LLM configuration (orchestrator level)
 type LLMModel struct {
-	Provider string  `json:"provider"`
-	ModelID  string  `json:"model_id"`
-	APIKey   *string `json:"api_key,omitempty"` // Per-model API key
-	Region   *string `json:"region,omitempty"`  // For Bedrock
+	Provider string                 `json:"provider"`
+	ModelID  string                 `json:"model_id"`
+	APIKey   *string                `json:"api_key,omitempty"` // Per-model API key
+	Region   *string                `json:"region,omitempty"`  // For Bedrock
+	Options  map[string]interface{} `json:"options,omitempty"` // Provider-specific runtime options
 }
 
 // LLMConfig represents the unified LLM configuration

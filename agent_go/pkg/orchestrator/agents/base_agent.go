@@ -167,22 +167,24 @@ func NewBaseAgent(
 	if llmConfig != nil {
 		// Convert orchestrator LLMConfig to mcpagent AgentLLMConfiguration
 		mcpConfig := mcpagent.AgentLLMConfiguration{
-			Primary: mcpagent.LLMModel{
-				Provider: llmConfig.Primary.Provider,
-				ModelID:  llmConfig.Primary.ModelID,
-				APIKey:   llmConfig.Primary.APIKey,
-				Region:   llmConfig.Primary.Region,
-			},
-			Fallbacks: make([]mcpagent.LLMModel, len(llmConfig.Fallbacks)),
-		}
-		for i, fb := range llmConfig.Fallbacks {
-			mcpConfig.Fallbacks[i] = mcpagent.LLMModel{
-				Provider: fb.Provider,
-				ModelID:  fb.ModelID,
-				APIKey:   fb.APIKey,
-				Region:   fb.Region,
+				Primary: mcpagent.LLMModel{
+					Provider: llmConfig.Primary.Provider,
+					ModelID:  llmConfig.Primary.ModelID,
+					APIKey:   llmConfig.Primary.APIKey,
+					Region:   llmConfig.Primary.Region,
+					Options:  llmConfig.Primary.Options,
+				},
+				Fallbacks: make([]mcpagent.LLMModel, len(llmConfig.Fallbacks)),
 			}
-		}
+			for i, fb := range llmConfig.Fallbacks {
+				mcpConfig.Fallbacks[i] = mcpagent.LLMModel{
+					Provider: fb.Provider,
+					ModelID:  fb.ModelID,
+					APIKey:   fb.APIKey,
+					Region:   fb.Region,
+					Options:  fb.Options,
+				}
+			}
 		agentOptions = append(agentOptions, mcpagent.WithLLMConfig(mcpConfig))
 	}
 

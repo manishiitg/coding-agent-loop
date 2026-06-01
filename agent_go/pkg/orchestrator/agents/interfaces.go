@@ -50,8 +50,9 @@ type LLMModel struct {
 	ModelID  string `json:"model_id"` // "claude-sonnet-4.5", "gpt-5", etc.
 
 	// Auth per model
-	APIKey *string `json:"api_key,omitempty"` // For OpenRouter, OpenAI, Anthropic, Vertex
-	Region *string `json:"region,omitempty"`  // For Bedrock
+	APIKey  *string                `json:"api_key,omitempty"` // For OpenRouter, OpenAI, Anthropic, Vertex
+	Region  *string                `json:"region,omitempty"`  // For Bedrock
+	Options map[string]interface{} `json:"options,omitempty"` // Provider-specific runtime options
 }
 
 // LLMConfig holds the primary and fallback LLM configurations

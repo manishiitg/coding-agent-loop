@@ -35,6 +35,8 @@ interface WorkspaceProps {
   onToggleMinimize: () => void
 }
 
+const WORKFLOW_METADATA_MUTATION_ERROR = 'This workflow metadata path is required for the active workflow. Delete specific run or output folders instead, or use the workflow menu to delete the whole workflow.'
+
 export default function Workspace({
   minimized,
   onToggleMinimize
@@ -329,6 +331,16 @@ export default function Workspace({
     fetchCapabilities()
   }, [fetchCapabilities])
 
+  useEffect(() => {
+    return () => {
+      closeDeleteDialog()
+      closeDeleteAllFilesDialog()
+      closeUploadDialog()
+      closeCreateFolderDialog()
+      setShowActionsDropdown(false)
+    }
+  }, [closeCreateFolderDialog, closeDeleteAllFilesDialog, closeDeleteDialog, closeUploadDialog, setShowActionsDropdown])
+
   // Restore expanded folders when files change
   // This runs after store's fetchFiles completes and handles workflow mode filtering
   useEffect(() => {
@@ -413,6 +425,26 @@ export default function Workspace({
   
   // Legacy function name for backward compatibility
   const getFullFilePath = getOriginalFilePath
+
+  const protectedWorkflowMetadataPaths = useMemo(() => {
+    if (selectedModeCategory !== 'workflow' || !effectiveWorkflowFolderPath) return []
+    const normalizedWorkflowPath = effectiveWorkflowFolderPath.replace(/^\/+|\/+$/g, '')
+    return [
+      `${normalizedWorkflowPath}/workflow.json`,
+      `${normalizedWorkflowPath}/planning/plan.json`,
+      `${normalizedWorkflowPath}/planning/step_config.json`,
+    ]
+  }, [selectedModeCategory, effectiveWorkflowFolderPath])
+
+  const isProtectedWorkflowMetadataItem = useCallback((item: PlannerFile): boolean => {
+    if (protectedWorkflowMetadataPaths.length === 0) return false
+    const normalizedItemPath = getOriginalFilePath(item).replace(/^\/+|\/+$/g, '')
+    return protectedWorkflowMetadataPaths.some(protectedPath =>
+      item.type === 'folder'
+        ? protectedPath.startsWith(`${normalizedItemPath}/`)
+        : protectedPath === normalizedItemPath
+    )
+  }, [getOriginalFilePath, protectedWorkflowMetadataPaths])
 
   // Recursively prune the runs/ subtree to only show the specified iteration
   const pruneRunsToIteration = (node: PlannerFile, iterationName: string): PlannerFile => {
@@ -910,24 +942,38 @@ export default function Workspace({
 
   // Handle file delete
   const handleFileDelete = (file: PlannerFile) => {
+    if (isProtectedWorkflowMetadataItem(file)) {
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      return
+    }
     openDeleteDialog(file)
   }
 
   // Handle folder delete
   const handleFolderDelete = (folder: PlannerFile) => {
+    if (isProtectedWorkflowMetadataItem(folder)) {
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      return
+    }
     openDeleteDialog(folder)
   }
 
   // Handle delete all contents in folder
   const handleDeleteAllFilesInFolder = (folder: PlannerFile) => {
+    if (isProtectedWorkflowMetadataItem(folder)) {
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      return
+    }
     openDeleteAllFilesDialog(folder)
   }
 
   // Helper function to collect only top-level file paths (not recursive)
   // API handles recursive deletion automatically, so we only need to select top-level items
   const collectTopLevelFilePaths = useCallback((files: PlannerFile[]): string[] => {
-    return files.map(file => file.filepath)
-  }, [])
+    return files
+      .filter(file => !isProtectedWorkflowMetadataItem(file))
+      .map(file => file.filepath)
+  }, [isProtectedWorkflowMetadataItem])
 
   // Toggle selection mode
   const toggleSelectionMode = useCallback(() => {
@@ -946,6 +992,9 @@ export default function Workspace({
   // Toggle file selection - only select/unselect the item itself (not children)
   // API handles recursive deletion automatically, so we don't need to select children
   const toggleFileSelection = useCallback((file: PlannerFile) => {
+    if (isProtectedWorkflowMetadataItem(file)) {
+      return
+    }
     setSelectedFiles(prev => {
       const newSet = new Set(prev)
       const filePath = file.filepath
@@ -959,13 +1008,17 @@ export default function Workspace({
       }
       return newSet
     })
-  }, [])
+  }, [isProtectedWorkflowMetadataItem])
 
   // Select file and enter selection mode
   // If it's a folder with children, enter selection mode without pre-selecting the folder itself
   // (to prevent accidentally deleting the entire folder when user only wants to select children)
   // If it's a file or leaf folder, pre-select it
   const selectFileAndEnterSelectionMode = useCallback((file: PlannerFile) => {
+    if (isProtectedWorkflowMetadataItem(file)) {
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      return
+    }
     setIsSelectionMode(true)
     if (file.type === 'folder' && file.children && file.children.length > 0) {
       // Don't pre-select parent folders — user likely wants to select items inside
@@ -973,7 +1026,7 @@ export default function Workspace({
     } else {
       setSelectedFiles(new Set([file.filepath]))
     }
-  }, [])
+  }, [isProtectedWorkflowMetadataItem, setError])
 
   // Select/Deselect all visible files (top-level only, not recursive)
   // API handles recursive deletion automatically, so we only need to select top-level items
@@ -1024,7 +1077,7 @@ export default function Workspace({
 
   // Handle bulk delete
   const handleBulkDelete = useCallback(() => {
-    const selectedItems = getSelectedFilesAsObjects()
+    const selectedItems = getSelectedFilesAsObjects().filter(item => !isProtectedWorkflowMetadataItem(item))
     console.log('[BulkDelete] Selected files set:', Array.from(selectedFiles))
     console.log('[BulkDelete] Resolved items:', selectedItems.map(item => ({
       filepath: item.filepath,
@@ -1032,13 +1085,17 @@ export default function Workspace({
       type: item.type,
       hasChildren: !!(item.children && item.children.length > 0)
     })))
-    if (selectedItems.length === 0) return
+    if (selectedItems.length === 0) {
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      setSelectedFiles(new Set())
+      return
+    }
     setBulkDeleteDialog({
       isOpen: true,
       isLoading: false,
       items: selectedItems
     })
-  }, [getSelectedFilesAsObjects, selectedFiles])
+  }, [getSelectedFilesAsObjects, isProtectedWorkflowMetadataItem, selectedFiles, setError])
 
   // Confirm bulk delete
   const confirmBulkDelete = async () => {
@@ -1048,12 +1105,19 @@ export default function Workspace({
 
     try {
       const errors: string[] = []
+      const deletableDialogItems = bulkDeleteDialog.items.filter(item => !isProtectedWorkflowMetadataItem(item))
+      if (deletableDialogItems.length === 0) {
+        setBulkDeleteDialog({ isOpen: false, isLoading: false, items: [] })
+        setSelectedFiles(new Set())
+        setError(WORKFLOW_METADATA_MUTATION_ERROR)
+        return
+      }
 
       // Deduplicate: if a parent folder is selected along with its children,
       // only delete the parent (folder deletion is recursive).
       // This prevents accidentally deleting more than intended.
-      const allPaths = new Set(bulkDeleteDialog.items.map(item => getOriginalFilePath(item)))
-      const itemsToDelete = bulkDeleteDialog.items.filter(item => {
+      const allPaths = new Set(deletableDialogItems.map(item => getOriginalFilePath(item)))
+      const itemsToDelete = deletableDialogItems.filter(item => {
         const itemPath = getOriginalFilePath(item)
         // Check if any ancestor of this item is also in the selection
         const parts = itemPath.split('/')
@@ -1123,6 +1187,12 @@ export default function Workspace({
   const confirmDelete = async () => {
     if (!deleteDialog.item) return
 
+    if (isProtectedWorkflowMetadataItem(deleteDialog.item)) {
+      closeDeleteDialog()
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      return
+    }
+
     setDeleteDialog({ isLoading: true })
 
     try {
@@ -1176,6 +1246,12 @@ export default function Workspace({
   // Confirm delete all contents
   const confirmDeleteAllFiles = async () => {
     if (!deleteAllFilesDialog.folder) return
+
+    if (isProtectedWorkflowMetadataItem(deleteAllFilesDialog.folder)) {
+      closeDeleteAllFilesDialog()
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      return
+    }
 
     setDeleteAllFilesDialog({ isLoading: true })
 
@@ -1408,6 +1484,12 @@ export default function Workspace({
   const confirmMove = async (destinationPath: string, commitMessage?: string) => {
     if (!localMoveDialog.item) return
 
+    if (isProtectedWorkflowMetadataItem(localMoveDialog.item)) {
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      closeLocalMoveDialog()
+      return
+    }
+
     setLocalMoveDialog(prev => ({ ...prev, isLoading: true }))
 
     try {
@@ -1450,6 +1532,12 @@ export default function Workspace({
   const confirmRename = async (newName: string, commitMessage?: string) => {
     if (!renameDialog.item) return
 
+    if (isProtectedWorkflowMetadataItem(renameDialog.item)) {
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      closeRenameDialog()
+      return
+    }
+
     setRenameDialog(prev => ({ ...prev, isLoading: true }))
 
     try {
@@ -1488,21 +1576,37 @@ export default function Workspace({
 
   // Handle file rename
   const handleFileRename = (file: PlannerFile) => {
+    if (isProtectedWorkflowMetadataItem(file)) {
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      return
+    }
     openRenameDialog(file)
   }
 
   // Handle folder rename
   const handleFolderRename = (folder: PlannerFile) => {
+    if (isProtectedWorkflowMetadataItem(folder)) {
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      return
+    }
     openRenameDialog(folder)
   }
 
   // Handle file move
   const handleFileMove = (file: PlannerFile) => {
+    if (isProtectedWorkflowMetadataItem(file)) {
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      return
+    }
     openLocalMoveDialog(file)
   }
 
   // Handle folder move
   const handleFolderMove = (folder: PlannerFile) => {
+    if (isProtectedWorkflowMetadataItem(folder)) {
+      setError(WORKFLOW_METADATA_MUTATION_ERROR)
+      return
+    }
     openLocalMoveDialog(folder)
   }
 
@@ -2307,6 +2411,7 @@ export default function Workspace({
         cancelText="Cancel"
         type="danger"
         isLoading={deleteDialog.isLoading}
+        preserveWorkspace
       />
 
       {/* Delete All Files Confirmation Dialog */}
@@ -2320,6 +2425,7 @@ export default function Workspace({
         cancelText="Cancel"
         type="warning"
         isLoading={deleteAllFilesDialog.isLoading}
+        preserveWorkspace
       />
 
       {/* Bulk Delete Confirmation Dialog */}
@@ -2335,11 +2441,15 @@ export default function Workspace({
         cancelText="Cancel"
         type="danger"
         isLoading={bulkDeleteDialog.isLoading}
+        preserveWorkspace
       />
 
       {/* Upload Dialog */}
       {uploadDialog.isOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          data-preserve-workspace="true"
+        >
           <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md mx-4 max-h-[80vh] flex flex-col">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
               Upload Files
@@ -2501,6 +2611,7 @@ export default function Workspace({
         onClose={cancelCreateFolder}
         onCreateFolder={handleCreateFolderSubmit}
         parentPath={createFolderDialog.parentPath}
+        preserveWorkspace
       />
 
       {/* Move File/Folder Dialog */}
@@ -2514,6 +2625,7 @@ export default function Workspace({
         commitMessage={localMoveDialog.commitMessage}
         setCommitMessage={(message) => setLocalMoveDialog(prev => ({ ...prev, commitMessage: message }))}
         isLoading={localMoveDialog.isLoading}
+        preserveWorkspace
       />
 
       {/* Rename File/Folder Dialog */}
@@ -2523,6 +2635,7 @@ export default function Workspace({
         onRename={confirmRename}
         item={renameDialog.item}
         isLoading={renameDialog.isLoading}
+        preserveWorkspace
       />
 
       {/* Hidden file input for backup import */}
@@ -2596,6 +2709,7 @@ export default function Workspace({
         isOpen={isImporting} 
         progress={importProgress} 
         fileName={importingFileName} 
+        preserveWorkspace
       />
       </div>
     </TooltipProvider>

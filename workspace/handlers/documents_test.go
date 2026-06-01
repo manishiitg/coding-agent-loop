@@ -55,6 +55,8 @@ func setupRouter(docsDir string) *gin.Engine {
 	r := gin.New()
 	r.GET("/api/documents", ListDocuments)
 	r.GET("/api/documents/*filepath", GetDocument)
+	r.DELETE("/api/documents/*filepath", DeleteDocument)
+	r.DELETE("/api/folders/*folderpath", DeleteFolder)
 	return r
 }
 
@@ -325,5 +327,230 @@ func TestNormalizeFolderPath(t *testing.T) {
 				t.Errorf("normalizeFolderPath(%q) = %q, want %q", tt.input, got, tt.expect)
 			}
 		})
+	}
+}
+
+func TestDeleteAllFilesRejectsWorkflowStructuralFiles(t *testing.T) {
+	docsDir, cleanup := setupTestDocsDir(t)
+	defer cleanup()
+
+	workflowDir := filepath.Join(docsDir, "Workflow", "demo")
+	if err := os.MkdirAll(filepath.Join(workflowDir, "planning"), 0755); err != nil {
+		t.Fatalf("create planning dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(workflowDir, "runs", "iteration-0"), 0755); err != nil {
+		t.Fatalf("create run dir: %v", err)
+	}
+	for path, content := range map[string]string{
+		filepath.Join(workflowDir, "workflow.json"):                    `{"schema_version":1,"id":"demo","label":"Demo"}`,
+		filepath.Join(workflowDir, "planning", "plan.json"):            `{"steps":[]}`,
+		filepath.Join(workflowDir, "planning", "step_config.json"):     `{}`,
+		filepath.Join(workflowDir, "runs", "iteration-0", "output.md"): `ok`,
+	} {
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("write fixture %s: %v", path, err)
+		}
+	}
+
+	router := setupRouter(docsDir)
+	req, _ := http.NewRequest("DELETE", "/api/folders/Workflow/demo/files?confirm=true", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	for _, path := range []string{
+		filepath.Join(workflowDir, "workflow.json"),
+		filepath.Join(workflowDir, "planning", "plan.json"),
+		filepath.Join(workflowDir, "planning", "step_config.json"),
+		filepath.Join(workflowDir, "runs", "iteration-0", "output.md"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s to remain after rejected delete: %v", path, err)
+		}
+	}
+}
+
+func TestDeleteAllFilesAllowsWorkflowRunFolderCleanup(t *testing.T) {
+	docsDir, cleanup := setupTestDocsDir(t)
+	defer cleanup()
+
+	workflowDir := filepath.Join(docsDir, "Workflow", "demo")
+	runDir := filepath.Join(workflowDir, "runs", "iteration-0")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("create run dir: %v", err)
+	}
+	outputPath := filepath.Join(runDir, "output.md")
+	if err := os.WriteFile(outputPath, []byte("ok"), 0644); err != nil {
+		t.Fatalf("write output fixture: %v", err)
+	}
+
+	router := setupRouter(docsDir)
+	req, _ := http.NewRequest("DELETE", "/api/folders/Workflow/demo/runs/iteration-0/files?confirm=true", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(runDir); err != nil {
+		t.Fatalf("expected run folder to remain: %v", err)
+	}
+	if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
+		t.Fatalf("expected output file to be deleted, stat err: %v", err)
+	}
+}
+
+func TestDeleteFolderRejectsWorkflowManifestFolder(t *testing.T) {
+	docsDir, cleanup := setupTestDocsDir(t)
+	defer cleanup()
+
+	workflowDir := filepath.Join(docsDir, "Workflow", "demo")
+	if err := os.MkdirAll(workflowDir, 0755); err != nil {
+		t.Fatalf("create workflow dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "workflow.json"), []byte(`{"schema_version":1,"id":"demo","label":"Demo"}`), 0644); err != nil {
+		t.Fatalf("write workflow manifest: %v", err)
+	}
+
+	router := setupRouter(docsDir)
+	req, _ := http.NewRequest("DELETE", "/api/folders/Workflow/demo?confirm=true", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(workflowDir); err != nil {
+		t.Fatalf("expected workflow folder to remain after rejected delete: %v", err)
+	}
+}
+
+func TestDeleteFolderAllowsExplicitWorkflowManifestFolderDelete(t *testing.T) {
+	docsDir, cleanup := setupTestDocsDir(t)
+	defer cleanup()
+
+	workflowDir := filepath.Join(docsDir, "Workflow", "demo")
+	if err := os.MkdirAll(workflowDir, 0755); err != nil {
+		t.Fatalf("create workflow dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "workflow.json"), []byte(`{"schema_version":1,"id":"demo","label":"Demo"}`), 0644); err != nil {
+		t.Fatalf("write workflow manifest: %v", err)
+	}
+
+	router := setupRouter(docsDir)
+	req, _ := http.NewRequest("DELETE", "/api/folders/Workflow/demo?confirm=true&allow_workflow_root_delete=true", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(workflowDir); !os.IsNotExist(err) {
+		t.Fatalf("expected workflow folder to be deleted with explicit allow, stat err: %v", err)
+	}
+}
+
+func TestDeleteFolderRejectsWorkflowPlanningFolder(t *testing.T) {
+	docsDir, cleanup := setupTestDocsDir(t)
+	defer cleanup()
+
+	workflowDir := filepath.Join(docsDir, "Workflow", "demo")
+	planningDir := filepath.Join(workflowDir, "planning")
+	if err := os.MkdirAll(planningDir, 0755); err != nil {
+		t.Fatalf("create planning dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(planningDir, "plan.json"), []byte(`{"steps":[]}`), 0644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	router := setupRouter(docsDir)
+	req, _ := http.NewRequest("DELETE", "/api/folders/Workflow/demo/planning?confirm=true", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(planningDir, "plan.json")); err != nil {
+		t.Fatalf("expected plan.json to remain after rejected delete: %v", err)
+	}
+}
+
+func TestDeleteFolderRootAllowDoesNotDeleteWorkflowPlanningFolder(t *testing.T) {
+	docsDir, cleanup := setupTestDocsDir(t)
+	defer cleanup()
+
+	workflowDir := filepath.Join(docsDir, "Workflow", "demo")
+	planningDir := filepath.Join(workflowDir, "planning")
+	if err := os.MkdirAll(planningDir, 0755); err != nil {
+		t.Fatalf("create planning dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(planningDir, "plan.json"), []byte(`{"steps":[]}`), 0644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	router := setupRouter(docsDir)
+	req, _ := http.NewRequest("DELETE", "/api/folders/Workflow/demo/planning?confirm=true&allow_workflow_root_delete=true", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(planningDir, "plan.json")); err != nil {
+		t.Fatalf("expected plan.json to remain after rejected delete: %v", err)
+	}
+}
+
+func TestDeleteDocumentRejectsWorkflowStructuralFile(t *testing.T) {
+	docsDir, cleanup := setupTestDocsDir(t)
+	defer cleanup()
+
+	planPath := filepath.Join(docsDir, "Workflow", "demo", "planning", "plan.json")
+	if err := os.MkdirAll(filepath.Dir(planPath), 0755); err != nil {
+		t.Fatalf("create planning dir: %v", err)
+	}
+	if err := os.WriteFile(planPath, []byte(`{"steps":[]}`), 0644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	router := setupRouter(docsDir)
+	req, _ := http.NewRequest("DELETE", "/api/documents/Workflow/demo/planning/plan.json?confirm=true", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(planPath); err != nil {
+		t.Fatalf("expected plan.json to remain after rejected delete: %v", err)
+	}
+}
+
+func TestDeleteDocumentAllowsExplicitWorkflowStructuralFileDelete(t *testing.T) {
+	docsDir, cleanup := setupTestDocsDir(t)
+	defer cleanup()
+
+	planPath := filepath.Join(docsDir, "Workflow", "demo", "planning", "plan.json")
+	if err := os.MkdirAll(filepath.Dir(planPath), 0755); err != nil {
+		t.Fatalf("create planning dir: %v", err)
+	}
+	if err := os.WriteFile(planPath, []byte(`{"steps":[]}`), 0644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	router := setupRouter(docsDir)
+	req, _ := http.NewRequest("DELETE", "/api/documents/Workflow/demo/planning/plan.json?confirm=true&allow_workflow_metadata_delete=true", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(planPath); !os.IsNotExist(err) {
+		t.Fatalf("expected plan.json to be deleted with explicit allow, stat err: %v", err)
 	}
 }

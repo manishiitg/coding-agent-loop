@@ -1105,6 +1105,15 @@ func DeleteDocument(c *gin.Context) {
 		return
 	}
 
+	if protectsWorkflowMetadata(filePath, docsDir) && c.Query("allow_workflow_metadata_delete") != "true" {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Cannot delete workflow metadata through generic document deletion",
+			Error:   "This path contains required workflow metadata. Delete specific run or output files instead, or use the workflow delete action to remove the whole workflow.",
+		})
+		return
+	}
+
 	// Use RemoveAll for directories so non-empty dirs are deleted cleanly,
 	// and plain Remove for files (faster, no risk of accidentally nuking a tree).
 	if info.IsDir() {
@@ -1761,6 +1770,28 @@ func DeleteFolder(c *gin.Context) {
 		return
 	}
 
+	isWorkflowRootDeleteAllowed := c.Query("allow_workflow_root_delete") == "true" && isWorkflowRootFolder(folderPath, docsDir)
+
+	if containsWorkflowManifest(folderPath) && !isWorkflowRootDeleteAllowed {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Cannot delete workflow folder through generic folder deletion",
+			Error:   "This folder contains workflow.json. Use the workflow delete action to remove the whole workflow.",
+		})
+		return
+	}
+
+	if protectsWorkflowMetadata(folderPath, docsDir) &&
+		c.Query("allow_workflow_metadata_delete") != "true" &&
+		!isWorkflowRootDeleteAllowed {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Cannot delete workflow metadata through generic folder deletion",
+			Error:   "This folder contains required workflow metadata. Delete specific run or output folders instead, or use the workflow delete action to remove the whole workflow.",
+		})
+		return
+	}
+
 	// Remove the folder and all its contents
 	if err := os.RemoveAll(folderPath); err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
@@ -1778,6 +1809,60 @@ func DeleteFolder(c *gin.Context) {
 			"folder_path": folderPathParam,
 		},
 	})
+}
+
+func containsWorkflowManifest(folderPath string) bool {
+	info, err := os.Stat(filepath.Join(folderPath, "workflow.json"))
+	return err == nil && !info.IsDir()
+}
+
+func isWorkflowRootFolder(absPath, docsDir string) bool {
+	relPath, err := filepath.Rel(docsDir, absPath)
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(normalizeWorkspaceRelativePath(relPath), "/")
+	return len(parts) == 2 && parts[0] == "Workflow" && parts[1] != ""
+}
+
+func protectsWorkflowMetadata(absPath, docsDir string) bool {
+	relPath, err := filepath.Rel(docsDir, absPath)
+	if err != nil {
+		return false
+	}
+	cleanPath := normalizeWorkspaceRelativePath(relPath)
+	if cleanPath == "" {
+		return true
+	}
+	protectedPaths := protectedWorkflowMetadataPaths(cleanPath)
+	for _, protectedPath := range protectedPaths {
+		if cleanPath == protectedPath || strings.HasPrefix(protectedPath, cleanPath+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeWorkspaceRelativePath(relPath string) string {
+	cleanPath := filepath.ToSlash(filepath.Clean(strings.TrimPrefix(relPath, "/")))
+	if cleanPath == "." {
+		return ""
+	}
+	return cleanPath
+}
+
+func protectedWorkflowMetadataPaths(relPath string) []string {
+	cleanPath := normalizeWorkspaceRelativePath(relPath)
+	parts := strings.Split(cleanPath, "/")
+	if len(parts) < 2 || parts[0] != "Workflow" || parts[1] == "" {
+		return nil
+	}
+	workflowRoot := strings.Join(parts[:2], "/")
+	return []string{
+		workflowRoot + "/workflow.json",
+		workflowRoot + "/planning/plan.json",
+		workflowRoot + "/planning/step_config.json",
+	}
 }
 
 // DeleteAllFilesInFolder handles DELETE /api/folders/*folderpath/files
@@ -1867,6 +1952,17 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam string, confirm bool
 		return
 	}
 
+	for _, itemPath := range itemsToDelete {
+		if isProtectedWorkflowMetadataPath(itemPath) {
+			c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+				Success: false,
+				Message: "Cannot delete workflow metadata with Delete All Contents",
+				Error:   "This folder contains required workflow files. Delete specific run or output folders instead, or use the workflow delete action to remove the whole workflow.",
+			})
+			return
+		}
+	}
+
 	// Delete all files and folders
 	for _, itemPath := range itemsToDelete {
 		fullPath := filepath.Join(docsDir, itemPath)
@@ -1904,6 +2000,16 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam string, confirm bool
 			"total_found":   len(itemsToDelete),
 		},
 	})
+}
+
+func isProtectedWorkflowMetadataPath(relPath string) bool {
+	cleanPath := normalizeWorkspaceRelativePath(relPath)
+	for _, protectedPath := range protectedWorkflowMetadataPaths(cleanPath) {
+		if cleanPath == protectedPath {
+			return true
+		}
+	}
+	return false
 }
 
 // UploadFile handles POST /api/upload

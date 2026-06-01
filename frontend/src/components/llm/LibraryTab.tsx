@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Trash2, Box, DollarSign, Thermometer, RefreshCw, Terminal, KeyRound, AudioLines } from 'lucide-react'
+import { Trash2, Box, DollarSign, RefreshCw, Terminal, KeyRound, AudioLines } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { useLLMStore } from '../../stores'
 import { llmConfigService, type ModelMetadata } from '../../services/llm-config-api'
@@ -224,12 +224,6 @@ export function LibraryTab() {
                                     {showPricing && metadata?.output_cost_per_1m !== undefined && (
                                       <span title="Output cost per 1M tokens">
                                         {formatCost(metadata.output_cost_per_1m)} out
-                                      </span>
-                                    )}
-                                    {llm.temperature !== undefined && (
-                                      <span className="flex items-center gap-0.5" title="Temperature">
-                                        <Thermometer className="w-3 h-3" />
-                                        {llm.temperature.toFixed(1)}
                                       </span>
                                     )}
                                   </div>

@@ -295,6 +295,54 @@ func TestChatModeFolderGuardBlockedWrite(t *testing.T) {
 	}
 }
 
+func TestPlanFolderGuardAllowsExplicitConfigWrite(t *testing.T) {
+	const chatsFolder = "_users/default/Chats"
+
+	noop := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		return "OK", nil
+	}
+	shellCalled := false
+	shellExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		shellCalled = true
+		writePaths, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string)
+		if !ok {
+			t.Fatalf("plan guard did not inject chat-mode write paths")
+		}
+		foundConfig := false
+		for _, folder := range writePaths {
+			if folder == "config" || folder == "config/" {
+				foundConfig = true
+				break
+			}
+		}
+		if !foundConfig {
+			t.Fatalf("expected config/ in injected write paths, got %v", writePaths)
+		}
+		return "OK", nil
+	}
+
+	wrapped := wrapExecutorsWithPlanFolderGuard(
+		map[string]func(ctx context.Context, args map[string]interface{}) (string, error){
+			"diff_patch_workspace_file": noop,
+			"execute_shell_command":     shellExecutor,
+		},
+		chatsFolder,
+		nil,
+		"config/",
+	)
+
+	if _, err := wrapped["diff_patch_workspace_file"](context.Background(), map[string]interface{}{"filepath": "config/published-llms.json"}); err != nil {
+		t.Fatalf("config write should be allowed when config/ is granted, got: %v", err)
+	}
+
+	if _, err := wrapped["execute_shell_command"](context.Background(), map[string]interface{}{"command": "true"}); err != nil {
+		t.Fatalf("shell command should be allowed, got: %v", err)
+	}
+	if !shellCalled {
+		t.Fatal("shell executor was not called")
+	}
+}
+
 func TestWorkflowPhaseFolderGuardDoesNotAllowChatsByDefault(t *testing.T) {
 	const workflowRoot = "Workflow/rtslatency"
 

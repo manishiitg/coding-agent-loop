@@ -314,7 +314,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
   }, [providerManifest])
 
   // Handle API key testing
-  const handleTestAPIKey = useCallback(async (provider: APIKeyProviderType, apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => {
+  const handleTestAPIKey = useCallback(async (provider: APIKeyProviderType, apiKey: string, modelId?: string, options?: Record<string, unknown>) => {
     // Allow testing without API key for Bedrock and Vertex (they support OAuth/credentials)
     if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
       return
@@ -322,14 +322,9 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
 
     setApiKeyStatus(prev => ({ ...prev, [provider]: 'testing' }))
     setApiKeyErrors(prev => ({ ...prev, [provider]: null }))
-    
-    // Merge temperature into options if provided
-    const optionsWithTemp = temperature !== undefined 
-      ? { ...options, temperature }
-      : options
-    
+
     try {
-      const result = await testAPIKey(provider, apiKey, modelId, optionsWithTemp)
+      const result = await testAPIKey(provider, apiKey, modelId, options)
       if (result.valid) {
         setApiKeyStatus(prev => ({ ...prev, [provider]: 'valid' }))
         setApiKeyErrors(prev => ({ ...prev, [provider]: null }))
@@ -591,7 +586,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
                     provider={entry}
                     config={configEntry.config}
                     onUpdate={(config) => handleProviderConfigUpdate(providerKey, config)}
-                    onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey(providerKey, apiKey, modelId, options, temperature)}
+                    onTestAPIKey={(apiKey, modelId, options) => handleTestAPIKey(providerKey, apiKey, modelId, options)}
                     apiKeyStatus={apiKeyStatus[providerKey]}
                     apiKeyError={apiKeyErrors[providerKey]}
                     metadata={metadata}
@@ -615,7 +610,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
                     ...availableVertexModels
                   ]))}
                   onUpdate={(config) => setVertexConfig(config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('vertex', apiKey, modelId, options, temperature)}
+                  onTestAPIKey={(apiKey, modelId, options) => handleTestAPIKey('vertex', apiKey, modelId, options)}
                   apiKeyStatus={apiKeyStatus.vertex}
                   apiKeyError={apiKeyErrors.vertex}
                   metadata={metadata}
@@ -642,7 +637,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
                     ...availableMinimaxModels.filter(isMiniMaxAudioModel)
                   ]))}
                   onUpdate={(config) => setMinimaxConfig(config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('minimax', apiKey, modelId, options, temperature)}
+                  onTestAPIKey={(apiKey, modelId, options) => handleTestAPIKey('minimax', apiKey, modelId, options)}
                   apiKeyStatus={apiKeyStatus.minimax}
                   apiKeyError={apiKeyErrors.minimax}
                   metadata={metadata}
@@ -662,7 +657,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
                     ...availableElevenLabsModels
                   ]))}
                   onUpdate={(config) => handleProviderConfigUpdate('elevenlabs', config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('elevenlabs', apiKey, modelId, options, temperature)}
+                  onTestAPIKey={(apiKey, modelId, options) => handleTestAPIKey('elevenlabs', apiKey, modelId, options)}
                   apiKeyStatus={apiKeyStatus.elevenlabs}
                   apiKeyError={apiKeyErrors.elevenlabs}
                   metadata={metadata}
@@ -682,7 +677,7 @@ export default function LLMConfigurationModal({ isOpen, onClose, onOpenDiscovery
                     ...availableDeepgramModels
                   ]))}
                   onUpdate={(config) => handleProviderConfigUpdate('deepgram', config)}
-                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('deepgram', apiKey, modelId, options, temperature)}
+                  onTestAPIKey={(apiKey, modelId, options) => handleTestAPIKey('deepgram', apiKey, modelId, options)}
                   apiKeyStatus={apiKeyStatus.deepgram}
                   apiKeyError={apiKeyErrors.deepgram}
                   metadata={metadata}

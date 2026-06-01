@@ -255,15 +255,19 @@ func convertDBAgentLLMConfig(dbConfig *workflowtypes.AgentLLMConfig) *step_based
 		return nil
 	}
 	cfg := &step_based_workflow.AgentLLMConfig{
-		Provider: dbConfig.Provider,
-		ModelID:  dbConfig.ModelID,
+		PublishedLLMID: dbConfig.PublishedLLMID,
+		Provider:       dbConfig.Provider,
+		ModelID:        dbConfig.ModelID,
+		Options:        dbConfig.Options,
 	}
 	if len(dbConfig.Fallbacks) > 0 {
 		cfg.Fallbacks = make([]step_based_workflow.AgentLLMFallback, len(dbConfig.Fallbacks))
 		for i, fb := range dbConfig.Fallbacks {
 			cfg.Fallbacks[i] = step_based_workflow.AgentLLMFallback{
-				Provider: fb.Provider,
-				ModelID:  fb.ModelID,
+				PublishedLLMID: fb.PublishedLLMID,
+				Provider:       fb.Provider,
+				ModelID:        fb.ModelID,
+				Options:        fb.Options,
 			}
 		}
 	}

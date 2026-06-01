@@ -115,7 +115,7 @@ Keep operators involved when workflows need approval, intervention, or additiona
 
 Runloop is provider-agnostic. Users configure published LLMs in the UI, then assign them to chat sessions, workflow phases, and workflow tiers.
 
-- **[LLM Configuration & Resilience](docs/core/llm_configuration_and_resilience.md):** Published LLMs carry provider, model, API key, temperature, and model-specific options; the backend does not require provider keys at startup in the default mode.
+- **[LLM Configuration & Resilience](docs/core/llm_configuration_and_resilience.md):** Published LLMs carry provider, model, and model-specific options; provider authentication is stored separately.
 - **[Tiered LLM Allocation](docs/workflow/tiered_llm_allocation.md):** Workflow steps can use tiered model selection, with separate phase LLM configuration for planning, builder, evaluation, and debugging-style phase work.
 - **[Azure AI Foundry](docs/core/azure_foundry_integration.md):** Azure OpenAI and Responses API routing are supported for newer agentic model deployments.
 - **[Environment-Based Defaults](docs/core/env-api-key-defaults.md):** Optional defaults and locked server-side configuration are available for managed deployments.

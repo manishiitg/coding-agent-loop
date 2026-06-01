@@ -683,6 +683,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			Primary: orchestrator.LLMModel{
 				Provider: stepConfig.ExecutionLLM.Provider,
 				ModelID:  stepConfig.ExecutionLLM.ModelID,
+				Options:  stepConfig.ExecutionLLM.Options,
 			},
 			Fallbacks: convertAgentFallbacks(stepConfig.ExecutionLLM.Fallbacks),
 			APIKeys:   orchestratorLLMConfig.APIKeys,
@@ -701,6 +702,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			Primary: orchestrator.LLMModel{
 				Provider: subAgentLLM.Provider,
 				ModelID:  subAgentLLM.ModelID,
+				Options:  subAgentLLM.Options,
 			},
 			Fallbacks: convertAgentFallbacks(subAgentLLM.Fallbacks),
 			APIKeys:   hcpo.GetAPIKeys(),
@@ -1146,6 +1148,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectPhaseLLM(agentPurpose string) *
 		Primary: orchestrator.LLMModel{
 			Provider: hcpo.presetPhaseLLM.Provider,
 			ModelID:  hcpo.presetPhaseLLM.ModelID,
+			Options:  hcpo.presetPhaseLLM.Options,
 		},
 		Fallbacks: convertAgentFallbacks(hcpo.presetPhaseLLM.Fallbacks),
 		APIKeys:   hcpo.GetAPIKeys(),
@@ -1348,6 +1351,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 			Primary: orchestrator.LLMModel{
 				Provider: stepConfig.LearningLLM.Provider,
 				ModelID:  stepConfig.LearningLLM.ModelID,
+				Options:  stepConfig.LearningLLM.Options,
 			},
 			Fallbacks: convertAgentFallbacks(stepConfig.LearningLLM.Fallbacks),
 			APIKeys:   orchestratorLLMConfig.APIKeys,
@@ -1993,6 +1997,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 			Primary: orchestrator.LLMModel{
 				Provider: todoTaskLLMConfig.Primary.Provider,
 				ModelID:  todoTaskLLMConfig.Primary.ModelID,
+				Options:  todoTaskLLMConfig.Primary.Options,
 			},
 			Fallbacks: todoTaskLLMConfig.Fallbacks,
 			APIKeys:   apiKeys, // Preserve API keys from orchestrator (may be nil)
@@ -2011,6 +2016,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 			Primary: orchestrator.LLMModel{
 				Provider: hcpo.presetPhaseLLM.Provider,
 				ModelID:  hcpo.presetPhaseLLM.ModelID,
+				Options:  hcpo.presetPhaseLLM.Options,
 			},
 			Fallbacks: convertAgentFallbacks(hcpo.presetPhaseLLM.Fallbacks),
 			APIKeys:   orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator

@@ -71,7 +71,6 @@ function sanitizeLLMModel(model: LLMModel): LLMModel {
     model_id: model.model_id,
     region: model.region,
     options: model.options,
-    temperature: model.temperature,
   }
 }
 
@@ -115,11 +114,11 @@ function sanitizeAgentConfig(config: AgentLLMConfiguration | null): AgentLLMConf
 }
 
 function sanitizeProviderConfigForPersistence(config: ExtendedLLMConfiguration): ExtendedLLMConfiguration {
-  return {
-    ...config,
-    api_key: undefined,
-    endpoint: undefined,
-  }
+  const sanitized = { ...config } as ExtendedLLMConfiguration & { temperature?: number }
+  delete sanitized.api_key
+  delete sanitized.endpoint
+  delete sanitized.temperature
+  return sanitized
 }
 
 function hasStoredProviderKeys(keys?: StoredProviderKeys | null): boolean {
@@ -914,12 +913,10 @@ export const useLLMStore = create<LLMState>()(
                 api_key: savedConfig?.api_key || defaultConfig?.api_key || '',
                 // Preserve region for Bedrock and Azure
                 region: savedConfig?.region || defaultConfig?.region,
-                // Preserve endpoint for Azure
-                endpoint: savedConfig?.endpoint || defaultConfig?.endpoint,
-                // Preserve options (includes api_version for Azure, reasoning settings, etc.)
-                options: savedConfig?.options || defaultConfig?.options,
-                // Preserve temperature
-                temperature: savedConfig?.temperature ?? defaultConfig?.temperature
+	                // Preserve endpoint for Azure
+	                endpoint: savedConfig?.endpoint || defaultConfig?.endpoint,
+	                // Preserve options (includes api_version for Azure, reasoning settings, etc.)
+	                options: savedConfig?.options || defaultConfig?.options
               }
             }
 
@@ -1336,11 +1333,11 @@ export const useLLMStore = create<LLMState>()(
 
               const metadata = metadataMap[`${savedLLM.provider}:${savedLLM.model_id}`]
               availableLLMs.push({
+                id: savedLLM.id,
                 provider: savedLLM.provider,
                 model: savedLLM.model_id,
                 label: savedLLM.name || `${savedLLM.provider} - ${savedLLM.model_id}`,
                 description: savedLLM.model_name || `Published ${savedLLM.provider} model`,
-                temperature: savedLLM.temperature,
                 options: savedLLM.options,
                 contextWindow: metadata?.contextWindow,
                 inputCostPer1M: metadata?.inputCost,

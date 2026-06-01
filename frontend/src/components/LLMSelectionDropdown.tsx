@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Brain, ChevronDown, Check, RefreshCw, Search, Thermometer, Box, DollarSign, Terminal, KeyRound, AudioLines } from 'lucide-react';
+import { Brain, ChevronDown, Check, RefreshCw, Search, Box, DollarSign, Terminal, KeyRound, AudioLines } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
@@ -295,7 +295,7 @@ export default function LLMSelectionDropdown({
                                   {llms.map((llm, index) => {
                                     const optionsSummary = getOptionsSummary(llm.options);
                                     const showPricing = shouldShowLLMPricing(llm.provider, llm.model);
-                                    const hasMetadata = llm.contextWindow || (showPricing && llm.inputCostPer1M !== undefined) || llm.temperature !== undefined;
+                                    const hasMetadata = llm.contextWindow || (showPricing && llm.inputCostPer1M !== undefined);
 
                                     return (
                                       <div
@@ -325,7 +325,7 @@ export default function LLMSelectionDropdown({
                                             {llm.model}
                                           </div>
 
-                                          {/* Metadata row: context, cost, temperature */}
+                                          {/* Metadata row: context and cost */}
                                           {hasMetadata && (
                                             <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] text-muted-foreground">
                                               {llm.contextWindow && (
@@ -338,12 +338,6 @@ export default function LLMSelectionDropdown({
                                                 <span className="flex items-center gap-0.5" title="Input cost per 1M tokens">
                                                   <DollarSign className="w-3 h-3" />
                                                   {formatCost(llm.inputCostPer1M)}/1M
-                                                </span>
-                                              )}
-                                              {llm.temperature !== undefined && (
-                                                <span className="flex items-center gap-0.5" title="Temperature">
-                                                  <Thermometer className="w-3 h-3" />
-                                                  {llm.temperature.toFixed(1)}
                                                 </span>
                                               )}
                                             </div>
@@ -397,11 +391,6 @@ export default function LLMSelectionDropdown({
                           {selectedShowPricing && selectedLLM.inputCostPer1M !== undefined && (
                             <span>
                               {formatCost(selectedLLM.inputCostPer1M)}/1M in
-                            </span>
-                          )}
-                          {selectedLLM.temperature !== undefined && (
-                            <span>
-                              Temp: {selectedLLM.temperature.toFixed(1)}
                             </span>
                           )}
                         </div>

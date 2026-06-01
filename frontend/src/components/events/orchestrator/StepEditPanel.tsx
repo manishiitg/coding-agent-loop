@@ -289,6 +289,10 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     if (!config || !config.provider || !config.model_id) {
       return null;
     }
+    if (config.published_llm_id) {
+      const byID = availableLLMs.find((l) => l.id === config.published_llm_id);
+      if (byID) return byID;
+    }
     const llm = availableLLMs.find(
       (l) => l.provider === config.provider && l.model === config.model_id
     );
@@ -330,8 +334,10 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       return undefined;
     }
     return {
-      provider: option.provider as 'openai' | 'bedrock' | 'vertex',
+      ...(option.id ? { published_llm_id: option.id } : {}),
+      provider: option.provider as AgentLLMConfig['provider'],
       model_id: option.model,
+      ...(option.options && Object.keys(option.options).length > 0 ? { options: option.options } : {}),
     };
   };
 

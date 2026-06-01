@@ -44,9 +44,6 @@ export interface LLMModel {
 
   // Model-specific options (reasoning_effort, thinking_level, thinking_budget, etc.)
   options?: Record<string, unknown>
-
-  // Model-specific temperature (0.0 - 1.0)
-  temperature?: number
 }
 
 // Saved/Published LLM Configuration (User library)
@@ -74,8 +71,10 @@ export interface AgentLLMConfiguration {
 
 // Legacy LLM Configuration types (kept for backward compatibility)
 export interface LLMConfiguration {
+  published_llm_id?: string
   provider: LLMProvider
   model_id: string
+  options?: Record<string, unknown>
   fallback_models: string[]
   cross_provider_fallback?: {
     provider: 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'cursor-cli' | 'agy-cli' | 'opencode-cli'
@@ -112,7 +111,6 @@ export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
   region?: string
   endpoint?: string  // Azure endpoint URL
   options?: Record<string, unknown>
-  temperature?: number
 }
 
 // Execution mode constants matching backend enum
@@ -1053,20 +1051,27 @@ export interface CostSummary {
 
 // Preset LLM Configuration types
 export interface AgentLLMFallback {
+  published_llm_id?: string
   provider: string
   model_id: string
+  options?: Record<string, unknown>
 }
 
 export interface AgentLLMConfig {
+  published_llm_id?: string
   provider: LLMProvider
   model_id: string
+  options?: Record<string, unknown>
   fallbacks?: AgentLLMFallback[]
 }
 
 export interface PresetLLMConfig {
+  published_llm_id?: string
+
   // Legacy: Single default model (for backward compatibility)
   provider?: LLMProvider
   model_id?: string
+  options?: Record<string, unknown>
 
   // New: Agent-specific default models (takes priority over legacy fields)
   learning_llm?: AgentLLMConfig         // Default for learning agents

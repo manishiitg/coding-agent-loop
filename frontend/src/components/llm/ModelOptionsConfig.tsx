@@ -3,47 +3,29 @@ import type { ModelMetadata } from '../../services/llm-config-api'
 interface ModelOptionsConfigProps {
   metadata?: ModelMetadata
   options: Record<string, unknown>
-  temperature?: number
-  onChange: (opts: Record<string, unknown>, temp?: number) => void
+  onChange: (opts: Record<string, unknown>) => void
   disabled?: boolean
 }
 
-export function ModelOptionsConfig({ metadata, options, temperature, onChange, disabled }: ModelOptionsConfigProps) {
+export function ModelOptionsConfig({ metadata, options, onChange, disabled }: ModelOptionsConfigProps) {
+  const hasModelOptions = !!(
+    metadata?.supports_reasoning_effort ||
+    metadata?.supports_thinking_level ||
+    metadata?.supports_thinking_budget
+  )
+
   const updateOption = (key: string, value: string | number) => {
-    onChange({ ...options, [key]: value }, temperature)
+    onChange({ ...options, [key]: value })
   }
 
-  const updateTemperature = (val: string) => {
-    onChange(options, parseFloat(val))
+  if (!hasModelOptions) {
+    return null
   }
-
-  // Generate temperature options: 0.0, 0.1, 0.2, ..., 1.0
-  const temperatureOptions = Array.from({ length: 11 }, (_, i) => i * 0.1)
-
-  // Default to 0.0 if temperature is undefined
-  const currentTemp = temperature !== undefined ? temperature : 0
 
   return (
     <div className="space-y-3 mt-4 border-t border-border pt-4">
       <h5 className="text-sm font-medium text-foreground">Model Options</h5>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {/* Common Option: Temperature */}
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Temperature</label>
-          <select 
-            value={currentTemp.toString()}
-            onChange={(e) => updateTemperature(e.target.value)}
-            disabled={disabled}
-            className="w-full px-2 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {temperatureOptions.map(temp => (
-              <option key={temp} value={temp.toString()}>
-                {temp.toFixed(1)}
-              </option>
-            ))}
-          </select>
-        </div>
-
         {metadata && metadata.supports_reasoning_effort && (
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">Reasoning Effort</label>

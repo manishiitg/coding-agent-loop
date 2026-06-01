@@ -30,7 +30,6 @@ type StoredPublishedLLM struct {
 	CachedInputCostPer1M      *float64               `json:"cached_input_cost_per_1m,omitempty"`
 	CachedInputCostWritePer1M *float64               `json:"cached_input_cost_write_per_1m,omitempty"`
 	Options                   map[string]interface{} `json:"options,omitempty"`
-	Temperature               *float64               `json:"temperature,omitempty"`
 	CreatedAt                 string                 `json:"created_at,omitempty"`
 }
 

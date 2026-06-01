@@ -99,21 +99,23 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	// Populate LLMConfig from orchestrator.LLMConfig (unified structure)
 	if llmConfig != nil {
 		// Copy Primary directly - no fallback to orchestrator default (LLM selection uses temp override → step config → preset LLM)
-		config.LLMConfig.Primary = agents.LLMModel{
-			Provider: llmConfig.Primary.Provider,
-			ModelID:  llmConfig.Primary.ModelID,
-			APIKey:   llmConfig.Primary.APIKey,
-			Region:   llmConfig.Primary.Region,
-		}
-		// Copy Fallbacks
-		for _, fallback := range llmConfig.Fallbacks {
-			config.LLMConfig.Fallbacks = append(config.LLMConfig.Fallbacks, agents.LLMModel{
-				Provider: fallback.Provider,
-				ModelID:  fallback.ModelID,
-				APIKey:   fallback.APIKey,
-				Region:   fallback.Region,
-			})
-		}
+			config.LLMConfig.Primary = agents.LLMModel{
+				Provider: llmConfig.Primary.Provider,
+				ModelID:  llmConfig.Primary.ModelID,
+				APIKey:   llmConfig.Primary.APIKey,
+				Region:   llmConfig.Primary.Region,
+				Options:  llmConfig.Primary.Options,
+			}
+			// Copy Fallbacks
+			for _, fallback := range llmConfig.Fallbacks {
+				config.LLMConfig.Fallbacks = append(config.LLMConfig.Fallbacks, agents.LLMModel{
+					Provider: fallback.Provider,
+					ModelID:  fallback.ModelID,
+					APIKey:   fallback.APIKey,
+					Region:   fallback.Region,
+					Options:  fallback.Options,
+				})
+			}
 		// Direct assignment — orchestrator.APIKeys and agents.AgentAPIKeys are
 		// both aliases for llm.ProviderAPIKeys, so no conversion needed.
 		if llmConfig.APIKeys != nil {

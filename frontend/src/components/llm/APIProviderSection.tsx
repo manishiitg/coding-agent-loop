@@ -13,7 +13,7 @@ interface APIProviderSectionProps {
   provider: ProviderManifestEntry
   config: ExtendedLLMConfiguration
   onUpdate: (config: ExtendedLLMConfiguration) => void
-  onTestAPIKey: (apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => void
+  onTestAPIKey: (apiKey: string, modelId?: string, options?: Record<string, unknown>) => void
   apiKeyStatus: 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
   apiKeyError: string | null
   metadata?: ModelMetadata[]
@@ -72,8 +72,8 @@ export function APIProviderSection({
     setPublishError(null)
   }
 
-  const handleOptionsChange = (newOptions: Record<string, unknown>, newTemp?: number) => {
-    onUpdate({ ...config, options: newOptions, temperature: newTemp })
+  const handleOptionsChange = (newOptions: Record<string, unknown>) => {
+    onUpdate({ ...config, options: newOptions })
   }
 
   const handleRegionChange = (newRegion: string) => {
@@ -106,8 +106,6 @@ export function APIProviderSection({
     const parts: string[] = []
     const modelId = config.model_id.replace(/-20\d{6}/g, '').replace(/-20\d{2}-\d{2}-\d{2}/g, '')
     parts.push(modelId)
-    const temp = config.temperature !== undefined ? config.temperature : 0
-    parts.push(`temp${temp.toFixed(1)}`)
     if (currentModelMetadata?.supports_thinking_level) {
       parts.push(`thinking-${(config.options?.thinking_level as string) || 'high'}`)
     }
@@ -130,14 +128,11 @@ export function APIProviderSection({
     setIsSubmitting(true)
     setPublishError(null)
     try {
-      const optionsWithTemp = config.temperature !== undefined
-        ? { ...config.options, temperature: config.temperature }
-        : config.options
       const testResult = await testAPIKeyFromStore(
         provider.id as Parameters<typeof testAPIKeyFromStore>[0],
         needsApiKey ? apiKey : '',
         config.model_id,
-        optionsWithTemp
+        config.options
       )
       if (testResult.valid) {
         const llmModel = {
@@ -147,12 +142,11 @@ export function APIProviderSection({
           ...(config.region ? { region: config.region } : {}),
           ...(config.endpoint ? { endpoint: config.endpoint } : {}),
           options: config.options,
-          temperature: config.temperature,
         }
         await saveLLM(llmModel, publishName.trim(), currentModelMetadata?.model_name, needsApiKey ? 'api_key' : 'none', currentModelMetadata)
         setPublishName('')
         setIsPublishing(false)
-        await onTestAPIKey(apiKey, config.model_id, config.options, config.temperature)
+        await onTestAPIKey(apiKey, config.model_id, config.options)
       } else {
         setPublishError(testResult.error || 'Validation failed. Check your credentials and try again.')
       }
@@ -198,7 +192,6 @@ export function APIProviderSection({
               <ModelOptionsConfig
                 metadata={currentModelMetadata}
                 options={config.options || {}}
-                temperature={config.temperature}
                 onChange={handleOptionsChange}
                 disabled={isLocked}
               />
@@ -313,7 +306,7 @@ export function APIProviderSection({
                   />
                   {!isLocked && (
                     <Button
-                      onClick={() => onTestAPIKey(apiKey, config.model_id, config.options, config.temperature)}
+                      onClick={() => onTestAPIKey(apiKey, config.model_id, config.options)}
                       disabled={!apiKey.trim() || apiKeyStatus === 'testing'}
                       size="sm"
                       variant="outline"

@@ -3999,6 +3999,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				perUserChatHistory := strings.TrimSuffix(perUserChatsFolder, "Chats") + "chat_history/"
 				additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
 				additionalFolders = append(additionalFolders, fileContextWriteFolders...)
+				additionalFolders = append(additionalFolders, "config/")
 				additionalFolders = append(additionalFolders, perUserMemWrite)
 				additionalFolders = append(additionalFolders, perUserChatHistory)
 				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
@@ -4124,6 +4125,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if !isWorkflowPhase {
 						additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
 						additionalFolders = append(additionalFolders, fileContextWriteFolders...)
+						additionalFolders = append(additionalFolders, "config/")
 						return wrapExecutorsWithPlanFolderGuard(execs, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
 					}
 					browserExtraFolders := append([]string{}, resolvedGrants.WriteFolders...)
@@ -10841,12 +10843,6 @@ func (api *StreamingAPI) buildLLMToolsCallbacks() *todo_creation_human.LLMToolsC
 			}
 
 			validationOptions := cloneOptionsMap(options)
-			if raw, ok := args["temperature"].(float64); ok {
-				if validationOptions == nil {
-					validationOptions = map[string]interface{}{}
-				}
-				validationOptions["temperature"] = raw
-			}
 
 			// Use workspace-backed auth if no explicit key provided
 			usedWorkspaceAuth := false
@@ -11671,9 +11667,11 @@ func collectQueryToolCallSummaries(api *StreamingAPI, mainSessID, correlationID,
 func workshopExtractLLM(specific *workflowtypes.AgentLLMConfig, legacyProvider, legacyModelID string) *todo_creation_human.AgentLLMConfig {
 	if specific != nil && specific.Provider != "" && specific.ModelID != "" {
 		return &todo_creation_human.AgentLLMConfig{
-			Provider:  specific.Provider,
-			ModelID:   specific.ModelID,
-			Fallbacks: workshopConvertFallbacks(specific.Fallbacks),
+			PublishedLLMID: specific.PublishedLLMID,
+			Provider:       specific.Provider,
+			ModelID:        specific.ModelID,
+			Options:        specific.Options,
+			Fallbacks:      workshopConvertFallbacks(specific.Fallbacks),
 		}
 	}
 	if legacyProvider != "" && legacyModelID != "" {
@@ -11690,9 +11688,11 @@ func workshopConvertAgentLLMConfig(config *workflowtypes.AgentLLMConfig) *todo_c
 		return nil
 	}
 	return &todo_creation_human.AgentLLMConfig{
-		Provider:  config.Provider,
-		ModelID:   config.ModelID,
-		Fallbacks: workshopConvertFallbacks(config.Fallbacks),
+		PublishedLLMID: config.PublishedLLMID,
+		Provider:       config.Provider,
+		ModelID:        config.ModelID,
+		Options:        config.Options,
+		Fallbacks:      workshopConvertFallbacks(config.Fallbacks),
 	}
 }
 
@@ -11733,8 +11733,10 @@ func workshopConvertFallbacks(fallbacks []workflowtypes.AgentLLMFallback) []todo
 	result := make([]todo_creation_human.AgentLLMFallback, len(fallbacks))
 	for i, fb := range fallbacks {
 		result[i] = todo_creation_human.AgentLLMFallback{
-			Provider: fb.Provider,
-			ModelID:  fb.ModelID,
+			PublishedLLMID: fb.PublishedLLMID,
+			Provider:       fb.Provider,
+			ModelID:        fb.ModelID,
+			Options:        fb.Options,
 		}
 	}
 	return result

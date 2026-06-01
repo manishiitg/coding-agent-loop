@@ -10,11 +10,11 @@ This document outlines the system for managing LLM configurations, user-driven f
 
 ### 📋 Overview
 
-The user-controlled LLM configuration system allows the **Primary LLM to be selected from Published LLMs**. Each Published LLM carries its own API key, temperature, and model-specific options. This ensures that the backend requires no API keys at startup and operates using ambient credentials (AWS) for internal operations only.
+The user-controlled LLM configuration system allows the **Primary LLM to be selected from Published LLMs**. Each Published LLM carries provider, model, and model-specific options such as `reasoning_effort`. Provider authentication is stored separately in workspace provider-key config.
 
 **Key Principles:**
 - **Primary LLM**: Selected from Published LLMs (not configured directly).
-- **Self-contained Auth**: Each Published LLM stores its own API key.
+- **Separate Auth**: Published LLM metadata does not store secrets; provider auth is managed separately.
 - **Backend Defaults**: Backend uses ambient credentials (AWS Bedrock) for internal operations only.
 - **Fallback Chain**: Simple ordered fallback array configured by the user.
 
@@ -35,13 +35,13 @@ The user-controlled LLM configuration system allows the **Primary LLM to be sele
 ```
 User configures LLM in Provider Tab (OpenRouter, Bedrock, etc.)
     ↓
-Publishes to "Published LLM" list (saves API key, temp, options)
+Publishes to "Published LLM" list (saves provider, model, and options)
     ↓
 Selects Published LLM as Primary (from Fallbacks or Published LLM tab)
     ↓
 LLM Dropdown shows all Published LLMs with metadata
     ↓
-Agent execution uses Published LLM config (with its stored API key)
+Agent execution uses Published LLM config plus provider auth
 ```
 
 ### 🏗️ Architecture
@@ -62,8 +62,6 @@ Agent execution uses Published LLM config (with its stored API key)
 interface SavedLLM extends LLMModel {
   id: string
   name: string
-  api_key?: string      // Stored per-LLM
-  temperature?: number
   options?: Record<string, unknown>  // reasoning_effort, thinking_level, etc.
 }
 
@@ -92,7 +90,7 @@ interface AgentLLMConfiguration {
 |-----------|---------|--------------|
 | **Published LLM Tab** | Manage saved configs | Publish current, set as primary, delete, show API key last 4 digits |
 | **Fallbacks Tab** | Configure fallback chain | Change Primary button, add from Published LLM or custom |
-| **LLM Dropdown** | Select LLM for execution | Rich metadata (cost, context, temp, reasoning options) |
+| **LLM Dropdown** | Select LLM for execution | Rich metadata (cost, context, reasoning options) |
 
 #### LLM Dropdown Display
 

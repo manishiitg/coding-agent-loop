@@ -214,9 +214,14 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
     return <WidgetError widget={widget} message={`Could not load ${widget.source}.`} hint={state.message} />
   }
 
+  // Markdown/HTML documents carry their own heading, so suppress the widget
+  // title to avoid a redundant double-heading (e.g. a "Full Report" label above
+  // an HTML report that already starts with its own <h1>).
+  const suppressHeader = format === 'markdown' || format === 'html'
+
   return (
     <div className="flex flex-col gap-2">
-      <WidgetHeader widget={widget} />
+      {!suppressHeader && <WidgetHeader widget={widget} />}
       {format === 'markdown' && (
         <div className="rounded-lg bg-muted/20 px-2.5 py-2 text-sm text-foreground">
           <MarkdownRenderer content={state.content || ''} basePath={path} className="max-w-none" maxHeight="none" />

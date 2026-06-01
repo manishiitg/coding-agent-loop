@@ -891,6 +891,37 @@ func (s *SchedulerService) StopRunningJob(scheduleID string) {
 	// Cancel background agents
 	s.api.bgAgentRegistry.CancelAll(sessionID)
 
+	// Close tmux-backed coding-CLI sessions. Canceling the Go contexts above tears
+	// down the streaming/orchestration server-side, but the CLI processes inside
+	// the tmux panes (the scheduled run's main agent + any step sub-agents) keep
+	// running their current turn until they finish naturally — so the job showed
+	// "stopped" in the UI while the main agent kept going. Mirror handleStopSession:
+	// gracefully close the main-agent session by owner, then enumerate this
+	// session's terminals and tear down each sub-agent pane by name (a scheduled
+	// stop is a hard, full stop — always cancel sub-agents).
+	const closeReason = "scheduled job stopped by user"
+	closeAllCodingCLIInteractiveSessionsForOwner(sessionID, closeReason)
+	if s.api.terminalStore != nil {
+		mainOwner := "main:" + sessionID
+		for _, snap := range s.api.terminalStore.List(sessionID) {
+			owner := strings.TrimSpace(snap.OwnerID)
+			tmux := strings.TrimSpace(snap.TmuxSession)
+			if tmux == "" || owner == sessionID || owner == mainOwner {
+				continue // no pane, or main agent already handled above
+			}
+			if handled := gracefulCloseCodingCLITmuxByName(tmux, closeReason); !handled {
+				killCtx, killCancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
+				if err := runTerminalTmuxCommand(killCtx, "", "kill-session", "-t", tmux); err != nil {
+					scheduleLogf("[SCHEDULER] kill-session %q (owner %s) failed (may already be gone): %v", tmux, owner, err)
+				}
+				killCancel()
+			}
+			if snap.Active {
+				s.api.terminalStore.MarkFailed(snap.TerminalID)
+			}
+		}
+	}
+
 	// Update runtime state
 	s.runtimeStatesMu.Lock()
 	if st, ok := s.runtimeStates[scheduleID]; ok {

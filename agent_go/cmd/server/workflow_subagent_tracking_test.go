@@ -230,6 +230,41 @@ func TestWorkflowStartAutoNotificationClearsStaleBusyWithoutActiveTurn(t *testin
 	}
 }
 
+func TestWorkflowStartAutoNotificationSkipsCompletedAgent(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	const sessionID = "session-completed-before-start-drain"
+	const agentID = "flow-completed-before-start"
+
+	api := &StreamingAPI{
+		bgAgentRegistry:           NewBackgroundAgentRegistry(),
+		eventStore:                store,
+		pendingStartNotifications: make(map[string][]string),
+	}
+	api.bgAgentRegistry.Register(sessionID, &BackgroundAgent{
+		ID:        agentID,
+		Name:      "Workflow step -> completed-before-start",
+		SessionID: sessionID,
+		Kind:      "workflow_run_tool",
+		Status:    BGAgentCompleted,
+		Result:    "done",
+		CreatedAt: time.Now(),
+	})
+	api.queuePendingStartNotification(sessionID, agentID)
+
+	pending := api.filterUnsentStartNotifications(sessionID, api.drainPendingStartNotifications(sessionID))
+	if len(pending) != 0 {
+		t.Fatalf("expected terminal agent start notification to be suppressed, got %#v", pending)
+	}
+
+	api.processBatchedBackgroundAgentStarts(sessionID, []string{agentID})
+	events := store.GetAllEventsRaw(sessionID)
+	if len(events) != 0 {
+		t.Fatalf("expected no start synthetic event for completed agent, got %d", len(events))
+	}
+}
+
 func TestWorkflowStartAutoNotificationDoesNotClearBusyWithActiveTurn(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()

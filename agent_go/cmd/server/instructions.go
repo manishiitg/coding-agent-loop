@@ -801,7 +801,7 @@ func filesystemSelectedSkills(selectedSkills []string) []string {
 }
 
 func isRuntimeOnlySkill(skill string) bool {
-	return skill == "agent-browser"
+	return false
 }
 
 // GetSubAgentBuilderInstructions returns the custom instructions for Sub-Agent Builder agents

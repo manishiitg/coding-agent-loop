@@ -8053,14 +8053,20 @@ func (api *StreamingAPI) filterUnsentStartNotifications(sessionID string, agentI
 		if agent == nil {
 			continue
 		}
+		snap := agent.GetSnapshot()
 		agent.mu.RLock()
 		alreadySent := agent.startNotified
+		completionNotified := agent.notified
 		agent.mu.RUnlock()
-		if !alreadySent {
+		if !alreadySent && !completionNotified && !isTerminalBackgroundAgentStatus(snap.Status) {
 			filtered = append(filtered, agentID)
 		}
 	}
 	return filtered
+}
+
+func isTerminalBackgroundAgentStatus(status BackgroundAgentStatus) bool {
+	return status == BGAgentCompleted || status == BGAgentFailed || status == BGAgentCanceled
 }
 
 func (api *StreamingAPI) schedulePendingStartNotificationRetry(sessionID string) {
@@ -8323,7 +8329,10 @@ func (api *StreamingAPI) processBatchedBackgroundAgentStartsLocked(sessionID str
 			continue
 		}
 		snap := agent.GetSnapshot()
-		if snap.Status == BGAgentCanceled {
+		if isTerminalBackgroundAgentStatus(snap.Status) {
+			agent.mu.Lock()
+			agent.startNotified = false
+			agent.mu.Unlock()
 			continue
 		}
 		parts = append(parts, backgroundAgentStartNotificationPart(snap))

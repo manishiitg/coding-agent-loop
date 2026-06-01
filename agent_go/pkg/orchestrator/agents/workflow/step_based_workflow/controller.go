@@ -550,14 +550,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetBrowserMode() string {
 }
 
 // HasBrowserCapability reports whether this workflow has any browser MCP available —
-// a registered browser server (playwright), the agent-browser skill, a
+// a registered browser server (playwright), a browser runtime skill, a
 // configured CDP port, or an explicit non-"none" browserMode. Use this (not
 // GetBrowserMode directly) when deciding whether to emit browser-specific prompt
 // content — an empty browserMode means "auto-detect", NOT "no browser".
 //
 // Real signals (see controller_agent_factory.go): browser MCP servers are
-// "playwright"; agent-browser ships as a skill registered via
-// GetSelectedSkills; CDP attach is driven by CdpPort.
+// "playwright"; agent-browser/playwright may also be listed as built-in
+// runtime skills via GetSelectedSkills; CDP attach is driven by CdpPort.
 func (hcpo *StepBasedWorkflowOrchestrator) HasBrowserCapability() bool {
 	if mode := hcpo.browserMode; mode != "" && mode != "none" {
 		return true
@@ -571,7 +571,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) HasBrowserCapability() bool {
 		}
 	}
 	for _, s := range hcpo.GetSelectedSkills() {
-		if s == "agent-browser" {
+		if isBrowserAutomationSkill(s) {
 			return true
 		}
 	}

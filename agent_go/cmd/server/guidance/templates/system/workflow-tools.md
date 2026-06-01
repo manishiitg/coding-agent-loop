@@ -53,8 +53,13 @@ returns the live JSON schema for the tool.
 - **MCP servers workflow**:
   1. `get_workflow_config` to inspect which servers are currently selected.
   2. `update_workflow_config(add_servers=["server-name"])` to add to the workflow. **Do NOT edit `workflow.json` manually.**
-  3. `update_step_config(step_id, servers=["server-name"])` to scope specific servers to a step.
-- **`update_workflow_config(add_servers?, remove_servers?, add_skills?, remove_skills?, add_secrets?, remove_secrets?, run_retention_count?)`** — Update workflow MCP servers, skills, secrets, or run/eval backup retention.
+  3. Optional workflow-level allowlist: `update_workflow_config(add_tools=["server:*"])` or `add_tools=["server:tool_name"]`. Tool entries must reference selected workflow servers.
+  4. `update_step_config(step_id, servers=["server-name"], tools=["server:tool_name"])` to scope specific servers/tools to a step.
+- **Browser workflow**:
+  1. Pick the workflow mode with `update_workflow_config(browser_mode="none"|"headless"|"cdp"|"playwright")`.
+  2. For `agent_browser` steps, enable `workspace_browser:agent_browser` via `update_step_config(enabled_custom_tools=[...])` and attach the matching runtime skill with `enabled_skills=["agent-browser"]`.
+  3. For Playwright steps, select the Playwright MCP server/tools and attach `enabled_skills=["playwright"]` when the step needs the Playwright operating rules.
+- **`update_workflow_config(add_servers?, remove_servers?, add_tools?, remove_tools?, add_skills?, remove_skills?, add_secrets?, remove_secrets?, browser_mode?, run_retention_count?)`** — Update workflow MCP servers, workflow-level MCP tool allowlist, skills, secrets, browser mode, or run/eval backup retention.
 
 ## Schedule Management (Workshop mode)
 

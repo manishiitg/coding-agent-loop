@@ -840,8 +840,22 @@ type InteractiveWorkshopManager struct {
 	workshopModeOverride   string                    // frontend-selected workshop mode (takes priority over auto-detection)
 }
 
+func uniqueStringsPreserveOrder(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
+}
+
 // persistWorkflowConfigToManifest writes the current in-memory workflow config
-// (servers, skills, secrets) back to workflow.json so changes survive session end.
+// (servers, tools, skills, secrets) back to workflow.json so changes survive
+// session end.
 func (iwm *InteractiveWorkshopManager) persistWorkflowConfigToManifest(ctx context.Context, logger loggerv2.Logger) {
 	wsPath := iwm.controller.GetWorkspacePath()
 	if wsPath == "" {
@@ -870,6 +884,7 @@ func (iwm *InteractiveWorkshopManager) persistWorkflowConfigToManifest(ctx conte
 
 	// Update from current controller state
 	caps["selected_servers"] = iwm.controller.GetSelectedServers()
+	caps["selected_tools"] = iwm.controller.GetSelectedTools()
 	caps["selected_skills"] = iwm.controller.GetSelectedSkills()
 
 	// Update secrets (names only, never values). Write to BOTH manifest fields:
@@ -889,6 +904,11 @@ func (iwm *InteractiveWorkshopManager) persistWorkflowConfigToManifest(ctx conte
 	caps["selected_global_secret_names"] = secretNames
 
 	caps["use_code_execution_mode"] = iwm.controller.GetUseCodeExecutionMode()
+	if mode := strings.ToLower(strings.TrimSpace(iwm.controller.GetBrowserMode())); mode != "" {
+		caps["browser_mode"] = mode
+	} else if _, exists := caps["browser_mode"]; !exists {
+		caps["browser_mode"] = "none"
+	}
 
 	// Persist lock_knowledgebase under capabilities.llm_config
 	llmCfg, _ := caps["llm_config"].(map[string]interface{})
@@ -1918,7 +1938,7 @@ For the full debugging playbook (workshop vs run investigation workflow steps, r
 
 Priority order when reviewing a step: (1) Correctness — description precision, validation schema completeness, context I/O wiring. (2) Knowledge — learnings quality, lock lifecycle. (3) Efficiency — tool-call waste, workflow structure (merge/split/reorder).
 
-	Hard rules: `+"`validation_schema`"+` is the only automated gate (catch stale files, field completeness, constraints); default `+"`learnings_access`"+` = `+"`\"read\"`"+` (opt into writes with `+"`\"read-write\"`"+` + `+"`learning_objective`"+`); `+"`lock_learnings=true`"+` is a deliberate builder/user decision, never a runtime side effect; `+"`lock_code=true`"+` only after user-explicit scripted + 10+ scenario-covering runs; workshop-created steps arrive as `+"`agentic`"+`, promote to `+"`scripted`"+` only with explicit ask + determinism + 10+ runs. Three locks: `+"`lock_learnings`"+` (per-step, freezes SKILL.md), `+"`lock_code`"+` (per-step scripted, freezes main.py), `+"`lock_knowledgebase`"+` (workflow-wide, freezes notes/ auto-updates).
+	Hard rules: `+"`validation_schema`"+` is the only automated gate (catch stale files, field completeness, constraints); default `+"`learnings_access`"+` = `+"`\"read\"`"+`; use `+"`\"read-write\"`"+` + `+"`learning_objective`"+` only for reusable execution HOW (browser selectors/timing/auth, API/MCP quirks, CLI/SDK command patterns, parsing/retry/recovery rules). Routing, validation, mechanical transforms, aggregation/report shaping, human approval, pure db/KB readers, and mature scripted steps should usually stay read-only. `+"`lock_learnings=true`"+` is a deliberate builder/user decision, never a runtime side effect; `+"`lock_code=true`"+` only after user-explicit scripted + 10+ scenario-covering runs; workshop-created steps arrive as `+"`agentic`"+`, promote to `+"`scripted`"+` only with explicit ask + determinism + 10+ runs. Three locks: `+"`lock_learnings`"+` (per-step, freezes SKILL.md), `+"`lock_code`"+` (per-step scripted, freezes main.py), `+"`lock_knowledgebase`"+` (workflow-wide, freezes notes/ auto-updates).
 
 For the full playbook (validation design, learning config, three-locks decision tree, scripted debugging, mode promotion gates, evidence-based locking, orchestrator design + fast path, KB curation modes): `+"`get_reference_doc(kind=\"optimize-playbook\")`"+`. When patching `+"`learnings/{step-id}/main.py`"+`: also load `+"`code-authoring`"+`.
 {{end}}
@@ -1938,7 +1958,7 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 - **Read-only info**: `+"`get_step_prompts`"+`, `+"`get_workflow_config`"+`, `+"`get_llm_config`"+`{{if eq .WorkshopMode "workshop"}}, `+"`get_workflow_command_guidance(kind=\"review-artifact-drift\")`"+`{{else}}. Artifact drift reviews belong in Workshop — switch modes and run `+"`/review-artifact-drift`"+` if needed{{end}}.
 {{if eq .WorkshopMode "workshop"}}
 - **Plan modification**: `+"`create_plan`"+`, `+"`add_<type>_step`"+`, `+"`update_<type>_step`"+`, `+"`delete_plan_steps`"+`, `+"`cleanup_orphan_step_configs`"+`, todo-task route tools, `+"`update_validation_schema`"+`, `+"`publish_workflow_version`"+`, `+"`restore_workflow_version`"+`.
-- **Variables & config**: `+"`update_variable`"+`, `+"`add_group`"+`/`+"`update_group`"+`/`+"`delete_group`"+`, `+"`update_workflow_config`"+`. Do NOT edit `+"`workflow.json`"+` manually.
+- **Variables & config**: `+"`update_variable`"+`, `+"`add_group`"+`/`+"`update_group`"+`/`+"`delete_group`"+`, `+"`update_workflow_config`"+`. Use `+"`update_workflow_config`"+` for workflow MCP servers, workflow-level MCP tool allowlists, selected skills, selected secrets, browser_mode, KB lock, and run retention. Do NOT edit `+"`workflow.json`"+` manually.
 - **Schedule management**: `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, the three scheduling modes (`+"`workflow`"+` vs `+"`workshop+run`"+` vs `+"`workshop+optimizer`"+`), `+"`/auto-improve`"+` exception, infinite-loop prevention rules, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
 {{end}}
 - **Shell & discovery**: `+"`execute_shell_command`"+`, `+"`human_feedback`"+`.
@@ -3496,7 +3516,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"learning_objective": map[string]interface{}{
 					"type":        "string",
-					"description": "Extraction instruction for the step agent's direct post-completion learning turn — describe what patterns/selectors/recipes SKILL.md should capture from successful runs, e.g. 'Capture Playwright selectors that worked for the ICICI login form; pattern of the OTP-input field appearing ~3s after PAN submit'. Required when learnings_access=\"read-write\" (the validator rejects write access with an empty objective). No longer acts as the learning gate on its own — learnings_access controls whether the step reads/writes global skill.",
+					"description": "Extraction instruction for the step agent's direct post-completion learning turn. Use only for reusable execution HOW: browser selectors/timing/auth flows, API/MCP request and response quirks, CLI/SDK command patterns, parsing rules, retries, recovery, or file-format pitfalls. Do not use for facts/results, report data, routing decisions, validation-only steps, mechanical transforms, human approvals, pure db/KB readers, or mature scripted steps whose main.py already captures the method. Example: 'Capture the Buffer API create-update request shape, success fields, 401/429 handling, and output id parsing.' Required when learnings_access=\"read-write\" (the validator rejects write access with an empty objective).",
 				},
 				"lock_learnings": map[string]interface{}{
 					"type":        "boolean",
@@ -3524,7 +3544,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"learnings_access": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"read", "read-write", "none"},
-					"description": "Access mode for this step against learnings/_global/ (SKILL.md + references/). Defaults to 'read' — every step sees the workflow's accumulated how-to knowledge in its prompt. 'read-write' — step also contributes and requires a non-empty learning_objective; the step agent writes via a dedicated post-completion turn. 'none' — step neither reads global skill nor contributes. Omit to keep the default.",
+					"description": "Access mode for this step against learnings/_global/ (SKILL.md + references/). Defaults to 'read' — every step sees the workflow's accumulated how-to knowledge in its prompt. 'read-write' — step contributes reusable execution HOW and requires a concrete learning_objective; use for browser/API/CLI/SDK/MCP/parsing/retry discoveries. Keep routing, validation, mechanical transform, aggregation/report-shaping, human approval, pure db/KB reader, and mature scripted steps read-only. 'none' — step neither reads global skill nor contributes; use rarely, only when shared HOW would mislead the step or token isolation is important. Omit to keep the default.",
 				},
 				"knowledgebase_contribution": map[string]interface{}{
 					"type":        "string",
@@ -6626,7 +6646,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: update_workflow_config — add/remove MCP servers, skills, secrets, and workflow-level knobs
 	if err := mcpAgent.RegisterCustomTool(
 		"update_workflow_config",
-		"Update workflow configuration: add/remove MCP servers, add/remove skills, enable/disable secrets, set run retention. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Changes take effect immediately for subsequent step executions.",
+		"Update workflow configuration: add/remove MCP servers, add/remove workflow-level tool allowlist entries, add/remove skills, enable/disable secrets, set browser mode, set run retention. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Changes take effect immediately for subsequent step executions.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -6639,6 +6659,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "MCP server names to remove from the workflow",
+				},
+				"add_tools": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Workflow-level MCP tool allowlist entries to add. Format: 'server:tool_name' or 'server:*'. The server must already be selected with add_servers. This is for MCP servers, not workspace custom tools; use update_step_config(enabled_custom_tools=...) for workspace_advanced/workspace_browser/human_tools.",
+				},
+				"remove_tools": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Workflow-level MCP tool allowlist entries to remove. Format: 'server:tool_name' or 'server:*'.",
 				},
 				"add_skills": map[string]interface{}{
 					"type":        "array",
@@ -6681,6 +6711,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"lock_knowledgebase": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Workflow-level freeze on the post-step KB update agent. When true, notes/ only mutates via explicit improve_kb calls (reads unaffected). Set after KB is stable to save LLM cost per step.",
+				},
+				"browser_mode": map[string]interface{}{
+					"type":        "string",
+					"enum":        []interface{}{"none", "headless", "cdp", "playwright"},
+					"description": "Workflow-level browser automation mode. 'none' disables browser capability; 'headless' enables isolated agent_browser; 'cdp' enables agent_browser against the operator's shared Chrome; 'playwright' uses Playwright MCP tools. For steps that actually drive the browser, also set update_step_config(enabled_custom_tools=[...]) and enabled_skills=['agent-browser'] or ['playwright'] as appropriate.",
 				},
 				"run_retention_count": map[string]interface{}{
 					"type":        "integer",
@@ -6763,7 +6798,107 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							sb.WriteString(fmt.Sprintf("- %s\n", s))
 						}
 					}
+					if len(removeServers) > 0 {
+						removeSet := make(map[string]bool, len(removeServers))
+						for _, s := range removeServers {
+							removeSet[s] = true
+						}
+						selectedTools := iwm.controller.GetSelectedTools()
+						filteredTools := selectedTools[:0]
+						for _, tool := range selectedTools {
+							serverName := tool
+							if idx := strings.Index(tool, ":"); idx >= 0 {
+								serverName = tool[:idx]
+							}
+							if !removeSet[serverName] {
+								filteredTools = append(filteredTools, tool)
+							}
+						}
+						if len(filteredTools) != len(selectedTools) {
+							iwm.controller.SetSelectedTools(filteredTools)
+							sb.WriteString("\nRemoved workflow-level tool allowlist entries for removed server(s).\n")
+						}
+					}
 					logger.Info(fmt.Sprintf("Updated workflow MCP servers: %v", result))
+				}
+			}
+
+			// --- Workflow-level MCP tool allowlist ---
+			addTools := extractStringArray("add_tools")
+			removeTools := extractStringArray("remove_tools")
+			if len(addTools) > 0 || len(removeTools) > 0 {
+				selectedServers := iwm.controller.GetSelectedServers()
+				serverSet := make(map[string]bool, len(selectedServers))
+				for _, s := range selectedServers {
+					serverSet[s] = true
+				}
+				var invalidTools []string
+				var missingServers []string
+				for _, tool := range addTools {
+					idx := strings.Index(tool, ":")
+					if idx <= 0 || idx == len(tool)-1 {
+						invalidTools = append(invalidTools, tool)
+						continue
+					}
+					serverName := tool[:idx]
+					if !serverSet[serverName] {
+						missingServers = append(missingServers, serverName)
+					}
+				}
+				if len(invalidTools) > 0 {
+					return fmt.Sprintf("Error: selected tool entries must use 'server:tool_name' or 'server:*'. Invalid entries: %v.", invalidTools), nil
+				}
+				if len(missingServers) > 0 {
+					return fmt.Sprintf("Error: selected tool entries reference server(s) not selected at workflow level: %v. Add the server first with update_workflow_config(add_servers=[...]).", uniqueStringsPreserveOrder(missingServers)), nil
+				}
+
+				tools := iwm.controller.GetSelectedTools()
+				result := make([]string, len(tools))
+				copy(result, tools)
+				changed := false
+
+				if len(addTools) > 0 {
+					existSet := make(map[string]bool, len(result))
+					for _, t := range result {
+						existSet[t] = true
+					}
+					for _, t := range addTools {
+						if !existSet[t] {
+							result = append(result, t)
+							existSet[t] = true
+							changed = true
+						}
+					}
+				}
+
+				if len(removeTools) > 0 {
+					removeSet := make(map[string]bool, len(removeTools))
+					for _, t := range removeTools {
+						removeSet[t] = true
+					}
+					filtered := result[:0]
+					for _, t := range result {
+						if !removeSet[t] {
+							filtered = append(filtered, t)
+						} else {
+							changed = true
+						}
+					}
+					result = filtered
+				}
+
+				if changed {
+					iwm.controller.SetSelectedTools(result)
+					anyChanged = true
+					sb.WriteString("\n### MCP Tools (updated)\n")
+					if len(result) == 0 {
+						sb.WriteString("No workflow-level tool allowlist configured; selected servers expose all their tools unless step-level tools override them.\n")
+					} else {
+						for _, t := range result {
+							sb.WriteString(fmt.Sprintf("- %s\n", t))
+						}
+					}
+					logger.Info(fmt.Sprintf("Updated workflow MCP tools: %v", result))
 				}
 			}
 
@@ -7033,6 +7168,20 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
+			// --- Browser mode ---
+			if raw, ok := args["browser_mode"]; ok && raw != nil {
+				mode, _ := raw.(string)
+				mode = strings.ToLower(strings.TrimSpace(mode))
+				validModes := map[string]bool{"none": true, "headless": true, "cdp": true, "playwright": true}
+				if !validModes[mode] {
+					return "Error: browser_mode must be one of: none, headless, cdp, playwright.", nil
+				}
+				iwm.controller.SetBrowserMode(mode)
+				anyChanged = true
+				sb.WriteString(fmt.Sprintf("\n### Browser Mode (updated)\n- %s\n", mode))
+				logger.Info(fmt.Sprintf("Updated workflow browser_mode=%s", mode))
+			}
+
 			// --- Run Retention ---
 			if raw, ok := args["run_retention_count"]; ok && raw != nil {
 				parseRetention := func(raw interface{}) (int, bool) {
@@ -7083,7 +7232,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase, run_retention_count.", nil
+				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase, browser_mode, run_retention_count.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)

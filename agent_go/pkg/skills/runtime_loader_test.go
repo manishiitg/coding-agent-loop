@@ -62,8 +62,8 @@ func fakeWorkspaceServer(t *testing.T, files map[string]string, listings map[str
 
 func TestLoadAttachableBuildsSkillFromWorkspace(t *testing.T) {
 	files := map[string]string{
-		"skills/pdf-extract/SKILL.md": "---\nname: pdf-extract\ndescription: Extract text from PDFs\n---\n\n# PDF Extract\n\nUse this skill to extract structured text from PDF files.\n",
-		"skills/pdf-extract/scripts/run.py":  "print('hi')\n",
+		"skills/pdf-extract/SKILL.md":          "---\nname: pdf-extract\ndescription: Extract text from PDFs\n---\n\n# PDF Extract\n\nUse this skill to extract structured text from PDF files.\n",
+		"skills/pdf-extract/scripts/run.py":    "print('hi')\n",
 		"skills/pdf-extract/references/api.md": "# API Reference\n\nDetails on the extraction API.\n",
 	}
 	listings := map[string][]DocumentEntry{
@@ -107,13 +107,23 @@ func TestLoadAttachableBuildsSkillFromWorkspace(t *testing.T) {
 	}
 }
 
-func TestLoadAttachableFiltersAgentBrowser(t *testing.T) {
-	// agent-browser is a runtime tool, not a markdown skill. The loader
-	// must filter it before any HTTP request so we don't generate a
-	// noisy "skill not found" log for every multi-agent chat session.
+func TestLoadAttachableLoadsAgentBrowserSkill(t *testing.T) {
 	got := LoadAttachable("http://unused.example", []string{"agent-browser"})
-	if len(got) != 0 {
-		t.Errorf("expected agent-browser to be filtered out, got %+v", got)
+	if len(got) != 1 {
+		t.Fatalf("expected agent-browser skill to load, got %+v", got)
+	}
+	if got[0].Name != "agent-browser" || !strings.Contains(got[0].Content, "CDP Shared Chrome Rules") {
+		t.Errorf("unexpected loaded skill: %+v", got[0])
+	}
+}
+
+func TestLoadAttachableLoadsPlaywrightSkill(t *testing.T) {
+	got := LoadAttachable("http://unused.example", []string{"playwright"})
+	if len(got) != 1 {
+		t.Fatalf("expected playwright skill to load, got %+v", got)
+	}
+	if got[0].Name != "playwright" || !strings.Contains(got[0].Content, "Shared Browser Vs Isolated Browser") {
+		t.Errorf("unexpected loaded skill: %+v", got[0])
 	}
 }
 

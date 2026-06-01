@@ -25,13 +25,21 @@ After a step runs successfully, always check: could a stale/fake output file pas
 The learning system has **two active dimensions** per step: `learnings_access` controls read/write scope, and `lock_learnings` freezes writes. `learnings_write_method` is retained only for old plan.json compatibility; new plans should omit it.
 
 - **Default access is `"read"`** (inferred when `learnings_access` is unset). Every step — including simple plumbing — sees `_global/SKILL.md` in its prompt for cross-step context. Do NOT set `learnings_access: "none"` on plumbing steps just because they don't contribute; they still benefit from reading.
-- **Opt into writing** by setting `learnings_access: "read-write"` AND a non-empty `learning_objective`. Required for steps that produce durable HOW-knowledge (selectors, timings, auth flows, tool-call patterns). The validator enforces the pairing.
+- **Opt into writing** by setting `learnings_access: "read-write"` AND a non-empty `learning_objective`. Required only for steps that produce durable HOW-knowledge: browser selectors/timing/auth flows, API/MCP request/response quirks, CLI/SDK command patterns, output parsing rules, retry/recovery behavior, and file-format pitfalls. The validator enforces the pairing.
 - **Writes are direct-only**: when `learnings_access="read-write"` and `learning_objective` are set, the step agent itself writes `_global/SKILL.md` in a dedicated post-completion user-message turn. Folder guard widens only for that turn; main execution cannot write learnings. This turn is part of step finalization, so it completes before the workflow advances to the next step. Direct-mode guidance is NOT in the step's main system prompt — the agent sees it only in the dedicated turn. Parallel direct-learning turns are serialized by an in-process mutex.
+- **Do not write learnings** for routing/condition steps, schema validation, mechanical transforms, aggregation/report data shaping, human approval/input, message-only steps, pure db/KB readers, or mature scripted steps whose `main.py` already captures the execution method. Leave these at `"read"` unless `_global/SKILL.md` would actively mislead them.
 - **Use `"none"` sparingly** — only when the global skill content would actively mislead the step (rare) or when the step is so divorced from the target system that reading the skill just burns tokens.
 - **Learning locks are manual**: runtime execution never auto-sets or auto-clears `lock_learnings`. Set it only when the builder/user intentionally decides this step should stop writing SKILL.md, and record the rationale in `review_notes`.
 - **Global Skill Objective**: set `global_skill_objective` in `execution_defaults` to describe what reusable HOW knowledge the skill should accumulate — e.g. *"Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably."* Every learning contribution is guided by this objective.
 - **scripted steps**: usually `learnings_access: "read"` (not `"read-write"`). The saved `learnings/{step-id}/main.py` IS the learned artifact — the HOW is encoded as code. Opt into write only when there's cross-step HOW knowledge the script itself can't capture (e.g. operator notes, patterns spanning multiple steps).
 - **Clearing a bad setting**: if a step was miss-configured with `learnings_access: "read-write"` but shouldn't contribute, clear it via `update_step_config(step_id, clear_fields=["learnings_access", "learning_objective"])`.
+
+Good `learning_objective` examples:
+- "Capture the CDP tab-selection pattern, authenticated X home-feed indicators, sign-in-page failure indicators, and safe wait/snapshot retry rules."
+- "Capture the Buffer API create-update request shape, success fields, 401/429 handling, and output id parsing."
+- "Capture the CLI flags, working directory, env vars, exit-code meanings, and output file locations needed to run the export command reliably."
+
+Bad learning objectives: "learn from this run", "remember the result", "save useful info", or anything that asks for facts/results instead of reusable HOW.
 
 #### The Three Locks — What They Freeze and When To Use
 

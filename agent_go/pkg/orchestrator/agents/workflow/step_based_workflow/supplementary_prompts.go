@@ -116,9 +116,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveBrowserConfig(serverNames []st
 		}
 	}
 	for _, skill := range skills {
-		if skill == "agent-browser" {
+		switch skill {
+		case "agent-browser":
 			cfg.HasAgentBrowser = true
-			break
+		case "playwright":
+			cfg.HasPlaywright = true
 		}
 	}
 

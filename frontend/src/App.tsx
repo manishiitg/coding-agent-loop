@@ -200,8 +200,24 @@ function App() {
     isSaving,
     getHasUnsavedChanges,
     saveFile,
-    binaryFileData
+    binaryFileData,
+    deleteDialog,
+    deleteAllFilesDialog,
+    uploadDialog,
+    createFolderDialog
   } = useWorkspaceStore()
+
+  const workspaceDialogOpen =
+    deleteDialog.isOpen ||
+    deleteAllFilesDialog.isOpen ||
+    uploadDialog.isOpen ||
+    createFolderDialog.isOpen
+
+  useEffect(() => {
+    if (workspaceDialogOpen && workspaceMinimized) {
+      setWorkspaceMinimized(false)
+    }
+  }, [workspaceDialogOpen, workspaceMinimized, setWorkspaceMinimized])
 
   const [videoObjectUrl, setVideoObjectUrl] = useState<string | null>(null)
   const [audioObjectUrl, setAudioObjectUrl] = useState<string | null>(null)
@@ -1924,10 +1940,10 @@ function App() {
 
           {/* Right Workspace Area - auto-minimize in workflow mode */}
           <div className={`${
-            // Use workspaceMinimized state directly - user can toggle regardless of mode
-            workspaceMinimized ? 'w-0 border-l-0' : 'w-96 border-l border-gray-200 dark:border-gray-700'
+            // Keep the workspace mounted while its own dialogs are open so modal state cannot trap reopening.
+            workspaceMinimized && !workspaceDialogOpen ? 'w-0 border-l-0' : 'w-96 border-l border-gray-200 dark:border-gray-700'
           } flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out relative z-20`}>
-            {!workspaceMinimized && (
+            {(!workspaceMinimized || workspaceDialogOpen) && (
               <Workspace 
                 minimized={false}
                 onToggleMinimize={toggleWorkspaceMinimize}

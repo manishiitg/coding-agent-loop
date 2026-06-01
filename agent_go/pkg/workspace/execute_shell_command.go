@@ -738,7 +738,7 @@ func closestWorkspaceRootHint(rejected string, roots []string) string {
 	clean := filepath.Clean(rejected)
 	// Look for the first known top-level workspace folder name in the rejected
 	// path; if found, the tail is what we'd append to a real root.
-	knownTops := []string{"/Workflow/", "/skills/", "/Chats/", "/Downloads/", "/subagents/", "/memory/", "/config/"}
+	knownTops := []string{"/Workflow/", "/skills/", "/Chats/", "/Downloads/", "/subagents/", "/memory/"}
 	for _, top := range knownTops {
 		if idx := strings.Index(clean, top); idx >= 0 {
 			tail := clean[idx:] // e.g. "/Workflow/linkedin/..."

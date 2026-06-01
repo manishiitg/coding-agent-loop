@@ -137,11 +137,11 @@ func (f FlexibleContextOutput) String() string {
 
 // AgentLLMConfig represents LLM configuration for an agent
 type AgentLLMConfig struct {
-	PublishedLLMID string                 `json:"published_llm_id,omitempty"` // Optional reference to config/published-llms.json
-	Provider       string                 `json:"provider,omitempty"`          // e.g., "openai", "bedrock", "openrouter", "vertex"
-	ModelID        string                 `json:"model_id,omitempty"`          // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
-	Options        map[string]interface{} `json:"options,omitempty"`           // Provider-specific runtime options
-	Fallbacks      []AgentLLMFallback     `json:"fallbacks,omitempty"`         // Optional fallback models for retry on failure
+	PublishedLLMID string                 `json:"published_llm_id,omitempty"` // Optional published LLM registry reference
+	Provider       string                 `json:"provider,omitempty"`         // e.g., "openai", "bedrock", "openrouter", "vertex"
+	ModelID        string                 `json:"model_id,omitempty"`         // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
+	Options        map[string]interface{} `json:"options,omitempty"`          // Provider-specific runtime options
+	Fallbacks      []AgentLLMFallback     `json:"fallbacks,omitempty"`        // Optional fallback models for retry on failure
 }
 
 // AgentLLMFallback represents a fallback LLM model

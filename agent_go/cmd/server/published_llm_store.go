@@ -39,9 +39,19 @@ func sanitizePublishedLLM(entry StoredPublishedLLM) (StoredPublishedLLM, bool) {
 	entry.Provider = strings.TrimSpace(entry.Provider)
 	entry.ModelID = strings.TrimSpace(entry.ModelID)
 	entry.SearchRole = strings.ToLower(strings.TrimSpace(entry.SearchRole))
-	entry.ModelName = strings.TrimSpace(entry.ModelName)
-	entry.AuthMethod = strings.TrimSpace(entry.AuthMethod)
 	entry.CreatedAt = strings.TrimSpace(entry.CreatedAt)
+
+	// Published chat LLM entries are a routing registry, not a pricing/model
+	// metadata cache. Keep legacy fields readable for old JSON files but do
+	// not expose or rewrite them after sanitization.
+	entry.ModelName = ""
+	entry.AuthMethod = ""
+	entry.ContextWindow = nil
+	entry.InputCostPer1M = nil
+	entry.OutputCostPer1M = nil
+	entry.ReasoningCostPer1M = nil
+	entry.CachedInputCostPer1M = nil
+	entry.CachedInputCostWritePer1M = nil
 
 	if entry.Provider == "" || entry.ModelID == "" || entry.Name == "" {
 		return StoredPublishedLLM{}, false

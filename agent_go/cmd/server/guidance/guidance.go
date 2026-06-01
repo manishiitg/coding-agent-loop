@@ -125,9 +125,10 @@ var referenceKinds = map[string]kindMeta{
 	"plan-design":         {Group: "system", Description: "Plan-design playbook: step boundaries, step-type selection, context flow, validation/failure design, anti-patterns, step-types reference. Load when designing a new plan or restructuring an existing one in DESIGN phase.", Modes: []string{"workshop"}},
 	"report-plan":         {Group: "system", Description: "Report plan toolchain: get/upsert/move/toggle/remove widgets, JSONata multi-source binding, section layouts and tabs, per-report themes, validate/preview, populating missing db sources. Load before authoring or editing reports/report_plan.json.", Modes: []string{"workshop"}},
 	"evaluation-plan":     {Group: "system", Description: "Evaluation plan rules: required fields, route gating, ID collision discipline, TARGET_RUN_PATH placeholder, step config (declared_execution_mode + execution_tier), validate/run workflow. Load before editing evaluation/evaluation_plan.json.", Modes: []string{"workshop"}},
+	"llm-provider-config": {Group: "system", Description: "Published chat LLM and provider-auth management for multi-agent chat and workflow workshop: list existing published LLMs, discover provider models, validate candidates, publish minimal provider/model/options entries, preserve reasoning_effort, and never read or edit config/ files directly. Load when the user asks which LLMs exist, what a provider can publish, or to publish/update provider auth.", Modes: []string{"multi-agent", "workshop"}},
 	"llm-selection":       {Group: "system", Description: "Choosing the LLM that runs a step: workflow-wide tiered allocation (tier_1/2/3 + phase_llm + fallbacks via set_workflow_llm_config) vs per-step overrides (execution_tier, execution_llm, validation_llm, learning_llm), precedence rules, the tier-vs-pin decision framework, cost review tools, and provider auth/published-models. Load when picking, pinning, or changing which model executes a workflow step (not media generation — see workspace-media-tools for that).", Modes: []string{"workshop"}},
 	"skill-management":    {Group: "system", Description: "Install skills and wire them into workflows: find (list_skills/search_skills), install (install_skill/import_skill), select for workflow/builder context (update_workflow_config add_skills), enable at runtime per step (update_step_config enabled_skills), the no-cascade attachment model, learnings/_global/SKILL.md as shared-know-how home, remove/uninstall, and troubleshooting. Load before installing a skill or wiring skills onto a workflow or step.", Modes: []string{"multi-agent", "workshop"}},
-	"employee-management": {Group: "system", Description: "Managing the org in multi-agent chat (CEO model): an employee = a name + its assigned workflows (config/employees.json + employee-workflows.json), the CRUD tools (list/create/update/delete_employee, assign_workflow_employee), the run-vs-delegate routing rule (employee's owned work → run_workflow/run_step; your own ad-hoc work → delegate with skills/servers), the status-report recipe (sweep each assigned workflow's runs/db/reports to summarize what an employee did), and the memory convention (track employee facts as entities in your shared memory, no per-employee store). Load when the user asks to manage employees, assign workflows, or report what an employee did.", Modes: []string{"multi-agent"}},
+	"employee-management": {Group: "system", Description: "Managing the org in multi-agent chat (CEO model): an employee = a name + its assigned workflows, managed through the employee tools (list/create/update/delete_employee, assign_workflow_employee); the run-vs-delegate routing rule (employee's owned work → run_workflow/run_step; your own ad-hoc work → delegate with skills/servers), the status-report recipe (sweep each assigned workflow's runs/db/reports to summarize what an employee did), and the memory convention (track employee facts as entities in your shared memory, no per-employee store). Load when the user asks to manage employees, assign workflows, or report what an employee did.", Modes: []string{"multi-agent"}},
 	"delegation":          {Group: "system", Description: "Multi-agent chat delegation contract: the four tools (delegate/query_agent/terminate_agent/list_agents), delegate parameters (name, instruction, reasoning_level, agent_template, servers, skills, share_browser), async background execution model, the max-depth-3 hierarchy (root→child→grandchild), explicit-pass skill semantics (sub-agents inherit NO skills), and what subagents/ templates actually apply at runtime (default_reasoning_level + body only — frontmatter skills/servers are NOT applied). Load before delegating work to sub-agents in chat.", Modes: []string{"multi-agent"}},
 
 	// Multi-agent chat reference docs (rare-path topics — schedule/secret
@@ -404,6 +405,8 @@ func BuildSystemToolsSkill(mode string) *llmtypes.Skill {
 		kindList = "(no reference docs are available in this mode)\n"
 	}
 
+	configAccess := buildConfigurationAccessGuidance(mode)
+
 	body := `This skill is a quick guide to the system tools available in this session. Use it as your map for discovery and deep documentation.
 
 ## Tool / API discovery
@@ -411,6 +414,10 @@ func BuildSystemToolsSkill(mode string) *llmtypes.Skill {
 - ` + "`get_api_spec(server_name, tool_name)`" + ` — when you do not know an MCP tool's parameters or response shape, call this first.
 - ` + "`get_reference_doc(kind, focus?)`" + ` — system reference docs. Load the matching doc before any deep action (e.g. read ` + "`optimize-playbook`" + ` before ` + "`harden_workflow`" + ` or ` + "`replan_workflow_from_results`" + `; read ` + "`code-authoring`" + ` before authoring ` + "`main.py`" + `; read ` + "`llm-selection`" + ` before ` + "`set_workflow_llm_config`" + `). Some tools refuse to run until their precondition doc has been loaded — the error will name the kind.
 - ` + "`get_workflow_command_guidance(kind, focus?)`" + ` — canonical procedural flows (improve-workflow, review-plan, auto-improve, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.
+
+## Configuration access
+
+` + configAccess + `
 
 ### Reference doc kinds available in this mode
 
@@ -445,6 +452,20 @@ Call the right discovery tool above before guessing. Hallucinated tool names or 
 		Content:     body,
 		Source:      llmtypes.SkillSource{Origin: "builtin"},
 	}
+}
+
+func buildConfigurationAccessGuidance(mode string) string {
+	var parts []string
+	parts = append(parts, "LLM/provider configuration is tool-managed. For published chat models and provider auth, use `list_published_llms`, `list_provider_models`, `test_llm`, `save_published_llm`, and `set_provider_auth` as appropriate. Do not read or edit `config/` files with shell or file tools; load `get_reference_doc(kind=\"llm-provider-config\")` before publishing or changing provider auth.")
+
+	if modeAllowedIn("llm-selection", mode, referenceKinds) {
+		parts = append(parts, "For workflow execution tiers and per-step model choices, use `get_llm_config` and `set_workflow_llm_config`; load `get_reference_doc(kind=\"llm-selection\")` before changing workflow execution models.")
+	}
+	if modeAllowedIn("workspace-media-tools", mode, referenceKinds) {
+		parts = append(parts, "For media/search provider tools, load `get_reference_doc(kind=\"workspace-media-tools\")`.")
+	}
+
+	return strings.Join(parts, " ")
 }
 
 // RenderSystemDoc renders the named reference doc with no caller context,

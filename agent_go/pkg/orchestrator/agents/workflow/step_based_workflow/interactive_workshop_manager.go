@@ -3611,7 +3611,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "object",
 					"description": "Override the execution LLM for this step. Use get_llm_config to see available models.",
 					"properties": map[string]interface{}{
-						"published_llm_id": map[string]interface{}{"type": "string", "description": "Optional published LLM id from config/published-llms.json."},
+						"published_llm_id": map[string]interface{}{"type": "string", "description": "Optional id from the published LLM set."},
 						"provider":         map[string]interface{}{"type": "string", "description": "LLM provider (e.g., 'openai', 'anthropic', 'bedrock', 'openrouter', 'vertex', 'azure')"},
 						"model_id":         map[string]interface{}{"type": "string", "description": "Model ID (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')"},
 						"options":          map[string]interface{}{"type": "object", "description": "Provider-specific runtime options copied from the published LLM, such as reasoning_effort.", "additionalProperties": true},
@@ -3647,7 +3647,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "object",
 					"description": "Override the learning LLM for this step.",
 					"properties": map[string]interface{}{
-						"published_llm_id": map[string]interface{}{"type": "string", "description": "Optional published LLM id from config/published-llms.json."},
+						"published_llm_id": map[string]interface{}{"type": "string", "description": "Optional id from the published LLM set."},
 						"provider":         map[string]interface{}{"type": "string"},
 						"model_id":         map[string]interface{}{"type": "string"},
 						"options":          map[string]interface{}{"type": "object", "description": "Provider-specific runtime options copied from the published LLM, such as reasoning_effort.", "additionalProperties": true},
@@ -8150,7 +8150,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 	// list_published_llms
 	if err := mcpAgent.RegisterCustomTool(
 		"list_published_llms",
-		"List all published LLMs from config/published-llms.json. These are the models available for selection in the workflow tier config.",
+		"List all published LLMs available for selection in the workflow tier config.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -8192,7 +8192,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 	// test_llm
 	if err := mcpAgent.RegisterCustomTool(
 		"test_llm",
-		"Validate an LLM provider/model configuration. Uses workspace-backed provider auth from config/provider-api-keys.json by default, but temporary overrides can be provided.",
+		"Validate an LLM provider/model configuration. Uses workspace-backed provider auth by default, but temporary overrides can be provided.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8237,7 +8237,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagen
 			"type":        "object",
 			"description": description,
 			"properties": map[string]interface{}{
-				"published_llm_id": map[string]interface{}{"type": "string", "description": "Optional published LLM id from config/published-llms.json."},
+				"published_llm_id": map[string]interface{}{"type": "string", "description": "Optional id from the published LLM set."},
 				"provider":         map[string]interface{}{"type": "string", "description": "Provider id."},
 				"model_id":         map[string]interface{}{"type": "string", "description": "Model id."},
 				"options":          map[string]interface{}{"type": "object", "description": "Provider-specific runtime options copied from the published LLM, such as reasoning_effort.", "additionalProperties": true},

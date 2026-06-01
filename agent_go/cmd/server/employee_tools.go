@@ -33,7 +33,7 @@ func (api *StreamingAPI) registerEmployeeManagementTools(underlyingAgent *mcpage
 		},
 		{
 			name:        "create_employee",
-			description: "Create a new org employee in config/employees.json. Use this when the user asks to add or create an employee from multi-agent chat. Name is the only required employee field. Do not use save_memory for org employee changes.",
+			description: "Create a new org employee in the workspace employee registry. Use this when the user asks to add or create an employee from multi-agent chat. Name is the only required employee field. Do not use save_memory for org employee changes.",
 			params: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -56,7 +56,7 @@ func (api *StreamingAPI) registerEmployeeManagementTools(underlyingAgent *mcpage
 		},
 		{
 			name:        "update_employee",
-			description: "Update an existing org employee's name, status, or avatar color in config/employees.json.",
+			description: "Update an existing org employee's name, status, or avatar color in the workspace employee registry.",
 			params: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -98,7 +98,7 @@ func (api *StreamingAPI) registerEmployeeManagementTools(underlyingAgent *mcpage
 		},
 		{
 			name:        "assign_workflow_employee",
-			description: "Assign or unassign a workflow to an org employee. Updates config/employee-workflows.json so the org page reflects ownership.",
+			description: "Assign or unassign a workflow to an org employee so the org page reflects ownership.",
 			params: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

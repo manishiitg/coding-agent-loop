@@ -54,15 +54,17 @@ const queryClient = new QueryClient();
 
 const WORKSPACE_COLLAPSING_POPUP_SELECTOR = [
   '[data-workspace-popup="true"]',
+  '[role="dialog"]',
+  '[class~="fixed"][class~="inset-0"]'
 ].join(',')
-const WORKSPACE_PRESERVING_POPUP_SELECTOR = '[data-preserve-workspace="true"]'
+const WORKSPACE_COLLAPSE_IGNORE_SELECTOR = '[data-workspace-collapse-ignore="true"]'
 
 const hasOpenWorkspaceCollapsingPopup = () => {
   if (typeof document === 'undefined') return false
 
   return Array.from(document.querySelectorAll<HTMLElement>(WORKSPACE_COLLAPSING_POPUP_SELECTOR))
     .some((element) => {
-      if (element.closest(WORKSPACE_PRESERVING_POPUP_SELECTOR)) {
+      if (element.closest(WORKSPACE_COLLAPSE_IGNORE_SELECTOR)) {
         return false
       }
       const style = window.getComputedStyle(element)
@@ -200,24 +202,8 @@ function App() {
     isSaving,
     getHasUnsavedChanges,
     saveFile,
-    binaryFileData,
-    deleteDialog,
-    deleteAllFilesDialog,
-    uploadDialog,
-    createFolderDialog
+    binaryFileData
   } = useWorkspaceStore()
-
-  const workspaceDialogOpen =
-    deleteDialog.isOpen ||
-    deleteAllFilesDialog.isOpen ||
-    uploadDialog.isOpen ||
-    createFolderDialog.isOpen
-
-  useEffect(() => {
-    if (workspaceDialogOpen && workspaceMinimized) {
-      setWorkspaceMinimized(false)
-    }
-  }, [workspaceDialogOpen, workspaceMinimized, setWorkspaceMinimized])
 
   const [videoObjectUrl, setVideoObjectUrl] = useState<string | null>(null)
   const [audioObjectUrl, setAudioObjectUrl] = useState<string | null>(null)
@@ -1401,7 +1387,7 @@ function App() {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['class', 'style', 'role', 'data-workspace-popup', 'data-preserve-workspace'],
+      attributeFilter: ['class', 'style', 'role', 'data-workspace-popup', 'data-workspace-collapse-ignore'],
     })
 
     return () => observer.disconnect()
@@ -1940,10 +1926,10 @@ function App() {
 
           {/* Right Workspace Area - auto-minimize in workflow mode */}
           <div className={`${
-            // Keep the workspace mounted while its own dialogs are open so modal state cannot trap reopening.
-            workspaceMinimized && !workspaceDialogOpen ? 'w-0 border-l-0' : 'w-96 border-l border-gray-200 dark:border-gray-700'
+            // Use workspaceMinimized state directly - user can toggle regardless of mode
+            workspaceMinimized ? 'w-0 border-l-0' : 'w-96 border-l border-gray-200 dark:border-gray-700'
           } flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out relative z-20`}>
-            {(!workspaceMinimized || workspaceDialogOpen) && (
+            {!workspaceMinimized && (
               <Workspace 
                 minimized={false}
                 onToggleMinimize={toggleWorkspaceMinimize}

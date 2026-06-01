@@ -44,6 +44,20 @@ func TestBuildCLIToolEnvironmentPromptUsesProviderSpecificBridgeToolNames(t *tes
 	}
 }
 
+func TestBuildCLIToolEnvironmentPromptIncludesLLMConfigCurlRouting(t *testing.T) {
+	got := BuildCLIToolEnvironmentPrompt("claude-code")
+	for _, want := range []string{
+		"LLM config tools",
+		"list_published_llms",
+		"$MCP_CUSTOM/list_provider_models",
+		"Do **NOT** read or edit `config/` files for LLM/provider configuration",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestHandleDelegatePrefersAsyncBackgroundDelegate(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -66,6 +66,7 @@ export default function PlannerFileList({
   hideAddToChat = false,
   onExportBackup,
   onImportBackup,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   workflowFolderPath,
   isExporting = false,
   isImporting = false,
@@ -88,24 +89,8 @@ export default function PlannerFileList({
     // This ensures workspace tool events can highlight files even when paths are adjusted in workflow mode
     const isHighlighted = highlightedFile === file.filepath || highlightedFile === file.originalFilepath
     const isInContext = chatFileContext.some(ctx => ctx.path === file.filepath)
-    const normalizedWorkflowFolderPath = workflowFolderPath?.replace(/^\/+|\/+$/g, '')
-    const normalizedFilePath = (file.originalFilepath || file.filepath).replace(/^\/+|\/+$/g, '')
-    const isWorkflowRootFolder = file.type === 'folder' && !!normalizedWorkflowFolderPath && normalizedFilePath === normalizedWorkflowFolderPath
-    const protectedWorkflowPaths = normalizedWorkflowFolderPath
-      ? [
-        `${normalizedWorkflowFolderPath}/workflow.json`,
-        `${normalizedWorkflowFolderPath}/planning/plan.json`,
-        `${normalizedWorkflowFolderPath}/planning/step_config.json`,
-      ]
-      : []
-    const protectsWorkflowMetadata = isWorkflowRootFolder || protectedWorkflowPaths.some(protectedPath =>
-      file.type === 'folder'
-        ? protectedPath.startsWith(`${normalizedFilePath}/`)
-        : protectedPath === normalizedFilePath
-    )
-    const isSelectable = !protectsWorkflowMetadata
     
-    const isSelected = isSelectable && selectedFiles.has(file.filepath)
+    const isSelected = selectedFiles.has(file.filepath)
 
     return (
       <div key={file.filepath} className="select-none">
@@ -122,7 +107,7 @@ export default function PlannerFileList({
           data-original-filepath={file.originalFilepath || undefined}
           data-highlighted={isHighlighted ? 'true' : 'false'}
           onClick={() => {
-            if (isSelectionMode && onToggleFileSelection && isSelectable) {
+            if (isSelectionMode && onToggleFileSelection) {
               onToggleFileSelection(file)
             } else {
               if (file.type === 'folder') {
@@ -134,7 +119,7 @@ export default function PlannerFileList({
           }}
         >
           {/* Checkbox for selection mode */}
-          {isSelectionMode && isSelectable && (
+          {isSelectionMode && (
             <div className="flex-shrink-0" onClick={(e) => e.stopPropagation()}>
               <input
                 type="checkbox"
@@ -249,7 +234,7 @@ export default function PlannerFileList({
                         Upload File
                       </button>
                     )}
-                    {onFolderMove && !protectsWorkflowMetadata && (
+                    {onFolderMove && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
@@ -261,7 +246,7 @@ export default function PlannerFileList({
                         Move
                       </button>
                     )}
-                    {onFolderRename && !protectsWorkflowMetadata && (
+                    {onFolderRename && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
@@ -305,7 +290,7 @@ export default function PlannerFileList({
                         </button>
                       </>
                     )}
-                    {onSelectFileAndEnterSelectionMode && !protectsWorkflowMetadata && (
+                    {onSelectFileAndEnterSelectionMode && (
                       <>
                         <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
                         <button
@@ -340,7 +325,7 @@ export default function PlannerFileList({
                         : <><Link className="w-3 h-3" />Copy Share Link</>
                       }
                     </button>
-                    {onDeleteAllFilesInFolder && !protectsWorkflowMetadata && (
+                    {onDeleteAllFilesInFolder && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
@@ -352,18 +337,16 @@ export default function PlannerFileList({
                         Delete All Contents
                       </button>
                     )}
-                    {!protectsWorkflowMetadata && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onFolderDelete(file)
-                        }}
-                        className="w-full px-3 py-1 text-left text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        Delete
-                      </button>
-                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onFolderDelete(file)
+                      }}
+                      className="w-full px-3 py-1 text-left text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Delete
+                    </button>
                   </div>
                 </div>
               </div>
@@ -404,7 +387,7 @@ export default function PlannerFileList({
                         Download
                       </button>
                     )}
-                    {onFileMove && !protectsWorkflowMetadata && (
+                    {onFileMove && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
@@ -416,7 +399,7 @@ export default function PlannerFileList({
                         Move
                       </button>
                     )}
-                    {onFileRename && !protectsWorkflowMetadata && (
+                    {onFileRename && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
@@ -428,7 +411,7 @@ export default function PlannerFileList({
                         Rename
                       </button>
                     )}
-                    {onSelectFileAndEnterSelectionMode && !protectsWorkflowMetadata && (
+                    {onSelectFileAndEnterSelectionMode && (
                       <>
                         <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
                         <button
@@ -463,18 +446,16 @@ export default function PlannerFileList({
                         : <><Link className="w-3 h-3" />Copy Share Link</>
                       }
                     </button>
-                    {!protectsWorkflowMetadata && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onFileDelete(file)
-                        }}
-                        className="w-full px-3 py-1 text-left text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        Delete
-                      </button>
-                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onFileDelete(file)
+                      }}
+                      className="w-full px-3 py-1 text-left text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Delete
+                    </button>
                   </div>
                 </div>
               </div>

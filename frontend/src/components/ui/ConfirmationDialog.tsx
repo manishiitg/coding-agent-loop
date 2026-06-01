@@ -12,7 +12,7 @@ interface ConfirmationDialogProps {
   cancelText?: string
   type?: 'danger' | 'warning' | 'info'
   isLoading?: boolean
-  preserveWorkspace?: boolean
+  ignoreWorkspaceAutoCollapse?: boolean
 }
 
 export default function ConfirmationDialog({
@@ -25,7 +25,7 @@ export default function ConfirmationDialog({
   cancelText = 'Cancel',
   type = 'danger',
   isLoading = false,
-  preserveWorkspace = false
+  ignoreWorkspaceAutoCollapse = false
 }: ConfirmationDialogProps) {
   // Keyboard shortcuts
   useEffect(() => {
@@ -86,7 +86,7 @@ export default function ConfirmationDialog({
     <ModalPortal>
     <div
       className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[10000]"
-      data-preserve-workspace={preserveWorkspace ? 'true' : undefined}
+      data-workspace-collapse-ignore={ignoreWorkspaceAutoCollapse ? 'true' : undefined}
     >
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
         {/* Header */}

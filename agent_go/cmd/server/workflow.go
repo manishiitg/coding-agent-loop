@@ -252,7 +252,7 @@ func deleteWorkspaceFile(ctx context.Context, configPath string) error {
 	}
 	encodedPath := strings.Join(encodedSegments, "/")
 
-	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "?confirm=true&allow_workflow_metadata_delete=true"
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "?confirm=true"
 	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -4418,7 +4418,7 @@ func deleteWorkspaceFolder(ctx context.Context, folderPath string) error {
 	}
 	encodedPath := strings.Join(encodedSegments, "/")
 
-	apiURL := getWorkspaceAPIURL() + "/api/folders/" + encodedPath + "?confirm=true&allow_workflow_root_delete=true"
+	apiURL := getWorkspaceAPIURL() + "/api/folders/" + encodedPath + "?confirm=true"
 	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)

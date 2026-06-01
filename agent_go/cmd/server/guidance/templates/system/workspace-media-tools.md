@@ -34,11 +34,11 @@ ambiguous routing leads to wrong-provider calls.
 ### Text generation
 
 - **`generate_text_llm(user_message, tier)`** — Generate text with one direct LLM call using the workspace tier config. `tier` must be `high`, `medium`, or `low`.
-- **`search_web_llm(query, provider, model_id?)`** — Run a live web search using a published search-capable provider from `config/published-llms.json`. Before selecting a provider/model, call `list_llm_capabilities(capability="search_web", include_models=true)`. `provider` is required; `model_id` is optional only when accepting the backend's default for that provider.
+- **`search_web_llm(query, provider, model_id?)`** — Run a live web search using a provider from the published search-capable LLM set. Before selecting a provider/model, call `list_llm_capabilities(capability="search_web", include_models=true)`. `provider` is required; `model_id` is optional only when accepting the backend's default for that provider.
 
 ### Image generation + editing
 
-- **`image_gen(prompt, output_path, provider?, model_id?)`** — Generate images using `config/image-generation-config.json` or an explicit provider/model override from `list_llm_capabilities(capability="generate_image", include_models=true)`. `output_path` is required and must be a full absolute workspace-docs destination chosen by the caller.
+- **`image_gen(prompt, output_path, provider?, model_id?)`** — Generate images using workspace-backed image generation defaults or an explicit provider/model override from `list_llm_capabilities(capability="generate_image", include_models=true)`. `output_path` is required and must be a full absolute workspace-docs destination chosen by the caller.
 - **`image_edit(image_path, output_path, prompt, provider?, model_id?)`** — Edit an existing workspace image using a provider/model pair from `list_llm_capabilities(capability="generate_image", include_models=true)`. `image_path` and `output_path` must be full absolute workspace-docs paths; use `absolute_paths` from a prior `image_gen` result when chaining.
 
 ### Video generation
@@ -55,26 +55,26 @@ ambiguous routing leads to wrong-provider calls.
 
 ### Media + document reading
 
-- **`read_image(filepath, query, provider?, model_id?)`** — Analyze an image file using a provider/model pair from `list_llm_capabilities(capability="read_image", include_models=true)` or `config/image-analysis-config.json`. `filepath` must be a full absolute path under the workspace docs root; do not pass workspace-relative paths. If no image-analysis config exists, it falls back to the current chat model. `codex-cli`, `cursor-cli`, `opencode-cli`, and `claude-code` are supported by passing the local workspace image path to the CLI.
+- **`read_image(filepath, query, provider?, model_id?)`** — Analyze an image file using a provider/model pair from `list_llm_capabilities(capability="read_image", include_models=true)` or workspace-backed image analysis defaults. `filepath` must be a full absolute path under the workspace docs root; do not pass workspace-relative paths. If no image-analysis defaults exist, it falls back to the current chat model. `codex-cli`, `cursor-cli`, `opencode-cli`, and `claude-code` are supported by passing the local workspace image path to the CLI.
 - **`read_video(filepath, query, provider?, model_id?)`** — Analyze a workspace video file using a provider/model pair from `list_llm_capabilities(capability="read_video", include_models=true)`. `filepath` must be a full absolute workspace-docs path. Direct video providers are not advertised by default; prefer a published coding-agent model until a dedicated provider is configured.
 - **`read_pdf(filepath, page_range?, max_pages?, password?)`** — Extract text from a workspace PDF. `filepath` must be a full absolute workspace-docs path.
 
 ## Provider setup rules
 
-- **Published LLM entries (`config/published-llms.json`) are for chat / text routing only.** Audio, video, image, and music providers are workspace **tool** capabilities; do not conclude they are unavailable just because they are absent from a published-LLM list.
+- **Published LLM entries are for chat / text routing only.** Audio, video, image, and music providers are workspace **tool** capabilities; do not conclude they are unavailable just because they are absent from a published-LLM list.
 - **For audio and music**, call `text_to_speech` or `generate_music` **directly**. Do not hand-roll provider HTTP calls through `execute_shell_command` unless the dedicated workspace tool is unavailable AND the user explicitly asks for raw API debugging.
-- **Provider auth** lives in `config/provider-api-keys.json` and is managed via the `set_provider_auth` tool. Do not hand-edit the encrypted auth file.
-- **Do not read, cat, grep, print, or manually edit `config/provider-api-keys.json`** — it is encrypted and not useful to inspect as plaintext.
-- **Search provider routing** comes from `config/published-llms.json`.
-- **Image generation defaults** come from `config/image-generation-config.json`.
-- **Image analysis defaults** come from `config/image-analysis-config.json`.
-- **Video analysis** uses Kimi provider auth from `config/provider-api-keys.json` / `KIMI_API_KEY` by default. For Z.AI MCP video analysis, set provider auth for `z-ai` / `Z_AI_API_KEY` and pass `provider="z-ai"`.
+- **Provider auth** is managed via the `set_provider_auth` tool. Do not read or hand-edit encrypted config files.
+- **Do not read, cat, grep, print, or manually edit config auth files** — they are encrypted and not useful to inspect as plaintext.
+- **Search provider routing** comes from the published LLM set surfaced by `list_published_llms`.
+- **Image generation defaults** come from workspace-backed image generation config; override per call with explicit provider/model when needed.
+- **Image analysis defaults** come from workspace-backed image analysis config; override per call with explicit provider/model when needed.
+- **Video analysis** uses Kimi provider auth / `KIMI_API_KEY` by default. For Z.AI MCP video analysis, set provider auth for `z-ai` / `Z_AI_API_KEY` and pass `provider="z-ai"`.
 
 ## Common mistakes
 
 - **Workspace-relative paths**: `Downloads/foo.pdf` instead of the full absolute path. The tools reject these.
 - **Passing `model_id` without `provider`**: ambiguous routing. Always pair them from the same `list_llm_capabilities` result.
 - **Pasting API keys in shell**: leaks into logs / scrollback. Always use `set_provider_auth`.
-- **Editing `config/provider-api-keys.json` by hand**: file is encrypted; manual edits corrupt it.
+- **Editing provider-auth config by hand**: auth is encrypted; manual edits corrupt it.
 - **Reaching for `execute_shell_command` + `curl` for audio/music**: the dedicated tools exist for a reason — auth, retries, output validation, cost tracking. Use them.
-- **Assuming a provider is unavailable** because it doesn't show up in `published-llms.json`: that file is for chat routing, not media tools. Call `list_llm_capabilities(capability="...")` for the authoritative answer.
+- **Assuming a provider is unavailable** because it doesn't show up in the published LLM set: published LLMs are for chat/search routing, not media tools. Call `list_llm_capabilities(capability="...")` for the authoritative answer.

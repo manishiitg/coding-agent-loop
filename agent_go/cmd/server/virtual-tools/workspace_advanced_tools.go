@@ -75,7 +75,7 @@ func CreateWorkspaceAdvancedToolExecutorsWithUserID(userID string) map[string]fu
 
 // CreateReadImageProviderTestExecutor creates a read_image executor for provider
 // matrix tests. It reads image bytes through the workspace API, but deliberately
-// bypasses config/image-analysis-config.json so the caller's context-injected
+// bypasses workspace-backed image-analysis defaults so the caller's context-injected
 // LLM config is the provider being tested.
 func CreateReadImageProviderTestExecutor(workspaceURL, userID string) func(ctx context.Context, args map[string]any) (string, error) {
 	if strings.TrimSpace(workspaceURL) == "" {
@@ -557,7 +557,7 @@ func loadPublishedSearchProvider(ctx context.Context, workspaceURL string, apiKe
 		return nil, fmt.Errorf("failed to load published LLMs: %w", err)
 	}
 	if !exists || len(publishedLLMs) == 0 {
-		return nil, fmt.Errorf("search_web_llm requires a published search-capable provider in config/published-llms.json")
+		return nil, fmt.Errorf("search_web_llm requires a published search-capable provider. Use list_published_llms/save_published_llm to manage the published set")
 	}
 
 	requestedProvider = strings.ToLower(strings.TrimSpace(requestedProvider))
@@ -610,7 +610,7 @@ func loadPublishedSearchProvider(ctx context.Context, workspaceURL string, apiKe
 			continue
 		}
 		if !hasSearchProviderAuth(provider, apiKeys) {
-			return nil, fmt.Errorf("search_web_llm requires auth for requested provider %q in config/provider-api-keys.json. %s", entry.Provider, publishedSearchProviderSummary(publishedLLMs))
+			return nil, fmt.Errorf("search_web_llm requires workspace auth for requested provider %q. Use set_provider_auth. %s", entry.Provider, publishedSearchProviderSummary(publishedLLMs))
 		}
 		if !isSearchProviderAvailable(provider) {
 			return nil, fmt.Errorf("search_web_llm cannot use requested provider %q because its runtime dependency is unavailable. %s", entry.Provider, publishedSearchProviderSummary(publishedLLMs))
@@ -619,13 +619,13 @@ func loadPublishedSearchProvider(ctx context.Context, workspaceURL string, apiKe
 		return &candidate, nil
 	}
 	if !foundProvider {
-		return nil, fmt.Errorf("search_web_llm could not find requested provider %q in config/published-llms.json. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
+		return nil, fmt.Errorf("search_web_llm could not find requested provider %q in the published LLM set. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
 	}
 	if !foundModel {
 		if requestedModelID == "" {
-			return nil, fmt.Errorf("search_web_llm could not find a usable search-capable model under provider %q in config/published-llms.json. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
+			return nil, fmt.Errorf("search_web_llm could not find a usable search-capable model under provider %q in the published LLM set. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
 		}
-		return nil, fmt.Errorf("search_web_llm could not find model %q under provider %q in config/published-llms.json. %s", requestedModelID, requestedProvider, publishedSearchProviderSummary(publishedLLMs))
+		return nil, fmt.Errorf("search_web_llm could not find model %q under provider %q in the published LLM set. %s", requestedModelID, requestedProvider, publishedSearchProviderSummary(publishedLLMs))
 	}
 	if requestedModelID == "" {
 		return nil, fmt.Errorf("search_web_llm does not support published provider %q for search yet. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
@@ -846,7 +846,7 @@ func createPublishedSearchLLM(ctx context.Context, workspaceURL string, requeste
 	switch provider {
 	case llm.ProviderGeminiCLI:
 		if apiKeys == nil || apiKeys.GeminiCLI == nil || strings.TrimSpace(*apiKeys.GeminiCLI) == "" {
-			return nil, fmt.Errorf("search_web_llm requires Gemini CLI auth in config/provider-api-keys.json for the published provider")
+			return nil, fmt.Errorf("search_web_llm requires Gemini CLI workspace auth for the published provider. Use set_provider_auth")
 		}
 	case llm.ProviderCodexCLI:
 		// Codex CLI can use workspace auth, CODEX_API_KEY, or its own stored login state.
@@ -854,11 +854,11 @@ func createPublishedSearchLLM(ctx context.Context, workspaceURL string, requeste
 		// Cursor CLI can use workspace auth, CURSOR_API_KEY, or its own stored login state.
 	case llm.ProviderClaudeCode:
 		if apiKeys == nil || apiKeys.Anthropic == nil || strings.TrimSpace(*apiKeys.Anthropic) == "" {
-			return nil, fmt.Errorf("search_web_llm requires Anthropic auth in config/provider-api-keys.json for the published Claude Code provider")
+			return nil, fmt.Errorf("search_web_llm requires Anthropic workspace auth for the published Claude Code provider. Use set_provider_auth")
 		}
 	case llm.ProviderVertex:
 		if apiKeys == nil || apiKeys.Vertex == nil || strings.TrimSpace(*apiKeys.Vertex) == "" {
-			return nil, fmt.Errorf("search_web_llm requires Vertex auth in config/provider-api-keys.json for the published Vertex provider")
+			return nil, fmt.Errorf("search_web_llm requires Vertex workspace auth for the published Vertex provider. Use set_provider_auth")
 		}
 	default:
 		return nil, fmt.Errorf("search_web_llm does not support published provider %q yet", publishedLLM.Provider)
@@ -1011,7 +1011,7 @@ func wrapReadVideoWithKimi(ctx context.Context, workspaceURL string, videoData w
 		apiKey = strings.TrimSpace(os.Getenv("KIMI_API_KEY"))
 	}
 	if apiKey == "" {
-		return "", fmt.Errorf("read_video requires Kimi provider auth in config/provider-api-keys.json or KIMI_API_KEY")
+		return "", fmt.Errorf("read_video requires Kimi workspace provider auth or KIMI_API_KEY")
 	}
 
 	videoBytes, err := base64.StdEncoding.DecodeString(videoData.Data)
@@ -1077,7 +1077,7 @@ func wrapReadVideoWithZAI(ctx context.Context, workspaceURL string, videoData wo
 		apiKey = strings.TrimSpace(os.Getenv("ZAI_API_KEY"))
 	}
 	if apiKey == "" {
-		return "", fmt.Errorf("read_video provider z-ai requires Z.AI auth in config/provider-api-keys.json or Z_AI_API_KEY")
+		return "", fmt.Errorf("read_video provider z-ai requires Z.AI workspace provider auth or Z_AI_API_KEY")
 	}
 
 	videoBytes, err := base64.StdEncoding.DecodeString(videoData.Data)

@@ -21,7 +21,7 @@ Available tools:
 - **Audio + music**: ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + ` (default Deepgram nova-3), ` + "`generate_music`" + ` (default ElevenLabs music_v1).
 - **Media reading**: ` + "`read_image`" + `, ` + "`read_video`" + `, ` + "`read_pdf`" + `.
 
-Provider-setup essentials (do not hand-edit ` + "`config/provider-api-keys.json`" + ` — it's encrypted and managed via ` + "`set_provider_auth`" + `; audio/video/image/music providers are workspace **tool** capabilities, not published-LLM entries — call ` + "`list_llm_capabilities(capability=\"...\")`" + ` for the authoritative availability answer).
+Provider-setup essentials (do not hand-edit provider-auth storage — it's encrypted and managed via ` + "`set_provider_auth`" + `; audio/video/image/music providers are workspace **tool** capabilities, not published-LLM entries — call ` + "`list_llm_capabilities(capability=\"...\")`" + ` for the authoritative availability answer).
 
 **For the full reference — every tool's parameters, defaults, provider routing rules, model-ID lists, and common-mistake gotchas — call:** ` + "`get_reference_doc(kind=\"workspace-media-tools\")`" + `.`
 }

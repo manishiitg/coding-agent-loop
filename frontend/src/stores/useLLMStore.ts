@@ -89,14 +89,6 @@ function sanitizeSavedLLM(llm: SavedLLM): SavedLLM {
     ...sanitizeLLMModel(llm),
     id: llm.id,
     name: llm.name,
-    model_name: llm.model_name,
-    auth_method: llm.auth_method,
-    context_window: llm.context_window,
-    input_cost_per_1m: llm.input_cost_per_1m,
-    output_cost_per_1m: llm.output_cost_per_1m,
-    reasoning_cost_per_1m: llm.reasoning_cost_per_1m,
-    cached_input_cost_per_1m: llm.cached_input_cost_per_1m,
-    cached_input_cost_write_per_1m: llm.cached_input_cost_write_per_1m,
     created_at: llm.created_at,
   }
 }
@@ -747,7 +739,7 @@ export const useLLMStore = create<LLMState>()(
         },
 
         // Library management
-        saveLLM: async (llm, name, modelName, authMethod, metadata) => {
+        saveLLM: async (llm, name, _modelName, _authMethod, _metadata) => {
           const { refreshAvailableLLMs, supportedProviders, providerManifest } = get()
           const knownProvider =
             supportedProviders.includes(llm.provider) ||
@@ -762,14 +754,6 @@ export const useLLMStore = create<LLMState>()(
             ...llm,
             id: crypto.randomUUID(),
             name,
-            model_name: modelName,
-            auth_method: authMethod,
-            context_window: metadata?.context_window,
-            input_cost_per_1m: metadata?.input_cost_per_1m,
-            output_cost_per_1m: metadata?.output_cost_per_1m,
-            reasoning_cost_per_1m: metadata?.reasoning_cost_per_1m,
-            cached_input_cost_per_1m: metadata?.cached_input_cost_per_1m,
-            cached_input_cost_write_per_1m: metadata?.cached_input_cost_write_per_1m,
             created_at: new Date().toISOString()
           })
           const nextSavedLLMs = filterPublishedLLMs([...(existingLLMs || []), newSavedLLM])

@@ -9,7 +9,7 @@ An employee is **a name + a set of assigned workflows** — a label that groups 
 - It is NOT an agent with its own persona, skills, tools, or memory.
 - It has no per-employee memory store. Anything you learn about an employee (their domain, recurring asks, quirks) goes in your **own shared memory as an entity** — `entities/<name>.md` — not a separate store.
 
-Stored in `config/employees.json` (the registry) and `config/employee-workflows.json` (workflow → employee, **one employee per workflow**). The current employee list + assignments are already injected into your prompt under "Current Employees & Workflow Assignments" — you don't need to read the files to see them.
+Stored in the workspace employee registry and assignment map, managed through the employee tools. The current employee list + assignments are already injected into your prompt under "Current Employees & Workflow Assignments" — you don't need to read registry files to see them.
 
 ### Managing employees (tools)
 

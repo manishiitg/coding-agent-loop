@@ -52,6 +52,6 @@ Set via `update_step_config(step_id, ...)`:
 
 ### Installing / authorizing providers
 
-- Only models in the workspace's published set (`config/published-llms.json`, surfaced by `list_published_llms`) are routable for chat/text execution.
+- Only models in the workspace's published set surfaced by `list_published_llms` are routable for chat/text execution.
 - To add credentials for a provider, use `set_provider_auth(provider, api_key?, region?, endpoint?, ...)` — never paste API keys into shell or config files.
 - Provider-backed **media** capabilities (image/video/audio/text generation, transcription, web search) are a separate surface with their own provider/model contracts and discovery — see `get_reference_doc(kind="workspace-media-tools")`. This doc covers the LLM that *executes agent steps*, not media generation.

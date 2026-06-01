@@ -345,7 +345,7 @@ func wrapImageGenerationSelectionError(err error) error {
 		return nil
 	}
 	return fmt.Errorf(
-		"image generation setup is incomplete: %w. Add workspace provider auth with set_provider_auth(provider=\"vertex\"|\"codex-cli\"|\"agy-cli\", api_key=\"...\") or update config/image-generation-config.json to point to a provider that has auth configured. %s",
+		"image generation setup is incomplete: %w. Add workspace provider auth with set_provider_auth(provider=\"vertex\"|\"codex-cli\"|\"agy-cli\", api_key=\"...\") or update the workspace image generation defaults to point to a provider that has auth configured. %s",
 		err,
 		supportedImageProviderSummary(),
 	)
@@ -360,25 +360,25 @@ func wrapImageGenerationInitializationError(provider, modelID string, err error)
 	switch provider {
 	case "vertex":
 		return fmt.Errorf(
-			"image generation could not start for provider %q and model %q: %w. To fix this, set workspace auth with set_provider_auth(provider=\"vertex\", api_key=\"...\") or change config/image-generation-config.json to another provider with matching auth. %s",
+			"image generation could not start for provider %q and model %q: %w. To fix this, set workspace auth with set_provider_auth(provider=\"vertex\", api_key=\"...\") or change the workspace image generation defaults to another provider with matching auth. %s",
 			provider, modelID, err,
 			imageModelsSummaryForProvider(provider),
 		)
 	case "codex-cli":
 		return fmt.Errorf(
-			"image generation could not start for provider %q and model %q: %w. To fix this, set workspace auth with set_provider_auth(provider=\"codex-cli\", api_key=\"...\") or change config/image-generation-config.json to another provider with matching auth. %s",
+			"image generation could not start for provider %q and model %q: %w. To fix this, set workspace auth with set_provider_auth(provider=\"codex-cli\", api_key=\"...\") or change the workspace image generation defaults to another provider with matching auth. %s",
 			provider, modelID, err,
 			imageModelsSummaryForProvider(provider),
 		)
 	case "agy-cli":
 		return fmt.Errorf(
-			"image generation could not start for provider %q and model %q: %w. To fix this, run `agy` locally and complete sign-in, or change config/image-generation-config.json to another provider with matching auth. %s",
+			"image generation could not start for provider %q and model %q: %w. To fix this, run `agy` locally and complete sign-in, or change the workspace image generation defaults to another provider with matching auth. %s",
 			provider, modelID, err,
 			imageModelsSummaryForProvider(provider),
 		)
 	default:
 		return fmt.Errorf(
-			"image generation could not start for provider %q and model %q: %w. Configure provider auth with set_provider_auth(...) or update config/image-generation-config.json. %s",
+			"image generation could not start for provider %q and model %q: %w. Configure provider auth with set_provider_auth(...) or update the workspace image generation defaults. %s",
 			provider, modelID, err, supportedImageProviderSummary(),
 		)
 	}
@@ -500,7 +500,7 @@ func resolveImageGenerationTarget(ctx context.Context, cfg ImageGenExecutorConfi
 				}
 			}
 			if sawCandidate {
-				return "", "", apiKeys, fmt.Errorf("image generation config requires matching provider auth in config/provider-api-keys.json or an explicit api_key override")
+				return "", "", apiKeys, fmt.Errorf("image generation defaults require matching workspace provider auth or an explicit api_key override")
 			}
 		}
 	}

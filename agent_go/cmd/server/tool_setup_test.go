@@ -295,7 +295,7 @@ func TestChatModeFolderGuardBlockedWrite(t *testing.T) {
 	}
 }
 
-func TestPlanFolderGuardAllowsExplicitConfigWrite(t *testing.T) {
+func TestPlanFolderGuardBlocksConfigWriteByDefault(t *testing.T) {
 	const chatsFolder = "_users/default/Chats"
 
 	noop := func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -308,15 +308,10 @@ func TestPlanFolderGuardAllowsExplicitConfigWrite(t *testing.T) {
 		if !ok {
 			t.Fatalf("plan guard did not inject chat-mode write paths")
 		}
-		foundConfig := false
 		for _, folder := range writePaths {
 			if folder == "config" || folder == "config/" {
-				foundConfig = true
-				break
+				t.Fatalf("config/ should not be injected into write paths, got %v", writePaths)
 			}
-		}
-		if !foundConfig {
-			t.Fatalf("expected config/ in injected write paths, got %v", writePaths)
 		}
 		return "OK", nil
 	}
@@ -328,11 +323,12 @@ func TestPlanFolderGuardAllowsExplicitConfigWrite(t *testing.T) {
 		},
 		chatsFolder,
 		nil,
-		"config/",
 	)
 
-	if _, err := wrapped["diff_patch_workspace_file"](context.Background(), map[string]interface{}{"filepath": "config/published-llms.json"}); err != nil {
-		t.Fatalf("config write should be allowed when config/ is granted, got: %v", err)
+	if _, err := wrapped["diff_patch_workspace_file"](context.Background(), map[string]interface{}{"filepath": "config/published-llms.json"}); err == nil {
+		t.Fatal("config write should be blocked by default")
+	} else if !strings.Contains(err.Error(), "writes restricted") {
+		t.Fatalf("expected writes restricted error, got: %v", err)
 	}
 
 	if _, err := wrapped["execute_shell_command"](context.Background(), map[string]interface{}{"command": "true"}); err != nil {

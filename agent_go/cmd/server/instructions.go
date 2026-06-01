@@ -74,7 +74,7 @@ func GetWorkspaceMap(docsRoot, chatsFolder, memoryFolder string) string {
 |------|--------|---------|
 | ` + "`" + p.Chats + "/`" + ` | read/write | Your workspace — save all output files here |
 | ` + "`" + p.Memory + "/`" + ` | read/write | Persistent memory (use save_memory / recall_memory tools) |
-| ` + "`" + p.Config + "/`" + ` | read/write | Session config (tier config, provider auth, image config) |
+| ` + "`" + p.Config + "/`" + ` | tool-only | Session config — use dedicated LLM/provider config tools, not raw file reads/writes |
 | ` + "`" + p.ChatHistory + "/`" + ` | read/write | Past conversation histories |
 | ` + "`" + p.Skills + "/`" + ` | read-only | Skill definitions (SKILL.md + supporting files) |
 | ` + "`" + p.Workflow + "/`" + ` | read-only via shell | Workflow definitions — create with ` + "`create_workflow`" + `; edit cron schedules with the workflow_schedule tools (see "Modifying Existing Workflows") |
@@ -132,7 +132,7 @@ Save workflow outputs, generated media, test artifacts, and builder-side files i
 |------|--------|---------|
 | ` + "`" + absWorkflowFolder + "/`" + ` | read/write | Active workflow workspace — save builder outputs and generated files here |
 | ` + "`" + absPlanningFolder + "/`" + ` | read-only via shell | Plan/config source of truth — inspect freely, but change it through workflow/builder tools rather than raw file writes |
-| ` + "`" + absConfig + "/`" + ` | read/write | Session config (tier config, provider auth, image config) |
+| ` + "`" + absConfig + "/`" + ` | tool-only | Session config — use dedicated LLM/provider config tools, not raw file reads/writes |
 | ` + "`" + absMemory + "/`" + ` | read/write | Persistent memory (use save_memory / recall_memory tools) |
 | ` + "`" + absDownloads + "/`" + ` | read/write | Scratchpad for downloads and browser artifacts |
 | ` + "`" + absWorkflowRoot + "/`" + ` | read-only outside the active workflow | Other workflow definitions |
@@ -160,16 +160,13 @@ If you generate a test image, video, or other artifact for this workflow, place 
 func GetWorkspaceReference(docsRoot, chatsFolder, memoryFolder string) string {
 	p := newWorkspacePaths(docsRoot, chatsFolder, memoryFolder)
 	absWorkflow := p.Workflow
-	absConfig := p.Config
 
 	instructions := utils.GetCommonFileInstructions()
 
 	instructions += "\n\n" + browserinstructions.GetSpecialWorkspaceToolsInstructions() + `
 
 ## LLM Tier Configuration
-Edit ` + "`" + absConfig + `/delegation-tier-config.json` + "`" + ` to change which model/provider each reasoning tier uses. Changes take effect immediately on next sub-agent spawn.
-- Read: ` + "`execute_shell_command(command: \"cat " + absConfig + "/delegation-tier-config.json\")`" + `
-- Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/delegation-tier-config.json\")`" + `
+Do not read or write tier-config storage with shell/file tools. Use the UI or dedicated backend tier-config API; raw workspace file tools intentionally do not have ` + "`config/`" + ` access.
 - Schema: ` + "`{\"main\":{\"provider\":\"anthropic\",\"model_id\":\"...\",\"fallbacks\":[{\"provider\":\"openai\",\"model_id\":\"gpt-5.4-mini\"},{\"model_id\":\"gpt-5.4\"}]},\"high\":{...},\"medium\":{...},\"low\":{...},\"custom\":{\"my-tier\":{...}}}`" + `
 - To add fallbacks for a tier, add an ordered ` + "`fallbacks`" + ` array under that tier object.
 - Each fallback entry uses ` + "`{\"provider\":\"...\",\"model_id\":\"...\"}`" + `. If ` + "`provider`" + ` is omitted, it defaults to the tier's own provider.
@@ -177,19 +174,19 @@ Edit ` + "`" + absConfig + `/delegation-tier-config.json` + "`" + ` to change wh
 - Preserve existing tiers when editing. Only change the specific tier or ` + "`fallbacks`" + ` entries the user asked for.
 
 ## Published LLMs & Provider Auth
-Published LLM metadata lives in ` + "`" + absConfig + `/published-llms.json` + "`" + `. Provider authentication lives separately in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + `.
+Published LLM metadata and provider authentication are workspace-backed configuration surfaces. Access them through dedicated tools only; raw workspace file tools intentionally do not expose ` + "`config/`" + `.
 - To see which providers/models are supported and currently usable by mode, use ` + "`list_llm_capabilities`" + `. It covers ` + "`chat`" + `, ` + "`search_web`" + `, ` + "`read_image`" + `, ` + "`read_video`" + `, ` + "`generate_image`" + `, ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, and ` + "`generate_music`" + `, including auth/runtime availability and static pricing metadata where available.
 - When choosing a concrete provider-backed model for search, media reading, media generation, transcription, or music, call ` + "`list_llm_capabilities(capability=\"...\", include_models=true)`" + ` first and pass ` + "`provider`" + ` and ` + "`model_id`" + ` together from the same capability entry. Do not pass only ` + "`model_id`" + ` and rely on provider inference.
 - Estimate priced generation/transcription costs with ` + "`estimate_llm_cost`" + ` for ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, and ` + "`generate_music`" + `. Treat results as estimates and verify provider pricing before high-volume runs.
 - Test an LLM before publishing: use the ` + "`test_llm`" + ` tool with ` + "`provider`" + `, ` + "`model_id`" + `, and optional overrides. It uses workspace-backed provider auth by default.
 - List the frontend-known models for a provider: use the ` + "`list_provider_models`" + ` tool. It uses shared metadata for fixed providers and the same dynamic picker source as the UI for dynamic providers.
-- List published LLMs: ` + "`execute_shell_command(command: \"cat " + absConfig + "/published-llms.json\")`" + `
-- Delete a published LLM: read the file, remove the matching JSON entry, then overwrite it with ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/published-llms.json\")`" + `
-- Provider auth is encrypted at rest in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + `. Do not read or hand-edit that file with shell commands.
+- List published LLMs with ` + "`list_published_llms`" + `.
+- Publish or update a published LLM with ` + "`save_published_llm`" + `.
+- Provider auth is encrypted at rest. Do not read or hand-edit config files with shell/file tools.
 - Update provider auth with the ` + "`set_provider_auth`" + ` tool.
 - Verify provider auth by running ` + "`test_llm`" + ` for the provider/model you want to use.
-- Prefer shell commands only for published LLM metadata in ` + "`" + absConfig + `/published-llms.json` + "`" + `. Use tools for provider-auth operations.
-- ` + "`search_web_llm`" + ` selects models from ` + "`" + absConfig + `/published-llms.json` + "`" + `. Its ` + "`provider`" + ` argument is required; ` + "`model_id`" + ` is optional only when accepting a working search-capable model for that provider.
+- Use dedicated tools for all published LLM and provider-auth operations; raw workspace file tools intentionally do not have ` + "`config/`" + ` access.
+- ` + "`search_web_llm`" + ` selects models from the published LLM set. Its ` + "`provider`" + ` argument is required; ` + "`model_id`" + ` is optional only when accepting a working search-capable model for that provider.
 - Use ` + "`search_role`" + ` to control routing:
   - ` + "`\"primary\"`" + ` = preferred default search provider
   - ` + "`\"fallback\"`" + ` = backup search provider
@@ -198,13 +195,12 @@ Published LLM metadata lives in ` + "`" + absConfig + `/published-llms.json` + "
 - Example: ` + "`{\"id\":\"gemini-search\",\"name\":\"Gemini Search\",\"provider\":\"gemini-cli\",\"model_id\":\"gemini-2.5-pro\",\"search_role\":\"primary\",\"search_priority\":1}`" + `
 
 ## Image Generation Defaults
-Image generation defaults live in ` + "`" + absConfig + `/image-generation-config.json` + "`" + `. Provider authentication still lives in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + `.
-- Read: ` + "`execute_shell_command(command: \"cat " + absConfig + "/image-generation-config.json\")`" + `
-- Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/image-generation-config.json\")`" + `
+Image generation defaults are workspace-backed configuration. Provider authentication is managed separately through ` + "`set_provider_auth`" + `.
+- Do not read or write saved defaults with shell/file tools. Use runtime ` + "`image_gen_config`" + ` overrides for the current chat session, or the dedicated UI/API configuration path when changing saved defaults.
 - Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3.1-flash-image-preview\"},\"fallbacks\":[{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"}]}`" + `
 - ` + "`primary`" + ` is tried first. ` + "`fallbacks`" + ` are tried in order when the primary provider lacks workspace auth.
 - Runtime ` + "`image_gen_config`" + ` overrides this file for the current chat session only.
-- Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using the ` + "`set_provider_auth`" + ` tool; do not hand-edit the encrypted auth file.
+- Keep provider auth updated with the ` + "`set_provider_auth`" + ` tool; do not hand-edit encrypted auth files.
 - Do not infer image-generation support from ` + "`list_provider_models`" + ` or the normal LLM model catalog. Those lists are for chat/text models, not image models.
 - Vertex image generation is supported via provider ` + "`vertex`" + ` with models such as ` + "`gemini-3.1-flash-image-preview`" + ` and ` + "`gemini-3-pro-image-preview`" + `.
 - Codex CLI image generation is supported via provider ` + "`codex-cli`" + ` with models such as ` + "`gpt-5.4-mini`" + `.
@@ -212,9 +208,8 @@ Image generation defaults live in ` + "`" + absConfig + `/image-generation-confi
 - For one-off ` + "`image_gen`" + ` or ` + "`image_edit`" + ` calls, use ` + "`list_llm_capabilities(capability=\"generate_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
 
 ## Image Analysis Defaults
-Image understanding for the ` + "`read_image`" + ` tool can be routed via ` + "`" + absConfig + `/image-analysis-config.json` + "`" + `.
-- Read: ` + "`execute_shell_command(command: \"cat " + absConfig + "/image-analysis-config.json\")`" + `
-- Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/image-analysis-config.json\")`" + `
+Image understanding for the ` + "`read_image`" + ` tool can be routed via workspace-backed image analysis defaults.
+- Do not read or write saved defaults with shell/file tools. Use per-call ` + "`read_image`" + ` overrides, or the dedicated UI/API configuration path when changing saved defaults.
 - Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3-pro-preview\"},\"fallbacks\":[{\"provider\":\"codex-cli\",\"model_id\":\"gpt-5.4-mini\"},{\"provider\":\"cursor-cli\",\"model_id\":\"cursor-cli\"},{\"provider\":\"opencode-cli\",\"model_id\":\"opencode-cli\"},{\"provider\":\"claude-code\",\"model_id\":\"claude-code\"}]}`" + `
 - If this file exists, ` + "`read_image`" + ` uses its ` + "`primary`" + ` and ordered ` + "`fallbacks`" + ` with workspace provider auth.
 - If this file does not exist, ` + "`read_image`" + ` falls back to the current chat model.
@@ -223,7 +218,7 @@ Image understanding for the ` + "`read_image`" + ` tool can be routed via ` + "`
 - Cursor CLI image understanding is supported via provider ` + "`cursor-cli`" + ` by passing the local workspace image path to Cursor Agent CLI.
 - OpenCode CLI image understanding is supported via provider ` + "`opencode-cli`" + ` by passing the local workspace image path to OpenCode CLI.
 - Claude Code image understanding is supported via provider ` + "`claude-code`" + ` by passing the local workspace image path to Claude Code CLI.
-- Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using the ` + "`set_provider_auth`" + ` tool; do not hand-edit the encrypted auth file.
+- Keep provider auth updated with the ` + "`set_provider_auth`" + ` tool; do not hand-edit encrypted auth files.
 
 ## Video Analysis
 Direct provider-backed video understanding is not advertised by default. Prefer a published coding-agent model for local video workflows until a dedicated video provider is configured and exposed by ` + "`list_llm_capabilities(capability=\"read_video\", include_models=true)`" + `.
@@ -238,8 +233,7 @@ Employees are virtual team members assigned to workflows. The employee UI shows 
 - Do not add a ` + "`role`" + ` or ` + "`description`" + ` just to fill metadata.
 
 ### Quick Reference
-- Employees: ` + "`execute_shell_command(command: \"cat " + absConfig + "/employees.json\")`" + `
-- Assignments (workflow_path → employee_id): ` + "`execute_shell_command(command: \"cat " + absConfig + "/employee-workflows.json\")`" + `
+- Employees and assignments: use ` + "`list_employees`" + `.
 - List workflows: ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/\")`" + `
 
 ### Managing employees from chat
@@ -331,7 +325,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 **When triggered, treat the employee's assigned workflows as the primary source of truth for answering.** Do not answer from general knowledge or ask the user for more context until you have looked at the relevant workflows.
 
 **Flow:**
-1. **Identify the employee.** If the employee list is already in this prompt (see "Current Employees & Workflow Assignments" section below), use it directly — no need to read config files. Otherwise read ` + "`" + absConfig + `/employees.json` + "`" + ` and ` + "`" + absConfig + `/employee-workflows.json` + "`" + `.
+1. **Identify the employee.** Use the employee list already injected into this prompt (see "Current Employees & Workflow Assignments" section below). If the list is missing or stale, use the dedicated employee tools; do not read employee registry files directly.
 2. **Look up their assigned workflows.** Every workflow path listed under that employee is in scope.
 3. **Read workflow state to answer the question.** Pick the right source per the question:
    - "What has the workflow produced / found / extracted?" → ` + "`runs/iteration-0/`" + ` (latest run outputs) or ` + "`db/*.json`" + ` (accumulated structured state across runs).
@@ -625,7 +619,7 @@ Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step)
 // buildEmployeesWorkflowsContext reads the employee registry and workflow-assignment map
 // and returns a compact markdown section listing each employee with their assigned workflows.
 // Injected into the multi-agent chat system prompt so the agent already knows who exists
-// and which workflows each person owns — no need to cat the config files just to resolve a name.
+// and which workflows each person owns — no need to inspect config files just to resolve a name.
 // Returns an empty string when no employees are registered.
 func buildEmployeesWorkflowsContext() string {
 	employees, err := readEmployeesFile()

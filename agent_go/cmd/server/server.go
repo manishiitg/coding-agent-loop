@@ -3989,7 +3989,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Apply folder guard to restrict writes based on mode.
 			// Non-workflow plan/chat sessions write to the per-user Chats folder.
-			// Workflow phase writes to the active workflow folder (plus config,
+			// Workflow phase writes to the active workflow folder (plus
 			// Downloads, memory, and chat_history) and keeps Chats read-only so
 			// builder artifacts cannot drift into normal chat storage.
 			if !isWorkflowPhase {
@@ -3999,17 +3999,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				perUserChatHistory := strings.TrimSuffix(perUserChatsFolder, "Chats") + "chat_history/"
 				additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
 				additionalFolders = append(additionalFolders, fileContextWriteFolders...)
-				additionalFolders = append(additionalFolders, "config/")
 				additionalFolders = append(additionalFolders, perUserMemWrite)
 				additionalFolders = append(additionalFolders, perUserChatHistory)
 				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
 				workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
-				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "skills/", "subagents/", "Downloads/", "Workflow/", "config/", perUserMemWrite}, additionalFolders...)
+				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "skills/", "subagents/", "Downloads/", "Workflow/", perUserMemWrite}, additionalFolders...)
 				readPaths = append(readPaths, resolvedGrants.ReadOnlyExtra...)
 				readPaths = append(readPaths, workflowReadOnlyFolders...)
 				workspace.SetSessionFolderGuard(sessionID,
 					readPaths,
-					append([]string{perUserChatsWrite, "Downloads/", "config/", perUserMemWrite, perUserChatHistory}, additionalFolders...),
+					append([]string{perUserChatsWrite, "Downloads/", perUserMemWrite, perUserChatHistory}, additionalFolders...),
 				)
 				log.Printf("[MULTI-AGENT FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, write: %v, read-only: %v, grants: %v)", perUserChatsWrite, perUserMemWrite, additionalFolders, workflowReadOnlyFolders, resolvedGrants.AppliedNames)
 			} else {
@@ -4022,7 +4021,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				extraFolders = append(extraFolders, perUserChatHistory)
 				workspaceExecutors = wrapExecutorsWithWorkflowPhaseFolderGuard(workspaceExecutors, workflowPhaseFolder, workflowReadOnlyFolders, fileContextBlockedWriteFolders, extraFolders...)
 				workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
-				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", perUserMemWrite}, extraFolders...)
+				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", perUserMemWrite}, extraFolders...)
 				readPaths = append(readPaths, workflowReadOnlyFolders...)
 				writePaths := workflowPhaseWriteFolders(workflowPhaseFolder, extraFolders...)
 				workspace.SetSessionFolderGuard(sessionID,
@@ -4125,7 +4124,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if !isWorkflowPhase {
 						additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
 						additionalFolders = append(additionalFolders, fileContextWriteFolders...)
-						additionalFolders = append(additionalFolders, "config/")
 						return wrapExecutorsWithPlanFolderGuard(execs, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
 					}
 					browserExtraFolders := append([]string{}, resolvedGrants.WriteFolders...)
@@ -7025,7 +7023,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			subPerUserChatsWrite := subPerUserChatsFolder + "/"
 			subPerUserMemWrite := perUserMemoryFolderFor(subAgentUserID) + "/"
 			subPerUserChatHistory := strings.TrimSuffix(subPerUserChatsFolder, "Chats") + "chat_history/"
-			extraFolders := append([]string{"config/"}, subResolvedGrants.WriteFolders...)
+			extraFolders := append([]string{}, subResolvedGrants.WriteFolders...)
 			extraFolders = append(extraFolders, fileContextWriteFolders...)
 			extraFolders = append(extraFolders, subPerUserMemWrite)
 			extraFolders = append(extraFolders, subPerUserChatHistory)
@@ -7034,12 +7032,12 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			// spawned with their own folder scope). Pass nil.
 			workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, nil, extraFolders...)
 			workspace.SetSessionWorkingDir(sessionID, subPerUserChatsFolder)
-			readPaths := append([]string{subPerUserChatsWrite, subPerUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", subPerUserMemWrite}, extraFolders...)
+			readPaths := append([]string{subPerUserChatsWrite, subPerUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", subPerUserMemWrite}, extraFolders...)
 			readPaths = append(readPaths, subResolvedGrants.ReadOnlyExtra...)
 			readPaths = append(readPaths, workflowReadOnlyFolders...)
 			workspace.SetSessionFolderGuard(sessionID,
 				readPaths,
-				append([]string{subPerUserChatsWrite, "Downloads/", "config/", subPerUserMemWrite, subPerUserChatHistory}, extraFolders...),
+				append([]string{subPerUserChatsWrite, "Downloads/", subPerUserMemWrite, subPerUserChatHistory}, extraFolders...),
 			)
 		}
 

@@ -9,7 +9,10 @@ import (
 )
 
 // MaterializeReferenceSkill bundles every mode-allowed entry in
-// referenceKinds into ONE Anthropic-pattern skill named "workflow-reference":
+// referenceKinds into ONE Anthropic-pattern skill. Workshop/run modes keep the
+// historical "workflow-reference" name; multi-agent chat gets an explicitly
+// chat-scoped name so CLI skill matching does not treat it as workflow-only
+// guidance.
 // the SKILL.md body is a table of contents; the deep content lives in
 // references/<kind>.md supporting files. The agent's CLI matches the skill
 // by description, then reads the specific reference file it needs.
@@ -17,18 +20,45 @@ import (
 // Returns nil if no kinds are allowed in the given mode (so callers can skip
 // attaching without an extra check).
 func MaterializeReferenceSkill(mode string) *llmtypes.Skill {
+	spec := referenceSkillSpecForMode(mode)
 	return buildMegaSkill(buildMegaSkillSpec{
-		Mode:     mode,
-		Registry: referenceKinds,
-		Name:     "workflow-reference",
+		Mode:        mode,
+		Registry:    referenceKinds,
+		Name:        spec.Name,
+		Description: spec.Description,
+		Intro:       spec.Intro,
+		Render:      renderReferenceKind,
+	})
+}
+
+type referenceSkillSpec struct {
+	Name        string
+	Description string
+	Intro       string
+}
+
+func referenceSkillSpecForMode(mode string) referenceSkillSpec {
+	if mode == "multi-agent" {
+		return referenceSkillSpec{
+			Name: "multiagent-reference",
+			Description: "Multi-agent chat reference docs — detailed contracts and rules to consult before specific actions: " +
+				"LLM/provider configuration via tools, employee management, delegation, skill management, memory, browser/media tools, " +
+				"schedule and secret management, backup, debugging, and MCP bridge usage. Match this skill when you need deep " +
+				"multi-agent chat reference material, then read the matching file under references/.",
+			Intro: "This skill bundles multi-agent chat reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — especially LLM/provider configuration, which is managed through dedicated tools and not by reading or editing `config/` files. Read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",
+		}
+	}
+
+	return referenceSkillSpec{
+		Name: "workflow-reference",
 		Description: "Workflow workshop reference docs — detailed contracts and rules to consult before specific actions: " +
-			"main.py authoring, persistent stores (skill/kb/db), routing and message-sequence patterns, workflow composition " +
-			"patterns, plan-design, report-plan, evaluation-plan, optimizer playbook, file layout, schedule and secret " +
+			"LLM/provider configuration via tools, main.py authoring, persistent stores (skill/kb/db), routing and " +
+			"message-sequence patterns, workflow composition patterns, plan-design, report-plan, evaluation-plan, " +
+			"optimizer playbook, file layout, schedule and secret " +
 			"management. Match this skill when you need deep reference material for any of those topics, then read the " +
 			"matching file under references/.",
-		Intro:  "This skill bundles the workflow workshop's reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — then read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",
-		Render: renderReferenceKind,
-	})
+		Intro: "This skill bundles the workflow workshop's reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — especially LLM/provider configuration, which is managed through dedicated tools and not by reading or editing `config/` files. Read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",
+	}
 }
 
 // MaterializeGuidanceSkill bundles every mode-allowed entry in allKinds into
@@ -60,8 +90,9 @@ func MaterializeGuidanceSkill(mode string) *llmtypes.Skill {
 //
 //   - system-tools (existing meta-skill: explains the tool surface,
 //     get_reference_doc, precondition gates)
-//   - workflow-reference (mega-skill bundling every reference doc allowed
-//     in the current mode; SKILL.md TOC + references/<kind>.md per topic)
+//   - workflow-reference / multiagent-reference (mega-skill bundling every
+//     reference doc allowed in the current mode; SKILL.md TOC +
+//     references/<kind>.md per topic)
 //   - workflow-commands (mega-skill bundling every procedural flow)
 //
 // Why three folders instead of one per kind: ~25 individual skill folders

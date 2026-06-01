@@ -13,7 +13,6 @@ interface MoveFileDialogProps {
   commitMessage: string
   setCommitMessage: (message: string) => void
   isLoading: boolean
-  preserveWorkspace?: boolean
 }
 
 export default function MoveFileDialog({
@@ -25,8 +24,7 @@ export default function MoveFileDialog({
   setDestinationPath,
   commitMessage,
   setCommitMessage,
-  isLoading,
-  preserveWorkspace = false
+  isLoading
 }: MoveFileDialogProps) {
   const [error, setError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
@@ -192,10 +190,7 @@ export default function MoveFileDialog({
   const isFolder = item.type === 'folder'
 
   return (
-    <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-      data-preserve-workspace={preserveWorkspace ? 'true' : undefined}
-    >
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center gap-2">

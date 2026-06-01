@@ -8,7 +8,6 @@ interface RenameFileDialogProps {
   onRename: (newName: string, commitMessage?: string) => Promise<void>
   item: PlannerFile | null
   isLoading: boolean
-  preserveWorkspace?: boolean
 }
 
 export default function RenameFileDialog({
@@ -16,8 +15,7 @@ export default function RenameFileDialog({
   onClose,
   onRename,
   item,
-  isLoading,
-  preserveWorkspace = false
+  isLoading
 }: RenameFileDialogProps) {
   const [error, setError] = useState('')
   const [newName, setNewName] = useState('')
@@ -92,10 +90,7 @@ export default function RenameFileDialog({
   const isFolder = item.type === 'folder'
 
   return (
-    <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-      data-preserve-workspace={preserveWorkspace ? 'true' : undefined}
-    >
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4 flex flex-col">
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center gap-2">

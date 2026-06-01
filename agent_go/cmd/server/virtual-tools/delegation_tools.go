@@ -826,6 +826,7 @@ The following tools are NOT available as direct function calls — call them via
 
 - **Delegation tools**: delegate, query_agent, terminate_agent, list_agents
 - **Memory tools**: save_memory, recall_memory, enrich_memory
+- **LLM config tools**: list_published_llms, list_provider_models, test_llm, save_published_llm, set_provider_auth, list_llm_capabilities, estimate_llm_cost
 
 **Pattern:**
 ` + "```" + `bash
@@ -847,9 +848,23 @@ payload='{"content": "Important context to remember"}'
 curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/save_memory"
 ` + "```" + `
 
+list published chat LLMs:
+` + "```" + `bash
+payload='{}'
+curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/list_published_llms"
+` + "```" + `
+
+list provider models:
+` + "```" + `bash
+payload='{"provider": "claude-code"}'
+curl -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/list_provider_models"
+` + "```" + `
+
 $MCP_CUSTOM and $MCP_AUTH are pre-set environment variables — use them as-is.
 
-**Important:** Whenever instructions mention ` + "`delegate(...)`" + ` or ` + "`save_memory(...)`" + `, translate to the curl pattern above. Do NOT call these as direct function calls.
+**Important:** Whenever instructions mention ` + "`delegate(...)`" + `, ` + "`save_memory(...)`" + `, or LLM config tools, translate to the curl pattern above. Do NOT call these as direct function calls.
+
+Do **NOT** read or edit ` + "`config/`" + ` files for LLM/provider configuration. Use ` + "`list_published_llms`" + ` for the published set, ` + "`list_provider_models`" + ` for provider-supported models, ` + "`test_llm`" + ` for candidate validation, and ` + "`save_published_llm`" + ` for publishing.
 
 ### Memory — CRITICAL
 Do **NOT** use your native memory system (e.g. ~/.codex/memories/, ~/.claude/memories/, or any home-directory path). Those paths are not accessible in this environment.

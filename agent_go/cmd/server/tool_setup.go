@@ -317,7 +317,7 @@ func enhanceToolDescriptionForWorkflowPhase(toolName, originalDescription, workf
 
 	if writeTools[toolName] {
 		accessInfo.WriteString(fmt.Sprintf("\n\n⚠️ **IMPORTANT:** Write workflow artifacts under `%s`. Raw writes under `%splanning/` are blocked; use workflow/builder tools for plan/config changes.", workflowFolder, workflowFolder))
-		accessInfo.WriteString("\nUse `Downloads/` only for scratch downloads/browser artifacts and `config/` only for session configuration. Do NOT write workflow artifacts to `_users/<user>/Chats/`; Chats is for normal chat sessions, not workflow state.")
+		accessInfo.WriteString("\nUse `Downloads/` only for scratch downloads/browser artifacts. Use dedicated configuration tools for config changes; do not read or write `config/` with file tools. Do NOT write workflow artifacts to `_users/<user>/Chats/`; Chats is for normal chat sessions, not workflow state.")
 	} else {
 		accessInfo.WriteString(fmt.Sprintf("\n\nYou have READ access to workspace folders and workflow WRITE access under `%s` except the raw-write-blocked `planning/` subtree.", workflowFolder))
 	}
@@ -337,10 +337,10 @@ func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription, chat
 	accessInfo.WriteString("\n\n📁 **DIRECTORY ACCESS RESTRICTIONS (MULTI-AGENT MODE):**")
 
 	if writeTools[toolName] {
-		accessInfo.WriteString(fmt.Sprintf("\n\n⚠️ **IMPORTANT:** You can write to '%s/' (primary) and 'config/' for workspace configuration. All other folders are read-only unless explicitly allowed.", chatsFolder))
+		accessInfo.WriteString(fmt.Sprintf("\n\n⚠️ **IMPORTANT:** You can write to '%s/' (primary). All other folders are read-only unless explicitly allowed. Use dedicated configuration tools for config changes; do not read or write `config/` with file tools.", chatsFolder))
 		accessInfo.WriteString(fmt.Sprintf("\nSave plan outputs inside the plan folder (e.g. '%s/{plan_id}/output.txt').", chatsFolder))
 	} else {
-		accessInfo.WriteString(fmt.Sprintf("\n\nYou have READ access to all workspace folders. WRITE access is restricted to '%s/', 'config/', and any explicitly allowed subfolders.", chatsFolder))
+		accessInfo.WriteString(fmt.Sprintf("\n\nYou have READ access to allowed workspace folders. WRITE access is restricted to '%s/' and any explicitly allowed subfolders. Configuration data is available through dedicated tools.", chatsFolder))
 	}
 
 	return originalDescription + accessInfo.String()
@@ -400,7 +400,7 @@ func chatModeWriteFolders(additionalWriteFolders ...string) []string {
 }
 
 func workflowPhaseWriteFolders(workflowFolder string, additionalWriteFolders ...string) []string {
-	allowedWriteFolders := []string{"Downloads/", "config/"}
+	allowedWriteFolders := []string{"Downloads/"}
 	workflowFolder = strings.TrimSpace(workflowFolder)
 	if workflowFolder != "" {
 		allowedWriteFolders = append(allowedWriteFolders, workflowFolder)
@@ -597,7 +597,7 @@ func wrapExecutorsWithFolderGuard(executors map[string]func(ctx context.Context,
 				} else {
 					ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolders)
 				}
-				readFolders := []string{"Downloads/", "skills/", "subagents/", "Workflow/", "config/"}
+				readFolders := []string{"Downloads/", "skills/", "subagents/", "Workflow/"}
 				readFolders = append(readFolders, shellAllowedFolders...)
 				readFolders = append(readFolders, readOnlyFolders...)
 				readFolders = cleanFolderGuardFolders(readFolders)

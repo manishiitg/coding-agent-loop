@@ -206,7 +206,6 @@ type llmCapabilityProvider struct {
 	Models            []string               `json:"models,omitempty"`
 	ModelCount        int                    `json:"model_count,omitempty"`
 	DefaultModel      string                 `json:"default_model,omitempty"`
-	ConfigFile        string                 `json:"config_file,omitempty"`
 	AuthSource        string                 `json:"auth_source,omitempty"`
 	AuthConfigured    bool                   `json:"auth_configured"`
 	RuntimeDependency string                 `json:"runtime_dependency,omitempty"`
@@ -549,7 +548,7 @@ func buildChatLLMCapabilities(keys *llm.ProviderAPIKeys, includeModels bool) []l
 	return result
 }
 
-func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, configFile string, providerModels map[string][]string, defaults map[string]string, notes map[string][]string) []llmCapabilityProvider {
+func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, providerModels map[string][]string, defaults map[string]string, notes map[string][]string) []llmCapabilityProvider {
 	result := make([]llmCapabilityProvider, 0, len(providerModels))
 	for _, provider := range []string{
 		string(llm.ProviderVertex),
@@ -574,7 +573,6 @@ func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, configFile string,
 			Models:            models,
 			ModelCount:        len(models),
 			DefaultModel:      defaults[provider],
-			ConfigFile:        configFile,
 			AuthSource:        authSource,
 			AuthConfigured:    authConfigured,
 			RuntimeDependency: runtime,
@@ -623,7 +621,7 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 		"schema_version": 1,
 		"notes": []string{
 			"usable means required workspace/env auth is configured and any required CLI runtime is installed.",
-			"Provider auth is managed in config/provider-api-keys.json; do not hand-edit that encrypted file.",
+			"Provider auth is managed by set_provider_auth and related provider-auth APIs; do not inspect or hand-edit config files.",
 			"Pricing is a static snapshot and should be treated as an estimate; verify provider pricing pages before high-volume runs.",
 		},
 	}
@@ -637,11 +635,9 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 
 	if capability == "all" || capability == "search" || capability == "search_web" {
 		all["search_web"] = map[string]interface{}{
-			"description": "Providers usable by search_web_llm. Routing is configured in config/published-llms.json with search_role/search_priority.",
-			"config_file": "config/published-llms.json",
+			"description": "Providers usable by search_web_llm. Routing comes from the workspace published LLM set managed by list_published_llms/save_published_llm.",
 			"providers": buildFixedCapabilityProviders(
 				keys,
-				"config/published-llms.json",
 				map[string][]string{
 					string(llm.ProviderClaudeCode):  {"claude-code"},
 					string(llm.ProviderCodexCLI):    {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
@@ -667,10 +663,8 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 	if capability == "all" || capability == "read_image" || capability == "image_analysis" {
 		all["read_image"] = map[string]interface{}{
 			"description": "Providers usable by read_image for image understanding.",
-			"config_file": "config/image-analysis-config.json",
 			"providers": buildFixedCapabilityProviders(
 				keys,
-				"config/image-analysis-config.json",
 				map[string][]string{
 					string(llm.ProviderVertex):      {"gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"},
 					string(llm.ProviderCodexCLI):    {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
@@ -708,10 +702,8 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 	if capability == "all" || capability == "generate_image" || capability == "image_generation" {
 		all["generate_image"] = map[string]interface{}{
 			"description": "Providers usable by image_gen/image_edit.",
-			"config_file": "config/image-generation-config.json",
 			"providers": buildFixedCapabilityProviders(
 				keys,
-				"config/image-generation-config.json",
 				map[string][]string{
 					string(llm.ProviderVertex):   {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"},
 					string(llm.ProviderCodexCLI): {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
@@ -734,7 +726,6 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 			"description": "Providers usable by generate_video.",
 			"providers": attachPricing("generate_video", buildFixedCapabilityProviders(
 				keys,
-				"",
 				map[string][]string{
 					string(llm.ProviderVertex): {"veo-3.1-generate-preview", "veo-3.1-fast-generate-preview", "veo-3.1-generate-001", "veo-3.1-fast-generate-001", "veo-3.1-lite-generate-001"},
 				},
@@ -753,7 +744,6 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 			"description": "Providers usable by text_to_speech.",
 			"providers": attachPricing("text_to_speech", buildFixedCapabilityProviders(
 				keys,
-				"",
 				map[string][]string{
 					string(llm.ProviderVertex):     {"gemini-3.1-flash-tts-preview"},
 					string(llm.ProviderMiniMax):    {"speech-2.8-turbo", "speech-2.8-hd", "speech-2.6-turbo", "speech-2.6-hd", "speech-02-turbo", "speech-02-hd"},
@@ -781,7 +771,6 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 			"description": "Providers usable by speech_to_text.",
 			"providers": attachPricing("speech_to_text", buildFixedCapabilityProviders(
 				keys,
-				"",
 				map[string][]string{
 					string(llm.ProviderDeepgram): {"nova-3", "nova-3-multilingual", "nova-2", "base"},
 				},
@@ -800,7 +789,6 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 			"description": "Providers usable by generate_music.",
 			"providers": attachPricing("generate_music", buildFixedCapabilityProviders(
 				keys,
-				"",
 				map[string][]string{
 					string(llm.ProviderElevenLabs): {"music_v1"},
 					string(llm.ProviderMiniMax):    {"music-2.6", "music-2.6-free", "music-cover", "music-cover-free"},
@@ -1121,7 +1109,7 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 func registerLLMCapabilityDiscoveryTools(registerTool func(string, string, map[string]interface{}, func(context.Context, map[string]interface{}) (string, error)) error) error {
 	if err := registerTool(
 		"list_llm_capabilities",
-		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Use include_models=true before choosing an explicit provider/model_id pair for provider-backed tools. Includes config files, auth requirements, CLI runtime availability, and static pricing metadata where available.",
+		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Use include_models=true before choosing an explicit provider/model_id pair for provider-backed tools. Includes workspace defaults, auth requirements, CLI runtime availability, and static pricing metadata where available.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1220,7 +1208,7 @@ func (api *StreamingAPI) registerWorkflowLLMDiscoveryTools(underlyingAgent *mcpa
 func registerLLMCapabilityTools(registerTool func(string, string, map[string]interface{}, func(context.Context, map[string]interface{}) (string, error)) error) error {
 	if err := registerTool(
 		"list_llm_capabilities",
-		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Use include_models=true before choosing an explicit provider/model_id pair for provider-backed tools. Includes config files, auth requirements, CLI runtime availability, and static pricing metadata where available.",
+		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Use include_models=true before choosing an explicit provider/model_id pair for provider-backed tools. Includes workspace defaults, auth requirements, CLI runtime availability, and static pricing metadata where available.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1304,6 +1292,31 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 	}
 
 	if err := registerTool(
+		"list_published_llms",
+		"List workspace-backed published chat/text LLM entries. Use this to answer which LLMs are published or available for workflow selection. Do not inspect config files directly.",
+		map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+		func(ctx context.Context, _ map[string]interface{}) (string, error) {
+			llms, err := LoadPublishedLLMs(ctx)
+			if err != nil {
+				return "", fmt.Errorf("failed to load published LLMs: %w", err)
+			}
+			if llms == nil {
+				llms = []StoredPublishedLLM{}
+			}
+			return prettyJSON(map[string]interface{}{
+				"count": len(llms),
+				"llms":  llms,
+				"note":  "These are the published chat/text models available for selection.",
+			}), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
 		"list_provider_models",
 		"List the frontend-visible models for a provider. Fixed providers use /api/llm-config/models/metadata; dynamic providers use /api/llm-config/providers/{provider}/models.",
 		map[string]interface{}{
@@ -1329,7 +1342,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 
 	if err := registerTool(
 		"test_llm",
-		"Validate an LLM provider/model configuration before publishing. Uses workspace-backed provider auth from config/provider-api-keys.json by default, but temporary overrides can be provided in the call.",
+		"Validate an LLM provider/model configuration before publishing. Uses workspace-backed provider auth by default, but temporary overrides can be provided in the call.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1459,7 +1472,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 
 	if err := registerTool(
 		"save_published_llm",
-		"Create or update a workspace-backed published LLM entry in config/published-llms.json. Authentication is managed separately in config/provider-api-keys.json.",
+		"Create or update a workspace-backed published LLM entry. Store only the minimal routable fields: name, provider, model_id, and optional options such as reasoning_effort. Authentication is managed separately through provider-auth tools.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1479,38 +1492,6 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 					"type":        "string",
 					"description": "Model id for the published LLM.",
 				},
-				"model_name": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional human-readable model name.",
-				},
-				"auth_method": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional auth method label such as api_key, oauth, or none.",
-				},
-				"context_window": map[string]interface{}{
-					"type":        "integer",
-					"description": "Optional context window snapshot to persist with the published LLM.",
-				},
-				"input_cost_per_1m": map[string]interface{}{
-					"type":        "number",
-					"description": "Optional input token price snapshot in USD per 1M tokens.",
-				},
-				"output_cost_per_1m": map[string]interface{}{
-					"type":        "number",
-					"description": "Optional output token price snapshot in USD per 1M tokens.",
-				},
-				"reasoning_cost_per_1m": map[string]interface{}{
-					"type":        "number",
-					"description": "Optional reasoning token price snapshot in USD per 1M tokens.",
-				},
-				"cached_input_cost_per_1m": map[string]interface{}{
-					"type":        "number",
-					"description": "Optional cached input token price snapshot in USD per 1M tokens.",
-				},
-				"cached_input_cost_write_per_1m": map[string]interface{}{
-					"type":        "number",
-					"description": "Optional cache write token price snapshot in USD per 1M tokens.",
-				},
 				"options": llmToolOptionsSchema("Optional model-specific options to persist with this published LLM. Include reasoning_effort for Codex CLI or Claude Code when you want the published entry to run at a specific effort level."),
 			},
 			"required": []string{"name", "provider", "model_id"},
@@ -1519,8 +1500,6 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			name, _ := args["name"].(string)
 			provider, _ := args["provider"].(string)
 			modelID, _ := args["model_id"].(string)
-			modelName, _ := args["model_name"].(string)
-			authMethod, _ := args["auth_method"].(string)
 			id, _ := args["id"].(string)
 			options, _ := args["options"].(map[string]interface{})
 
@@ -1534,32 +1513,6 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 				return fmt.Sprintf("unsupported published LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, opencode-cli, claude-code, gemini-cli, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
-			var contextWindow *int
-			if raw, ok := args["context_window"].(float64); ok {
-				value := int(raw)
-				contextWindow = &value
-			}
-			var inputCostPer1M *float64
-			if raw, ok := args["input_cost_per_1m"].(float64); ok {
-				inputCostPer1M = &raw
-			}
-			var outputCostPer1M *float64
-			if raw, ok := args["output_cost_per_1m"].(float64); ok {
-				outputCostPer1M = &raw
-			}
-			var reasoningCostPer1M *float64
-			if raw, ok := args["reasoning_cost_per_1m"].(float64); ok {
-				reasoningCostPer1M = &raw
-			}
-			var cachedInputCostPer1M *float64
-			if raw, ok := args["cached_input_cost_per_1m"].(float64); ok {
-				cachedInputCostPer1M = &raw
-			}
-			var cachedInputCostWritePer1M *float64
-			if raw, ok := args["cached_input_cost_write_per_1m"].(float64); ok {
-				cachedInputCostWritePer1M = &raw
-			}
-
 			llms, err := LoadPublishedLLMs(ctx)
 			if err != nil {
 				return "", err
@@ -1569,20 +1522,12 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			}
 
 			entry := StoredPublishedLLM{
-				ID:                        strings.TrimSpace(id),
-				Name:                      name,
-				Provider:                  provider,
-				ModelID:                   modelID,
-				ModelName:                 strings.TrimSpace(modelName),
-				AuthMethod:                strings.TrimSpace(authMethod),
-				ContextWindow:             contextWindow,
-				InputCostPer1M:            inputCostPer1M,
-				OutputCostPer1M:           outputCostPer1M,
-				ReasoningCostPer1M:        reasoningCostPer1M,
-				CachedInputCostPer1M:      cachedInputCostPer1M,
-				CachedInputCostWritePer1M: cachedInputCostWritePer1M,
-				Options:                   options,
-				CreatedAt:                 time.Now().UTC().Format(time.RFC3339),
+				ID:        strings.TrimSpace(id),
+				Name:      name,
+				Provider:  provider,
+				ModelID:   modelID,
+				Options:   options,
+				CreatedAt: time.Now().UTC().Format(time.RFC3339),
 			}
 
 			matchIndex := -1
@@ -1618,7 +1563,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 
 	if err := registerTool(
 		"set_provider_auth",
-		"Create or update workspace-backed provider authentication in config/provider-api-keys.json. Use this for providers that need API keys, Azure endpoint config, or Bedrock region config.",
+		"Create or update workspace-backed provider authentication. Use this for providers that need API keys, Azure endpoint config, or Bedrock region config.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

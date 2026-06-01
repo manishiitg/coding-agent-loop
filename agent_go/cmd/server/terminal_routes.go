@@ -566,7 +566,6 @@ func collapseBlankRuns(s string) string {
 		return s
 	}
 	lines := strings.Split(s, "\n")
-	lines = stripInputBoxTrailerLines(lines)
 	lines = pruneTerminalSpinnerWordFragments(lines)
 	out := make([]string, 0, len(lines))
 	blankRun := 0
@@ -601,40 +600,6 @@ func collapseBlankRuns(s string) string {
 func isTerminalSpinnerLine(line string) bool {
 	r, _ := utf8.DecodeRuneInString(line)
 	return r >= 0x2800 && r <= 0x28FF
-}
-
-// stripInputBoxTrailerLines removes the agy input-box region and everything
-// below it (animation cursor-positioning artifacts like "oa", "ad", "di").
-// The input box is a ─── top border + › prompt + ─── bottom border; we strip
-// from the top border onward.
-func stripInputBoxTrailerLines(lines []string) []string {
-	lastBorderIdx := -1
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if len(trimmed) >= 20 && isAllDashRunes(trimmed) {
-			lastBorderIdx = i
-		}
-	}
-	if lastBorderIdx < 0 {
-		return lines
-	}
-	// Walk back to find the top border (the ─── line above the › prompt).
-	topBorderIdx := -1
-	for i := lastBorderIdx - 1; i >= 0; i-- {
-		trimmed := strings.TrimSpace(lines[i])
-		if len(trimmed) >= 20 && isAllDashRunes(trimmed) {
-			topBorderIdx = i
-			break
-		}
-		if trimmed != "" && !strings.HasPrefix(trimmed, ">") {
-			break
-		}
-	}
-	cutAt := lastBorderIdx + 1
-	if topBorderIdx >= 0 {
-		cutAt = topBorderIdx
-	}
-	return lines[:cutAt]
 }
 
 func isAllDashRunes(s string) bool {

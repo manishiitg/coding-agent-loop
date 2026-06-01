@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowDownToLine, ArrowRightToLine, Braces, Bug, Check, ChevronDown, ChevronsLeft, ChevronsRight, ChevronUp, Copy, CornerDownLeft, CornerUpLeft, GitBranch, History, Info, Minus, Palette, Plus, Power, RefreshCw, Square, Terminal, Trash2, X } from 'lucide-react'
 import { AnsiUp } from 'ansi_up'
+import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
 import { agentApi } from '../services/api'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -37,43 +40,6 @@ function stripAnsi(s: string): string {
 function hasAnsiCodes(s: string): boolean {
   // eslint-disable-next-line no-control-regex
   return s.includes('\x1B[')
-}
-
-// stripAnsiBackgrounds removes background-color parameters from SGR escape
-// sequences while preserving foreground color, bold, dim, underline, etc.
-// CLI TUIs (gemini-cli's input/notification box, codex banners) paint a
-// background highlight that reads fine against their native terminal theme
-// but renders as an ugly grey block over the pane's near-black backdrop once
-// captured (-e) and re-colorized by ansi_up. Stripping at the SGR layer
-// catches both the 16-color background classes AND 256/truecolor backgrounds
-// (which ansi_up would otherwise emit as inline styles that CSS can't reach).
-//
-// Background params dropped: 40-47 (standard), 100-107 (bright), 49 (default
-// reset), and the extended form 48;5;<n> / 48;2;<r>;<g>;<b>. Everything else
-// — including foreground 38;5/38;2 runs — is passed through untouched. A
-// sequence that contained ONLY background params collapses to nothing (NOT a
-// `\x1b[m` reset, which would wrongly clear the active foreground color).
-function stripAnsiBackgrounds(input: string): string {
-  // eslint-disable-next-line no-control-regex
-  return input.replace(/\x1B\[([0-9;]*)m/g, (_full, rawParams: string) => {
-    const parts = rawParams.length ? rawParams.split(';') : ['0']
-    const kept: string[] = []
-    for (let i = 0; i < parts.length; i++) {
-      const n = parseInt(parts[i], 10)
-      if (Number.isNaN(n)) { kept.push(parts[i]); continue }
-      if (n === 48) {
-        // Extended background — skip the whole selector run so its trailing
-        // numbers aren't reinterpreted as unrelated SGR codes.
-        if (parts[i + 1] === '5') i += 2
-        else if (parts[i + 1] === '2') i += 4
-        else i += 1
-        continue
-      }
-      if ((n >= 40 && n <= 49) || (n >= 100 && n <= 107)) continue
-      kept.push(parts[i])
-    }
-    return kept.length ? `\x1B[${kept.join(';')}m` : ''
-  })
 }
 
 // rawAfterVisibleChars returns the substring of `raw` that starts after the
@@ -477,15 +443,254 @@ const TERMINAL_THEMES = {
 type TerminalTheme = (typeof TERMINAL_THEMES)[TerminalColorScheme]
 
 const TERMINAL_COLOR_SCHEME_OPTIONS: Array<{ value: TerminalColorScheme; label: string }> = [
-  { value: 'homebrew', label: 'Homebrew' },
-  { value: 'mono', label: 'Mono' },
-  { value: 'catppuccin', label: 'Catppuccin' },
-  { value: 'nord', label: 'Nord' },
-  { value: 'gruvbox', label: 'Gruvbox' },
-  { value: 'solarized', label: 'Solarized' },
-  { value: 'tokyo', label: 'Tokyo Night' },
-  { value: 'neon', label: 'Neon' },
+  { value: 'homebrew', label: 'Standard' },
+  { value: 'mono', label: 'Compact' },
+  { value: 'gruvbox', label: 'Classic' },
 ]
+
+const XTERM_PROFILE_OPTIONS: Record<TerminalColorScheme, {
+  fontFamily: string
+  fontSize: number
+  lineHeight: number
+  cursorStyle: 'block' | 'underline' | 'bar'
+  panePaddingClass: string
+}> = {
+  neon: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+    fontSize: 12.5,
+    lineHeight: 1.45,
+    cursorStyle: 'block',
+    panePaddingClass: 'p-2',
+  },
+  mono: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+    fontSize: 11,
+    lineHeight: 1.22,
+    cursorStyle: 'bar',
+    panePaddingClass: 'p-1.5',
+  },
+  homebrew: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+    fontSize: 12.5,
+    lineHeight: 1.45,
+    cursorStyle: 'block',
+    panePaddingClass: 'p-2',
+  },
+  catppuccin: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+    fontSize: 12.5,
+    lineHeight: 1.45,
+    cursorStyle: 'block',
+    panePaddingClass: 'p-2',
+  },
+  nord: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+    fontSize: 12,
+    lineHeight: 1.4,
+    cursorStyle: 'block',
+    panePaddingClass: 'p-2',
+  },
+  gruvbox: {
+    fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", ui-monospace, monospace',
+    fontSize: 13,
+    lineHeight: 1.5,
+    cursorStyle: 'underline',
+    panePaddingClass: 'p-2.5',
+  },
+  solarized: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+    fontSize: 12,
+    lineHeight: 1.4,
+    cursorStyle: 'block',
+    panePaddingClass: 'p-2',
+  },
+  tokyo: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+    fontSize: 12,
+    lineHeight: 1.4,
+    cursorStyle: 'block',
+    panePaddingClass: 'p-2',
+  },
+}
+
+const XTERM_THEMES: Record<TerminalColorScheme, ITheme> = {
+  neon: {
+    background: '#020403',
+    foreground: '#8cff9a',
+    cursor: '#39ff14',
+    selectionBackground: '#14532d',
+    black: '#020403',
+    red: '#ff5f5f',
+    green: '#39ff14',
+    yellow: '#d6ff5f',
+    blue: '#00d7ff',
+    magenta: '#ff5fff',
+    cyan: '#5fffff',
+    white: '#d7ffd7',
+    brightBlack: '#166534',
+    brightRed: '#ff8787',
+    brightGreen: '#8cff9a',
+    brightYellow: '#efff8a',
+    brightBlue: '#5fd7ff',
+    brightMagenta: '#ff87ff',
+    brightCyan: '#87ffff',
+    brightWhite: '#f0fff4',
+  },
+  mono: {
+    background: '#101010',
+    foreground: '#e5e5e5',
+    cursor: '#f5f5f5',
+    selectionBackground: '#404040',
+    black: '#171717',
+    red: '#d4d4d4',
+    green: '#d4d4d4',
+    yellow: '#e5e5e5',
+    blue: '#d4d4d4',
+    magenta: '#d4d4d4',
+    cyan: '#d4d4d4',
+    white: '#e5e5e5',
+    brightBlack: '#737373',
+    brightRed: '#f5f5f5',
+    brightGreen: '#f5f5f5',
+    brightYellow: '#fafafa',
+    brightBlue: '#f5f5f5',
+    brightMagenta: '#f5f5f5',
+    brightCyan: '#f5f5f5',
+    brightWhite: '#ffffff',
+  },
+  homebrew: {
+    background: '#0b0d0c',
+    foreground: '#e5e7eb',
+    cursor: '#a3e635',
+    selectionBackground: '#334155',
+    black: '#1f2937',
+    red: '#ef4444',
+    green: '#22c55e',
+    yellow: '#eab308',
+    blue: '#3b82f6',
+    magenta: '#d946ef',
+    cyan: '#06b6d4',
+    white: '#e5e7eb',
+    brightBlack: '#9ca3af',
+    brightRed: '#f87171',
+    brightGreen: '#4ade80',
+    brightYellow: '#facc15',
+    brightBlue: '#60a5fa',
+    brightMagenta: '#e879f9',
+    brightCyan: '#22d3ee',
+    brightWhite: '#f9fafb',
+  },
+  catppuccin: {
+    background: '#11111b',
+    foreground: '#cdd6f4',
+    cursor: '#f5c2e7',
+    selectionBackground: '#45475a',
+    black: '#45475a',
+    red: '#f38ba8',
+    green: '#a6e3a1',
+    yellow: '#f9e2af',
+    blue: '#89b4fa',
+    magenta: '#cba6f7',
+    cyan: '#94e2d5',
+    white: '#bac2de',
+    brightBlack: '#585b70',
+    brightRed: '#f38ba8',
+    brightGreen: '#a6e3a1',
+    brightYellow: '#f9e2af',
+    brightBlue: '#89b4fa',
+    brightMagenta: '#f5c2e7',
+    brightCyan: '#94e2d5',
+    brightWhite: '#f5e0dc',
+  },
+  nord: {
+    background: '#2e3440',
+    foreground: '#d8dee9',
+    cursor: '#88c0d0',
+    selectionBackground: '#4c566a',
+    black: '#3b4252',
+    red: '#bf616a',
+    green: '#a3be8c',
+    yellow: '#ebcb8b',
+    blue: '#81a1c1',
+    magenta: '#b48ead',
+    cyan: '#88c0d0',
+    white: '#e5e9f0',
+    brightBlack: '#4c566a',
+    brightRed: '#bf616a',
+    brightGreen: '#a3be8c',
+    brightYellow: '#ebcb8b',
+    brightBlue: '#81a1c1',
+    brightMagenta: '#b48ead',
+    brightCyan: '#8fbcbb',
+    brightWhite: '#eceff4',
+  },
+  gruvbox: {
+    background: '#1d2021',
+    foreground: '#ebdbb2',
+    cursor: '#fabd2f',
+    selectionBackground: '#504945',
+    black: '#282828',
+    red: '#cc241d',
+    green: '#98971a',
+    yellow: '#d79921',
+    blue: '#458588',
+    magenta: '#b16286',
+    cyan: '#689d6a',
+    white: '#a89984',
+    brightBlack: '#928374',
+    brightRed: '#fb4934',
+    brightGreen: '#b8bb26',
+    brightYellow: '#fabd2f',
+    brightBlue: '#83a598',
+    brightMagenta: '#d3869b',
+    brightCyan: '#8ec07c',
+    brightWhite: '#fbf1c7',
+  },
+  solarized: {
+    background: '#002b36',
+    foreground: '#93a1a1',
+    cursor: '#2aa198',
+    selectionBackground: '#073642',
+    black: '#073642',
+    red: '#dc322f',
+    green: '#859900',
+    yellow: '#b58900',
+    blue: '#268bd2',
+    magenta: '#d33682',
+    cyan: '#2aa198',
+    white: '#eee8d5',
+    brightBlack: '#586e75',
+    brightRed: '#cb4b16',
+    brightGreen: '#859900',
+    brightYellow: '#b58900',
+    brightBlue: '#268bd2',
+    brightMagenta: '#6c71c4',
+    brightCyan: '#2aa198',
+    brightWhite: '#fdf6e3',
+  },
+  tokyo: {
+    background: '#1a1b26',
+    foreground: '#c0caf5',
+    cursor: '#7dcfff',
+    selectionBackground: '#33467c',
+    black: '#15161e',
+    red: '#f7768e',
+    green: '#9ece6a',
+    yellow: '#e0af68',
+    blue: '#7aa2f7',
+    magenta: '#bb9af7',
+    cyan: '#7dcfff',
+    white: '#a9b1d6',
+    brightBlack: '#414868',
+    brightRed: '#f7768e',
+    brightGreen: '#9ece6a',
+    brightYellow: '#e0af68',
+    brightBlue: '#7aa2f7',
+    brightMagenta: '#bb9af7',
+    brightCyan: '#7dcfff',
+    brightWhite: '#c0caf5',
+  },
+}
 
 function isTerminalColorScheme(value: string | null): value is TerminalColorScheme {
   return TERMINAL_COLOR_SCHEME_OPTIONS.some(option => option.value === value)
@@ -1709,39 +1914,84 @@ const ColoredText: React.FC<{ rawText: string; className?: string }> = ({ rawTex
   return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />
 }
 
-// RawTerminalPane is the non-structured pane view used for real CLI
-// terminals (claudecode, codex, gemini, cursor, agy interactive sessions —
-// anything where the orchestrator does NOT pre-parse the content into
-// typed rows). The whole pane content is rendered through ansi_up to
-// colorize SGR sequences; non-ANSI content takes the plain text path so we
-// don't pay parser cost for ANSI-free pages. Newlines and whitespace are
-// preserved by the `<pre>` element.
-const RawTerminalPane: React.FC<{
+const XtermTerminalPane: React.FC<{
   content: string
   className?: string
-  contentRef: React.RefObject<HTMLPreElement | null>
-  onScroll: (e: React.UIEvent<HTMLPreElement>) => void
-  onWheel: (e: React.WheelEvent<HTMLPreElement>) => void
-}> = ({ content, className, contentRef, onScroll, onWheel }) => {
-  const html = useMemo(
-    () => (hasAnsiCodes(content) ? ansiUp.ansi_to_html(stripAnsiBackgrounds(content)) : null),
-    [content],
-  )
-  if (html !== null) {
-    return (
-      <pre
-        ref={contentRef}
-        onScroll={onScroll}
-        onWheel={onWheel}
-        className={className}
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
-    )
-  }
+  contentRef: React.RefObject<HTMLDivElement | null>
+  xtermTheme: ITheme
+  xtermProfile: (typeof XTERM_PROFILE_OPTIONS)[TerminalColorScheme]
+}> = ({ content, className, contentRef, xtermTheme, xtermProfile }) => {
+  const mountRef = useRef<HTMLDivElement | null>(null)
+  const terminalRef = useRef<XTerm | null>(null)
+
+  useEffect(() => {
+    const mount = mountRef.current
+    if (!mount) return
+
+    const term = new XTerm({
+      allowProposedApi: false,
+      convertEol: true,
+      cursorBlink: false,
+      cursorStyle: xtermProfile.cursorStyle,
+      disableStdin: true,
+      fontFamily: xtermProfile.fontFamily,
+      fontSize: xtermProfile.fontSize,
+      lineHeight: xtermProfile.lineHeight,
+      scrollback: 20000,
+      theme: xtermTheme,
+    })
+    const fit = new FitAddon()
+    term.loadAddon(fit)
+    term.open(mount)
+    terminalRef.current = term
+
+    const fitTerminal = () => {
+      try {
+        fit.fit()
+      } catch {
+        // Fit can fail during unmount or while the pane is display:none.
+      }
+    }
+    fitTerminal()
+    const resizeObserver = new ResizeObserver(fitTerminal)
+    resizeObserver.observe(mount)
+
+    return () => {
+      resizeObserver.disconnect()
+      terminalRef.current = null
+      term.dispose()
+    }
+  }, [])
+
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!term) return
+    term.options.theme = xtermTheme
+  }, [xtermTheme])
+
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!term) return
+    term.options.fontFamily = xtermProfile.fontFamily
+    term.options.fontSize = xtermProfile.fontSize
+    term.options.lineHeight = xtermProfile.lineHeight
+    term.options.cursorStyle = xtermProfile.cursorStyle
+  }, [xtermProfile])
+
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!term) return
+    term.reset()
+    if (content) {
+      term.write(content.replace(/\r?\n/g, '\r\n'))
+    }
+    term.scrollToBottom()
+  }, [content])
+
   return (
-    <pre ref={contentRef} onScroll={onScroll} onWheel={onWheel} className={className}>
-      {content}
-    </pre>
+    <div ref={contentRef} className={className} style={{ backgroundColor: xtermTheme.background }}>
+      <div ref={mountRef} className="h-full w-full [&_.xterm]:h-full" />
+    </div>
   )
 }
 
@@ -2945,6 +3195,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     },
     [selectedTerminalView, priorArchivedTurns, archivedTurnContents],
   )
+  const selectedTerminalIsSynthetic = selectedTerminalView ? isSyntheticTerminal(selectedTerminalView) : false
   const selectedRouteDecision = selectedTerminalView?.step_id
     ? routingDecisionByNextStepID.get(selectedTerminalView.step_id)
     : undefined
@@ -2968,7 +3219,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     detailRequestSeqRef.current = requestSeq
     let cancelled = false
     probeInFlightRef.current = true
-    agentApi.getTerminal(selectedTerminal.terminal_id)
+    const detailOptions = selectedTerminal.tmux_session ? { content: 'tmux' as const } : undefined
+    agentApi.getTerminal(selectedTerminal.terminal_id, detailOptions)
       .then(detail => {
         if (!cancelled && detailRequestSeqRef.current === requestSeq && terminalPaneKey(detail) === selectedTerminalKey) {
           cacheTerminalDetail(detail)
@@ -2987,21 +3239,18 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
   }, [selectedTerminal?.terminal_id, selectedTerminal?.chunk_index, selectedTerminal?.updated_at, selectedTerminalKey, cacheTerminalDetail])
 
-  // For inactive tmux terminals (e.g. after Claude Code context compaction), there
-  // are no streaming events to bump chunk_index, so the detail cache never expires
-  // and the UI shows stale content. Probe the backend every 3s — the GET endpoint
-  // captures a live tmux snapshot for inactive terminals, which increments chunk_index
-  // if content changed. The updated chunk_index flows back through the list poll and
-  // re-triggers the detail fetch above, creating a self-sustaining refresh loop until
-  // the content stabilises.
+  // Tmux panes can change without a new streaming event: prompt text is typed
+  // directly into tmux, and some CLIs redraw their screen in-place. Probe the
+  // selected live pane every 3s so the detail view follows the actual tmux
+  // screen instead of only the last stored stream chunk.
   useEffect(() => {
     const terminalId = selectedTerminalView?.terminal_id
     const tmuxSession = selectedTerminalView?.tmux_session
     const state = selectedTerminalView ? terminalState(selectedTerminalView) : ''
     // Stale/failed terminals have no live tmux pane to recapture; probing them
     // just loops over a dead session (the backend now marks such GETs stale).
-    const isInactiveTmux = !selectedTerminalView?.active && !!tmuxSession && state !== 'stale' && state !== 'failed'
-    if (!terminalId || !isInactiveTmux) return
+    const shouldProbeTmux = !!tmuxSession && state !== 'stale' && state !== 'failed'
+    if (!terminalId || !shouldProbeTmux) return
 
     let stopped = false
     let interval = 0
@@ -3020,9 +3269,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
         cacheTerminalDetail(detail)
         // The detail carries the freshest active/state — react to it directly
         // instead of waiting a full list-poll cycle for selectedTerminalView to
-        // catch up. Re-activated (compaction resumed) or dead (stale) ⇒ stop.
+        // catch up. Dead sessions should stop; active sessions keep probing
+        // because their pane can update without server-side stream events.
         const detailState = terminalState(detail)
-        if (detail.active || detailState === 'stale' || detailState === 'failed') {
+        if (detailState === 'stale' || detailState === 'failed') {
           stop()
         }
         void fetchTerminals()
@@ -3031,6 +3281,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
     }
 
     interval = window.setInterval(probe, 3000)
+    probe()
     return () => stop()
   }, [selectedTerminalView?.terminal_id, selectedTerminalView?.tmux_session, selectedTerminalView?.active, cacheTerminalDetail, fetchTerminals])
 
@@ -3804,8 +4055,8 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       )}
                       <label
                         className={`relative inline-flex h-6 w-7 items-center justify-center rounded border border-neutral-700/90 bg-[#101211] text-neutral-500 hover:bg-neutral-800/80 hover:text-neutral-100 focus-within:text-neutral-100 ${terminalTheme.inputFocus}`}
-                        title={`Terminal color theme: ${TERMINAL_COLOR_SCHEME_OPTIONS.find(option => option.value === terminalColorScheme)?.label || terminalColorScheme}`}
-                        aria-label="Terminal color theme"
+                        title={`Terminal profile: ${TERMINAL_COLOR_SCHEME_OPTIONS.find(option => option.value === terminalColorScheme)?.label || terminalColorScheme}`}
+                        aria-label="Terminal profile"
                       >
                         <Palette className="pointer-events-none h-3.5 w-3.5" />
                         <select
@@ -3883,10 +4134,10 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       })}
                     </div>
                   )}
-                  {isSyntheticTerminal(selectedTerminalView) ? (
+                  {selectedTerminalIsSynthetic ? (
                     <StructuredTerminalView
                       content={selectedTerminalDisplayContent}
-                      rows={priorArchivedTurns.length === 0 ? selectedTerminalView.rows : undefined}
+                      rows={selectedTerminalIsSynthetic && priorArchivedTurns.length === 0 ? selectedTerminalView.rows : undefined}
                       scrollRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
                       onScroll={handleTerminalScroll}
                       onWheel={handleTerminalWheel as (e: React.WheelEvent<HTMLDivElement>) => void}
@@ -3894,12 +4145,12 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       theme={terminalTheme}
                     />
                   ) : (
-                    <RawTerminalPane
-                      contentRef={terminalOutputRef as React.RefObject<HTMLPreElement | null>}
-                      onScroll={handleTerminalScroll}
-                      onWheel={handleTerminalWheel as (e: React.WheelEvent<HTMLPreElement>) => void}
+                    <XtermTerminalPane
+                      contentRef={terminalOutputRef as React.RefObject<HTMLDivElement | null>}
                       content={selectedTerminalDisplayContent}
-                      className={`min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-[#0b0d0c] p-2.5 font-mono whitespace-pre-wrap break-words text-neutral-100 ${terminalTheme.contentText} ${terminalTheme.selection}`}
+                      xtermTheme={XTERM_THEMES[terminalColorScheme]}
+                      xtermProfile={XTERM_PROFILE_OPTIONS[terminalColorScheme]}
+                      className={`min-w-0 flex-1 overflow-hidden overscroll-contain font-mono text-neutral-100 ${XTERM_PROFILE_OPTIONS[terminalColorScheme].panePaddingClass} ${terminalTheme.selection}`}
                     />
                   )}
                   {selectedTerminalView && (() => {

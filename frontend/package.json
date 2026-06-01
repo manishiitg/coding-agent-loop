@@ -26,6 +26,8 @@
     "@tanstack/react-query": "^5.81.5",
     "@types/dagre": "^0.7.53",
     "@types/node": "^24.0.10",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.9.3",
     "ajv": "^8.17.1",
     "ansi_up": "^6.0.6",

@@ -112,6 +112,50 @@ func TestTerminalRoutesListCapsContentButGetKeepsFullContent(t *testing.T) {
 	}
 }
 
+func TestTerminalCollapseBlankRunsKeepsCodexSeparatorTail(t *testing.T) {
+	input := strings.Join([]string{
+		"→ tool: api-bridge.execute_shell_command({\"command\":\"update plan\"})",
+		"✓ result api-bridge.execute_shell_command: updated",
+		"────────────────────────────────────────────────────────────────",
+		"",
+		"• I checked the persisted files, not just the notification text.",
+		"",
+		"› i think its best to start with from scratch",
+		"",
+	}, "\n")
+
+	got := collapseBlankRuns(input)
+	for _, want := range []string{
+		"• I checked the persisted files",
+		"› i think its best to start with from scratch",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("collapseBlankRuns removed Codex tail %q\noutput:\n%s", want, got)
+		}
+	}
+}
+
+func TestTerminalCollapseBlankRunsKeepsPromptBoxTrailer(t *testing.T) {
+	input := strings.Join([]string{
+		"real terminal output",
+		"────────────────────────────────────────────────────────────────",
+		"›",
+		"────────────────────────────────────────────────────────────────",
+		"flattened cursor artifact",
+	}, "\n")
+
+	got := collapseBlankRuns(input)
+	for _, want := range []string{
+		"real terminal output",
+		"›",
+		"flattened cursor artifact",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("collapseBlankRuns should keep prompt box trailer %q, got:\n%s", want, got)
+		}
+	}
+}
+
 func TestTerminalRoutesListCanReturnMetadataOnly(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}

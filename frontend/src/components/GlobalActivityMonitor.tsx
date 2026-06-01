@@ -66,6 +66,22 @@ function sessionTitle(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo
   if (isWorkflowSession(session)) {
     const workflowFolder = (workflow?.workspace_path || session.workspace_path)?.split('/').filter(Boolean).pop()
     const hasBackgroundWork = session.has_running_background_agents || (session.running_background_agent_count ?? 0) > 0
+    const scheduled = isScheduledWorkflowSession(session, workflow)
+
+    if (scheduled) {
+      return (
+        workflow?.preset_name ||
+        session.preset_name ||
+        session.workflow_name ||
+        session.workflow_label ||
+        workflowFolder ||
+        fallbackWorkflowName ||
+        workflow?.title ||
+        session.title ||
+        session.query ||
+        'Workflow'
+      )
+    }
 
     return (
       workflow?.preset_name ||
@@ -99,7 +115,13 @@ function displaySessionTitle(
   if (isWorkflowSession(session)) {
     // For view-only (schedule/bot) tabs, tab.name is a type label ("Schedule", "WhatsApp"),
     // not the actual workflow name — skip it and resolve the real workflow title instead.
-    if (tab?.name && tab.name !== 'Workflow Builder' && !tab.metadata?.isViewOnly) {
+    const genericTabName = (tab?.name || '').trim().toLowerCase()
+    const tabNameIsTypeLabel = genericTabName === 'schedule' ||
+      genericTabName === 'scheduled run' ||
+      genericTabName === 'bot' ||
+      genericTabName === 'whatsapp' ||
+      genericTabName === 'slack'
+    if (tab?.name && tab.name !== 'Workflow Builder' && !tab.metadata?.isViewOnly && !tabNameIsTypeLabel) {
       return tab.name
     }
     return sessionTitle(session, workflow, fallbackWorkflowName)

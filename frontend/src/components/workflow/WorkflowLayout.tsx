@@ -141,6 +141,18 @@ function isRunningWorkflowEntry(entry: RunningWorkflowInfo): boolean {
   )
 }
 
+function isExternalReadOnlyWorkflowEntry(entry: RunningWorkflowInfo): boolean {
+  const trigger = (entry.triggered_by || '').toLowerCase()
+  const sessionId = (entry.session_id || '').toLowerCase()
+  return trigger.includes('schedule') ||
+    trigger === 'cron' ||
+    trigger.includes('bot') ||
+    trigger.includes('whatsapp') ||
+    trigger.includes('slack') ||
+    sessionId.startsWith('schedule-') ||
+    sessionId.includes('-schedule-')
+}
+
 function runningWorkflowBelongsToPreset(
   entry: RunningWorkflowInfo,
   presetId: string,
@@ -1504,6 +1516,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         if (cancelled) return
         const runningWorkflows = (response.running || [])
           .filter(item => item.session_id && isRunningWorkflowEntry(item))
+          // Scheduled/bot workflow runs are restored through the read-only
+          // run helpers when the user clicks their activity pill or run row.
+          // Creating normal workflow tabs here races those helpers and can
+          // leave duplicate "Schedule" tabs for the same session.
+          .filter(item => !isExternalReadOnlyWorkflowEntry(item))
           .filter(item => runningWorkflowBelongsToPreset(item, activePresetId, workspacePath))
           .sort((a, b) => new Date(b.started_at || 0).getTime() - new Date(a.started_at || 0).getTime())
 

@@ -1847,6 +1847,17 @@ func RegisterRunFullWorkflowTool(
 				workflowController.SetSubAgentNotifier(session.combinedSubAgentNotifier())
 				workflowController.SetWorkshopExecutionContext(execCtx, session.StepRegistry)
 				workflowController.SetRoutingDecisionNotifier(session.executionNotifier)
+				// Wire the workshop execution notifier so step types that emit their
+				// own lifecycle notifications directly (message_sequence items,
+				// kb-update, continuation recovery) actually reach the main agent
+				// during a full-workflow run. Without this the notifier is nil and
+				// those notifications silently no-op — e.g. a message_sequence step
+				// (login/discovery/retrieval phases) ran for many minutes with the
+				// main agent never told it started, progressed, or finished. Routing
+				// is unaffected: startRoutingPickNotification prefers
+				// routingDecisionNotifier (set above), and the workflowProgressBridge
+				// already excludes message-sequence-* agents, so no double-notify.
+				workflowController.SetWorkshopExecutionNotifier(session.executionNotifier)
 
 				// Propagate session context
 				if cfg.SessionID != "" {

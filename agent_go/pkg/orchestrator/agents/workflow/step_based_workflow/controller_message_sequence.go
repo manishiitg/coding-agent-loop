@@ -212,7 +212,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) startMessageSequenceItemNotification(ctx context.Context, step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, source string, started time.Time) (string, string, map[string]string, bool) {
-	if hcpo == nil || hcpo.workshopExecutionNotifier == nil || step == nil {
+	if hcpo == nil || step == nil {
+		return "", "", nil, false
+	}
+	// Fail loud, not silent: a nil notifier means this execution path forgot to
+	// wire SetWorkshopExecutionNotifier, so the main agent gets NO notification
+	// for this message_sequence item. That used to be an invisible no-op (a whole
+	// step ran with the main agent never told). Log it so the wiring gap is
+	// obvious instead of silently swallowed.
+	if hcpo.workshopExecutionNotifier == nil {
+		if hcpo.GetLogger() != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ message_sequence item %q/%q: workshopExecutionNotifier is nil — auto-notification skipped (notifier not wired for this execution path)", step.GetID(), item.ID))
+		}
 		return "", "", nil, false
 	}
 	execID := messageSequenceItemExecutionID(step.GetID(), item.ID, started)

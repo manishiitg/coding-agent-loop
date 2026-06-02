@@ -712,7 +712,11 @@ export const GlobalActivityMonitor: React.FC = () => {
         const tone = statusTone(session, workflowInfo)
         const title = displaySessionTitle(session, tab, workflowInfo, fallbackName)
         const statusLabel = headerStatusLabel(session, workflowInfo)
-        const name = shortText(title, statusLabel === 'running' ? nameCharLimit : Math.max(5, nameCharLimit - 2))
+        // End user only cares about two states: is it working, or is it waiting for me?
+        // The icon alone conveys this — spinner = running, amber alert = waiting for input.
+        // No status text at all; full detail stays in the hover tooltip.
+        const isWorking = tone === 'running' || tone === 'background'
+        const name = shortText(title, nameCharLimit)
         const waitingTitle = session.waiting_message ? ` · ${session.waiting_message}` : ''
         return (
           <React.Fragment key={item.id}>
@@ -725,14 +729,14 @@ export const GlobalActivityMonitor: React.FC = () => {
               className={pillClasses}
               title={`${title} · ${statusLabel}${waitingTitle}`}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${statusDotClasses(tone)}`} />
-              <span className="whitespace-nowrap">
-                {statusLabel === 'running' ? name : `${name} · ${statusLabel}`}
-              </span>
-              {tone === 'needs-input' && <AlertCircle className="w-3 h-3 text-amber-500 dark:text-amber-400" />}
-              {tone === 'idle' && <Clock className="w-3 h-3 opacity-50" />}
-              {tone === 'paused' && <Pause className="w-3 h-3 opacity-50" />}
-              {tone === 'background' && <Loader2 className="w-3 h-3 animate-spin opacity-60" />}
+              {tone === 'needs-input'
+                ? <AlertCircle className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
+                : isWorking
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin opacity-70" />
+                  : tone === 'paused'
+                    ? <Pause className="w-3.5 h-3.5 opacity-50" />
+                    : <Clock className="w-3.5 h-3.5 opacity-50" />}
+              <span className="whitespace-nowrap">{name}</span>
             </button>
           </React.Fragment>
         )

@@ -235,7 +235,7 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
           html={state.content || ''}
           title={widget.title || name}
           autoHeight
-          className="block min-h-[120px] w-full rounded-lg border border-border bg-background"
+          className="block w-full border-0"
         />
       )}
       {(format === 'text' || format === 'code' || format === 'json') && (

@@ -706,10 +706,30 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       : previewMode === 'tablet'
         ? 'mx-auto w-full max-w-[880px] p-1.5 transition-all duration-200'
         : 'mx-auto w-full max-w-full transition-all duration-200'
+  // A report that is just a single HTML document renders edge-to-edge: the HTML
+  // owns its own width / padding / background, so we add no content-width cap, no
+  // scroll padding, and no card chrome around it (avoids double margins/frames).
+  const htmlOnlyReport = useMemo(() => {
+    if (visibleSections.length !== 1) return false
+    const { entries } = visibleSections[0]
+    if (entries.length !== 1 || entries[0].entry.kind !== 'single') return false
+    const w = entries[0].entry.widget
+    if (w.kind !== 'file') return false
+    const fmt = w.renderFormat || 'auto'
+    if (fmt === 'html') return true
+    if (fmt === 'auto') {
+      const ext = (w.source || '').split('.').pop()?.toLowerCase()
+      return ext === 'html' || ext === 'htm'
+    }
+    return false
+  }, [visibleSections])
+
   const previewContentClassName =
     previewMode === 'mobile' || previewMode === 'tablet'
       ? 'w-full max-w-full'
-      : 'mx-auto w-full max-w-5xl'
+      : htmlOnlyReport
+        ? 'w-full max-w-full'
+        : 'mx-auto w-full max-w-5xl'
 
 
   // Inline custom palette → CSS variables on the report root. Hex values get
@@ -818,7 +838,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2 py-2 [scrollbar-gutter:stable] sm:px-3 sm:py-3">
+      <div className={`min-h-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable] ${htmlOnlyReport ? '' : 'px-2 py-2 sm:px-3 sm:py-3'}`}>
         <div ref={reportExportRef} className={previewShellClassName}>
           <div className={`flex flex-col gap-3 ${previewContentClassName}`}>
             {loading && <ReportSkeleton />}

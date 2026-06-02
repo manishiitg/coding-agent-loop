@@ -16,6 +16,12 @@ export interface ReportDataApi {
   query: (sql: string) => Promise<Record<string, unknown>[]>
   get: (path: string) => Promise<unknown>
   getText: (path: string) => Promise<string | null>
+  // File access (parity with file widgets): fileUrl returns an authenticated
+  // blob URL usable in <img src> / <a href> / <iframe src> for images, PDFs,
+  // etc.; openFile opens the file in the in-report preview modal. Both scoped to
+  // db/ knowledgebase/ docs/.
+  fileUrl: (path: string) => Promise<string | null>
+  openFile: (path: string) => void
 }
 
 export interface ReportRuntime {

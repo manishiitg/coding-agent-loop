@@ -31,7 +31,10 @@ Workshop may maintain the live frontend report defined by `reports/report_plan.j
   - `await window.report.query(sql)` — run a read-only SQL query against `db/db.sqlite` → array of row objects (the primary data source)
   - `await window.report.get(path)` — fetch any `db/`/`knowledgebase/`/`docs/` file live → parsed JSON (or text); use for markdown/text/assets, not structured data
   - `await window.report.getText(path)` — raw file text
-  - the `report:data` event fires on load and on every refresh — render in its handler
+  - `await window.report.fileUrl(path)` — an authenticated blob URL for a workspace file (image/PDF/etc.); use it in `<img src>`, `<a href>`, or `<iframe src>` to show artifacts
+  - `window.report.openFile(path)` — open a file in the in-report preview modal (e.g. a "view PDF" button)
+  - `window.report.theme` — `'dark'`/`'light'` (the app's current mode); the `report:data` event fires on load + refresh, `report:theme` on toggle — render/restyle in their handlers
+  (all paths scoped to `db/`/`knowledgebase/`/`docs/`, same as file widgets)
 
   ~~~html
   <h1>Portfolio Report</h1>

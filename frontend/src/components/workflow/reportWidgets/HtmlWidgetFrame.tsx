@@ -13,6 +13,8 @@ import { useReportDataApi } from './reportEmbedContext'
 //   await window.report.query(sql)   // read-only SQL against db/db.sqlite -> array of row objects
 //   await window.report.get(path)    // any db/ knowledgebase/ docs file -> parsed JSON (or text)
 //   await window.report.getText(path)// raw file text
+//   await window.report.fileUrl(path)// blob URL for <img>/<a>/<iframe> (images, PDFs, …)
+//   window.report.openFile(path)     // open a file in the in-report preview modal
 //   window.report.theme              // 'dark' | 'light' — the APP's current theme
 //   window.addEventListener('report:data', render)   // fires on load + on data refresh
 //   window.addEventListener('report:theme', restyle) // fires when the app theme toggles
@@ -86,6 +88,8 @@ export function HtmlReportFrame({
         query: dataApi.query,
         get: dataApi.get,
         getText: dataApi.getText,
+        fileUrl: dataApi.fileUrl,
+        openFile: dataApi.openFile,
         theme: 'light',
       }
       applyTheme()

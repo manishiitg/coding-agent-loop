@@ -26,7 +26,8 @@ import {
 } from './reportWidgets/shared'
 import { useCompactWidgetLayout, useContainerSizeTier } from './reportWidgets/tableHelpers'
 import { BarChart3, Check, ChevronDown, Download, Laptop, Loader2, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
-import { agentApi } from '../../services/api'
+import { agentApi, workspaceApi } from '../../services/api'
+import { useReportFilePreviewStore } from '../../stores/useReportFilePreviewStore'
 import { useChatStore } from '../../stores/useChatStore'
 import {
   applyWidgetFilter,
@@ -768,7 +769,28 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
         return text
       }
     }
-    return { workspacePath, query, get, getText }
+    const fileUrl = async (path: string): Promise<string | null> => {
+      const n = allowed(path)
+      if (!n) return null
+      try {
+        const response = await workspaceApi.get(`/api/documents/${encodeURIComponent(`${workspacePath}/${n}`)}`, {
+          params: { download: 'true' },
+          responseType: 'blob',
+          headers: { Accept: 'application/octet-stream' },
+          transformResponse: [(d) => d],
+        })
+        const blob = response.data instanceof Blob ? response.data : new Blob([response.data])
+        return URL.createObjectURL(blob)
+      } catch {
+        return null
+      }
+    }
+    const openFile = (path: string): void => {
+      const n = allowed(path)
+      if (!n) return
+      useReportFilePreviewStore.getState().show({ path: `${workspacePath}/${n}` })
+    }
+    return { workspacePath, query, get, getText, fileUrl, openFile }
   }, [workspacePath])
 
   const reportRuntime = useMemo(

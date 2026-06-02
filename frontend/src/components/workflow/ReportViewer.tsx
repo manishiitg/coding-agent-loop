@@ -20,6 +20,7 @@ import {
   WidgetError,
   WidgetShell,
   WidgetVisibilityButton,
+  isDocumentWidget,
   resolveSingularWidgetSource,
   type SingularWidgetSourceResolution,
 } from './reportWidgets/shared'
@@ -1031,9 +1032,17 @@ function SectionContainer({
     ? tabGroups.find(tab => tab.key === activeTabKey) ?? tabGroups[0]
     : null
   const renderedEntries = activeTab ? activeTab.entries : entries
+  // A section that is just a single self-contained document (md/html) doesn't
+  // need the section heading + card chrome — the document carries its own title
+  // and should fill the whole section. Common for HTML reports.
+  const documentOnly =
+    !tabsEnabled &&
+    entries.length === 1 &&
+    entries[0].entry.kind === 'single' &&
+    isDocumentWidget(entries[0].entry.widget)
   return (
-    <section className="flex flex-col gap-2 p-0 sm:gap-2.5 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3 sm:shadow-sm">
-      <SectionHeader heading={section.heading} />
+    <section className={documentOnly ? 'flex flex-col' : 'flex flex-col gap-2 p-0 sm:gap-2.5 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3 sm:shadow-sm'}>
+      {!documentOnly && <SectionHeader heading={section.heading} />}
       {tabsEnabled && tabGroups.length > 0 && (
         sizeTier === 'phone' ? (
           <MobileTabPicker

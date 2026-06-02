@@ -22,12 +22,16 @@ READ FIRST
 MIGRATE (build the database)
 
 1. One table per JSON file. Table name = file basename without `.json`, lowercased, non-alphanumeric → `_` (e.g. `db/job_candidates.json` → table `job_candidates`).
-2. **Normalize the JSON to a list of row objects first — NEVER drop data.** Check these shapes in order:
+2. **Normalize the JSON to row objects first — NEVER drop ANY non-empty array, object, or field.** The cardinal rule: every piece of source data must land somewhere queryable (a row, a column, or its own table). Putting data "in `db/README.md`" does NOT count — the README is documentation, not storage. Only tiny bookkeeping scalars (`schema_version`, `last_updated`) may be dropped to README. Check these shapes in order:
    - **Array of objects** `[{...}, {...}]` → those are the rows (the common case).
-   - **Wrapper object with a nested rows array** — an object that holds the real rows under ONE key alongside metadata/schema keys, e.g. `{"_schema": {...}, "employees": [ …42… ], "total_count": 42, "last_synced": "..."}` or `{"records": [ …38… ]}`. Migrate the **inner array** (`employees` / `records` / etc.) as the rows — do NOT make the wrapper a single row. Pick the array-valued key (if several, the one whose name matches the table/entity or holds objects); keep the sibling metadata in `db/README.md`, not as a row.
+   - **Wrapper object with ONE meaningful nested array** + only scalar/bookkeeping siblings — e.g. `{"_schema": {...}, "employees": [ …42… ], "total_count": 42, "last_synced": "..."}` or `{"records": [ …38… ]}`. Migrate the **inner array** (`employees` / `records`) as the rows; the scalar siblings are bookkeeping → note them in README. (If a scalar sibling is real data, keep it as a column on every row.)
+   - **Rich state object with MULTIPLE non-empty collections** — e.g. `action_queue.json` = `{actions:[6], parameter_gaps:[6], notes:[3], source_files:[6], session_policy:{…}, status, …}`. This is the data-loss trap: do NOT pick one array and discard the rest. Preserve everything, by EITHER:
+     - **(a) one row, JSON columns** (simplest, fully faithful): make the whole object **one row**; store each nested array/object as a JSON-text column (`json(...)`), keep scalars as their own columns. Queryable later via `json_extract` / `json_each`. Prefer this when the file is one logical state document (a queue, a config, a per-day snapshot).
+     - **(b) one table per collection**: split each non-empty nested array into its own table named `<file>_<key>` (e.g. `action_queue_actions`, `action_queue_parameter_gaps`, `action_queue_notes`), plus a single-row `<file>_meta` table for the top-level scalars/objects. Prefer this when the collections are genuinely independent row sets a report will query separately.
+     Pick (a) or (b) per file and record which in README. Either way, **no non-empty array or object may be dropped.**
    - **A single object** `{...}` (no nested rows array) → that is **ONE row** (its keys = columns). Do NOT create an empty table — that loses the data. (e.g. `{"status":"allowed"}` → one row `status="allowed"`.)
    - **An object whose values are all row objects** (a map/dict keyed by id, e.g. `{"a":{...},"b":{...}}`) → one row per value; add the key as an `id`/key column if it isn't already a field.
-   - **Empty array `[]` or empty object `{}`** → create the table empty (preserve the contract).
+   - **Empty array `[]` / empty object `{}` / object whose only arrays are all empty** → create the table empty (preserve the contract); for a single object with empty embedded arrays, still make it one row with those arrays as empty JSON.
    - **A scalar or array of scalars** → wrap as a single-column table (`value`), one row per element.
 3. Columns = the union of top-level keys across all normalized rows. Use the declared `primary_key` from `db/README.md` as `PRIMARY KEY` (only if it is unique across the rows; otherwise note it and use a synthetic key). Scalar values map to their natural type (INTEGER / REAL / TEXT); booleans → INTEGER 0/1; nested objects and arrays are stored as JSON **text** (use SQLite's `json(...)` so they round-trip and stay queryable via `json_extract`).
 4. Write a small `python3` script (stdlib `sqlite3` + `json`) — the most reliable way to handle arbitrary/nested JSON. Build into **`db/db.sqlite.tmp`** (not the final name yet). The script must, per file: load + normalize to rows per step 2, `CREATE TABLE` with the PK, insert every row (`json.dumps` nested values), add the PK index + any field report widgets filter/sort by, and print the row count.
@@ -35,9 +39,10 @@ MIGRATE (build the database)
 VERIFY (before committing) — this is the guard against silent data loss
 
 1. For each table, compute the **expected** row count from the normalized shape and compare to `sqlite3 db/db.sqlite.tmp "SELECT COUNT(*) FROM <table>"`:
-   - array → `jq 'length'`; wrapper with nested array → `jq '.<key> | length'` (the inner array, e.g. `jq '.employees | length'`); single object → **1**; keyed map → `jq 'length'` (number of keys); empty → 0.
+   - array → `jq 'length'`; wrapper with nested array → `jq '.<key> | length'` (the inner array, e.g. `jq '.employees | length'`); single object / state-doc as one row (option a) → **1**; state-doc split into tables (option b) → each `<file>_<key>` table = `jq '.<key> | length'`; keyed map → `jq 'length'` (number of keys); empty → 0.
    Do NOT blindly `jq 'length'` on the file (it returns the top-level key-count for a wrapper/object, not the row count). They MUST match. If any mismatch — especially a non-empty source mapping to 0 rows — STOP, do not commit, and report the discrepancy.
-2. Spot-check one row per table round-trips (including a nested field via `json_extract`).
+2. **No-dropped-data check (critical for rich state objects):** for each source file, list every top-level key whose value is a non-empty array or object; confirm each one is represented in SQLite (as a table, or as a non-null JSON column on the row). If any non-empty array/object from the source has no home in the DB, STOP — that is silent data loss.
+3. Spot-check one row per table round-trips (including a nested field via `json_extract`).
 
 REWRITE REPORTS
 

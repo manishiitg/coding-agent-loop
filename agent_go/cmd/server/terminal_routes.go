@@ -778,25 +778,66 @@ func sendTerminalKey(ctx context.Context, tmuxSession, key string) error {
 	if tmuxSession == "" {
 		return fmt.Errorf("tmux session is required")
 	}
-	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "enter", "return":
-		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "C-m")
-	case "esc", "escape":
-		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "Escape")
-	case "ctrl-c", "ctrl_c", "interrupt", "cancel":
-		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "C-c")
-	case "ctrl-o", "ctrl_o", "expand":
-		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "C-o")
-	case "tab":
-		// e.g. allowlist a gated MCP-tool prompt, accept a menu selection.
-		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "Tab")
-	case "up", "arrow-up", "arrow_up":
-		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "Up")
-	case "down", "arrow-down", "arrow_down":
-		return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, "Down")
-	default:
+	tmuxKey, ok := tmuxKeyName(key)
+	if !ok {
 		return fmt.Errorf("unsupported terminal key %q", key)
 	}
+	return runTerminalTmuxCommand(ctx, "", "send-keys", "-t", tmuxSession, tmuxKey)
+}
+
+// tmuxKeyName maps a frontend key identifier to the key name understood by
+// `tmux send-keys`. It covers the named keys used by the terminal debug menu
+// plus the broader set needed for live keyboard passthrough from the chat
+// input (arrows, editing keys, navigation keys, and arbitrary Ctrl chords).
+func tmuxKeyName(key string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "enter", "return":
+		return "C-m", true
+	case "esc", "escape":
+		return "Escape", true
+	case "tab":
+		// e.g. allowlist a gated MCP-tool prompt, accept a menu selection.
+		return "Tab", true
+	case "btab", "shift-tab", "shift_tab":
+		return "BTab", true
+	case "space":
+		return "Space", true
+	case "backspace", "bspace":
+		return "BSpace", true
+	case "delete", "del":
+		return "DC", true
+	case "up", "arrow-up", "arrow_up":
+		return "Up", true
+	case "down", "arrow-down", "arrow_down":
+		return "Down", true
+	case "left", "arrow-left", "arrow_left":
+		return "Left", true
+	case "right", "arrow-right", "arrow_right":
+		return "Right", true
+	case "home":
+		return "Home", true
+	case "end":
+		return "End", true
+	case "pageup", "page-up", "page_up", "pgup":
+		return "PageUp", true
+	case "pagedown", "page-down", "page_down", "pgdn":
+		return "PageDown", true
+	case "ctrl-o", "ctrl_o", "expand":
+		return "C-o", true
+	case "ctrl-c", "ctrl_c", "interrupt", "cancel":
+		return "C-c", true
+	}
+	// Generic Ctrl chord, e.g. "ctrl-d" -> "C-d", "ctrl-l" -> "C-l".
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	for _, prefix := range []string{"ctrl-", "ctrl_"} {
+		if rest := strings.TrimPrefix(normalized, prefix); rest != normalized && len(rest) == 1 {
+			r := rest[0]
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				return "C-" + rest, true
+			}
+		}
+	}
+	return "", false
 }
 
 func isMissingTmuxTargetError(err error) bool {

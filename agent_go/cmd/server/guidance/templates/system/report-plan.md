@@ -72,6 +72,14 @@ Workshop may maintain the live frontend report defined by `reports/report_plan.j
     body { background:var(--bg); color:var(--fg); }
     ```
     Never hardcode a single-mode colour (e.g. plain `#000`/`#fff`) — it breaks in the other theme. Re-style on the `report:theme` event if your JS-rendered charts bake colours in.
+  - **Match the app palette via its CSS variables (preferred over inventing colours).** The app injects its **resolved theme tokens** into the report iframe as CSS variables (HSL triplets) that **auto-switch with the app's light/dark mode** — so you don't have to define your own palette or guess hex values. Use them with `hsl(var(--token))`:
+    ```css
+    body { background: hsl(var(--background)); color: hsl(var(--foreground)); }
+    .card { background: hsl(var(--card)); border: 1px solid hsl(var(--border)); }
+    .accent { color: hsl(var(--primary)); }       /* primary accent */
+    .muted { color: hsl(var(--muted-foreground)); }
+    ```
+    Available: `--background --foreground --card --card-foreground --primary --primary-foreground --secondary --muted --muted-foreground --accent --accent-foreground --border --input --ring --destructive` and chart colours `--chart-1 … --chart-5`. These already reflect the active light/dark theme (and any report theme), so a report built on them matches the rest of the app and flips correctly when the user toggles — no extra work. (You may still define your own palette if you want a bespoke brand look; the tokens are there when you want consistency.)
   - **Responsive design (raw HTML is YOUR job).** The report renders at three widths: **mobile ≈ 480px, tablet ≈ 880px, desktop full (content ≈ 1024px)**. Author HTML that flows at all three: use **fluid widths** (`%` / `max-width: 100%`, never fixed `px` page widths), make wide tables wrap or scroll (`overflow-x:auto`), **stack multi-column layouts on narrow screens** with `@media (max-width: 640px)` and `(max-width: 960px)`, use relative font sizes, and never assume a desktop width. A quick check: it must read with no horizontal overflow at ~480px. (Markdown documents and report-plan widgets reflow automatically — this only applies to hand-written HTML.)
   - **SELF-REVIEW the design visually — don't ship HTML you haven't looked at.** You cannot judge a visual design by reading its source; render it and look. Loop:
     1. Build a **self-contained** version of the report HTML with **data baked in** — run the queries yourself and inline the actual numbers/rows, and inline images as base64 (or omit). It must NOT depend on `window.report` (that only exists inside the app; opened standalone it renders blank), and must reference nothing external.

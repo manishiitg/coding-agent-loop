@@ -1,6 +1,35 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useReportDataApi } from './reportEmbedContext'
 
+// App theme tokens (HSL triplets) exposed to the HTML report as CSS variables so
+// it can match the app palette via hsl(var(--…)) and switch with light/dark. Read
+// from the (themed) iframe host element so report-theme overrides are included.
+const REPORT_THEME_VARS = [
+  'background', 'foreground', 'card', 'card-foreground', 'popover', 'popover-foreground',
+  'primary', 'primary-foreground', 'secondary', 'secondary-foreground',
+  'muted', 'muted-foreground', 'accent', 'accent-foreground',
+  'border', 'input', 'ring', 'destructive', 'destructive-foreground',
+  'chart-1', 'chart-2', 'chart-3', 'chart-4', 'chart-5',
+] as const
+
+function injectThemeTokens(host: HTMLElement, doc: Document) {
+  const cs = getComputedStyle(host)
+  const decls = REPORT_THEME_VARS
+    .map((v) => {
+      const val = cs.getPropertyValue(`--${v}`).trim()
+      return val ? `--${v}:${val};` : ''
+    })
+    .join('')
+  if (!decls) return
+  let style = doc.getElementById('__report_theme_tokens') as HTMLStyleElement | null
+  if (!style) {
+    style = doc.createElement('style')
+    style.id = '__report_theme_tokens'
+    doc.head?.appendChild(style)
+  }
+  style.textContent = `:root{${decls}}`
+}
+
 // HtmlReportFrame renders an HTML report in a sandboxed iframe and injects a live
 // data API onto the iframe's window as `window.report`, then fires a `report:data`
 // event. The HTML owns ALL rendering (its own charts/tables/branded CSS) — we
@@ -50,15 +79,19 @@ export function HtmlReportFrame({
   // `.dark` (or `.dark-plus`) class on <html>.
   const applyTheme = useCallback(() => {
     const frame = iframeRef.current
+    if (!frame) return
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const win = frame?.contentWindow as any
-    const doc = frame?.contentDocument
+    const win = frame.contentWindow as any
+    const doc = frame.contentDocument
     if (!win || !doc?.documentElement) return
     const cl = document.documentElement.classList
     const theme: 'dark' | 'light' = cl.contains('dark') || cl.contains('dark-plus') ? 'dark' : 'light'
     doc.documentElement.classList.toggle('dark', theme === 'dark')
     doc.documentElement.setAttribute('data-theme', theme)
     if (win.report) win.report.theme = theme
+    // Expose the app's resolved theme tokens (current light/dark + report theme)
+    // as CSS variables inside the iframe so the HTML can use hsl(var(--…)).
+    injectThemeTokens(frame, doc)
     try {
       win.dispatchEvent(new win.Event('report:theme'))
     } catch {

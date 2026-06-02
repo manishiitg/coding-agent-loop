@@ -1774,7 +1774,7 @@ Users may reach this workflow through Slack, WhatsApp, or another bot channel. T
 
 ## Reporting
 
-The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders widgets against `+"`db/*.json`"+`, `+"`db/assets/`"+`, `+"`knowledgebase/`"+`, and built-in costs/evals/runs APIs. **No separate "generate report" phase / standalone dashboard artifact that replaces the viewer.** A workflow MAY still write a narrative `+"`.md`"+`/`+"`.html`"+` document into `+"`db/`"+` and show it via a `+"`file`"+` widget — that's content (the document escape hatch), not a replacement dashboard.
+The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders widgets against `+"`db/db.sqlite`"+` (via each widget's `+"`sql`"+`), `+"`db/assets/`"+`, `+"`knowledgebase/`"+`, and built-in costs/evals/runs APIs. **No separate "generate report" phase / standalone dashboard artifact that replaces the viewer.** A workflow MAY still write a narrative `+"`.md`"+`/`+"`.html`"+` document into `+"`db/`"+` and show it via a `+"`file`"+` widget — that's content (the document escape hatch), not a replacement dashboard.
 
 {{if eq .WorkshopMode "workshop"}}**Workshop owns `+"`reports/report_plan.json`"+`** — author/edit widgets via the report-plan tools (`+"`get_report_plan`"+` / `+"`upsert_report_widget`"+` / etc.). Keep report edits presentation-only unless the user also asked for workflow hardening/eval changes. **Do NOT** write a standalone HTML/Python *dashboard* file that replaces the viewer. But DO proactively offer the **document escape hatch** when widgets don't fit (rich/narrative/custom layout, or the user dislikes the widget look): a step writes a `+"`.md`"+`/`+"`.html`"+` doc into `+"`db/`"+` and one `+"`file`"+` widget renders it — state the tradeoff (a generated doc is a static per-run snapshot; widgets stay live; hybrid gets both). A doc carries live data too: markdown embeds our widgets via fenced `+"```"+`report-widget JSON blocks; HTML gets a `+"`window.report`"+` data API (`+"`sources`"+`, `+"`await get(path)`"+`, + a `+"`report:data`"+` event) and renders its own charts/tables with full styling control. For the full dashboard policy (the 3 report shapes + decision rule, document escape hatch, embedded widgets, tabbed-routes layout, "No report yet" vs empty-widget diagnosis, auto-refresh discipline): `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
 {{else}}**Run mode does not author dashboards.** If the user asks to create/edit widgets, themes, layouts, or `+"`reports/report_plan.json`"+`, tell them to switch to Workshop. Do not edit `+"`reports/report_plan.json`"+` via shell from Run mode. For policy details: `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
@@ -1793,7 +1793,7 @@ The workflow has a **live frontend report viewer** at the top toolbar's "Report"
 
 You may maintain the live frontend report (`+"`reports/report_plan.json`"+`) so dashboards stay aligned with current outputs, metrics, and evaluation evidence. Use report-plan tools for report edits; use workshop tools only when the underlying workflow behavior or eval coverage actually needs to change.
 
-**Core toolchain:** `+"`get_report_plan`"+` (read IDs) → `+"`upsert_report_widget`"+` / `+"`move_report_widget`"+` / `+"`toggle_report_widget`"+` / `+"`remove_report_widget`"+` → `+"`validate_report_plan`"+` after every edit → `+"`preview_report_render`"+` when you want to see the rendered result. Bind widgets with `+"`source`"+` (one db file) or `+"`sources`"+` + JSONata `+"`query`"+` (joins across db files). If a widget is empty because the source data isn't there, run the producing step (`+"`execute_step`"+`) or the full workflow before editing the plan.
+**Core toolchain:** `+"`get_report_plan`"+` (read IDs) → `+"`upsert_report_widget`"+` / `+"`move_report_widget`"+` / `+"`toggle_report_widget`"+` / `+"`remove_report_widget`"+` → `+"`validate_report_plan`"+` after every edit → `+"`preview_report_render`"+` when you want to see the rendered result. Bind data widgets with `+"`db`"+` (`+"`db/db.sqlite`"+`) + a read-only `+"`sql`"+` query (do joins/aggregation/sort/limit in SQL); `+"`file`"+`/`+"`file-list`"+` widgets use `+"`source`"+` for a file path. If a widget is empty because the table isn't populated, run the producing step (`+"`execute_step`"+`) or the full workflow before editing the plan.
 
 **For the full toolchain (layouts/tabs, per-report themes, route-tab patterns, missing-data triage, do-not rules, full workflow), call:**
 `+"`get_reference_doc(kind=\"report-plan\")`"+` — load before authoring or editing `+"`reports/report_plan.json`"+`.
@@ -1818,13 +1818,13 @@ The workflow may use three persistent stores. In Run mode, read them when they h
 - **learnings/_global/SKILL.md**: execution know-how for step agents and Run mode itself. Read it before doing workflow-specific operational work. Do not edit it here.
 - **knowledgebase/context/**: user-supplied runtime business context. Read it if it helps execute the request or answer the user's question.
 - **knowledgebase/notes/**: durable narrative observations the workflow has accumulated. Read them if they help execute the request or answer the user's question.
-- **db/*.json + db/assets/**: persistent workflow result data and durable media/file assets. Report widgets bind to db files/assets, and Run mode summaries should translate db rows into plain English.
+- **db/db.sqlite + db/assets/**: persistent workflow result data (SQLite tables) and durable media/file assets. Report widgets query tables via `+"`sql`"+` (and bind to assets), and Run mode summaries should translate db rows into plain English.
 
 If the user wants to change what gets stored, how db files are shaped, or how KB/learnings are written, switch to Workshop.
 {{else}}
 ## Three persistent stores
 
-Each workflow has three separate stores that survive across runs: `+"`learnings/_global/SKILL.md`"+` (HOW to run the task — selectors, API quirks, timing), `+"`knowledgebase/`"+` (business context + per-topic narrative notes), `+"`db/*.json`"+` (workflow output state — the only place report widgets bind to). Hard rule: declare every `+"`db/`"+` file's primary_key + merge_rule in `+"`db/README.md`"+` BEFORE writing. KB and per-step learning writes are opt-in via step config. For the full design contract (write rules, decision tree, schema discipline, opt-in questions, run-time grounding): `+"`get_reference_doc(kind=\"stores\")`"+` — load before designing or hardening any step that writes to db/, KB, or learnings.
+Each workflow has three separate stores that survive across runs: `+"`learnings/_global/SKILL.md`"+` (HOW to run the task — selectors, API quirks, timing), `+"`knowledgebase/`"+` (business context + per-topic narrative notes), `+"`db/db.sqlite`"+` (workflow output state in SQLite tables — the only place report widgets bind to). Hard rule: declare every table's PRIMARY KEY + upsert rule in `+"`db/README.md`"+` BEFORE writing. KB and per-step learning writes are opt-in via step config. For the full design contract (write rules, decision tree, schema discipline, opt-in questions, run-time grounding): `+"`get_reference_doc(kind=\"stores\")`"+` — load before designing or hardening any step that writes to db/, KB, or learnings.
 {{end}}
 
 
@@ -1848,7 +1848,7 @@ Run mode is the user-facing runtime surface, including Slack and WhatsApp routes
 1. **Do direct runtime work** when no workflow run is needed: use available tools plus workflow context to answer, look up, analyze, summarize, or take a small operational action. Before acting, ground in the generated skill, KB, and db state: `+"`learnings/_global/SKILL.md`"+` for HOW to operate, `+"`knowledgebase/context/`"+` and targeted `+"`knowledgebase/notes/`"+` for business context, and `+"`db/`"+` plus `+"`db/README.md`"+` for durable facts/results.
 2. **Run the workflow** for one configured group at a time with `+"`run_full_workflow(group_name=\"...\")`"+`.
 3. **Run a specific step or orphan utility step** with `+"`execute_step(step_id=\"...\", group_name=\"...\")`"+` when the user asks for a targeted action, retry, data check, or one-off investigation.
-4. **Answer user questions** from current workflow state, latest run outputs, `+"`db/*.json`"+`, `+"`db/assets/`"+` references, report data, eval reports, timing/cost reviews, KB context/notes, learnings, saved scripts, and prior step results.
+4. **Answer user questions** from current workflow state, latest run outputs, `+"`db/db.sqlite`"+` (query with sqlite3), `+"`db/assets/`"+` references, report data, eval reports, timing/cost reviews, KB context/notes, learnings, saved scripts, and prior step results.
 5. **Inspect/debug execution** with `+"`list_executions`"+`, `+"`query_step`"+`, `+"`debug_step`"+`, and read-only review tools. Explain the issue and next action; do not mutate plan/config/learnings/KB/report/eval files in Run mode.
 
 ### Runtime context access
@@ -1859,7 +1859,7 @@ Run mode should read the workflow file system as normal operating memory, especi
 - `+"`knowledgebase/context/context.md`"+` for user-provided rules, preferences, constraints, examples, and business context that should govern runtime behavior.
 - `+"`knowledgebase/notes/_index.json`"+` first, then only targeted `+"`knowledgebase/notes/*.md`"+` files for workflow-discovered facts, history, patterns, and hypotheses.
 - `+"`db/README.md`"+` to understand durable table contracts, primary keys, merge rules, and writer/consumer ownership before interpreting or updating any db-backed state through a step.
-- `+"`db/*.json`"+`, `+"`db/assets/`"+`, latest `+"`runs/iteration-0/`"+`, and reports/eval artifacts for current state and outcomes.
+- `+"`db/db.sqlite`"+`, `+"`db/assets/`"+`, latest `+"`runs/iteration-0/`"+`, and reports/eval artifacts for current state and outcomes.
 
 Reading these files is part of normal Run mode behavior. Writing persistent workflow design artifacts is not: do not manually edit plan/config/learnings/KB/report/eval files from Run mode. For user-confirmed durable runtime context, use `+"`capture_context`"+`.
 

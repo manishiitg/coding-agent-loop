@@ -13,7 +13,17 @@ import { useReportDataApi } from './reportEmbedContext'
 //   await window.report.query(sql)   // read-only SQL against db/db.sqlite -> array of row objects
 //   await window.report.get(path)    // any db/ knowledgebase/ docs file -> parsed JSON (or text)
 //   await window.report.getText(path)// raw file text
-//   window.addEventListener('report:data', render)  // fires on load + on refresh
+//   window.report.theme              // 'dark' | 'light' — the APP's current theme
+//   window.addEventListener('report:data', render)   // fires on load + on data refresh
+//   window.addEventListener('report:theme', restyle) // fires when the app theme toggles
+//
+// Theme: the iframe is a separate document and `@media (prefers-color-scheme)`
+// only sees the OS, not the app's in-app light/dark toggle. So the frame mirrors
+// the app theme onto the iframe's <html> as BOTH a `.dark` class and a
+// `data-theme="dark|light"` attribute, exposes `window.report.theme`, and keeps
+// them in sync via a MutationObserver when the user toggles. Author HTML to key
+// off `:root.dark` / `[data-theme="dark"]` (and prefers-color-scheme as a
+// standalone fallback).
 //
 // autoHeight: size the iframe to its content (no inner scrollbar / clipping) and
 // keep it in sync via a ResizeObserver as content renders. Used for the inline
@@ -32,6 +42,27 @@ export function HtmlReportFrame({
   const dataApi = useReportDataApi()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const observerRef = useRef<ResizeObserver | null>(null)
+
+  // Mirror the APP's light/dark theme onto the iframe document (the agent's HTML
+  // designs its own palette but keys the active mode off this). The app uses a
+  // `.dark` (or `.dark-plus`) class on <html>.
+  const applyTheme = useCallback(() => {
+    const frame = iframeRef.current
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const win = frame?.contentWindow as any
+    const doc = frame?.contentDocument
+    if (!win || !doc?.documentElement) return
+    const cl = document.documentElement.classList
+    const theme: 'dark' | 'light' = cl.contains('dark') || cl.contains('dark-plus') ? 'dark' : 'light'
+    doc.documentElement.classList.toggle('dark', theme === 'dark')
+    doc.documentElement.setAttribute('data-theme', theme)
+    if (win.report) win.report.theme = theme
+    try {
+      win.dispatchEvent(new win.Event('report:theme'))
+    } catch {
+      /* iframe may have navigated/reloaded */
+    }
+  }, [])
 
   const resize = useCallback(() => {
     if (!autoHeight) return
@@ -55,7 +86,9 @@ export function HtmlReportFrame({
         query: dataApi.query,
         get: dataApi.get,
         getText: dataApi.getText,
+        theme: 'light',
       }
+      applyTheme()
       try {
         win.dispatchEvent(new win.Event('report:data'))
       } catch {
@@ -81,6 +114,14 @@ export function HtmlReportFrame({
   useEffect(() => {
     inject()
   }, [inject])
+
+  // Keep the iframe theme in sync when the user toggles the app's light/dark mode
+  // while the report is open (watches the app's <html> class).
+  useEffect(() => {
+    const mo = new MutationObserver(() => applyTheme())
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    return () => mo.disconnect()
+  }, [applyTheme])
 
   // Disconnect the observer on unmount.
   useEffect(() => () => observerRef.current?.disconnect(), [])

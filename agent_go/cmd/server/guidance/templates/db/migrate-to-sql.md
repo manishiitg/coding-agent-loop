@@ -56,6 +56,20 @@ REWRITE REPORTS
 2. Apply the same rewrite to any ```report-widget embedded blocks you found in markdown docs.
 3. Edit `reports/report_plan.json` with `diff_patch_workspace_file`.
 
+REWRITE PLAN STEPS — **required, or the workflow breaks on next run**
+
+The step descriptions and step config still tell agents to read/write the old `db/*.json` files with `jq`/`cat`/file-writes. After migration those files are gone (in `_json_backup/`), so every such instruction is stale. Update them:
+
+1. Search the plan for stale references: grep `planning/plan.json` and `planning/step_config.json` for `db/<file>.json`, `jq`, and JSON-path forms like `db/posts.json[<id>].field`.
+2. For each **step description** that reads/writes a migrated file, rewrite the instruction to use SQLite:
+   - read: `jq '.posts[0:7] | map({...})' db/posts.json` → `sqlite3 db/db.sqlite "SELECT post_id, category FROM posts LIMIT 7"` (single-quote the SQL; `$`-paths need quoting).
+   - write/upsert: "append to db/x.json" / "upsert by key" → `sqlite3 db/db.sqlite "INSERT INTO x(...) VALUES(...) ON CONFLICT(<pk>) DO UPDATE SET ..."`.
+   - JSON-path conditions like `db/posts.json[post_id].success == true` → `SELECT success FROM posts WHERE post_id = '...'`.
+   - Use the plan-modification tools (e.g. `update_step_config` / the plan editor) so changes are schema-validated; do not hand-edit `plan.json` via shell.
+3. For **`foreach`** items (message_sequence / todo_task) that iterate a db file: the `source` / `source_path` fields are **gone** — convert each to `source_sql` (e.g. `source: "db/tasks.json"` → `source_sql: "SELECT * FROM tasks"`). A foreach left with `source` and no `source_sql` will fail validation at runtime.
+4. Update `context_dependencies` / `validation_schema` file rules that point at `db/*.json` — these no longer exist as files; rely on the table contract in `db/README.md` instead (or a `context_output` the step still writes).
+5. Re-read each rewritten step to confirm the SQL is correct against the new schema; note any step you couldn't safely auto-translate so the user can review it.
+
 FINALIZE
 
 1. Rewrite `db/README.md` to the SQL contract: one section per table with its `CREATE TABLE` DDL, PRIMARY KEY, indexes, writer steps, and which report widgets read it.

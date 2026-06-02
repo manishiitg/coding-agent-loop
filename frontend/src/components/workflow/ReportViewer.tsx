@@ -2,7 +2,7 @@
 // JSON source, and renders widgets.
 // See docs/workflow/persistent_stores_design.md.
 
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import jsonata from 'jsonata'
 import { TextWidget } from './reportWidgets/TextWidget'
 import { MarkdownWidget } from './reportWidgets/MarkdownWidget'
@@ -14,6 +14,7 @@ import { PivotWidget } from './reportWidgets/PivotWidget'
 import { ChartWidget } from './reportWidgets/ChartWidget'
 import { FileListWidget, FileWidget } from './reportWidgets/FileWidget'
 import { FilePreviewModal } from './reportWidgets/FilePreviewModal'
+import { ReportEmbedProvider } from './reportWidgets/reportEmbedContext'
 import {
   StandaloneWidgetNotice,
   WidgetError,
@@ -707,7 +708,15 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   // named theme block and ultimately the workspace defaults.
   const themeStyle = useMemo(() => buildThemeStyle(plan.themeColors), [plan.themeColors])
 
+  // Renderer for ```report-widget blocks embedded in markdown documents — gives
+  // them the live, db-bound WidgetCard with the report's loaded sources.
+  const renderEmbeddedWidget = useCallback(
+    (spec: unknown) => <EmbeddedReportWidget spec={spec} workspacePath={workspacePath} baseSources={sources} />,
+    [workspacePath, sources],
+  )
+
   return (
+    <ReportEmbedProvider value={renderEmbeddedWidget}>
     <div
       className="relative h-full w-full flex flex-col overflow-hidden bg-gradient-to-b from-background via-background to-muted/20 text-foreground"
       data-report-theme={plan.theme || undefined}
@@ -804,6 +813,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
           workspace's file-content viewer. */}
       <FilePreviewModal />
     </div>
+    </ReportEmbedProvider>
   )
 }
 
@@ -1090,6 +1100,58 @@ function SectionContainer({
       </div>
     </section>
   )
+}
+
+// EmbeddedReportWidget renders a widget spec parsed from a ```report-widget
+// block inside a markdown document. Embedded specs reference source files the
+// plan scanner never saw, so it loads any that aren't already in the report
+// snapshot, then defers to the normal WidgetCard so embedded widgets behave
+// exactly like plan widgets (live, db-bound).
+function EmbeddedReportWidget({
+  spec,
+  workspacePath,
+  baseSources,
+}: {
+  spec: unknown
+  workspacePath: string
+  baseSources: SourceCache
+}) {
+  const widget = (spec && typeof spec === 'object' ? spec : {}) as ReportWidget
+  const validKind = typeof widget.kind === 'string' && widget.kind in WIDGET_SOURCE_MODE
+  const needed = useMemo(() => (validKind ? widgetSourcePaths(widget) : []), [validKind, widget])
+  const missing = useMemo(() => needed.filter(p => !(p in baseSources)), [needed, baseSources])
+  const missingKey = missing.join('|')
+  const [extra, setExtra] = useState<SourceCache | null>(missing.length === 0 ? {} : null)
+
+  useEffect(() => {
+    if (missing.length === 0) { setExtra({}); return }
+    let cancelled = false
+    setExtra(null)
+    void Promise.all(
+      missing.map(async (path): Promise<readonly [string, unknown]> => {
+        const content = await readWorkspaceText(`${workspacePath}/${path}`)
+        if (content === null || content.trim() === '') return [path, null] as const
+        if (/\.(md|markdown|txt)$/i.test(path)) return [path, content] as const
+        try { return [path, JSON.parse(content)] as const } catch { return [path, null] as const }
+      })
+    ).then(entries => { if (!cancelled) setExtra(Object.fromEntries(entries)) })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspacePath, missingKey])
+
+  if (!validKind) {
+    return (
+      <WidgetError
+        widget={widget}
+        message={`Unknown embedded widget kind "${String(widget.kind ?? '')}".`}
+        hint="Use a valid kind: table, stat, chart, cards, text, markdown, file, file-list, alert, pivot."
+      />
+    )
+  }
+  if (extra === null) {
+    return <div className="py-2 text-xs italic text-muted-foreground">Loading embedded widget…</div>
+  }
+  return <WidgetCard widget={widget} workspacePath={workspacePath} sources={{ ...baseSources, ...extra }} />
 }
 
 function EntryRenderer({

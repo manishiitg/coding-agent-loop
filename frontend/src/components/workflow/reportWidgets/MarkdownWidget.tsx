@@ -1,7 +1,9 @@
 import type { ReportWidget } from '../../../services/api-types'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
+import { useEmbeddedWidgetRenderer } from './reportEmbedContext'
 
 export function MarkdownWidget({ value, widget }: { value: unknown; widget: ReportWidget }) {
+  const renderEmbeddedWidget = useEmbeddedWidgetRenderer() ?? undefined
   const markdown =
     typeof value === 'string'
       ? value
@@ -18,7 +20,7 @@ export function MarkdownWidget({ value, widget }: { value: unknown; widget: Repo
   return (
     <div className="flex flex-col gap-1.5">
       <div className="rounded-lg bg-muted/20 px-2.5 py-2 text-sm text-foreground">
-        <MarkdownRenderer content={markdown} className="max-w-none" maxHeight="none" basePath={basePath} />
+        <MarkdownRenderer content={markdown} className="max-w-none" maxHeight="none" basePath={basePath} renderEmbeddedWidget={renderEmbeddedWidget} />
       </div>
     </div>
   )

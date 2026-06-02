@@ -19,6 +19,11 @@ interface MarkdownRendererProps {
   disablePathLinking?: boolean
   basePath?: string
   onLinkClick?: (filepath: string) => void
+  // When provided, a ```report-widget fenced block whose body is a widget JSON
+  // spec is replaced by a live, db-bound report widget. Supplied by the report
+  // viewer (MarkdownWidget / FileWidget) so a generated .md document can embed
+  // live widgets inline. Absent everywhere else, so the fence renders as code.
+  renderEmbeddedWidget?: (spec: unknown) => React.ReactNode
 }
 
 const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/', '_users/', 'learnings/']
@@ -555,7 +560,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   showScrollbar = false,
   disablePathLinking = false,
   basePath,
-  onLinkClick
+  onLinkClick,
+  renderEmbeddedWidget
 }) => {
   const containerClasses = `prose prose-sm max-w-none dark:prose-invert ${className}`
   const scrollClasses = showScrollbar ? 'overflow-y-auto overflow-x-auto min-w-0' : ""
@@ -1067,6 +1073,23 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             const match = /language-(\w+)/.exec(className || '')
             const isInline = typeof inline === 'boolean' ? inline : false
             
+            // ```report-widget — embed a live report widget from a JSON spec.
+            // Only active when the report viewer passes renderEmbeddedWidget;
+            // otherwise it falls through to normal code rendering.
+            if (!isInline && match && match[1] === 'report-widget' && renderEmbeddedWidget) {
+              const raw = String(children).replace(/\n$/, '')
+              try {
+                const spec = JSON.parse(raw)
+                return <div className="my-3">{renderEmbeddedWidget(spec)}</div>
+              } catch {
+                return (
+                  <pre className="my-3 rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-400">
+                    Invalid report-widget JSON:{'\n'}{raw}
+                  </pre>
+                )
+              }
+            }
+
             if (!isInline && match && match[1] === 'tool-definition') {
               return <ToolDefinition content={String(children).replace(/\n$/, '')} />
             }

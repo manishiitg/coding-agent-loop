@@ -5,6 +5,7 @@ import { agentApi, workspaceApi } from '../../../services/api'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 import { WidgetError, WidgetHeader } from './shared'
 import { useReportFilePreviewStore } from '../../../stores/useReportFilePreviewStore'
+import { useEmbeddedWidgetRenderer } from './reportEmbedContext'
 
 // previewReportFile opens a file-list entry in the in-report preview modal.
 // file.filepath is the absolute workspace path the planner-files API returns.
@@ -202,6 +203,7 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
   const format = effectiveRenderFormat(widget)
   const path = workspaceFilePath(workspacePath, widget.source)
   const name = basename(widget.source)
+  const renderEmbeddedWidget = useEmbeddedWidgetRenderer() ?? undefined
 
   if (!isAllowedArtifactSource(widget.source)) {
     return <WidgetError widget={widget} message="Unsupported file source." hint="Use db/, knowledgebase/, or docs/." />
@@ -224,7 +226,7 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
       {!suppressHeader && <WidgetHeader widget={widget} />}
       {format === 'markdown' && (
         <div className="rounded-lg bg-muted/20 px-2.5 py-2 text-sm text-foreground">
-          <MarkdownRenderer content={state.content || ''} basePath={path} className="max-w-none" maxHeight="none" />
+          <MarkdownRenderer content={state.content || ''} basePath={path} className="max-w-none" maxHeight="none" renderEmbeddedWidget={renderEmbeddedWidget} />
         </div>
       )}
       {format === 'html' && (
@@ -563,6 +565,7 @@ export function FilePreviewByPath({ path, name }: { path: string; name?: string 
   const kind = artifactKind(path)
   const state = useAbsoluteFileContent(path, kind)
   const label = name || basename(path)
+  const renderEmbeddedWidget = useEmbeddedWidgetRenderer() ?? undefined
 
   if (state.status === 'loading') {
     return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading {label}…</div>
@@ -579,7 +582,7 @@ export function FilePreviewByPath({ path, name }: { path: string; name?: string 
   if (kind === 'markdown') {
     return (
       <div className="h-full overflow-auto px-4 py-3 text-sm text-foreground">
-        <MarkdownRenderer content={state.content || ''} basePath={path} className="max-w-none" maxHeight="none" />
+        <MarkdownRenderer content={state.content || ''} basePath={path} className="max-w-none" maxHeight="none" renderEmbeddedWidget={renderEmbeddedWidget} />
       </div>
     )
   }

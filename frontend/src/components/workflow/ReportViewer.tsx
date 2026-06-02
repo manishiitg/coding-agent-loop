@@ -322,7 +322,7 @@ function useWidgetSQLData(widget: ReportWidget | null, workspacePath: string): W
     }
     // db is workspace-relative to the workflow root (e.g. "db/db.sqlite").
     const dbPath = `${workspacePath}/${db}`
-    const cacheKey = `${dbPath} ${sql}`
+    const cacheKey = `${dbPath}::${sql}`
     const cached = widgetSQLCache.get(cacheKey)
     if (cached) {
       setState({ status: 'success', rows: cached })
@@ -739,10 +739,16 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   )
 
   // Live data API exposed to HTML report documents as `window.report`. HTML
-  // renders its own visuals; we just deliver data. `get`/`getText` are scoped to
-  // db/ knowledgebase/ docs/ (same as file widgets) so a report can't read
-  // arbitrary workspace files.
+  // renders its own visuals; we just deliver data. `query` runs read-only SQL
+  // against db/db.sqlite (the primary data source); `get`/`getText` are scoped to
+  // db/ knowledgebase/ docs/ (same as file widgets) for markdown/text/assets so a
+  // report can't read arbitrary workspace files.
   const dataApi = useMemo<ReportDataApi>(() => {
+    const query = async (sql: string): Promise<Record<string, unknown>[]> => {
+      const res = await agentApi.queryWorkflowDB(`${workspacePath}/db/db.sqlite`, sql)
+      if (!res.success || !res.data) throw new Error(res.error || 'Query failed.')
+      return res.data.rows
+    }
     const allowed = (p: string): string => {
       const n = p.replace(/\\/g, '/').replace(/^\/+/, '')
       if (!n || n.split('/').includes('..')) return ''
@@ -762,8 +768,8 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
         return text
       }
     }
-    return { sources, workspacePath, get, getText }
-  }, [sources, workspacePath])
+    return { workspacePath, query, get, getText }
+  }, [workspacePath])
 
   const reportRuntime = useMemo(
     () => ({ renderEmbeddedWidget, data: dataApi }),

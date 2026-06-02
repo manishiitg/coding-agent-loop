@@ -113,11 +113,12 @@ custom layout.
   schema as `report_plan.json`, any kind). Zero styling work; looks
   consistent with the rest of the report.
 - **HTML** gets the data and renders its own visuals: the viewer exposes
-  `window.report` inside the iframe (`sources`, `await get(path)`,
-  `await getText(path)`) and fires a `report:data` event on load/refresh.
-  The HTML draws its own charts/tables/branded CSS from that data — full
-  styling control, no embedded widgets. Use HTML when you want bespoke
-  visuals and will write the rendering; otherwise prefer markdown.
+  `window.report` inside the iframe (`await query(sql)` against db/db.sqlite,
+  plus `await get(path)` / `await getText(path)` for files) and fires a
+  `report:data` event on load/refresh. The HTML draws its own charts/tables/
+  branded CSS from that data — full styling control, no embedded widgets. Use
+  HTML when you want bespoke visuals and will write the rendering; otherwise
+  prefer markdown.
 
 Full syntax + examples, and the **"writing a good report document" formatting
 guide** (lead with a summary, structure with headings, data as tables/widgets
@@ -130,10 +131,11 @@ not raw JSON, self-contained + responsive HTML, dark mode):
   is missing or contains zero usable widgets. Fix by creating/updating
   the report plan.
 - **When the report renders but is empty/missing widgets the user
-  expects:** the plan resolved correctly but the widget `source` JSON
-  is missing or has no rows yet. Either a step hasn't run, or the
-  widget points at the wrong path. Inspect `reports/report_plan.json`
-  and the actual `db/` files to diagnose.
+  expects:** the plan resolved correctly but the widget's `sql` returns
+  no rows yet (the table is empty), or the widget points at the wrong
+  table/column. Either a step hasn't run, or the query is off. Inspect
+  `reports/report_plan.json` and query `db/db.sqlite` with sqlite3 to
+  diagnose.
 
 ### Refresh discipline
 

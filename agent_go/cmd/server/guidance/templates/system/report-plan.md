@@ -28,8 +28,8 @@ Workshop may maintain the live frontend report defined by `reports/report_plan.j
   The JSON is the same widget schema you'd put in `report_plan.json` (any kind: table/stat/chart/cards/text/markdown/file/file-list/alert/pivot).
 
 - **HTML reports get LIVE data, not embedded widgets** — the `.html` path is for full styling control, so instead of injecting our widgets the viewer hands the HTML the live data and lets it render its own visuals (Chart.js, custom tables, branded CSS — whatever). Inside the iframe the viewer exposes `window.report`:
-  - `window.report.sources` — already-loaded plan sources, `{ "db/x.json": {…} }`
-  - `await window.report.get(path)` — fetch any `db/`/`knowledgebase/`/`docs/` file live → parsed JSON (or text)
+  - `await window.report.query(sql)` — run a read-only SQL query against `db/db.sqlite` → array of row objects (the primary data source)
+  - `await window.report.get(path)` — fetch any `db/`/`knowledgebase/`/`docs/` file live → parsed JSON (or text); use for markdown/text/assets, not structured data
   - `await window.report.getText(path)` — raw file text
   - the `report:data` event fires on load and on every refresh — render in its handler
 
@@ -39,10 +39,10 @@ Workshop may maintain the live frontend report defined by `reports/report_plan.j
   <canvas id="chart"></canvas>
   <script>
     window.addEventListener('report:data', async () => {
-      const runs = await window.report.get('db/sync_runs.json');
-      const total = runs.rows.reduce((s, r) => s + r.total_portfolio_value, 0);
+      const rows = await window.report.query('SELECT total_portfolio_value FROM sync_runs');
+      const total = rows.reduce((s, r) => s + r.total_portfolio_value, 0);
       document.getElementById('total').textContent = '₹' + total.toLocaleString('en-IN');
-      // ...draw your own Chart.js chart / styled table from the data
+      // ...draw your own Chart.js chart / styled table from the rows
     });
   </script>
   ~~~

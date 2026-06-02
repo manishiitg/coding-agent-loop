@@ -7,12 +7,13 @@ import type { ReactNode } from 'react'
 export type EmbeddedWidgetRenderer = (spec: unknown) => ReactNode
 
 // Live data access for HTML report documents. HTML renders its OWN visuals
-// (charts/tables/branded CSS) — we just hand it the data. `sources` is what the
-// report plan already loaded; `get`/`getText` fetch any db/ knowledgebase/ docs
-// file on demand. Exposed inside the iframe as `window.report`.
+// (charts/tables/branded CSS) — we just hand it the data. `query` runs read-only
+// SQL against the workflow's db/db.sqlite (the primary data source); `get`/
+// `getText` fetch any db/ knowledgebase/ docs file (markdown, text, assets) on
+// demand. Exposed inside the iframe as `window.report`.
 export interface ReportDataApi {
-  sources: Record<string, unknown>
   workspacePath: string
+  query: (sql: string) => Promise<Record<string, unknown>[]>
   get: (path: string) => Promise<unknown>
   getText: (path: string) => Promise<string | null>
 }

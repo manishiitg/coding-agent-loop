@@ -10,7 +10,7 @@ import { useReportDataApi } from './reportEmbedContext'
 // data API in context) the HTML renders standalone.
 //
 // Inside the HTML report:
-//   window.report.sources            // { "db/x.json": {...} } already-loaded plan sources
+//   await window.report.query(sql)   // read-only SQL against db/db.sqlite -> array of row objects
 //   await window.report.get(path)    // any db/ knowledgebase/ docs file -> parsed JSON (or text)
 //   await window.report.getText(path)// raw file text
 //   window.addEventListener('report:data', render)  // fires on load + on refresh
@@ -31,8 +31,8 @@ export function HtmlReportFrame({
     const win = iframeRef.current?.contentWindow as any
     if (!win || !dataApi) return
     win.report = {
-      sources: dataApi.sources,
       workspacePath: dataApi.workspacePath,
+      query: dataApi.query,
       get: dataApi.get,
       getText: dataApi.getText,
     }

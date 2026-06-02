@@ -1772,7 +1772,7 @@ Users may reach this workflow through Slack, WhatsApp, or another bot channel. T
 
 The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders widgets against `+"`db/*.json`"+`, `+"`db/assets/`"+`, `+"`knowledgebase/`"+`, and built-in costs/evals/runs APIs. **No separate "generate report" phase / standalone dashboard artifact that replaces the viewer.** A workflow MAY still write a narrative `+"`.md`"+`/`+"`.html`"+` document into `+"`db/`"+` and show it via a `+"`file`"+` widget — that's content (the document escape hatch), not a replacement dashboard.
 
-{{if eq .WorkshopMode "workshop"}}**Workshop owns `+"`reports/report_plan.json`"+`** — author/edit widgets via the report-plan tools (`+"`get_report_plan`"+` / `+"`upsert_report_widget`"+` / etc.). Keep report edits presentation-only unless the user also asked for workflow hardening/eval changes. **Do NOT** write a standalone HTML/Python *dashboard* file that replaces the viewer. But DO proactively offer the **document escape hatch** when widgets don't fit (rich/narrative/custom layout, or the user dislikes the widget look): a step writes a `+"`.md`"+`/`+"`.html`"+` doc into `+"`db/`"+` and one `+"`file`"+` widget renders it — state the tradeoff (a generated doc is a static per-run snapshot; widgets stay live; hybrid gets both). A doc can also embed LIVE widgets inline (best of both — narrative + live data): markdown via fenced `+"```"+`report-widget JSON blocks, HTML via `+"`<div data-report-widget='{…}'>`"+` placeholders. For the full dashboard policy (the 3 report shapes + decision rule, document escape hatch, embedded widgets, tabbed-routes layout, "No report yet" vs empty-widget diagnosis, auto-refresh discipline): `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
+{{if eq .WorkshopMode "workshop"}}**Workshop owns `+"`reports/report_plan.json`"+`** — author/edit widgets via the report-plan tools (`+"`get_report_plan`"+` / `+"`upsert_report_widget`"+` / etc.). Keep report edits presentation-only unless the user also asked for workflow hardening/eval changes. **Do NOT** write a standalone HTML/Python *dashboard* file that replaces the viewer. But DO proactively offer the **document escape hatch** when widgets don't fit (rich/narrative/custom layout, or the user dislikes the widget look): a step writes a `+"`.md`"+`/`+"`.html`"+` doc into `+"`db/`"+` and one `+"`file`"+` widget renders it — state the tradeoff (a generated doc is a static per-run snapshot; widgets stay live; hybrid gets both). A doc carries live data too: markdown embeds our widgets via fenced `+"```"+`report-widget JSON blocks; HTML gets a `+"`window.report`"+` data API (`+"`sources`"+`, `+"`await get(path)`"+`, + a `+"`report:data`"+` event) and renders its own charts/tables with full styling control. For the full dashboard policy (the 3 report shapes + decision rule, document escape hatch, embedded widgets, tabbed-routes layout, "No report yet" vs empty-widget diagnosis, auto-refresh discipline): `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
 {{else}}**Run mode does not author dashboards.** If the user asks to create/edit widgets, themes, layouts, or `+"`reports/report_plan.json`"+`, tell them to switch to Workshop. Do not edit `+"`reports/report_plan.json`"+` via shell from Run mode. For policy details: `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
 {{end}}
 
@@ -9921,6 +9921,13 @@ func (iwm *InteractiveWorkshopManager) runImproveDBAgent(ctx context.Context, mo
 	}
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("improve-db-agent", 50, agents.OutputFormatStructured, phaseLLM)
+	// Isolate the coding-CLI session in a fresh tmp dir instead of the
+	// builder's live workflow folder. This background tool agent reaches
+	// workspace files through the MCP bridge (absolute paths), so it does
+	// not need to sit in the builder's CWD — and projecting its own
+	// CLAUDE.md/.claude/ there would collide with the active builder
+	// session's projection. Mirrors runBackgroundTaskAgent.
+	config.IsolateCodingAgentWorkspace = true
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.ServerNames = []string{mcpclient.NoServers}
 	defer iwm.configureWorkshopToolAgentSession(config, "improve-db", readPaths, writePaths)()
@@ -10041,6 +10048,9 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-plan-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
+	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
+	// builder's live workflow folder. See improve-db-agent above.
+	config.IsolateCodingAgentWorkspace = true
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.ServerNames = []string{mcpclient.NoServers}
 	defer iwm.configureWorkshopToolAgentSession(config, "review-plan", readPaths, []string{})()
@@ -10156,6 +10166,9 @@ func (iwm *InteractiveWorkshopManager) runReviewArtifactSyncAgent(ctx context.Co
 	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-artifact-sync-agent", 120, agents.OutputFormatStructured, llmConfigToUse)
+	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
+	// builder's live workflow folder. See improve-db-agent above.
+	config.IsolateCodingAgentWorkspace = true
 	config.UseCodeExecutionMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
 	defer iwm.configureWorkshopToolAgentSession(config, "review-artifact-sync", readPaths, writePaths)()
@@ -10260,6 +10273,9 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowResultsAgent(ctx context
 	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-results-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
+	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
+	// builder's live workflow folder. See improve-db-agent above.
+	config.IsolateCodingAgentWorkspace = true
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.ServerNames = []string{mcpclient.NoServers}
 	defer iwm.configureWorkshopToolAgentSession(config, "review-workflow-results", readPaths, []string{})()
@@ -10356,6 +10372,9 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowTimingAgent(ctx context.
 	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-timing-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
+	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
+	// builder's live workflow folder. See improve-db-agent above.
+	config.IsolateCodingAgentWorkspace = true
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.ServerNames = []string{mcpclient.NoServers}
 	defer iwm.configureWorkshopToolAgentSession(config, "review-workflow-timing", readPaths, []string{})()
@@ -10453,6 +10472,9 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowCostsAgent(ctx context.C
 	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-costs-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
+	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
+	// builder's live workflow folder. See improve-db-agent above.
+	config.IsolateCodingAgentWorkspace = true
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.ServerNames = []string{mcpclient.NoServers}
 	defer iwm.configureWorkshopToolAgentSession(config, "review-workflow-costs", readPaths, []string{})()
@@ -10619,6 +10641,9 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-step-code-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
+	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
+	// builder's live workflow folder. See improve-db-agent above.
+	config.IsolateCodingAgentWorkspace = true
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.ServerNames = []string{mcpclient.NoServers}
 	defer iwm.configureWorkshopToolAgentSession(config, "review-step-code", readPaths, []string{})()
@@ -10704,6 +10729,9 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("replan-workflow-from-results-agent", 90, agents.OutputFormatStructured, llmConfigToUse)
+	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
+	// builder's live workflow folder. See improve-db-agent above.
+	config.IsolateCodingAgentWorkspace = true
 	config.UseCodeExecutionMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
 	defer iwm.configureWorkshopToolAgentSession(config, "replan-workflow-from-results", readPaths, writePaths)()
@@ -10822,6 +10850,9 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 	llmConfigToUse := workflowAgentLLMConfig(iwm.controller.presetPhaseLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("harden-workflow-agent", 120, agents.OutputFormatStructured, llmConfigToUse)
+	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
+	// builder's live workflow folder. See improve-db-agent above.
+	config.IsolateCodingAgentWorkspace = true
 	config.UseCodeExecutionMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
 	defer iwm.configureWorkshopToolAgentSession(config, "harden-workflow", readPaths, writePaths)()

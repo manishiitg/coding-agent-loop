@@ -14,7 +14,7 @@ import { PivotWidget } from './reportWidgets/PivotWidget'
 import { ChartWidget } from './reportWidgets/ChartWidget'
 import { FileListWidget, FileWidget } from './reportWidgets/FileWidget'
 import { FilePreviewModal } from './reportWidgets/FilePreviewModal'
-import { ReportEmbedProvider } from './reportWidgets/reportEmbedContext'
+import { ReportEmbedProvider, type ReportDataApi } from './reportWidgets/reportEmbedContext'
 import {
   StandaloneWidgetNotice,
   WidgetError,
@@ -730,8 +730,40 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     [workspacePath, sources, plan.theme, themeStyle],
   )
 
+  // Live data API exposed to HTML report documents as `window.report`. HTML
+  // renders its own visuals; we just deliver data. `get`/`getText` are scoped to
+  // db/ knowledgebase/ docs/ (same as file widgets) so a report can't read
+  // arbitrary workspace files.
+  const dataApi = useMemo<ReportDataApi>(() => {
+    const allowed = (p: string): string => {
+      const n = p.replace(/\\/g, '/').replace(/^\/+/, '')
+      if (!n || n.split('/').includes('..')) return ''
+      return n.startsWith('db/') || n.startsWith('knowledgebase/') || n.startsWith('docs/') ? n : ''
+    }
+    const getText = async (path: string): Promise<string | null> => {
+      const n = allowed(path)
+      if (!n) return null
+      return readWorkspaceText(`${workspacePath}/${n}`)
+    }
+    const get = async (path: string): Promise<unknown> => {
+      const text = await getText(path)
+      if (text == null || text.trim() === '') return null
+      try {
+        return JSON.parse(text)
+      } catch {
+        return text
+      }
+    }
+    return { sources, workspacePath, get, getText }
+  }, [sources, workspacePath])
+
+  const reportRuntime = useMemo(
+    () => ({ renderEmbeddedWidget, data: dataApi }),
+    [renderEmbeddedWidget, dataApi],
+  )
+
   return (
-    <ReportEmbedProvider value={renderEmbeddedWidget}>
+    <ReportEmbedProvider value={reportRuntime}>
     <div
       className="relative h-full w-full flex flex-col overflow-hidden bg-gradient-to-b from-background via-background to-muted/20 text-foreground"
       data-report-theme={plan.theme || undefined}

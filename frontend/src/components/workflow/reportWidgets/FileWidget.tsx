@@ -6,7 +6,7 @@ import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 import { WidgetError, WidgetHeader } from './shared'
 import { useReportFilePreviewStore } from '../../../stores/useReportFilePreviewStore'
 import { useEmbeddedWidgetRenderer } from './reportEmbedContext'
-import { HtmlWithEmbeddedWidgets } from './HtmlWidgetFrame'
+import { HtmlReportFrame } from './HtmlWidgetFrame'
 
 // previewReportFile opens a file-list entry in the in-report preview modal.
 // file.filepath is the absolute workspace path the planner-files API returns.
@@ -231,7 +231,7 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
         </div>
       )}
       {format === 'html' && (
-        <HtmlWithEmbeddedWidgets
+        <HtmlReportFrame
           html={state.content || ''}
           title={widget.title || name}
           className="h-[min(720px,70vh)] w-full rounded-lg border border-border bg-background"
@@ -587,7 +587,7 @@ export function FilePreviewByPath({ path, name }: { path: string; name?: string 
     )
   }
   if (kind === 'html') {
-    return <HtmlWithEmbeddedWidgets html={state.content || ''} title={label} className="h-full w-full bg-background" />
+    return <HtmlReportFrame html={state.content || ''} title={label} className="h-full w-full bg-background" />
   }
   if (kind === 'pdf' && state.objectUrl) {
     return <iframe title={label} src={state.objectUrl} className="h-full w-full bg-background" />

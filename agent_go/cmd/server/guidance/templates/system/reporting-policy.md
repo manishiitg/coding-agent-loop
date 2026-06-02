@@ -106,17 +106,22 @@ can't express. Both document shapes can embed live widgets, so the old
 widgets is a static snapshot, a doc full of them ≈ a widget plan with
 custom layout.
 
-**Embedding live widgets in a document:**
-- **Markdown** — a fenced ` ```report-widget ` block whose body is a widget
-  JSON spec renders as a live db-bound widget inline.
-- **HTML** — a placeholder `<div data-report-widget='{…spec…}'></div>`; the
-  viewer injects app styles into the iframe and mounts a live widget into
-  it (content inside the div is a static fallback for standalone viewing).
+**Live data in a document — two different models:**
+- **Markdown** embeds our widgets: a fenced ` ```report-widget ` block whose
+  body is a widget JSON spec renders as a live db-bound widget inline (same
+  schema as `report_plan.json`, any kind). Zero styling work; looks
+  consistent with the rest of the report.
+- **HTML** gets the data and renders its own visuals: the viewer exposes
+  `window.report` inside the iframe (`sources`, `await get(path)`,
+  `await getText(path)`) and fires a `report:data` event on load/refresh.
+  The HTML draws its own charts/tables/branded CSS from that data — full
+  styling control, no embedded widgets. Use HTML when you want bespoke
+  visuals and will write the rendering; otherwise prefer markdown.
 
-Same widget JSON schema as `report_plan.json` (any kind). Full syntax +
-examples, and the **"writing a good report document" formatting guide**
-(lead with a summary, structure with headings, data as tables/widgets not
-raw JSON, self-contained HTML, dark mode): `get_reference_doc(kind="report-plan")`.
+Full syntax + examples, and the **"writing a good report document" formatting
+guide** (lead with a summary, structure with headings, data as tables/widgets
+not raw JSON, self-contained + responsive HTML, dark mode):
+`get_reference_doc(kind="report-plan")`.
 
 ### Diagnosis
 

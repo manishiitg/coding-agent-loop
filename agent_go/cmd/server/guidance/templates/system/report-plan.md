@@ -27,17 +27,27 @@ Workshop may maintain the live frontend report defined by `reports/report_plan.j
 
   The JSON is the same widget schema you'd put in `report_plan.json` (any kind: table/stat/chart/cards/text/markdown/file/file-list/alert/pivot).
 
-- **Embed LIVE widgets inside an HTML document** — same idea for the `.html` path. Put a placeholder element with the widget spec in a `data-report-widget` attribute; the viewer mounts a live widget into it (it injects app styles into the iframe and portals the React widget in). Anything you put *inside* the div is a static fallback shown when the HTML is viewed outside the report:
+- **HTML reports get LIVE data, not embedded widgets** — the `.html` path is for full styling control, so instead of injecting our widgets the viewer hands the HTML the live data and lets it render its own visuals (Chart.js, custom tables, branded CSS — whatever). Inside the iframe the viewer exposes `window.report`:
+  - `window.report.sources` — already-loaded plan sources, `{ "db/x.json": {…} }`
+  - `await window.report.get(path)` — fetch any `db/`/`knowledgebase/`/`docs/` file live → parsed JSON (or text)
+  - `await window.report.getText(path)` — raw file text
+  - the `report:data` event fires on load and on every refresh — render in its handler
 
   ~~~html
-  <h1>Income Tax Report — X SPACES</h1>
-  <p>Pulled live from the canonical DB:</p>
-  <div data-report-widget='{"kind":"table","source":"db/reports_consolidated.json","path":"AAAFX2962N.tds_rows"}'>
-    (live table loads here)
-  </div>
+  <h1>Portfolio Report</h1>
+  <div id="total">—</div>
+  <canvas id="chart"></canvas>
+  <script>
+    window.addEventListener('report:data', async () => {
+      const runs = await window.report.get('db/sync_runs.json');
+      const total = runs.rows.reduce((s, r) => s + r.total_portfolio_value, 0);
+      document.getElementById('total').textContent = '₹' + total.toLocaleString('en-IN');
+      // ...draw your own Chart.js chart / styled table from the data
+    });
+  </script>
   ~~~
 
-  So both document paths can carry live widgets: markdown via ` ```report-widget ` fences, HTML via `data-report-widget` placeholders. **Prefer markdown** — it renders richly (headings, tables, file links, embedded widgets), is simpler and more robust to author, and avoids the HTML iframe's styling/isolation caveats. Reach for HTML only when you genuinely need pixel-perfect or branded/print layout markdown can't express.
+  This is the right model for HTML: live data + 100% control over look. (Markdown embeds our widgets; HTML renders its own.) **Prefer markdown** overall — it renders richly (headings, tables, file links, embedded widgets) with zero styling burden; reach for HTML when you want bespoke/branded visuals and are willing to write the rendering yourself.
 - **Writing a GOOD report document (md/html).** Mechanics above place content; these make it readable — instruct the step that generates the doc accordingly:
   - **Lead with the answer.** Title, then a short summary/TL;DR block up top — the key numbers, status, and "what needs action" — before any detail. A reader should get the verdict in the first screen.
   - **Structure + scannability.** Use clear section headings; short paragraphs and bullets over walls of prose; **bold** the key figures; one logical section per topic/entity. For multi-entity reports, one section (or tab) per entity.

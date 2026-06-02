@@ -81,7 +81,7 @@ When delegating to a sub-agent, pass the exact output file paths and required st
 
 **Three persistent stores — keep them separate when instructing sub-agents:**
 - **soul/soul.md** — workflow north star: objective and success criteria. At step start, read it if present and use it to resolve ambiguity, prioritize tradeoffs, and avoid technically-correct work that misses the workflow goal. Treat it as READ-ONLY. When delegating, pass relevant objective/success-criteria context in the sub-agent `+"`instructions`"+`; sub-agents cannot see your system prompt.
-- **db/** — workflow state and results (JSON produced/consumed by steps). Step-owned, upsert-by-key, never overwrite wholesale. Durable media/file assets live under `+"`db/assets/`"+` with metadata rows in `+"`db/*.json`"+`.
+- **db/db.sqlite** — workflow state and results (SQLite tables produced/consumed by steps; query with `+"`sqlite3`"+`). Step-owned, upsert via `+"`INSERT ... ON CONFLICT DO UPDATE`"+`, never DROP/recreate a table. Durable media/file assets live under `+"`db/assets/`"+` with metadata rows in a `+"`db/db.sqlite`"+` table.
 - **knowledgebase/context/** — user-supplied runtime business context. If `+"`knowledgebase/context/context.md`"+` exists and KB read access is granted, read and respect relevant sections; do not edit it.
 - **knowledgebase/notes/** — per-topic narrative markdown the workflow accumulates about its subject matter (entity-scoped like `+"`"+`company-acme.md`+"`"+` or cross-cutting like `+"`"+`pattern-*.md`+"`"+`), plus `+"`"+`notes/_index.json`+"`"+` as the registry. Use it only when `+"`"+`knowledgebase_access`+"`"+` grants read/write. {{if eq .KbWriteMethod "direct"}}This step (and its sub-agents) write KB notes directly — see the **Knowledgebase contribution** block below. The post-step KB update agent does NOT run. Writes use shell heredoc or `+"`"+`diff_patch_workspace_file`+"`"+`; keep `+"`"+`_index.json`+"`"+` in sync. Never edit `+"`knowledgebase/context/`"+`.{{else}}Written **only by the post-step KB update agent**. Sub-agents may read via shell if `+"`"+`knowledgebase_access`+"`"+` grants read; they must NOT edit `+"`"+`notes/`+"`"+` directly.{{end}}
 - **learnings/** — HOW to run the task. Use it only when relevant learnings are injected or the folder is listed in Allowed READ.{{if eq .LearningsAccess "read-write"}} This orchestrator has learnings **read-write**: once the work is verified, capture durable HOW-to knowledge (recipes, gotchas, tier hints) by updating `+"`"+`{{.LearningsPath}}/SKILL.md`+"`"+` directly (shell heredoc or `+"`"+`diff_patch_workspace_file`+"`"+`). Keep it concise and generalizable; never dump run-specific data there — that belongs in db/.{{end}}
@@ -191,7 +191,7 @@ Do not guess tool names or invent bridge-prefixed variants. Discover the exact c
 ## Files
 | Path | Purpose | Persistence |
 | :--- | :--- | :--- |
-| db/ | Structured JSON state shared across runs and groups | Persistent across runs |
+| db/db.sqlite | Structured SQLite tables shared across runs and groups | Persistent across runs |
 {{if ne .KbAccess "none"}}| knowledgebase/ | Templates, shared config, reference data | Persistent across runs |
 {{end}}| execution/ | Cross-step dependencies (read-only) | Read-only |
 

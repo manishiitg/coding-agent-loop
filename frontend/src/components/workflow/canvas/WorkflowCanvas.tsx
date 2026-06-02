@@ -198,16 +198,6 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan }: { hasPlan
         )}
         <button type="button" onClick={showReport} className={tabCls(isReport)}>Report</button>
       </div>
-      {canRefresh && (
-        <button type="button" onClick={refresh} title="Refresh" aria-label="Refresh" className={iconBtnCls}>
-          <RefreshCw className="h-4 w-4" />
-        </button>
-      )}
-      {canDownload && (
-        <button type="button" onClick={download} title={`Download ${isReport ? 'report' : 'plan'} (PNG)`} aria-label="Download" className={iconBtnCls}>
-          <Download className="h-4 w-4" />
-        </button>
-      )}
       {(
         <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/70 p-0.5 shadow-sm backdrop-blur-sm">
           {PREVIEW_DEVICE_OPTS.map(({ mode, Icon, label }) => (
@@ -225,6 +215,16 @@ function PreviewPaneControls({ hasPlan, onExportPlan, onRefreshPlan }: { hasPlan
             </button>
           ))}
         </div>
+      )}
+      {canDownload && (
+        <button type="button" onClick={download} title={`Download ${isReport ? 'report' : 'plan'} (PNG)`} aria-label="Download" className={iconBtnCls}>
+          <Download className="h-4 w-4" />
+        </button>
+      )}
+      {canRefresh && (
+        <button type="button" onClick={refresh} title="Refresh" aria-label="Refresh" className={iconBtnCls}>
+          <RefreshCw className="h-4 w-4" />
+        </button>
       )}
       <button type="button" onClick={hidePane} title="Hide panel" aria-label="Hide panel" className={iconBtnCls}>
         <PanelRightClose className="h-4 w-4" />

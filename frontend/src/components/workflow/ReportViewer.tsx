@@ -712,8 +712,22 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   // Renderer for ```report-widget blocks embedded in markdown documents — gives
   // them the live, db-bound WidgetCard with the report's loaded sources.
   const renderEmbeddedWidget = useCallback(
-    (spec: unknown) => <EmbeddedReportWidget spec={spec} workspacePath={workspacePath} baseSources={sources} />,
-    [workspacePath, sources],
+    (spec: unknown) => (
+      // Wrap embeds in a themed app surface. Critical for HTML embeds, which
+      // mount in a separate iframe document outside the report's themed
+      // container: this carries the report theme + CSS variables, sets the app
+      // base surface/typography (bg-background / text-foreground / font-sans),
+      // and isolates the widget from the host HTML's inherited fonts and colors
+      // (otherwise stats/tables inherit the document's styling and look wrong).
+      <div
+        className="report-embed-root rounded-lg bg-background p-2 text-foreground font-sans"
+        data-report-theme={plan.theme || undefined}
+        style={themeStyle}
+      >
+        <EmbeddedReportWidget spec={spec} workspacePath={workspacePath} baseSources={sources} />
+      </div>
+    ),
+    [workspacePath, sources, plan.theme, themeStyle],
   )
 
   return (

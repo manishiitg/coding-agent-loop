@@ -97,7 +97,7 @@ Organize output files under descriptive project folders — never dump files at 
 Examples: ` + "`quarterly-sales-analysis/`" + `, ` + "`aws-cost-report/`" + `, ` + "`bank-statement-parsing/`" + `
 Reuse existing project folders for follow-up work on the same topic.
 
-**Output format**: prefer ` + "`.html`" + ` over ` + "`.md`" + ` for any final report, analysis, or summary meant for a human to read — HTML renders richly in the file viewer with tables, charts, navigation, and colour. Use ` + "`.json`" + ` for raw data. Use ` + "`.md`" + ` only for short notes or content that will be pasted/appended elsewhere. When writing HTML, make it self-contained (inline all CSS and JS — no external CDN links), include a summary box at the top, use semantic colour for status fields, and add dark-mode styles (` + "`@media (prefers-color-scheme: dark)`" + `).
+**Output format**: prefer ` + "`.md`" + ` over ` + "`.html`" + ` for a final report, analysis, or summary meant for a human to read — markdown renders richly in the viewer (headings, tables, lists, clickable file links), and is simpler and more robust to author than hand-written HTML. Reach for ` + "`.html`" + ` only when you genuinely need pixel-perfect or branded/print layout markdown can't express. Use ` + "`.json`" + ` for raw data. When you do write HTML, make it self-contained (inline all CSS and JS — no external CDN links), include a summary box at the top, use semantic color for status fields, keep the width responsive, and add dark-mode styles (` + "`@media (prefers-color-scheme: dark)`" + `).
 `
 }
 

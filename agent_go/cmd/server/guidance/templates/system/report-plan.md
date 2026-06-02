@@ -37,7 +37,7 @@ Workshop may maintain the live frontend report defined by `reports/report_plan.j
   </div>
   ~~~
 
-  So both document paths can carry live widgets: markdown via ` ```report-widget ` fences, HTML via `data-report-widget` placeholders. HTML still gives the most layout/branding control; markdown is simpler to author.
+  So both document paths can carry live widgets: markdown via ` ```report-widget ` fences, HTML via `data-report-widget` placeholders. **Prefer markdown** — it renders richly (headings, tables, file links, embedded widgets), is simpler and more robust to author, and avoids the HTML iframe's styling/isolation caveats. Reach for HTML only when you genuinely need pixel-perfect or branded/print layout markdown can't express.
 - **Writing a GOOD report document (md/html).** Mechanics above place content; these make it readable — instruct the step that generates the doc accordingly:
   - **Lead with the answer.** Title, then a short summary/TL;DR block up top — the key numbers, status, and "what needs action" — before any detail. A reader should get the verdict in the first screen.
   - **Structure + scannability.** Use clear section headings; short paragraphs and bullets over walls of prose; **bold** the key figures; one logical section per topic/entity. For multi-entity reports, one section (or tab) per entity.

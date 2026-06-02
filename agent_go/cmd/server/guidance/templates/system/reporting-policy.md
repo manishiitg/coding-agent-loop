@@ -98,11 +98,13 @@ the tradeoff:
 | **HTML doc (+ embedded widgets)** | pixel-perfect / branded | live (embedded widgets) | highly designed/branded/print-like layouts that also want live data |
 
 Decision rule: default to a **widget plan** for dashboards/live metrics;
-use a **markdown doc** for a narrative report (simplest to author); use an
-**HTML doc** when you need pixel-perfect/branded layout. Both document
-shapes can embed live widgets, so the old "documents are static" tradeoff
-is mostly gone — a doc with no embedded widgets is a static snapshot, a doc
-full of them ≈ a widget plan with custom layout.
+for a narrative report **prefer a markdown doc** (renders richly, simplest
+and most robust to author, no iframe caveats); reach for an **HTML doc**
+only when you genuinely need pixel-perfect/branded/print layout markdown
+can't express. Both document shapes can embed live widgets, so the old
+"documents are static" tradeoff is mostly gone — a doc with no embedded
+widgets is a static snapshot, a doc full of them ≈ a widget plan with
+custom layout.
 
 **Embedding live widgets in a document:**
 - **Markdown** — a fenced ` ```report-widget ` block whose body is a widget

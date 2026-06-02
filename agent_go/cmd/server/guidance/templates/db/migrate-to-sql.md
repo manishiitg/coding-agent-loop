@@ -22,16 +22,20 @@ READ FIRST
 MIGRATE (build the database)
 
 1. One table per JSON file. Table name = file basename without `.json`, lowercased, non-alphanumeric → `_` (e.g. `db/job_candidates.json` → table `job_candidates`).
-2. Columns = the union of top-level keys across all rows. Use the declared `primary_key` from `db/README.md` as `PRIMARY KEY`. Scalar values map to their natural type (INTEGER / REAL / TEXT); booleans → INTEGER 0/1; nested objects and arrays are stored as JSON **text** (use SQLite's `json(...)` so they round-trip and stay queryable via `json_extract`).
-3. Write a small `python3` script (stdlib `sqlite3` + `json`) to do this generically — it is the most reliable way to handle arbitrary/nested JSON. Build into **`db/db.sqlite.tmp`** (not the final name yet). The script must:
-   - For each JSON file: load the array, collect the column union, `CREATE TABLE` with the PK, then insert every row (`json.dumps` nested values).
-   - Add an index on the primary key and on any field the report widgets filter/sort by.
-   - Print per-table row counts as it goes.
-4. Empty or non-array JSON files: create the table empty (preserve the contract) and note it.
+2. **Normalize the JSON to a list of row objects first — NEVER drop data:**
+   - **Array of objects** `[{...}, {...}]` → those are the rows (the common case).
+   - **A single object** `{...}` → that is **ONE row** (its keys = columns). Do NOT create an empty table — that loses the data. (e.g. `{"status":"allowed"}` → one row `status="allowed"`.)
+   - **An object whose values are all row objects** (a map/dict keyed by id, e.g. `{"a":{...},"b":{...}}`) → one row per value; add the key as an `id`/key column if it isn't already a field.
+   - **Empty array `[]` or empty object `{}`** → create the table empty (preserve the contract).
+   - **A scalar or array of scalars** → wrap as a single-column table (`value`), one row per element.
+3. Columns = the union of top-level keys across all normalized rows. Use the declared `primary_key` from `db/README.md` as `PRIMARY KEY` (only if it is unique across the rows; otherwise note it and use a synthetic key). Scalar values map to their natural type (INTEGER / REAL / TEXT); booleans → INTEGER 0/1; nested objects and arrays are stored as JSON **text** (use SQLite's `json(...)` so they round-trip and stay queryable via `json_extract`).
+4. Write a small `python3` script (stdlib `sqlite3` + `json`) — the most reliable way to handle arbitrary/nested JSON. Build into **`db/db.sqlite.tmp`** (not the final name yet). The script must, per file: load + normalize to rows per step 2, `CREATE TABLE` with the PK, insert every row (`json.dumps` nested values), add the PK index + any field report widgets filter/sort by, and print the row count.
 
-VERIFY (before committing)
+VERIFY (before committing) — this is the guard against silent data loss
 
-1. For each table, compare counts: `sqlite3 db/db.sqlite.tmp "SELECT COUNT(*) FROM <table>"` vs `jq 'length' db/<file>.json`. They MUST match. If any mismatch, STOP, do not commit, and report the discrepancy.
+1. For each table, compute the **expected** row count from the normalized shape and compare to `sqlite3 db/db.sqlite.tmp "SELECT COUNT(*) FROM <table>"`:
+   - array → `jq 'length'`; single object → **1**; keyed map → `jq 'length'` (number of keys); empty → 0.
+   Do NOT blindly `jq 'length'` (it returns key-count for an object, not 1). They MUST match. If any mismatch — especially a non-empty source mapping to 0 rows — STOP, do not commit, and report the discrepancy.
 2. Spot-check one row per table round-trips (including a nested field via `json_extract`).
 
 REWRITE REPORTS

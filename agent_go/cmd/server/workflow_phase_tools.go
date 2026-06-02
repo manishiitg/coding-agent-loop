@@ -267,7 +267,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 
 		if phaseTemplateVars["WorkshopMode"] == "workshop" || phaseTemplateVars["WorkshopMode"] == "builder" || phaseTemplateVars["WorkshopMode"] == "optimizer" || phaseTemplateVars["WorkshopMode"] == "reporting" {
 			// Reporting tools: JSON report-plan read/write tools plus validation and
-			// preview against real db/*.json / knowledgebase/*.json sources. The renderer
+			// preview against real db/db.sqlite tables / knowledgebase sources. The renderer
 			// silently drops bad widgets, so validation stays in the loop.
 			if err := todo_creation_human.RegisterReportPlanManagementTools(
 				underlyingAgent,

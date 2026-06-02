@@ -33,12 +33,12 @@ const KnowledgebaseContextFolderName = "context"
 // DBFolderName is the name of the persistent structured-data folder at workspace root.
 // Always created on workspace init (no preset toggle, unlike knowledgebase). All regular steps
 // get read+write by default. Evaluation steps get read always, write only if DBWrite: true
-// on the step. Files are JSON by convention; steps should upsert by builder-defined key rather
-// than overwrite wholesale. See docs/workflow/persistent_stores_design.md section 1.
+// on the step. State lives in db/db.sqlite (one table per entity); steps should upsert via
+// INSERT ... ON CONFLICT rather than recreate tables. See docs/workflow/persistent_stores_design.md section 1.
 const DBFolderName = "db"
 
 // DBAssetsFolderName stores durable binary/media assets referenced by db rows,
-// reports, or later steps. Keep metadata in db/*.json and the actual files here.
+// reports, or later steps. Keep metadata in a db/db.sqlite table and the actual files here.
 const DBAssetsFolderName = "assets"
 
 // getKnowledgebasePath returns the full path to the knowledgebase folder

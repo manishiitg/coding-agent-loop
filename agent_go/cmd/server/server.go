@@ -1593,7 +1593,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/plan/add-step", requireWorkflowWriteAccess(api.handleAddStep)).Methods("POST", "OPTIONS")
 	// Dynamic report system (docs/workflow/persistent_stores_design.md section 2).
 	// No backend wrappers — the frontend ReportViewer reads reports/report_plan.json
-	// and db/*.json / knowledgebase/*.json directly via the workspace service's
+	// and db/db.sqlite (via the query endpoint) / knowledgebase files via the workspace service's
 	// /api/documents/{path} endpoint (agentApi.getPlannerFileContent).
 
 	// Workflow Version API routes

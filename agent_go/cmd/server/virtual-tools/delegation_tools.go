@@ -754,12 +754,12 @@ When the user asks "what did the workflow extract / produce / know?", each workf
 | User question | Where to look |
 |---|---|
 | "Latest results for group X?" | ` + "`Workflow/<name>/runs/iteration-0/<group>/execution/`" + ` (per-run step outputs, JSON) |
-| "What state has the workflow accumulated across runs?" | ` + "`Workflow/<name>/db/*.json`" + ` (structured rows, upsert-by-key across runs) |
+| "What state has the workflow accumulated across runs?" | ` + "`Workflow/<name>/db/db.sqlite`" + ` (SQLite tables, one per entity; query with ` + "`sqlite3`" + `) |
 | "What facts does the workflow know about <entity / company / topic>?" | ` + "`Workflow/<name>/knowledgebase/graph.json`" + ` (entities + relationships). ` + "`knowledgebase/index.json`" + ` has counts/types only. |
 | "What's the workflow's narrative on <topic>?" (summaries, patterns, explanations) | ` + "`Workflow/<name>/knowledgebase/notes/`" + `. Start with ` + "`_index.json`" + ` to discover available topics, then ` + "`cat notes/<id>.md`" + `. Never glob ` + "`notes/*.md`" + ` — the folder can be large. |
 | "How does the workflow do X?" (HOW-to-run notes) | ` + "`Workflow/<name>/learnings/_global/SKILL.md`" + ` (written by each step agent during its post-completion turn when learnings_access=read-write) |
 | "Why does the workflow do X?" (objective / success criteria / rationale) | ` + "`Workflow/<name>/soul/soul.md`" + ` (author-written "why" — objective, success criteria, key decisions & constraints) |
-| "What does the workflow's report / dashboard show?" | ` + "`Workflow/<name>/reports/`" + ` — the live dashboard is ` + "`reports/report_plan.json`" + ` (widget definitions) bound to ` + "`db/*.json`" + ` (the data); finished-run reports are ` + "`reports/<group>/<timestamp>.md`" + `. To summarize results, read the ` + "`db/*.json`" + ` the widgets bind to plus any ` + "`<timestamp>.md`" + ` report. |
+| "What does the workflow's report / dashboard show?" | ` + "`Workflow/<name>/reports/`" + ` — the live dashboard is ` + "`reports/report_plan.json`" + ` (widget definitions) bound to ` + "`db/db.sqlite`" + ` via each widget's ` + "`sql`" + `; finished-run reports are ` + "`reports/<group>/<timestamp>.md`" + `. To summarize results, run the widgets' ` + "`sql`" + ` against ` + "`db/db.sqlite`" + ` plus any ` + "`<timestamp>.md`" + ` report. |
 
 **Schema hints** (so you can write correct ` + "`jq`" + ` queries without sniffing first):
 - ` + "`graph.json`" + `: ` + "`{schema_version, entities: [{id, type, label, properties, provenance}], relationships: [{from_id, to_id, type, properties, provenance}]}`" + `. Query examples:
@@ -767,7 +767,7 @@ When the user asks "what did the workflow extract / produce / know?", each workf
   - One entity by id: ` + "`jq '.entities[] | select(.id==\"company-acme\")' graph.json`" + `
   - Relationships from an entity: ` + "`jq '.relationships[] | select(.from_id==\"company-acme\")' graph.json`" + `
 - ` + "`notes/_index.json`" + `: ` + "`{topics: [{id, file, covers: [entity_ids], last_updated, size_bytes, section_count}]}`" + `. Read ` + "`_index.json`" + ` first to find which topic covers what, then ` + "`cat`" + ` only the relevant file.
-- ` + "`db/*.json`" + `: row shape is workflow-specific — ` + "`head`" + ` or ` + "`jq '.[0]'`" + ` the file to learn its fields before querying.
+- ` + "`db/db.sqlite`" + `: tables are workflow-specific — ` + "`sqlite3 db/db.sqlite \".tables\"`" + ` then ` + "`.schema <table>`" + ` (or ` + "`SELECT * FROM <table> LIMIT 1`" + `) to learn columns before querying.
 
 **Example flow** for "does Trading know about technical_momentum?":
 1. ` + "`cat Workflow/trading/knowledgebase/index.json`" + ` — see if the KB is non-empty

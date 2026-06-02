@@ -25,7 +25,7 @@ import {
 } from '../PreviousChatHistoryPanel'
 import {
   REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
-  REPORT_PREVIEW_PREFERENCE_KEY,
+  reportPreviewPreferenceKey,
 } from './ReportViewer'
 
 // Helper component to get observerId and render ChatArea
@@ -750,10 +750,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   const [reportPreviewPreference, setReportPreviewPreference] = useState<'auto' | 'desktop' | 'tablet' | 'mobile'>(() => {
     try {
-      const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
-      return saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'auto'
+      const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
+      return saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'mobile'
     } catch {
-      return 'auto'
+      return 'mobile'
     }
   })
 
@@ -781,14 +781,17 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [setShowChatArea])
 
   useEffect(() => {
+    // Re-read this workflow's scoped preference (default mobile) on mount, on
+    // workflow switch, and whenever the device changes (event/storage).
     const syncReportPreviewPreference = () => {
       try {
-        const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
-        setReportPreviewPreference(saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'auto')
+        const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
+        setReportPreviewPreference(saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'mobile')
       } catch {
-        setReportPreviewPreference('auto')
+        setReportPreviewPreference('mobile')
       }
     }
+    syncReportPreviewPreference()
 
     window.addEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, syncReportPreviewPreference as EventListener)
     window.addEventListener('storage', syncReportPreviewPreference)
@@ -797,7 +800,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       window.removeEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, syncReportPreviewPreference as EventListener)
       window.removeEventListener('storage', syncReportPreviewPreference)
     }
-  }, [])
+  }, [workspacePath])
 
   const workspacePaneVisible = !showChatArea || showWorkspacePane
   // Each preview tier controls the OUTER report pane width when both chat and
@@ -837,13 +840,19 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   //   laptop → report fills, chat ~360px rail (the report column flexes)
   //   tablet → report pane 880px, chat fills the rest
   //   mobile → report pane 480px, chat fills the rest
-  // Clicking into chat overrides to a mobile-style split so chat gets the room.
+  // Clicking into chat overrides to a mobile-style split so chat gets the room —
+  // except an explicit Tablet choice, which keeps its 880px report column.
   // Report is always grid col 2 (right), chat is col 1 (left).
-  const previewDevice = usePreviewDevice()
+  const previewDevice = usePreviewDevice(workspacePath)
+  // An explicit Tablet choice keeps its 880px report column even when chat is
+  // focused — only desktop/mobile collapse the report to the narrow mobile pane
+  // to give chat room while you type.
   const effectiveTier: 'mobile' | 'tablet' | 'laptop' =
-    focusedPane === 'chat'
-      ? 'mobile'
-      : previewDevice === 'mobile' ? 'mobile' : previewDevice === 'tablet' ? 'tablet' : 'laptop'
+    previewDevice === 'tablet'
+      ? 'tablet'
+      : focusedPane === 'chat'
+        ? 'mobile'
+        : previewDevice === 'mobile' ? 'mobile' : 'laptop'
   const splitGridCols =
     effectiveTier === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
     : effectiveTier === 'tablet' ? 'md:grid-cols-[minmax(0,1fr)_880px]'

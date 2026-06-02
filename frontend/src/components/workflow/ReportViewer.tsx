@@ -46,6 +46,13 @@ import type {
 
 export const REPORT_PREVIEW_PREFERENCE_KEY = 'workflow_report_preview_preference'
 export const REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT = 'workflow-report-preview-preference-changed'
+
+// The device-width preview preference is PER WORKFLOW — scope the storage key by
+// the workflow's workspacePath so a choice in one workflow doesn't leak to others.
+// A workflow with no saved choice defaults to mobile.
+export function reportPreviewPreferenceKey(scopeId?: string | null): string {
+  return scopeId ? `${REPORT_PREVIEW_PREFERENCE_KEY}:${scopeId}` : REPORT_PREVIEW_PREFERENCE_KEY
+}
 const REPORT_SVG_EXPORT_SCALE = 2
 const REPORT_PNG_EXPORT_SCALE = 1
 const REPORT_PNG_EXPORT_MAX_SIDE = 16000
@@ -513,12 +520,22 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   // mobilePreview prop, used when nothing has been selected yet.
   const [previewPreference, setPreviewPreference] = useState<'auto' | 'desktop' | 'tablet' | 'mobile'>(() => {
     try {
-      const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
-      return saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'auto'
+      const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
+      return saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'mobile'
     } catch {
-      return 'auto'
+      return 'mobile'
     }
   })
+  // Re-read the per-workflow preference when the workflow (workspacePath) changes,
+  // since this component can be reused across workflows without remounting.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(reportPreviewPreferenceKey(workspacePath))
+      setPreviewPreference(saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'mobile')
+    } catch {
+      setPreviewPreference('mobile')
+    }
+  }, [workspacePath])
   const [loading, setLoading] = useState(false)
   const initialSnapshot = reportDataCache.get(workspacePath)
   const [planSource, setPlanSource] = useState<string | null>(initialSnapshot?.planSource ?? null)
@@ -634,7 +651,10 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     const onExport = () => { void exportReportRef.current('png') }
     const onRefresh = () => { void refreshReportRef.current() }
     const onPref = (e: Event) => {
-      const p = (e as CustomEvent).detail?.preference
+      const detail = (e as CustomEvent).detail
+      // Only react to changes for THIS workflow (scoped per workspacePath).
+      if ((detail?.scopeId ?? null) !== (workspacePath ?? null)) return
+      const p = detail?.preference
       if (p === 'mobile' || p === 'tablet' || p === 'desktop' || p === 'auto') setPreviewPreference(p)
     }
     window.addEventListener('workflow-report-export-requested', onExport)
@@ -645,7 +665,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       window.removeEventListener('workflow-report-refresh-requested', onRefresh)
       window.removeEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, onPref)
     }
-  }, [])
+  }, [workspacePath])
 
   const handleToggleWidgetHidden = (widgetKey: string) => {
     setHiddenWidgetKeys(prev => {

@@ -709,12 +709,21 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   // A report that is just a single HTML document renders edge-to-edge: the HTML
   // owns its own width / padding / background, so we add no content-width cap, no
   // scroll padding, and no card chrome around it (avoids double margins/frames).
-  const htmlOnlyReport = useMemo(() => {
-    if (visibleSections.length !== 1) return false
+  const soleDocumentWidget = useMemo(() => {
+    if (visibleSections.length !== 1) return null
     const { entries } = visibleSections[0]
-    if (entries.length !== 1 || entries[0].entry.kind !== 'single') return false
+    if (entries.length !== 1 || entries[0].entry.kind !== 'single') return null
     const w = entries[0].entry.widget
-    if (w.kind !== 'file') return false
+    return isDocumentWidget(w) ? w : null
+  }, [visibleSections])
+  // A report that is just one document (md or html) drops our chrome — no scroll
+  // padding and no card box around it; the document owns its own spacing.
+  const documentOnlyReport = soleDocumentWidget != null
+  // HTML additionally goes full-width (it sets its own max-width); markdown keeps
+  // the readable content width.
+  const htmlOnlyReport = useMemo(() => {
+    const w = soleDocumentWidget
+    if (!w || w.kind !== 'file') return false
     const fmt = w.renderFormat || 'auto'
     if (fmt === 'html') return true
     if (fmt === 'auto') {
@@ -722,7 +731,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       return ext === 'html' || ext === 'htm'
     }
     return false
-  }, [visibleSections])
+  }, [soleDocumentWidget])
 
   const previewContentClassName =
     previewMode === 'mobile' || previewMode === 'tablet'
@@ -838,7 +847,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
         </div>
       )}
 
-      <div className={`min-h-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable] ${htmlOnlyReport ? '' : 'px-2 py-2 sm:px-3 sm:py-3'}`}>
+      <div className={`min-h-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable] ${documentOnlyReport ? '' : 'px-2 py-2 sm:px-3 sm:py-3'}`}>
         <div ref={reportExportRef} className={previewShellClassName}>
           <div className={`flex flex-col gap-3 ${previewContentClassName}`}>
             {loading && <ReportSkeleton />}

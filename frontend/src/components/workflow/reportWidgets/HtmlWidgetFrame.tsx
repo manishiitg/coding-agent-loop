@@ -71,8 +71,13 @@ export function HtmlReportFrame({
     const frame = iframeRef.current
     const doc = frame?.contentDocument
     if (!frame || !doc) return
-    const h = Math.max(doc.documentElement?.scrollHeight || 0, doc.body?.scrollHeight || 0)
-    if (h > 0) frame.style.height = `${h}px`
+    const content = Math.max(doc.documentElement?.scrollHeight || 0, doc.body?.scrollHeight || 0)
+    if (content <= 0) return
+    // Grow to fit content, but cap at ~viewport height so a tall report can never
+    // be cut off if the outer pane doesn't scroll — past the cap the iframe itself
+    // scrolls (iframes scroll their document by default). Short reports fit exactly.
+    const cap = Math.max(360, Math.round((window.innerHeight || 800) * 0.9))
+    frame.style.height = `${Math.min(content, cap)}px`
   }, [autoHeight])
 
   const inject = useCallback(() => {

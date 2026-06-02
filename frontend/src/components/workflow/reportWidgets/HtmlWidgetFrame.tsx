@@ -120,6 +120,27 @@ export function HtmlReportFrame({
     const doc = frame?.contentDocument
     if (!win || !doc) return
 
+    // In a srcDoc iframe the base URL is about:srcdoc, so clicking an in-page
+    // `#anchor` link (the report's tab nav) reloads the WHOLE document instead of
+    // scrolling. Intercept those clicks and scroll manually. Bound once per loaded
+    // document (the flag resets on reload, so a fresh doc re-binds).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!(doc as any).__anchorScrollBound) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(doc as any).__anchorScrollBound = true
+      doc.addEventListener('click', (e: Event) => {
+        const el = e.target as Element | null
+        const anchor = el?.closest?.('a[href^="#"]') as HTMLAnchorElement | null
+        if (!anchor) return
+        const id = anchor.getAttribute('href')?.slice(1)
+        if (!id) return
+        const target = doc.getElementById(id)
+        if (!target) return
+        e.preventDefault()
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+    }
+
     if (dataApi) {
       win.report = {
         workspacePath: dataApi.workspacePath,

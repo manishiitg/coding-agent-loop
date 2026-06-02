@@ -22,9 +22,10 @@ READ FIRST
 MIGRATE (build the database)
 
 1. One table per JSON file. Table name = file basename without `.json`, lowercased, non-alphanumeric → `_` (e.g. `db/job_candidates.json` → table `job_candidates`).
-2. **Normalize the JSON to a list of row objects first — NEVER drop data:**
+2. **Normalize the JSON to a list of row objects first — NEVER drop data.** Check these shapes in order:
    - **Array of objects** `[{...}, {...}]` → those are the rows (the common case).
-   - **A single object** `{...}` → that is **ONE row** (its keys = columns). Do NOT create an empty table — that loses the data. (e.g. `{"status":"allowed"}` → one row `status="allowed"`.)
+   - **Wrapper object with a nested rows array** — an object that holds the real rows under ONE key alongside metadata/schema keys, e.g. `{"_schema": {...}, "employees": [ …42… ], "total_count": 42, "last_synced": "..."}` or `{"records": [ …38… ]}`. Migrate the **inner array** (`employees` / `records` / etc.) as the rows — do NOT make the wrapper a single row. Pick the array-valued key (if several, the one whose name matches the table/entity or holds objects); keep the sibling metadata in `db/README.md`, not as a row.
+   - **A single object** `{...}` (no nested rows array) → that is **ONE row** (its keys = columns). Do NOT create an empty table — that loses the data. (e.g. `{"status":"allowed"}` → one row `status="allowed"`.)
    - **An object whose values are all row objects** (a map/dict keyed by id, e.g. `{"a":{...},"b":{...}}`) → one row per value; add the key as an `id`/key column if it isn't already a field.
    - **Empty array `[]` or empty object `{}`** → create the table empty (preserve the contract).
    - **A scalar or array of scalars** → wrap as a single-column table (`value`), one row per element.
@@ -34,8 +35,8 @@ MIGRATE (build the database)
 VERIFY (before committing) — this is the guard against silent data loss
 
 1. For each table, compute the **expected** row count from the normalized shape and compare to `sqlite3 db/db.sqlite.tmp "SELECT COUNT(*) FROM <table>"`:
-   - array → `jq 'length'`; single object → **1**; keyed map → `jq 'length'` (number of keys); empty → 0.
-   Do NOT blindly `jq 'length'` (it returns key-count for an object, not 1). They MUST match. If any mismatch — especially a non-empty source mapping to 0 rows — STOP, do not commit, and report the discrepancy.
+   - array → `jq 'length'`; wrapper with nested array → `jq '.<key> | length'` (the inner array, e.g. `jq '.employees | length'`); single object → **1**; keyed map → `jq 'length'` (number of keys); empty → 0.
+   Do NOT blindly `jq 'length'` on the file (it returns the top-level key-count for a wrapper/object, not the row count). They MUST match. If any mismatch — especially a non-empty source mapping to 0 rows — STOP, do not commit, and report the discrepancy.
 2. Spot-check one row per table round-trips (including a nested field via `json_extract`).
 
 REWRITE REPORTS

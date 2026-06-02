@@ -70,3 +70,30 @@ func TestWorkshopConvertAgentLLMConfigPreservesPublishedOptions(t *testing.T) {
 		t.Fatalf("expected fallback reasoning_effort=medium, got %v", got)
 	}
 }
+
+func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {
+	phase, tiered := workshopResolveLLMConfig(&workflowtypes.PresetLLMConfig{
+		Provider:          "claude-code",
+		ModelID:           "claude-code",
+		LLMAllocationMode: workflowtypes.LLMAllocationModeCodingAgent,
+	})
+
+	if phase == nil {
+		t.Fatal("expected coding agent phase/workshop LLM")
+	}
+	if phase.Provider != "claude-code" || phase.ModelID != "claude-opus-4-6" {
+		t.Fatalf("unexpected phase config: %+v", phase)
+	}
+	if tiered == nil || tiered.Tier1 == nil || tiered.Tier2 == nil || tiered.Tier3 == nil {
+		t.Fatalf("expected full tiered config, got %+v", tiered)
+	}
+	if tiered.Tier1.ModelID != "claude-opus-4-6" {
+		t.Fatalf("unexpected high tier: %+v", tiered.Tier1)
+	}
+	if tiered.Tier2.ModelID != "claude-sonnet-4-6" {
+		t.Fatalf("unexpected medium tier: %+v", tiered.Tier2)
+	}
+	if tiered.Tier3.ModelID != "claude-haiku-4-5-20251001" {
+		t.Fatalf("unexpected low tier: %+v", tiered.Tier3)
+	}
+}

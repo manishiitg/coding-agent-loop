@@ -2813,10 +2813,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				phaseManifestLoaded = true
 				workflowPhaseFolder = resolvedWPath
 				logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Loaded config from manifest at %s", resolvedWPath)
-				if manifest.Capabilities.LLMConfig != nil && manifest.Capabilities.LLMConfig.PhaseLLM != nil {
-					finalProvider = manifest.Capabilities.LLMConfig.PhaseLLM.Provider
-					finalModelID = manifest.Capabilities.LLMConfig.PhaseLLM.ModelID
-					logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Using phase LLM from manifest: %s/%s", finalProvider, finalModelID)
+				if manifest.Capabilities.LLMConfig != nil {
+					phaseLLM, _ := workshopResolveLLMConfig(manifest.Capabilities.LLMConfig)
+					if phaseLLM != nil && phaseLLM.Provider != "" && phaseLLM.ModelID != "" {
+						finalProvider = phaseLLM.Provider
+						finalModelID = phaseLLM.ModelID
+						logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Using workshop LLM from manifest: %s/%s", finalProvider, finalModelID)
+					}
 				}
 				// If manifest has explicit selection, use it; otherwise leave nil (= all globals included)
 				if req.SelectedGlobalSecrets == nil && manifest.Capabilities.SelectedGlobalSecretNames != nil {

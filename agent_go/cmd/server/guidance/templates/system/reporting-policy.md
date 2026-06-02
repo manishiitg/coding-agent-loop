@@ -112,7 +112,9 @@ full of them ≈ a widget plan with custom layout.
   it (content inside the div is a static fallback for standalone viewing).
 
 Same widget JSON schema as `report_plan.json` (any kind). Full syntax +
-examples: `get_reference_doc(kind="report-plan")`.
+examples, and the **"writing a good report document" formatting guide**
+(lead with a summary, structure with headings, data as tables/widgets not
+raw JSON, self-contained HTML, dark mode): `get_reference_doc(kind="report-plan")`.
 
 ### Diagnosis
 

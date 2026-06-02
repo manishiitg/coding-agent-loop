@@ -1,6 +1,6 @@
 Migrate this workflow's durable store from per-file `db/*.json` to a single SQLite database `db/db.sqlite` (one table per JSON file), then rewrite report widgets to query SQL.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-You perform this migration **inline yourself** using `execute_shell_command` (you have `sqlite3`, `python3`, `jq`, `mv`) and `diff_patch_workspace_file`. There is no separate tool — you do the work. Work entirely under `{{.WorkspacePath}}`.
+You perform this migration **inline yourself** using `execute_shell_command` (you have `sqlite3`, `python3`, `jq`, `mv`) and `diff_patch_workspace_file`. There is no separate tool — you do the work. Work entirely within the current workflow's root (its `db/` and `reports/` folders).
 
 This is a one-time, irreversible-by-default conversion. Be careful: never lose rows. Keep the original JSON as a backup so the step is reversible.
 

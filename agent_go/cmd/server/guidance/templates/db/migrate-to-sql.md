@@ -44,7 +44,7 @@ VERIFY (before committing) — this is the guard against silent data loss
    - array → `jq 'length'`; wrapper with nested array → `jq '.<key> | length'` (the inner array, e.g. `jq '.employees | length'`); single object / state-doc as one row (option a) → **1**; state-doc split into tables (option b) → each `<file>_<key>` table = `jq '.<key> | length'`; keyed map → `jq 'length'` (number of keys); empty → 0.
    Do NOT blindly `jq 'length'` on the file (it returns the top-level key-count for a wrapper/object, not the row count). They MUST match. If any mismatch — especially a non-empty source mapping to 0 rows — STOP, do not commit, and report the discrepancy.
 2. **No-dropped-data check (critical for rich state objects):** for each source file, list every top-level key whose value is a non-empty array or object; confirm each one is represented in SQLite (as a table, or as a non-null JSON column on the row). If any non-empty array/object from the source has no home in the DB, STOP — that is silent data loss.
-3. Spot-check one row per table round-trips (including a nested field via `json_extract`).
+3. Spot-check one row per table round-trips (including a nested field via `json_extract`). **Shell quoting:** SQLite JSON paths begin with `$` (e.g. `json_extract(data, '$.actions')`), which the shell expands inside double quotes or unquoted. Wrap the whole SQL in **single quotes** — `sqlite3 db/db.sqlite.tmp 'SELECT json_extract(data, "$.actions") FROM t'` — or escape `\$`, so SQLite sees the path verbatim.
 
 REWRITE REPORTS
 

@@ -4,6 +4,7 @@ import { Login } from '../pages/Login'
 import { AuthCallback } from '../pages/AuthCallback'
 import { SharedFile } from '../pages/SharedFile'
 import { SharedFolder } from '../pages/SharedFolder'
+import { ReportPage } from '../pages/ReportPage'
 import { Loader2 } from 'lucide-react'
 import { WorkspaceConnectionSwitcher } from './WorkspaceConnectionSwitcher'
 import { DesktopAppOnlyGate } from './DesktopAppOnlyGate'
@@ -25,6 +26,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
 
   const [sharedFilePath, setSharedFilePath] = useState<string | null>(null)
   const [sharedFolderPath, setSharedFolderPath] = useState<string | null>(null)
+  const [reportWorkspacePath, setReportWorkspacePath] = useState<string | null>(null)
   const [sharedUid, setSharedUid] = useState<string | null>(null)
   const [isAuthCallback, setIsAuthCallback] = useState(false)
 
@@ -50,6 +52,15 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       if (encodedPath) {
         setSharedFolderPath(encodedPath)
         if (uidParam) setSharedUid(uidParam)
+        return
+      }
+    }
+
+    // Check for dedicated workflow report URL: /report?path=BASE64_WORKSPACE_PATH
+    if (path === '/report') {
+      const encodedPath = params.get('path')
+      if (encodedPath) {
+        setReportWorkspacePath(encodedPath)
         return
       }
     }
@@ -118,6 +129,17 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
     if (isDesktopAppOnlyMode() && !(window as any).electronAPI) {
       return <DesktopAppOnlyGate />
     }
+    if (reportWorkspacePath) {
+      return (
+        <ReportPage
+          encodedPath={reportWorkspacePath}
+          onBack={() => {
+            setReportWorkspacePath(null)
+            window.history.pushState({}, '', '/')
+          }}
+        />
+      )
+    }
     return <>{children}</>
   }
 
@@ -134,6 +156,18 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   // Authenticated: render children
   if (isDesktopAppOnlyMode() && !(window as any).electronAPI) {
     return <DesktopAppOnlyGate />
+  }
+
+  if (reportWorkspacePath) {
+    return (
+      <ReportPage
+        encodedPath={reportWorkspacePath}
+        onBack={() => {
+          setReportWorkspacePath(null)
+          window.history.pushState({}, '', '/')
+        }}
+      />
+    )
   }
 
   return <>{children}</>

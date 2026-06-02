@@ -371,6 +371,39 @@ type StreamingAPI struct {
 	apiToken string
 }
 
+func spaStaticFileHandler(root string) http.Handler {
+	fileServer := http.FileServer(http.Dir(root))
+	indexPath := filepath.Join(root, "index.html")
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		if r.URL.Path == "/" {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		relativePath := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+		if relativePath != "." && !strings.HasPrefix(relativePath, "..") {
+			requestedPath := filepath.Join(root, relativePath)
+			if info, err := os.Stat(requestedPath); err == nil && !info.IsDir() {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		if _, err := os.Stat(indexPath); err == nil {
+			http.ServeFile(w, r, indexPath)
+			return
+		}
+
+		fileServer.ServeHTTP(w, r)
+	})
+}
+
 // QueryRequest represents an agent query request
 type QueryRequest struct {
 	Query          string                  `json:"query"`
@@ -1654,8 +1687,10 @@ func runServer(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(w, "window.__APP_RUNTIME_CONFIG__ = {\n  apiBaseUrl: \"http://localhost:%d\",\n  workspaceApiBaseUrl: %q\n};\n", actualPort, workspaceURL)
 	}).Methods("GET")
 
-	// Static file serving (for frontend)
-	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
+	// Static file serving (for frontend). Unknown GET/HEAD routes fall back to
+	// index.html so dedicated SPA URLs like /report, /file, and /folder work
+	// when opened directly in a browser.
+	router.PathPrefix("/").Handler(spaStaticFileHandler("./static/"))
 
 	// Create HTTP server
 	srv := &http.Server{

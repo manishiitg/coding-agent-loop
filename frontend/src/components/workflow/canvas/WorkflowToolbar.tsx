@@ -489,7 +489,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
-        {/* Show Database - durable db/*.json sources used by report widgets and steps */}
+        {/* Show Database - durable db/db.sqlite tables used by report widgets and steps */}
         {workspacePath && (
           <Tooltip>
             <TooltipTrigger asChild>

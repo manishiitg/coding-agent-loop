@@ -1,5 +1,5 @@
-// Database popup: read-only viewer for workflow db/*.json and db/*.jsonl files.
-// Report widgets bind to these durable files, so this gives users a direct way
+// Database popup: read-only viewer for the workflow's db/db.sqlite tables.
+// Report widgets query these tables via SQL, so this gives users a direct way
 // to inspect the data behind the live report without opening the file tree.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'

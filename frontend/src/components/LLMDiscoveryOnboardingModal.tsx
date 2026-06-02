@@ -19,18 +19,17 @@ type CandidateTestState = {
 
 type ReadinessLevel = 'ready' | 'needs_setup' | 'not_detected'
 type TierKey = 'main' | 'high' | 'medium' | 'low'
+type VisibleTierKey = Exclude<TierKey, 'main'>
 
-const FALLBACK_CODING_CLI_ORDER = ['codex-cli', 'claude-code', 'cursor-cli', 'opencode-cli', 'gemini-cli'] as const
-const TIER_LABELS: Record<TierKey, string> = {
-  main: 'Main',
+const PRIMARY_CODING_CLI_ORDER = ['claude-code', 'codex-cli'] as const
+const SECONDARY_CODING_CLI_ORDER = ['gemini-cli', 'agy-cli', 'opencode-cli', 'cursor-cli'] as const
+const FALLBACK_CODING_CLI_ORDER = [...PRIMARY_CODING_CLI_ORDER, ...SECONDARY_CODING_CLI_ORDER] as const
+const CODING_CLI_DISPLAY_ORDER = new Map<string, number>(
+  FALLBACK_CODING_CLI_ORDER.map((provider, index) => [provider, index])
+)
+const VISIBLE_TIER_LABELS: Record<VisibleTierKey, string> = {
   high: 'High',
-  medium: 'Medium',
-  low: 'Low',
-}
-const TIER_SHORT_LABELS: Record<TierKey, string> = {
-  main: 'Primary',
-  high: 'High',
-  medium: 'Medium',
+  medium: 'Med',
   low: 'Low',
 }
 
@@ -85,6 +84,12 @@ const CODING_CLI_INFO: Record<typeof FALLBACK_CODING_CLI_ORDER[number], {
     setupCommand: 'cursor-agent login',
     installHint: 'Install Cursor CLI so the cursor-agent command is available on the backend PATH.',
   },
+  'agy-cli': {
+    label: 'Antigravity CLI (Alpha)',
+    binary: 'agy',
+    setupCommand: 'agy',
+    installHint: 'Install Antigravity CLI so the agy command is available on the backend PATH.',
+  },
   'opencode-cli': {
     label: 'OpenCode CLI',
     binary: 'opencode',
@@ -101,6 +106,22 @@ const CODING_CLI_INFO: Record<typeof FALLBACK_CODING_CLI_ORDER[number], {
 
 const isFallbackCodingCLIProvider = (provider: string): provider is typeof FALLBACK_CODING_CLI_ORDER[number] =>
   (FALLBACK_CODING_CLI_ORDER as readonly string[]).includes(provider)
+
+const isPrimaryCodingCLIProvider = (provider: string) =>
+  (PRIMARY_CODING_CLI_ORDER as readonly string[]).includes(provider)
+
+const isOpenCodeSubProvider = (provider: string) =>
+  provider.startsWith('opencode-cli-')
+
+const codingCliDisplayRank = (provider: string) =>
+  CODING_CLI_DISPLAY_ORDER.get(isOpenCodeSubProvider(provider) ? 'opencode-cli' : provider) ?? 999
+
+function sortCodingCliCandidates(candidates: LLMDiscoveryCandidate[]) {
+  return [...candidates].sort((a, b) =>
+    codingCliDisplayRank(a.provider) - codingCliDisplayRank(b.provider) ||
+    a.label.localeCompare(b.label)
+  )
+}
 
 function fallbackCodingCandidate(provider: typeof FALLBACK_CODING_CLI_ORDER[number]): LLMDiscoveryCandidate {
   const info = CODING_CLI_INFO[provider]
@@ -186,16 +207,6 @@ function tierConfigForCandidate(candidate: LLMDiscoveryCandidate): Record<TierKe
   }
 }
 
-function publishedName(candidate: LLMDiscoveryCandidate, selectedModelId?: string): string {
-  if (candidate.provider === 'codex-cli') return 'Codex CLI'
-  if (candidate.provider === 'cursor-cli') return 'Cursor CLI'
-  if (candidate.provider === 'opencode-cli') return 'OpenCode CLI'
-  if (candidate.provider === 'opencode-cli-free') return 'OpenCode Free Models'
-  if (candidate.provider === 'claude-code') return 'Claude Code'
-  if (candidate.provider === 'gemini-cli') return `Gemini CLI (${selectedModelId || candidate.model_id})`
-  return candidate.label
-}
-
 function modelNameFor(provider: string, modelID: string, metadata: ModelMetadata[], providerManifest: ProviderManifestEntry[]) {
   const meta = metadata.find(m => m.provider === provider && m.model_id === modelID)
   if (meta?.model_name) return meta.model_name
@@ -204,34 +215,44 @@ function modelNameFor(provider: string, modelID: string, metadata: ModelMetadata
   return manifestModel?.model_name || modelID
 }
 
-function tierEntries(candidate: LLMDiscoveryCandidate, metadata: ModelMetadata[], providerManifest: ProviderManifestEntry[]) {
-  const tierModelIDs = tierModelIDsForCandidate(candidate)
-  return (Object.entries(tierModelIDs) as Array<[TierKey, string]>).map(([key, modelID]) => ({
-    key,
-    label: TIER_LABELS[key],
-    modelID,
-    modelName: modelNameFor(candidate.provider, modelID, metadata, providerManifest),
-  }))
-}
-
-function tierDisplayText(tier: ReturnType<typeof tierEntries>[number]) {
-  if (!tier.modelName || tier.modelName === tier.modelID) return tier.modelID
-
-  const cleanedModelName = tier.modelName
+function compactModelLabel(modelID: string, modelName: string) {
+  const raw = (modelName || modelID)
     .replace(/\s*\(default,\s*pricing varies\)/i, '')
     .replace(/\s*\(recommended,\s*pricing varies\)/i, '')
-
-  const prefix = `${tier.label} (`
-  if (cleanedModelName.startsWith(prefix) && cleanedModelName.endsWith(')')) {
-    return cleanedModelName.slice(prefix.length, -1)
+    .trim()
+  const lower = `${modelID} ${raw}`.toLowerCase()
+  if (lower.includes('opus')) return 'Opus'
+  if (lower.includes('sonnet')) return 'Sonnet'
+  if (lower.includes('haiku')) return 'Haiku'
+  if (['high', 'medium', 'low', 'auto'].includes(modelID)) {
+    return modelID.charAt(0).toUpperCase() + modelID.slice(1)
   }
-
-  return cleanedModelName
+  const tail = raw.split('/').pop() || raw
+  return tail.length > 18 ? `${tail.slice(0, 18)}...` : tail
 }
 
-function tierTitleText(tier: ReturnType<typeof tierEntries>[number]) {
-  const displayText = tierDisplayText(tier)
-  return `${tier.label}: ${displayText}${displayText !== tier.modelID ? ` (alias: ${tier.modelID})` : ''}`
+function visibleTierEntries(candidate: LLMDiscoveryCandidate, metadata: ModelMetadata[], providerManifest: ProviderManifestEntry[]) {
+  const tierModelIDs = tierModelIDsForCandidate(candidate)
+  return (['high', 'medium', 'low'] as VisibleTierKey[]).map(key => {
+    const modelID = tierModelIDs[key]
+    const modelName = modelNameFor(candidate.provider, modelID, metadata, providerManifest)
+    return {
+      key,
+      label: VISIBLE_TIER_LABELS[key],
+      modelID,
+      display: compactModelLabel(modelID, modelName),
+    }
+  })
+}
+
+function publishedName(candidate: LLMDiscoveryCandidate, selectedModelId?: string): string {
+  if (candidate.provider === 'codex-cli') return 'Codex CLI'
+  if (candidate.provider === 'cursor-cli') return 'Cursor CLI'
+  if (candidate.provider === 'opencode-cli') return 'OpenCode CLI'
+  if (candidate.provider === 'opencode-cli-free') return 'OpenCode Free Models'
+  if (candidate.provider === 'claude-code') return 'Claude Code'
+  if (candidate.provider === 'gemini-cli') return `Gemini CLI (${selectedModelId || candidate.model_id})`
+  return candidate.label
 }
 
 export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvancedSetup }: LLMDiscoveryOnboardingModalProps) {
@@ -264,7 +285,7 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
     const byProvider = new Map<string, LLMDiscoveryCandidate>()
     const byRuntime = new Map<string, LLMDiscoveryCandidate>()
     for (const candidate of candidates) {
-      if (candidate.kind === 'local_cli' && !byProvider.has(candidate.provider)) {
+      if (candidate.kind === 'local_cli' && !isOpenCodeSubProvider(candidate.provider) && !byProvider.has(candidate.provider)) {
         byProvider.set(candidate.provider, candidate)
         const runtimeKey = candidate.runtime_command || candidate.provider
         if (!byRuntime.has(runtimeKey)) byRuntime.set(runtimeKey, candidate)
@@ -274,6 +295,7 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
     const seenRuntimeKeys = new Set<string>()
     const manifestCodingProviders = providerManifest.filter(provider => {
       if (provider.integration_kind !== 'coding_agent') return false
+      if (isOpenCodeSubProvider(provider.id)) return false
       const runtimeKey = provider.runtime_command || provider.id
       if (seenRuntimeKeys.has(runtimeKey)) return false
       seenRuntimeKeys.add(runtimeKey)
@@ -294,11 +316,20 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
         const runtimeKey = candidate.runtime_command || candidate.provider
         if (!seen.has(candidate.provider) && !seenRuntimeKeys.has(runtimeKey)) ordered.push(candidate)
       }
-      return ordered
+      return sortCodingCliCandidates(ordered)
     }
 
     return FALLBACK_CODING_CLI_ORDER.map(provider => byProvider.get(provider) || fallbackCodingCandidate(provider))
   }, [candidates, providerManifest])
+
+  const primaryCodingCliCandidates = useMemo(
+    () => codingCliCandidates.filter(candidate => isPrimaryCodingCLIProvider(candidate.provider)),
+    [codingCliCandidates]
+  )
+  const secondaryCodingCliCandidates = useMemo(
+    () => codingCliCandidates.filter(candidate => !isPrimaryCodingCLIProvider(candidate.provider)),
+    [codingCliCandidates]
+  )
 
   const grouped = useMemo(() => {
     const readyAPI: LLMDiscoveryCandidate[] = []
@@ -316,11 +347,6 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
   }, [candidates])
 
   const hasReadyCodingCLI = codingCliCandidates.some(candidate => candidateReadiness(candidate) === 'ready')
-  const openCodeFreeProvider = providerManifest.find(provider => provider.id === 'opencode-cli-free')
-  const openCodeFreeCandidate = openCodeFreeProvider ? manifestProviderCandidate(openCodeFreeProvider) : null
-  const openCodeFreeModels = openCodeFreeProvider?.models.filter(model =>
-    model.input_cost_per_1m === 0 && model.output_cost_per_1m === 0
-  ) || []
 
   const loadDiscovery = async () => {
     setIsLoading(true)
@@ -368,17 +394,17 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
     const providerInfo = isFallbackCodingCLIProvider(candidate.provider)
       ? CODING_CLI_INFO[candidate.provider]
       : undefined
-    const binary = candidate.runtime_command || providerInfo?.binary || candidate.provider
-    const setupCommand = providerInfo?.setupCommand || (readiness === 'needs_setup' ? binary : undefined)
-    const tiers = tierEntries(candidate, metadata, providerManifest)
+    const setupCommand = providerInfo?.setupCommand || (readiness === 'needs_setup' ? candidate.runtime_command || candidate.provider : undefined)
+    const tierChips = visibleTierEntries(candidate, metadata, providerManifest)
     const popularOpenCodeProviders = candidate.provider === 'opencode-cli'
-      ? ['Kimi', 'GLM', 'MiniMax', 'DeepSeek', 'Qwen']
+      ? ['Kimi', 'GLM', 'MiniMax', 'DeepSeek', 'Qwen', 'free models']
       : []
+    const isPrimaryProvider = isPrimaryCodingCLIProvider(candidate.provider)
     const statusClasses = readiness === 'ready'
-      ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+      ? 'bg-success/10 text-success'
       : readiness === 'needs_setup'
-        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-        : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+        ? 'bg-warning/20 text-warning'
+        : 'bg-muted text-muted-foreground'
     const statusLabel = readiness === 'ready'
       ? 'Detected'
       : readiness === 'needs_setup'
@@ -388,32 +414,46 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
     return (
       <div
         key={candidate.id}
-        className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800"
+        className={`rounded-lg border p-4 shadow-sm ${
+          isPrimaryProvider
+            ? 'border-primary/40 bg-card ring-1 ring-primary/20'
+            : 'border-border bg-card'
+        }`}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-start gap-2">
-              <Terminal className="h-4 w-4 shrink-0 text-gray-500 dark:text-gray-400" />
-              <h4 className="min-w-0 text-sm font-semibold leading-snug text-gray-900 dark:text-gray-100">{candidate.label}</h4>
-            </div>
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
-              <code className="rounded bg-gray-100 px-1.5 py-0.5 font-mono dark:bg-slate-700">{binary}</code>
+              <Terminal className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <h4 className="min-w-0 text-sm font-semibold leading-snug text-foreground">{candidate.label}</h4>
             </div>
           </div>
-          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${statusClasses}`}>
-            {statusLabel}
-          </span>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${statusClasses}`}>
+              {statusLabel}
+            </span>
+          </div>
         </div>
 
-        <div className="mt-3 text-xs text-gray-600 dark:text-gray-300">
+        <div className="mt-3 space-y-2 text-xs text-muted-foreground">
+          <div className="flex flex-wrap gap-1.5">
+            {tierChips.map(tier => (
+              <span
+                key={tier.key}
+                className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                title={`${tier.label}: ${tier.modelID}`}
+              >
+                {tier.label}: {tier.display}
+              </span>
+            ))}
+          </div>
           {popularOpenCodeProviders.length > 0 ? (
-            <div className="mb-2">
-              <div className="mb-1 text-gray-500 dark:text-gray-400">Popular model providers via OpenCode</div>
+            <div>
+              <div className="mb-1 text-muted-foreground">OpenCode integrations</div>
               <div className="flex flex-wrap gap-1.5">
                 {popularOpenCodeProviders.map(provider => (
                   <span
                     key={provider}
-                    className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-slate-700 dark:text-slate-300"
+                    className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
                   >
                     {provider}
                   </span>
@@ -421,23 +461,9 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
               </div>
             </div>
           ) : null}
-          {readiness === 'ready' || readiness === 'needs_setup' ? (
-            <div className="space-y-1">
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {tiers.map(tier => (
-                  <span
-                    key={tier.key}
-                    className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600 dark:bg-slate-700 dark:text-slate-300"
-                    title={tierTitleText(tier)}
-                  >
-                    {TIER_SHORT_LABELS[tier.key]}: {tierDisplayText(tier)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : (
+          {readiness === 'not_detected' ? (
             <p className="line-clamp-2">{candidate.setup_hint || candidate.reason}</p>
-          )}
+          ) : null}
         </div>
 
         <div className={`mt-4 flex items-center gap-2 ${readiness === 'ready' && testState.status !== 'invalid' ? 'justify-end' : 'justify-between'}`}>
@@ -450,20 +476,20 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
                 size="sm"
                 onClick={() => enableCandidate(candidate)}
                 disabled={isEnabling || enablingId !== null}
-                className="h-8 px-3"
+                className="h-7 px-2.5 text-xs"
               >
                 {isEnabling ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : testState.status === 'valid' ? (
                   <CheckCircle className="h-3.5 w-3.5" />
                 ) : (
-                  'Activate CLI'
+                  'Use'
                 )}
               </Button>
             </>
           ) : readiness === 'needs_setup' && setupCommand ? (
             <>
-              <code className="truncate rounded bg-gray-100 px-2 py-1 text-xs dark:bg-slate-700">{setupCommand}</code>
+              <code className="truncate rounded bg-muted px-2 py-1 text-xs text-foreground">{setupCommand}</code>
               <Button
                 type="button"
                 variant="outline"
@@ -476,68 +502,8 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
               </Button>
             </>
           ) : (
-            <span className="text-xs text-gray-500 dark:text-gray-400">Install, then use Rescan.</span>
+            <span className="text-xs text-muted-foreground">Install, then use Rescan.</span>
           )}
-        </div>
-      </div>
-    )
-  }
-
-  const renderOpenCodeFreePanel = () => {
-    if (!openCodeFreeCandidate || openCodeFreeModels.length === 0) return null
-
-    const readiness = candidateReadiness(openCodeFreeCandidate)
-    const isEnabling = enablingId === openCodeFreeCandidate.id
-    const visibleModels = openCodeFreeModels.slice(0, 5)
-    const tierModelIDs = tierModelIDsForCandidate(openCodeFreeCandidate)
-    const highModel = modelNameFor(openCodeFreeCandidate.provider, tierModelIDs.high, metadata, providerManifest)
-    const lowModel = modelNameFor(openCodeFreeCandidate.provider, tierModelIDs.low, metadata, providerManifest)
-
-    return (
-      <div className="mt-3 rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">OpenCode free models</h4>
-              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                No API key
-              </span>
-              <span className="text-xs text-gray-500 dark:text-gray-400">rate-limited</span>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {visibleModels.map(model => (
-                <span
-                  key={model.model_id}
-                  className="rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-700 dark:bg-slate-700 dark:text-gray-200"
-                  title={model.model_id}
-                >
-                  {model.model_name}
-                </span>
-              ))}
-            </div>
-            <p className="mt-2 text-xs text-gray-600 dark:text-gray-300">
-              Free after installing OpenCode. High/Medium use {highModel}; Low uses {lowModel}.
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center justify-between gap-3 lg:justify-end">
-            <span className="text-xs text-gray-500 dark:text-gray-400">
-              {readiness === 'ready'
-                ? 'OpenCode CLI detected'
-                : openCodeFreeCandidate.setup_hint || 'Install OpenCode CLI, then rescan.'}
-            </span>
-            {readiness === 'ready' ? (
-              <Button
-                size="sm"
-                onClick={() => enableCandidate(openCodeFreeCandidate)}
-                disabled={isEnabling || enablingId !== null}
-                className="h-8 px-3"
-              >
-                {isEnabling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Activate CLI'}
-              </Button>
-            ) : (
-              <span className="text-xs text-gray-500 dark:text-gray-400">Use Rescan after install.</span>
-            )}
-          </div>
         </div>
       </div>
     )
@@ -647,14 +613,14 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
                 <section>
                   <div className="mb-3 flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                      <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         <Terminal className="h-3.5 w-3.5" />
-                        Supported Coding CLIs
+                        Best Choices
                       </h3>
-                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                      <p className="mt-1 text-sm text-muted-foreground">
                         {hasReadyCodingCLI
-                          ? 'Detected CLIs can be validated and enabled. Other supported CLIs stay visible for later.'
-                          : 'No supported coding CLI was detected yet. Install one of these, sign in, then rescan.'}
+                          ? 'Start with one of these. Secondary CLIs stay available below.'
+                          : 'Install and sign in to one of these, then rescan.'}
                       </p>
                     </div>
                     <Button
@@ -668,10 +634,20 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
                       Rescan
                     </Button>
                   </div>
-                  <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
-                    {codingCliCandidates.map(renderCodingCliCard)}
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {primaryCodingCliCandidates.map(renderCodingCliCard)}
                   </div>
-                  {renderOpenCodeFreePanel()}
+                  {secondaryCodingCliCandidates.length > 0 && (
+                    <div className="mt-5">
+                      <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <Terminal className="h-3.5 w-3.5" />
+                        Other CLIs
+                      </h3>
+                      <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+                        {secondaryCodingCliCandidates.map(renderCodingCliCard)}
+                      </div>
+                    </div>
+                  )}
                 </section>
 
                 {/* API Providers — ready */}

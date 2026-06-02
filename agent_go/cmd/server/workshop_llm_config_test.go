@@ -81,13 +81,13 @@ func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {
 	if phase == nil {
 		t.Fatal("expected coding agent phase/workshop LLM")
 	}
-	if phase.Provider != "claude-code" || phase.ModelID != "claude-opus-4-6" {
+	if phase.Provider != "claude-code" || phase.ModelID != "claude-opus-4-8" {
 		t.Fatalf("unexpected phase config: %+v", phase)
 	}
 	if tiered == nil || tiered.Tier1 == nil || tiered.Tier2 == nil || tiered.Tier3 == nil {
 		t.Fatalf("expected full tiered config, got %+v", tiered)
 	}
-	if tiered.Tier1.ModelID != "claude-opus-4-6" {
+	if tiered.Tier1.ModelID != "claude-opus-4-8" {
 		t.Fatalf("unexpected high tier: %+v", tiered.Tier1)
 	}
 	if tiered.Tier2.ModelID != "claude-sonnet-4-6" {

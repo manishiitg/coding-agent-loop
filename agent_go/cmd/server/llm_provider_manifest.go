@@ -580,6 +580,8 @@ func inferCursorModelGroup(modelID, _ string) string {
 		return "GPT-5.1"
 	case strings.HasPrefix(id, "gpt-5"):
 		return "GPT-5"
+	case strings.Contains(id, "claude-opus-4-8") || strings.Contains(id, "opus-4-8"):
+		return "Claude Opus 4.8"
 	case strings.Contains(id, "claude-opus-4-7") || strings.Contains(id, "opus-4-7"):
 		return "Claude Opus 4.7"
 	case strings.Contains(id, "claude-4.6-opus") || strings.Contains(id, "opus-4-6"):

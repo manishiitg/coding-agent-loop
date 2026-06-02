@@ -516,7 +516,7 @@ const XTERM_PROFILE_OPTIONS: Record<TerminalColorScheme, {
   },
 }
 
-const XTERM_THEMES: Record<TerminalColorScheme, ITheme> = {
+const XTERM_BASE_THEMES: Record<TerminalColorScheme, ITheme> = {
   neon: {
     background: '#020403',
     foreground: '#8cff9a',
@@ -694,6 +694,47 @@ const XTERM_THEMES: Record<TerminalColorScheme, ITheme> = {
     brightWhite: '#c0caf5',
   },
 }
+
+// Claude Code (and other CLIs) paint a "queued message" — one submitted while the
+// agent is mid-turn — with a background of xterm 256-color index 237. xterm.js's
+// built-in value for 237 (#3a3a3a) renders noticeably brighter against our dark
+// terminal backgrounds than the same index does in a native terminal, so queued
+// messages look like a harsh grey bar here. ITheme can only style the 16 base
+// ANSI colors, so we override index 237 through `extendedAnsi` (which covers the
+// full 16-255 range). To keep every other color pixel-identical to xterm.js's
+// defaults we regenerate the standard 256-color palette and only tweak 237.
+const QUEUED_MESSAGE_BG_237 = '#1e1e1e'
+
+function buildExtendedAnsiPalette(): string[] {
+  const toHex = (v: number) => v.toString(16).padStart(2, '0')
+  // extendedAnsi covers indices 16-255 (240 entries; extendedAnsi[i] === color i+16).
+  const palette: string[] = []
+  for (let i = 16; i <= 255; i++) {
+    if (i < 232) {
+      // 6x6x6 color cube.
+      const n = i - 16
+      const cube = [Math.floor(n / 36), Math.floor((n % 36) / 6), n % 6].map(c =>
+        c === 0 ? 0 : 55 + 40 * c,
+      )
+      palette.push(`#${toHex(cube[0])}${toHex(cube[1])}${toHex(cube[2])}`)
+    } else {
+      // 24-step grayscale ramp.
+      const v = 8 + 10 * (i - 232)
+      palette.push(`#${toHex(v)}${toHex(v)}${toHex(v)}`)
+    }
+  }
+  palette[237 - 16] = QUEUED_MESSAGE_BG_237
+  return palette
+}
+
+const EXTENDED_ANSI_PALETTE = buildExtendedAnsiPalette()
+
+const XTERM_THEMES: Record<TerminalColorScheme, ITheme> = Object.fromEntries(
+  Object.entries(XTERM_BASE_THEMES).map(([scheme, theme]) => [
+    scheme,
+    { ...theme, extendedAnsi: EXTENDED_ANSI_PALETTE },
+  ]),
+) as Record<TerminalColorScheme, ITheme>
 
 function isTerminalColorScheme(value: string | null): value is TerminalColorScheme {
   return TERMINAL_COLOR_SCHEME_OPTIONS.some(option => option.value === value)

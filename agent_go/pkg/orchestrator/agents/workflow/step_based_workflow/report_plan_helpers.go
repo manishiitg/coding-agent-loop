@@ -35,10 +35,9 @@ var (
 	reportPlanKnownPivotAggregates = map[string]struct{}{
 		"sum": {}, "avg": {}, "count": {}, "min": {}, "max": {}, "first": {},
 	}
-	reportPlanValidSourceRE = regexp.MustCompile(`^db/[^/]+\.json$`)
-	reportPlanFenceRE       = regexp.MustCompile("^```\\s*widget:([\\w-]+)\\s*$")
-	reportPlanHexColorRE    = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
-	reportPlanCSSNamedRE    = regexp.MustCompile(`^[a-zA-Z]+$`)
+	reportPlanFenceRE    = regexp.MustCompile("^```\\s*widget:([\\w-]+)\\s*$")
+	reportPlanHexColorRE = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
+	reportPlanCSSNamedRE = regexp.MustCompile(`^[a-zA-Z]+$`)
 	// Mirrors evaluateShowIf in reportPlanParser.ts. Intentionally permissive —
 	// we flag malformed expressions as warnings, not errors, so the report
 	// still renders while the builder fixes them.
@@ -783,33 +782,6 @@ func normalizeReportPlanPath(raw string) string {
 	return t
 }
 
-func parseReportPlanSourcesField(raw string) map[string]string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	out := map[string]string{}
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		eq := strings.Index(part, "=")
-		if eq <= 0 {
-			continue
-		}
-		alias := strings.TrimSpace(part[:eq])
-		source := strings.TrimSpace(part[eq+1:])
-		if alias != "" && source != "" {
-			out[alias] = source
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
 // parseReportPlanPathSegments splits a path into segments, understanding dot
 // keys, bracket indices, and a leading "$"/"$." document-root sigil. Mirrors the
 // frontend parsePathSegments (reportPlanParser.ts) so validate_report_plan and
@@ -904,18 +876,6 @@ func applyReportPlanFilter(value interface{}, filter string) interface{} {
 		}
 	}
 	return filtered
-}
-
-// reportPlanWidgetSourcePaths returns the file path a file/file-list/markdown
-// widget points at. Data widgets bind via db+sql and have no file source.
-func reportPlanWidgetSourcePaths(w *reportPlanWidget) []string {
-	if w == nil {
-		return nil
-	}
-	if src := strings.TrimSpace(w.Source); src != "" {
-		return []string{src}
-	}
-	return nil
 }
 
 // reportPlanIsDataWidget reports whether the widget binds to db/db.sqlite via SQL.
@@ -1197,66 +1157,6 @@ func validateReportPlan(
 	return result, nil
 }
 
-func trackReportPlanSourceRequirement(reqs map[string]*reportPlanSourceRequirement, w *reportPlanWidget, locator string) {
-	if w == nil {
-		return
-	}
-	for _, source := range reportPlanWidgetSourcePaths(w) {
-		req := reqs[source]
-		if req == nil {
-			req = &reportPlanSourceRequirement{
-				Source: source,
-				Fields: map[string]struct{}{},
-			}
-			reqs[source] = req
-		}
-		req.Widgets = append(req.Widgets, locator)
-	}
-	if strings.TrimSpace(w.Fields["query"]) != "" {
-		// JSONata can rename, derive, join, and aggregate fields. For queried
-		// widgets the producer contract can deterministically guarantee the input
-		// files, while validate_report_plan executes the query against live JSON to
-		// verify the transformed output shape.
-		return
-	}
-
-	addField := func(raw string) {
-		for _, source := range reportPlanWidgetSourcePaths(w) {
-			reportPlanAddFieldRefs(reqs[source].Fields, raw)
-		}
-	}
-	addField(w.Path)
-	if w.Filter != "" {
-		if eq := strings.Index(w.Filter, "="); eq > 0 {
-			addField(w.Filter[:eq])
-		}
-	}
-	for _, key := range []string{
-		"fields", "x_axis", "xaxis", "y_axis", "yaxis", "color_by", "colorby",
-		"default_sort", "card_title_field", "card_subtitle_field", "card_description_field",
-		"card_link_field", "card_image_field", "delta_path", "deltapath", "trend_path",
-		"trendpath", "rows", "columns", "values",
-	} {
-		addField(w.Fields[key])
-	}
-	if rawSeries := reportPlanFirstNonEmpty(w.Fields["series"]); rawSeries != "" {
-		addField(rawSeries)
-	}
-	if rawFormats := reportPlanFirstNonEmpty(w.Fields["formats"]); rawFormats != "" {
-		for _, part := range strings.Split(rawFormats, ",") {
-			if eq := strings.Index(part, "="); eq > 0 {
-				addField(part[:eq])
-			}
-		}
-	}
-	if rawShowIf := reportPlanFirstNonEmpty(w.Fields["show_if"], w.Fields["showif"]); rawShowIf != "" {
-		matches := reportPlanShowIfRE.FindStringSubmatch(rawShowIf)
-		if len(matches) >= 3 {
-			addField(matches[2])
-		}
-	}
-}
-
 func validateReportPlanProducerContracts(
 	ctx context.Context,
 	workspacePath string,
@@ -1468,44 +1368,6 @@ func reportPlanContractStepLabels(contracts []reportPlanProducerContract) []stri
 		}
 	}
 	return reportPlanUniqueStrings(labels)
-}
-
-func reportPlanAddFieldRefs(fields map[string]struct{}, raw string) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "$" {
-		return
-	}
-	for _, part := range strings.Split(raw, ",") {
-		field := strings.TrimSpace(part)
-		if field == "" || field == "$" {
-			continue
-		}
-		for _, sep := range []string{"=", ":", " "} {
-			if idx := strings.Index(field, sep); idx > 0 {
-				field = field[:idx]
-			}
-		}
-		field = strings.Trim(field, "`'\" ")
-		field = strings.TrimPrefix(field, "$.")
-		field = strings.TrimPrefix(field, ".")
-		if field == "" || field == "$" {
-			continue
-		}
-		if strings.Contains(field, ".") {
-			fields[field] = struct{}{}
-		}
-		for _, segment := range strings.Split(field, ".") {
-			segment = strings.TrimSpace(segment)
-			segment = strings.Trim(segment, "[]`'\" ")
-			if segment == "" || segment == "$" {
-				continue
-			}
-			if _, err := strconv.Atoi(segment); err == nil {
-				continue
-			}
-			fields[segment] = struct{}{}
-		}
-	}
 }
 
 func reportPlanSortedFieldRefs(fields map[string]struct{}) []string {
@@ -2204,27 +2066,6 @@ func buildReportPlanParsedDump(sections []reportPlanSection) []reportPlanParsedS
 	return out
 }
 
-// reportPlanLooksLikeFlattenArtifact heuristically flags filenames that are
-// almost always pre-flattened helpers derived from a canonical source — the
-// validator suggests collapsing them via an in-widget JSONata query.
-func reportPlanLooksLikeFlattenArtifact(base string) bool {
-	lower := strings.ToLower(base)
-	if !strings.HasSuffix(lower, ".json") {
-		return false
-	}
-	stem := strings.TrimSuffix(lower, ".json")
-	if strings.HasSuffix(stem, "_rows") || strings.HasSuffix(stem, "_summary") || strings.HasSuffix(stem, "_summary_rows") {
-		return true
-	}
-	if strings.HasPrefix(stem, "flat_") || strings.HasPrefix(stem, "flattened_") {
-		return true
-	}
-	return false
-}
-
-// evalReportPlanQuery evaluates a JSONata expression against the raw source
-// JSON, mirroring the browser pipeline (source → query → path → filter →
-// render). Returns the transformed value or an error.
 func reportPlanFirstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {

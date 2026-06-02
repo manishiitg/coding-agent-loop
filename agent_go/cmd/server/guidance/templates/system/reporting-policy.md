@@ -94,23 +94,25 @@ the tradeoff:
 | Shape | Layout | Live data? | Best for |
 |---|---|---|---|
 | **Widget plan** | structured (grid, tabs, spans, themes) | live, auto-refresh | dashboards, at-a-glance metrics/tables/charts, multi-route reports |
-| **Markdown + embedded widgets** | narrative / linear | live (embedded widgets) | a report read top-to-bottom — prose plus a few live numbers/tables |
-| **Full HTML** | pixel-perfect / branded | static snapshot | highly designed, print-like, or layouts the others can't express |
+| **Markdown doc (+ embedded widgets)** | narrative / linear | live (embedded widgets) | a report read top-to-bottom — prose plus a few live numbers/tables |
+| **HTML doc (+ embedded widgets)** | pixel-perfect / branded | live (embedded widgets) | highly designed/branded/print-like layouts that also want live data |
 
 Decision rule: default to a **widget plan** for dashboards/live metrics;
-use **markdown + embedded widgets** for a narrative report with some live
-data; use **full HTML** only for pixel-perfect/branded/print layouts where
-a static snapshot is acceptable (and say "this won't auto-update").
+use a **markdown doc** for a narrative report (simplest to author); use an
+**HTML doc** when you need pixel-perfect/branded layout. Both document
+shapes can embed live widgets, so the old "documents are static" tradeoff
+is mostly gone — a doc with no embedded widgets is a static snapshot, a doc
+full of them ≈ a widget plan with custom layout.
 
-**Embedding live widgets in a markdown document** removes the static
-drawback of the doc path: inside a `.md` rendered via a `file`/`markdown`
-widget, a fenced ` ```report-widget ` block whose body is a widget JSON
-spec renders as a real live db-bound widget inline. So a markdown doc that
-is all `report-widget` blocks ≈ a widget plan, and one with none ≈ a
-static doc — which is why this middle shape usually removes the need to
-choose between the two extremes. (HTML can't embed live widgets — sandbox
-— so for HTML bake static charts or place live widgets alongside it.) Full
-syntax + schema: `get_reference_doc(kind="report-plan")`.
+**Embedding live widgets in a document:**
+- **Markdown** — a fenced ` ```report-widget ` block whose body is a widget
+  JSON spec renders as a live db-bound widget inline.
+- **HTML** — a placeholder `<div data-report-widget='{…spec…}'></div>`; the
+  viewer injects app styles into the iframe and mounts a live widget into
+  it (content inside the div is a static fallback for standalone viewing).
+
+Same widget JSON schema as `report_plan.json` (any kind). Full syntax +
+examples: `get_reference_doc(kind="report-plan")`.
 
 ### Diagnosis
 

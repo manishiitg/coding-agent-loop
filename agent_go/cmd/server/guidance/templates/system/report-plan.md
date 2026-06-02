@@ -25,7 +25,19 @@ Workshop may maintain the live frontend report defined by `reports/report_plan.j
   ```
   ~~~
 
-  The JSON is the same widget schema you'd put in `report_plan.json` (any kind: table/stat/chart/cards/text/markdown/file/file-list/alert/pivot). **This works only for the markdown path** — HTML renders in a sandboxed iframe and cannot host live widgets, so for HTML either bake static charts into the HTML or place live widgets *alongside* the html `file` widget in the plan.
+  The JSON is the same widget schema you'd put in `report_plan.json` (any kind: table/stat/chart/cards/text/markdown/file/file-list/alert/pivot).
+
+- **Embed LIVE widgets inside an HTML document** — same idea for the `.html` path. Put a placeholder element with the widget spec in a `data-report-widget` attribute; the viewer mounts a live widget into it (it injects app styles into the iframe and portals the React widget in). Anything you put *inside* the div is a static fallback shown when the HTML is viewed outside the report:
+
+  ~~~html
+  <h1>Income Tax Report — X SPACES</h1>
+  <p>Pulled live from the canonical DB:</p>
+  <div data-report-widget='{"kind":"table","source":"db/reports_consolidated.json","path":"AAAFX2962N.tds_rows"}'>
+    (live table loads here)
+  </div>
+  ~~~
+
+  So both document paths can carry live widgets: markdown via ` ```report-widget ` fences, HTML via `data-report-widget` placeholders. HTML still gives the most layout/branding control; markdown is simpler to author.
 - For dashboard-style layouts: call `set_section_layout` to put a section into CSS Grid mode (columns 1–24), then pass `layout: { span }` in the widget config so widgets span N columns. Use `mode: "tabs"` when a workflow has route-specific views; then pass `tab: "Route name"` to `upsert_report_widget` so widgets for the same route render under one tab. Prefer tabs over separate duplicate sections when routes share the same conceptual report area. Without a section layout, sections use the default flex layout.
 - Route-tab pattern: create one section for the conceptual area (for example `Route Evidence`, `Route Results`, or `Agent Outputs`), set that section to `mode: "tabs"`, and put every widget for a given route under the same `tab` value. Do not create many near-identical sections named after routes unless each route genuinely needs a different page-level narrative.
 - For per-report color palettes: call `set_report_theme` with `brand` / `warm` / `cool` for bundled themes, or pass `colors: { primary, accent, card, muted, border, chart: [...] }` (hex strings) for an inline custom palette — useful for brand-specific colors (HDFC red, Citi blue, etc.) that no bundled theme matches. Omit fields you don't want to override; pass null/empty to clear.

@@ -253,12 +253,19 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const workflowSecretPath = editingPreset ? selectedFolder?.filepath : undefined;
 
   const hasAdvancedWorkflowLLMConfig = useCallback((presetLLM?: PresetLLMConfig | null) => {
+    if (!presetLLM) return false;
+    if (presetLLM.llm_allocation_mode === 'tiered') return true;
+    if (presetLLM.llm_allocation_mode === 'coding_agent' || presetLLM.llm_allocation_mode === 'coding_plan') {
+      return false;
+    }
     const t1 = presetLLM?.tiered_config?.tier_1;
     const t2 = presetLLM?.tiered_config?.tier_2;
     const t3 = presetLLM?.tiered_config?.tier_3;
     const phase = presetLLM?.phase_llm;
-    const configured = [t1, t2, t3, phase].filter(Boolean);
+    const learning = presetLLM?.learning_llm;
+    const configured = [t1, t2, t3, phase, learning].filter(Boolean);
     const key = (cfg?: AgentLLMConfig | null) => cfg?.provider && cfg?.model_id ? `${cfg.provider}/${cfg.model_id}` : '';
+    if (presetLLM.llm_allocation_mode === 'manual' && configured.length > 0) return true;
     if (configured.some(cfg => (cfg?.fallbacks ?? []).length > 0)) return true;
     return new Set(configured.map(key).filter(Boolean)).size > 1;
   }, []);

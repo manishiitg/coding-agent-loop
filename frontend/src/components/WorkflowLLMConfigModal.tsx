@@ -17,6 +17,26 @@ interface WorkflowLLMConfigModalProps {
   onClose: () => void
 }
 
+function hasAdvancedWorkflowLLMConfig(config?: PresetLLMConfig | null): boolean {
+  if (!config) return false
+  if (config.llm_allocation_mode === 'tiered') return true
+  if (config.llm_allocation_mode === 'coding_agent' || config.llm_allocation_mode === 'coding_plan') {
+    return false
+  }
+
+  const t1 = config.tiered_config?.tier_1
+  const t2 = config.tiered_config?.tier_2
+  const t3 = config.tiered_config?.tier_3
+  const phase = config.phase_llm
+  const learning = config.learning_llm
+  const configured = [t1, t2, t3, phase, learning].filter(Boolean)
+  const key = (cfg?: AgentLLMConfig | null) => cfg?.provider && cfg?.model_id ? `${cfg.provider}/${cfg.model_id}` : ''
+
+  if (config.llm_allocation_mode === 'manual' && configured.length > 0) return true
+  if (configured.some(cfg => (cfg?.fallbacks ?? []).length > 0)) return true
+  return new Set(configured.map(key).filter(Boolean)).size > 1
+}
+
 // Inner component mounts fresh each open, so state always reflects the current preset
 function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const { availableLLMs, loadDefaultsFromBackend, isLoadingLLMs, providerManifest, providerManifestLoaded, loadProviderManifest } = useLLMStore()
@@ -60,17 +80,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const [tier2, setTier2] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_2 ?? existing?.tiered_config?.tier_2 ?? null)
   const [tier3, setTier3] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_3 ?? existing?.tiered_config?.tier_3 ?? null)
   const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(manifestLLM?.phase_llm ?? existing?.phase_llm ?? null)
-  const [showAdvanced, setShowAdvanced] = useState(() => {
-    const config = manifestLLM ?? existing
-    const t1 = config?.tiered_config?.tier_1
-    const t2 = config?.tiered_config?.tier_2
-    const t3 = config?.tiered_config?.tier_3
-    const phase = config?.phase_llm
-    const key = (cfg?: AgentLLMConfig | null) => cfg?.provider && cfg?.model_id ? `${cfg.provider}/${cfg.model_id}` : ''
-    const configured = [t1, t2, t3, phase].filter(Boolean)
-    if (configured.some(cfg => (cfg?.fallbacks ?? []).length > 0)) return true
-    return new Set(configured.map(key).filter(Boolean)).size > 1
-  })
+  const [showAdvanced, setShowAdvanced] = useState(() => hasAdvancedWorkflowLLMConfig(manifestLLM ?? existing))
 
   if (!activePreset) return null
 
@@ -166,6 +176,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
           if (refreshed.tiered_config?.tier_2) setTier2(refreshed.tiered_config.tier_2)
           if (refreshed.tiered_config?.tier_3) setTier3(refreshed.tiered_config.tier_3)
           if (refreshed.phase_llm) setPhaseLLM(refreshed.phase_llm)
+          setShowAdvanced(hasAdvancedWorkflowLLMConfig(refreshed))
         }
       }
     } finally {
@@ -196,9 +207,10 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
           llm_allocation_mode: 'coding_agent',
         }
       } else {
+        const effectivePhaseLLM = phaseLLM ?? (tieredConfig ? tier1 : null)
         newLLMConfig = {
           ...nextBaseLLMConfig,
-          phase_llm: phaseLLM ?? undefined,
+          phase_llm: effectivePhaseLLM ?? undefined,
           llm_allocation_mode: tieredConfig ? 'tiered' : 'manual',
           ...(tieredConfig ? { tiered_config: tieredConfig } : {}),
         }

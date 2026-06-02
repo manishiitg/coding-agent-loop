@@ -96,9 +96,12 @@ WorkflowTabItem.displayName = 'WorkflowTabItem'
  */
 interface WorkflowChatTabsProps {
   onNewChat?: () => void
+  // When true, render inline (no bordered/background bar wrapper) so the strip can
+  // be embedded inside the WorkflowToolbar row instead of being its own bar.
+  embedded?: boolean
 }
 
-export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat }) => {
+export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, embedded = false }) => {
   const [pendingTreeViewTabId, setPendingTreeViewTabId] = useState<string | null>(null)
   const {
     chatTabs,
@@ -255,9 +258,13 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat })
 
   return (
     <>
-    <div className="shrink-0 border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800">
-      <div className="flex min-w-0 items-center gap-1 px-2 py-1">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+    <div className={embedded
+      ? 'flex min-w-0 flex-1'
+      : 'shrink-0 border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800'}>
+      <div className={embedded
+        ? 'flex min-w-0 flex-1 items-center gap-1'
+        : 'flex min-w-0 items-center gap-1 px-2 py-1'}>
+        <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
           {activeWorkflowTabs.map((tab) => (
             <WorkflowTabItem
               key={tab.tabId}
@@ -271,9 +278,28 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat })
           ))}
         </div>
 
+        {/* New Chat sits right next to the tabs (browser-style) */}
+        {onNewChat && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onNewChat()
+            }}
+            className="ml-0.5 inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+            title="Start a new workflow chat"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">New Chat</span>
+          </button>
+        )}
+
+        {/* Spacer pushes the view controls to the right, beside status/tools */}
+        <div className="min-w-[0.5rem] flex-1" />
+
         {/* Auto-scroll and layout controls - only show when there are workflow tabs */}
         {activeWorkflowTabs.length > 0 && (
-          <div className="flex shrink-0 items-center gap-1 border-l border-gray-200 pl-2 dark:border-gray-700">
+          <div className="flex shrink-0 items-center gap-1">
             {activeViewMode !== 'terminal' && (
             <button
               onClick={(e) => {
@@ -351,20 +377,6 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat })
                 </Tooltip>
               ))}
             </div>
-            {onNewChat && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onNewChat()
-                }}
-                className="ml-1 inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
-                title="Start a new workflow chat"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">New Chat</span>
-              </button>
-            )}
           </div>
         )}
       </div>

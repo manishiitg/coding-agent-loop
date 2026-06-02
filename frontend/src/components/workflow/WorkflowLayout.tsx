@@ -1961,6 +1961,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       showChatArea={showChatArea}
       toolbarOnly={!workspacePaneVisible && showChatArea}
       sharedToolbar={showChatArea}
+      chatTabsSlot={showChatArea ? <WorkflowChatTabs embedded onNewChat={handleWorkflowNewChat} /> : undefined}
       paneClassName={canvasPaneClassName}
       onToggleChatArea={handleToggleChatArea}
       className={showChatArea && !workspacePaneVisible ? '!h-auto shrink-0' : 'h-full'}
@@ -2005,9 +2006,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               ? `border-b border-border md:col-start-1 md:row-start-2 md:border-b-0 md:border-r ${shouldUseMobileReportPane ? 'flex-1 md:flex-[1.35]' : 'flex-1 basis-1/2'}`
               : 'flex-1'
           }`}>
-            <div className="flex-shrink-0">
-              <WorkflowChatTabs onNewChat={handleWorkflowNewChat} />
-            </div>
+            {/* WorkflowChatTabs now renders inline in the WorkflowToolbar (chatTabsSlot
+                on canvasElement above) so the tabs + status + tools share one bar. */}
 
             {isRestoringWorkflowSessions && (
               <div className="flex items-center gap-2 border-b border-blue-100 bg-blue-50 px-3 py-1.5 dark:border-blue-800/50 dark:bg-blue-900/20">

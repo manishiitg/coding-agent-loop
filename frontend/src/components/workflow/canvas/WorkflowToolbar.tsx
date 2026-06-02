@@ -67,6 +67,10 @@ interface WorkflowToolbarProps {
   showChatArea?: boolean
   onToggleChatArea?: () => void
   onRefresh?: () => Promise<void>  // Refresh plan and variables
+  // Chat tab strip (WorkflowChatTabs) rendered inline on the left of this bar so the
+  // workflow chat tabs + new-chat share one row with the status/tools instead of
+  // sitting in a separate bar below.
+  chatTabsSlot?: React.ReactNode
   className?: string
 }
 
@@ -82,6 +86,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   onStartPhase,
   showChatArea = false,
   onRefresh,
+  chatTabsSlot,
   className = ''
 }) => {
   // Normalize runFolders to avoid repeated null checks throughout the component
@@ -364,11 +369,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       relative z-10
       ${className}
     `}>
-      {/* Left side - primary workflow views */}
-      <div className="flex min-w-0 flex-1 items-center gap-x-3 gap-y-1.5 flex-wrap">
-        {/* The Chat/Plan/Report view-switcher was removed from the top bar.
-            Plan/Report now live as an on-pane segmented switch (PreviewPaneControls);
-            the chat pane's "New chat" covers starting a builder conversation. */}
+      {/* Left side - chat tab strip (grows) + workflow status */}
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        {/* Chat tabs + new-chat live here so they share this row instead of a
+            separate bar below. Plan/Report live as an on-pane segmented switch. */}
+        {chatTabsSlot}
 
         <div className="flex shrink-0 items-center gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">

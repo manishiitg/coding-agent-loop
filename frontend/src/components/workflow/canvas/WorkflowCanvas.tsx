@@ -68,6 +68,7 @@ interface WorkflowCanvasProps {
   onToggleChatArea?: () => void
   toolbarOnly?: boolean  // When true, only render the toolbar (skip React Flow canvas for performance)
   sharedToolbar?: boolean
+  chatTabsSlot?: React.ReactNode  // Chat tab strip rendered inline in the toolbar (shared-toolbar mode)
   paneClassName?: string
   className?: string
   viewMode?: CanvasViewMode
@@ -243,6 +244,7 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
   onToggleChatArea,
   toolbarOnly = false,
   sharedToolbar = false,
+  chatTabsSlot,
   paneClassName = '',
   className = '',
   hideToolbar = false,
@@ -310,6 +312,7 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
             showChatArea={showChatArea}
             onToggleChatArea={onToggleChatArea}
             onRefresh={handleRefresh}
+            chatTabsSlot={chatTabsSlot}
           />
         </div>
       )}
@@ -1054,6 +1057,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   onToggleChatArea,
   toolbarOnly = false,
   sharedToolbar = false,
+  chatTabsSlot,
   paneClassName = '',
   className = '',
   viewMode,
@@ -2586,6 +2590,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               showChatArea={showChatArea}
               onToggleChatArea={onToggleChatArea}
               onRefresh={handleRefresh}
+              chatTabsSlot={chatTabsSlot}
             />
           </div>
         )}
@@ -2635,6 +2640,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             showChatArea={showChatArea}
             onToggleChatArea={onToggleChatArea}
             onRefresh={handleRefresh}
+            chatTabsSlot={chatTabsSlot}
           />
         </div>
       )}

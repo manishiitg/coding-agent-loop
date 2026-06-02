@@ -9,7 +9,7 @@ BOUNDARIES
 1. Write only under `db/` and `reports/`. Do not touch `planning/`, `learnings/`, `knowledgebase/`, `evaluation/`, or run outputs.
 2. Preserve every row and field. Do not drop, rename, or transform row values — only change the storage format and (for nested objects/arrays) wrap them as JSON text in a column.
 3. `db/metrics_history.jsonl` stays as JSONL — it is backend-owned and append-only. Do NOT migrate it. Leave `db/assets/` (binary media) untouched.
-4. Idempotent: if `db/db.sqlite` already exists, STOP and report that this workflow is already migrated.
+4. **Resume vs fresh** (check FIRST): if `db/db.sqlite` already exists, the DATA is already migrated — do NOT rebuild it, re-import rows, or re-back-up JSON. Switch to **FINISH-THE-CUTOVER mode**: skip the MIGRATE / VERIFY / FINALIZE-backup steps and do only the rewrite phases (REWRITE REPORTS for any widget still on `source`/`query`, and especially REWRITE PLAN STEPS for stale `db/*.json` instructions), then update `db/README.md` if needed and report what you finished. Many workflows were migrated by an older flow that converted data + reports but NOT plan steps — finishing those steps is the whole job on a re-run.
 
 READ FIRST
 
@@ -19,7 +19,7 @@ READ FIRST
 4. Read `reports/report_plan.json` if present. Map every widget's `source: db/*.json` and any `sources` + JSONata `query` to the table(s) it will query in SQL. Also scan markdown docs under `reports/` and `db/` for ```report-widget fenced blocks — those embedded widgets must be rewritten too.
 5. Sample each JSON file with `jq` to learn its shape and which fields are nested objects/arrays.
 
-MIGRATE (build the database)
+MIGRATE (build the database) — **SKIP this whole section in FINISH-THE-CUTOVER mode (db/db.sqlite already exists)**
 
 1. One table per JSON file. Table name = file basename without `.json`, lowercased, non-alphanumeric → `_` (e.g. `db/job_candidates.json` → table `job_candidates`).
 2. **Normalize the JSON to row objects first — NEVER drop ANY non-empty array, object, or field.** The cardinal rule: every piece of source data must land somewhere queryable (a row, a column, or its own table). Putting data "in `db/README.md`" does NOT count — the README is documentation, not storage. Only tiny bookkeeping scalars (`schema_version`, `last_updated`) may be dropped to README. Check these shapes in order:
@@ -38,7 +38,7 @@ MIGRATE (build the database)
    - **Build the DB in a LOCAL temp path, then move it onto the workspace.** In this environment Python's `sqlite3` often CANNOT open/create a database file directly on the workspace mount (`db/...`) — file-locking on the mounted FS. So have the script create the DB at a local path like `/tmp/db_migrate.sqlite`, then copy it onto the mount: `cp /tmp/db_migrate.sqlite db/db.sqlite.tmp` (a plain file copy needs no DB locking and works on the mount). Do NOT point Python's `sqlite3.connect()` at `db/...` directly.
    - **Fallback** if the temp-then-copy path is unavailable: have Python emit a `.sql` file (DDL + `INSERT` statements, escaping `'`→`''` in TEXT and `json.dumps` for nested), then build the DB with the `sqlite3` CLI: `sqlite3 db/db.sqlite.tmp < /tmp/migrate.sql` (the CLI can open the mount path even when Python can't).
 
-VERIFY (before committing) — this is the guard against silent data loss
+VERIFY (before committing) — this is the guard against silent data loss — **SKIP in FINISH-THE-CUTOVER mode**
 
 1. For each table, compute the **expected** row count from the normalized shape and compare to `sqlite3 db/db.sqlite.tmp "SELECT COUNT(*) FROM <table>"`:
    - array → `jq 'length'`; wrapper with nested array → `jq '.<key> | length'` (the inner array, e.g. `jq '.employees | length'`); single object / state-doc as one row (option a) → **1**; state-doc split into tables (option b) → each `<file>_<key>` table = `jq '.<key> | length'`; keyed map → `jq 'length'` (number of keys); empty → 0.
@@ -72,10 +72,10 @@ The step descriptions and step config still tell agents to read/write the old `d
 
 FINALIZE
 
-1. Rewrite `db/README.md` to the SQL contract: one section per table with its `CREATE TABLE` DDL, PRIMARY KEY, indexes, writer steps, and which report widgets read it.
-2. Move the old JSON aside for rollback: `mkdir -p db/_json_backup && mv db/<each>.json db/_json_backup/`.
-3. Promote the database atomically: `mv db/db.sqlite.tmp db/db.sqlite`. (Doing this last makes "db/db.sqlite exists" mean "fully migrated".)
-4. Write a marker `db/_migration.json`: `{ "migrated_at": "<ISO time>", "tables": <n>, "rows_verified": true, "source_files": [ ... ] }`.
+1. Rewrite `db/README.md` to the SQL contract: one section per table with its `CREATE TABLE` DDL, PRIMARY KEY, indexes, writer steps, and which report widgets read it. (In FINISH-THE-CUTOVER mode, only touch README if it's stale.)
+2. **(fresh migration only)** Move the old JSON aside for rollback: `mkdir -p db/_json_backup && mv db/<each>.json db/_json_backup/`.
+3. **(fresh migration only)** Promote the database atomically: `mv db/db.sqlite.tmp db/db.sqlite`. (Doing this last makes "db/db.sqlite exists" mean "data migrated".)
+4. Write/update the marker `db/_migration.json`: `{ "migrated_at": "<ISO time>", "tables": <n>, "rows_verified": true, "source_files": [ ... ], "plan_steps_rewritten": true }`. (In FINISH-THE-CUTOVER mode, set `plan_steps_rewritten: true` to record that the steps are now done.)
 
 REPORT
 

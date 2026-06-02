@@ -226,7 +226,7 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
     <div className="flex flex-col gap-2">
       {!suppressHeader && <WidgetHeader widget={widget} />}
       {format === 'markdown' && (
-        <div className="rounded-lg bg-muted/20 px-2.5 py-2 text-sm text-foreground">
+        <div className="text-sm text-foreground">
           <MarkdownRenderer content={state.content || ''} basePath={path} className="max-w-none" maxHeight="none" renderEmbeddedWidget={renderEmbeddedWidget} />
         </div>
       )}
@@ -235,7 +235,7 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
           html={state.content || ''}
           title={widget.title || name}
           autoHeight
-          className="block min-h-[120px] w-full rounded-lg border border-border bg-background"
+          className="block w-full border-0"
         />
       )}
       {(format === 'text' || format === 'code' || format === 'json') && (

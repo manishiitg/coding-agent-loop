@@ -26,7 +26,8 @@ import {
 } from './reportWidgets/shared'
 import { useCompactWidgetLayout, useContainerSizeTier } from './reportWidgets/tableHelpers'
 import { BarChart3, Check, ChevronDown, Download, Laptop, Loader2, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
-import { agentApi } from '../../services/api'
+import { agentApi, workspaceApi } from '../../services/api'
+import { useReportFilePreviewStore } from '../../stores/useReportFilePreviewStore'
 import { useChatStore } from '../../stores/useChatStore'
 import {
   applyWidgetFilter,
@@ -705,10 +706,39 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       : previewMode === 'tablet'
         ? 'mx-auto w-full max-w-[880px] p-1.5 transition-all duration-200'
         : 'mx-auto w-full max-w-full transition-all duration-200'
+  // A report that is just a single HTML document renders edge-to-edge: the HTML
+  // owns its own width / padding / background, so we add no content-width cap, no
+  // scroll padding, and no card chrome around it (avoids double margins/frames).
+  const soleDocumentWidget = useMemo(() => {
+    if (visibleSections.length !== 1) return null
+    const { entries } = visibleSections[0]
+    if (entries.length !== 1 || entries[0].entry.kind !== 'single') return null
+    const w = entries[0].entry.widget
+    return isDocumentWidget(w) ? w : null
+  }, [visibleSections])
+  // A report that is just one document (md or html) drops our chrome — no scroll
+  // padding and no card box around it; the document owns its own spacing.
+  const documentOnlyReport = soleDocumentWidget != null
+  // HTML additionally goes full-width (it sets its own max-width); markdown keeps
+  // the readable content width.
+  const htmlOnlyReport = useMemo(() => {
+    const w = soleDocumentWidget
+    if (!w || w.kind !== 'file') return false
+    const fmt = w.renderFormat || 'auto'
+    if (fmt === 'html') return true
+    if (fmt === 'auto') {
+      const ext = (w.source || '').split('.').pop()?.toLowerCase()
+      return ext === 'html' || ext === 'htm'
+    }
+    return false
+  }, [soleDocumentWidget])
+
   const previewContentClassName =
     previewMode === 'mobile' || previewMode === 'tablet'
       ? 'w-full max-w-full'
-      : 'mx-auto w-full max-w-5xl'
+      : htmlOnlyReport
+        ? 'w-full max-w-full'
+        : 'mx-auto w-full max-w-5xl'
 
 
   // Inline custom palette → CSS variables on the report root. Hex values get
@@ -768,7 +798,28 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
         return text
       }
     }
-    return { workspacePath, query, get, getText }
+    const fileUrl = async (path: string): Promise<string | null> => {
+      const n = allowed(path)
+      if (!n) return null
+      try {
+        const response = await workspaceApi.get(`/api/documents/${encodeURIComponent(`${workspacePath}/${n}`)}`, {
+          params: { download: 'true' },
+          responseType: 'blob',
+          headers: { Accept: 'application/octet-stream' },
+          transformResponse: [(d) => d],
+        })
+        const blob = response.data instanceof Blob ? response.data : new Blob([response.data])
+        return URL.createObjectURL(blob)
+      } catch {
+        return null
+      }
+    }
+    const openFile = (path: string): void => {
+      const n = allowed(path)
+      if (!n) return
+      useReportFilePreviewStore.getState().show({ path: `${workspacePath}/${n}` })
+    }
+    return { workspacePath, query, get, getText, fileUrl, openFile }
   }, [workspacePath])
 
   const reportRuntime = useMemo(
@@ -796,7 +847,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2 py-2 [scrollbar-gutter:stable] sm:px-3 sm:py-3">
+      <div className={`min-h-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable] ${documentOnlyReport ? '' : 'px-2 py-2 sm:px-3 sm:py-3'}`}>
         <div ref={reportExportRef} className={previewShellClassName}>
           <div className={`flex flex-col gap-3 ${previewContentClassName}`}>
             {loading && <ReportSkeleton />}

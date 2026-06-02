@@ -25,7 +25,37 @@ Workshop may maintain the live frontend report defined by `reports/report_plan.j
   ```
   ~~~
 
-  The JSON is the same widget schema you'd put in `report_plan.json` (any kind: table/stat/chart/cards/text/markdown/file/file-list/alert/pivot). **This works only for the markdown path** — HTML renders in a sandboxed iframe and cannot host live widgets, so for HTML either bake static charts into the HTML or place live widgets *alongside* the html `file` widget in the plan.
+  The JSON is the same widget schema you'd put in `report_plan.json` (any kind: table/stat/chart/cards/text/markdown/file/file-list/alert/pivot).
+
+- **HTML reports get LIVE data, not embedded widgets** — the `.html` path is for full styling control, so instead of injecting our widgets the viewer hands the HTML the live data and lets it render its own visuals (Chart.js, custom tables, branded CSS — whatever). Inside the iframe the viewer exposes `window.report`:
+  - `window.report.sources` — already-loaded plan sources, `{ "db/x.json": {…} }`
+  - `await window.report.get(path)` — fetch any `db/`/`knowledgebase/`/`docs/` file live → parsed JSON (or text)
+  - `await window.report.getText(path)` — raw file text
+  - the `report:data` event fires on load and on every refresh — render in its handler
+
+  ~~~html
+  <h1>Portfolio Report</h1>
+  <div id="total">—</div>
+  <canvas id="chart"></canvas>
+  <script>
+    window.addEventListener('report:data', async () => {
+      const runs = await window.report.get('db/sync_runs.json');
+      const total = runs.rows.reduce((s, r) => s + r.total_portfolio_value, 0);
+      document.getElementById('total').textContent = '₹' + total.toLocaleString('en-IN');
+      // ...draw your own Chart.js chart / styled table from the data
+    });
+  </script>
+  ~~~
+
+  This is the right model for HTML: live data + 100% control over look. (Markdown embeds our widgets; HTML renders its own.) **Prefer markdown** overall — it renders richly (headings, tables, file links, embedded widgets) with zero styling burden; reach for HTML when you want bespoke/branded visuals and are willing to write the rendering yourself.
+- **Writing a GOOD report document (md/html).** Mechanics above place content; these make it readable — instruct the step that generates the doc accordingly:
+  - **Lead with the answer.** Title, then a short summary/TL;DR block up top — the key numbers, status, and "what needs action" — before any detail. A reader should get the verdict in the first screen.
+  - **Structure + scannability.** Use clear section headings; short paragraphs and bullets over walls of prose; **bold** the key figures; one logical section per topic/entity. For multi-entity reports, one section (or tab) per entity.
+  - **Show data as data.** Use tables (or embedded `table`/`stat` widgets) for numbers — never dump raw JSON or logs into the prose. Use status labels/semantic colour (✅ ok / ⚠️ attention / ❌ fail) for pass-fail fields.
+  - **Embed live widgets for anything that changes** (totals, per-entity tables, file lists, metrics) via the syntaxes above; hardcode only genuinely static narrative. This keeps the doc from going stale.
+  - **Link, don't inline, big artifacts.** Reference PDFs/files with relative links (clickable, open in the in-report viewer) instead of pasting their contents.
+  - **HTML specifics:** make it **self-contained** — inline all CSS/JS, no external CDN; support dark mode (`@media (prefers-color-scheme: dark)`), and prefer CSS variables / semantic colours over hardcoded ones. The viewer also injects the app's theme into the HTML iframe, so embedded widgets already match.
+  - **Responsive design (raw HTML is YOUR job).** The report renders at three widths: **mobile ≈ 480px, tablet ≈ 880px, desktop full (content ≈ 1024px)**. Author HTML that flows at all three: use **fluid widths** (`%` / `max-width: 100%`, never fixed `px` page widths), make wide tables wrap or scroll (`overflow-x:auto`), **stack multi-column layouts on narrow screens** with `@media (max-width: 640px)` and `(max-width: 960px)`, use relative font sizes, and never assume a desktop width. A quick check: it must read with no horizontal overflow at ~480px. (Markdown documents and report-plan widgets reflow automatically — this only applies to hand-written HTML.)
 - For dashboard-style layouts: call `set_section_layout` to put a section into CSS Grid mode (columns 1–24), then pass `layout: { span }` in the widget config so widgets span N columns. Use `mode: "tabs"` when a workflow has route-specific views; then pass `tab: "Route name"` to `upsert_report_widget` so widgets for the same route render under one tab. Prefer tabs over separate duplicate sections when routes share the same conceptual report area. Without a section layout, sections use the default flex layout.
 - Route-tab pattern: create one section for the conceptual area (for example `Route Evidence`, `Route Results`, or `Agent Outputs`), set that section to `mode: "tabs"`, and put every widget for a given route under the same `tab` value. Do not create many near-identical sections named after routes unless each route genuinely needs a different page-level narrative.
 - For per-report color palettes: call `set_report_theme` with `brand` / `warm` / `cool` for bundled themes, or pass `colors: { primary, accent, card, muted, border, chart: [...] }` (hex strings) for an inline custom palette — useful for brand-specific colors (HDFC red, Citi blue, etc.) that no bundled theme matches. Omit fields you don't want to override; pass null/empty to clear.

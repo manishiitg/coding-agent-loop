@@ -95,23 +95,34 @@ the tradeoff:
 | Shape | Layout | Live data? | Best for |
 |---|---|---|---|
 | **Widget plan** | structured (grid, tabs, spans, themes) | live, auto-refresh | dashboards, at-a-glance metrics/tables/charts, multi-route reports |
-| **Markdown + embedded widgets** | narrative / linear | live (embedded widgets) | a report read top-to-bottom — prose plus a few live numbers/tables |
-| **Full HTML** | pixel-perfect / branded | static snapshot | highly designed, print-like, or layouts the others can't express |
+| **Markdown doc (+ embedded widgets)** | narrative / linear | live (embedded widgets) | a report read top-to-bottom — prose plus a few live numbers/tables |
+| **HTML doc (+ embedded widgets)** | pixel-perfect / branded | live (embedded widgets) | highly designed/branded/print-like layouts that also want live data |
 
 Decision rule: default to a **widget plan** for dashboards/live metrics;
-use **markdown + embedded widgets** for a narrative report with some live
-data; use **full HTML** only for pixel-perfect/branded/print layouts where
-a static snapshot is acceptable (and say "this won't auto-update").
+for a narrative report **prefer a markdown doc** (renders richly, simplest
+and most robust to author, no iframe caveats); reach for an **HTML doc**
+only when you genuinely need pixel-perfect/branded/print layout markdown
+can't express. Both document shapes can embed live widgets, so the old
+"documents are static" tradeoff is mostly gone — a doc with no embedded
+widgets is a static snapshot, a doc full of them ≈ a widget plan with
+custom layout.
 
-**Embedding live widgets in a markdown document** removes the static
-drawback of the doc path: inside a `.md` rendered via a `file`/`markdown`
-widget, a fenced ` ```report-widget ` block whose body is a widget JSON
-spec renders as a real live db-bound widget inline. So a markdown doc that
-is all `report-widget` blocks ≈ a widget plan, and one with none ≈ a
-static doc — which is why this middle shape usually removes the need to
-choose between the two extremes. (HTML can't embed live widgets — sandbox
-— so for HTML bake static charts or place live widgets alongside it.) Full
-syntax + schema: `get_reference_doc(kind="report-plan")`.
+**Live data in a document — two different models:**
+- **Markdown** embeds our widgets: a fenced ` ```report-widget ` block whose
+  body is a widget JSON spec renders as a live db-bound widget inline (same
+  schema as `report_plan.json`, any kind). Zero styling work; looks
+  consistent with the rest of the report.
+- **HTML** gets the data and renders its own visuals: the viewer exposes
+  `window.report` inside the iframe (`sources`, `await get(path)`,
+  `await getText(path)`) and fires a `report:data` event on load/refresh.
+  The HTML draws its own charts/tables/branded CSS from that data — full
+  styling control, no embedded widgets. Use HTML when you want bespoke
+  visuals and will write the rendering; otherwise prefer markdown.
+
+Full syntax + examples, and the **"writing a good report document" formatting
+guide** (lead with a summary, structure with headings, data as tables/widgets
+not raw JSON, self-contained + responsive HTML, dark mode):
+`get_reference_doc(kind="report-plan")`.
 
 ### Diagnosis
 

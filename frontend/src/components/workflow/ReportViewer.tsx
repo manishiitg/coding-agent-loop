@@ -14,12 +14,13 @@ import { PivotWidget } from './reportWidgets/PivotWidget'
 import { ChartWidget } from './reportWidgets/ChartWidget'
 import { FileListWidget, FileWidget } from './reportWidgets/FileWidget'
 import { FilePreviewModal } from './reportWidgets/FilePreviewModal'
-import { ReportEmbedProvider } from './reportWidgets/reportEmbedContext'
+import { ReportEmbedProvider, type ReportDataApi } from './reportWidgets/reportEmbedContext'
 import {
   StandaloneWidgetNotice,
   WidgetError,
   WidgetShell,
   WidgetVisibilityButton,
+  isDocumentWidget,
   resolveSingularWidgetSource,
   type SingularWidgetSourceResolution,
 } from './reportWidgets/shared'
@@ -719,12 +720,58 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
   // Renderer for ```report-widget blocks embedded in markdown documents — gives
   // them the live, db-bound WidgetCard with the report's loaded sources.
   const renderEmbeddedWidget = useCallback(
-    (spec: unknown) => <EmbeddedReportWidget spec={spec} workspacePath={workspacePath} baseSources={sources} />,
-    [workspacePath, sources],
+    (spec: unknown) => (
+      // Wrap embeds in a themed app surface. Critical for HTML embeds, which
+      // mount in a separate iframe document outside the report's themed
+      // container: this carries the report theme + CSS variables, sets the app
+      // base surface/typography (bg-background / text-foreground / font-sans),
+      // and isolates the widget from the host HTML's inherited fonts and colors
+      // (otherwise stats/tables inherit the document's styling and look wrong).
+      <div
+        className="report-embed-root rounded-lg bg-background p-2 text-foreground font-sans"
+        data-report-theme={plan.theme || undefined}
+        style={themeStyle}
+      >
+        <EmbeddedReportWidget spec={spec} workspacePath={workspacePath} baseSources={sources} />
+      </div>
+    ),
+    [workspacePath, sources, plan.theme, themeStyle],
+  )
+
+  // Live data API exposed to HTML report documents as `window.report`. HTML
+  // renders its own visuals; we just deliver data. `get`/`getText` are scoped to
+  // db/ knowledgebase/ docs/ (same as file widgets) so a report can't read
+  // arbitrary workspace files.
+  const dataApi = useMemo<ReportDataApi>(() => {
+    const allowed = (p: string): string => {
+      const n = p.replace(/\\/g, '/').replace(/^\/+/, '')
+      if (!n || n.split('/').includes('..')) return ''
+      return n.startsWith('db/') || n.startsWith('knowledgebase/') || n.startsWith('docs/') ? n : ''
+    }
+    const getText = async (path: string): Promise<string | null> => {
+      const n = allowed(path)
+      if (!n) return null
+      return readWorkspaceText(`${workspacePath}/${n}`)
+    }
+    const get = async (path: string): Promise<unknown> => {
+      const text = await getText(path)
+      if (text == null || text.trim() === '') return null
+      try {
+        return JSON.parse(text)
+      } catch {
+        return text
+      }
+    }
+    return { sources, workspacePath, get, getText }
+  }, [sources, workspacePath])
+
+  const reportRuntime = useMemo(
+    () => ({ renderEmbeddedWidget, data: dataApi }),
+    [renderEmbeddedWidget, dataApi],
   )
 
   return (
-    <ReportEmbedProvider value={renderEmbeddedWidget}>
+    <ReportEmbedProvider value={reportRuntime}>
     <div
       className="relative h-full w-full flex flex-col overflow-hidden bg-gradient-to-b from-background via-background to-muted/20 text-foreground"
       data-report-theme={plan.theme || undefined}
@@ -1039,9 +1086,17 @@ function SectionContainer({
     ? tabGroups.find(tab => tab.key === activeTabKey) ?? tabGroups[0]
     : null
   const renderedEntries = activeTab ? activeTab.entries : entries
+  // A section that is just a single self-contained document (md/html) doesn't
+  // need the section heading + card chrome — the document carries its own title
+  // and should fill the whole section. Common for HTML reports.
+  const documentOnly =
+    !tabsEnabled &&
+    entries.length === 1 &&
+    entries[0].entry.kind === 'single' &&
+    isDocumentWidget(entries[0].entry.widget)
   return (
-    <section className="flex flex-col gap-2 p-0 sm:gap-2.5 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3 sm:shadow-sm">
-      <SectionHeader heading={section.heading} />
+    <section className={documentOnly ? 'flex flex-col' : 'flex flex-col gap-2 p-0 sm:gap-2.5 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3 sm:shadow-sm'}>
+      {!documentOnly && <SectionHeader heading={section.heading} />}
       {tabsEnabled && tabGroups.length > 0 && (
         sizeTier === 'phone' ? (
           <MobileTabPicker

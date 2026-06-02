@@ -14,41 +14,76 @@ import { useReportDataApi } from './reportEmbedContext'
 //   await window.report.get(path)    // any db/ knowledgebase/ docs file -> parsed JSON (or text)
 //   await window.report.getText(path)// raw file text
 //   window.addEventListener('report:data', render)  // fires on load + on refresh
+//
+// autoHeight: size the iframe to its content (no inner scrollbar / clipping) and
+// keep it in sync via a ResizeObserver as content renders. Used for the inline
+// report view; the modal preview keeps a fixed height and scrolls internally.
 export function HtmlReportFrame({
   html,
   title,
   className,
+  autoHeight = false,
 }: {
   html: string
   title: string
   className: string
+  autoHeight?: boolean
 }) {
   const dataApi = useReportDataApi()
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const observerRef = useRef<ResizeObserver | null>(null)
+
+  const resize = useCallback(() => {
+    if (!autoHeight) return
+    const frame = iframeRef.current
+    const doc = frame?.contentDocument
+    if (!frame || !doc) return
+    const h = Math.max(doc.documentElement?.scrollHeight || 0, doc.body?.scrollHeight || 0)
+    if (h > 0) frame.style.height = `${h}px`
+  }, [autoHeight])
 
   const inject = useCallback(() => {
+    const frame = iframeRef.current
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const win = iframeRef.current?.contentWindow as any
-    if (!win || !dataApi) return
-    win.report = {
-      sources: dataApi.sources,
-      workspacePath: dataApi.workspacePath,
-      get: dataApi.get,
-      getText: dataApi.getText,
-    }
-    try {
-      // Use the iframe realm's Event constructor so the event belongs to it.
-      win.dispatchEvent(new win.Event('report:data'))
-    } catch {
-      /* iframe may have navigated/reloaded */
-    }
-  }, [dataApi])
+    const win = frame?.contentWindow as any
+    const doc = frame?.contentDocument
+    if (!win || !doc) return
 
-  // Re-inject when the report data changes (sources refreshed) so the HTML can
-  // re-render against current data.
+    if (dataApi) {
+      win.report = {
+        sources: dataApi.sources,
+        workspacePath: dataApi.workspacePath,
+        get: dataApi.get,
+        getText: dataApi.getText,
+      }
+      try {
+        win.dispatchEvent(new win.Event('report:data'))
+      } catch {
+        /* iframe may have navigated/reloaded */
+      }
+    }
+
+    if (autoHeight) {
+      observerRef.current?.disconnect()
+      resize()
+      try {
+        const ro = new ResizeObserver(() => resize())
+        if (doc.documentElement) ro.observe(doc.documentElement)
+        if (doc.body) ro.observe(doc.body)
+        observerRef.current = ro
+      } catch {
+        /* ResizeObserver unavailable — height stays at last measure */
+      }
+    }
+  }, [dataApi, autoHeight, resize])
+
+  // Re-inject when the report data changes (sources refreshed).
   useEffect(() => {
     inject()
   }, [inject])
+
+  // Disconnect the observer on unmount.
+  useEffect(() => () => observerRef.current?.disconnect(), [])
 
   return (
     <iframe

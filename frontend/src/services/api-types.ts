@@ -1650,14 +1650,19 @@ export type ReportDefaultSort = ReportPlanDocumentDefaultSort;
 export type ReportWidgetLayout = ReportPlanDocumentWidgetLayout;
 export type ReportSectionLayout = ReportPlanDocumentSectionLayout;
 
-// Narrowed widget type. The parser always sets `source` and `path` to a
-// string, so callsites can rely on those being defined — the schema makes them optional because Go's
-// omitempty allows them to be absent on the wire.
+// Narrowed widget type. The parser always sets `path` to a string, so callsites
+// can rely on it being defined — the schema makes it optional because Go's
+// omitempty allows it to be absent on the wire.
+//
+// Data widgets (table/chart/cards/stat/alert/pivot/text) bind via `db` + `sql`
+// and render from the read-only SQLite query endpoint. `source` is for
+// file/file-list/markdown widgets that point at a file (under db/,
+// knowledgebase/, or docs/) — those keep self-fetching their own content.
 export type ReportWidget = ReportPlanDocumentWidget & {
-  source: string;
-  sources?: Record<string, string>;
+  source?: string;
+  db?: string;
+  sql?: string;
   path: string;
-  query?: string;
 };
 
 // Narrowed row — widgets is a ReportWidget[] (with source/path defined),

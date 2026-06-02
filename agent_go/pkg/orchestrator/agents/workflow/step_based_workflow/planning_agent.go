@@ -493,9 +493,9 @@ type MessageSequenceItem struct {
 	SaveRepaired     bool                         `json:"save_repaired_script,omitempty"`
 	ValidationSchema *ValidationSchema            `json:"validation_schema,omitempty"`
 	Prevalidation    *ValidationSchema            `json:"prevalidation,omitempty"`
-	// foreach items: iterate a JSON array from a db file, one templated user_message per row.
-	Source        string `json:"source,omitempty"`         // workspace-relative JSON file (e.g. db/tasks.json)
-	SourcePath    string `json:"source_path,omitempty"`    // optional dot-path to the array field
+	// foreach items: iterate db/db.sqlite table rows, one templated user_message
+	// per row. source_sql is a read-only query; each result row binds to '.'.
+	SourceSQL     string `json:"source_sql,omitempty"`     // read-only SQL against db/db.sqlite
 	MaxIterations int    `json:"max_iterations,omitempty"` // optional cap on rows (0 = all)
 }
 
@@ -548,9 +548,9 @@ type TodoTaskMessage struct {
 	Message          string            `json:"message,omitempty"`           // message entries: the instruction for one orchestrator turn; foreach entries: the per-row Go template
 	ValidationSchema *ValidationSchema `json:"validation_schema,omitempty"` // prevalidation entries: the gate schema
 	MaxCorrections   int               `json:"max_corrections,omitempty"`   // prevalidation only: corrective orchestrator turns allowed on failure (default 1)
-	// foreach entries: iterate a JSON array from a db file, one orchestrator turn per row.
-	Source        string `json:"source,omitempty"`         // workspace-relative JSON file (e.g. db/tasks.json)
-	SourcePath    string `json:"source_path,omitempty"`    // optional dot-path to the array field
+	// foreach entries: iterate db/db.sqlite table rows, one orchestrator turn per
+	// row. source_sql is a read-only query; each result row binds to '.'.
+	SourceSQL     string `json:"source_sql,omitempty"`     // read-only SQL against db/db.sqlite
 	MaxIterations int    `json:"max_iterations,omitempty"` // optional cap on rows (0 = all)
 }
 
@@ -1181,8 +1181,7 @@ func getAddMessageSequenceStepSchema() string {
 						"save_repaired_script": {"type": "boolean"},
 						"validation_schema": {"type": "object", "description": "For prevalidation items: backend validation schema (a hard gate). Interleave prevalidation items with DIFFERENT schemas between turns to gate distinct claims one at a time."},
 						"prevalidation": {"type": "object", "description": "Alias for validation_schema on a prevalidation item."},
-						"source": {"type": "string", "description": "For foreach items: workspace-relative JSON file to iterate (typically under db/, e.g. db/tasks.json). Must resolve to a JSON array (directly, or via source_path). Use this to reliably process every row a prior step wrote to the db — the runtime sends one user_message turn per row."},
-						"source_path": {"type": "string", "description": "For foreach items: optional dot-path to the array inside source (e.g. 'result.items'). Omit if the file's top level IS the array."},
+						"source_sql": {"type": "string", "description": "For foreach items: a read-only SQL query against db/db.sqlite (e.g. \"SELECT id, name FROM tasks WHERE status='pending'\"). The runtime runs it and sends one user_message turn per result row, with the row (an object keyed by column) bound to '.' in the message template. Use this to reliably process every row a prior step wrote to the db."},
 						"max_iterations": {"type": "number", "description": "For foreach items: optional cap on rows processed (0 = all). Excess rows are skipped and logged, never silently dropped."}
 					},
 					"required": ["id", "type"]
@@ -1524,8 +1523,7 @@ func getAddTodoTaskStepSchema() string {
 						"message": {"type": "string", "description": "message entries: the instruction for one orchestrator turn (e.g. a follow-up phase, or 'now verify X and fix any gaps'). foreach entries: a Go text/template rendered once per row of source, row bound to '.' (e.g. 'Handle task {{.id}}: {{.desc}}')."},
 						"validation_schema": {"type": "object", "description": "prevalidation entries: a hard gate checked between turns. On failure the orchestrator receives the failures as a corrective turn and retries up to max_corrections."},
 						"max_corrections": {"type": "number", "description": "prevalidation entries only: corrective orchestrator turns allowed on gate failure (default 1)."},
-						"source": {"type": "string", "description": "foreach entries: workspace-relative JSON array file to iterate (e.g. db/tasks.json). The orchestrator gets one turn per row — reliable processing of every row a prior step wrote to the db."},
-						"source_path": {"type": "string", "description": "foreach entries: optional dot-path to the array inside source."},
+						"source_sql": {"type": "string", "description": "foreach entries: a read-only SQL query against db/db.sqlite (e.g. \"SELECT id, name FROM tasks WHERE status='pending'\"). The orchestrator gets one turn per result row, with the row bound to '.' — reliable processing of every row a prior step wrote to the db."},
 						"max_iterations": {"type": "number", "description": "foreach entries: optional cap on rows processed (0 = all)."}
 					},
 					"required": ["type"]
@@ -4046,8 +4044,8 @@ func validateTodoTaskStepFieldsTyped(step *TodoTaskPlanStep) error {
 				return fmt.Errorf("step (title: %q, ID: %s) messages[%d] is a prevalidation entry but has no validation_schema", step.Title, step.ID, i)
 			}
 		case "foreach":
-			if strings.TrimSpace(m.Source) == "" {
-				return fmt.Errorf("step (title: %q, ID: %s) messages[%d] is a foreach entry but has no source", step.Title, step.ID, i)
+			if strings.TrimSpace(m.SourceSQL) == "" {
+				return fmt.Errorf("step (title: %q, ID: %s) messages[%d] is a foreach entry but has no source_sql", step.Title, step.ID, i)
 			}
 			if strings.TrimSpace(m.Message) == "" {
 				return fmt.Errorf("step (title: %q, ID: %s) messages[%d] is a foreach entry but has no message (the per-row template)", step.Title, step.ID, i)
@@ -4105,8 +4103,8 @@ func validateMessageSequenceStepFieldsTyped(step *MessageSequencePlanStep) error
 				return fmt.Errorf("message_sequence step %q item %q is prevalidation but no validation_schema/prevalidation exists", step.ID, item.ID)
 			}
 		case "foreach":
-			if strings.TrimSpace(item.Source) == "" {
-				return fmt.Errorf("message_sequence step %q item %q is foreach but source is empty", step.ID, item.ID)
+			if strings.TrimSpace(item.SourceSQL) == "" {
+				return fmt.Errorf("message_sequence step %q item %q is foreach but source_sql is empty", step.ID, item.ID)
 			}
 			if strings.TrimSpace(item.Message) == "" {
 				return fmt.Errorf("message_sequence step %q item %q is foreach but message (the per-row template) is empty", step.ID, item.ID)

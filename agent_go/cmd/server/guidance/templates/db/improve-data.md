@@ -1,46 +1,46 @@
-Improve the workflow database surface so `db/*.json` supports the current plan, downstream steps, and report widgets.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Improve the workflow database so `db/db.sqlite` supports the current plan, downstream steps, and report widgets.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 Before writing builder/improve.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown.
 
 BOUNDARIES
 
 1. The applied tool is `improve_db`; call it once with a concrete `instruction` string and optional `focus`.
-2. Work only on `db/` files. Do not edit `planning/`, `reports/`, `knowledgebase/`, `learnings/`, `evaluation/`, or run outputs from this command.
-3. Treat `db/*.json` as structured state, not scratch output. Never delete rows, transform row values, or rewrite data semantics unless the user explicitly asks for that migration.
-4. Prefer contract and shape improvements: `db/README.md`, schema consistency, primary-key clarity, report compatibility, and JSON validity.
+2. Work only on `db/` files (`db/db.sqlite` + `db/README.md`). Do not edit `planning/`, `reports/`, `knowledgebase/`, `learnings/`, `evaluation/`, or run outputs from this command.
+3. Treat `db/db.sqlite` as structured state, not scratch output. Never delete rows, transform column values, or rewrite data semantics unless the user explicitly asks for that migration.
+4. Prefer contract and schema improvements: `db/README.md`, table schema consistency, PRIMARY KEY / index clarity, report compatibility (the `sql` widgets resolve), and data integrity.
 
 READ FIRST
 
 1. Read `soul/soul.md` if present to understand the workflow objective and success criteria.
 2. Read `planning/plan.json` and `planning/step_config.json` if present. Identify steps that produce, consume, save, track, upsert, append, deduplicate, or report persistent data.
-3. Read `reports/report_plan.json` if present. Map widgets to their `source: db/*.json` files and any JSONata `query` expressions.
-4. Read `db/README.md` if present, then list `db/*.json`, `db/*.jsonl`, `db/assets/`, and obvious helper files such as `*_rows.json`, `*_summary.json`, or `flat_*.json`.
-5. Sample each relevant DB file enough to understand shape. Do not load very large files wholesale; use `jq`, `head`, `tail`, or targeted slices.
+3. Read `reports/report_plan.json` if present. Map widgets to their `db: db/db.sqlite` + `sql` queries (and `source` for file/file-list widgets).
+4. Read `db/README.md` if present, then inspect the database: `sqlite3 db/db.sqlite ".tables"` and `.schema <table>` for each table; also note `db/assets/`.
+5. Sample each relevant table enough to understand shape. Do not dump whole tables; use `sqlite3 db/db.sqlite "SELECT * FROM <table> LIMIT 5"`, `SELECT COUNT(*)`, and targeted queries.
 
 WHEN TO USE EACH MODE
 
 Use `mode="targeted"` for a specific safe cleanup:
 
-- fix invalid JSON
+- fix a malformed table or a column with inconsistent value types
 - add or correct one `db/README.md` contract section
-- normalize a clearly documented field name
-- remove an empty/stale helper file only when explicitly requested
+- add a missing index a report widget's `sql` needs
+- drop an empty/stale table only when explicitly requested
 - repair a report-incompatible shape without changing row meaning
 
 Use `mode="schema"` for contract/schema work:
 
-- document purpose, shape, primary_key, merge_rule, writers, consumers, and report widgets
-- add examples of valid rows
-- clarify group/run separation rules
-- identify required/optional fields
+- document each table's DDL, PRIMARY KEY, upsert rule, indexes, writers, and consumers
+- add example rows
+- clarify group/run separation rules (e.g. a `group_name` column when multiple groups share a table)
+- identify required/optional columns
 
 Use `mode="cross_step"` when improving DB requires the plan, multiple writer/consumer steps, or reports:
 
-- reconcile writer step descriptions with actual `db/*.json` files
-- ensure durable images/PDFs/screenshots/downloads/generated files are stored under `db/assets/` with metadata/provenance/reference rows in `db/*.json`, not embedded as base64 in JSON
-- identify duplicate helper files that should become report JSONata queries
-- align DB files with report widgets and downstream consumers
-- surface stale fields/files whose writers no longer exist
+- reconcile writer step descriptions with the actual `db/db.sqlite` tables
+- ensure durable images/PDFs/screenshots/downloads/generated files are stored under `db/assets/` with metadata/provenance/reference rows in a table, not embedded as blobs
+- identify redundant tables that a report widget's `sql` (JOIN/GROUP BY) could replace
+- align tables with report widgets and downstream consumers
+- surface stale columns/tables whose writers no longer exist
 
 If unsure, use `mode="auto"` or omit mode.
 
@@ -52,5 +52,5 @@ ACTION
 `improve_db(mode="auto", instruction="<specific DB improvement instruction>", focus="<optional focus>")`
 
 3. The tool runs in the background and returns an `execution_id`. If you need the result before answering, use `query_step(execution_id="<id>")` until it completes.
-4. When complete, summarize files changed under `db/`, schema/contract improvements, report compatibility changes, any row/data migrations performed, and remaining follow-up work.
+4. When complete, summarize tables/schema changed in `db/db.sqlite`, `db/README.md` contract improvements, report compatibility changes, any row/data migrations performed, and remaining follow-up work.
 5. If this is part of an optimizer/improvement pass, append a short note to `builder/improve.html` after the tool completes; otherwise report in chat only.

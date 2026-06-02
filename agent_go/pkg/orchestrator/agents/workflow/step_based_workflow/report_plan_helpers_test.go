@@ -7,6 +7,82 @@ import (
 	"testing"
 )
 
+// fakeReportPlanReadFile serves report_plan.json (and any other files) from memory.
+func fakeReportPlanReadFile(files map[string]string) func(context.Context, string) (string, error) {
+	return func(_ context.Context, path string) (string, error) {
+		content, ok := files[path]
+		if !ok {
+			return "", fmt.Errorf("file not found: %s", path)
+		}
+		return content, nil
+	}
+}
+
+// fakeReportPlanQueryDB returns rows for a data widget's SQL from an in-memory
+// map keyed by the (trimmed) SQL string. An unknown query returns an error,
+// mirroring a SQL failure against db/db.sqlite.
+func fakeReportPlanQueryDB(bySQL map[string][]map[string]interface{}) reportPlanQueryFunc {
+	return func(_ context.Context, _ string, sql string) ([]map[string]interface{}, error) {
+		rows, ok := bySQL[strings.TrimSpace(sql)]
+		if !ok {
+			return nil, fmt.Errorf("no such query: %s", sql)
+		}
+		return rows, nil
+	}
+}
+
+func diagnosticsContain(diags []reportPlanDiagnostic, want string) bool {
+	for _, diag := range diags {
+		if strings.Contains(diag.Message, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// A stat widget whose SQL resolves (via path) to a scalar is valid; an unknown
+// format preset is a (non-fatal) warning.
+func TestValidateReportPlanStatScalarValidWithFormatWarning(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := "Workflow/linkedin"
+	files := map[string]string{
+		"Workflow/linkedin/reports/report_plan.json": `{
+			"version": 1,
+			"sections": [{
+				"heading": "Overview",
+				"entries": [{
+					"kind": "single",
+					"widget": {
+						"kind": "stat",
+						"title": "Total Posts",
+						"db": "db/db.sqlite",
+						"sql": "SELECT total_posts FROM summary",
+						"path": "0.total_posts",
+						"format": "count"
+					}
+				}]
+			}]
+		}`,
+	}
+	// Values mirror JSON-parsed query results (numbers arrive as float64).
+	queryDB := fakeReportPlanQueryDB(map[string][]map[string]interface{}{
+		"SELECT total_posts FROM summary": {{"total_posts": float64(14)}},
+	})
+
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), queryDB)
+	if err != nil {
+		t.Fatalf("validateReportPlan returned error: %v", err)
+	}
+	if !result.Valid {
+		t.Fatalf("expected result.Valid=true, got false with errors %#v", result.Errors)
+	}
+	if !diagnosticsContain(result.Warnings, `unknown format preset "count"`) {
+		t.Fatalf("expected unknown format warning, got %#v", result.Warnings)
+	}
+}
+
+// A stat widget whose SQL/path resolves to an array (not a scalar) is an error.
 func TestValidateReportPlanStatArrayIsError(t *testing.T) {
 	t.Parallel()
 
@@ -14,203 +90,28 @@ func TestValidateReportPlanStatArrayIsError(t *testing.T) {
 	files := map[string]string{
 		"Workflow/linkedin/reports/report_plan.json": `{
 			"version": 1,
-			"sections": [
-				{
-					"heading": "Overview",
-					"entries": [
-						{
-							"kind": "single",
-							"widget": {
-								"kind": "stat",
-								"title": "Active Strategies",
-								"source": "db/strategies.json",
-								"path": "active_strategies",
-								"format": "count"
-							}
-						}
-					]
-				}
-			]
+			"sections": [{
+				"heading": "Overview",
+				"entries": [{
+					"kind": "single",
+					"widget": {
+						"kind": "stat",
+						"title": "Active Strategies",
+						"db": "db/db.sqlite",
+						"sql": "SELECT id FROM strategies WHERE active=1"
+					}
+				}]
+			}]
 		}`,
-		"Workflow/linkedin/db/strategies.json": `{"active_strategies":[{"id":"s-1"},{"id":"s-2"}]}`,
 	}
+	queryDB := fakeReportPlanQueryDB(map[string][]map[string]interface{}{
+		"SELECT id FROM strategies WHERE active=1": {{"id": "s-1"}, {"id": "s-2"}},
+	})
 
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), queryDB)
 	if err != nil {
 		t.Fatalf("validateReportPlan returned error: %v", err)
 	}
-
-	if result.Valid {
-		t.Fatalf("expected result.Valid=false, got true")
-	}
-	if len(result.Errors) == 0 {
-		t.Fatalf("expected at least one validation error, got none")
-	}
-	if !diagnosticsContain(result.Errors, "stat widgets require a scalar value") {
-		t.Fatalf("expected scalar-value error, got %#v", result.Errors)
-	}
-	if !diagnosticsContain(result.Warnings, `unknown format preset "count"`) {
-		t.Fatalf("expected unknown format warning for stat format, got %#v", result.Warnings)
-	}
-}
-
-func TestValidateReportPlanStatUnknownFormatWarns(t *testing.T) {
-	t.Parallel()
-
-	workspacePath := "Workflow/linkedin"
-	files := map[string]string{
-		"Workflow/linkedin/reports/report_plan.json": `{
-			"version": 1,
-			"sections": [
-				{
-					"heading": "Overview",
-					"entries": [
-						{
-							"kind": "single",
-							"widget": {
-								"kind": "stat",
-								"title": "Total Posts",
-								"source": "db/summary.json",
-								"path": "total_posts",
-								"format": "count"
-							}
-						}
-					]
-				}
-			]
-		}`,
-		"Workflow/linkedin/db/summary.json": `{"total_posts":14}`,
-	}
-
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
-	if err != nil {
-		t.Fatalf("validateReportPlan returned error: %v", err)
-	}
-
-	if !result.Valid {
-		t.Fatalf("expected result.Valid=true, got false with errors %#v", result.Errors)
-	}
-	if len(result.Errors) != 0 {
-		t.Fatalf("expected no validation errors, got %#v", result.Errors)
-	}
-	if !diagnosticsContain(result.Warnings, `unknown format preset "count"`) {
-		t.Fatalf("expected unknown format warning for stat format, got %#v", result.Warnings)
-	}
-}
-
-func TestValidateReportPlanJSONataQueryFeedsShapeValidation(t *testing.T) {
-	t.Parallel()
-
-	workspacePath := "Workflow/orders"
-	files := map[string]string{
-		"Workflow/orders/reports/report_plan.json": `{
-			"version": 1,
-			"sections": [
-				{
-					"heading": "Overview",
-					"entries": [
-						{
-							"kind": "single",
-							"widget": {
-								"kind": "stat",
-								"title": "Paid Total",
-								"source": "db/orders.json",
-								"query": "$sum(rows[status='paid'].amount)",
-								"format": "currency-usd"
-							}
-						}
-					]
-				}
-			]
-		}`,
-		"Workflow/orders/db/orders.json": `{"rows":[{"status":"paid","amount":12.5},{"status":"open","amount":99},{"status":"paid","amount":7.5}]}`,
-	}
-
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
-	if err != nil {
-		t.Fatalf("validateReportPlan returned error: %v", err)
-	}
-
-	if !result.Valid {
-		t.Fatalf("expected result.Valid=true, got false with errors %#v", result.Errors)
-	}
-	if len(result.Errors) != 0 {
-		t.Fatalf("expected no validation errors, got %#v", result.Errors)
-	}
-}
-
-func TestValidateReportPlanJSONataQueryErrorIsDeterministicError(t *testing.T) {
-	t.Parallel()
-
-	workspacePath := "Workflow/orders"
-	files := map[string]string{
-		"Workflow/orders/reports/report_plan.json": `{
-			"version": 1,
-			"sections": [
-				{
-					"heading": "Overview",
-					"entries": [
-						{
-							"kind": "single",
-							"widget": {
-								"kind": "stat",
-								"title": "Paid Total",
-								"source": "db/orders.json",
-								"query": "$sum(rows[status='paid'.amount)"
-							}
-						}
-					]
-				}
-			]
-		}`,
-		"Workflow/orders/db/orders.json": `{"rows":[{"status":"paid","amount":12.5}]}`,
-	}
-
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
-	if err != nil {
-		t.Fatalf("validateReportPlan returned error: %v", err)
-	}
-
-	if result.Valid {
-		t.Fatalf("expected result.Valid=false, got true")
-	}
-	if !diagnosticsContain(result.Errors, "JSONata query failed") {
-		t.Fatalf("expected JSONata query failure, got %#v", result.Errors)
-	}
-}
-
-func TestValidateReportPlanJSONataWrongShapeIsError(t *testing.T) {
-	t.Parallel()
-
-	workspacePath := "Workflow/orders"
-	files := map[string]string{
-		"Workflow/orders/reports/report_plan.json": `{
-			"version": 1,
-			"sections": [
-				{
-					"heading": "Overview",
-					"entries": [
-						{
-							"kind": "single",
-							"widget": {
-								"kind": "stat",
-								"title": "Paid Rows",
-								"source": "db/orders.json",
-								"query": "rows[status='paid']"
-							}
-						}
-					]
-				}
-			]
-		}`,
-		"Workflow/orders/db/orders.json": `{"rows":[{"status":"paid","amount":12.5},{"status":"paid","amount":7.5}]}`,
-	}
-
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
-	if err != nil {
-		t.Fatalf("validateReportPlan returned error: %v", err)
-	}
-
 	if result.Valid {
 		t.Fatalf("expected result.Valid=false, got true")
 	}
@@ -219,86 +120,40 @@ func TestValidateReportPlanJSONataWrongShapeIsError(t *testing.T) {
 	}
 }
 
-func TestValidateReportPlanJSONataCanJoinMultipleSources(t *testing.T) {
+// A table widget whose SQL returns an array-of-objects validates cleanly.
+func TestValidateReportPlanTableFromSQLValid(t *testing.T) {
 	t.Parallel()
 
 	workspacePath := "Workflow/orders"
 	files := map[string]string{
-		"Workflow/orders/planning/plan.json": `{
-			"steps": [
-				{
-					"type": "regular",
-					"id": "collect-runs",
-					"title": "Collect Runs",
-					"description": "Write run rows.",
-					"context_dependencies": [],
-					"context_output": "db/runs.json",
-					"validation_schema": {
-						"files": [
-							{
-								"file_name": "db/runs.json",
-								"must_exist": true,
-								"json_checks": [
-									{"path": "$.rows", "must_exist": true, "value_type": "array"}
-								]
-							}
-						]
-					}
-				},
-				{
-					"type": "regular",
-					"id": "collect-costs",
-					"title": "Collect Costs",
-					"description": "Write cost rows.",
-					"context_dependencies": [],
-					"context_output": "db/costs.json",
-					"validation_schema": {
-						"files": [
-							{
-								"file_name": "db/costs.json",
-								"must_exist": true,
-								"json_checks": [
-									{"path": "$.rows", "must_exist": true, "value_type": "array"}
-								]
-							}
-						]
-					}
-				}
-			]
-		}`,
 		"Workflow/orders/reports/report_plan.json": `{
 			"version": 1,
-			"sections": [
-				{
-					"heading": "Overview",
-					"entries": [
-						{
-							"kind": "single",
-							"widget": {
-								"kind": "stat",
-								"title": "Cost Total",
-								"sources": {
-									"runs": "db/runs.json",
-									"costs": "db/costs.json"
-								},
-								"query": "{\"cost_total\": $sum(costs.rows.amount), \"run_count\": $count(runs.rows)}",
-								"path": "cost_total",
-								"format": "currency-usd"
-							}
-						}
-					]
-				}
-			]
+			"sections": [{
+				"heading": "Overview",
+				"entries": [{
+					"kind": "single",
+					"widget": {
+						"kind": "table",
+						"title": "Orders",
+						"db": "db/db.sqlite",
+						"sql": "SELECT status, amount FROM orders",
+						"fields": ["status", "amount"]
+					}
+				}]
+			}]
 		}`,
-		"Workflow/orders/db/runs.json":  `{"rows":[{"run_id":"r1"},{"run_id":"r2"}]}`,
-		"Workflow/orders/db/costs.json": `{"rows":[{"run_id":"r1","amount":12.5},{"run_id":"r2","amount":7.5}]}`,
 	}
+	queryDB := fakeReportPlanQueryDB(map[string][]map[string]interface{}{
+		"SELECT status, amount FROM orders": {
+			{"status": "paid", "amount": 12.5},
+			{"status": "open", "amount": 99.0},
+		},
+	})
 
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), queryDB)
 	if err != nil {
 		t.Fatalf("validateReportPlan returned error: %v", err)
 	}
-
 	if !result.Valid {
 		t.Fatalf("expected result.Valid=true, got false with errors %#v", result.Errors)
 	}
@@ -307,127 +162,74 @@ func TestValidateReportPlanJSONataCanJoinMultipleSources(t *testing.T) {
 	}
 }
 
-func TestValidateReportPlanErrorsWhenSourceHasNoValidationContract(t *testing.T) {
+// A failing SQL query surfaces as a deterministic validation error.
+func TestValidateReportPlanSQLErrorIsError(t *testing.T) {
 	t.Parallel()
 
 	workspacePath := "Workflow/orders"
 	files := map[string]string{
-		"Workflow/orders/planning/plan.json": `{
-			"steps": [
-				{
-					"type": "regular",
-					"id": "collect-orders",
-					"title": "Collect Orders",
-					"description": "Collect order data and write db/orders.json.",
-					"context_dependencies": [],
-					"context_output": "db/orders.json"
-				}
-			]
-		}`,
 		"Workflow/orders/reports/report_plan.json": `{
 			"version": 1,
-			"sections": [
-				{
-					"heading": "Overview",
-					"entries": [
-						{
-							"kind": "single",
-							"widget": {
-								"kind": "table",
-								"title": "Orders",
-								"source": "db/orders.json",
-								"path": "rows",
-								"fields": ["status", "amount"]
-							}
-						}
-					]
-				}
-			]
-		}`,
-		"Workflow/orders/db/orders.json": `{"rows":[{"status":"paid","amount":12.5}]}`,
-	}
-
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
-	if err != nil {
-		t.Fatalf("validateReportPlan returned error: %v", err)
-	}
-
-	if result.Valid {
-		t.Fatalf("expected result.Valid=false, got true")
-	}
-	if !diagnosticsContain(result.Errors, "no validation_schema file rule declares") {
-		t.Fatalf("expected missing producer contract error, got %#v", result.Errors)
-	}
-}
-
-func TestValidateReportPlanErrorsWhenProducerContractMissesReportFields(t *testing.T) {
-	t.Parallel()
-
-	workspacePath := "Workflow/orders"
-	files := map[string]string{
-		"Workflow/orders/planning/plan.json": `{
-			"steps": [
-				{
-					"type": "regular",
-					"id": "collect-orders",
-					"title": "Collect Orders",
-					"description": "Collect order data and write db/orders.json.",
-					"context_dependencies": [],
-					"context_output": "db/orders.json",
-					"validation_schema": {
-						"files": [
-							{
-								"file_name": "db/orders.json",
-								"must_exist": true,
-								"json_checks": [
-									{"path": "$.rows", "must_exist": true, "value_type": "array"}
-								]
-							}
-						]
+			"sections": [{
+				"heading": "Overview",
+				"entries": [{
+					"kind": "single",
+					"widget": {
+						"kind": "table",
+						"title": "Orders",
+						"db": "db/db.sqlite",
+						"sql": "SELECT * FROM no_such_table"
 					}
-				}
-			]
+				}]
+			}]
 		}`,
-		"Workflow/orders/reports/report_plan.json": `{
-			"version": 1,
-			"sections": [
-				{
-					"heading": "Overview",
-					"entries": [
-						{
-							"kind": "single",
-							"widget": {
-								"kind": "table",
-								"title": "Orders",
-								"source": "db/orders.json",
-								"path": "rows",
-								"fields": ["status", "amount"]
-							}
-						}
-					]
-				}
-			]
-		}`,
-		"Workflow/orders/db/orders.json": `{"rows":[{"status":"paid","amount":12.5}]}`,
 	}
+	// queryDB knows no queries → every query errors.
+	queryDB := fakeReportPlanQueryDB(map[string][]map[string]interface{}{})
 
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), queryDB)
 	if err != nil {
 		t.Fatalf("validateReportPlan returned error: %v", err)
 	}
-
 	if result.Valid {
 		t.Fatalf("expected result.Valid=false, got true")
 	}
-	if !diagnosticsContain(result.Errors, "does not mention report field") {
-		t.Fatalf("expected missing report field error, got %#v", result.Errors)
+	if !diagnosticsContain(result.Errors, "SQL query failed") {
+		t.Fatalf("expected SQL query failure, got %#v", result.Errors)
 	}
 }
 
-// Regression: theme and section.Layout were silently stripped on every plan
-// mutation because normalizeReportPlanDocument reconstructed sections from a
-// hand-written field list. set_report_theme and set_section_layout would
-// successfully save, then any later upsert/move/toggle/remove would wipe them.
+// A data widget with `db` but no `sql` is an error.
+func TestValidateReportPlanDataWidgetMissingSQL(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := "Workflow/orders"
+	files := map[string]string{
+		"Workflow/orders/reports/report_plan.json": `{
+			"version": 1,
+			"sections": [{
+				"heading": "Overview",
+				"entries": [{
+					"kind": "single",
+					"widget": {"kind": "table", "title": "Orders", "db": "db/db.sqlite"}
+				}]
+			}]
+		}`,
+	}
+
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), fakeReportPlanQueryDB(nil))
+	if err != nil {
+		t.Fatalf("validateReportPlan returned error: %v", err)
+	}
+	if result.Valid {
+		t.Fatalf("expected result.Valid=false, got true")
+	}
+	if !diagnosticsContain(result.Errors, "has no `sql`") {
+		t.Fatalf("expected missing-sql error, got %#v", result.Errors)
+	}
+}
+
+// Regression: theme and section.Layout must survive normalization.
 func TestNormalizeReportPlanPreservesThemeAndLayout(t *testing.T) {
 	t.Parallel()
 
@@ -446,8 +248,9 @@ func TestNormalizeReportPlanPreservesThemeAndLayout(t *testing.T) {
 				Kind: "single",
 				Widget: &reportPlanDocumentWidget{
 					Kind:   "stat",
-					Source: "db/strategies.json",
-					Path:   "active_strategies",
+					DB:     "db/db.sqlite",
+					SQL:    "SELECT n FROM strategies",
+					Path:   "0.n",
 					Layout: &reportPlanDocumentWidgetLayout{Span: 6},
 				},
 			}},
@@ -469,9 +272,6 @@ func TestNormalizeReportPlanPreservesThemeAndLayout(t *testing.T) {
 	if section.Layout.Columns != 12 || section.Layout.Gap != 16 {
 		t.Fatalf("section.Layout corrupted: got %+v, want columns=12 gap=16", section.Layout)
 	}
-	if len(section.Entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(section.Entries))
-	}
 	widget := section.Entries[0].Widget
 	if widget == nil {
 		t.Fatalf("widget dropped")
@@ -481,26 +281,8 @@ func TestNormalizeReportPlanPreservesThemeAndLayout(t *testing.T) {
 	}
 }
 
-func fakeReportPlanReadFile(files map[string]string) func(context.Context, string) (string, error) {
-	return func(_ context.Context, path string) (string, error) {
-		content, ok := files[path]
-		if !ok {
-			return "", fmt.Errorf("file not found: %s", path)
-		}
-		return content, nil
-	}
-}
-
-func diagnosticsContain(diags []reportPlanDiagnostic, want string) bool {
-	for _, diag := range diags {
-		if strings.Contains(diag.Message, want) {
-			return true
-		}
-	}
-	return false
-}
-
-func TestValidateReportPlanFileWidgetsAllowArtifactsWithoutJSONParsing(t *testing.T) {
+// File / file-list widgets render durable files and need no SQL/DB access.
+func TestValidateReportPlanFileWidgetsAllowArtifactsWithoutData(t *testing.T) {
 	t.Parallel()
 	workspacePath := "Workflow/artifacts"
 	files := map[string]string{
@@ -515,12 +297,13 @@ func TestValidateReportPlanFileWidgetsAllowArtifactsWithoutJSONParsing(t *testin
 		  }]
 		}`,
 	}
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	// No queryDB needed — file widgets don't touch the db.
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), nil)
 	if err != nil {
 		t.Fatalf("validateReportPlan returned error: %v", err)
 	}
 	if !result.Valid {
-		t.Fatalf("expected file widgets to validate without JSON source parsing; errors=%+v warnings=%+v", result.Errors, result.Warnings)
+		t.Fatalf("expected file widgets to validate; errors=%+v warnings=%+v", result.Errors, result.Warnings)
 	}
 	if result.Widgets != 2 {
 		t.Fatalf("expected 2 widgets, got %d", result.Widgets)
@@ -541,22 +324,20 @@ func TestValidateReportPlanFileWidgetRejectsOutsideRoots(t *testing.T) {
 		  }]
 		}`,
 	}
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), nil)
 	if err != nil {
 		t.Fatalf("validateReportPlan returned error: %v", err)
 	}
 	if result.Valid {
 		t.Fatalf("expected file widget outside allowed roots to be invalid")
 	}
-	if !diagnosticsContain(result.Errors, "not a valid widget source") {
+	if !diagnosticsContain(result.Errors, "under db/, knowledgebase/, or docs/") {
 		t.Fatalf("expected invalid source diagnostic, got %+v", result.Errors)
 	}
 }
 
 // Locks in bracket / $-root path resolution so validate_report_plan and
-// preview_report_render stay in parity with the frontend renderer. The classic
-// alert form "$[0].login_success" must resolve against an array source rather
-// than silently returning undefined (which used to keep the alert hidden).
+// preview_report_render stay in parity with the frontend renderer.
 func TestResolveReportPlanPathBracketAndRootSigil(t *testing.T) {
 	t.Parallel()
 	rows := []interface{}{
@@ -583,7 +364,6 @@ func TestResolveReportPlanPathBracketAndRootSigil(t *testing.T) {
 		}
 	}
 
-	// show_if must now evaluate the same expression instead of failing open.
 	if !reportPlanEvaluateShowIf(rows, "$[0].login_success == false") {
 		t.Error(`show_if "$[0].login_success == false" should be true when row 0 login failed`)
 	}

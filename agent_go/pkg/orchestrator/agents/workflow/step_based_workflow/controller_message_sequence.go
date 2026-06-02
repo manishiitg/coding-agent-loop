@@ -542,7 +542,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceUserMessage(ctx
 // growing context bounded). Each row's templated text is sent as an ordinary user_message,
 // inheriting the foreach item's kind / write_access.
 func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceForeachItem(ctx context.Context, step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, session *messageSequenceSession) (string, error) {
-	messages, err := hcpo.expandForeach(ctx, item.Source, item.SourcePath, item.Message, item.MaxIterations)
+	messages, err := hcpo.expandForeach(ctx, item.SourceSQL, item.Message, item.MaxIterations)
 	if err != nil {
 		return "", fmt.Errorf("foreach item %q: %w", item.ID, err)
 	}

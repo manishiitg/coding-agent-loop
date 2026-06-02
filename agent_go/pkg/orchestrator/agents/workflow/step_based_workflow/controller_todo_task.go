@@ -496,7 +496,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskMessageSequence(
 			}
 
 		case "foreach":
-			rows, err := hcpo.expandForeach(ctx, m.Source, m.SourcePath, m.Message, m.MaxIterations)
+			rows, err := hcpo.expandForeach(ctx, m.SourceSQL, m.Message, m.MaxIterations)
 			if err != nil {
 				return fmt.Errorf("todo task foreach (messages[%d]): %w", i, err)
 			}

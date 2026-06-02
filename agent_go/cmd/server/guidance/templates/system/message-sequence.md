@@ -83,13 +83,12 @@ Example:
 
 ## DATA-DRIVEN ITERATION (`foreach`)
 
-Items are usually fixed at design time. A **`foreach`** item instead generates turns at **runtime** from a db file — a reliable for-loop. Use it for the producer/consumer pattern: an earlier step writes rows to `db/<file>.json`, and this step processes **every** row.
+Items are usually fixed at design time. A **`foreach`** item instead generates turns at **runtime** from `db/db.sqlite` table rows — a reliable for-loop. Use it for the producer/consumer pattern: an earlier step writes rows to a table, and this step processes **every** row. `source_sql` is a read-only query; each result row binds to `.` in the message template.
 
 ```jsonc
 { "type": "foreach",
-  "source": "db/tasks.json",      // workspace-relative JSON array (or use source_path for a nested array)
-  "source_path": "items",         // optional dot-path to the array field
-  "message": "Process task {{"{{"}}.id{{"}}"}}: {{"{{"}}.desc{{"}}"}}. Write the result to db/results.json keyed by {{"{{"}}.id{{"}}"}}.",
+  "source_sql": "SELECT id, desc FROM tasks WHERE status='pending'",  // read-only query against db/db.sqlite
+  "message": "Process task {{"{{"}}.id{{"}}"}}: {{"{{"}}.desc{{"}}"}}. Upsert the result into the results table: sqlite3 db/db.sqlite \"INSERT INTO results(id, ...) VALUES(...) ON CONFLICT(id) DO UPDATE SET ...\".",
   "max_iterations": 0             // optional cap; 0 = all rows (capping is logged, never silent)
 }
 ```

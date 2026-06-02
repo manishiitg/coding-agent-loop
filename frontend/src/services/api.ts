@@ -1231,6 +1231,36 @@ export const agentApi = {
     return response.data
   },
 
+  // Run a read-only SQL query against a workflow's db/db.sqlite. The workspace
+  // service opens the connection mode=ro + query_only, so only reads succeed.
+  // Returns { success, data: { columns, rows } } — rows are objects keyed by column.
+  queryWorkflowDB: async (dbPath: string, sql: string) => {
+    const response = await workspaceApi.post('/api/query', { db_path: dbPath, sql })
+    return response.data as {
+      success: boolean
+      error?: string
+      data?: { columns: string[]; rows: Record<string, unknown>[] }
+    }
+  },
+
+  // List tables (schema + row count + sample) in a workflow's db/db.sqlite for
+  // the read-only DatabasePopup inspector.
+  getWorkflowDBTables: async (dbPath: string) => {
+    const response = await workspaceApi.get('/api/db/tables', { params: { db_path: dbPath } })
+    return response.data as {
+      success: boolean
+      error?: string
+      data?: {
+        tables: Array<{
+          name: string
+          columns: Array<{ name: string; type: string; primary_key: boolean }>
+          row_count: number
+          sample: Record<string, unknown>[]
+        }>
+      }
+    }
+  },
+
   updatePlannerFile: async (filepath: string, content: string, commitMessage?: string) => {
     const requestBody: { content: string; commit_message?: string } = { content }
     if (commitMessage) {

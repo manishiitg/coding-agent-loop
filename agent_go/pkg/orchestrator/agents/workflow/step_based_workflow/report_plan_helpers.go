@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	jsonata "github.com/blues/jsonata-go"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
@@ -55,12 +54,13 @@ func reportPlanIsPlausibleColor(v string) bool {
 }
 
 type reportPlanWidget struct {
-	Kind    string // "text" | "table" | "chart"
-	Source  string
-	Sources map[string]string
-	Path    string
-	Filter  string
-	Fields  map[string]string // raw optional fields, lowercase keys
+	Kind   string // "text" | "table" | "chart"
+	Source string // file/file-list/markdown widgets: a file path under db/, knowledgebase/, docs/
+	DB     string // data widgets: SQLite path, e.g. "db/db.sqlite"
+	SQL    string // data widgets: read-only query
+	Path   string
+	Filter string
+	Fields map[string]string // raw optional fields, lowercase keys
 	// Location info for error messages
 	Section  string
 	LineNum  int
@@ -134,10 +134,10 @@ type reportPlanDocumentWidget struct {
 	Hidden       bool                           `json:"hidden,omitempty"`
 	Kind         string                         `json:"kind" jsonschema:"required,enum=text,enum=markdown,enum=chart,enum=table,enum=cards,enum=stat,enum=alert,enum=pivot,enum=file,enum=file-list"`
 	Source       string                         `json:"source,omitempty"`
-	Sources      map[string]string              `json:"sources,omitempty"`
+	DB           string                         `json:"db,omitempty"`
+	SQL          string                         `json:"sql,omitempty"`
 	Path         string                         `json:"path,omitempty"`
 	Filter       string                         `json:"filter,omitempty"`
-	Query        string                         `json:"query,omitempty"`
 	Title        string                         `json:"title,omitempty"`
 	Description  string                         `json:"description,omitempty"`
 	Height       int                            `json:"height,omitempty"`
@@ -247,16 +247,16 @@ type reportPlanParsedSection struct {
 }
 
 type reportPlanParsedWidget struct {
-	Kind     string            `json:"kind"`
-	Source   string            `json:"source"`
-	Sources  map[string]string `json:"sources,omitempty"`
-	Path     string            `json:"path,omitempty"`
-	Filter   string            `json:"filter,omitempty"`
-	Query    string            `json:"query,omitempty"`
-	ShowIf   string            `json:"show_if,omitempty"`
-	Line     int               `json:"line,omitempty"`
-	InRow    bool              `json:"in_row,omitempty"`
-	RowIndex int               `json:"row_index,omitempty"`
+	Kind     string `json:"kind"`
+	Source   string `json:"source,omitempty"`
+	DB       string `json:"db,omitempty"`
+	SQL      string `json:"sql,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Filter   string `json:"filter,omitempty"`
+	ShowIf   string `json:"show_if,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	InRow    bool   `json:"in_row,omitempty"`
+	RowIndex int    `json:"row_index,omitempty"`
 	// Options captures all non-standard fields the parser saw — so the builder
 	// can spot e.g. `type: stat_row` (unrecognized key) or `chrt_type: bar`
 	// (typo) being silently ignored.
@@ -298,20 +298,21 @@ type reportPlanPreviewSection struct {
 }
 
 type reportPlanPreviewWidget struct {
-	Kind        string            `json:"kind"`
-	Title       string            `json:"title,omitempty"`
-	Description string            `json:"description,omitempty"`
-	Source      string            `json:"source,omitempty"`
-	Sources     map[string]string `json:"sources,omitempty"`
-	Path        string            `json:"path,omitempty"`
-	Line        int               `json:"line,omitempty"`
-	InRow       bool              `json:"in_row,omitempty"`
-	RowIndex    int               `json:"row_index,omitempty"`
-	Visible     bool              `json:"visible"`
-	RenderState string            `json:"render_state,omitempty"` // visible | hidden | error
-	Reason      string            `json:"reason,omitempty"`
-	Summary     string            `json:"summary,omitempty"`
-	DataPreview interface{}       `json:"data_preview,omitempty"`
+	Kind        string      `json:"kind"`
+	Title       string      `json:"title,omitempty"`
+	Description string      `json:"description,omitempty"`
+	Source      string      `json:"source,omitempty"`
+	DB          string      `json:"db,omitempty"`
+	SQL         string      `json:"sql,omitempty"`
+	Path        string      `json:"path,omitempty"`
+	Line        int         `json:"line,omitempty"`
+	InRow       bool        `json:"in_row,omitempty"`
+	RowIndex    int         `json:"row_index,omitempty"`
+	Visible     bool        `json:"visible"`
+	RenderState string      `json:"render_state,omitempty"` // visible | hidden | error
+	Reason      string      `json:"reason,omitempty"`
+	Summary     string      `json:"summary,omitempty"`
+	DataPreview interface{} `json:"data_preview,omitempty"`
 }
 
 func readReportPlanDocument(
@@ -464,21 +465,10 @@ func reportPlanLegacyWidgetFromDocumentWidget(widget reportPlanDocumentWidget, s
 		}
 	}
 	add("source", widget.Source)
-	if len(widget.Sources) > 0 {
-		keys := make([]string, 0, len(widget.Sources))
-		for key := range widget.Sources {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		parts := make([]string, 0, len(keys))
-		for _, key := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%s", key, widget.Sources[key]))
-		}
-		fields["sources"] = strings.Join(parts, ", ")
-	}
+	add("db", widget.DB)
+	add("sql", widget.SQL)
 	add("path", widget.Path)
 	add("filter", widget.Filter)
-	add("query", widget.Query)
 	add("title", widget.Title)
 	add("description", widget.Description)
 	if widget.Height > 0 {
@@ -595,7 +585,8 @@ func reportPlanLegacyWidgetFromDocumentWidget(widget reportPlanDocumentWidget, s
 	return &reportPlanWidget{
 		Kind:     widget.Kind,
 		Source:   widget.Source,
-		Sources:  widget.Sources,
+		DB:       widget.DB,
+		SQL:      widget.SQL,
 		Path:     widget.Path,
 		Filter:   widget.Filter,
 		Fields:   fields,
@@ -718,17 +709,17 @@ func parseReportPlanKeyValue(kind string, body []string) *reportPlanWidget {
 			fields[key] = val
 		}
 	}
-	sources := parseReportPlanSourcesField(fields["sources"])
-	if fields["source"] == "" && len(sources) == 0 {
+	if fields["source"] == "" && !(fields["db"] != "" && fields["sql"] != "") {
 		return nil
 	}
 	return &reportPlanWidget{
-		Kind:    kind,
-		Source:  fields["source"],
-		Sources: sources,
-		Path:    normalizeReportPlanPath(fields["path"]),
-		Filter:  fields["filter"],
-		Fields:  fields,
+		Kind:   kind,
+		Source: fields["source"],
+		DB:     fields["db"],
+		SQL:    fields["sql"],
+		Path:   normalizeReportPlanPath(fields["path"]),
+		Filter: fields["filter"],
+		Fields: fields,
 	}
 }
 
@@ -768,17 +759,17 @@ func parseReportPlanRow(body []string) []*reportPlanWidget {
 				fields[key] = val
 			}
 		}
-		sources := parseReportPlanSourcesField(fields["sources"])
-		if fields["source"] == "" && len(sources) == 0 {
+		if fields["source"] == "" && !(fields["db"] != "" && fields["sql"] != "") {
 			continue
 		}
 		out = append(out, &reportPlanWidget{
-			Kind:    kind,
-			Source:  fields["source"],
-			Sources: sources,
-			Path:    normalizeReportPlanPath(fields["path"]),
-			Filter:  fields["filter"],
-			Fields:  fields,
+			Kind:   kind,
+			Source: fields["source"],
+			DB:     fields["db"],
+			SQL:    fields["sql"],
+			Path:   normalizeReportPlanPath(fields["path"]),
+			Filter: fields["filter"],
+			Fields: fields,
 		})
 	}
 	return out
@@ -915,28 +906,30 @@ func applyReportPlanFilter(value interface{}, filter string) interface{} {
 	return filtered
 }
 
+// reportPlanWidgetSourcePaths returns the file path a file/file-list/markdown
+// widget points at. Data widgets bind via db+sql and have no file source.
 func reportPlanWidgetSourcePaths(w *reportPlanWidget) []string {
 	if w == nil {
 		return nil
 	}
-	seen := map[string]struct{}{}
-	var out []string
-	add := func(source string) {
-		source = strings.TrimSpace(source)
-		if source == "" {
-			return
-		}
-		if _, ok := seen[source]; ok {
-			return
-		}
-		seen[source] = struct{}{}
-		out = append(out, source)
+	if src := strings.TrimSpace(w.Source); src != "" {
+		return []string{src}
 	}
-	add(w.Source)
-	for _, source := range w.Sources {
-		add(source)
+	return nil
+}
+
+// reportPlanIsDataWidget reports whether the widget binds to db/db.sqlite via SQL.
+func reportPlanIsDataWidget(w *reportPlanWidget) bool {
+	return w != nil && (strings.TrimSpace(w.DB) != "" || strings.TrimSpace(w.SQL) != "")
+}
+
+// reportPlanRowsToValue converts SQL result rows to the generic []interface{}
+// shape the path/filter/shape validators operate on.
+func reportPlanRowsToValue(rows []map[string]interface{}) interface{} {
+	out := make([]interface{}, len(rows))
+	for i, r := range rows {
+		out[i] = r
 	}
-	sort.Strings(out)
 	return out
 }
 
@@ -964,36 +957,32 @@ func reportPlanValidFileWidgetSource(source string) bool {
 		strings.HasPrefix(cleaned, "docs/")
 }
 
-func reportPlanValidSourceForWidget(w *reportPlanWidget, source string) bool {
-	if w != nil && reportPlanIsFileWidgetKind(w.Kind) {
-		return reportPlanValidFileWidgetSource(source)
-	}
-	return reportPlanValidSourceRE.MatchString(source)
-}
-
 func reportPlanWidgetSourceLabel(w *reportPlanWidget) string {
 	if w == nil {
 		return ""
 	}
-	if len(w.Sources) > 0 {
-		keys := make([]string, 0, len(w.Sources))
-		for key := range w.Sources {
-			keys = append(keys, key)
+	if reportPlanIsDataWidget(w) {
+		if sql := strings.TrimSpace(w.SQL); sql != "" {
+			return sql
 		}
-		sort.Strings(keys)
-		parts := make([]string, 0, len(keys))
-		for _, key := range keys {
-			parts = append(parts, fmt.Sprintf("%s:%s", key, w.Sources[key]))
-		}
-		return strings.Join(parts, ",")
+		return w.DB
 	}
 	return w.Source
 }
 
+// reportPlanQueryFunc runs a read-only SQL query against a workflow's SQLite DB
+// and returns the result rows as objects keyed by column name. Supplied by the
+// workshop controller (→ workspace /api/query). nil when no DB access is wired,
+// in which case data widgets are validated structurally only.
+type reportPlanQueryFunc func(ctx context.Context, dbPath, sql string) ([]map[string]interface{}, error)
+
+// loadReportPlanWidgetData runs a data widget's SQL against its db and returns the
+// result rows as a generic []interface{}. Results are cached per (db, sql) so the
+// same query isn't re-run across widgets in one validation pass.
 func loadReportPlanWidgetData(
 	ctx context.Context,
 	workspacePath string,
-	readFile func(context.Context, string) (string, error),
+	queryDB reportPlanQueryFunc,
 	w *reportPlanWidget,
 	sourceCache map[string]interface{},
 	sourceMissing map[string]bool,
@@ -1001,56 +990,32 @@ func loadReportPlanWidgetData(
 	locator string,
 	result *reportPlanValidationResult,
 ) (interface{}, bool) {
-	loadOne := func(source string) (interface{}, bool) {
-		data, hasData := sourceCache[source]
-		if hasData {
-			return data, true
-		}
-		if sourceMissing[source] {
-			return nil, false
-		}
-		content, readErr := readFile(ctx, normalizePathForWorkspaceAPI(source, workspacePath))
-		if readErr != nil {
-			sourceMissing[source] = true
-			result.Valid = false
-			result.Errors = append(result.Errors, reportPlanDiagnostic{
-				Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
-				Message: fmt.Sprintf("source file %s not found or unreadable: %v", source, readErr),
-				Hint:    "Confirm a workflow step actually writes this file — or remove the widget until it does.",
-			})
-			return nil, false
-		}
-		var parsed interface{}
-		if unmarshalErr := json.Unmarshal([]byte(content), &parsed); unmarshalErr != nil {
-			sourceMissing[source] = true
-			result.Valid = false
-			result.Errors = append(result.Errors, reportPlanDiagnostic{
-				Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
-				Message: fmt.Sprintf("source %s is not valid JSON: %v", source, unmarshalErr),
-			})
-			return nil, false
-		}
-		sourceCache[source] = parsed
-		return parsed, true
+	if queryDB == nil {
+		// No DB access wired (e.g. unit context) — skip data validation.
+		return nil, false
 	}
-
-	if len(w.Sources) == 0 {
-		return loadOne(w.Source)
+	dbPath := normalizePathForWorkspaceAPI(w.DB, workspacePath)
+	cacheKey := dbPath + "\n" + strings.TrimSpace(w.SQL)
+	if data, ok := sourceCache[cacheKey]; ok {
+		return data, true
 	}
-	combined := map[string]interface{}{}
-	keys := make([]string, 0, len(w.Sources))
-	for key := range w.Sources {
-		keys = append(keys, key)
+	if sourceMissing[cacheKey] {
+		return nil, false
 	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		data, ok := loadOne(w.Sources[key])
-		if !ok {
-			return nil, false
-		}
-		combined[key] = data
+	rows, err := queryDB(ctx, dbPath, w.SQL)
+	if err != nil {
+		sourceMissing[cacheKey] = true
+		result.Valid = false
+		result.Errors = append(result.Errors, reportPlanDiagnostic{
+			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
+			Message: fmt.Sprintf("SQL query failed against %s: %v", w.DB, err),
+			Hint:    "Fix the `sql` (test it with sqlite3 against db/db.sqlite) — or confirm a workflow step has populated the table.",
+		})
+		return nil, false
 	}
-	return combined, true
+	data := reportPlanRowsToValue(rows)
+	sourceCache[cacheKey] = data
+	return data, true
 }
 
 // validateReportPlan parses the canonical JSON report plan (with markdown fallback)
@@ -1060,6 +1025,7 @@ func validateReportPlan(
 	ctx context.Context,
 	workspacePath string,
 	readFile func(context.Context, string) (string, error),
+	queryDB reportPlanQueryFunc,
 ) (*reportPlanValidationResult, error) {
 	planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
 	if err != nil {
@@ -1098,70 +1064,46 @@ func validateReportPlan(
 				locator = fmt.Sprintf("row[%d]:%s", w.RowIndex, locator)
 			}
 
-			// 1. Source path allowlist.
-			invalidSource := ""
-			for _, source := range reportPlanWidgetSourcePaths(w) {
-				if !reportPlanValidSourceForWidget(w, source) {
-					invalidSource = source
-					break
-				}
-			}
-			if invalidSource == "" && len(reportPlanWidgetSourcePaths(w)) == 0 {
-				invalidSource = ""
-			}
-			if invalidSource != "" || len(reportPlanWidgetSourcePaths(w)) == 0 {
-				result.Valid = false
-				message := "widget has no source."
-				if invalidSource != "" {
-					message = fmt.Sprintf("source %q is not a valid widget source.", invalidSource)
-				}
-				result.Errors = append(result.Errors, reportPlanDiagnostic{
-					Severity: "error", Section: section.Heading, Line: w.LineNum, Widget: locator,
-					Message: message,
-					Hint:    "Use source: db/<file>.json for JSON widgets. For file/file-list widgets, use source under db/, knowledgebase/, or docs/.",
-				})
-				continue
-			}
-			if reportPlanIsFileWidgetKind(w.Kind) {
-				validateReportPlanOptions(w, section.Heading, locator, result)
-				continue
-			}
-			trackReportPlanSourceRequirement(sourceRequirements, w, locator)
-
-			// 2. Read (cached) and JSON-parse the source(s). Multi-source widgets
-			// receive a JSONata input object keyed by alias, e.g. {runs: ..., costs: ...}.
-			data, hasData := loadReportPlanWidgetData(ctx, workspacePath, readFile, w, sourceCache, sourceMissing, section.Heading, locator, result)
-			if !hasData {
-				continue
-			}
-
-			if q := strings.TrimSpace(w.Fields["query"]); q != "" {
-				transformed, qErr := evalReportPlanQuery(q, data)
-				if qErr != nil {
+			// 1. Resolve the widget's data binding. File/file-list/markdown widgets
+			// point `source` at a file; data widgets bind via `db` + `sql`.
+			if !reportPlanIsDataWidget(w) {
+				src := strings.TrimSpace(w.Source)
+				if src == "" {
 					result.Valid = false
 					result.Errors = append(result.Errors, reportPlanDiagnostic{
 						Severity: "error", Section: section.Heading, Line: w.LineNum, Widget: locator,
-						Message: fmt.Sprintf("JSONata query failed: %v", qErr),
-						Hint:    "Fix `query:` or test it against the source JSON. The query runs before path/filter/widget rendering.",
+						Message: "widget has no data binding.",
+						Hint:    "Data widgets need `db` + `sql`; file/file-list/markdown widgets need a `source` under db/, knowledgebase/, or docs/.",
 					})
-					validateReportPlanOptions(w, section.Heading, locator, result)
 					continue
 				}
-				data = transformed
+				if !reportPlanValidFileWidgetSource(src) {
+					result.Valid = false
+					result.Errors = append(result.Errors, reportPlanDiagnostic{
+						Severity: "error", Section: section.Heading, Line: w.LineNum, Widget: locator,
+						Message: fmt.Sprintf("source %q must be a path under db/, knowledgebase/, or docs/.", src),
+					})
+					continue
+				}
+				validateReportPlanOptions(w, section.Heading, locator, result)
+				continue
 			}
 
-			// Suggest `query:` when the source filename looks like a
-			// pre-flattened helper (`*_rows.json`, `*_summary.json`,
-			// `flat_*.json`). These almost always duplicate a canonical db
-			// file and can be collapsed with an in-widget JSONata query.
-			for _, source := range reportPlanWidgetSourcePaths(w) {
-				if base := filepath.Base(source); reportPlanLooksLikeFlattenArtifact(base) {
-					result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-						Severity: "warning", Section: section.Heading, Line: w.LineNum, Widget: locator,
-						Message: fmt.Sprintf("source %s looks like a pre-flattened helper file; consider collapsing it into a JSONata `query:` against the canonical db source.", source),
-						Hint:    "Replace `source: db/foo_rows.json` + flatten step with `source: db/foo.json` + `query: rows[…]` (or `$sum(rows.amount)`, `$sort(rows, …)[[0..9]]`, etc.). Removes the flatten step and one db artifact.",
-					})
-				}
+			// Data widget: must declare a SQL query against the db.
+			if strings.TrimSpace(w.SQL) == "" {
+				result.Valid = false
+				result.Errors = append(result.Errors, reportPlanDiagnostic{
+					Severity: "error", Section: section.Heading, Line: w.LineNum, Widget: locator,
+					Message: "data widget sets `db` but has no `sql`.",
+					Hint:    "Add a read-only `sql` query, e.g. \"SELECT ... FROM <table> ...\".",
+				})
+				continue
+			}
+
+			// 2. Run the SQL and get the result rows (array of row objects).
+			data, hasData := loadReportPlanWidgetData(ctx, workspacePath, queryDB, w, sourceCache, sourceMissing, section.Heading, locator, result)
+			if !hasData {
+				continue
 			}
 
 			// 3. Resolve dot-path.
@@ -2219,7 +2161,7 @@ func buildReportPlanParsedDump(sections []reportPlanSection) []reportPlanParsedS
 	// set is surfaced under `options` — that's where typos and unrecognized
 	// keys become visible.
 	recognized := map[string]struct{}{
-		"source": {}, "sources": {}, "path": {}, "filter": {}, "query": {}, "show_if": {}, "showif": {},
+		"source": {}, "db": {}, "sql": {}, "path": {}, "filter": {}, "show_if": {}, "showif": {},
 	}
 	out := make([]reportPlanParsedSection, 0, len(sections))
 	for _, s := range sections {
@@ -2228,10 +2170,10 @@ func buildReportPlanParsedDump(sections []reportPlanSection) []reportPlanParsedS
 			pw := reportPlanParsedWidget{
 				Kind:     w.Kind,
 				Source:   w.Source,
-				Sources:  w.Sources,
+				DB:       w.DB,
+				SQL:      w.SQL,
 				Path:     w.Path,
 				Filter:   w.Filter,
-				Query:    w.Fields["query"],
 				ShowIf:   reportPlanFirstNonEmpty(w.Fields["show_if"], w.Fields["showif"]),
 				Line:     w.LineNum,
 				InRow:    w.InRow,
@@ -2283,18 +2225,6 @@ func reportPlanLooksLikeFlattenArtifact(base string) bool {
 // evalReportPlanQuery evaluates a JSONata expression against the raw source
 // JSON, mirroring the browser pipeline (source → query → path → filter →
 // render). Returns the transformed value or an error.
-func evalReportPlanQuery(query string, raw interface{}) (interface{}, error) {
-	expr, err := jsonata.Compile(query)
-	if err != nil {
-		return nil, fmt.Errorf("compile: %w", err)
-	}
-	result, err := expr.Eval(raw)
-	if err != nil {
-		return nil, fmt.Errorf("evaluate: %w", err)
-	}
-	return result, nil
-}
-
 func reportPlanFirstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {
@@ -2308,13 +2238,14 @@ func previewReportRender(
 	ctx context.Context,
 	workspacePath string,
 	readFile func(context.Context, string) (string, error),
+	queryDB reportPlanQueryFunc,
 ) (*reportPlanRenderPreviewResult, error) {
 	planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
 	if err != nil {
 		return nil, err
 	}
 
-	validation, validationErr := validateReportPlan(ctx, workspacePath, readFile)
+	validation, validationErr := validateReportPlan(ctx, workspacePath, readFile, queryDB)
 	if validationErr != nil {
 		return nil, validationErr
 	}
@@ -2352,6 +2283,7 @@ func previewReportRender(
 				widget,
 				workspacePath,
 				readFile,
+				queryDB,
 				sourceCache,
 				sourceErrors,
 			)
@@ -2381,6 +2313,7 @@ func buildReportPlanWidgetPreview(
 	w *reportPlanWidget,
 	workspacePath string,
 	readFile func(context.Context, string) (string, error),
+	queryDB reportPlanQueryFunc,
 	sourceCache map[string]interface{},
 	sourceErrors map[string]string,
 ) reportPlanPreviewWidget {
@@ -2389,7 +2322,8 @@ func buildReportPlanWidgetPreview(
 		Title:       reportPlanFirstNonEmpty(w.Fields["title"]),
 		Description: reportPlanFirstNonEmpty(w.Fields["description"]),
 		Source:      w.Source,
-		Sources:     w.Sources,
+		DB:          w.DB,
+		SQL:         w.SQL,
 		Path:        w.Path,
 		Line:        w.LineNum,
 		InRow:       w.InRow,
@@ -2406,7 +2340,8 @@ func buildReportPlanWidgetPreview(
 		return out
 	}
 
-	if reportPlanIsFileWidgetKind(w.Kind) {
+	// File / file-list / markdown-from-file widgets render a file, not data.
+	if !reportPlanIsDataWidget(w) {
 		if !reportPlanValidFileWidgetSource(w.Source) {
 			out.Visible = false
 			out.RenderState = "error"
@@ -2433,25 +2368,13 @@ func buildReportPlanWidgetPreview(
 		return out
 	}
 
-	raw, readErr := reportPlanLoadWidgetPreviewData(ctx, workspacePath, w, readFile, sourceCache, sourceErrors)
+	raw, readErr := reportPlanLoadWidgetPreviewData(ctx, workspacePath, w, queryDB, sourceCache, sourceErrors)
 	if readErr != "" {
 		out.Visible = false
 		out.RenderState = "error"
 		out.Reason = readErr
 		out.Summary = readErr
 		return out
-	}
-
-	if q := strings.TrimSpace(w.Fields["query"]); q != "" {
-		transformed, qErr := evalReportPlanQuery(q, raw)
-		if qErr != nil {
-			out.Visible = false
-			out.RenderState = "error"
-			out.Reason = fmt.Sprintf("query failed: %v", qErr)
-			out.Summary = out.Reason
-			return out
-		}
-		raw = transformed
 	}
 
 	if !reportPlanEvaluateShowIf(raw, reportPlanFirstNonEmpty(w.Fields["show_if"], w.Fields["showif"])) {
@@ -2481,64 +2404,41 @@ func buildReportPlanWidgetPreview(
 	return out
 }
 
-func reportPlanLoadSourceData(
-	ctx context.Context,
-	workspacePath string,
-	source string,
-	readFile func(context.Context, string) (string, error),
-	sourceCache map[string]interface{},
-	sourceErrors map[string]string,
-) (interface{}, string) {
-	if source == "" {
-		return nil, "source is empty"
-	}
-	if errMsg, ok := sourceErrors[source]; ok {
-		return nil, errMsg
-	}
-	if cached, ok := sourceCache[source]; ok {
-		return cached, ""
-	}
-	content, err := readFile(ctx, normalizePathForWorkspaceAPI(source, workspacePath))
-	if err != nil {
-		msg := fmt.Sprintf("source %s is unreadable: %v", source, err)
-		sourceErrors[source] = msg
-		return nil, msg
-	}
-	var parsed interface{}
-	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
-		msg := fmt.Sprintf("source %s is not valid JSON: %v", source, err)
-		sourceErrors[source] = msg
-		return nil, msg
-	}
-	sourceCache[source] = parsed
-	return parsed, ""
-}
-
+// reportPlanLoadWidgetPreviewData runs a data widget's SQL against its db and
+// returns the result rows as []interface{}. Cached per (db, sql) so repeated
+// widgets don't re-run the same query. Returns ("", data) on success or a
+// non-empty error string on failure.
 func reportPlanLoadWidgetPreviewData(
 	ctx context.Context,
 	workspacePath string,
 	w *reportPlanWidget,
-	readFile func(context.Context, string) (string, error),
+	queryDB reportPlanQueryFunc,
 	sourceCache map[string]interface{},
 	sourceErrors map[string]string,
 ) (interface{}, string) {
-	if len(w.Sources) == 0 {
-		return reportPlanLoadSourceData(ctx, workspacePath, w.Source, readFile, sourceCache, sourceErrors)
+	if queryDB == nil {
+		return nil, "no database access wired for preview"
 	}
-	combined := map[string]interface{}{}
-	keys := make([]string, 0, len(w.Sources))
-	for key := range w.Sources {
-		keys = append(keys, key)
+	if strings.TrimSpace(w.SQL) == "" {
+		return nil, "data widget has no sql"
 	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		data, errMsg := reportPlanLoadSourceData(ctx, workspacePath, w.Sources[key], readFile, sourceCache, sourceErrors)
-		if errMsg != "" {
-			return nil, errMsg
-		}
-		combined[key] = data
+	dbPath := normalizePathForWorkspaceAPI(w.DB, workspacePath)
+	cacheKey := dbPath + "\n" + strings.TrimSpace(w.SQL)
+	if errMsg, ok := sourceErrors[cacheKey]; ok {
+		return nil, errMsg
 	}
-	return combined, ""
+	if cached, ok := sourceCache[cacheKey]; ok {
+		return cached, ""
+	}
+	rows, err := queryDB(ctx, dbPath, w.SQL)
+	if err != nil {
+		msg := fmt.Sprintf("SQL query failed against %s: %v", w.DB, err)
+		sourceErrors[cacheKey] = msg
+		return nil, msg
+	}
+	data := reportPlanRowsToValue(rows)
+	sourceCache[cacheKey] = data
+	return data, ""
 }
 
 func reportPlanEvaluateShowIf(data interface{}, expr string) bool {
@@ -2903,6 +2803,7 @@ func registerReportPlanValidationTools(
 	workspacePath string,
 	logger loggerv2.Logger,
 	readFile func(context.Context, string) (string, error),
+	queryDB reportPlanQueryFunc,
 ) error {
 	schema := `{
 		"type": "object",
@@ -2913,10 +2814,10 @@ func registerReportPlanValidationTools(
 
 	mcpAgent.RegisterCustomTool(
 		"validate_report_plan",
-		"Validate reports/report_plan.json after editing it. It parses every widget, reads the JSON sources they point to, and checks: source path allowlist, source file readability, dot-path resolution, widget/data shape compatibility, and option validity. Returns structured per-widget errors + warnings + suggestions plus a parsed dump showing exactly what the validator saw.",
+		"Validate reports/report_plan.json after editing it. It parses every widget, runs each data widget's `sql` against db/db.sqlite (read-only), and checks: file-source path allowlist, SQL executes, dot-path resolution against the result rows, widget/data shape compatibility, and option validity. Returns structured per-widget errors + warnings + suggestions plus a parsed dump showing exactly what the validator saw.",
 		params,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			res, err := validateReportPlan(ctx, workspacePath, readFile)
+			res, err := validateReportPlan(ctx, workspacePath, readFile, queryDB)
 			if err != nil {
 				return "", err
 			}
@@ -3492,6 +3393,7 @@ func registerReportRenderPreviewTool(
 	workspacePath string,
 	logger loggerv2.Logger,
 	readFile func(context.Context, string) (string, error),
+	queryDB reportPlanQueryFunc,
 ) error {
 	schema := `{
 		"type": "object",
@@ -3502,10 +3404,10 @@ func registerReportRenderPreviewTool(
 
 	mcpAgent.RegisterCustomTool(
 		"preview_report_render",
-		"Preview how reports/report_plan.json resolves against current workspace data. Returns validation output, a human-readable preview markdown, and per-widget resolved data previews so you can inspect what the final report would show before asking the user to open the Report tab.",
+		"Preview how reports/report_plan.json resolves against current workspace data. Runs each data widget's `sql` against db/db.sqlite (read-only). Returns validation output, a human-readable preview markdown, and per-widget resolved data previews so you can inspect what the final report would show before asking the user to open the Report tab.",
 		params,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			res, err := previewReportRender(ctx, workspacePath, readFile)
+			res, err := previewReportRender(ctx, workspacePath, readFile, queryDB)
 			if err != nil {
 				return "", err
 			}

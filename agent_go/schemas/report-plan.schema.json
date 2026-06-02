@@ -156,19 +156,16 @@
         "source": {
           "type": "string"
         },
-        "sources": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
+        "db": {
+          "type": "string"
+        },
+        "sql": {
+          "type": "string"
         },
         "path": {
           "type": "string"
         },
         "filter": {
-          "type": "string"
-        },
-        "query": {
           "type": "string"
         },
         "title": {

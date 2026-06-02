@@ -37,12 +37,10 @@ export interface ReportPlanDocumentWidget {
   hidden?: boolean;
   kind: "text" | "markdown" | "chart" | "table" | "cards" | "stat" | "alert" | "pivot" | "file" | "file-list";
   source?: string;
-  sources?: {
-    [k: string]: string;
-  };
+  db?: string;
+  sql?: string;
   path?: string;
   filter?: string;
-  query?: string;
   title?: string;
   description?: string;
   height?: number;

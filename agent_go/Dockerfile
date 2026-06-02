@@ -75,6 +75,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tmux \
     jq \
     ripgrep \
+    sqlite3 \
     python3 \
     python3-pip \
     python3-venv \
@@ -146,8 +147,8 @@ RUN pip3 install --break-system-packages uv pypdf
 # Verify npx and docker are available
 RUN which npx && which docker && which tmux && npm --version && npx --version && docker --version
 
-# Verify ripgrep and jq
-RUN which rg && which jq && rg --version && jq --version
+# Verify ripgrep, jq and sqlite3
+RUN which rg && which jq && which sqlite3 && rg --version && jq --version && sqlite3 --version
 
 # Create non-root user. Runtime caches (uvx/npx) land in /home/appuser/.cache/
 RUN groupadd -g 1001 appgroup && useradd -m -u 1001 -g appgroup appuser

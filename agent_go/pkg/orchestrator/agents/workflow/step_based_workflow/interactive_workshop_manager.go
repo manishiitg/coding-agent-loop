@@ -1349,6 +1349,7 @@ func (iwm *InteractiveWorkshopManager) registerWorkshopMutationToolsForToolAgent
 		workspacePath,
 		logger,
 		iwm.controller.ReadWorkspaceFile,
+		iwm.controller.QueryWorkflowDB,
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register report validation tool: %v", agentName, err))
 	}
@@ -1357,6 +1358,7 @@ func (iwm *InteractiveWorkshopManager) registerWorkshopMutationToolsForToolAgent
 		workspacePath,
 		logger,
 		iwm.controller.ReadWorkspaceFile,
+		iwm.controller.QueryWorkflowDB,
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register report preview tool: %v", agentName, err))
 	}
@@ -1395,6 +1397,7 @@ func (iwm *InteractiveWorkshopManager) registerWorkshopReviewToolsForToolAgent(a
 		workspacePath,
 		logger,
 		iwm.controller.ReadWorkspaceFile,
+		iwm.controller.QueryWorkflowDB,
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register report validation tool: %v", agentName, err))
 	}
@@ -1403,6 +1406,7 @@ func (iwm *InteractiveWorkshopManager) registerWorkshopReviewToolsForToolAgent(a
 		workspacePath,
 		logger,
 		iwm.controller.ReadWorkspaceFile,
+		iwm.controller.QueryWorkflowDB,
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register report preview tool: %v", agentName, err))
 	}

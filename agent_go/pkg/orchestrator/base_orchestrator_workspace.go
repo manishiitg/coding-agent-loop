@@ -45,6 +45,22 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	return result.Content, nil
 }
 
+// QueryWorkflowDB runs a read-only SQL query against a workflow db/db.sqlite file
+// (resolved relative to the workspace) and returns the result rows as objects
+// keyed by column name. Used by foreach to iterate table rows directly.
+func (bo *BaseOrchestrator) QueryWorkflowDB(ctx context.Context, dbPath, sql string) ([]map[string]interface{}, error) {
+	dbPath = bo.resolveWorkspacePath(dbPath)
+	rows, err := bo.WorkspaceClient.QueryWorkflowDB(ctx, workspace.QueryWorkflowDBParams{
+		DBPath: dbPath,
+		SQL:    sql,
+	})
+	if err != nil {
+		bo.GetLogger().Warn(fmt.Sprintf("QueryWorkflowDB(%s) failed: %v", dbPath, err))
+		return nil, fmt.Errorf("failed to query %s: %w", dbPath, err)
+	}
+	return rows, nil
+}
+
 // CheckWorkspaceFileExists checks if a file or directory exists in the workspace
 func (bo *BaseOrchestrator) CheckWorkspaceFileExists(ctx context.Context, filePath string) (bool, error) {
 	_, err := bo.ReadWorkspaceFile(ctx, filePath)

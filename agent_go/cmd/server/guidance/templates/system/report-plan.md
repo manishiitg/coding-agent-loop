@@ -6,10 +6,10 @@ Workshop may maintain the live frontend report defined by `reports/report_plan.j
 
 - Before move/remove/toggle operations, call `get_report_plan` so you have stable section, entry, row, and widget IDs.
 - Use `upsert_report_widget` for create/update, `move_report_widget` to reposition, `toggle_report_widget` to hide/show, and `remove_report_widget` to delete.
-- For one JSON file, bind widgets with `source: "db/file.json"`. For joins across db files, bind with `sources: { "alias": "db/file.json", ... }` and a JSONata `query`; the query input is an object keyed by alias (for example `runs.rows` and `costs.rows`). Prefer this over creating helper db files just to join, sum, filter, or pick latest report rows.
+- Bind data widgets (table/chart/cards/stat/alert/pivot/text) with `db: "db/db.sqlite"` and a read-only `sql` query, e.g. `"sql": "SELECT name, score FROM companies ORDER BY score DESC LIMIT 20"`. Do the joining, summing, filtering, grouping, and latest-row selection in SQL (`JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, `LIMIT`) — do not create helper tables just to reshape data for a widget. `path`/`filter`/`formats` still apply to the returned rows.
 - To show stored artifacts, use `kind: "file"` for one file and `kind: "file-list"` for a folder. File widgets may read `db/`, `knowledgebase/`, or `docs/` paths. Use `renderFormat: "auto" | "markdown" | "html" | "text" | "code" | "json" | "image" | "video" | "audio" | "pdf" | "link"` on `file`; use `listFormat: "list" | "cards" | "table" | "gallery"`, `recursive`, `extensions`, and `maxItems` on `file-list`. Prefer `file-list` for multiple images/videos/PDFs and `file` when a single artifact should be rendered inline.
 - **Document escape hatch:** for a rich/narrative/highly-custom report the widget grammar can't express cleanly (or when the user dislikes the widget-composed look), have a step write a `.md`/`.html` document into `db/` and render the whole thing with one `file` widget (`renderFormat: "markdown"` or `"html"`). HTML renders in a sandboxed iframe (inline CSS/JS, tables, charts, dark mode all work); links to PDFs/files inside the document are clickable. Proactively offer this to the user — it's frequently the best fit for document-style reports — but state the tradeoff: a generated doc is a **static snapshot regenerated each run**, not live-bound to `db/`, whereas widgets auto-refresh. A **hybrid** (generated doc for the narrative body + a few live widgets for status/metrics/file-lists) gets both. See `get_reference_doc(kind="reporting-policy")` for the full dispatch.
-- **Embed LIVE widgets inside a markdown document** — removes the "static snapshot" drawback for the `.md` path. In a `.md` file rendered via a `file`/`markdown` widget, a fenced ` ```report-widget ` block whose body is a widget JSON spec is replaced by a real, live, db-bound widget inline. The widget's `source` is loaded on demand (it need not be in the plan), so the narrative is freeform prose AND the numbers/tables/charts stay live. Example inside the `.md`:
+- **Embed LIVE widgets inside a markdown document** — removes the "static snapshot" drawback for the `.md` path. In a `.md` file rendered via a `file`/`markdown` widget, a fenced ` ```report-widget ` block whose body is a widget JSON spec is replaced by a real, live, db-bound widget inline. The widget's `sql` runs on demand against `db/db.sqlite` (it need not be in the plan), so the narrative is freeform prose AND the numbers/tables/charts stay live. Example inside the `.md`:
 
   ~~~
   ## TDS Reconciliation — X SPACES
@@ -17,11 +17,11 @@ Workshop may maintain the live frontend report defined by `reports/report_plan.j
   Pulled live from the canonical DB:
 
   ```report-widget
-  { "kind": "table", "source": "db/reports_consolidated.json", "path": "AAAFX2962N.tds_rows" }
+  { "kind": "table", "db": "db/db.sqlite", "sql": "SELECT * FROM tds_rows WHERE pan = 'AAAFX2962N'" }
   ```
 
   ```report-widget
-  { "kind": "stat", "source": "db/tax_summary.json", "path": "AAAFX2962N.total_tds", "label": "Total TDS" }
+  { "kind": "stat", "db": "db/db.sqlite", "sql": "SELECT total_tds FROM tax_summary WHERE pan = 'AAAFX2962N'", "label": "Total TDS" }
   ```
   ~~~
 
@@ -34,8 +34,8 @@ Workshop may maintain the live frontend report defined by `reports/report_plan.j
 
 ### When data is missing — running steps from this mode
 
-If a widget renders empty because the underlying `db/` file hasn't been populated yet, you have `execute_step` and `run_full_workflow` available. Use them to make the data exist:
-- For a single missing source, run only the step(s) that write it: `execute_step(step_id, group_name)`.
+If a widget renders empty because the underlying `db/db.sqlite` table hasn't been populated yet, you have `execute_step` and `run_full_workflow` available. Use them to make the data exist:
+- For a single missing table, run only the step(s) that write it: `execute_step(step_id, group_name)`.
 - For a fresh workflow with no runs yet, `run_full_workflow(group_name="...", disable_eval=true)` is the right fallback for report data. Report authoring does not own eval refreshes; omit `disable_eval=true` only when the user explicitly asks to refresh eval-backed widgets.
 - Diagnose first with `review_workflow_results` and `get_report_plan` — don't run steps blindly. The widget might be pointing at the wrong path or filter, in which case the fix is in the plan, not in the data.
 
@@ -47,7 +47,7 @@ If a widget renders empty because the underlying `db/` file hasn't been populate
 
 1. Clarify what the user wants to see.
 2. Call `get_report_plan` for IDs / current structure.
-3. If the data isn't there yet, run the right step(s) (or full workflow) to populate `db/`.
+3. If the data isn't there yet, run the right step(s) (or full workflow) to populate `db/db.sqlite`.
 4. Use the report-plan mutation tools to update `reports/report_plan.json`.
 5. Call `validate_report_plan`. Fix errors, validate again.
 6. Optionally call `preview_report_render` to show the user what it will look like.

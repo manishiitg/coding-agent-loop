@@ -118,6 +118,11 @@ func runServer(cmd *cobra.Command, args []string) {
 		// Shell execution route
 		api.POST("/execute", handlers.ExecuteShellCommand)
 
+		// Read-only SQLite query routes (report widgets + DatabasePopup).
+		// Connection opened mode=ro + query_only — writes are rejected by the engine.
+		api.POST("/query", handlers.QueryWorkflowDB)
+		api.GET("/db/tables", handlers.GetWorkflowDBTables)
+
 		// CDP connectivity check (used by frontend to verify Chrome is reachable from container)
 		api.GET("/cdp-check", handlers.CheckCdpConnection)
 

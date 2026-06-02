@@ -44,6 +44,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	phaseReadFile func(ctx context.Context, p string) (string, error),
 	phaseWriteFile func(ctx context.Context, p, content string) error,
 	phaseMoveFile func(ctx context.Context, src, dst string) error,
+	phaseQueryDB func(ctx context.Context, dbPath, sql string) ([]map[string]interface{}, error),
 	syntheticReq QueryRequest,
 	applyAllowList bool,
 ) error {
@@ -285,6 +286,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 				phaseWorkspacePath,
 				api.logger,
 				phaseReadFile,
+				phaseQueryDB,
 			); err != nil {
 				log.Printf("[WORKFLOW_PHASE] Warning: Failed to register report plan validation tool in %s: %v", workflowPhaseID, err)
 			} else {
@@ -296,6 +298,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 				phaseWorkspacePath,
 				api.logger,
 				phaseReadFile,
+				phaseQueryDB,
 			); err != nil {
 				log.Printf("[WORKFLOW_PHASE] Warning: Failed to register report render preview tool in %s: %v", workflowPhaseID, err)
 			} else {

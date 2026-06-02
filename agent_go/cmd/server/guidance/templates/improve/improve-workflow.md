@@ -44,7 +44,7 @@ PHASE 1 — OUTPUT + METRIC REVIEW
    - knowledgebase/context/context.md for user-supplied runtime context that steps may be ignoring; when a step needs it, the fix must update both `knowledgebase_access` and the step description so it names the relevant context section/path
    - knowledgebase/notes/_index.json + topic files for stale, duplicate, missing, or contradictory workflow-discovered context
    - learnings/_global/SKILL.md and learnings/<step-id>/script_metadata.json for stale rules, missing learning objectives, or agentic steps with leftover main.py
-   - db/*.json for broken data contracts or write/read drift
+   - db/db.sqlite tables for broken data contracts or write/read drift
    - reports/report_plan.json for dashboard/report wiring that hides important metric/eval evidence
 7. List the top 1-3 candidate actions. Each candidate must name the evidence and the expected metric/success-criteria impact. Include eval-plan improvement as a candidate when the workflow output cannot be trusted because evaluation coverage, scoring, structured output, or metric-to-eval wiring is weak.
 
@@ -80,8 +80,8 @@ Harden and replan have the **same plan tools**; the difference is intent, not ca
    Examples: a browser/API/document/spreadsheet skill is installed and matches a failing step but `enabled_skills` is empty; a description says "use skill X" but the step does not enable X; a workflow-selected skill is assumed to affect runtime but no step has it in `enabled_skills`; an external skill contains this workflow's selectors/run paths/account names; a step has three broad skills but only one is relevant.
    Action: use `update_step_config(step_id, enabled_skills=[...])` for step runtime skills and `update_workflow_config(add_skills/remove_skills=[...])` only for builder/workshop selected skills. If the cleanup is workflow-specific HOW, call `improve_learnings(...)` instead of editing an external skill. Do not manually edit `workflow.json`.
 
-8. **Data / DB contract hygiene** when `db/*.json` has drifted from the plan's writer/consumer steps or from report widgets. `db/`, the plan, and reports are one data-contract triangle — fix the corner that is actually wrong; do not bend db to cover for a broken step or report.
-   Examples: invalid JSON, broken or undocumented data contracts, write/read drift, missing or stale `db/README.md`, report-incompatible row shapes, duplicate helper files that should be report JSONata queries, base64 blobs that should live under `db/assets/` with reference rows, or fields whose writer steps no longer exist.
+8. **Data / DB contract hygiene** when `db/db.sqlite` tables have drifted from the plan's writer/consumer steps or from report widgets. `db/`, the plan, and reports are one data-contract triangle — fix the corner that is actually wrong; do not bend db to cover for a broken step or report.
+   Examples: malformed tables, broken or undocumented data contracts, write/read drift, missing or stale `db/README.md`, report-incompatible column shapes, redundant tables that a widget `sql` (JOIN/GROUP BY) should replace, blobs that should live under `db/assets/` with reference rows, or columns whose writer steps no longer exist.
    - If the **db shape/schema/contract** itself is wrong while the plan and reports are right, action: call `improve_db(mode="auto", instruction="<specific db contract/schema/report-compatibility fix>", focus="<brief>")`. `improve_db` reads `planning/plan.json` and `reports/report_plan.json` but edits only `db/` to stay compatible with them, and never deletes or rewrites row data unless explicitly asked.
    - If a **writer step produces the wrong data at the source**, that is a Harden (#1) or Replan (#2) signal — fix the contract where it originates, not in db.
    - If the **report layout/wiring** misrepresents otherwise-correct data, that belongs to the manual `/improve-report` flow, not this pass.

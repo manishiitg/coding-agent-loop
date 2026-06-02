@@ -34,10 +34,10 @@ When the user asks *"what did <employee> do?"*, *"show me <employee>'s results /
 
 For **each** workflow the employee owns:
 1. **Latest run** — `Workflow/<name>/runs/iteration-0/<group>/execution/` (per-step outputs from the most recent run).
-2. **Accumulated results** — `Workflow/<name>/db/*.json` (rows built up across runs; `jq '.[0]'` to learn the shape first).
-3. **Reports** — `Workflow/<name>/reports/`: the live dashboard is `reports/report_plan.json` (widget definitions) bound to `db/*.json`; finished-run reports are `reports/<group>/<timestamp>.md`. To summarize, read the bound `db/*.json` plus the latest `<timestamp>.md`.
+2. **Accumulated results** — `Workflow/<name>/db/db.sqlite` (rows built up across runs; `sqlite3 db/db.sqlite ".tables"` then `SELECT * FROM <table> LIMIT 5` to learn the shape first).
+3. **Reports** — `Workflow/<name>/reports/`: the live dashboard is `reports/report_plan.json` (widget definitions) bound to `db/db.sqlite` via `sql` queries; finished-run reports are `reports/<group>/<timestamp>.md`. To summarize, query the bound tables plus read the latest `<timestamp>.md`.
 
-Then produce **one summary per employee**, grouping their workflows: what ran, key results/numbers (from db + reports), and anything notable (failures, stale runs). Read via `cat`/`jq` through `execute_shell_command`. You have **read-only** access — never modify workflow internals; if the user wants to change how a workflow works, tell them to open it in the builder.
+Then produce **one summary per employee**, grouping their workflows: what ran, key results/numbers (from db + reports), and anything notable (failures, stale runs). Read via `cat`/`sqlite3` through `execute_shell_command`. You have **read-only** access — never modify workflow internals; if the user wants to change how a workflow works, tell them to open it in the builder.
 
 ### Discipline
 

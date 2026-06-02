@@ -298,15 +298,16 @@ function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
   const widget: ReportWidget = {
     kind,
     hidden: source.hidden === true ? true : undefined,
-    source: typeof source.source === 'string' ? source.source : '',
     path: normalizePath(typeof source.path === 'string' ? source.path : ''),
   }
-  const sources = parseSourcesObject(source.sources)
-  if (sources) widget.sources = sources
-  if (!widget.source && !widget.sources) return null
+  if (typeof source.source === 'string' && source.source) widget.source = source.source
+  if (typeof source.db === 'string' && source.db) widget.db = source.db
+  if (typeof source.sql === 'string' && source.sql) widget.sql = source.sql
+  // A widget needs either a file `source` (file/file-list/markdown) or a
+  // `db` + `sql` data binding. Anything else is unrenderable.
+  if (!widget.source && !(widget.db && widget.sql)) return null
 
   if (typeof source.filter === 'string') widget.filter = source.filter
-  if (typeof source.query === 'string') widget.query = source.query
   if (typeof source.title === 'string') widget.title = source.title
   if (typeof source.description === 'string') widget.description = source.description
   if (typeof source.height === 'number' && Number.isFinite(source.height) && source.height > 0) widget.height = Math.trunc(source.height)
@@ -543,16 +544,15 @@ function parseKeyValueFields(body: string[]): Record<string, string> {
 //   y_axis: <field>                           (chart only)
 function parseKeyValueWidget(kind: ReportWidgetKind, body: string[]): ReportWidget | null {
   const fields = parseKeyValueFields(body)
-  const sources = fields.sources ? parseSourcesField(fields.sources) : undefined
-  if (!fields.source && !sources) return null
+  if (!fields.source && !(fields.db && fields.sql)) return null
   const widget: ReportWidget = {
     kind,
-    source: fields.source ?? '',
     path: normalizePath(fields.path),
   }
-  if (sources) widget.sources = sources
+  if (fields.source) widget.source = fields.source
+  if (fields.db) widget.db = fields.db
+  if (fields.sql) widget.sql = fields.sql
   if (fields.filter) widget.filter = fields.filter
-  if (fields.query) widget.query = fields.query
   if (fields.show_if || fields.showif) widget.showIf = fields.show_if || fields.showif
   applyOptionalFields(widget, fields)
   return widget
@@ -769,16 +769,15 @@ function parseRowBlock(body: string[]): ReportWidgetRow {
       continue
     }
     if (!isWidgetKind(kind)) continue
-    const sources = fields.sources ? parseSourcesField(fields.sources) : undefined
-    if (!fields.source && !sources) continue
+    if (!fields.source && !(fields.db && fields.sql)) continue
     const widget: ReportWidget = {
       kind,
-      source: fields.source ?? '',
       path: normalizePath(fields.path),
     }
-    if (sources) widget.sources = sources
+    if (fields.source) widget.source = fields.source
+    if (fields.db) widget.db = fields.db
+    if (fields.sql) widget.sql = fields.sql
     if (fields.filter) widget.filter = fields.filter
-    if (fields.query) widget.query = fields.query
     if (fields.show_if || fields.showif) widget.showIf = fields.show_if || fields.showif
     applyOptionalFields(widget, fields)
     widgets.push(widget)

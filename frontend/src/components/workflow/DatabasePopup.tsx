@@ -97,6 +97,9 @@ function fileName(path: string): string {
 }
 
 function relativeDBPath(workspacePath: string, path: string): string {
+  // Table pseudo-paths look like `db/db.sqlite#<table>` — show the table name.
+  const hash = path.indexOf('#')
+  if (hash >= 0) return path.slice(hash + 1)
   const prefix = `${workspacePath}/db/`
   return path.startsWith(prefix) ? path.slice(prefix.length) : fileName(path)
 }
@@ -423,52 +426,54 @@ export default function DatabasePopup({ isOpen, onClose, workspacePath }: Databa
   const [detailTab, setDetailTab] = useState<'preview' | 'schema' | 'raw'>('preview')
   const [maximizedCell, setMaximizedCell] = useState<MaximizedCell | null>(null)
 
-  const dbPath = workspacePath ? `${workspacePath}/db` : null
+  // The workflow's single SQLite database. Each table is surfaced as a pseudo
+  // "file" entry (filepath `db/db.sqlite#<table>`) so the existing list/preview/
+  // schema/relationship UI renders tables with no structural change.
+  const dbFile = workspacePath ? `${workspacePath}/db/db.sqlite` : null
 
   const load = useCallback(async () => {
-    if (!dbPath) return
+    if (!dbFile) return
     setLoading(true)
     setRelationshipLoading(false)
     setError(null)
     try {
-      const resp = await agentApi.getPlannerFiles(dbPath, -1, 8)
-      const rootFiles = normalizePlannerFilesResponse(resp)
-      if (rootFiles.length === 0 && resp && Array.isArray((resp as PlannerFilesLikeResponse).data) === false && (resp as PlannerFilesLikeResponse).success === false) {
-        throw new Error((resp as PlannerFilesLikeResponse).message || 'Failed to load database files')
+      const resp = await agentApi.getWorkflowDBTables(dbFile)
+      if (!resp.success || !resp.data) {
+        // Most commonly: the workflow hasn't been migrated to SQLite yet.
+        throw new Error(resp.error || 'No db/db.sqlite found for this workflow.')
       }
-      const allFiles = collectFiles(rootFiles)
-        .filter(file => /\.(json|jsonl)$/i.test(file.filepath || ''))
-        .sort((a, b) => (a.filepath || '').localeCompare(b.filepath || ''))
-      setFiles(allFiles)
-      setContentCache({})
-      setRelationships([])
-      setSelectedPath(prev => {
-        if (prev && allFiles.some(file => file.filepath === prev)) return prev
-        return allFiles[0]?.filepath ?? null
-      })
-      setLoading(false)
 
-      if (allFiles.length > 0) {
-        setRelationshipLoading(true)
-        Promise.all(
-          allFiles.map(async file => {
-            const content = await readText(file.filepath)
-            return [file.filepath, buildContentCacheEntry(file.filepath, content)] as const
-          }),
-        )
-          .then(loadedEntries => {
-            const nextCache = Object.fromEntries(loadedEntries)
-            setContentCache(nextCache)
-            const tables = allFiles.flatMap(file => buildDBTablesFromContent(workspacePath, file.filepath, nextCache[file.filepath]?.content ?? null))
-            setRelationships(inferDBRelationships(tables))
-          })
-          .catch(err => {
-            console.warn('[DatabasePopup] Failed to scan database relationships:', err)
-          })
-          .finally(() => {
-            setRelationshipLoading(false)
-          })
+      const tables = resp.data.tables.slice().sort((a, b) => a.name.localeCompare(b.name))
+      const pseudoFiles: PlannerFile[] = tables.map(t => ({ filepath: `db/db.sqlite#${t.name}`, type: 'file' } as PlannerFile))
+      const cache: Record<string, ContentCacheEntry> = {}
+      for (const t of tables) {
+        const path = `db/db.sqlite#${t.name}`
+        const content = JSON.stringify(t.sample)
+        const cols = t.columns.map(c => c.name)
+        cache[path] = {
+          content,
+          formatted: JSON.stringify(t.sample, null, 2),
+          summary: {
+            kind: 'array',
+            label: `${t.row_count} row${t.row_count === 1 ? '' : 's'}`,
+            detail: cols.length > 0 ? `${cols.length} column${cols.length === 1 ? '' : 's'}: ${cols.slice(0, 6).join(', ')}${cols.length > 6 ? ', ...' : ''}` : undefined,
+          },
+        }
       }
+
+      setFiles(pseudoFiles)
+      setContentCache(cache)
+      setSelectedPath(prev => {
+        if (prev && pseudoFiles.some(file => file.filepath === prev)) return prev
+        return pseudoFiles[0]?.filepath ?? null
+      })
+
+      // Relationship inference over the sample rows (same heuristic as before).
+      const dbTables = tables
+        .map(t => createTable(`db/db.sqlite#${t.name}`, t.name, t.sample))
+        .filter((t): t is DBTable => t !== null)
+      setRelationships(inferDBRelationships(dbTables))
+      setLoading(false)
     } catch (err) {
       setFiles([])
       setRelationships([])
@@ -476,7 +481,7 @@ export default function DatabasePopup({ isOpen, onClose, workspacePath }: Databa
       setLoading(false)
       setRelationshipLoading(false)
     }
-  }, [dbPath, workspacePath])
+  }, [dbFile])
 
   useEffect(() => {
     if (isOpen) load()
@@ -549,7 +554,7 @@ export default function DatabasePopup({ isOpen, onClose, workspacePath }: Databa
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Table2 className="h-5 w-5 text-primary" />
               <h2 className="text-lg font-semibold">Database</h2>
-              <span className="text-xs text-muted-foreground sm:ml-2">db/ - durable JSON sources</span>
+              <span className="text-xs text-muted-foreground sm:ml-2">db/db.sqlite - tables</span>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -581,7 +586,7 @@ export default function DatabasePopup({ isOpen, onClose, workspacePath }: Databa
                 <span className="font-medium">{totalSize}</span>
               </div>
             )}
-            {dbPath && <div className="ml-auto truncate font-mono text-xs text-muted-foreground">{dbPath}</div>}
+            {dbFile && <div className="ml-auto truncate font-mono text-xs text-muted-foreground">{dbFile}</div>}
           </div>
 
           <div className="flex flex-shrink-0 flex-col gap-2 border-b border-border px-4 py-3 text-sm lg:flex-row lg:items-center">
@@ -599,7 +604,7 @@ export default function DatabasePopup({ isOpen, onClose, workspacePath }: Databa
                 <span className="ml-2 font-semibold">{totalSize ?? '-'}</span>
               </div>
             </div>
-            {dbPath && <div className="min-w-0 truncate font-mono text-xs text-muted-foreground lg:ml-auto">{dbPath}</div>}
+            {dbFile && <div className="min-w-0 truncate font-mono text-xs text-muted-foreground lg:ml-auto">{dbFile}</div>}
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[20rem_minmax(0,1fr)]">

@@ -141,13 +141,15 @@ needs to work a long, multi-phase task as a continuous conversation ("do phase
   `prevalidation` (a hard gate between turns — on failure the orchestrator gets
   the failed checks as a corrective turn and retries up to `max_corrections`),
   and `foreach` (data-driven — see below).
-- **`foreach`** iterates a JSON array from a db file and feeds **one orchestrator
-  turn per row** (row bound to `.` in a Go template via `message`; `source` =
-  e.g. `db/tasks.json`, optional `source_path`, optional `max_iterations`). The
-  loop is deterministic (in code, not the LLM), so the orchestrator reliably
-  works through **every** row a prior step wrote — delegating to sub-agents per
-  row as needed. This is the producer/consumer pattern: one step fills a db, this
-  one drains it.
+- **`foreach`** iterates `db/db.sqlite` table rows and feeds **one orchestrator
+  turn per row** (row bound to `.` in a Go template via `message`; `source_sql` =
+  a read-only query e.g. `SELECT id, task FROM tasks WHERE status='pending'`,
+  optional `max_iterations`). The query runs against `db/db.sqlite` and each
+  result row (an object keyed by column) is rendered through the `message`
+  template. The loop is deterministic (in code, not the LLM), so the orchestrator
+  reliably works through **every** row — delegating to sub-agents per row as
+  needed. This is the producer/consumer pattern: one step fills a table, this one
+  drains it.
 - It all runs in **one execution** — there is **no persistence and no re-entry**.
   For a specialist that resumes across the orchestrator's *own repeated calls*,
   or anything that must "rerun later", use a `message_sequence` **route** instead

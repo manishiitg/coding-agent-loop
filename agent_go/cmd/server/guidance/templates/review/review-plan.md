@@ -101,29 +101,29 @@ Treat plan, config, skills, learning, KB, db, reports, variables, and eval as on
    - Check `knowledgebase/notes/_index.json` points to coherent topic files and that topic notes contain durable WHAT-we-know facts discovered by the workflow, not execution recipes, run logs, raw rows, or user-owned runtime context that belongs in `knowledgebase/context/context.md`.
    - Flag steps that read KB without a clear need, write KB without a contribution contract, or store KB-worthy domain facts only in context outputs/db/learnings.
 5. **Database audit**:
-   - From `planning/plan.json`, find every step description that says it writes, saves, tracks, stores, accumulates, appends, caches, deduplicates, or reports data. Map those steps to concrete `db/*.json` files.
-   - Read `db/README.md` if it exists. Then list `db/*.json` files and sample each non-empty file.
-   - Read `reports/report_plan.json` if present and map which widgets consume which `db/*.json` paths.
-   - For each `db/*.json` file, check:
-     - **Documented schema exists** in `db/README.md` with purpose, shape, primary_key, merge_rule, writers, consumers, and report widgets that depend on it.
-     - **Stable JSON shape**: top-level object or array is intentional; rows have consistent keys/types; no mixed unrelated record types in one file.
-     - **Primary key discipline**: array-like tables have a stable primary key (`id`, `group_name`, domain id, composite id). If no primary key exists, repeated runs will duplicate or clobber rows.
-     - **Merge/upsert rule**: each writer description says read existing file, merge by primary key, preserve unrelated rows/groups, and write back. Flag wholesale overwrite risk.
-     - **Writer ownership**: every file has one clear owner step or explicitly documented multi-writer rules. If multiple steps write the same file, their fields and merge responsibilities must not conflict.
-     - **Group/run separation**: group-specific rows include `group_name` or another scoped key when multiple variable groups can run. Do not rely on folder names inside `db/` data.
-     - **No volatile run paths as data model**: report widgets and downstream steps should bind to `db/*.json`, not `runs/iteration-*` files. Stored paths may reference run artifacts only when intentionally archival and documented.
-    - **Report compatibility**: widget source paths, expected fields, aggregation/grouping keys, and chart/table fields exist in the sampled data.
-     - **Asset discipline**: durable binary/media files live under `db/assets/`, with metadata/provenance/reference rows in `db/*.json`; no base64 blobs or large binaries embedded inside JSON rows.
-     - **Data hygiene**: no duplicate primary keys, stale test rows, impossible nulls, mixed date formats, or fields that silently changed names across rows.
+   - From `planning/plan.json`, find every step description that says it writes, saves, tracks, stores, accumulates, appends, caches, deduplicates, or reports data. Map those steps to concrete `db/db.sqlite` tables.
+   - Read `db/README.md` if it exists. Then list tables (`sqlite3 db/db.sqlite ".tables"`) and sample each non-empty table.
+   - Read `reports/report_plan.json` if present and map which widgets query which tables (the `db` + `sql` bindings).
+   - For each table, check:
+     - **Documented schema exists** in `db/README.md` with DDL, primary_key, upsert rule, indexes, writers, consumers, and report widgets that depend on it.
+     - **Stable shape**: column types are consistent; no mixed unrelated record types in one table; nested data stored as JSON-text columns intentionally.
+     - **Primary key discipline**: every table has a stable PRIMARY KEY (`id`, `group_name`, domain id, composite key). Without one, repeated runs duplicate or clobber rows.
+     - **Upsert rule**: each writer description says use `INSERT ... ON CONFLICT(<pk>) DO UPDATE`, preserving unrelated rows/groups. Flag any DROP/recreate or delete-then-insert-whole-table risk.
+     - **Writer ownership**: every table has one clear owner step or explicitly documented multi-writer rules. If multiple steps write the same table, their columns and upsert responsibilities must not conflict.
+     - **Group/run separation**: group-specific rows include a `group_name` column or another scoped key when multiple variable groups can run.
+     - **No volatile run paths as data model**: report widgets and downstream steps should query `db/db.sqlite`, not `runs/iteration-*` files. Stored paths may reference run artifacts only when intentionally archival and documented.
+    - **Report compatibility**: the columns each widget's `sql` selects, plus aggregation/grouping keys and chart/table fields, exist in the tables.
+     - **Asset discipline**: durable binary/media files live under `db/assets/`, with metadata/provenance/reference rows in a table; no blobs embedded inside rows.
+     - **Data hygiene**: no duplicate primary keys, stale test rows, impossible nulls, mixed date formats, or columns that silently changed meaning across rows.
    - **Message-sequence item write access**: for every `message_sequence` step, check each item whose `message` or `output_files` writes to `db/` or `knowledgebase/`. That item MUST declare the matching `write_access` (`{"db": true}` and/or `{"knowledgebase": true}`) or an inferring `kind` (`db` / `knowledgebase` / `code`). Item writes are default-deny and folder-scoped — booleans only, a per-file `paths` list is invalid and ignored — while reads are always open, so a missing grant is easy to overlook and the write is silently blocked at runtime (the step then loops or fails late). Flag CRITICAL: name the item id and the file it tries to write.
-   - For each step that writes `db/`, check that its description references the `db/README.md` contract and names the file, primary key, and merge rule. If it only says "save the result" or writes to a run folder, flag it.
+   - For each step that writes `db/db.sqlite`, check that its description references the `db/README.md` contract and names the table, primary key, and upsert rule. If it only says "save the result" or writes to a run folder, flag it.
 6. **Report audit**:
-   - Check `reports/report_plan.json` widgets source durable `db/*.json`, `db/assets/` references, KB context/notes, or built-in APIs rather than volatile run folders.
-   - Check every referenced field exists in sampled source data and each widget has a clear owner/source step.
-   - Flag report widgets whose source data is not produced by any step or whose data contract is undocumented.
-   - Check whether widgets are using the Report UI's JSONata `query` feature where appropriate. The pipeline is `source -> query -> path -> filter -> render`; when `query` returns the final array/scalar, `path` should be empty or `$`.
-   - Flag derived/helper report files like `*_rows.json`, `*_summary.json`, `flat_*.json`, or a `step-generate-report` / "flatten data" step when the same result can be expressed as a widget `query` against the canonical `db/*.json` source.
-   - For report findings, recommend collapsing helper sources into canonical db source + `query` when this would reduce duplicated data, stale helper files, or extra workflow steps.
+   - Check `reports/report_plan.json` data widgets query `db/db.sqlite` (and `file`/`file-list` widgets source durable `db/assets/`, KB context/notes, or `docs/`) rather than volatile run folders.
+   - Check every column each widget's `sql` references exists in the tables, and each widget has a clear owner/source step.
+   - Flag report widgets whose data is not produced by any step or whose table contract is undocumented.
+   - Check whether widgets push joins/aggregation/sorting/limits into `sql` where appropriate, rather than over-fetching and reshaping client-side.
+   - Flag redundant tables or a `step-generate-report` / "flatten data" step when the same result can be expressed as a widget `sql` (JOIN/GROUP BY) against the canonical tables.
+   - For report findings, recommend collapsing helper tables into a widget `sql` query when this would reduce duplicated data, stale tables, or extra workflow steps.
 7. **Evaluation and variables audit**:
    - Check `evaluation/evaluation_plan.json` covers the objective and success criteria with measurable rubrics, and that eval step IDs do not collide with execution step IDs.
    - Check `variables/variables.json` contains user-specific values that should not be hardcoded in descriptions, scripts, KB, db rows, or reports.
@@ -167,7 +167,7 @@ Then a cross-step summary:
 - **Learning findings** (Phase 4): list steps with unjustified learning, missing objective, wrong write method, missing/stale `.learning_metadata.json`, unsupported learning locks, agentic steps with leftover main.py, stale global skill content, stale main.py, or browser scripted.
 - **Knowledgebase findings** (Phase 4): list missing or unjustified KB access/contribution, stale/malformed topic notes, and facts stored in the wrong place.
 - **Database structure findings** (Phase 4): list by `db/<file>.json`, then by writer step. Include missing `db/README.md` entries, missing primary keys, unsafe overwrite/append behavior, asset metadata issues under `db/assets/`, report incompatibilities, and duplicate/stale rows.
-- **Report/eval/variable findings** (Phase 4): list stale report wiring, missed JSONata `query` opportunities, unnecessary report helper files/flatten steps, missing eval coverage, and values that should be variables.
+- **Report/eval/variable findings** (Phase 4): list stale report wiring, missed `sql` join/aggregation opportunities, unnecessary report helper tables/flatten steps, missing eval coverage, and values that should be variables.
 - **Steps that look clean across all phases.**
 - **Top 5 issues to fix first** (highest-impact across all phases).
 

@@ -1,9 +1,9 @@
-// Dynamic report viewer — parses reports/report_plan.json, fetches each widget's
-// JSON source, and renders widgets.
+// Dynamic report viewer — parses reports/report_plan.json. Data widgets bind via
+// `db` + `sql` and render from the read-only SQLite query endpoint; file/markdown
+// widgets fetch their `source` file directly.
 // See docs/workflow/persistent_stores_design.md.
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import jsonata from 'jsonata'
 import { TextWidget } from './reportWidgets/TextWidget'
 import { MarkdownWidget } from './reportWidgets/MarkdownWidget'
 import { StatWidget } from './reportWidgets/StatWidget'
@@ -279,10 +279,11 @@ interface ReportViewProps {
 // `null` = fetched and missing/malformed; otherwise the parsed JSON value.
 type SourceCache = Record<string, unknown>
 
-type JSONataQueryState =
+// SQL query result for a data widget. `undefined` = loading; `null` = error.
+type WidgetSQLState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'success'; value: unknown }
+  | { status: 'success'; rows: Record<string, unknown>[] }
   | { status: 'error'; message: string }
 
 type WidgetSourceInput =
@@ -298,47 +299,67 @@ interface ReportDataSnapshot {
 const reportDataCache = new Map<string, ReportDataSnapshot>()
 const reportDataPromises = new Map<string, Promise<ReportDataSnapshot>>()
 
-function useJSONataQuery(source: unknown, query: string): JSONataQueryState {
-  const [state, setState] = useState<JSONataQueryState>({ status: 'idle' })
+// Per (db, sql) result cache so re-renders don't re-hit the endpoint.
+const widgetSQLCache = new Map<string, Record<string, unknown>[]>()
+
+function isDataWidget(widget: ReportWidget): boolean {
+  return !!(widget.db && widget.sql)
+}
+
+// useWidgetSQLData runs a data widget's `sql` against its `db` via the read-only
+// query endpoint and returns the rows. Pass `null` for non-data widgets (the
+// hook then stays idle — hooks must be called unconditionally).
+function useWidgetSQLData(widget: ReportWidget | null, workspacePath: string): WidgetSQLState {
+  const db = widget?.db ?? ''
+  const sql = widget?.sql ?? ''
+  const [state, setState] = useState<WidgetSQLState>({ status: 'idle' })
 
   useEffect(() => {
-    const trimmedQuery = query.trim()
-    if (!trimmedQuery || source === undefined || source === null) {
+    if (!db || !sql) {
       setState({ status: 'idle' })
+      return
+    }
+    // db is workspace-relative to the workflow root (e.g. "db/db.sqlite").
+    const dbPath = `${workspacePath}/${db}`
+    const cacheKey = `${dbPath} ${sql}`
+    const cached = widgetSQLCache.get(cacheKey)
+    if (cached) {
+      setState({ status: 'success', rows: cached })
       return
     }
 
     let cancelled = false
     setState({ status: 'loading' })
-    Promise.resolve()
-      .then(() => jsonata(trimmedQuery).evaluate(source))
-      .then(value => {
-        if (!cancelled) setState({ status: 'success', value })
+    agentApi
+      .queryWorkflowDB(dbPath, sql)
+      .then(res => {
+        if (cancelled) return
+        if (!res.success || !res.data) {
+          setState({ status: 'error', message: res.error || 'Query failed.' })
+          return
+        }
+        widgetSQLCache.set(cacheKey, res.data.rows)
+        setState({ status: 'success', rows: res.data.rows })
       })
       .catch(error => {
         if (cancelled) return
         const message = error instanceof Error ? error.message : String(error)
-        setState({ status: 'error', message: message || 'JSONata query failed.' })
+        setState({ status: 'error', message: message || 'Query failed.' })
       })
 
     return () => {
       cancelled = true
     }
-  }, [source, query])
+  }, [db, sql, workspacePath])
 
   return state
 }
 
+// File-path sources (for file/file-list/markdown widgets that point `source` at
+// a file). Data widgets contribute none — they bind via db+sql.
 function widgetSourcePaths(widget: ReportWidget): string[] {
-  if (isFileArtifactWidget(widget)) return []
-  const paths = new Set<string>()
-  if (widget.source) paths.add(widget.source)
-  if (widget.sources) {
-    for (const source of Object.values(widget.sources)) {
-      if (source) paths.add(source)
-    }
-  }
-  return Array.from(paths).sort()
+  if (isDataWidget(widget)) return []
+  return widget.source ? [widget.source] : []
 }
 
 function isFileArtifactWidget(widget: ReportWidget): boolean {
@@ -408,26 +429,12 @@ async function loadReportDataSnapshot(workspacePath: string, force = false): Pro
 }
 
 function widgetSourceLabel(widget: ReportWidget): string {
-  if (widget.sources && Object.keys(widget.sources).length > 0) {
-    return Object.entries(widget.sources)
-      .map(([alias, source]) => `${alias}:${source}`)
-      .join(', ')
-  }
-  return widget.source
+  return widget.source ?? ''
 }
 
+// Resolve a file/markdown widget's `source` file from the prefetched cache.
 function resolveWidgetSourceInput(widget: ReportWidget, sources: SourceCache): WidgetSourceInput {
   const label = widgetSourceLabel(widget)
-  if (widget.sources && Object.keys(widget.sources).length > 0) {
-    const combined: Record<string, unknown> = {}
-    for (const [alias, source] of Object.entries(widget.sources)) {
-      const value = sources[source]
-      if (value === undefined) return { status: 'loading', label }
-      if (value === null) return { status: 'missing', label }
-      combined[alias] = value
-    }
-    return { status: 'ok', value: combined, label }
-  }
   if (!widget.source) return { status: 'missing', label }
   const raw = sources[widget.source]
   if (raw === undefined) return { status: 'loading', label }
@@ -451,8 +458,9 @@ function widgetInstanceKey(
     ids.entryIndex,
     ids.widgetIndex,
     widget.kind,
-    widget.source,
-    JSON.stringify(widget.sources ?? {}),
+    widget.source ?? '',
+    widget.db ?? '',
+    widget.sql ?? '',
     widget.path ?? '',
     widget.title ?? '',
   ].join('::')
@@ -1289,10 +1297,10 @@ function WidgetCard({
   onToggleHidden?: () => void
   workspacePath: string
 }) {
-  const query = widget.query?.trim() ?? ''
+  const dataWidget = isDataWidget(widget)
   const sourceInput = useMemo(() => resolveWidgetSourceInput(widget, sources), [widget, sources])
   const raw = sourceInput.status === 'ok' ? sourceInput.value : sourceInput.status === 'loading' ? undefined : null
-  const queryState = useJSONataQuery(raw, query)
+  const sqlState = useWidgetSQLData(dataWidget ? widget : null, workspacePath)
 
   if (hidden && onToggleHidden) {
     return <HiddenWidgetCard widget={widget} onShow={onToggleHidden} />
@@ -1326,7 +1334,8 @@ function WidgetCard({
     )
   }
 
-  if (!widget.source && !widget.sources) {
+  // A widget binds to either a data source (db + sql) or a file (source).
+  if (!widget.source && !dataWidget) {
     return (
       <div
         aria-hidden="true"
@@ -1336,34 +1345,34 @@ function WidgetCard({
     )
   }
 
-  if (raw === undefined) {
-    return wrapNotice(
-      <div className="py-1.5 text-xs italic text-muted-foreground">Loading {sourceInput.label}…</div>,
-    )
+  let effectiveRaw: unknown
+  if (dataWidget) {
+    if (sqlState.status === 'idle' || sqlState.status === 'loading') {
+      return wrapNotice(
+        <div className="py-1.5 text-xs italic text-muted-foreground">Running query…</div>,
+      )
+    }
+    if (sqlState.status === 'error') {
+      return wrapNotice(
+        <WidgetError widget={widget} message="SQL query failed." hint={sqlState.message} />,
+      )
+    }
+    effectiveRaw = sqlState.rows
+  } else {
+    if (raw === undefined) {
+      return wrapNotice(
+        <div className="py-1.5 text-xs italic text-muted-foreground">Loading {sourceInput.label}…</div>,
+      )
+    }
+    if (raw === null) {
+      return wrapNotice(
+        <div className="py-1.5 text-xs italic text-muted-foreground">
+          Source not available: <code className="px-1 rounded bg-muted">{sourceInput.label}</code>
+        </div>,
+      )
+    }
+    effectiveRaw = raw
   }
-  if (raw === null) {
-    return wrapNotice(
-      <div className="py-1.5 text-xs italic text-muted-foreground">
-        Source not available: <code className="px-1 rounded bg-muted">{sourceInput.label}</code>
-      </div>,
-    )
-  }
-  if (query && queryState.status === 'loading') {
-    return wrapNotice(
-      <div className="py-1.5 text-xs italic text-muted-foreground">Running JSONata query…</div>,
-    )
-  }
-  if (query && queryState.status === 'error') {
-    return wrapNotice(
-      <WidgetError
-        widget={widget}
-        message="JSONata query failed."
-        hint={queryState.message}
-      />,
-    )
-  }
-
-  const effectiveRaw = query && queryState.status === 'success' ? queryState.value : raw
 
   const singularSource = mode === 'singular' ? resolveSingularWidgetSource(effectiveRaw, widget) : null
   const conditionalSource = singularSource?.status === 'ok' ? singularSource.value : effectiveRaw

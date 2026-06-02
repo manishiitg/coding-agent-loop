@@ -68,7 +68,7 @@ function artifactKind(path: string): ArtifactKind {
 function effectiveRenderFormat(widget: ReportWidget): ArtifactKind | 'link' {
   const requested = (widget.renderFormat || 'auto') as ReportFileRenderFormat
   if (requested && requested !== 'auto') return requested === 'link' ? 'link' : requested
-  return artifactKind(widget.source)
+  return artifactKind((widget.source ?? ''))
 }
 
 function mimeTypeFor(path: string): string {
@@ -145,7 +145,7 @@ function ArtifactIcon({ kind }: { kind: ArtifactKind }) {
 
 function useFileContent(widget: ReportWidget, workspacePath: string): FileContentState {
   const [state, setState] = useState<FileContentState>({ status: 'loading' })
-  const path = workspaceFilePath(workspacePath, widget.source)
+  const path = workspaceFilePath(workspacePath, (widget.source ?? ''))
   const format = effectiveRenderFormat(widget)
 
   useEffect(() => {
@@ -155,7 +155,7 @@ function useFileContent(widget: ReportWidget, workspacePath: string): FileConten
 
     const load = async () => {
       try {
-        if (!isAllowedArtifactSource(widget.source)) {
+        if (!isAllowedArtifactSource((widget.source ?? ''))) {
           throw new Error('File widgets can only read db/, knowledgebase/, or docs/ paths.')
         }
         if (format === 'link') {
@@ -193,7 +193,7 @@ function useFileContent(widget: ReportWidget, workspacePath: string): FileConten
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [format, path, widget.source])
+  }, [format, path, (widget.source ?? '')])
 
   return state
 }
@@ -201,11 +201,11 @@ function useFileContent(widget: ReportWidget, workspacePath: string): FileConten
 export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; workspacePath: string }) {
   const state = useFileContent(widget, workspacePath)
   const format = effectiveRenderFormat(widget)
-  const path = workspaceFilePath(workspacePath, widget.source)
-  const name = basename(widget.source)
+  const path = workspaceFilePath(workspacePath, (widget.source ?? ''))
+  const name = basename((widget.source ?? ''))
   const renderEmbeddedWidget = useEmbeddedWidgetRenderer() ?? undefined
 
-  if (!isAllowedArtifactSource(widget.source)) {
+  if (!isAllowedArtifactSource((widget.source ?? ''))) {
     return <WidgetError widget={widget} message="Unsupported file source." hint="Use db/, knowledgebase/, or docs/." />
   }
 
@@ -213,7 +213,7 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
     return <div className="py-3 text-sm text-muted-foreground">Loading {name}...</div>
   }
   if (state.status === 'error') {
-    return <WidgetError widget={widget} message={`Could not load ${widget.source}.`} hint={state.message} />
+    return <WidgetError widget={widget} message={`Could not load ${(widget.source ?? '')}.`} hint={state.message} />
   }
 
   // Markdown/HTML documents carry their own heading, so suppress the widget
@@ -256,8 +256,8 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
       )}
       {(format === 'link' || format === 'other') && (
         <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-2.5 py-2 text-sm text-foreground">
-          <ArtifactIcon kind={artifactKind(widget.source)} />
-          <span className="min-w-0 truncate">{widget.source}</span>
+          <ArtifactIcon kind={artifactKind((widget.source ?? ''))} />
+          <span className="min-w-0 truncate">{(widget.source ?? '')}</span>
         </div>
       )}
     </div>
@@ -293,7 +293,7 @@ function relFolderSegments(filepath: string, sourceFolderAbs: string): string[] 
 
 function useFileList(widget: ReportWidget, workspacePath: string): FileListState {
   const [state, setState] = useState<FileListState>({ status: 'loading' })
-  const folder = workspaceFilePath(workspacePath, widget.source)
+  const folder = workspaceFilePath(workspacePath, (widget.source ?? ''))
   const maxDepth = widget.recursive ? -1 : 1
 
   useEffect(() => {
@@ -301,7 +301,7 @@ function useFileList(widget: ReportWidget, workspacePath: string): FileListState
     setState({ status: 'loading' })
     const load = async () => {
       try {
-        if (!isAllowedArtifactSource(widget.source)) {
+        if (!isAllowedArtifactSource((widget.source ?? ''))) {
           throw new Error('File-list widgets can only read db/, knowledgebase/, or docs/ paths.')
         }
         const response = await agentApi.getPlannerFiles(folder, widget.maxItems ?? 200, maxDepth)
@@ -330,7 +330,7 @@ function useFileList(widget: ReportWidget, workspacePath: string): FileListState
     return () => {
       cancelled = true
     }
-  }, [folder, maxDepth, widget.extensions, widget.maxItems, widget.recursive, widget.source])
+  }, [folder, maxDepth, widget.extensions, widget.maxItems, widget.recursive, (widget.source ?? '')])
 
   return state
 }
@@ -366,20 +366,20 @@ export function FileListWidget({ widget, workspacePath }: { widget: ReportWidget
   const state = useFileList(widget, workspacePath)
   const format = (widget.listFormat || 'list') as ReportFileListFormat
 
-  if (!isAllowedArtifactSource(widget.source)) {
+  if (!isAllowedArtifactSource((widget.source ?? ''))) {
     return <WidgetError widget={widget} message="Unsupported folder source." hint="Use db/, knowledgebase/, or docs/." />
   }
   if (state.status === 'loading') {
     return <div className="py-3 text-sm text-muted-foreground">Loading files...</div>
   }
   if (state.status === 'error') {
-    return <WidgetError widget={widget} message={`Could not list ${widget.source}.`} hint={state.message} />
+    return <WidgetError widget={widget} message={`Could not list ${(widget.source ?? '')}.`} hint={state.message} />
   }
 
   // Group by subfolder (e.g. per-PAN) so a recursive listing reads as labelled
   // sections instead of one long flat list. Falls back to a flat render when
   // every file sits in the source root (a single empty group).
-  const sourceFolderAbs = workspaceFilePath(workspacePath, widget.source)
+  const sourceFolderAbs = workspaceFilePath(workspacePath, (widget.source ?? ''))
   const groups = groupFilesByFolder(state.files, sourceFolderAbs)
   const grouped = groups.length > 1 || (groups.length === 1 && groups[0].group !== '')
 
@@ -638,7 +638,7 @@ function FilePreviewMedia({ widget, workspacePath, kind }: { widget: ReportWidge
     return <div className="flex h-full items-center justify-center text-xs text-muted-foreground">{state.status === 'loading' ? 'Loading...' : 'Preview unavailable'}</div>
   }
   if (kind === 'image') {
-    return <img src={state.content || state.objectUrl} alt={basename(widget.source)} className="h-full w-full object-cover" />
+    return <img src={state.content || state.objectUrl} alt={basename((widget.source ?? ''))} className="h-full w-full object-cover" />
   }
   if (kind === 'video' && state.objectUrl) {
     return <video src={state.objectUrl} controls className="h-full w-full bg-black object-contain" />

@@ -65,7 +65,7 @@ var allKinds = map[string]kindMeta{
 	"ready-to-optimize": {Group: "builder", Description: "Pre-optimizer readiness checklist (objective, success criteria, runs, validation, etc.)", Modes: []string{"workshop"}},
 
 	// Reviews — recommend, don't apply; appends to builder/review.html
-	"review-plan":           {Group: "review", Description: "Comprehensive workflow audit: plan, step descriptions, learnings, KB, db/*.json, reports, variables, and eval wiring", Modes: []string{"workshop", "run"}},
+	"review-plan":           {Group: "review", Description: "Comprehensive workflow audit: plan, step descriptions, learnings, KB, db/db.sqlite, reports, variables, and eval wiring", Modes: []string{"workshop", "run"}},
 	"review-speed":          {Group: "review", Description: "Latency analysis with safe-speedup recommendations", Modes: []string{"workshop"}},
 	"review-cost":           {Group: "review", Description: "Cost analysis with safe-reduction recommendations", Modes: []string{"workshop"}},
 	"review-code":           {Group: "review", Description: "Saved main.py vs current step descriptions drift check", Modes: []string{"workshop"}},
@@ -77,8 +77,11 @@ var allKinds = map[string]kindMeta{
 	// Learning maintenance — applies targeted/cross-step cleanup to learnings/_global
 	"improve-learnings": {Group: "learning", Description: "Improve learnings/_global with targeted cleanup or current-plan consolidation", Modes: []string{"workshop"}},
 
-	// DB maintenance — applies guarded schema/contract cleanup to db/*.json
-	"improve-data": {Group: "db", Description: "Improve db/*.json contracts, schemas, and report compatibility", Modes: []string{"workshop"}},
+	// DB maintenance — applies guarded schema/contract cleanup to db/db.sqlite
+	"improve-data": {Group: "db", Description: "Improve db/db.sqlite table contracts, schemas, and report compatibility", Modes: []string{"workshop"}},
+
+	// DB migration — one-time conversion of db/*.json into db/db.sqlite + rewrites report widgets to SQL
+	"migrate-to-sql": {Group: "db", Description: "Migrate this workflow's db/*.json into a single db/db.sqlite (one table per file) and rewrite report widgets to query SQL", Modes: []string{"workshop"}},
 
 	// Improvements — metric-driven harden/replan flows
 	"define-success":     {Group: "improve", Description: "One-time bootstrap of optimization success criteria (Workflow Profile + metrics)", Modes: []string{"workshop"}},
@@ -123,7 +126,7 @@ var referenceKinds = map[string]kindMeta{
 	"optimize-playbook":   {Group: "system", Description: "Optimizer deep-dive: harden vs replan decision tree, eval, metrics, auto-improvement framework", Modes: []string{"workshop"}},
 	"file-layout":         {Group: "system", Description: "Workspace file layout reference and path discipline", Modes: []string{"workshop", "run"}},
 	"plan-design":         {Group: "system", Description: "Plan-design playbook: step boundaries, step-type selection, context flow, validation/failure design, anti-patterns, step-types reference. Load when designing a new plan or restructuring an existing one in DESIGN phase.", Modes: []string{"workshop"}},
-	"report-plan":         {Group: "system", Description: "Report plan toolchain: get/upsert/move/toggle/remove widgets, JSONata multi-source binding, section layouts and tabs, per-report themes, validate/preview, populating missing db sources. Load before authoring or editing reports/report_plan.json.", Modes: []string{"workshop"}},
+	"report-plan":         {Group: "system", Description: "Report plan toolchain: get/upsert/move/toggle/remove widgets, db/db.sqlite SQL binding (db + sql), section layouts and tabs, per-report themes, validate/preview, populating missing db tables. Load before authoring or editing reports/report_plan.json.", Modes: []string{"workshop"}},
 	"evaluation-plan":     {Group: "system", Description: "Evaluation plan rules: required fields, route gating, ID collision discipline, TARGET_RUN_PATH placeholder, step config (declared_execution_mode + execution_tier), validate/run workflow. Load before editing evaluation/evaluation_plan.json.", Modes: []string{"workshop"}},
 	"llm-provider-config": {Group: "system", Description: "Published chat LLM and provider-auth management for multi-agent chat and workflow workshop: list existing published LLMs, discover provider models, validate candidates, publish minimal provider/model/options entries, preserve reasoning_effort, and never read or edit config/ files directly. Load when the user asks which LLMs exist, what a provider can publish, or to publish/update provider auth.", Modes: []string{"multi-agent", "workshop"}},
 	"llm-selection":       {Group: "system", Description: "Choosing the LLM that runs a step: workflow-wide tiered allocation (tier_1/2/3 + phase_llm + fallbacks via set_workflow_llm_config) vs per-step overrides (execution_tier, execution_llm, validation_llm, learning_llm), precedence rules, the tier-vs-pin decision framework, cost review tools, and provider auth/published-models. Load when picking, pinning, or changing which model executes a workflow step (not media generation — see workspace-media-tools for that).", Modes: []string{"workshop"}},

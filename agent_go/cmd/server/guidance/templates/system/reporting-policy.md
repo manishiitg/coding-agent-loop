@@ -2,8 +2,9 @@
 
 The workflow has a **live frontend report viewer** at the top
 toolbar's "Report" tab. It reads `reports/report_plan.json` and
-renders the widget blocks defined there against `db/*.json`, durable
-`db/assets/` references, `knowledgebase/` context/notes, and dedicated
+renders the widget blocks defined there against `db/db.sqlite` (via
+each widget's `sql`), durable `db/assets/` references, `knowledgebase/`
+context/notes, and dedicated
 workflow APIs for built-in `costs` / `evals` / `runs` widgets. It is
 always available — there is **NO separate "generate report" phase** and
 no standalone dashboard artifact that replaces the viewer. (A workflow

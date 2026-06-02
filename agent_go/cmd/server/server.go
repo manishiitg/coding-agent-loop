@@ -5018,6 +5018,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					return err
 				}
 
+				// queryDB closure: runs read-only SQL against a workflow db/db.sqlite
+				// (for report widget validation/preview).
+				phaseQueryDB := func(ctx context.Context, dbPath, sql string) ([]map[string]interface{}, error) {
+					return phaseWSClient.QueryWorkflowDB(ctx, workspace.QueryWorkflowDBParams{DBPath: dbPath, SQL: sql})
+				}
+
 				// moveFile closure: moves file in workspace
 				phaseMoveFile := func(ctx context.Context, src string, dst string) error {
 					_, err := phaseWSClient.MoveWorkspaceFile(ctx, workspace.MoveWorkspaceFileParams{SourceFilepath: src, DestinationFilepath: dst})
@@ -5307,7 +5313,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					setupCtx, underlyingAgent, sessionID, currentUserID,
 					workflowPhaseID, phaseWorkspacePath, phaseRunFolder,
 					phaseTemplateVars, selectedServers, mergedAPIKeys,
-					phaseReadFile, phaseWriteFile, phaseMoveFile,
+					phaseReadFile, phaseWriteFile, phaseMoveFile, phaseQueryDB,
 					syntheticReq, true, // applyAllowList=true
 				); err != nil {
 					// Preserve the original Fatal semantics for the /api/query

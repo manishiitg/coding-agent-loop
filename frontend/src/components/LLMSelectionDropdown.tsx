@@ -37,6 +37,31 @@ const getOptionsSummary = (options?: Record<string, unknown>): string => {
   return parts.join(' • ');
 };
 
+const SECTION_INFO: Record<NonNullable<LLMOption['section']>, {
+  label: string;
+  toneClass: string;
+  icon: typeof Terminal;
+}> = {
+  coding_agent: {
+    label: 'Coding Agents',
+    toneClass: 'text-amber-700 dark:text-amber-300',
+    icon: Terminal,
+  },
+  published_model: {
+    label: 'Published Models',
+    toneClass: 'text-blue-700 dark:text-blue-300',
+    icon: KeyRound,
+  },
+};
+
+type LLMOptionGroup = {
+  key: string;
+  label: string;
+  toneClass: string;
+  icon: typeof Terminal;
+  llms: LLMOption[];
+};
+
 interface LLMSelectionDropdownProps {
   availableLLMs: LLMOption[];
   selectedLLM: LLMOption | null;
@@ -137,10 +162,26 @@ export default function LLMSelectionDropdown({
     audio_provider: AudioLines,
   };
 
-  const groupedLLMsByIntegration = LLM_INTEGRATION_ORDER.map((kind) => ({
-    kind,
-    llms: filteredLLMs.filter((llm) => getProviderIntegrationKind(llm.provider, llm.model) === kind),
-  })).filter((group) => group.llms.length > 0);
+  const usesCustomSections = filteredLLMs.some((llm) => llm.section);
+  const groupedLLMs: LLMOptionGroup[] = usesCustomSections
+    ? (['coding_agent', 'published_model'] as Array<NonNullable<LLMOption['section']>>).map((section) => ({
+        key: section,
+        label: SECTION_INFO[section].label,
+        toneClass: SECTION_INFO[section].toneClass,
+        icon: SECTION_INFO[section].icon,
+        llms: filteredLLMs.filter((llm) => llm.section === section),
+      })).filter((group) => group.llms.length > 0)
+    : LLM_INTEGRATION_ORDER.map((kind) => {
+        const firstForKind = filteredLLMs.find((llm) => getProviderIntegrationKind(llm.provider, llm.model) === kind);
+        const integrationInfo = getProviderIntegrationInfo(firstForKind?.provider, firstForKind?.model);
+        return {
+        key: kind,
+        label: integrationInfo.label,
+        toneClass: integrationInfo.toneClass,
+        icon: integrationIcons[kind],
+        llms: filteredLLMs.filter((llm) => getProviderIntegrationKind(llm.provider, llm.model) === kind),
+        };
+      }).filter((group) => group.llms.length > 0);
   const selectedShowPricing = selectedLLM ? shouldShowLLMPricing(selectedLLM.provider, selectedLLM.model) : false;
 
   return (
@@ -267,9 +308,8 @@ export default function LLMSelectionDropdown({
                   {/* LLM List - Grouped by Integration */}
                   <div className="max-h-48 overflow-y-auto space-y-2 border-border border rounded-md p-2 bg-background">
                     {filteredLLMs.length > 0 ? (
-                      groupedLLMsByIntegration.map((group) => {
-                        const integrationInfo = getProviderIntegrationInfo(group.llms[0]?.provider, group.llms[0]?.model);
-                        const IntegrationIcon = integrationIcons[group.kind];
+                      groupedLLMs.map((group) => {
+                        const IntegrationIcon = group.icon;
                         const providerGroups = group.llms.reduce((groups, llm) => {
                           if (!groups[llm.provider]) {
                             groups[llm.provider] = [];
@@ -279,10 +319,10 @@ export default function LLMSelectionDropdown({
                         }, {} as Record<string, LLMOption[]>);
 
                         return (
-                          <div key={group.kind} className="space-y-1">
-                            <div className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide px-2 py-1 bg-secondary rounded ${integrationInfo.toneClass}`}>
+                          <div key={group.key} className="space-y-1">
+                            <div className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide px-2 py-1 bg-secondary rounded ${group.toneClass}`}>
                               <IntegrationIcon className="w-3.5 h-3.5" />
-                              {integrationInfo.label}
+                              {group.label}
                             </div>
 
                             {Object.entries(providerGroups).map(([provider, llms]) => {

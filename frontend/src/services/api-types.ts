@@ -1083,7 +1083,7 @@ export interface PresetLLMConfig {
   enable_context_editing?: boolean       // nil/false = disabled (default), true = enabled
 
   // Tiered LLM allocation mode
-  llm_allocation_mode?: 'manual' | 'tiered'
+  llm_allocation_mode?: 'manual' | 'tiered' | 'coding_agent' | 'coding_plan'
   tiered_config?: {
     tier_1: AgentLLMConfig
     tier_2: AgentLLMConfig

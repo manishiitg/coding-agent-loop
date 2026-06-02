@@ -46,6 +46,7 @@ export interface ProviderManifestEntry {
   requires_api_key: boolean
   supports_dynamic_models: boolean
   default_model_id: string
+  default_tier_models?: ProviderDefaultTierModels
   models: ModelMetadata[]
   capabilities: string[]
   coding_agent?: {
@@ -55,6 +56,20 @@ export interface ProviderManifestEntry {
   }
   api_key_env?: string
   api_key_url?: string
+}
+
+export interface ProviderTierModelRef {
+  provider: string
+  model_id: string
+  options?: Record<string, unknown>
+}
+
+export interface ProviderDefaultTierModels {
+  main: ProviderTierModelRef
+  high: ProviderTierModelRef
+  medium: ProviderTierModelRef
+  low: ProviderTierModelRef
+  phase: ProviderTierModelRef
 }
 
 export interface IntegrationKindInfo {

@@ -6,6 +6,7 @@ export interface LLMOption {
   model: string;
   label: string;
   description?: string;
+  section?: 'coding_agent' | 'published_model';
 
   // Metadata from Published LLM / Model Registry
   contextWindow?: number;       // Context window size in tokens

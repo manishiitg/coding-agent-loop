@@ -38,11 +38,7 @@ func (api *StreamingAPI) resolveWorkflowLLMConfigForWorkspace(
 	manifest, exists, err := ReadWorkflowManifest(ctx, workspacePath)
 	if err == nil && exists && manifest.Capabilities.LLMConfig != nil {
 		llmCfg := manifest.Capabilities.LLMConfig
-		phaseLLM := workshopExtractLLM(llmCfg.PhaseLLM, llmCfg.Provider, llmCfg.ModelID)
-		var tieredConfig *todo_creation_human.TieredLLMConfig
-		if llmCfg.LLMAllocationMode == "tiered" && llmCfg.TieredConfig != nil {
-			tieredConfig = workshopConvertTieredLLMConfig(llmCfg.TieredConfig)
-		}
+		phaseLLM, tieredConfig := workshopResolveLLMConfig(llmCfg)
 		return phaseLLM, tieredConfig, manifest.ID, nil
 	}
 

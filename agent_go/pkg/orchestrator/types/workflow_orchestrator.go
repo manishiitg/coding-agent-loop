@@ -318,8 +318,13 @@ func NewWorkflowOrchestrator(
 
 	// Extract phase LLM from preset config
 	var presetPhaseLLM *step_based_workflow.AgentLLMConfig
+	var resolvedCodingAgentTiered *workflowtypes.TieredLLMConfig
 	if presetLLMConfig != nil {
-		if presetLLMConfig.PhaseLLM != nil && presetLLMConfig.PhaseLLM.Provider != "" && presetLLMConfig.PhaseLLM.ModelID != "" {
+		if phase, tiered, ok := workflowtypes.ResolveCodingAgentConfig(presetLLMConfig); ok {
+			presetPhaseLLM = convertDBAgentLLMConfig(phase)
+			resolvedCodingAgentTiered = tiered
+			log.Printf("[CODING_AGENT_LLM] Resolved coding agent %s/%s dynamically", presetLLMConfig.Provider, presetLLMConfig.ModelID)
+		} else if presetLLMConfig.PhaseLLM != nil && presetLLMConfig.PhaseLLM.Provider != "" && presetLLMConfig.PhaseLLM.ModelID != "" {
 			presetPhaseLLM = convertDBAgentLLMConfig(presetLLMConfig.PhaseLLM)
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for phase agents
@@ -332,10 +337,14 @@ func NewWorkflowOrchestrator(
 
 	// Extract tiered LLM allocation config
 	var tieredConfig *step_based_workflow.TieredLLMConfig
-	if presetLLMConfig != nil && presetLLMConfig.TieredConfig != nil {
-		tier1 := convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier1)
-		tier2 := convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier2)
-		tier3 := convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier3)
+	if resolvedCodingAgentTiered != nil || (presetLLMConfig != nil && presetLLMConfig.TieredConfig != nil) {
+		sourceTiered := resolvedCodingAgentTiered
+		if sourceTiered == nil {
+			sourceTiered = presetLLMConfig.TieredConfig
+		}
+		tier1 := convertDBAgentLLMConfig(sourceTiered.Tier1)
+		tier2 := convertDBAgentLLMConfig(sourceTiered.Tier2)
+		tier3 := convertDBAgentLLMConfig(sourceTiered.Tier3)
 		tieredConfig = &step_based_workflow.TieredLLMConfig{
 			Tier1: tier1,
 			Tier2: tier2,

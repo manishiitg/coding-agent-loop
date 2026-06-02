@@ -1,6 +1,7 @@
 package server
 
 import (
+	llm "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/opencodecli"
 )
@@ -90,6 +91,7 @@ func openCodeSubProviderManifestEntries(runtimeAvailable bool, mergedSubKeys map
 			RequiresAPIKey:        sp.RequiresAPIKey,
 			SupportsDynamicModels: false,
 			DefaultModelID:        defaultModelID,
+			DefaultTierModels:     openCodeSubProviderWorkflowTierDefaults(sp.ID),
 			Models:                models,
 			Capabilities:          []string{"chat", "read_image"},
 			CodingAgent:           providerCodingAgentManifestInfo(sp.ID, defaultModelID),
@@ -98,6 +100,14 @@ func openCodeSubProviderManifestEntries(runtimeAvailable bool, mergedSubKeys map
 		})
 	}
 	return entries
+}
+
+func openCodeSubProviderWorkflowTierDefaults(provider string) *llm.CodingAgentDefaultTierModels {
+	defaults, ok := llm.GetCodingAgentDefaultTierModels(llm.Provider(provider))
+	if !ok {
+		return nil
+	}
+	return defaults
 }
 
 func authDescriptionForSubProvider(sp opencodecli.OpenCodeSubProvider) string {

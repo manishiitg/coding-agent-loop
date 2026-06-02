@@ -17,8 +17,10 @@ import { useModeStore } from '../stores/useModeStore';
 import { useMCPStore } from '../stores/useMCPStore';
 import { agentApi, getApiBaseUrl } from '../services/api';
 import LLMSelectionDropdown from './LLMSelectionDropdown';
+import WorkflowLLMTierPreview from './WorkflowLLMTierPreview';
 import type { LLMOption } from '../types/llm';
 import ModalPortal from './ui/ModalPortal';
+import { agentLLMToPresetBase, getWorkflowLLMOptions, getWorkflowLLMTierDefaults, hasWorkflowLLMTierDefaults } from '../utils/workflowLLMTierDefaults';
 
 interface PresetModalProps {
   isOpen: boolean;
@@ -106,6 +108,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const { selectedModeCategory, getAgentModeFromCategory } = useModeStore();
   const primaryConfig = useLLMStore(state => state.primaryConfig);
   const availableLLMs = useLLMStore(state => state.availableLLMs);
+  const providerManifest = useLLMStore(state => state.providerManifest);
+  const providerManifestLoaded = useLLMStore(state => state.providerManifestLoaded);
+  const loadProviderManifest = useLLMStore(state => state.loadProviderManifest);
   const getCurrentLLMOption = useLLMStore(state => state.getCurrentLLMOption);
   const loadDefaultsFromBackend = useLLMStore(state => state.loadDefaultsFromBackend);
 
@@ -114,6 +119,17 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     if (propAgentMode) return propAgentMode as 'multi-agent' | 'workflow';
     return internalAgentMode;
   }, [fixedAgentMode, propAgentMode, internalAgentMode]);
+
+  const workflowLLMOptions = useMemo(
+    () => getWorkflowLLMOptions(availableLLMs, providerManifest),
+    [availableLLMs, providerManifest]
+  );
+
+  useEffect(() => {
+    if (isOpen && effectiveAgentMode === 'workflow' && !providerManifestLoaded) {
+      loadProviderManifest();
+    }
+  }, [effectiveAgentMode, isOpen, loadProviderManifest, providerManifestLoaded]);
 
   const sanitizeWorkflowFolderName = useCallback((value: string): string => {
     const sanitized = value
@@ -175,13 +191,13 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const findLLMOptionForConfig = useCallback((config?: AgentLLMConfig | PresetLLMConfig | null): LLMOption | null => {
     if (!config?.provider || !config?.model_id) return null;
     if (config.published_llm_id) {
-      const byID = availableLLMs.find(llm => llm.id === config.published_llm_id);
+      const byID = workflowLLMOptions.find(llm => llm.id === config.published_llm_id);
       if (byID) return byID;
     }
-    return availableLLMs.find(llm =>
+    return workflowLLMOptions.find(llm =>
       llm.provider === config.provider && llm.model === config.model_id
     ) || null;
-  }, [availableLLMs]);
+  }, [workflowLLMOptions]);
   const llmConfigKey = (llm: { provider?: string; model_id?: string; published_llm_id?: string }) =>
     llm.published_llm_id ? `id:${llm.published_llm_id}` : `model:${llm.provider}/${llm.model_id}`;
   const llmOptionKey = (llm: LLMOption) =>
@@ -227,6 +243,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const effectiveTier1LLM = useMemo<AgentLLMConfig | null>(() => tier1LLM || defaultAgentLLM, [tier1LLM, defaultAgentLLM]);
   const effectiveTier2LLM = useMemo<AgentLLMConfig | null>(() => tier2LLM || defaultAgentLLM, [tier2LLM, defaultAgentLLM]);
   const effectiveTier3LLM = useMemo<AgentLLMConfig | null>(() => tier3LLM || defaultAgentLLM, [tier3LLM, defaultAgentLLM]);
+  const selectedWorkflowLLMOption = useMemo(() => {
+    if (llmConfig && currentLLMOption) return currentLLMOption;
+    const selected = phaseLLM || effectiveTier1LLM || defaultAgentLLM;
+    if (!selected) return currentLLMOption;
+    return findLLMOptionForConfig(selected) || currentLLMOption;
+  }, [currentLLMOption, defaultAgentLLM, effectiveTier1LLM, findLLMOptionForConfig, llmConfig, phaseLLM]);
   // Draft create paths can collide with existing workflows, so only load scoped secrets for persisted workflows.
   const workflowSecretPath = editingPreset ? selectedFolder?.filepath : undefined;
 
@@ -242,21 +264,17 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   }, []);
 
   const handleSharedWorkflowLLMSelect = useCallback((llm: LLMOption) => {
-    const selected = toAgentLLMConfig(llm);
-    setLlmConfig({
-      ...(llm.id ? { published_llm_id: llm.id } : {}),
-      provider: llm.provider as LLMProvider,
-      model_id: llm.model,
-      ...(hasLLMOptions(llm.options) ? { options: llm.options } : {}),
-    });
-    setTier1LLM(selected);
-    setTier2LLM(selected);
-    setTier3LLM(selected);
-    setPhaseLLM(selected);
+    const defaults = getWorkflowLLMTierDefaults(llm, providerManifest);
+    setLlmConfig(agentLLMToPresetBase(defaults.base));
+    setTier1LLM(defaults.tier1);
+    setTier2LLM(defaults.tier2);
+    setTier3LLM(defaults.tier3);
+    setPhaseLLM(defaults.phase);
+    setLearningLLM(defaults.tier2);
     setTier1Fallbacks([]);
     setTier2Fallbacks([]);
     setTier3Fallbacks([]);
-  }, [toAgentLLMConfig]);
+  }, [providerManifest]);
 
   useEffect(() => {
     if (editingPreset) {
@@ -405,30 +423,37 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       // execution_llm is step-only and is not persisted at the workflow level.
       let finalLLMConfig: PresetLLMConfig | undefined = llmConfig || undefined;
       if (effectiveAgentMode === 'workflow') {
-        // For workflow mode, keep tiered defaults plus phase/learning settings.
-        // Use the displayed fallback value (from llmConfig) if user didn't explicitly select
-        // This ensures the visual selection is saved even if user didn't explicitly click the dropdown
-        const defaultWorkflowLLM = defaultAgentLLM || undefined;
         const workflowBaseLLMConfig = { ...((llmConfig || {}) as PresetLLMConfig & { execution_llm?: unknown }) };
         delete workflowBaseLLMConfig.execution_llm;
+        const defaultWorkflowLLM = defaultAgentLLM || undefined;
         const withFallbacks = (llm: AgentLLMConfig, fallbacks: AgentLLMFallback[]): AgentLLMConfig => ({
           ...llm,
           ...(fallbacks.length > 0 ? { fallbacks } : {}),
         });
+        const explicitTieredConfig = effectiveTier1LLM && effectiveTier2LLM && effectiveTier3LLM ? {
+          tier_1: withFallbacks(effectiveTier1LLM, tier1Fallbacks),
+          tier_2: withFallbacks(effectiveTier2LLM, tier2Fallbacks),
+          tier_3: withFallbacks(effectiveTier3LLM, tier3Fallbacks),
+        } : undefined;
 
-        finalLLMConfig = {
-          ...workflowBaseLLMConfig,
-          learning_llm: learningLLM || defaultWorkflowLLM,
-          phase_llm: phaseLLM || effectiveTier1LLM || defaultWorkflowLLM,
-          llm_allocation_mode: 'tiered' as const,
-          ...(effectiveTier1LLM && effectiveTier2LLM && effectiveTier3LLM ? {
-            tiered_config: {
-              tier_1: withFallbacks(effectiveTier1LLM, tier1Fallbacks),
-              tier_2: withFallbacks(effectiveTier2LLM, tier2Fallbacks),
-              tier_3: withFallbacks(effectiveTier3LLM, tier3Fallbacks),
-            }
-          } : {}),
-        };
+        if (!showWorkflowLLMAdvanced && !workflowBaseLLMConfig.published_llm_id && workflowBaseLLMConfig.provider && hasWorkflowLLMTierDefaults(workflowBaseLLMConfig.provider, providerManifest)) {
+          delete workflowBaseLLMConfig.learning_llm;
+          delete workflowBaseLLMConfig.phase_llm;
+          delete workflowBaseLLMConfig.tiered_config;
+          finalLLMConfig = {
+            ...workflowBaseLLMConfig,
+            llm_allocation_mode: 'coding_agent' as const,
+          };
+        } else {
+          // Advanced mode and non-coding-agent simple selections keep explicit pinned defaults.
+          finalLLMConfig = {
+            ...workflowBaseLLMConfig,
+            learning_llm: learningLLM || defaultWorkflowLLM,
+            phase_llm: phaseLLM || effectiveTier1LLM || defaultWorkflowLLM,
+            llm_allocation_mode: explicitTieredConfig ? 'tiered' as const : 'manual' as const,
+            ...(explicitTieredConfig ? { tiered_config: explicitTieredConfig } : {}),
+          };
+        }
       }
       console.log('[PRESET_MODAL] Agent LLM configs being saved:', {
         learningLLM: learningLLM,
@@ -457,7 +482,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, learningLLM, phaseLLM, enableBrowserAccess, browserMode, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, learningLLM, phaseLLM, enableBrowserAccess, browserMode, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced, providerManifest]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -579,20 +604,17 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           Workflow model
                         </label>
                         <LLMSelectionDropdown
-                          availableLLMs={availableLLMs}
-                          selectedLLM={(() => {
-                            const selected = phaseLLM || effectiveTier1LLM || defaultAgentLLM;
-                            if (!selected) return currentLLMOption;
-                            return findLLMOptionForConfig(selected) || currentLLMOption;
-                          })()}
+                          availableLLMs={workflowLLMOptions}
+                          selectedLLM={selectedWorkflowLLMOption}
                           onLLMSelect={handleSharedWorkflowLLMSelect}
                           onRefresh={loadDefaultsFromBackend}
                           disabled={false}
                           inModal={true}
                           openDirection="down"
                         />
+                        <WorkflowLLMTierPreview selectedLLM={selectedWorkflowLLMOption} providerManifest={providerManifest} />
                         <div className="text-xs text-gray-500 mt-2">
-                          Used for execution, learning, validation, planning, and debugging.
+                          Coding agents save high, medium, and low workflow tiers. Workshop work uses high.
                         </div>
                         <button
                           type="button"
@@ -638,7 +660,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             </TooltipProvider>
                           </div>
                           <LLMSelectionDropdown
-                            availableLLMs={availableLLMs}
+                            availableLLMs={workflowLLMOptions}
                             selectedLLM={(() => {
                               const effectiveTierLLM =
                                 tier.num === 1 ? effectiveTier1LLM :
@@ -688,11 +710,11 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           </div>
                         </div>
                         ))}
-                        {/* Phase Agent */}
+                        {/* Workshop LLM */}
                         <div>
                           <div className="flex items-center gap-1.5 mb-2">
                             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                              Phase Agent
+                              Workshop LLM
                             </label>
                             <TooltipProvider>
                               <Tooltip>
@@ -700,13 +722,13 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                   <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
                                 </TooltipTrigger>
                                 <TooltipContent className="max-w-xs">
-                                  <p className="text-xs">Independent LLM for all workflow phases: planning, variable extraction, evaluation design, anonymization, plan improvement, learning consolidation, and debugging. This is separate from the tiered execution/learning/validation assignments.</p>
+                                  <p className="text-xs">Independent LLM for workshop work: planning, variable extraction, evaluation design, anonymization, plan improvement, learning consolidation, and debugging. This is separate from the tiered execution/learning/validation assignments.</p>
                                 </TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
                           </div>
                           <LLMSelectionDropdown
-                            availableLLMs={availableLLMs}
+                            availableLLMs={workflowLLMOptions}
                             selectedLLM={phaseLLM ? findLLMOptionForConfig(phaseLLM) || null : (effectiveTier1LLM ? findLLMOptionForConfig(effectiveTier1LLM) || null : currentLLMOption)}
                             onLLMSelect={(llm) => setPhaseLLM(toAgentLLMConfig(llm))}
                             onRefresh={loadDefaultsFromBackend}
@@ -715,7 +737,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             openDirection="down"
                           />
                           <div className="text-xs text-gray-500 mt-1">
-                            Used for planning, evaluation design, anonymization, plan improvement, and debugging phases. Defaults to Tier 1 if not set.
+                            Used for planning, evaluation design, anonymization, plan improvement, and debugging. Defaults to Tier 1 if not set.
                           </div>
                         </div>
                         {/* Info panel */}
@@ -724,7 +746,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           <div>Execution: Tier 1 → Tier 2 (after first learning)</div>
                           <div>Learning: Tier 2 → Tier 3 (after 2+ runs)</div>
                           <div>Validation: Always Tier 3</div>
-                          <div>Phase Agent: Independent — always uses the configured Phase LLM above</div>
+                          <div>Workshop LLM: Independent — always uses the configured Workshop LLM above</div>
                         </div>
                       </>
                     )}

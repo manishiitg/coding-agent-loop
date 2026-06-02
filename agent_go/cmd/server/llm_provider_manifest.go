@@ -20,27 +20,28 @@ import (
 
 // providerManifestEntry is the per-provider metadata returned by the manifest endpoint.
 type providerManifestEntry struct {
-	ID                    string                    `json:"id"`
-	DisplayName           string                    `json:"display_name"`
-	Description           string                    `json:"description"`
-	Kind                  string                    `json:"kind"`
-	IntegrationKind       string                    `json:"integration_kind"`
-	ModelSelectionMode    string                    `json:"model_selection_mode"`
-	AuthDescription       string                    `json:"auth_description"`
-	RuntimeCommand        string                    `json:"runtime_command,omitempty"`
-	RuntimeAvailable      *bool                     `json:"runtime_available,omitempty"`
-	AuthConfigured        bool                      `json:"auth_configured"`
-	AuthSource            string                    `json:"auth_source,omitempty"`
-	Usable                bool                      `json:"usable"`
-	SetupHint             string                    `json:"setup_hint,omitempty"`
-	RequiresAPIKey        bool                      `json:"requires_api_key"`
-	SupportsDynamicModels bool                      `json:"supports_dynamic_models"`
-	DefaultModelID        string                    `json:"default_model_id"`
-	Models                []*llmtypes.ModelMetadata `json:"models"`
-	Capabilities          []string                  `json:"capabilities"`
-	CodingAgent           *providerCodingAgentInfo  `json:"coding_agent,omitempty"`
-	APIKeyEnv             string                    `json:"api_key_env,omitempty"`
-	APIKeyURL             string                    `json:"api_key_url,omitempty"`
+	ID                    string                            `json:"id"`
+	DisplayName           string                            `json:"display_name"`
+	Description           string                            `json:"description"`
+	Kind                  string                            `json:"kind"`
+	IntegrationKind       string                            `json:"integration_kind"`
+	ModelSelectionMode    string                            `json:"model_selection_mode"`
+	AuthDescription       string                            `json:"auth_description"`
+	RuntimeCommand        string                            `json:"runtime_command,omitempty"`
+	RuntimeAvailable      *bool                             `json:"runtime_available,omitempty"`
+	AuthConfigured        bool                              `json:"auth_configured"`
+	AuthSource            string                            `json:"auth_source,omitempty"`
+	Usable                bool                              `json:"usable"`
+	SetupHint             string                            `json:"setup_hint,omitempty"`
+	RequiresAPIKey        bool                              `json:"requires_api_key"`
+	SupportsDynamicModels bool                              `json:"supports_dynamic_models"`
+	DefaultModelID        string                            `json:"default_model_id"`
+	DefaultTierModels     *llm.CodingAgentDefaultTierModels `json:"default_tier_models,omitempty"`
+	Models                []*llmtypes.ModelMetadata         `json:"models"`
+	Capabilities          []string                          `json:"capabilities"`
+	CodingAgent           *providerCodingAgentInfo          `json:"coding_agent,omitempty"`
+	APIKeyEnv             string                            `json:"api_key_env,omitempty"`
+	APIKeyURL             string                            `json:"api_key_url,omitempty"`
 }
 
 type providerCodingAgentInfo struct {
@@ -242,6 +243,17 @@ func providerCodingAgentManifestInfo(provider, modelID string) *providerCodingAg
 	}
 }
 
+func providerWorkflowTierDefaults(provider string) *llm.CodingAgentDefaultTierModels {
+	if providerStaticInfoMap[provider].integrationKind != "coding_agent" {
+		return nil
+	}
+	defaults, ok := llm.GetCodingAgentDefaultTierModels(llm.Provider(provider))
+	if !ok {
+		return nil
+	}
+	return defaults
+}
+
 // handleGetProviderManifest returns the full provider manifest for the frontend.
 func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -349,6 +361,7 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 			RequiresAPIKey:        info.requiresAPIKey,
 			SupportsDynamicModels: selectionMode == "dynamic",
 			DefaultModelID:        defaultModel,
+			DefaultTierModels:     providerWorkflowTierDefaults(provider),
 			Models:                models,
 			Capabilities:          caps,
 			CodingAgent:           providerCodingAgentManifestInfo(provider, defaultModel),

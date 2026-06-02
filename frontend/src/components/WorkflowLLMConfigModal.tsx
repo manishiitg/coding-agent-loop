@@ -1,14 +1,16 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { X, Brain, Zap, Gauge, Cpu, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useLLMStore, useChatStore } from '../stores'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
+import WorkflowLLMTierPreview from './WorkflowLLMTierPreview'
 import ModalPortal from './ui/ModalPortal'
 import type { AgentLLMConfig, AgentLLMFallback, PresetLLMConfig } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import type { CustomPreset } from '../types/preset'
+import { agentLLMToPresetBase, getWorkflowLLMOptions, getWorkflowLLMTierDefaults, hasWorkflowLLMTierDefaults } from '../utils/workflowLLMTierDefaults'
 
 interface WorkflowLLMConfigModalProps {
   isOpen: boolean
@@ -17,13 +19,23 @@ interface WorkflowLLMConfigModalProps {
 
 // Inner component mounts fresh each open, so state always reflects the current preset
 function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
-  const { availableLLMs, loadDefaultsFromBackend, isLoadingLLMs } = useLLMStore()
+  const { availableLLMs, loadDefaultsFromBackend, isLoadingLLMs, providerManifest, providerManifestLoaded, loadProviderManifest } = useLLMStore()
   const { getActivePreset, savePreset } = useGlobalPresetStore()
   const [isSaving, setIsSaving] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
 
   const activePreset = getActivePreset('workflow') as CustomPreset | null
   const existing = activePreset?.llmConfig
+  const workflowLLMOptions = useMemo(
+    () => getWorkflowLLMOptions(availableLLMs, providerManifest),
+    [availableLLMs, providerManifest]
+  )
+
+  useEffect(() => {
+    if (!providerManifestLoaded) {
+      loadProviderManifest()
+    }
+  }, [loadProviderManifest, providerManifestLoaded])
 
   // Read from workflow manifest (source of truth) with preset as fallback
   const manifestLLM = (() => {
@@ -32,6 +44,18 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
     return useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)?.manifest?.capabilities?.llm_config ?? null
   })()
 
+  const initialCodingAgentLLM = (() => {
+    const config = manifestLLM ?? existing
+    if (!config?.provider || !config?.model_id) return null
+    return {
+      ...(config.published_llm_id ? { published_llm_id: config.published_llm_id } : {}),
+      provider: config.provider,
+      model_id: config.model_id,
+      ...(hasOptions(config.options) ? { options: config.options } : {}),
+    } as AgentLLMConfig
+  })()
+
+  const [selectedCodingAgentLLM, setSelectedCodingAgentLLM] = useState<AgentLLMConfig | null>(initialCodingAgentLLM)
   const [tier1, setTier1] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_1 ?? existing?.tiered_config?.tier_1 ?? null)
   const [tier2, setTier2] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_2 ?? existing?.tiered_config?.tier_2 ?? null)
   const [tier3, setTier3] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_3 ?? existing?.tiered_config?.tier_3 ?? null)
@@ -50,7 +74,9 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
 
   if (!activePreset) return null
 
-  const hasOptions = (options?: Record<string, unknown>) => Boolean(options && Object.keys(options).length > 0)
+  function hasOptions(options?: Record<string, unknown>) {
+    return Boolean(options && Object.keys(options).length > 0)
+  }
   const llmKey = (llm: { provider?: string; model_id?: string; published_llm_id?: string }) =>
     llm.published_llm_id ? `id:${llm.published_llm_id}` : `model:${llm.provider}/${llm.model_id}`
   const optionKey = (opt: LLMOption) =>
@@ -59,19 +85,19 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const findOption = (cfg: AgentLLMConfig | null): LLMOption | null => {
     if (!cfg) return null
     if (cfg.published_llm_id) {
-      const byID = availableLLMs.find(o => o.id === cfg.published_llm_id)
+      const byID = workflowLLMOptions.find(o => o.id === cfg.published_llm_id)
       if (byID) return byID
     }
-    return availableLLMs.find(o => o.provider === cfg.provider && o.model === cfg.model_id) ?? null
+    return workflowLLMOptions.find(o => o.provider === cfg.provider && o.model === cfg.model_id) ?? null
   }
 
   const getFallbackOptions = (primary: AgentLLMConfig | null): LLMOption[] => {
-    if (!primary) return availableLLMs
+    if (!primary) return workflowLLMOptions
     const excluded = new Set([
       llmKey(primary),
       ...(primary.fallbacks ?? []).map(f => llmKey(f)),
     ])
-    return availableLLMs.filter(o => !excluded.has(optionKey(o)))
+    return workflowLLMOptions.filter(o => !excluded.has(optionKey(o)))
   }
 
   const toAgentLLM = (opt: LLMOption, fallbacks?: AgentLLMFallback[]): AgentLLMConfig => ({
@@ -82,15 +108,16 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
     ...(fallbacks && fallbacks.length > 0 ? { fallbacks } : {}),
   })
 
-  const sharedWorkflowLLM = tier1 ?? tier2 ?? tier3 ?? phaseLLM
+  const sharedWorkflowLLM = selectedCodingAgentLLM ?? phaseLLM ?? tier1 ?? tier2 ?? tier3
   const sharedSelectedLLM = findOption(sharedWorkflowLLM)
 
   const handleSharedWorkflowLLMSelect = (opt: LLMOption) => {
-    const next = toAgentLLM(opt)
-    setTier1(next)
-    setTier2(next)
-    setTier3(next)
-    setPhaseLLM(next)
+    const defaults = getWorkflowLLMTierDefaults(opt, providerManifest)
+    setSelectedCodingAgentLLM(defaults.base)
+    setTier1(defaults.tier1)
+    setTier2(defaults.tier2)
+    setTier3(defaults.tier3)
+    setPhaseLLM(defaults.phase)
   }
 
   const addFallback = (setter: React.Dispatch<React.SetStateAction<AgentLLMConfig | null>>, opt: LLMOption) => {
@@ -127,6 +154,14 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
       if (workspacePath) {
         const refreshed = useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)?.manifest?.capabilities?.llm_config
         if (refreshed) {
+          if (refreshed.provider && refreshed.model_id) {
+            setSelectedCodingAgentLLM({
+              ...(refreshed.published_llm_id ? { published_llm_id: refreshed.published_llm_id } : {}),
+              provider: refreshed.provider,
+              model_id: refreshed.model_id,
+              ...(hasOptions(refreshed.options) ? { options: refreshed.options } : {}),
+            } as AgentLLMConfig)
+          }
           if (refreshed.tiered_config?.tier_1) setTier1(refreshed.tiered_config.tier_1)
           if (refreshed.tiered_config?.tier_2) setTier2(refreshed.tiered_config.tier_2)
           if (refreshed.tiered_config?.tier_3) setTier3(refreshed.tiered_config.tier_3)
@@ -146,12 +181,27 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
         : undefined
       const existingWithoutExecution = { ...((existing ?? {}) as PresetLLMConfig & { execution_llm?: unknown }) }
       delete existingWithoutExecution.execution_llm
-
-      const newLLMConfig: PresetLLMConfig = {
+      const nextBaseLLMConfig = {
         ...existingWithoutExecution,
-        phase_llm: phaseLLM ?? undefined,
-        llm_allocation_mode: tieredConfig ? 'tiered' : 'manual',
-        ...(tieredConfig ? { tiered_config: tieredConfig } : {}),
+        ...(selectedCodingAgentLLM ? agentLLMToPresetBase(selectedCodingAgentLLM) : {}),
+      }
+
+      let newLLMConfig: PresetLLMConfig
+      if (!showAdvanced && !nextBaseLLMConfig.published_llm_id && nextBaseLLMConfig.provider && hasWorkflowLLMTierDefaults(nextBaseLLMConfig.provider, providerManifest)) {
+        delete nextBaseLLMConfig.learning_llm
+        delete nextBaseLLMConfig.phase_llm
+        delete nextBaseLLMConfig.tiered_config
+        newLLMConfig = {
+          ...nextBaseLLMConfig,
+          llm_allocation_mode: 'coding_agent',
+        }
+      } else {
+        newLLMConfig = {
+          ...nextBaseLLMConfig,
+          phase_llm: phaseLLM ?? undefined,
+          llm_allocation_mode: tieredConfig ? 'tiered' : 'manual',
+          ...(tieredConfig ? { tiered_config: tieredConfig } : {}),
+        }
       }
 
       await savePreset(
@@ -247,16 +297,16 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                     <p><span className="font-medium">Tier 1</span> — first execution (no learnings yet) + initial extraction</p>
                     <p><span className="font-medium">Tier 2</span> — execution once learnings exist + refinement</p>
                     <p><span className="font-medium">Tier 3</span> — validation (always) + mature refinement (2+ runs)</p>
-                    <p><span className="font-medium">Phase LLM</span> — planning, eval design, debugging, anonymization. Independent of tier assignment.</p>
+                    <p><span className="font-medium">Workshop LLM</span> — planning, eval design, debugging, anonymization. Independent of tier assignment.</p>
                   </div>
                 </>
               ) : (
                 <>
                   <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">How it works</h3>
                   <div className="text-sm text-gray-600 dark:text-gray-300 space-y-1.5">
-                    <p>Pick one model for this workflow.</p>
-                    <p>The workflow will use it for execution, learning, validation, planning, and debugging.</p>
-                    <p>Use advanced setup only when different jobs need different models.</p>
+                    <p>Pick one coding agent or model for this workflow.</p>
+                    <p>Coding agents save high, medium, and low tiers automatically.</p>
+                    <p>Workshop work uses the high tier.</p>
                   </div>
                 </>
               )}
@@ -276,20 +326,21 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                 <div>
                   <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Choose one workflow model</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                    This model will be used for execution, learning, validation, and workflow phase work.
+                    Coding agents expand into high, medium, and low defaults. Workshop work uses high.
                   </p>
                   <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-4">
                     <LLMSelectionDropdown
-                      availableLLMs={availableLLMs}
+                      availableLLMs={workflowLLMOptions}
                       selectedLLM={sharedSelectedLLM}
                       onLLMSelect={handleSharedWorkflowLLMSelect}
                       inModal={true}
                       openDirection="down"
                       title="Select model for workflow"
                     />
+                    <WorkflowLLMTierPreview selectedLLM={sharedSelectedLLM} providerManifest={providerManifest} />
                     {sharedWorkflowLLM && (
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-3">
-                        Internally this applies the same model everywhere.
+                        Saved as workflow tier defaults.
                       </p>
                     )}
                   </div>
@@ -333,7 +384,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                   )}
                 </div>
                 <LLMSelectionDropdown
-                  availableLLMs={availableLLMs}
+                  availableLLMs={workflowLLMOptions}
                   selectedLLM={findOption(value)}
                   onLLMSelect={opt => setter(toAgentLLM(opt, value?.fallbacks))}
                   inModal={true}
@@ -368,13 +419,13 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
               </div>
             ))}
 
-            {/* Phase LLM */}
+            {/* Workshop LLM */}
             <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-3">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <Cpu className="w-4 h-4 text-orange-500" />
                   <div>
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Phase Agent</span>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Workshop LLM</span>
                     <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5">planning, eval, debugging</span>
                   </div>
                 </div>
@@ -383,12 +434,12 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
                 )}
               </div>
               <LLMSelectionDropdown
-                availableLLMs={availableLLMs}
+                availableLLMs={workflowLLMOptions}
                 selectedLLM={findOption(phaseLLM)}
                 onLLMSelect={opt => setPhaseLLM(toAgentLLM(opt))}
                 inModal={true}
                 openDirection="down"
-                placeholder={tier1 ? `Defaults to Tier 1 (${tier1.model_id})` : 'Select phase agent model'}
+                placeholder={tier1 ? `Defaults to Tier 1 (${tier1.model_id})` : 'Select workshop LLM'}
               />
             </div>
               </>

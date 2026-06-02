@@ -19,6 +19,13 @@ const (
 	WorkflowStatusEvalBuilder      = "evaluation-builder"
 )
 
+const (
+	LLMAllocationModeManual           = "manual"
+	LLMAllocationModeTiered           = "tiered"
+	LLMAllocationModeCodingAgent      = "coding_agent"
+	LLMAllocationModeCodingPlanLegacy = "coding_plan"
+)
+
 // Knowledgebase shape — only one shape supported: notes-only (per-topic
 // markdown files under knowledgebase/notes/ plus notes/_index.json). The
 // legacy graph+notes shape has been removed. KBShapeGraphNotes is kept as a
@@ -76,7 +83,11 @@ type PresetLLMConfig struct {
 	ImageGenModelID       string `json:"image_gen_model_id,omitempty"`
 
 	// Tiered LLM allocation.
-	LLMAllocationMode string           `json:"llm_allocation_mode,omitempty"` // "manual" (default) or "tiered"
+	// Supported values:
+	//   - "manual" (default): use explicitly stored provider/model defaults
+	//   - "tiered": use explicitly stored tiered_config
+	//   - "coding_agent": resolve provider/model_id dynamically through multi-llm-provider-go
+	LLMAllocationMode string           `json:"llm_allocation_mode,omitempty"`
 	TieredConfig      *TieredLLMConfig `json:"tiered_config,omitempty"`
 }
 
@@ -104,6 +115,51 @@ type AgentLLMFallback struct {
 	Options        map[string]interface{} `json:"options,omitempty"`
 }
 
+func agentLLMConfigFromCodingAgentRef(ref llmproviders.CodingAgentTierModelRef) *AgentLLMConfig {
+	if ref.Provider == "" || ref.ModelID == "" {
+		return nil
+	}
+	return &AgentLLMConfig{
+		Provider: ref.Provider,
+		ModelID:  ref.ModelID,
+		Options:  ref.Options,
+	}
+}
+
+func isCodingAgentAllocationMode(mode string) bool {
+	return mode == LLMAllocationModeCodingAgent || mode == LLMAllocationModeCodingPlanLegacy
+}
+
+// ResolveCodingAgentConfig expands a coding-agent preset into current provider
+// package defaults. It intentionally does not persist the resolved models.
+func ResolveCodingAgentConfig(config *PresetLLMConfig) (*AgentLLMConfig, *TieredLLMConfig, bool) {
+	if config == nil || !isCodingAgentAllocationMode(config.LLMAllocationMode) || config.Provider == "" {
+		return nil, nil, false
+	}
+
+	defaults, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.Provider(config.Provider))
+	if !ok {
+		return nil, nil, false
+	}
+
+	phase := agentLLMConfigFromCodingAgentRef(defaults.Phase)
+	tiered := &TieredLLMConfig{
+		Tier1: agentLLMConfigFromCodingAgentRef(defaults.High),
+		Tier2: agentLLMConfigFromCodingAgentRef(defaults.Medium),
+		Tier3: agentLLMConfigFromCodingAgentRef(defaults.Low),
+	}
+
+	if tiered.Tier1 == nil || tiered.Tier2 == nil || tiered.Tier3 == nil {
+		return phase, nil, true
+	}
+	return phase, tiered, true
+}
+
+// ResolveCodingPlanConfig is kept for legacy call sites and old saved configs.
+func ResolveCodingPlanConfig(config *PresetLLMConfig) (*AgentLLMConfig, *TieredLLMConfig, bool) {
+	return ResolveCodingAgentConfig(config)
+}
+
 // WorkflowSelectedOption represents a selected option for a workflow phase.
 type WorkflowSelectedOption struct {
 	OptionID    string `json:"option_id"`
@@ -122,6 +178,16 @@ type WorkflowSelectedOptions struct {
 // ValidatePresetLLMConfigPublic accepts either legacy Provider+ModelID or at
 // least one non-nil AgentLLMConfig with valid provider and model_id.
 func ValidatePresetLLMConfigPublic(config *PresetLLMConfig) error {
+	if isCodingAgentAllocationMode(config.LLMAllocationMode) {
+		if config.Provider == "" {
+			return fmt.Errorf("provider is required for coding_agent llm_config")
+		}
+		if _, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.Provider(config.Provider)); !ok {
+			return fmt.Errorf("provider %q does not expose coding agent tier defaults", config.Provider)
+		}
+		return nil
+	}
+
 	if config.TieredConfig != nil {
 		tierConfigs := []struct {
 			config *AgentLLMConfig

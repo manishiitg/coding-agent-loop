@@ -15,6 +15,7 @@ export type ProviderType =
   | 'gemini-cli'
   | 'codex-cli'
   | 'cursor-cli'
+  | 'agy-cli'
   | 'opencode-cli'
   | 'minimax'
   | 'minimax-coding-plan'
@@ -59,7 +60,7 @@ export const LLM_INTEGRATION_DISPLAY_INFO: Record<LLMIntegrationKind, LLMIntegra
   },
 }
 
-export const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'opencode-cli'])
+export const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'gemini-cli', 'codex-cli', 'cursor-cli', 'agy-cli', 'opencode-cli'])
 const AUDIO_PROVIDER_PROVIDERS = new Set(['elevenlabs', 'deepgram'])
 
 const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
@@ -122,6 +123,11 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
     name: 'Cursor CLI',
     authDescription: 'Local CLI (API key optional)',
     colorClass: 'text-slate-600 dark:text-slate-300',
+  },
+  'agy-cli': {
+    name: 'Antigravity CLI',
+    authDescription: 'Local CLI (Agy sign-in)',
+    colorClass: 'text-zinc-600 dark:text-zinc-300',
   },
   'opencode-cli': {
     name: 'OpenCode CLI',
@@ -190,7 +196,7 @@ export function getProviderIntegrationKind(provider?: string, modelId?: string):
   const normalizedProvider = (provider || '').trim().toLowerCase()
   const normalizedModel = (modelId || '').trim().toLowerCase()
 
-  if (CODING_AGENT_PROVIDERS.has(normalizedProvider)) {
+  if (CODING_AGENT_PROVIDERS.has(normalizedProvider) || normalizedProvider.startsWith('opencode-cli-')) {
     return 'coding_agent'
   }
   if (AUDIO_PROVIDER_PROVIDERS.has(normalizedProvider)) {

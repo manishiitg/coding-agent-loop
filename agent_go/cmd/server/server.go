@@ -10347,7 +10347,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				llmCfg := caps.LLMConfig
 				log.Printf("[WORKSHOP] LLMConfig details: allocationMode=%q tieredConfig=%v provider=%q modelID=%q",
 					llmCfg.LLMAllocationMode, llmCfg.TieredConfig != nil, llmCfg.Provider, llmCfg.ModelID)
-				cfg.PresetPhaseLLM = workshopExtractLLM(llmCfg.PhaseLLM, llmCfg.Provider, llmCfg.ModelID)
+				cfg.PresetPhaseLLM, cfg.TieredConfig = workshopResolveLLMConfig(llmCfg)
 
 				if llmCfg.UseKnowledgebase != nil {
 					cfg.UseKnowledgebase = *llmCfg.UseKnowledgebase
@@ -10357,9 +10357,8 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				}
 
 				// Tiered LLM allocation
-				if llmCfg.LLMAllocationMode == "tiered" && llmCfg.TieredConfig != nil {
+				if cfg.TieredConfig != nil {
 					cfg.LLMAllocationMode = "tiered"
-					cfg.TieredConfig = workshopConvertTieredLLMConfig(llmCfg.TieredConfig)
 					log.Printf("[WORKSHOP] Tiered mode: T1=%s T2=%s T3=%s",
 						workshopFormatAgentLLM(cfg.TieredConfig.Tier1),
 						workshopFormatAgentLLM(cfg.TieredConfig.Tier2),
@@ -11898,6 +11897,22 @@ func workshopConvertTieredLLMConfig(config *workflowtypes.TieredLLMConfig) *todo
 	}
 
 	return tiered
+}
+
+func workshopResolveLLMConfig(config *workflowtypes.PresetLLMConfig) (*todo_creation_human.AgentLLMConfig, *todo_creation_human.TieredLLMConfig) {
+	if config == nil {
+		return nil, nil
+	}
+	if phase, tiered, ok := workflowtypes.ResolveCodingAgentConfig(config); ok {
+		return workshopConvertAgentLLMConfig(phase), workshopConvertTieredLLMConfig(tiered)
+	}
+
+	phase := workshopExtractLLM(config.PhaseLLM, config.Provider, config.ModelID)
+	var tiered *todo_creation_human.TieredLLMConfig
+	if config.LLMAllocationMode == workflowtypes.LLMAllocationModeTiered && config.TieredConfig != nil {
+		tiered = workshopConvertTieredLLMConfig(config.TieredConfig)
+	}
+	return phase, tiered
 }
 
 func workshopFormatAgentLLM(config *todo_creation_human.AgentLLMConfig) string {

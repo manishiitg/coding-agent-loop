@@ -144,11 +144,10 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 					if caps.LLMConfig != nil {
 						log.Printf("[WORKFLOW_PHASE] Refresh LLMConfig details: allocationMode=%q tieredConfig=%v",
 							caps.LLMConfig.LLMAllocationMode, caps.LLMConfig.TieredConfig != nil)
-						phaseLLM := workshopExtractLLM(caps.LLMConfig.PhaseLLM, caps.LLMConfig.Provider, caps.LLMConfig.ModelID)
+						phaseLLM, refreshedTiered := workshopResolveLLMConfig(caps.LLMConfig)
 						workshopSession.UpdatePresetLLMConfigs(phaseLLM)
 
-						if caps.LLMConfig.TieredConfig != nil {
-							refreshedTiered := workshopConvertTieredLLMConfig(caps.LLMConfig.TieredConfig)
+						if refreshedTiered != nil {
 							workshopSession.UpdateTieredConfig(refreshedTiered)
 							log.Printf("[WORKFLOW_PHASE] Refreshed tiered config from manifest")
 						} else {

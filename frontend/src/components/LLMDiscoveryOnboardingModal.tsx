@@ -33,33 +33,6 @@ const VISIBLE_TIER_LABELS: Record<VisibleTierKey, string> = {
   low: 'Low',
 }
 
-const TIER_MODEL_OVERRIDES: Partial<Record<LLMProvider, Partial<Record<TierKey, string>>>> = {
-  'codex-cli': {
-    main: 'high',
-    high: 'high',
-    medium: 'medium',
-    low: 'low',
-  },
-  'claude-code': {
-    main: 'claude-sonnet-4-6',
-    high: 'claude-opus-4-6',
-    medium: 'claude-sonnet-4-6',
-    low: 'claude-haiku-4-5-20251001',
-  },
-  'gemini-cli': {
-    main: 'auto',
-    high: 'high',
-    medium: 'medium',
-    low: 'low',
-  },
-  'opencode-cli-free': {
-    main: 'deepseek-v4-flash-free',
-    high: 'deepseek-v4-flash-free',
-    medium: 'deepseek-v4-flash-free',
-    low: 'qwen3.6-plus-free',
-  },
-}
-
 const CODING_CLI_INFO: Record<typeof FALLBACK_CODING_CLI_ORDER[number], {
   label: string
   binary: string
@@ -174,36 +147,51 @@ function candidateReadiness(candidate: LLMDiscoveryCandidate): ReadinessLevel {
   return 'ready'
 }
 
-function modelForCandidate(candidate: LLMDiscoveryCandidate, selectedModelId?: string): LLMModel {
-  const options: Record<string, unknown> = {}
-  if (candidate.provider === 'codex-cli') options.reasoning_effort = 'medium'
-  if (candidate.provider === 'claude-code') options.reasoning_effort = 'high'
+function modelForCandidate(
+  candidate: LLMDiscoveryCandidate,
+  selectedModelId: string | undefined,
+  providerManifest: ProviderManifestEntry[],
+): LLMModel {
+  const manifestDefaults = providerManifest.find(provider => provider.id === candidate.provider)?.default_tier_models
+  const main = manifestDefaults?.main
 
   return {
-    provider: candidate.provider,
-    model_id: selectedModelId || candidate.model_id,
-    ...(Object.keys(options).length > 0 ? { options } : {}),
+    provider: (main?.provider || candidate.provider) as LLMProvider,
+    model_id: selectedModelId || main?.model_id || candidate.model_id,
+    ...(main?.options && Object.keys(main.options).length > 0 ? { options: main.options } : {}),
   }
 }
 
-function tierModelIDsForCandidate(candidate: LLMDiscoveryCandidate): Record<TierKey, string> {
-  const overrides = TIER_MODEL_OVERRIDES[candidate.provider] || {}
+function tierModelsForCandidate(
+  candidate: LLMDiscoveryCandidate,
+  providerManifest: ProviderManifestEntry[] = [],
+): Record<TierKey, { provider: string; modelID: string }> {
+  const manifestDefaults = providerManifest.find(provider => provider.id === candidate.provider)?.default_tier_models
+  if (manifestDefaults) {
+    return {
+      main: { provider: manifestDefaults.main.provider, modelID: manifestDefaults.main.model_id },
+      high: { provider: manifestDefaults.high.provider, modelID: manifestDefaults.high.model_id },
+      medium: { provider: manifestDefaults.medium.provider, modelID: manifestDefaults.medium.model_id },
+      low: { provider: manifestDefaults.low.provider, modelID: manifestDefaults.low.model_id },
+    }
+  }
+
   const fallback = candidate.model_id
   return {
-    main: overrides.main || fallback,
-    high: overrides.high || fallback,
-    medium: overrides.medium || fallback,
-    low: overrides.low || fallback,
+    main: { provider: candidate.provider, modelID: fallback },
+    high: { provider: candidate.provider, modelID: fallback },
+    medium: { provider: candidate.provider, modelID: fallback },
+    low: { provider: candidate.provider, modelID: fallback },
   }
 }
 
-function tierConfigForCandidate(candidate: LLMDiscoveryCandidate): Record<TierKey, TierModel> {
-  const tierModelIDs = tierModelIDsForCandidate(candidate)
+function tierConfigForCandidate(candidate: LLMDiscoveryCandidate, providerManifest: ProviderManifestEntry[]): Record<TierKey, TierModel> {
+  const tierModels = tierModelsForCandidate(candidate, providerManifest)
   return {
-    main: { provider: candidate.provider, model_id: tierModelIDs.main },
-    high: { provider: candidate.provider, model_id: tierModelIDs.high },
-    medium: { provider: candidate.provider, model_id: tierModelIDs.medium },
-    low: { provider: candidate.provider, model_id: tierModelIDs.low },
+    main: { provider: tierModels.main.provider, model_id: tierModels.main.modelID },
+    high: { provider: tierModels.high.provider, model_id: tierModels.high.modelID },
+    medium: { provider: tierModels.medium.provider, model_id: tierModels.medium.modelID },
+    low: { provider: tierModels.low.provider, model_id: tierModels.low.modelID },
   }
 }
 
@@ -232,10 +220,10 @@ function compactModelLabel(modelID: string, modelName: string) {
 }
 
 function visibleTierEntries(candidate: LLMDiscoveryCandidate, metadata: ModelMetadata[], providerManifest: ProviderManifestEntry[]) {
-  const tierModelIDs = tierModelIDsForCandidate(candidate)
+  const tierModels = tierModelsForCandidate(candidate, providerManifest)
   return (['high', 'medium', 'low'] as VisibleTierKey[]).map(key => {
-    const modelID = tierModelIDs[key]
-    const modelName = modelNameFor(candidate.provider, modelID, metadata, providerManifest)
+    const { provider, modelID } = tierModels[key]
+    const modelName = modelNameFor(provider, modelID, metadata, providerManifest)
     return {
       key,
       label: VISIBLE_TIER_LABELS[key],
@@ -527,7 +515,7 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
       setTestStates(prev => ({ ...prev, [candidate.id]: { status: 'valid', message: validation.message } }))
 
       const modelId = candidate.model_id
-      const llmModel = modelForCandidate(candidate, modelId)
+      const llmModel = modelForCandidate(candidate, modelId, providerManifest)
       const alreadyPublished = savedLLMs.some(
         (saved: SavedLLM) => saved.provider === llmModel.provider && saved.model_id === llmModel.model_id
       )
@@ -551,7 +539,7 @@ export default function LLMDiscoveryOnboardingModal({ isOpen, onClose, onAdvance
         cross_provider_fallback: undefined,
       })
       setAgentConfig({ primary: llmModel, fallbacks: [] })
-      setDelegationTierConfig(tierConfigForCandidate(candidate))
+      setDelegationTierConfig(tierConfigForCandidate(candidate, providerManifest))
 
       setSuccess(`${publishedName(candidate, modelId)} is enabled. You can change models later in Advanced setup.`)
     } catch (err) {

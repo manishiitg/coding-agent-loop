@@ -52,39 +52,41 @@ unless the user also asked for workflow hardening/eval changes.
 
 ### The md/html document escape hatch — suggest this proactively
 
-When the user wants a rich, narrative, or highly custom layout the
-widget grammar can't express cleanly — or simply doesn't like the
-widget-composed look — the simplest answer is often: have a workflow
-step write a detailed `.md` or `.html` document into `db/`, then surface
-the whole thing with a single `file` widget:
+When the user wants a rich, narrative, or highly custom layout the widget
+grammar can't express cleanly — or dislikes the widget-composed look —
+**author a `.md`/`.html` report document once** (a workspace file under
+`db/reports/`) and surface it with a single `file` widget:
 
 ```json
 { "kind": "file", "source": "db/reports/<name>.html", "renderFormat": "html" }
 { "kind": "file", "source": "db/reports/<name>.md",   "renderFormat": "markdown" }
 ```
 
+**Do NOT add a workflow STEP that (re)generates the report each run.**
+Author the document once and wire it to read data **live**, so it stays
+current with no per-run work — the workflow's normal steps already write
+the data to `db/db.sqlite`; the report just reads it, there is nothing to
+"generate":
+- **HTML** reads `db/db.sqlite` live via the `window.report` API
+  (`query`/`get`/`getText`) and renders its own visuals — authored once,
+  always current.
+- **Markdown** embeds live db-bound widgets via ` ```report-widget `
+  fenced blocks — authored once, always current.
+
 The viewer renders Markdown via its renderer and HTML in a sandboxed
 iframe — self-contained HTML (inline CSS/JS, tables, charts, dark mode)
-all work, and file/PDF links inside the document are clickable and open
-in the in-report preview. This is a first-class supported pattern, NOT
-the dashboard anti-pattern above.
+all work, and file/PDF links inside the document are clickable. First-class
+supported pattern, NOT the dashboard-file anti-pattern above.
 
-**Proactively offer this option, with the tradeoff, whenever a user asks
-for a report or is unhappy with the existing widgets:**
+The ONLY variant that goes stale is a document with **data baked in**
+(numbers hardcoded at author time) — that one would need regeneration and
+is the discouraged path (stale, costs tokens each run). Prefer
+live-reading docs; bake data in only for a deliberate one-off export.
 
-- **Generated `.md`/`.html` document** — maximum layout/narrative
-  flexibility, trivial plan (one widget), ideal for a report a human
-  reads top-to-bottom. But it is a **static snapshot regenerated each
-  run**, not live-bound to `db/`, and costs tokens to author every run.
-- **Widgets** — live-bound to `db/`, auto-refresh, interactive and
-  structured, consistent theming. But more authoring effort and less
-  narrative freedom.
-
-Best of both is a **hybrid**: a generated `.md`/`.html` for the rich
-narrative body, plus a few live widgets (status/freshness stat, key
-metrics, file lists) for signals that must stay current. md/html is
-frequently the right call for document-style reports — don't default to
-widgets silently; surface the choice and let the user decide.
+So all three live shapes need **no reporting step**: pick by layout need —
+- **Widget plan** — db-bound widgets, auto-refresh; best for dashboards.
+- **Markdown doc + embedded widgets** — narrative + live numbers/tables.
+- **HTML doc + `window.report`** — bespoke/branded layout + live data.
 
 ### Choosing a report shape — one decision the agent makes for the user
 

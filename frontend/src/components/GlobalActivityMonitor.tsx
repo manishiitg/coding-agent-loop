@@ -6,8 +6,7 @@ import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
 import { activateTab } from '../utils/activateTab'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
-import { restoreSession } from '../utils/sessionRestore'
-import { isBotWorkflowSession, isScheduledWorkflowSession, restoreBotWorkflowRunChat, restoreScheduledWorkflowRunChat, restoreWorkflowSessionChat, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
+import { isScheduledWorkflowSession, openActiveSession, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
 import { useAppStore } from '../stores/useAppStore'
 
 const ACTIVITY_DETAILS_POLL_MS = 30000
@@ -635,35 +634,13 @@ export const GlobalActivityMonitor: React.FC = () => {
   }, [])
 
   const handleOpenSession = useCallback(async (session: ActiveSessionInfo) => {
-    const chatStore = useChatStore.getState()
-    const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === session.session_id)
-
-    if (isWorkflowSession(session)) {
-      const workflowInfo = runningWorkflowsBySession[session.session_id]
-      if (isScheduledWorkflowSession(session, workflowInfo)) {
-        await restoreScheduledWorkflowRunChat(session, { runningWorkflow: workflowInfo })
-      } else if (isBotWorkflowSession(session, workflowInfo)) {
-        await restoreBotWorkflowRunChat(session, { runningWorkflow: workflowInfo })
-      } else {
-        await restoreWorkflowSessionChat(session, { runningWorkflow: workflowInfo })
-      }
-      setOpen(false)
-      return
-    }
-
-    if (existingTab) {
-      // activateTab clears the Workflows Overview overlay and sets the pane mode
-      // from the tab metadata — without that the tab is selected but stays hidden.
-      activateTab(existingTab.tabId)
-      setOpen(false)
-      return
-    }
-
-    const tabId = await restoreSession(session.session_id, {
+    // Shared path with the Ctrl+K quick-switcher so opening the same session
+    // behaves identically from either surface.
+    await openActiveSession(session, {
+      runningWorkflow: runningWorkflowsBySession[session.session_id],
       title: sessionTitle(session, runningWorkflowsBySession[session.session_id], currentWorkflowPresetName),
       source: 'global-activity-monitor',
     })
-    activateTab(tabId)
     setOpen(false)
   }, [currentWorkflowPresetName, runningWorkflowsBySession])
 

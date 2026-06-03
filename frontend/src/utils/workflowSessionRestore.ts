@@ -1,4 +1,5 @@
 import { activateTab } from './activateTab'
+import { restoreSession } from './sessionRestore'
 import { agentApi } from '../services/api'
 import type { ActiveSessionInfo, RunningWorkflowInfo } from '../services/api-types'
 import { useAppStore } from '../stores/useAppStore'
@@ -370,4 +371,40 @@ async function restoreReadOnlyWorkflowRunChat(
   } finally {
     useRunningWorkflowsStore.getState().setIsRestoringWorkflow(false)
   }
+}
+
+// openActiveSession is the SINGLE shared path for opening an active session row
+// from a global surface (the Ctrl+K quick-switcher and the header activity
+// monitor). Both call this so clicking the same session behaves identically.
+//
+// Workflow sessions go through the thorough restore family, which already: jumps
+// to an existing tab, closes a stale builder tab, applies the preset, switches to
+// workflow mode, clears the Workflows Overview, and scrolls to bottom. Plain chat
+// sessions activate their existing tab or restore a fresh one.
+export async function openActiveSession(
+  session: ActiveSessionInfo,
+  options: { runningWorkflow?: RunningWorkflowInfo; title?: string; source?: string } = {},
+): Promise<void> {
+  const isWorkflow = (session.agent_mode || '').toLowerCase().includes('workflow')
+  if (isWorkflow) {
+    if (isScheduledWorkflowSession(session, options.runningWorkflow)) {
+      await restoreScheduledWorkflowRunChat(session, { runningWorkflow: options.runningWorkflow })
+    } else if (isBotWorkflowSession(session, options.runningWorkflow)) {
+      await restoreBotWorkflowRunChat(session, { runningWorkflow: options.runningWorkflow })
+    } else {
+      await restoreWorkflowSessionChat(session, { runningWorkflow: options.runningWorkflow })
+    }
+    return
+  }
+
+  const chatStore = useChatStore.getState()
+  const existingTab = findTabForSession(chatStore.chatTabs, session.session_id)
+  if (existingTab) {
+    activateTab(existingTab.tabId)
+    requestChatScrollToBottom()
+    return
+  }
+  const tabId = await restoreSession(session.session_id, { title: options.title, source: options.source })
+  activateTab(tabId)
+  requestChatScrollToBottom()
 }

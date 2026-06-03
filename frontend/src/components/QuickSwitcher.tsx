@@ -7,9 +7,8 @@ import type { ChatTab } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { ActiveSessionInfo, PollingEvent } from '../services/api-types'
-import { restoreSession } from '../utils/sessionRestore'
 import { activateTab } from '../utils/activateTab'
-import { isBotWorkflowSession, isScheduledWorkflowSession, restoreBotWorkflowRunChat, restoreScheduledWorkflowRunChat, restoreWorkflowSessionChat, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
+import { isBotWorkflowSession, isScheduledWorkflowSession, openActiveSession, restoreBotWorkflowRunChat, restoreScheduledWorkflowRunChat, restoreWorkflowSessionChat, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
 import { formatEventMemoryBytes, hasEventMemoryPressure, type EventMemoryStats } from '../utils/eventMemory'
 
 interface QuickSwitcherProps {
@@ -510,32 +509,12 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
   const handleSelect = useCallback(async (item: QuickSwitcherItem, minimize = false) => {
     if (item.type === 'active') {
-      const chatStore = useChatStore.getState()
-      const existingTab = item.tabId ? chatStore.getTab(item.tabId) : findTabForSession(chatStore.chatTabs, item.session.session_id)
-      if (existingTab) {
-        switchToTab(existingTab)
-        onClose()
-        return
-      }
-
-      if (item.mode === 'workflow') {
-        if (isScheduledWorkflowSession(item.session)) {
-          await restoreScheduledWorkflowRunChat(item.session)
-        } else if (isBotWorkflowSession(item.session)) {
-          await restoreBotWorkflowRunChat(item.session)
-        } else {
-          await restoreWorkflowSessionChat(item.session)
-        }
-        onClose()
-        return
-      }
-
-      const restoredTabId = await restoreSession(item.session.session_id, {
+      // Shared path with the header activity monitor so opening the same session
+      // behaves identically from either surface.
+      await openActiveSession(item.session, {
         title: item.label,
         source: 'quick-switcher',
       })
-      const restoredTab = useChatStore.getState().getTab(restoredTabId)
-      if (restoredTab) switchToTab(restoredTab)
       onClose()
       return
     }

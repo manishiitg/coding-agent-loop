@@ -281,7 +281,10 @@ interface ReportViewProps {
   reviewData?: unknown
   /** Optional close/back handler; when omitted, no close button is rendered (used for canvas-mode). */
   onClose?: () => void
-  mobilePreview?: boolean
+  // When the report pane is chat-focused it shrinks, so the parent caps the report
+  // at a smaller tier than the user's saved device width: laptop→tablet, and the
+  // narrowest case (saved mobile) → mobile. undefined = no chat-focus override.
+  focusTier?: 'mobile' | 'tablet'
 }
 
 // Source content cached per workspace-relative path. `undefined` = not yet fetched;
@@ -513,7 +516,7 @@ export function ReportViewer({ workspacePath, isOpen, onClose }: ReportViewerPro
 
 // Inline content — renders the report plan directly without modal chrome. Used by the
 // workflow canvas when canvasViewMode === 'report'.
-function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onClose, mobilePreview = false }: ReportViewProps) {
+function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onClose, focusTier }: ReportViewProps) {
   // Three explicit preview widths plus 'auto'. The internal name 'desktop' is
   // surfaced as "Laptop" in the UI to match the user's mental model — laptop
   // viewports are what fill the full max-width shell. 'auto' falls back to the
@@ -606,7 +609,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       cancelled = true
       clearTimeout(loadTimer)
     }
-  }, [workspacePath, refreshNonce, mobilePreview])
+  }, [workspacePath, refreshNonce, focusTier])
 
   useEffect(() => {
     setHiddenWidgetKeys(new Set())
@@ -708,12 +711,12 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     }
     return false
   }, [planExists, plan, sources, hiddenWidgetKeys])
-  // Report renders at the selected device width (default laptop = full width).
-  // When the pane is chat-focused it sits in the narrow 480px column, so force
-  // mobile regardless. Device selection + refresh now live in the shared on-pane
-  // bar (PreviewPaneControls); this component just reacts to the preference.
-  const previewMode: 'desktop' | 'tablet' | 'mobile' = mobilePreview
-    ? 'mobile'
+  // Report renders at the selected device width. When the pane is chat-focused the
+  // parent passes a capped focusTier (laptop→tablet, mobile→mobile) so the report
+  // fits the narrower pane; otherwise it follows the user's saved preference.
+  // Device selection lives in the shared on-pane bar (PreviewPaneControls).
+  const previewMode: 'desktop' | 'tablet' | 'mobile' = focusTier
+    ? focusTier
     : (previewPreference === 'mobile' || previewPreference === 'tablet' || previewPreference === 'desktop'
         ? previewPreference
         : 'desktop')

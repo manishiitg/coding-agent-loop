@@ -840,19 +840,17 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   //   laptop → report fills, chat ~360px rail (the report column flexes)
   //   tablet → report pane 880px, chat fills the rest
   //   mobile → report pane 480px, chat fills the rest
-  // Clicking into chat overrides to a mobile-style split so chat gets the room —
-  // except an explicit Tablet choice, which keeps its 880px report column.
-  // Report is always grid col 2 (right), chat is col 1 (left).
+  // Clicking into chat caps the report at tablet so chat gets room without
+  // shrinking the report all the way to mobile: laptop→tablet, tablet stays
+  // tablet, mobile stays mobile. Report is always grid col 2, chat is col 1.
   const previewDevice = usePreviewDevice(workspacePath)
-  // An explicit Tablet choice keeps its 880px report column even when chat is
-  // focused — only desktop/mobile collapse the report to the narrow mobile pane
-  // to give chat room while you type.
+  // Focusing chat shrinks the report column, so cap the report at tablet while
+  // typing: laptop→tablet (not all the way to mobile), tablet stays tablet, and a
+  // saved mobile width stays mobile. Unfocused, the report uses its own device tier.
   const effectiveTier: 'mobile' | 'tablet' | 'laptop' =
-    previewDevice === 'tablet'
-      ? 'tablet'
-      : focusedPane === 'chat'
-        ? 'mobile'
-        : previewDevice === 'mobile' ? 'mobile' : 'laptop'
+    focusedPane === 'chat'
+      ? (previewDevice === 'mobile' ? 'mobile' : 'tablet')
+      : previewDevice === 'mobile' ? 'mobile' : previewDevice === 'tablet' ? 'tablet' : 'laptop'
   const splitGridCols =
     effectiveTier === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
     : effectiveTier === 'tablet' ? 'md:grid-cols-[minmax(0,1fr)_880px]'

@@ -262,7 +262,12 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
   // collapses to the narrow 480px column (desktop/mobile). An explicit Tablet choice
   // keeps its 880px frame even while chat is focused.
   const reportPreviewDevice = usePreviewDevice(workspacePath)
-  const reportFocusMobile = useWorkflowStore(state => state.focusedPane === 'chat') && reportPreviewDevice !== 'tablet'
+  // When chat is focused the report pane shrinks, so cap the report at tablet
+  // (laptop→tablet); a saved mobile width stays mobile; tablet stays tablet.
+  const reportFocusTier: 'mobile' | 'tablet' | undefined =
+    useWorkflowStore(state => state.focusedPane === 'chat')
+      ? (reportPreviewDevice === 'mobile' ? 'mobile' : 'tablet')
+      : undefined
   const planData = usePlanData(workspacePath)
   const plan = planData.plan
   const loadPlanRefresh = planData.refresh
@@ -331,7 +336,7 @@ const WorkflowReportCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasPr
         {toolbarOnly ? null : (
           <div className="h-full min-h-0 relative">
             <PreviewPaneControls hasPlan={Boolean(plan?.steps?.length)} scopeId={workspacePath} />
-            {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={reportFocusMobile} />}
+            {workspacePath && <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} />}
           </div>
         )}
       </div>
@@ -1208,10 +1213,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   // Device-width preview also constrains the plan/flow pane (centered shell).
   const previewDevice = usePreviewDevice(workspacePath)
-  // Report renders mobile-framed when chat is focused AND the report pane actually
-  // collapses to the narrow 480px column (desktop/mobile). An explicit Tablet choice
-  // keeps its 880px frame even while chat is focused.
-  const reportFocusMobile = useWorkflowStore(state => state.focusedPane === 'chat') && previewDevice !== 'tablet'
+  // When chat is focused the report pane shrinks, so cap the report at tablet
+  // (laptop→tablet); a saved mobile width stays mobile; tablet stays tablet.
+  const reportFocusTier: 'mobile' | 'tablet' | undefined =
+    useWorkflowStore(state => state.focusedPane === 'chat')
+      ? (previewDevice === 'mobile' ? 'mobile' : 'tablet')
+      : undefined
   // Changing the device width resizes the flow pane; re-fit the diagram after the
   // CSS width transition (~300ms) so it recenters into the new width.
   useEffect(() => {
@@ -2661,7 +2668,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {toolbarOnly ? null : effectiveCanvasViewMode === 'report' ? (
           <div className="h-full min-h-0 relative">
             <PreviewPaneControls hasPlan={hasPlan} onExportPlan={() => { void handleExportImage('png') }} onRefreshPlan={() => { void handleRefresh() }} scopeId={workspacePath} />
-            {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={reportFocusMobile} />}
+            {workspacePath && <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} />}
           </div>
         ) : <div className="h-full min-h-0 relative flex">
           <PreviewPaneControls hasPlan={hasPlan} onExportPlan={() => { void handleExportImage('png') }} onRefreshPlan={() => { void handleRefresh() }} />

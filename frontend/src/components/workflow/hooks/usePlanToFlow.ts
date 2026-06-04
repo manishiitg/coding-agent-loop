@@ -208,8 +208,8 @@ const NODE_DIMENSIONS = {
   todo_task: { width: 300, height: 120 },
   human_input: { width: 260, height: 120 },
   loop: { width: 300, height: 140 },
-  start: { width: 80, height: 36 },
-  end: { width: 80, height: 36 },
+  start: { width: 96, height: 40 },
+  end: { width: 96, height: 40 },
   variables: { width: 220, height: 120 },
   'workflow-artifact': { width: 220, height: 120 }
 }
@@ -226,11 +226,12 @@ function getSubAgentGridMetrics(count: number, direction: 'LR' | 'TB') {
     return { columns: 0, rows: 0, width: 0, height: 0 }
   }
 
+  const verticalColumns = count <= 2 ? count : 2
   const columns = direction === 'TB'
-    ? count
+    ? verticalColumns
     : Math.ceil(count / (count >= 5 ? 2 : 1))
   const rows = direction === 'TB'
-    ? 1
+    ? Math.ceil(count / verticalColumns)
     : (count >= 5 ? 2 : 1)
 
   return {
@@ -2440,9 +2441,9 @@ export function usePlanToFlow(
 
     // CRITICAL: Position header nodes BEFORE Dagre runs
     // This ensures they're excluded from Dagre and maintain horizontal layout
-    const HEADER_GAP = 100 // Increased further to prevent overlap
-    const HEADER_START_X = 80 // Increased further
-    const HEADER_Y = 80 // Increased further
+    const HEADER_GAP = layoutDirection === 'TB' ? 40 : 100
+    const HEADER_START_X = 80
+    const HEADER_Y = 80
     
     // Position header nodes horizontally BEFORE Dagre
     const headerNodesWithPositions = nodes.map(node => {
@@ -2461,7 +2462,7 @@ export function usePlanToFlow(
     const layoutedResult = layoutWithDagre(headerNodesWithPositions, edges, layoutDirection)
 
     // Header nodes are already positioned correctly above, but verify and ensure they stay horizontal
-    const HEADER_TO_WORKFLOW_GAP = 150 // Increased further to prevent overlap with step1
+    const HEADER_TO_WORKFLOW_GAP = layoutDirection === 'TB' ? 180 : 150
 
     const startNodeIndex = layoutedResult.nodes.findIndex(n => n.id === 'start')
     const variablesNodeIndex = layoutedResult.nodes.findIndex(n => n.id === 'variables')
@@ -2477,8 +2478,8 @@ export function usePlanToFlow(
       // Since header nodes are excluded from Dagre, they should already have correct positions
       // But we enforce them here to be absolutely sure
       // TEST: Using same large gaps as above
-      const startPos = { x: HEADER_START_X, y: HEADER_Y }
-      const varsPos = { x: HEADER_START_X + startDims.width + HEADER_GAP, y: HEADER_Y }
+      let startPos = { x: HEADER_START_X, y: HEADER_Y }
+      let varsPos = { x: HEADER_START_X + startDims.width + HEADER_GAP, y: HEADER_Y }
 
       // Enforce positions (even though they should already be correct since header nodes are excluded from Dagre)
       layoutedResult.nodes[startNodeIndex] = {
@@ -2522,15 +2523,30 @@ export function usePlanToFlow(
         }
 
         if (layoutDirection === 'TB') {
-          // TB mode: workflow flows vertically, so first step should be below the header row
-          // Start from the right edge of the header row
-          const firstStepTargetX = headerRowEndX + HEADER_TO_WORKFLOW_GAP
+          // TB mode: keep the header row above the workflow and centered over
+          // the first step instead of pushing the whole graph to the right.
+          const firstStepDims = getNodeLayoutDimensions(firstStepNode)
+          const headerRowWidth = startDims.width + HEADER_GAP + variablesDims.width
+          const firstStepTargetX = firstStepLeftEdge
           const firstStepTargetY = headerRowBottom + HEADER_TO_WORKFLOW_GAP
 
           // Calculate offset to shift all workflow nodes
           // Use firstStepLeftEdge to ensure sub-agents don't overlap with header
           const offsetX = firstStepTargetX - firstStepLeftEdge
           const offsetY = firstStepTargetY - firstStepNode.position.y
+          const firstStepCenterX = firstStepNode.position.x + offsetX + (firstStepDims.width / 2)
+          const headerRowStartX = firstStepCenterX - (headerRowWidth / 2)
+          startPos = { x: headerRowStartX, y: HEADER_Y }
+          varsPos = { x: headerRowStartX + startDims.width + HEADER_GAP, y: HEADER_Y }
+
+          layoutedResult.nodes[startNodeIndex] = {
+            ...layoutedResult.nodes[startNodeIndex],
+            position: startPos
+          }
+          layoutedResult.nodes[variablesNodeIndex] = {
+            ...layoutedResult.nodes[variablesNodeIndex],
+            position: varsPos
+          }
 
           // Shift all non-header nodes by this offset
           layoutedResult.nodes = layoutedResult.nodes.map((node, index) => {
@@ -2630,53 +2646,29 @@ export function usePlanToFlow(
         getNodeFootprintDimensions(layoutedResult.nodes[index], layoutedResult.nodes, todoTaskParentIds, layoutDirection)
       )
 
-      if (layoutDirection === 'LR') {
-        const subAgentGrid = getSubAgentGridMetricsFromDimensions(subAgentFootprints, layoutDirection)
-        const columnWidths = subAgentGrid.columnWidths
-        const rowHeights = subAgentGrid.rowHeights
-        const startX = parentNode.position.x + (parentDimensions.width - subAgentGrid.width) / 2
-        const startY = parentNode.position.y + parentDimensions.height + SUB_AGENT_LAYOUT.parentGap
+      const subAgentGrid = getSubAgentGridMetricsFromDimensions(subAgentFootprints, layoutDirection)
+      const columnWidths = subAgentGrid.columnWidths
+      const rowHeights = subAgentGrid.rowHeights
+      const startX = parentNode.position.x + (parentDimensions.width - subAgentGrid.width) / 2
+      const startY = parentNode.position.y + parentDimensions.height + SUB_AGENT_LAYOUT.parentGap
 
-        subAgentIndices.forEach((subAgentIndex, index) => {
-          const subAgent = layoutedResult.nodes[subAgentIndex]
-          const dimensions = subAgentDimensions[index]
-          const footprint = subAgentFootprints[index]
-          const column = index % subAgentGrid.columns
-          const row = Math.floor(index / subAgentGrid.columns)
-          const cellX = startX + columnWidths.slice(0, column).reduce((sum, width) => sum + width, 0) + (column * SUB_AGENT_LAYOUT.cellGap)
-          const cellY = startY + rowHeights.slice(0, row).reduce((sum, height) => sum + height, 0) + (row * SUB_AGENT_LAYOUT.cellGap)
+      subAgentIndices.forEach((subAgentIndex, index) => {
+        const subAgent = layoutedResult.nodes[subAgentIndex]
+        const dimensions = subAgentDimensions[index]
+        const footprint = subAgentFootprints[index]
+        const column = index % subAgentGrid.columns
+        const row = Math.floor(index / subAgentGrid.columns)
+        const cellX = startX + columnWidths.slice(0, column).reduce((sum, width) => sum + width, 0) + (column * SUB_AGENT_LAYOUT.cellGap)
+        const cellY = startY + rowHeights.slice(0, row).reduce((sum, height) => sum + height, 0) + (row * SUB_AGENT_LAYOUT.cellGap)
 
-          layoutedResult.nodes[subAgentIndex] = {
-            ...subAgent,
-            position: {
-              x: cellX + (footprint.width - dimensions.width) / 2,
-              y: cellY
-            }
+        layoutedResult.nodes[subAgentIndex] = {
+          ...subAgent,
+          position: {
+            x: cellX + (footprint.width - dimensions.width) / 2,
+            y: cellY
           }
-        })
-      } else {
-        const totalWidth = subAgentFootprints.reduce((sum, footprint) => sum + footprint.width, 0) +
-          Math.max(0, subAgentFootprints.length - 1) * SUB_AGENT_LAYOUT.cellGap
-        const startX = parentNode.position.x + (parentDimensions.width - totalWidth) / 2
-        const startY = parentNode.position.y + parentDimensions.height + SUB_AGENT_LAYOUT.parentGap
-
-        let cursorX = startX
-        subAgentIndices.forEach((subAgentIndex, index) => {
-          const subAgent = layoutedResult.nodes[subAgentIndex]
-          const dimensions = subAgentDimensions[index]
-          const footprint = subAgentFootprints[index]
-
-          layoutedResult.nodes[subAgentIndex] = {
-            ...subAgent,
-            position: {
-              x: cursorX + (footprint.width - dimensions.width) / 2,
-              y: startY
-            }
-          }
-
-          cursorX += footprint.width + SUB_AGENT_LAYOUT.cellGap
-        })
-      }
+        }
+      })
     })
 
     // After Dagre + todo_task positioning, keep validation/learning/evaluation nodes
@@ -2877,6 +2869,43 @@ export function usePlanToFlow(
     const nodesAfterCollision = layoutedResult.nodes.length
     if (nodesBeforeCollision !== nodesAfterCollision) {
       // Node count changed during collision detection (log removed to reduce console noise)
+    }
+
+    if (layoutDirection === 'TB') {
+      const startHeaderNode = layoutedResult.nodes.find(node => node.id === 'start')
+      const variablesHeaderNode = layoutedResult.nodes.find(node => node.id === 'variables')
+      const workflowNodes = layoutedResult.nodes.filter(node =>
+        node.id !== 'start' &&
+        node.id !== 'variables' &&
+        !node.id.startsWith('orphan-')
+      )
+
+      if (startHeaderNode && variablesHeaderNode && workflowNodes.length > 0) {
+        const startDims = getNodeLayoutDimensions(startHeaderNode)
+        const variablesDims = getNodeLayoutDimensions(variablesHeaderNode)
+        const headerBottom = Math.max(
+          startHeaderNode.position.y + startDims.height,
+          variablesHeaderNode.position.y + variablesDims.height
+        )
+        const minWorkflowTop = headerBottom + HEADER_TO_WORKFLOW_GAP
+        const currentWorkflowTop = Math.min(...workflowNodes.map(node => node.position.y))
+        const shiftY = minWorkflowTop - currentWorkflowTop
+
+        if (shiftY > 0) {
+          layoutedResult.nodes = layoutedResult.nodes.map(node => {
+            if (node.id === 'start' || node.id === 'variables' || node.id.startsWith('orphan-')) {
+              return node
+            }
+            return {
+              ...node,
+              position: {
+                x: node.position.x,
+                y: node.position.y + shiftY
+              }
+            }
+          })
+        }
+      }
     }
 
     // Inject read-only context into step-type nodes.

@@ -48,6 +48,47 @@ const WORKFLOW_LAYOUT_VERSION = '2.0-tree'
 const FLOW_FIT_PADDING = 0.24
 const FLOW_FIT_MIN_ZOOM = 0.08
 const FLOW_FIT_MAX_ZOOM = 0.95
+const FLOW_HEADER_CLEARANCE = 180
+const FLOW_HEADER_NODE_HEIGHTS: Record<string, number> = {
+  start: 40,
+  variables: 160
+}
+
+function enforceWorkflowHeaderClearance(nodes: WorkflowNode[]): WorkflowNode[] {
+  const startNode = nodes.find(node => node.id === 'start')
+  const variablesNode = nodes.find(node => node.id === 'variables')
+  if (!startNode || !variablesNode) return nodes
+
+  const workflowNodes = nodes.filter(node =>
+    node.id !== 'start' &&
+    node.id !== 'variables' &&
+    !node.id.startsWith('orphan-')
+  )
+  if (workflowNodes.length === 0) return nodes
+
+  const headerBottom = Math.max(
+    startNode.position.y + FLOW_HEADER_NODE_HEIGHTS.start,
+    variablesNode.position.y + FLOW_HEADER_NODE_HEIGHTS.variables
+  )
+  const minWorkflowTop = headerBottom + FLOW_HEADER_CLEARANCE
+  const currentWorkflowTop = Math.min(...workflowNodes.map(node => node.position.y))
+  const shiftY = minWorkflowTop - currentWorkflowTop
+
+  if (shiftY <= 0) return nodes
+
+  return nodes.map(node => {
+    if (node.id === 'start' || node.id === 'variables' || node.id.startsWith('orphan-')) {
+      return node
+    }
+    return {
+      ...node,
+      position: {
+        x: node.position.x,
+        y: node.position.y + shiftY
+      }
+    }
+  })
+}
 
 import type { ExecutionOptions } from '../../../services/api-types'
 
@@ -2246,6 +2287,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 }
                 return node
               })
+              updated = enforceWorkflowHeaderClearance(updated)
+              buildNodeGroups(updated)
               
               // Clear current positions after use (they've been applied)
               if (positionsToUse === currentPositionsRef.current) {
@@ -2258,12 +2301,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           } else {
             // No saved layout - force header nodes immediately
             setNodes((nds) => {
-              return nds.map(node => {
+              const updated = nds.map(node => {
                 if (headerNodePositions.has(node.id)) {
                   return { ...node, position: headerNodePositions.get(node.id)! }
                 }
                 return node
               })
+              return enforceWorkflowHeaderClearance(updated)
             })
           }
         }).catch(err => {
@@ -2291,6 +2335,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 }
                 return node
               })
+              updated = enforceWorkflowHeaderClearance(updated)
+              buildNodeGroups(updated)
               
               // Clear current positions after use
               currentPositionsRef.current.clear()
@@ -2310,12 +2356,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         
         if (headerNodePositions.size > 0) {
           setNodes((nds) => {
-            return nds.map(node => {
+            const updated = nds.map(node => {
               if (headerNodePositions.has(node.id)) {
                 return { ...node, position: headerNodePositions.get(node.id)! }
               }
               return node
             })
+            return enforceWorkflowHeaderClearance(updated)
           })
           
           // Also use updateNode API to force positions

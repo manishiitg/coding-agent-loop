@@ -122,18 +122,6 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'migrate-to-sql',
-    description: 'Migrate db/*.json into a single db/db.sqlite and rewrite report widgets to SQL',
-    icon: <Server className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['workshop'],
-    source: 'builtin',
-    execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'migrate-to-sql')
-    }
-  },
-  {
     command: 'design-reporting-ui',
     description: 'Design the reporting UI from scratch: pick HTML (live data) or Markdown documents and build them',
     icon: <CheckCircle className="w-4 h-4" />,

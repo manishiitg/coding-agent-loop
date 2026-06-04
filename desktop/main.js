@@ -463,6 +463,21 @@ ipcMain.handle('capture-flow-image', async (event, { filename, format, rect }) =
   return { canceled: false, filePath };
 });
 
+// Capture a single on-screen rectangle and return it as a PNG data URL WITHOUT
+// writing to disk. Used by the report exporter to scroll-and-stitch a tall
+// report into one full-length, pixel-perfect image (capturePage only grabs the
+// visible viewport, so the renderer captures each slice and stitches them).
+ipcMain.handle('capture-region', async (event, { rect }) => {
+  const bounds = {
+    x: Math.max(0, Math.round(rect?.x || 0)),
+    y: Math.max(0, Math.round(rect?.y || 0)),
+    width: Math.max(1, Math.round(rect?.width || 1)),
+    height: Math.max(1, Math.round(rect?.height || 1)),
+  };
+  const image = await event.sender.capturePage(bounds);
+  return { dataUrl: image.toDataURL() };
+});
+
 // IPC Handler for Dock Badge
 ipcMain.on('set-dock-badge', (event, text) => {
   if (process.platform === 'darwin') {

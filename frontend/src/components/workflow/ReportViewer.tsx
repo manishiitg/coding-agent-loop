@@ -240,6 +240,120 @@ function svgDataUrlToPngDataUrl(svgDataUrl: string, scale = REPORT_PNG_EXPORT_SC
   })
 }
 
+function loadDataUrlImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('Failed to load captured slice'))
+    img.src = src
+  })
+}
+
+// Wait two animation frames so a programmatic scroll has actually painted before
+// the native capture reads the framebuffer.
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  })
+}
+
+// Nearest scrollable ancestor (the report's scroll pane), or null.
+function findScrollParent(el: HTMLElement): HTMLElement | null {
+  let node = el.parentElement
+  while (node) {
+    const overflowY = getComputedStyle(node).overflowY
+    if ((overflowY === 'auto' || overflowY === 'scroll') && node.scrollHeight > node.clientHeight + 1) {
+      return node
+    }
+    node = node.parentElement
+  }
+  return null
+}
+
+type ElectronCaptureRegion = (payload: {
+  rect: { x: number; y: number; width: number; height: number }
+}) => Promise<{ dataUrl?: string }>
+
+function electronCaptureRegion(): ElectronCaptureRegion | null {
+  const api = (window as unknown as { electronAPI?: { captureRegion?: ElectronCaptureRegion } }).electronAPI
+  return api?.captureRegion ?? null
+}
+
+// Pixel-perfect, full-length capture of an HTML report. `capturePage` only grabs
+// the visible viewport, so we scroll the report's pane through its full height,
+// native-capture each slice exactly as rendered (fonts, images, theme — true
+// WYSIWYG), and stitch them into one tall PNG. Returns a PNG data URL, or null
+// if native capture is unavailable (caller falls back to the SVG path).
+// Electron-only.
+async function captureReportIframeByStitching(target: HTMLElement): Promise<string | null> {
+  const captureRegion = electronCaptureRegion()
+  if (!captureRegion) return null
+  const iframe = target.querySelector('iframe')
+  if (!iframe) return null
+  const container = findScrollParent(target) || target.parentElement
+  if (!container) return null
+
+  const dpr = window.devicePixelRatio || 1
+  const startScroll = container.scrollTop
+  const fullWidth = Math.max(1, Math.ceil(iframe.getBoundingClientRect().width))
+  const fullHeight = Math.max(1, Math.ceil(iframe.getBoundingClientRect().height))
+
+  // Cap the stitched output so a very tall report can't exceed canvas limits.
+  const outScale = Math.max(0.1, Math.min(
+    dpr,
+    REPORT_PNG_EXPORT_MAX_SIDE / fullWidth,
+    REPORT_PNG_EXPORT_MAX_SIDE / fullHeight,
+    Math.sqrt(REPORT_PNG_EXPORT_MAX_PIXELS / (fullWidth * fullHeight)),
+  ))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(fullWidth * outScale))
+  canvas.height = Math.max(1, Math.round(fullHeight * outScale))
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+
+  // Content offset of the iframe's top within the scroll container's content box.
+  const c0 = container.getBoundingClientRect()
+  const i0 = iframe.getBoundingClientRect()
+  const iframeTopInContent = (i0.top - c0.top) + container.scrollTop
+
+  try {
+    let captured = 0
+    let guard = 0
+    while (captured < fullHeight && guard < 1000) {
+      guard += 1
+      container.scrollTop = iframeTopInContent + captured
+      await nextPaint()
+      const actual = container.scrollTop
+      // On the last slice scrollTop clamps below the target, so the row we want
+      // sits `within` px down from the pane's top — capture from there.
+      const within = Math.max(0, (iframeTopInContent + captured) - actual)
+      const cRect = container.getBoundingClientRect()
+      const iRect = iframe.getBoundingClientRect()
+      const sliceTopOnScreen = cRect.top + within
+      const sliceMaxVisible = cRect.bottom - sliceTopOnScreen
+      const sliceHeight = Math.min(sliceMaxVisible, fullHeight - captured)
+      if (sliceHeight < 1) break
+      const { dataUrl } = await captureRegion({
+        rect: { x: iRect.left, y: sliceTopOnScreen, width: iRect.width, height: sliceHeight },
+      })
+      if (!dataUrl) return null
+      const slice = await loadDataUrlImage(dataUrl)
+      ctx.drawImage(
+        slice,
+        0, Math.round(captured * outScale),
+        Math.round(fullWidth * outScale), Math.round(sliceHeight * outScale),
+      )
+      captured += sliceHeight
+    }
+  } finally {
+    container.scrollTop = startScroll
+  }
+
+  const out = canvas.toDataURL('image/png')
+  return out.startsWith('data:image/png;base64,') ? out : null
+}
+
 // Convert "#rgb" / "#rrggbb" / "rgb(r,g,b)" / "hsl(h,s%,l%)" to a Tailwind-style
 // "H S% L%" triplet. Tailwind's CSS variables expect that triplet so they can
 // be wrapped in `hsl(var(--name))` — passing a full `hsl(...)` or hex string
@@ -622,16 +736,31 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     setIsExportingReport(true)
     try {
       const filename = reportExportFilename(workspacePath, format)
-      // For an HTML-document report the content is a same-origin srcDoc iframe that
-      // the outer-DOM capture can't see — rasterize the iframe's own document so the
-      // export isn't blank. Fall back to the normal capture if it isn't reachable.
-      let svgDataUrl: string | null = null
-      if (htmlOnlyReport) {
-        const iframe = target.querySelector('iframe')
-        if (iframe) svgDataUrl = renderIframeDocumentToSvg(iframe)
+      let dataUrl: string | null = null
+      // Prefer a pixel-perfect native scroll-and-stitch capture for HTML reports
+      // (Electron only) so the export matches EXACTLY what the user sees — fonts,
+      // images, theme — and covers the full length past the viewport fold.
+      if (format === 'png' && htmlOnlyReport) {
+        try {
+          dataUrl = await captureReportIframeByStitching(target)
+        } catch (err) {
+          console.warn('[ReportView] Native report capture failed, falling back to SVG export:', err)
+          dataUrl = null
+        }
       }
-      if (!svgDataUrl) svgDataUrl = renderReportElementToSvg(target)
-      const dataUrl = format === 'png' ? await svgDataUrlToPngDataUrl(svgDataUrl) : svgDataUrl
+      // Fallback: serialize the DOM to SVG (web, or if native capture is
+      // unavailable). For an HTML report the content is a same-origin srcDoc
+      // iframe the outer-DOM capture can't see, so rasterize the iframe's own
+      // document; fall back to the normal capture if it isn't reachable.
+      if (!dataUrl) {
+        let svgDataUrl: string | null = null
+        if (htmlOnlyReport) {
+          const iframe = target.querySelector('iframe')
+          if (iframe) svgDataUrl = renderIframeDocumentToSvg(iframe)
+        }
+        if (!svgDataUrl) svgDataUrl = renderReportElementToSvg(target)
+        dataUrl = format === 'png' ? await svgDataUrlToPngDataUrl(svgDataUrl) : svgDataUrl
+      }
       const result = await saveReportImage(dataUrl, filename, format)
       if (result?.canceled) return
       const location = result?.filePath ? ` to ${result.filePath}` : ''

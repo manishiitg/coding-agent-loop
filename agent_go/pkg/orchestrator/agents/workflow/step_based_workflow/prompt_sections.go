@@ -290,6 +290,7 @@ func BuildPythonBestPractices(varMappingLines []string, hasInputArgs bool) strin
 	sb.WriteString("mcp_token     = os.environ['MCP_API_TOKEN']\n")
 	sb.WriteString("group_name    = os.environ.get('VAR_GROUP_NAME', '')  # current group name (e.g., 'production'); empty if no group\n")
 	sb.WriteString("```\n\n")
+	sb.WriteString("**sqlite `unable to open database file`?** You used a relative path. Python's `sqlite3` opens the workflow db fine for read AND write — just pass the absolute path: `sqlite3.connect(os.environ['DB_PATH'])`. This is NOT a mount/file-locking/sandbox problem: do NOT switch to the `sqlite3` CLI, do NOT generate `.sql` files, do NOT copy the db to `/tmp`. The only fix is the absolute `$DB_PATH`.\n\n")
 
 	// Input files
 	if hasInputArgs {

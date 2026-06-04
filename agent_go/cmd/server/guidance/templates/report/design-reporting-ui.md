@@ -22,6 +22,6 @@ STEP 4 — REGISTER, VALIDATE, PREVIEW
 - Call `preview_report_render` to confirm it renders with current data.
 
 STEP 5 — OPTIONAL VISUAL REVIEW
-- Only if the user asks to review it visually (or it's clearly part of the task): open `/report?path=<base64url path>` with `agent-browser` at desktop/tablet/mobile widths, render BOTH light and dark, `read_image`, and critique against the design bar — hierarchy, spacing, contrast in both themes, alignment, no clipping, chart legibility. Fix the real HTML and repeat until polished. Otherwise validate and stop. (Full instructions in the reference doc.)
+- Only if the user asks to review it visually (or it's clearly part of the task): open `/report?path=<base64url path>` with `agent-browser` at desktop/tablet/mobile widths, **screenshot with `--full`** (full scroll height — a plain screenshot clips below the viewport fold), render BOTH light and dark, `read_image`, and critique against the design bar — hierarchy, spacing, contrast in both themes, alignment, no clipping, chart legibility. Fix the real HTML and repeat until polished. Otherwise validate and stop. (Full instructions in the reference doc.)
 
 Before authoring anything large, show the user your plan: how many documents/tabs and what each shows. Author after they confirm, then validate and preview.

@@ -111,13 +111,12 @@ function requestChatScrollToBottom(): void {
   setTimeout(() => window.dispatchEvent(new CustomEvent('chat-scroll-to-bottom')), 400)
 }
 
+// Open a restored workflow session in the user's saved view-mode preference
+// (e.g. terminal), NOT whatever view the tab they're switching AWAY from
+// happened to be on. Copying the previous tab's mode is why a terminal-default
+// user sometimes landed in tree view after switching from the global monitor.
 function currentWorkflowViewMode(): EventViewMode {
-  const chatStore = useChatStore.getState()
-  const activeTab = chatStore.activeTabId ? chatStore.chatTabs[chatStore.activeTabId] : undefined
-  if (activeTab?.metadata?.mode === 'workflow') {
-    return normalizeEventViewMode(activeTab.viewMode)
-  }
-  return normalizeEventViewMode(chatStore.eventViewModePreference)
+  return normalizeEventViewMode(useChatStore.getState().eventViewModePreference)
 }
 
 export async function restoreWorkflowSessionChat(
@@ -194,24 +193,36 @@ export async function restoreWorkflowSessionChat(
       return tabId
     }
 
-    try {
-      const response = await agentApi.getRecentSessionEvents(session.session_id)
-      const restoredEvents = response.events || []
-      latestChatStore.setTabEvents(session.session_id, restoredEvents)
-      latestChatStore.setTabLastEventIndex(
-        session.session_id,
-        response.last_processed_index ?? (restoredEvents.length ? restoredEvents.length - 1 : -1),
-      )
-      latestChatStore.setTabStreaming(tabId, isActive || response.session_status === 'running')
-      latestChatStore.setTabCompleted(tabId, !isActive && response.session_status !== 'running')
-    } catch {
-      latestChatStore.setTabStreaming(tabId, isActive)
-      latestChatStore.setTabCompleted(tabId, !isActive)
-    }
-
+    // Reveal the terminal/chat IMMEDIATELY — don't block on the history fetch.
+    // The terminal pane loads its own content from the terminal API; the event
+    // history only feeds the error banners + routing badges. So flip the pane
+    // on now (optimistic streaming flags) and load the history in the
+    // BACKGROUND, populating those overlays when it arrives.
+    latestChatStore.setTabStreaming(tabId, isActive)
+    latestChatStore.setTabCompleted(tabId, !isActive)
     useWorkflowStore.getState().setShowChatArea(true)
     activateTab(tabId)
     if (options.scrollToBottom !== false) requestChatScrollToBottom()
+
+    void agentApi.getRecentSessionEvents(session.session_id)
+      .then(response => {
+        const store = useChatStore.getState()
+        const restoredEvents = response.events || []
+        // Don't clobber events the live stream may already have backfilled
+        // (a running session's SSE connects from index -1 the moment we reveal).
+        if (store.getTabEvents(session.session_id).length === 0) {
+          store.setTabEvents(session.session_id, restoredEvents)
+          store.setTabLastEventIndex(
+            session.session_id,
+            response.last_processed_index ?? (restoredEvents.length ? restoredEvents.length - 1 : -1),
+          )
+        }
+        store.setTabStreaming(tabId, isActive || response.session_status === 'running')
+        store.setTabCompleted(tabId, !isActive && response.session_status !== 'running')
+        if (options.scrollToBottom !== false) requestChatScrollToBottom()
+      })
+      .catch(() => { /* optimistic streaming flags already applied above */ })
+
     return tabId
   } finally {
     useRunningWorkflowsStore.getState().setIsRestoringWorkflow(false)

@@ -79,9 +79,6 @@ var allKinds = map[string]kindMeta{
 	// DB maintenance — applies guarded schema/contract cleanup to db/db.sqlite
 	"improve-database": {Group: "db", Description: "Improve db/db.sqlite table contracts, schemas, and report compatibility", Modes: []string{"workshop"}},
 
-	// DB migration — one-time conversion of db/*.json into db/db.sqlite + rewrites report widgets to SQL
-	"migrate-to-sql": {Group: "db", Description: "Migrate this workflow's db/*.json into a single db/db.sqlite (one table per file) and rewrite report widgets to query SQL", Modes: []string{"workshop"}},
-
 	// Improvements — metric-driven harden/replan flows
 	"define-success":     {Group: "improve", Description: "One-time bootstrap of optimization success criteria (Workflow Profile + metrics)", Modes: []string{"workshop"}},
 	"improve-workflow":   {Group: "improve", Description: "Unified metric-driven workflow improvement: harden or replan from run/eval evidence", Modes: []string{"workshop"}},

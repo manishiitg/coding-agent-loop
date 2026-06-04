@@ -23,129 +23,20 @@
 
 import type {
   ParsedReportPlan,
-  ReportAlertSeverity,
-  ReportChartType,
-  ReportDefaultSort,
   ReportFileListFormat,
   ReportFileRenderFormat,
   ReportEntry,
-  ReportFormatterName,
-  ReportPivotAggregate,
   ReportSection,
-  ReportSortDirection,
   ReportWidget,
   ReportWidgetKind,
   ReportWidgetRow,
 } from '../services/api-types'
 
-const KNOWN_FORMATTERS: ReportFormatterName[] = [
-  'currency-inr', 'currency-usd', 'percent', 'percent-1dp',
-  'short-date', 'long-date', 'datetime',
-  'number', 'number-1dp', 'number-2dp', 'bytes', 'boolean-icon',
-]
-const KNOWN_FORMATTER_SET = new Set<string>(KNOWN_FORMATTERS)
-const KNOWN_CHART_TYPES: ReportChartType[] = ['bar', 'line', 'area', 'pie']
-const KNOWN_CHART_TYPE_SET = new Set<string>(KNOWN_CHART_TYPES)
-const KNOWN_ALERT_SEVERITIES: ReportAlertSeverity[] = ['info', 'warning', 'error', 'success']
-const KNOWN_ALERT_SEVERITY_SET = new Set<string>(KNOWN_ALERT_SEVERITIES)
-const KNOWN_PIVOT_AGGREGATES: ReportPivotAggregate[] = ['sum', 'avg', 'count', 'min', 'max', 'first']
-const KNOWN_PIVOT_AGGREGATE_SET = new Set<string>(KNOWN_PIVOT_AGGREGATES)
 const KNOWN_FILE_RENDER_FORMATS: ReportFileRenderFormat[] = ['auto', 'markdown', 'html', 'text', 'code', 'json', 'image', 'video', 'audio', 'pdf', 'link']
 const KNOWN_FILE_RENDER_FORMAT_SET = new Set<string>(KNOWN_FILE_RENDER_FORMATS)
 const KNOWN_FILE_LIST_FORMATS: ReportFileListFormat[] = ['list', 'cards', 'table', 'gallery']
 const KNOWN_FILE_LIST_FORMAT_SET = new Set<string>(KNOWN_FILE_LIST_FORMATS)
 const LEGACY_EMPTY_WIDGET_KIND_SET = new Set<string>(['costs', 'evals', 'runs'])
-
-// Parses a comma-separated list of field names into a trimmed non-empty array.
-// Returns undefined when the resulting list is empty so callers can drop the key.
-function parseFieldList(raw: string): string[] | undefined {
-  const out: string[] = []
-  for (const part of raw.split(',')) {
-    const p = part.trim()
-    if (p) out.push(p)
-  }
-  return out.length > 0 ? out : undefined
-}
-
-// Parses `formats` value: comma-separated `field=preset` pairs.
-// Example: `balance=currency-inr, eval_score=percent-1dp, updated=datetime`
-// Unknown presets are silently dropped.
-function parseFormatsField(raw: string): Record<string, ReportFormatterName> | undefined {
-  const out: Record<string, ReportFormatterName> = {}
-  for (const part of raw.split(',')) {
-    const eq = part.indexOf('=')
-    if (eq <= 0) continue
-    const field = part.slice(0, eq).trim()
-    const preset = part.slice(eq + 1).trim()
-    if (!field || !preset) continue
-    if (!KNOWN_FORMATTER_SET.has(preset)) continue
-    out[field] = preset as ReportFormatterName
-  }
-  return Object.keys(out).length > 0 ? out : undefined
-}
-
-// Parses `sources` value: comma-separated `alias=db/file.json` pairs.
-// Example: `sources: runs=db/runs.json, costs=db/costs.json`
-function parseSourcesField(raw: string): Record<string, string> | undefined {
-  const out: Record<string, string> = {}
-  for (const part of raw.split(',')) {
-    const eq = part.indexOf('=')
-    if (eq <= 0) continue
-    const alias = part.slice(0, eq).trim()
-    const source = part.slice(eq + 1).trim()
-    if (!alias || !source) continue
-    out[alias] = source
-  }
-  return Object.keys(out).length > 0 ? out : undefined
-}
-
-function parseSourcesObject(raw: unknown): Record<string, string> | undefined {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
-  const out: Record<string, string> = {}
-  for (const [alias, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof value !== 'string') continue
-    const cleanAlias = alias.trim()
-    const cleanValue = value.trim()
-    if (cleanAlias && cleanValue) out[cleanAlias] = cleanValue
-  }
-  return Object.keys(out).length > 0 ? out : undefined
-}
-
-// Parses `colors` / `colors_dark` — comma-separated list of hex or CSS color names.
-// Invalid entries are dropped but don't invalidate the whole list.
-function parseColorsField(raw: string): string[] | undefined {
-  const out: string[] = []
-  for (const part of raw.split(',')) {
-    const c = part.trim()
-    if (c && isPlausibleColor(c)) out.push(c)
-  }
-  return out.length > 0 ? out : undefined
-}
-
-// Parses `color_map` — comma-separated `value=color` pairs.
-// Example: `ok=#10b981, warning=#f59e0b, failed=#ef4444`
-function parseColorMapField(raw: string): Record<string, string> | undefined {
-  const out: Record<string, string> = {}
-  for (const part of raw.split(',')) {
-    const eq = part.indexOf('=')
-    if (eq <= 0) continue
-    const value = part.slice(0, eq).trim()
-    const color = part.slice(eq + 1).trim()
-    if (!value || !color) continue
-    if (!isPlausibleColor(color)) continue
-    out[value] = color
-  }
-  return Object.keys(out).length > 0 ? out : undefined
-}
-
-// Accepts #rgb, #rrggbb, #rrggbbaa, or CSS named colors. Named-color validation
-// is loose — anything that looks like a word is passed through and the browser
-// decides. Prevents obvious junk like multi-word strings.
-const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
-const CSS_NAMED_RE = /^[a-zA-Z]+$/
-function isPlausibleColor(value: string): boolean {
-  return HEX_COLOR_RE.test(value) || CSS_NAMED_RE.test(value)
-}
 
 function parsePositiveInt(raw: string): number | undefined {
   const n = Number.parseInt(raw, 10)
@@ -313,117 +204,21 @@ function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
   if (typeof source.height === 'number' && Number.isFinite(source.height) && source.height > 0) widget.height = Math.trunc(source.height)
   if (typeof source.showIf === 'string') widget.showIf = source.showIf
 
-  if (widget.kind === 'table' || widget.kind === 'cards') {
-    if (source.formats && typeof source.formats === 'object' && !Array.isArray(source.formats)) {
-      const formats: Record<string, ReportFormatterName> = {}
-      for (const [key, value] of Object.entries(source.formats as Record<string, unknown>)) {
-        if (typeof value === 'string' && KNOWN_FORMATTER_SET.has(value)) formats[key] = value as ReportFormatterName
-      }
-      if (Object.keys(formats).length > 0) widget.formats = formats
+  if (widget.kind === 'file' || widget.kind === 'file-list') {
+    if (typeof source.renderFormat === 'string' && KNOWN_FILE_RENDER_FORMAT_SET.has(source.renderFormat.toLowerCase())) {
+      widget.renderFormat = source.renderFormat.toLowerCase() as ReportFileRenderFormat
     }
-    if (typeof source.pageSize === 'number' && Number.isFinite(source.pageSize) && source.pageSize > 0) widget.pageSize = Math.trunc(source.pageSize)
-    if (typeof source.enableSearch === 'boolean') widget.enableSearch = source.enableSearch
-    if (source.defaultSort && typeof source.defaultSort === 'object' && !Array.isArray(source.defaultSort)) {
-      const defaultSort = source.defaultSort as Record<string, unknown>
-      const field = typeof defaultSort.field === 'string'
-        ? defaultSort.field
-        : ''
-      const direction = typeof defaultSort.direction === 'string'
-        ? defaultSort.direction.toLowerCase()
-        : 'asc'
-      if (field) widget.defaultSort = { field, direction: direction === 'desc' ? 'desc' : 'asc' }
+    if (typeof source.listFormat === 'string' && KNOWN_FILE_LIST_FORMAT_SET.has(source.listFormat.toLowerCase())) {
+      widget.listFormat = source.listFormat.toLowerCase() as ReportFileListFormat
     }
-    if (Array.isArray(source.hideColumns)) {
-      const cols = source.hideColumns.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      if (cols.length > 0) widget.hideColumns = cols
+    if (typeof source.recursive === 'boolean') widget.recursive = source.recursive
+    if (Array.isArray(source.extensions)) {
+      const extensions = source.extensions
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map(value => value.trim().replace(/^\./, '').toLowerCase())
+      if (extensions.length > 0) widget.extensions = extensions
     }
-    if (Array.isArray(source.fields)) {
-      const fields = source.fields.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      if (fields.length > 0) widget.fields = fields
-    }
-    if (typeof source.cardTitleField === 'string') widget.cardTitleField = source.cardTitleField
-    if (typeof source.cardSubtitleField === 'string') widget.cardSubtitleField = source.cardSubtitleField
-    if (typeof source.cardDescriptionField === 'string') widget.cardDescriptionField = source.cardDescriptionField
-    if (typeof source.cardLinkField === 'string') widget.cardLinkField = source.cardLinkField
-    if (typeof source.cardImageField === 'string') widget.cardImageField = source.cardImageField
-  } else if (widget.kind === 'chart') {
-    if (typeof source.chartType === 'string' && KNOWN_CHART_TYPE_SET.has(source.chartType.toLowerCase())) widget.chartType = source.chartType.toLowerCase() as ReportChartType
-    if (typeof source.xAxis === 'string') widget.xAxis = source.xAxis
-    if (typeof source.yAxis === 'string') widget.yAxis = source.yAxis
-    if (typeof source.topN === 'number' && Number.isFinite(source.topN) && source.topN > 0) widget.topN = Math.trunc(source.topN)
-    if (typeof source.sort === 'string') {
-      const sort = source.sort.toLowerCase()
-      if (sort === 'asc' || sort === 'desc' || sort === 'none') widget.sort = sort as ReportSortDirection | 'none'
-    }
-    if (typeof source.showValues === 'boolean') widget.showValues = source.showValues
-    if (Array.isArray(source.series)) {
-      const series = source.series.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      if (series.length > 0) widget.series = series
-    }
-    if (Array.isArray(source.seriesColors)) {
-      const colors = source.seriesColors.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      if (colors.length > 0) widget.seriesColors = colors
-    }
-    if (typeof source.stacked === 'boolean') widget.stacked = source.stacked
-  } else if (widget.kind === 'stat') {
-    if (typeof source.label === 'string') widget.label = source.label
-    if (typeof source.prefix === 'string') widget.prefix = source.prefix
-    if (typeof source.suffix === 'string') widget.suffix = source.suffix
-    if (typeof source.format === 'string' && KNOWN_FORMATTER_SET.has(source.format)) widget.format = source.format as ReportFormatterName
-    if (typeof source.deltaPath === 'string') widget.deltaPath = source.deltaPath
-    if (typeof source.deltaFormat === 'string' && KNOWN_FORMATTER_SET.has(source.deltaFormat)) widget.deltaFormat = source.deltaFormat as ReportFormatterName
-    if (typeof source.trendPath === 'string') widget.trendPath = source.trendPath
-  } else if (widget.kind === 'alert') {
-    if (typeof source.severity === 'string' && KNOWN_ALERT_SEVERITY_SET.has(source.severity.toLowerCase())) widget.severity = source.severity.toLowerCase() as ReportAlertSeverity
-    if (typeof source.message === 'string') widget.message = source.message
-	  } else if (widget.kind === 'pivot') {
-    if (typeof source.rowsField === 'string') widget.rowsField = source.rowsField
-    else if (typeof source.rows === 'string') widget.rowsField = source.rows
-    if (typeof source.columnsField === 'string') widget.columnsField = source.columnsField
-    else if (typeof source.columns === 'string') widget.columnsField = source.columns
-    if (typeof source.valuesField === 'string') widget.valuesField = source.valuesField
-    else if (typeof source.values === 'string') widget.valuesField = source.values
-    if (typeof source.aggregate === 'string' && KNOWN_PIVOT_AGGREGATE_SET.has(source.aggregate.toLowerCase())) widget.aggregate = source.aggregate.toLowerCase() as ReportPivotAggregate
-    if (typeof source.format === 'string' && KNOWN_FORMATTER_SET.has(source.format)) widget.format = source.format as ReportFormatterName
-    if (typeof source.heatmap === 'boolean') widget.heatmap = source.heatmap
-	    if (Array.isArray(source.heatmapColors)) {
-	      const colors = source.heatmapColors.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-	      if (colors.length >= 2) widget.heatmapColors = [colors[0], colors[1]]
-	    }
-	  } else if (widget.kind === 'file' || widget.kind === 'file-list') {
-	    if (typeof source.renderFormat === 'string' && KNOWN_FILE_RENDER_FORMAT_SET.has(source.renderFormat.toLowerCase())) {
-	      widget.renderFormat = source.renderFormat.toLowerCase() as ReportFileRenderFormat
-	    }
-	    if (typeof source.listFormat === 'string' && KNOWN_FILE_LIST_FORMAT_SET.has(source.listFormat.toLowerCase())) {
-	      widget.listFormat = source.listFormat.toLowerCase() as ReportFileListFormat
-	    }
-	    if (typeof source.recursive === 'boolean') widget.recursive = source.recursive
-	    if (Array.isArray(source.extensions)) {
-	      const extensions = source.extensions
-	        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-	        .map(value => value.trim().replace(/^\./, '').toLowerCase())
-	      if (extensions.length > 0) widget.extensions = extensions
-	    }
-	    if (typeof source.maxItems === 'number' && Number.isFinite(source.maxItems) && source.maxItems > 0) widget.maxItems = Math.trunc(source.maxItems)
-	  }
-
-  if (widget.kind === 'chart' || widget.kind === 'table' || widget.kind === 'cards') {
-    if (Array.isArray(source.colors)) {
-      const colors = source.colors.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      if (colors.length > 0) widget.colors = colors
-    }
-    if (Array.isArray(source.colorsDark)) {
-      const colors = source.colorsDark.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      if (colors.length > 0) widget.colorsDark = colors
-    }
-    if (typeof source.colorBy === 'string') widget.colorBy = source.colorBy
-    if (source.colorMap && typeof source.colorMap === 'object' && !Array.isArray(source.colorMap)) {
-      const colorMap: Record<string, string> = {}
-      for (const [key, value] of Object.entries(source.colorMap as Record<string, unknown>)) {
-        if (typeof value === 'string') colorMap[key] = value
-      }
-      if (Object.keys(colorMap).length > 0) widget.colorMap = colorMap
-    }
+    if (typeof source.maxItems === 'number' && Number.isFinite(source.maxItems) && source.maxItems > 0) widget.maxItems = Math.trunc(source.maxItems)
   }
 
   const widgetLayout = parseWidgetLayout(source.layout)
@@ -479,19 +274,8 @@ function parseWidgetBlock(kind: string, body: string[]): ReportEntry | null {
 }
 
 function isWidgetKind(kind: string): kind is ReportWidgetKind {
-  return (
-    kind === 'text' ||
-    kind === 'markdown' ||
-    kind === 'chart' ||
-    kind === 'table' ||
-    kind === 'cards' ||
-    kind === 'stat' ||
-	    kind === 'alert' ||
-	    kind === 'pivot' ||
-	    kind === 'file' ||
-	    kind === 'file-list'
-	  )
-	}
+  return kind === 'markdown' || kind === 'file' || kind === 'file-list'
+}
 
 function isLegacyEmptyWidgetKind(kind: string): boolean {
   return LEGACY_EMPTY_WIDGET_KIND_SET.has(kind)
@@ -570,164 +354,26 @@ function applyOptionalFields(widget: ReportWidget, fields: Record<string, string
     if (n !== undefined) widget.height = n
   }
 
-  if (widget.kind === 'table' || widget.kind === 'cards') {
-    if (fields.formats) {
-      const fm = parseFormatsField(fields.formats)
-      if (fm) widget.formats = fm
+  if (widget.kind === 'file' || widget.kind === 'file-list') {
+    const renderFormat = (fields.render_format || fields.renderformat || '').toLowerCase()
+    if (KNOWN_FILE_RENDER_FORMAT_SET.has(renderFormat)) widget.renderFormat = renderFormat as ReportFileRenderFormat
+    const listFormat = (fields.list_format || fields.listformat || '').toLowerCase()
+    if (KNOWN_FILE_LIST_FORMAT_SET.has(listFormat)) widget.listFormat = listFormat as ReportFileListFormat
+    if (fields.recursive) {
+      const b = parseBool(fields.recursive)
+      if (b !== undefined) widget.recursive = b
     }
-    if (fields.page_size || fields.pagesize) {
-      const n = parsePositiveInt(fields.page_size || fields.pagesize)
-      if (n !== undefined) widget.pageSize = n
-    }
-    if (fields.enable_search || fields.enablesearch) {
-      const b = parseBool(fields.enable_search || fields.enablesearch)
-      if (b !== undefined) widget.enableSearch = b
-    }
-    if (fields.default_sort || fields.defaultsort) {
-      const s = parseDefaultSort(fields.default_sort || fields.defaultsort)
-      if (s) widget.defaultSort = s
-    }
-    if (fields.hide_columns || fields.hidecolumns) {
-      const list = (fields.hide_columns || fields.hidecolumns)
+    if (fields.extensions) {
+      const extensions = fields.extensions
         .split(',')
-        .map(s => s.trim())
+        .map(value => value.trim().replace(/^\./, '').toLowerCase())
         .filter(Boolean)
-      if (list.length > 0) widget.hideColumns = list
+      if (extensions.length > 0) widget.extensions = extensions
     }
-    if (fields.fields) {
-      const list = parseFieldList(fields.fields)
-      if (list) widget.fields = list
+    if (fields.max_items || fields.maxitems) {
+      const n = parsePositiveInt(fields.max_items || fields.maxitems)
+      if (n !== undefined) widget.maxItems = n
     }
-    if (fields.title_field || fields.titlefield) widget.cardTitleField = fields.title_field || fields.titlefield
-    if (fields.subtitle_field || fields.subtitlefield) widget.cardSubtitleField = fields.subtitle_field || fields.subtitlefield
-    if (fields.description_field || fields.descriptionfield) widget.cardDescriptionField = fields.description_field || fields.descriptionfield
-    if (fields.link_field || fields.linkfield) widget.cardLinkField = fields.link_field || fields.linkfield
-    if (fields.image_field || fields.imagefield) widget.cardImageField = fields.image_field || fields.imagefield
-  } else if (widget.kind === 'chart') {
-    if (fields.chart_type || fields.charttype) {
-      const t = (fields.chart_type || fields.charttype).toLowerCase()
-      if (KNOWN_CHART_TYPE_SET.has(t)) widget.chartType = t as ReportChartType
-    }
-    if (fields.x_axis || fields.xaxis) widget.xAxis = (fields.x_axis || fields.xaxis)
-    if (fields.y_axis || fields.yaxis) widget.yAxis = (fields.y_axis || fields.yaxis)
-    if (fields.top_n || fields.topn) {
-      const n = parsePositiveInt(fields.top_n || fields.topn)
-      if (n !== undefined) widget.topN = n
-    }
-    if (fields.sort) {
-      const s = fields.sort.toLowerCase()
-      if (s === 'asc' || s === 'desc' || s === 'none') {
-        widget.sort = s as ReportSortDirection | 'none'
-      }
-    }
-    if (fields.show_values || fields.showvalues) {
-      const b = parseBool(fields.show_values || fields.showvalues)
-      if (b !== undefined) widget.showValues = b
-    }
-    // Multi-series: `series: a, b, c` becomes [a, b, c]. When set, each field
-    // is plotted as its own series using x_axis as the shared category key.
-    if (fields.series) {
-      const list = parseFieldList(fields.series)
-      if (list) widget.series = list
-    }
-    if (fields.series_colors || fields.seriescolors) {
-      const list = parseColorsField(fields.series_colors || fields.seriescolors)
-      if (list) widget.seriesColors = list
-    }
-    if (fields.stacked) {
-      const b = parseBool(fields.stacked)
-      if (b !== undefined) widget.stacked = b
-    }
-  } else if (widget.kind === 'stat') {
-    if (fields.label) widget.label = fields.label
-    if (fields.prefix) widget.prefix = fields.prefix
-    if (fields.suffix) widget.suffix = fields.suffix
-    if (fields.format) {
-      const f = fields.format
-      if (KNOWN_FORMATTER_SET.has(f)) widget.format = f as ReportFormatterName
-    }
-    if (fields.delta_path || fields.deltapath) widget.deltaPath = fields.delta_path || fields.deltapath
-    if (fields.delta_format || fields.deltaformat) {
-      const f = fields.delta_format || fields.deltaformat
-      if (KNOWN_FORMATTER_SET.has(f)) widget.deltaFormat = f as ReportFormatterName
-    }
-    if (fields.trend_path || fields.trendpath) widget.trendPath = fields.trend_path || fields.trendpath
-  } else if (widget.kind === 'alert') {
-    if (fields.severity) {
-      const s = fields.severity.toLowerCase()
-      if (KNOWN_ALERT_SEVERITY_SET.has(s)) widget.severity = s as ReportAlertSeverity
-    }
-    if (fields.message) widget.message = fields.message
-	  } else if (widget.kind === 'pivot') {
-    if (fields.rows) widget.rowsField = fields.rows
-    if (fields.columns) widget.columnsField = fields.columns
-    if (fields.values) widget.valuesField = fields.values
-    if (fields.aggregate) {
-      const a = fields.aggregate.toLowerCase()
-      if (KNOWN_PIVOT_AGGREGATE_SET.has(a)) widget.aggregate = a as ReportPivotAggregate
-    }
-    if (fields.format) {
-      const f = fields.format
-      if (KNOWN_FORMATTER_SET.has(f)) widget.format = f as ReportFormatterName
-    }
-    if (fields.heatmap) {
-      const b = parseBool(fields.heatmap)
-      if (b !== undefined) widget.heatmap = b
-    }
-	    if (fields.heatmap_colors || fields.heatmapcolors) {
-	      const list = parseColorsField(fields.heatmap_colors || fields.heatmapcolors)
-	      if (list && list.length >= 2) widget.heatmapColors = [list[0], list[1]]
-	    }
-	  } else if (widget.kind === 'file' || widget.kind === 'file-list') {
-	    const renderFormat = (fields.render_format || fields.renderformat || '').toLowerCase()
-	    if (KNOWN_FILE_RENDER_FORMAT_SET.has(renderFormat)) widget.renderFormat = renderFormat as ReportFileRenderFormat
-	    const listFormat = (fields.list_format || fields.listformat || '').toLowerCase()
-	    if (KNOWN_FILE_LIST_FORMAT_SET.has(listFormat)) widget.listFormat = listFormat as ReportFileListFormat
-	    if (fields.recursive) {
-	      const b = parseBool(fields.recursive)
-	      if (b !== undefined) widget.recursive = b
-	    }
-	    if (fields.extensions) {
-	      const extensions = fields.extensions
-	        .split(',')
-	        .map(value => value.trim().replace(/^\./, '').toLowerCase())
-	        .filter(Boolean)
-	      if (extensions.length > 0) widget.extensions = extensions
-	    }
-	    if (fields.max_items || fields.maxitems) {
-	      const n = parsePositiveInt(fields.max_items || fields.maxitems)
-	      if (n !== undefined) widget.maxItems = n
-	    }
-	  }
-
-  // Color options — apply to chart, table, and cards; ignored for text widgets.
-  if (widget.kind === 'chart' || widget.kind === 'table' || widget.kind === 'cards') {
-    if (fields.colors) {
-      const c = parseColorsField(fields.colors)
-      if (c) widget.colors = c
-    }
-    if (fields.colors_dark || fields.colorsdark) {
-      const c = parseColorsField(fields.colors_dark || fields.colorsdark)
-      if (c) widget.colorsDark = c
-    }
-    if (fields.color_by || fields.colorby) {
-      widget.colorBy = fields.color_by || fields.colorby
-    }
-    if (fields.color_map || fields.colormap) {
-      const m = parseColorMapField(fields.color_map || fields.colormap)
-      if (m) widget.colorMap = m
-    }
-  }
-}
-
-// Parses `default_sort: <field>:<direction>` (e.g. `balance:desc`) or just `<field>` (asc).
-function parseDefaultSort(raw: string): ReportDefaultSort | undefined {
-  const parts = raw.split(':').map(s => s.trim())
-  if (parts.length === 0 || !parts[0]) return undefined
-  const direction = parts[1]?.toLowerCase()
-  return {
-    field: parts[0],
-    direction: direction === 'desc' ? 'desc' : 'asc',
   }
 }
 

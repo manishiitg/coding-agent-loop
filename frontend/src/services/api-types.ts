@@ -1612,7 +1612,6 @@ export interface EvaluationAggregate {
 // ---------------------------------------------------------------------------
 
 import type {
-  ReportPlanDocumentDefaultSort,
   ReportPlanDocumentSection,
   ReportPlanDocumentSectionLayout,
   ReportPlanDocumentWidget,
@@ -1623,11 +1622,9 @@ import type {
 // consuming field, so these are independently useful where callsites need
 // to name an enum (function args, switch exhaustiveness checks, etc.). They
 // must mirror the Go enum tags; if these drift, callsites will break.
-export type ReportWidgetKind = 'text' | 'markdown' | 'chart' | 'table' | 'cards' | 'stat' | 'alert' | 'pivot' | 'file' | 'file-list';
+export type ReportWidgetKind = 'markdown' | 'file' | 'file-list';
 export type ReportFileRenderFormat = 'auto' | 'markdown' | 'html' | 'text' | 'code' | 'json' | 'image' | 'video' | 'audio' | 'pdf' | 'link';
 export type ReportFileListFormat = 'list' | 'cards' | 'table' | 'gallery';
-export type ReportAlertSeverity = 'info' | 'warning' | 'error' | 'success';
-export type ReportPivotAggregate = 'sum' | 'avg' | 'count' | 'min' | 'max' | 'first';
 export type ReportFormatterName =
   | 'currency-inr'
   | 'currency-usd'
@@ -1641,12 +1638,8 @@ export type ReportFormatterName =
   | 'number-2dp'
   | 'bytes'
   | 'boolean-icon';
-export type ReportChartType = 'bar' | 'line' | 'area' | 'pie';
-export type ReportSortDirection = 'asc' | 'desc';
-
 // Direct re-exports of the generated types under their public names. Adding
 // a field to any of these = edit the Go struct and regenerate.
-export type ReportDefaultSort = ReportPlanDocumentDefaultSort;
 export type ReportWidgetLayout = ReportPlanDocumentWidgetLayout;
 export type ReportSectionLayout = ReportPlanDocumentSectionLayout;
 

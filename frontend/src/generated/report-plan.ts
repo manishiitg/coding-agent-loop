@@ -35,7 +35,7 @@ export interface ReportPlanDocumentEntry {
 export interface ReportPlanDocumentWidget {
   id?: string;
   hidden?: boolean;
-  kind: "text" | "markdown" | "chart" | "table" | "cards" | "stat" | "alert" | "pivot" | "file" | "file-list";
+  kind: "markdown" | "file" | "file-list";
   source?: string;
   db?: string;
   sql?: string;
@@ -44,84 +44,13 @@ export interface ReportPlanDocumentWidget {
   title?: string;
   description?: string;
   height?: number;
-  formats?: {
-    [k: string]: string;
-  };
-  pageSize?: number;
-  enableSearch?: boolean;
-  defaultSort?: ReportPlanDocumentDefaultSort;
-  hideColumns?: string[];
-  fields?: string[];
-  cardTitleField?: string;
-  cardSubtitleField?: string;
-  cardDescriptionField?: string;
-  cardLinkField?: string;
-  cardImageField?: string;
-  chartType?: "bar" | "line" | "area" | "pie";
-  xAxis?: string;
-  yAxis?: string;
-  topN?: number;
-  sort?: "asc" | "desc" | "none";
-  showValues?: boolean;
-  colors?: string[];
-  colorsDark?: string[];
-  colorBy?: string;
-  colorMap?: {
-    [k: string]: string;
-  };
   showIf?: string;
-  label?: string;
-  prefix?: string;
-  suffix?: string;
-  format?:
-    | "currency-inr"
-    | "currency-usd"
-    | "percent"
-    | "percent-1dp"
-    | "short-date"
-    | "long-date"
-    | "datetime"
-    | "number"
-    | "number-1dp"
-    | "number-2dp"
-    | "bytes"
-    | "boolean-icon";
-  deltaPath?: string;
-  deltaFormat?:
-    | "currency-inr"
-    | "currency-usd"
-    | "percent"
-    | "percent-1dp"
-    | "short-date"
-    | "long-date"
-    | "datetime"
-    | "number"
-    | "number-1dp"
-    | "number-2dp"
-    | "bytes"
-    | "boolean-icon";
-  trendPath?: string;
-  severity?: "info" | "warning" | "error" | "success";
-  message?: string;
-  rowsField?: string;
-  columnsField?: string;
-  valuesField?: string;
-  aggregate?: "sum" | "avg" | "count" | "min" | "max" | "first";
-  heatmap?: boolean;
-  heatmapColors?: string[];
-  series?: string[];
-  seriesColors?: string[];
-  stacked?: boolean;
   renderFormat?: "auto" | "markdown" | "html" | "text" | "code" | "json" | "image" | "video" | "audio" | "pdf" | "link";
   listFormat?: "list" | "cards" | "table" | "gallery";
   recursive?: boolean;
   extensions?: string[];
   maxItems?: number;
   layout?: ReportPlanDocumentWidgetLayout;
-}
-export interface ReportPlanDocumentDefaultSort {
-  field?: string;
-  direction?: "asc" | "desc";
 }
 export interface ReportPlanDocumentWidgetLayout {
   span?: number;

@@ -18,19 +18,6 @@ func fakeReportPlanReadFile(files map[string]string) func(context.Context, strin
 	}
 }
 
-// fakeReportPlanQueryDB returns rows for a data widget's SQL from an in-memory
-// map keyed by the (trimmed) SQL string. An unknown query returns an error,
-// mirroring a SQL failure against db/db.sqlite.
-func fakeReportPlanQueryDB(bySQL map[string][]map[string]interface{}) reportPlanQueryFunc {
-	return func(_ context.Context, _ string, sql string) ([]map[string]interface{}, error) {
-		rows, ok := bySQL[strings.TrimSpace(sql)]
-		if !ok {
-			return nil, fmt.Errorf("no such query: %s", sql)
-		}
-		return rows, nil
-	}
-}
-
 func diagnosticsContain(diags []reportPlanDiagnostic, want string) bool {
 	for _, diag := range diags {
 		if strings.Contains(diag.Message, want) {
@@ -40,196 +27,8 @@ func diagnosticsContain(diags []reportPlanDiagnostic, want string) bool {
 	return false
 }
 
-// A stat widget whose SQL resolves (via path) to a scalar is valid; an unknown
-// format preset is a (non-fatal) warning.
-func TestValidateReportPlanStatScalarValidWithFormatWarning(t *testing.T) {
-	t.Parallel()
-
-	workspacePath := "Workflow/linkedin"
-	files := map[string]string{
-		"Workflow/linkedin/reports/report_plan.json": `{
-			"version": 1,
-			"sections": [{
-				"heading": "Overview",
-				"entries": [{
-					"kind": "single",
-					"widget": {
-						"kind": "stat",
-						"title": "Total Posts",
-						"db": "db/db.sqlite",
-						"sql": "SELECT total_posts FROM summary",
-						"path": "0.total_posts",
-						"format": "count"
-					}
-				}]
-			}]
-		}`,
-	}
-	// Values mirror JSON-parsed query results (numbers arrive as float64).
-	queryDB := fakeReportPlanQueryDB(map[string][]map[string]interface{}{
-		"SELECT total_posts FROM summary": {{"total_posts": float64(14)}},
-	})
-
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), queryDB)
-	if err != nil {
-		t.Fatalf("validateReportPlan returned error: %v", err)
-	}
-	if !result.Valid {
-		t.Fatalf("expected result.Valid=true, got false with errors %#v", result.Errors)
-	}
-	if !diagnosticsContain(result.Warnings, `unknown format preset "count"`) {
-		t.Fatalf("expected unknown format warning, got %#v", result.Warnings)
-	}
-}
-
-// A stat widget whose SQL/path resolves to an array (not a scalar) is an error.
-func TestValidateReportPlanStatArrayIsError(t *testing.T) {
-	t.Parallel()
-
-	workspacePath := "Workflow/linkedin"
-	files := map[string]string{
-		"Workflow/linkedin/reports/report_plan.json": `{
-			"version": 1,
-			"sections": [{
-				"heading": "Overview",
-				"entries": [{
-					"kind": "single",
-					"widget": {
-						"kind": "stat",
-						"title": "Active Strategies",
-						"db": "db/db.sqlite",
-						"sql": "SELECT id FROM strategies WHERE active=1"
-					}
-				}]
-			}]
-		}`,
-	}
-	queryDB := fakeReportPlanQueryDB(map[string][]map[string]interface{}{
-		"SELECT id FROM strategies WHERE active=1": {{"id": "s-1"}, {"id": "s-2"}},
-	})
-
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), queryDB)
-	if err != nil {
-		t.Fatalf("validateReportPlan returned error: %v", err)
-	}
-	if result.Valid {
-		t.Fatalf("expected result.Valid=false, got true")
-	}
-	if !diagnosticsContain(result.Errors, "stat widgets require a scalar value") {
-		t.Fatalf("expected scalar-value error, got %#v", result.Errors)
-	}
-}
-
-// A table widget whose SQL returns an array-of-objects validates cleanly.
-func TestValidateReportPlanTableFromSQLValid(t *testing.T) {
-	t.Parallel()
-
-	workspacePath := "Workflow/orders"
-	files := map[string]string{
-		"Workflow/orders/reports/report_plan.json": `{
-			"version": 1,
-			"sections": [{
-				"heading": "Overview",
-				"entries": [{
-					"kind": "single",
-					"widget": {
-						"kind": "table",
-						"title": "Orders",
-						"db": "db/db.sqlite",
-						"sql": "SELECT status, amount FROM orders",
-						"fields": ["status", "amount"]
-					}
-				}]
-			}]
-		}`,
-	}
-	queryDB := fakeReportPlanQueryDB(map[string][]map[string]interface{}{
-		"SELECT status, amount FROM orders": {
-			{"status": "paid", "amount": 12.5},
-			{"status": "open", "amount": 99.0},
-		},
-	})
-
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), queryDB)
-	if err != nil {
-		t.Fatalf("validateReportPlan returned error: %v", err)
-	}
-	if !result.Valid {
-		t.Fatalf("expected result.Valid=true, got false with errors %#v", result.Errors)
-	}
-	if len(result.Errors) != 0 {
-		t.Fatalf("expected no validation errors, got %#v", result.Errors)
-	}
-}
-
-// A failing SQL query surfaces as a deterministic validation error.
-func TestValidateReportPlanSQLErrorIsError(t *testing.T) {
-	t.Parallel()
-
-	workspacePath := "Workflow/orders"
-	files := map[string]string{
-		"Workflow/orders/reports/report_plan.json": `{
-			"version": 1,
-			"sections": [{
-				"heading": "Overview",
-				"entries": [{
-					"kind": "single",
-					"widget": {
-						"kind": "table",
-						"title": "Orders",
-						"db": "db/db.sqlite",
-						"sql": "SELECT * FROM no_such_table"
-					}
-				}]
-			}]
-		}`,
-	}
-	// queryDB knows no queries → every query errors.
-	queryDB := fakeReportPlanQueryDB(map[string][]map[string]interface{}{})
-
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), queryDB)
-	if err != nil {
-		t.Fatalf("validateReportPlan returned error: %v", err)
-	}
-	if result.Valid {
-		t.Fatalf("expected result.Valid=false, got true")
-	}
-	if !diagnosticsContain(result.Errors, "SQL query failed") {
-		t.Fatalf("expected SQL query failure, got %#v", result.Errors)
-	}
-}
-
-// A data widget with `db` but no `sql` is an error.
-func TestValidateReportPlanDataWidgetMissingSQL(t *testing.T) {
-	t.Parallel()
-
-	workspacePath := "Workflow/orders"
-	files := map[string]string{
-		"Workflow/orders/reports/report_plan.json": `{
-			"version": 1,
-			"sections": [{
-				"heading": "Overview",
-				"entries": [{
-					"kind": "single",
-					"widget": {"kind": "table", "title": "Orders", "db": "db/db.sqlite"}
-				}]
-			}]
-		}`,
-	}
-
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), fakeReportPlanQueryDB(nil))
-	if err != nil {
-		t.Fatalf("validateReportPlan returned error: %v", err)
-	}
-	if result.Valid {
-		t.Fatalf("expected result.Valid=false, got true")
-	}
-	if !diagnosticsContain(result.Errors, "has no `sql`") {
-		t.Fatalf("expected missing-sql error, got %#v", result.Errors)
-	}
-}
-
-// Regression: theme and section.Layout must survive normalization.
+// Regression: theme and section.Layout must survive normalization. Reports are
+// HTML-only documents now, so the widget is a file artifact.
 func TestNormalizeReportPlanPreservesThemeAndLayout(t *testing.T) {
 	t.Parallel()
 
@@ -247,11 +46,10 @@ func TestNormalizeReportPlanPreservesThemeAndLayout(t *testing.T) {
 				ID:   "section-01-overview-entry-01",
 				Kind: "single",
 				Widget: &reportPlanDocumentWidget{
-					Kind:   "stat",
-					DB:     "db/db.sqlite",
-					SQL:    "SELECT n FROM strategies",
-					Path:   "0.n",
-					Layout: &reportPlanDocumentWidgetLayout{Span: 6},
+					Kind:         "file",
+					Source:       "docs/report.html",
+					RenderFormat: "html",
+					Layout:       &reportPlanDocumentWidgetLayout{Span: 6},
 				},
 			}},
 		}},
@@ -278,6 +76,34 @@ func TestNormalizeReportPlanPreservesThemeAndLayout(t *testing.T) {
 	}
 	if widget.Layout == nil || widget.Layout.Span != 6 {
 		t.Fatalf("widget.Layout stripped: got %+v", widget.Layout)
+	}
+}
+
+// Normalization drops legacy data-viz widget kinds (chart/table/stat/etc) since
+// reports are documents only.
+func TestNormalizeReportPlanDropsLegacyWidgetKinds(t *testing.T) {
+	t.Parallel()
+
+	doc := &reportPlanDocument{
+		Version: 1,
+		Sections: []reportPlanDocumentSection{{
+			Heading: "Overview",
+			Entries: []reportPlanDocumentEntry{
+				{Kind: "single", Widget: &reportPlanDocumentWidget{Kind: "stat", Source: "db/summary.json"}},
+				{Kind: "single", Widget: &reportPlanDocumentWidget{Kind: "markdown", Source: "docs/intro.md"}},
+			},
+		}},
+	}
+
+	out := normalizeReportPlanDocument(doc)
+	if len(out.Sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(out.Sections))
+	}
+	if got := len(out.Sections[0].Entries); got != 1 {
+		t.Fatalf("expected only the markdown widget to survive, got %d entries", got)
+	}
+	if kind := out.Sections[0].Entries[0].Widget.Kind; kind != "markdown" {
+		t.Fatalf("expected surviving widget kind=markdown, got %q", kind)
 	}
 }
 

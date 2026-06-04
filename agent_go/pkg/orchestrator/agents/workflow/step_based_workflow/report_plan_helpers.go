@@ -29,12 +29,6 @@ var (
 		"number": {}, "number-1dp": {}, "number-2dp": {},
 		"bytes": {}, "boolean-icon": {},
 	}
-	reportPlanKnownAlertSeverities = map[string]struct{}{
-		"info": {}, "warning": {}, "error": {}, "success": {},
-	}
-	reportPlanKnownPivotAggregates = map[string]struct{}{
-		"sum": {}, "avg": {}, "count": {}, "min": {}, "max": {}, "first": {},
-	}
 	reportPlanFenceRE    = regexp.MustCompile("^```\\s*widget:([\\w-]+)\\s*$")
 	reportPlanHexColorRE = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
 	reportPlanCSSNamedRE = regexp.MustCompile(`^[a-zA-Z]+$`)
@@ -128,67 +122,29 @@ type reportPlanDocumentDefaultSort struct {
 	Direction string `json:"direction,omitempty" jsonschema:"enum=asc,enum=desc"`
 }
 
+// Reports are HTML-only documents now: a widget renders a `markdown` body, a
+// `file` artifact (HTML/markdown/asset), or lists a folder via `file-list`. The
+// legacy data-viz widget kinds (chart/table/cards/stat/alert/pivot/text) and
+// their config fields were removed.
 type reportPlanDocumentWidget struct {
-	ID           string                         `json:"id,omitempty"`
-	Hidden       bool                           `json:"hidden,omitempty"`
-	Kind         string                         `json:"kind" jsonschema:"required,enum=text,enum=markdown,enum=chart,enum=table,enum=cards,enum=stat,enum=alert,enum=pivot,enum=file,enum=file-list"`
-	Source       string                         `json:"source,omitempty"`
-	DB           string                         `json:"db,omitempty"`
-	SQL          string                         `json:"sql,omitempty"`
-	Path         string                         `json:"path,omitempty"`
-	Filter       string                         `json:"filter,omitempty"`
-	Title        string                         `json:"title,omitempty"`
-	Description  string                         `json:"description,omitempty"`
-	Height       int                            `json:"height,omitempty"`
-	Formats      map[string]string              `json:"formats,omitempty"`
-	PageSize     int                            `json:"pageSize,omitempty"`
-	EnableSearch *bool                          `json:"enableSearch,omitempty"`
-	DefaultSort  *reportPlanDocumentDefaultSort `json:"defaultSort,omitempty"`
-	HideColumns  []string                       `json:"hideColumns,omitempty"`
-	// Cards-specific layout overrides. Tables ignore them at render time, but
-	// the schema accepts them on every widget so a single hand-edited plan can
-	// switch a widget between table and cards without losing the field hints.
-	Fields               []string                        `json:"fields,omitempty"`
-	CardTitleField       string                          `json:"cardTitleField,omitempty"`
-	CardSubtitleField    string                          `json:"cardSubtitleField,omitempty"`
-	CardDescriptionField string                          `json:"cardDescriptionField,omitempty"`
-	CardLinkField        string                          `json:"cardLinkField,omitempty"`
-	CardImageField       string                          `json:"cardImageField,omitempty"`
-	ChartType            string                          `json:"chartType,omitempty" jsonschema:"enum=bar,enum=line,enum=area,enum=pie"`
-	XAxis                string                          `json:"xAxis,omitempty"`
-	YAxis                string                          `json:"yAxis,omitempty"`
-	TopN                 int                             `json:"topN,omitempty"`
-	Sort                 string                          `json:"sort,omitempty" jsonschema:"enum=asc,enum=desc,enum=none"`
-	ShowValues           *bool                           `json:"showValues,omitempty"`
-	Colors               []string                        `json:"colors,omitempty"`
-	ColorsDark           []string                        `json:"colorsDark,omitempty"`
-	ColorBy              string                          `json:"colorBy,omitempty"`
-	ColorMap             map[string]string               `json:"colorMap,omitempty"`
-	ShowIf               string                          `json:"showIf,omitempty"`
-	Label                string                          `json:"label,omitempty"`
-	Prefix               string                          `json:"prefix,omitempty"`
-	Suffix               string                          `json:"suffix,omitempty"`
-	Format               string                          `json:"format,omitempty" jsonschema:"enum=currency-inr,enum=currency-usd,enum=percent,enum=percent-1dp,enum=short-date,enum=long-date,enum=datetime,enum=number,enum=number-1dp,enum=number-2dp,enum=bytes,enum=boolean-icon"`
-	DeltaPath            string                          `json:"deltaPath,omitempty"`
-	DeltaFormat          string                          `json:"deltaFormat,omitempty" jsonschema:"enum=currency-inr,enum=currency-usd,enum=percent,enum=percent-1dp,enum=short-date,enum=long-date,enum=datetime,enum=number,enum=number-1dp,enum=number-2dp,enum=bytes,enum=boolean-icon"`
-	TrendPath            string                          `json:"trendPath,omitempty"`
-	Severity             string                          `json:"severity,omitempty" jsonschema:"enum=info,enum=warning,enum=error,enum=success"`
-	Message              string                          `json:"message,omitempty"`
-	RowsField            string                          `json:"rowsField,omitempty"`
-	ColumnsField         string                          `json:"columnsField,omitempty"`
-	ValuesField          string                          `json:"valuesField,omitempty"`
-	Aggregate            string                          `json:"aggregate,omitempty" jsonschema:"enum=sum,enum=avg,enum=count,enum=min,enum=max,enum=first"`
-	Heatmap              *bool                           `json:"heatmap,omitempty"`
-	HeatmapColors        []string                        `json:"heatmapColors,omitempty"`
-	Series               []string                        `json:"series,omitempty"`
-	SeriesColors         []string                        `json:"seriesColors,omitempty"`
-	Stacked              *bool                           `json:"stacked,omitempty"`
-	RenderFormat         string                          `json:"renderFormat,omitempty" jsonschema:"enum=auto,enum=markdown,enum=html,enum=text,enum=code,enum=json,enum=image,enum=video,enum=audio,enum=pdf,enum=link"`
-	ListFormat           string                          `json:"listFormat,omitempty" jsonschema:"enum=list,enum=cards,enum=table,enum=gallery"`
-	Recursive            *bool                           `json:"recursive,omitempty"`
-	Extensions           []string                        `json:"extensions,omitempty"`
-	MaxItems             int                             `json:"maxItems,omitempty"`
-	Layout               *reportPlanDocumentWidgetLayout `json:"layout,omitempty"`
+	ID           string                          `json:"id,omitempty"`
+	Hidden       bool                            `json:"hidden,omitempty"`
+	Kind         string                          `json:"kind" jsonschema:"required,enum=markdown,enum=file,enum=file-list"`
+	Source       string                          `json:"source,omitempty"`
+	DB           string                          `json:"db,omitempty"`
+	SQL          string                          `json:"sql,omitempty"`
+	Path         string                          `json:"path,omitempty"`
+	Filter       string                          `json:"filter,omitempty"`
+	Title        string                          `json:"title,omitempty"`
+	Description  string                          `json:"description,omitempty"`
+	Height       int                             `json:"height,omitempty"`
+	ShowIf       string                          `json:"showIf,omitempty"`
+	RenderFormat string                          `json:"renderFormat,omitempty" jsonschema:"enum=auto,enum=markdown,enum=html,enum=text,enum=code,enum=json,enum=image,enum=video,enum=audio,enum=pdf,enum=link"`
+	ListFormat   string                          `json:"listFormat,omitempty" jsonschema:"enum=list,enum=cards,enum=table,enum=gallery"`
+	Recursive    *bool                           `json:"recursive,omitempty"`
+	Extensions   []string                        `json:"extensions,omitempty"`
+	MaxItems     int                             `json:"maxItems,omitempty"`
+	Layout       *reportPlanDocumentWidgetLayout `json:"layout,omitempty"`
 }
 
 // Public aliases for schema generation. The package-private types above are
@@ -337,10 +293,7 @@ func parseReportPlanJSONDocument(raw string) (*reportPlanDocument, error) {
 }
 
 func reportPlanDocumentWidgetKindAllowed(kind string) bool {
-	return kind == "text" || kind == "markdown" ||
-		kind == "table" || kind == "cards" || kind == "chart" ||
-		kind == "stat" || kind == "alert" || kind == "pivot" ||
-		kind == "file" || kind == "file-list"
+	return kind == "markdown" || kind == "file" || kind == "file-list"
 }
 
 func normalizeReportPlanDocument(doc *reportPlanDocument) *reportPlanDocument {
@@ -457,100 +410,7 @@ func reportPlanLegacyWidgetFromDocumentWidget(widget reportPlanDocumentWidget, s
 	if widget.Height > 0 {
 		fields["height"] = strconv.Itoa(widget.Height)
 	}
-	if len(widget.Formats) > 0 {
-		keys := make([]string, 0, len(widget.Formats))
-		for key := range widget.Formats {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		parts := make([]string, 0, len(keys))
-		for _, key := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%s", key, widget.Formats[key]))
-		}
-		fields["formats"] = strings.Join(parts, ", ")
-	}
-	if widget.PageSize > 0 {
-		fields["page_size"] = strconv.Itoa(widget.PageSize)
-	}
-	if widget.EnableSearch != nil {
-		fields["enable_search"] = strconv.FormatBool(*widget.EnableSearch)
-	}
-	if widget.DefaultSort != nil && widget.DefaultSort.Field != "" {
-		if widget.DefaultSort.Direction == "desc" {
-			fields["default_sort"] = widget.DefaultSort.Field + ":desc"
-		} else {
-			fields["default_sort"] = widget.DefaultSort.Field
-		}
-	}
-	if len(widget.HideColumns) > 0 {
-		fields["hide_columns"] = strings.Join(widget.HideColumns, ", ")
-	}
-	if len(widget.Fields) > 0 {
-		fields["fields"] = strings.Join(widget.Fields, ", ")
-	}
-	add("card_title_field", widget.CardTitleField)
-	add("card_subtitle_field", widget.CardSubtitleField)
-	add("card_description_field", widget.CardDescriptionField)
-	add("card_link_field", widget.CardLinkField)
-	add("card_image_field", widget.CardImageField)
-	add("chart_type", widget.ChartType)
-	add("x_axis", widget.XAxis)
-	add("y_axis", widget.YAxis)
-	if widget.TopN > 0 {
-		fields["top_n"] = strconv.Itoa(widget.TopN)
-	}
-	add("sort", widget.Sort)
-	if widget.ShowValues != nil {
-		fields["show_values"] = strconv.FormatBool(*widget.ShowValues)
-	}
-	if len(widget.Colors) > 0 {
-		fields["colors"] = strings.Join(widget.Colors, ", ")
-	}
-	if len(widget.ColorsDark) > 0 {
-		fields["colors_dark"] = strings.Join(widget.ColorsDark, ", ")
-	}
-	add("color_by", widget.ColorBy)
-	if len(widget.ColorMap) > 0 {
-		keys := make([]string, 0, len(widget.ColorMap))
-		for key := range widget.ColorMap {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		parts := make([]string, 0, len(keys))
-		for _, key := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%s", key, widget.ColorMap[key]))
-		}
-		fields["color_map"] = strings.Join(parts, ", ")
-	}
 	add("show_if", widget.ShowIf)
-	add("label", widget.Label)
-	add("prefix", widget.Prefix)
-	add("suffix", widget.Suffix)
-	add("format", widget.Format)
-	add("delta_path", widget.DeltaPath)
-	add("delta_format", widget.DeltaFormat)
-	add("trend_path", widget.TrendPath)
-	add("severity", widget.Severity)
-	add("message", widget.Message)
-	add("rows", widget.RowsField)
-	add("columns", widget.ColumnsField)
-	add("values", widget.ValuesField)
-	add("aggregate", widget.Aggregate)
-	if widget.Heatmap != nil {
-		fields["heatmap"] = strconv.FormatBool(*widget.Heatmap)
-	}
-	if len(widget.HeatmapColors) > 0 {
-		fields["heatmap_colors"] = strings.Join(widget.HeatmapColors, ", ")
-	}
-	if len(widget.Series) > 0 {
-		fields["series"] = strings.Join(widget.Series, ", ")
-	}
-	if len(widget.SeriesColors) > 0 {
-		fields["series_colors"] = strings.Join(widget.SeriesColors, ", ")
-	}
-	if widget.Stacked != nil {
-		fields["stacked"] = strconv.FormatBool(*widget.Stacked)
-	}
 	add("render_format", widget.RenderFormat)
 	add("list_format", widget.ListFormat)
 	if widget.Recursive != nil {
@@ -881,20 +741,6 @@ func reportPlanIsFileWidgetKind(kind string) bool {
 	return kind == "file" || kind == "file-list"
 }
 
-// reportPlanWidgetKindIsLegacy reports whether a widget kind belongs to the
-// deprecated data-viz widget grammar. Going forward a report is documents:
-// `markdown` (inline/static) or `file` (an HTML/markdown/artifact document).
-// Everything else (text/table/cards/chart/stat/alert/pivot/file-list) is legacy
-// and still renders for back-compat, but new reports should be HTML documents.
-func reportPlanWidgetKindIsLegacy(kind string) bool {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "text", "table", "cards", "chart", "stat", "alert", "pivot", "file-list":
-		return true
-	default:
-		return false
-	}
-}
-
 func reportPlanValidFileWidgetSource(source string) bool {
 	source = strings.TrimSpace(strings.ReplaceAll(source, "\\", "/"))
 	if source == "" || strings.HasPrefix(source, "/") || strings.Contains(source, "\x00") {
@@ -1012,11 +858,10 @@ func validateReportPlan(
 	sourceCache := map[string]interface{}{}
 	sourceMissing := map[string]bool{}
 
-	// Reports are now documents (HTML primary, Markdown secondary); the data-viz
-	// widget grammar is deprecated. We still validate + render legacy widget plans
-	// (graceful back-compat) so existing dashboards don't break, but emit one
-	// deprecation warning per plan steering new work to an HTML document.
-	legacyWidgetWarned := false
+	// Reports are HTML-only documents: a widget renders a markdown body, a file
+	// artifact (HTML/markdown/asset), or lists a folder via file-list. The
+	// data-viz widget grammar (chart/table/cards/stat/alert/pivot/text) was
+	// removed; unknown kinds are dropped during normalization before we get here.
 	for _, section := range sections {
 		for _, w := range section.Widgets {
 			result.Widgets++
@@ -1024,15 +869,6 @@ func validateReportPlan(
 			locator := fmt.Sprintf("%s@%s", w.Kind, sourceLabel)
 			if w.InRow {
 				locator = fmt.Sprintf("row[%d]:%s", w.RowIndex, locator)
-			}
-
-			if !legacyWidgetWarned && reportPlanWidgetKindIsLegacy(w.Kind) {
-				legacyWidgetWarned = true
-				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-					Severity: "warning", Section: section.Heading, Line: w.LineNum, Widget: locator,
-					Message: fmt.Sprintf("widget kind %q is deprecated — reports are now documents.", w.Kind),
-					Hint:    "New reports should be a single HTML document (live data via window.report.query) registered with a `file` widget (renderFormat: html), or a Markdown document for static narrative. Run /design-reporting-ui. Existing widget reports still render during the transition.",
-				})
 			}
 
 			// 1. Resolve the widget's data binding. File/file-list/markdown widgets
@@ -1114,22 +950,7 @@ func validateReportPlan(
 				}
 			}
 			resolved = applyReportPlanFilter(resolved, w.Filter)
-
-			// 5. Widget-kind-specific shape checks.
-			switch w.Kind {
-			case "table":
-				validateReportPlanTableShape(w, resolved, section.Heading, locator, result)
-			case "chart":
-				validateReportPlanChartShape(w, resolved, section.Heading, locator, result)
-			case "text":
-				// text widgets accept scalars, objects, arrays — nothing to enforce.
-			case "stat":
-				validateReportPlanStatShape(w, data, section.Heading, locator, result)
-			case "alert":
-				validateReportPlanAlertShape(w, data, section.Heading, locator, result)
-			case "pivot":
-				validateReportPlanPivotShape(w, resolved, section.Heading, locator, result)
-			}
+			_ = resolved
 
 			// 5b. show_if expression syntax — warn only. Same grammar as
 			// evaluateShowIf in reportPlanParser.ts. Resolved against `data`
@@ -1165,402 +986,6 @@ func validateReportPlan(
 		result.Suggestions = append(result.Suggestions, "Fix errors first. Review warnings too — some still degrade rendering even when the report remains technically valid.")
 	}
 	return result, nil
-}
-
-func validateReportPlanTableShape(
-	w *reportPlanWidget, resolved interface{},
-	section, locator string, result *reportPlanValidationResult,
-) {
-	arr, ok := resolved.([]interface{})
-	if !ok {
-		result.Valid = false
-		result.Errors = append(result.Errors, reportPlanDiagnostic{
-			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "widget:table needs an array of objects — resolved value is not an array.",
-			Hint:    "Point `path:` at an array (e.g. entities, or `$` if the whole file is a list).",
-		})
-		return
-	}
-	if len(arr) == 0 {
-		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "table resolves to an empty array — the widget will render nothing until the source is populated.",
-		})
-		return
-	}
-	first, ok := arr[0].(map[string]interface{})
-	if !ok {
-		result.Valid = false
-		result.Errors = append(result.Errors, reportPlanDiagnostic{
-			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "widget:table needs array-of-objects — array contains scalars.",
-			Hint:    "Reshape the step output to `[{col1: ..., col2: ...}, ...]`.",
-		})
-		return
-	}
-	if colorBy := reportPlanFirstNonEmpty(w.Fields["color_by"], w.Fields["colorby"]); colorBy != "" {
-		if _, ok := first[colorBy]; !ok {
-			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-				Message: fmt.Sprintf("color_by=%q not found on first row of data — rows won't be tinted.", colorBy),
-			})
-		}
-	}
-}
-
-func validateReportPlanChartShape(
-	w *reportPlanWidget, resolved interface{},
-	section, locator string, result *reportPlanValidationResult,
-) {
-	arr, ok := resolved.([]interface{})
-	if !ok {
-		result.Valid = false
-		result.Errors = append(result.Errors, reportPlanDiagnostic{
-			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "widget:chart needs an array — resolved value is not an array.",
-			Hint:    "Charts plot points; point `path:` at an array.",
-		})
-		return
-	}
-	if len(arr) == 0 {
-		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "chart resolves to an empty array — nothing will plot until the source is populated.",
-		})
-		return
-	}
-	first, ok := arr[0].(map[string]interface{})
-	if !ok {
-		result.Valid = false
-		result.Errors = append(result.Errors, reportPlanDiagnostic{
-			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "chart array must contain objects (got scalars).",
-			Hint:    "Reshape to `[{label: ..., value: ...}, ...]` or set x_axis/y_axis to real field names.",
-		})
-		return
-	}
-	xAxis := w.Fields["x_axis"]
-	if xAxis == "" {
-		xAxis = w.Fields["xaxis"]
-	}
-	yAxis := w.Fields["y_axis"]
-	if yAxis == "" {
-		yAxis = w.Fields["yaxis"]
-	}
-	_, hasLabel := first["label"]
-	_, hasValue := first["value"]
-	if xAxis == "" && yAxis == "" && !(hasLabel && hasValue) {
-		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "chart data has no `label`/`value` keys and no `x_axis`/`y_axis` set — renderer will guess columns.",
-			Hint:    "Either pre-shape data to `{label, value}` or set `x_axis: <field>` and `y_axis: <field>`.",
-		})
-	}
-	if xAxis != "" {
-		if _, ok := first[xAxis]; !ok {
-			if !strings.Contains(xAxis, ".") { // dot-paths are resolved at render-time; skip those
-				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-					Message: fmt.Sprintf("x_axis=%q not found on first row of data.", xAxis),
-				})
-			}
-		}
-	}
-	if yAxis != "" && !strings.Contains(yAxis, ".") {
-		if _, ok := first[yAxis]; !ok {
-			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-				Message: fmt.Sprintf("y_axis=%q not found on first row of data.", yAxis),
-			})
-		}
-	}
-	if colorBy := reportPlanFirstNonEmpty(w.Fields["color_by"], w.Fields["colorby"]); colorBy != "" {
-		if _, ok := first[colorBy]; !ok {
-			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-				Message: fmt.Sprintf("color_by=%q not found on first row of data — chart will fall back to default palette cycling.", colorBy),
-			})
-		}
-	}
-	// Multi-series: every field in `series` must exist on the first row. When
-	// series is set, x_axis is the label key; its presence was already checked
-	// above. Stacked requires a compatible chart_type (bar/area only).
-	if rawSeries := w.Fields["series"]; rawSeries != "" {
-		seriesFields := []string{}
-		for _, part := range strings.Split(rawSeries, ",") {
-			p := strings.TrimSpace(part)
-			if p != "" {
-				seriesFields = append(seriesFields, p)
-			}
-		}
-		if len(seriesFields) == 0 {
-			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-				Message: "series is set but parses to an empty list — multi-series is off.",
-			})
-		}
-		for _, f := range seriesFields {
-			if _, ok := first[f]; !ok {
-				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-					Message: fmt.Sprintf("series field %q not found on first row of data.", f),
-				})
-			}
-		}
-		if stacked := parseReportPlanBool(reportPlanFirstNonEmpty(w.Fields["stacked"])); stacked {
-			ct := strings.ToLower(reportPlanFirstNonEmpty(w.Fields["chart_type"], w.Fields["charttype"]))
-			if ct != "" && ct != "bar" && ct != "area" {
-				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-					Message: fmt.Sprintf("stacked has no effect on chart_type=%q — only bar and area stack.", ct),
-				})
-			}
-		}
-	}
-}
-
-// narrowSingularWidgetTarget mirrors the stat / alert renderer's evaluation
-// order: when a filter is set on an array source, narrow it to the matching
-// row(s) and unwrap a single match to its row before path resolution. Returns
-// the target that path: should resolve against, whether the renderer-order
-// narrowing actually fired (used to tailor error hints), and a skip flag for
-// "source has no rows for this filter yet" — the renderer surfaces that as a
-// friendly notice, so we shouldn't error here on volatile data.
-func narrowSingularWidgetTarget(
-	w *reportPlanWidget, data interface{}, kind, section, locator string,
-	result *reportPlanValidationResult,
-) (target interface{}, filterApplied bool, skip bool) {
-	target = data
-	if w.Filter == "" {
-		return target, false, false
-	}
-	arr, ok := data.([]interface{})
-	if !ok {
-		return target, false, false
-	}
-	filtered, _ := applyReportPlanFilter(arr, w.Filter).([]interface{})
-	switch len(filtered) {
-	case 0:
-		// Source is empty for this filter at validation time. Data is
-		// volatile (steps may not have run yet); the renderer shows a
-		// "no rows match filter" notice. Don't synthesize a structural
-		// error from a transient empty slice.
-		return target, true, true
-	case 1:
-		return filtered[0], true, false
-	default:
-		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-			Message: fmt.Sprintf("%s filter %q matches %d rows in current source — %s widgets need exactly one row. The renderer will show a multi-match error.", kind, w.Filter, len(filtered), kind),
-			Hint:    "Tighten the filter to match a single row, or precompute a singleton record.",
-		})
-		return filtered[0], true, false
-	}
-}
-
-// looksLikeArrayIndexedPath reports whether a path starts with a numeric
-// segment (e.g. "0", "0.balance", "12.field") — the most common shape for a
-// stat / alert path that ought to drop its index when filter narrows the
-// source to a single row.
-func looksLikeArrayIndexedPath(path string) bool {
-	if path == "" {
-		return false
-	}
-	first := path
-	if dot := strings.Index(path, "."); dot >= 0 {
-		first = path[:dot]
-	}
-	if first == "" {
-		return false
-	}
-	for _, r := range first {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-// widget:stat — `path:` must resolve to a scalar (string or number). When
-// `filter:` is set on an array source, the renderer narrows to a single row
-// first and resolves `path:` against that row, so `path:` should address a
-// field of the row directly (no leading array index). delta_path and
-// trend_path resolve against the same target as path.
-func validateReportPlanStatShape(
-	w *reportPlanWidget, data interface{},
-	section, locator string, result *reportPlanValidationResult,
-) {
-	target, filterApplied, skip := narrowSingularWidgetTarget(w, data, "stat", section, locator, result)
-	if skip {
-		return
-	}
-	v, ok := resolveReportPlanPath(target, w.Path)
-	if !ok {
-		result.Valid = false
-		pathLabel := w.Path
-		if pathLabel == "" {
-			pathLabel = "(root)"
-		}
-		sourceLabel := reportPlanWidgetSourceLabel(w)
-		hint := "Point `path:` at a scalar field (number or short string)."
-		if filterApplied && looksLikeArrayIndexedPath(w.Path) {
-			hint = "With `filter:` set, the source narrows to a single row before `path:` resolves — drop the leading array index from `path:` and use the bare field name (e.g. `balance` instead of `0.balance`)."
-		}
-		result.Errors = append(result.Errors, reportPlanDiagnostic{
-			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
-			Message: fmt.Sprintf("stat `path:` %q does not resolve in %s.", pathLabel, sourceLabel),
-			Hint:    hint,
-		})
-		return
-	}
-	switch v.(type) {
-	case nil, bool, float64, string:
-		// acceptable scalars (json.Unmarshal uses float64 for numbers)
-	default:
-		result.Valid = false
-		result.Errors = append(result.Errors, reportPlanDiagnostic{
-			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "stat `path:` resolves to an object or array — stat widgets require a scalar value.",
-			Hint:    "Pick a leaf field or write a summary JSON file with precomputed scalar metrics; otherwise the UI will stringify the JSON into the KPI tile.",
-		})
-	}
-	if dp := reportPlanFirstNonEmpty(w.Fields["delta_path"], w.Fields["deltapath"]); dp != "" {
-		if _, ok := resolveReportPlanPath(target, dp); !ok {
-			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-				Message: fmt.Sprintf("delta_path %q does not resolve in %s — the delta arrow won't render.", dp, reportPlanWidgetSourceLabel(w)),
-			})
-		}
-	}
-	if tp := reportPlanFirstNonEmpty(w.Fields["trend_path"], w.Fields["trendpath"]); tp != "" {
-		resolved, okTP := resolveReportPlanPath(target, tp)
-		if !okTP {
-			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-				Message: fmt.Sprintf("trend_path %q does not resolve in %s — sparkline won't render.", tp, reportPlanWidgetSourceLabel(w)),
-			})
-		} else if _, isArr := resolved.([]interface{}); !isArr {
-			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-				Message: "trend_path resolves to a non-array — sparkline needs an array of numbers.",
-			})
-		}
-	}
-}
-
-// widget:alert — severity must be known; either title/message should be set
-// (otherwise the banner renders only the raw value). show_if is strongly
-// recommended on alerts but not required.
-func validateReportPlanAlertShape(
-	w *reportPlanWidget, data interface{},
-	section, locator string, result *reportPlanValidationResult,
-) {
-	if sev := strings.ToLower(reportPlanFirstNonEmpty(w.Fields["severity"])); sev != "" {
-		if _, ok := reportPlanKnownAlertSeverities[sev]; !ok {
-			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-				Message: fmt.Sprintf("unknown severity %q — defaulting to info.", sev),
-				Hint:    "Use one of: info, warning, error, success.",
-			})
-		}
-	}
-	if w.Fields["title"] == "" && w.Fields["message"] == "" {
-		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "alert has no title or message — it will render just the resolved value.",
-			Hint:    "Add `title:` or `message:`. Use `{value}` in message to interpolate the resolved path.",
-		})
-	}
-	if showIf := reportPlanFirstNonEmpty(w.Fields["show_if"], w.Fields["showif"]); showIf == "" {
-		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "alert without show_if renders unconditionally — usually alerts should only show when a condition is true.",
-			Hint:    "Add `show_if: <path> > 0` (or similar) so the banner appears only when relevant.",
-		})
-	}
-	// Validate that path resolves when set (used for {value} interpolation).
-	// Mirror the alert renderer's filter → unwrap → path order so a stale
-	// `0.field` path with a filter is flagged at validation time rather than
-	// silently swallowed.
-	if w.Path != "" {
-		target, filterApplied, skip := narrowSingularWidgetTarget(w, data, "alert", section, locator, result)
-		if !skip {
-			if _, ok := resolveReportPlanPath(target, w.Path); !ok {
-				hint := ""
-				if filterApplied && looksLikeArrayIndexedPath(w.Path) {
-					hint = "With `filter:` set, the source narrows to a single row before `path:` resolves — drop the leading array index from `path:` and use the bare field name."
-				}
-				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-					Message: fmt.Sprintf("alert path %q does not resolve — {value} interpolation will render empty.", w.Path),
-					Hint:    hint,
-				})
-			}
-		}
-	}
-}
-
-// widget:pivot — rows/columns/values are required; resolved must be array of
-// objects; aggregate must be known; first row must have all three fields.
-func validateReportPlanPivotShape(
-	w *reportPlanWidget, resolved interface{},
-	section, locator string, result *reportPlanValidationResult,
-) {
-	rows := reportPlanFirstNonEmpty(w.Fields["rows"])
-	cols := reportPlanFirstNonEmpty(w.Fields["columns"])
-	vals := reportPlanFirstNonEmpty(w.Fields["values"])
-	if rows == "" || cols == "" || vals == "" {
-		result.Valid = false
-		result.Errors = append(result.Errors, reportPlanDiagnostic{
-			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "pivot requires `rows:`, `columns:`, and `values:` fields.",
-			Hint:    "Example: `rows: team`, `columns: month`, `values: net_salary`, `aggregate: sum`.",
-		})
-		return
-	}
-	if agg := strings.ToLower(reportPlanFirstNonEmpty(w.Fields["aggregate"])); agg != "" {
-		if _, ok := reportPlanKnownPivotAggregates[agg]; !ok {
-			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-				Message: fmt.Sprintf("unknown aggregate %q — defaulting to sum.", agg),
-				Hint:    "Use one of: sum, avg, count, min, max, first.",
-			})
-		}
-	}
-	arr, ok := resolved.([]interface{})
-	if !ok {
-		result.Valid = false
-		result.Errors = append(result.Errors, reportPlanDiagnostic{
-			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "pivot needs an array of objects — resolved value is not an array.",
-			Hint:    "Point `path:` at an array (e.g. records).",
-		})
-		return
-	}
-	if len(arr) == 0 {
-		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "pivot resolves to an empty array — the grid will render blank until the source is populated.",
-		})
-		return
-	}
-	first, ok := arr[0].(map[string]interface{})
-	if !ok {
-		result.Valid = false
-		result.Errors = append(result.Errors, reportPlanDiagnostic{
-			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "pivot array must contain objects (got scalars).",
-		})
-		return
-	}
-	for _, f := range []string{rows, cols, vals} {
-		if _, ok := first[f]; !ok {
-			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-				Message: fmt.Sprintf("pivot field %q not found on first row of data.", f),
-			})
-		}
-	}
 }
 
 // Small helper mirroring parseBool in reportPlanParser.ts. Only treats 'true'
@@ -2443,61 +1868,11 @@ func registerReportPlanManagementTools(
 		"properties": {
 			"id": { "type": "string" },
 			"hidden": { "type": "boolean" },
-			"db": { "type": "string", "description": "SQLite database path for DATA widgets (table, chart, cards, stat, alert, pivot, text) — always \"db/db.sqlite\". The widget runs sql against it." },
-			"sql": { "type": "string", "description": "Read-only SQL query whose result rows feed a data widget. Do joins, aggregation, filtering, sorting, and limiting in SQL, e.g. \"SELECT name, score FROM companies ORDER BY score DESC LIMIT 20\". For a stat (single value) select one row and column, e.g. \"SELECT total FROM summary LIMIT 1\". Nested JSON columns are queryable with json_extract / json_each." },
-			"source": { "type": "string", "description": "File path for file/file-list/markdown widgets ONLY (under db/, knowledgebase/, or docs/). Data widgets use db + sql instead, not source." },
-			"path": { "type": "string", "description": "Optional dot-notation path into the SQL result rows. Usually unneeded — the rows array is the widget input directly. For stat / alert widgets the renderer applies filter first then resolves path against the matched row, so when filter is set, path must be a bare column name (e.g. \"balance\"), NOT \"0.balance\". Use a leading numeric index only with no filter to pick by position." },
-			"filter": { "type": "string", "description": "Narrows the result rows to matching ones. Format: \"key=value\" (string equality). For stat / alert widgets, filter picks one row by a column value. Prefer doing this in the SQL WHERE clause; filter is a post-query convenience." },
+			"source": { "type": "string", "description": "File path for file/file-list/markdown widgets (under db/, knowledgebase/, or docs/). For a markdown or file widget, point at the document; for file-list point at a folder." },
 			"title": { "type": "string" },
 			"description": { "type": "string" },
 			"height": { "type": "integer" },
-			"formats": { "type": "object", "additionalProperties": { "type": "string" } },
-			"pageSize": { "type": "integer" },
-			"enableSearch": { "type": "boolean" },
-			"defaultSort": {
-				"type": "object",
-				"properties": {
-					"field": { "type": "string" },
-					"direction": { "type": "string", "enum": ["asc", "desc"] }
-				},
-				"additionalProperties": false
-			},
-			"hideColumns": { "type": "array", "items": { "type": "string" } },
-			"fields": { "type": "array", "items": { "type": "string" } },
-			"cardTitleField": { "type": "string" },
-			"cardSubtitleField": { "type": "string" },
-			"cardDescriptionField": { "type": "string" },
-			"cardLinkField": { "type": "string" },
-			"cardImageField": { "type": "string" },
-			"chartType": { "type": "string", "enum": ["bar", "line", "area", "pie"] },
-			"xAxis": { "type": "string" },
-			"yAxis": { "type": "string" },
-			"topN": { "type": "integer" },
-			"sort": { "type": "string", "enum": ["asc", "desc", "none"] },
-			"showValues": { "type": "boolean" },
-			"colors": { "type": "array", "items": { "type": "string" } },
-			"colorsDark": { "type": "array", "items": { "type": "string" } },
-			"colorBy": { "type": "string" },
-			"colorMap": { "type": "object", "additionalProperties": { "type": "string" } },
 			"showIf": { "type": "string" },
-			"label": { "type": "string" },
-			"prefix": { "type": "string" },
-			"suffix": { "type": "string" },
-			"format": { "type": "string" },
-			"deltaPath": { "type": "string" },
-			"deltaFormat": { "type": "string" },
-			"trendPath": { "type": "string" },
-			"severity": { "type": "string", "enum": ["info", "warning", "error", "success"] },
-			"message": { "type": "string" },
-			"rowsField": { "type": "string" },
-			"columnsField": { "type": "string" },
-			"valuesField": { "type": "string" },
-			"aggregate": { "type": "string", "enum": ["sum", "avg", "count", "min", "max", "first"] },
-			"heatmap": { "type": "boolean" },
-			"heatmapColors": { "type": "array", "items": { "type": "string" } },
-			"series": { "type": "array", "items": { "type": "string" } },
-			"seriesColors": { "type": "array", "items": { "type": "string" } },
-			"stacked": { "type": "boolean" },
 			"renderFormat": { "type": "string", "enum": ["auto", "markdown", "html", "text", "code", "json", "image", "video", "audio", "pdf", "link"], "description": "file widget only. auto infers from extension; explicit formats render markdown/html/text/code/json/image/video/audio/pdf or a link tile." },
 			"listFormat": { "type": "string", "enum": ["list", "cards", "table", "gallery"], "description": "file-list widget only. gallery is best for image/video evidence; table is best for dense inventories." },
 			"recursive": { "type": "boolean", "description": "file-list widget only. Whether to include nested folder files." },
@@ -2522,8 +1897,8 @@ func registerReportPlanManagementTools(
 			"section_heading": { "type": "string" },
 			"row_id": { "type": "string" },
 			"widget_id": { "type": "string" },
-			"tab": { "type": "string", "description": "Optional tab label for this widget entry when the section layout mode is tabs. Use the user-facing route name, e.g. \"Happy path\" or \"Fallback route\". Prefer setting this for widgets tied to todo_task/orchestration/routing outputs so each route has its own tab. Updating an existing widget with tab sets or clears the containing entry tab." },
-			"kind": { "type": "string", "enum": ["text", "markdown", "table", "cards", "chart", "stat", "alert", "pivot", "file", "file-list"] },
+			"tab": { "type": "string", "description": "Optional tab label for this widget entry when the section layout mode is tabs. Use the user-facing route name, e.g. \"Happy path\" or \"Fallback route\". Updating an existing widget with tab sets or clears the containing entry tab." },
+			"kind": { "type": "string", "enum": ["markdown", "file", "file-list"] },
 			"index": { "type": "integer" },
 			"config": %s
 		},
@@ -2534,11 +1909,10 @@ func registerReportPlanManagementTools(
 
 	mcpAgent.RegisterCustomTool(
 		"upsert_report_widget",
-		"Create or update one report widget in reports/report_plan.json. If widget_id exists, this merges the provided config into the existing widget. If widget_id is omitted, it creates a new widget in the target section; pass row_id to insert into an existing row entry.\n\n"+
-			"Supported widget kinds: text, markdown (formatted text/markdown body), table, cards (record tiles with title/subtitle/description/image fields — set cardTitleField etc.), chart (bar/line/area/pie), stat (KPI tile + delta + sparkline), alert (severity callout), pivot (rows × cols × aggregate), file (render one stored artifact), file-list (list a folder of artifacts).\n\n"+
-			"Data binding: data widgets (table/chart/cards/stat/alert/pivot/text) use `db: \"db/db.sqlite\"` plus a read-only `sql` query — do joins, aggregation, filtering, sorting, and limiting in SQL (`SELECT ... JOIN ... GROUP BY ... ORDER BY ... LIMIT`). Do not create helper tables only to reshape report data when one `sql` can do it. For artifacts, use `kind:\"file\"` with source under db/, knowledgebase/, or docs/ and optional `renderFormat`; for multiple images/videos/PDFs/etc use `kind:\"file-list\"` with source folder plus `listFormat`, `recursive`, `extensions`, and `maxItems`.\n\n"+
-			"Chart configuration: single-series uses xAxis + yAxis (or relies on canonical {label,value} keys). For multi-series — overlaying multiple lines/bars on the same axes — set `series: [\"field_a\", \"field_b\", ...]` and `xAxis` (each row in the source contributes one x-tick; each series field becomes one plotted line/bar). Optional: `seriesColors` (hex parallel to series), `stacked: true` for bar/area to stack instead of group. Tooltip and legend render automatically.\n\n"+
-			"Per-widget grid layout: when the parent section has section.layout.columns set, pass `layout: { span: N, minWidth: 320 }` in config to span N grid columns. For route dashboards, prefer set_section_layout(mode=\"tabs\") on one shared conceptual section and pass `tab: \"Route name\"` so entries with the same route label render together. Use tabs by default for todo_task predefined routes, orchestration/routing branches, or any plan where route outputs would otherwise be mixed in one long section; use a combined table only when the user explicitly wants cross-route comparison or the route outputs share one schema. Use set_report_theme to swap the chart palette report-wide.",
+		"Create or update one report widget in reports/report_plan.json. Reports are documents only. If widget_id exists, this merges the provided config into the existing widget. If widget_id is omitted, it creates a new widget in the target section; pass row_id to insert into an existing row entry.\n\n"+
+			"Supported widget kinds: markdown (a formatted text/markdown body), file (render one stored artifact — typically an HTML report document via renderFormat: html, or a markdown document), file-list (list a folder of artifacts).\n\n"+
+			"Binding: every widget points `source` at a path under db/, knowledgebase/, or docs/. For a `file` widget set optional `renderFormat` (html for the primary report document); for multiple images/videos/PDFs use `kind:\"file-list\"` with a source folder plus `listFormat`, `recursive`, `extensions`, and `maxItems`.\n\n"+
+			"Per-widget grid layout: when the parent section has section.layout.columns set, pass `layout: { span: N, minWidth: 320 }` in config to span N grid columns. For route dashboards, prefer set_section_layout(mode=\"tabs\") on one shared conceptual section and pass `tab: \"Route name\"` so entries with the same route label render together.",
 		upsertParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)

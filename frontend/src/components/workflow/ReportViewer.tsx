@@ -4,26 +4,16 @@
 // See docs/workflow/persistent_stores_design.md.
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { TextWidget } from './reportWidgets/TextWidget'
 import { MarkdownWidget } from './reportWidgets/MarkdownWidget'
-import { StatWidget } from './reportWidgets/StatWidget'
-import { AlertWidget } from './reportWidgets/AlertWidget'
-import { CardsWidget } from './reportWidgets/CardsWidget'
-import { TableWidget } from './reportWidgets/TableWidget'
-import { PivotWidget } from './reportWidgets/PivotWidget'
-import { ChartWidget } from './reportWidgets/ChartWidget'
 import { FileListWidget, FileWidget } from './reportWidgets/FileWidget'
 import { FilePreviewModal } from './reportWidgets/FilePreviewModal'
 import { ReportEmbedProvider, type ReportDataApi } from './reportWidgets/reportEmbedContext'
 import {
-  StandaloneWidgetNotice,
   WidgetError,
   WidgetShell,
   WidgetVisibilityButton,
   isDocumentWidget,
   isHtmlDocumentWidget,
-  resolveSingularWidgetSource,
-  type SingularWidgetSourceResolution,
 } from './reportWidgets/shared'
 import { useCompactWidgetLayout, useContainerSizeTier } from './reportWidgets/tableHelpers'
 import { BarChart3, Check, ChevronDown, Download, Laptop, Loader2, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
@@ -359,13 +349,6 @@ interface ReportViewProps {
 // `null` = fetched and missing/malformed; otherwise the parsed JSON value.
 type SourceCache = Record<string, unknown>
 
-// SQL query result for a data widget. `undefined` = loading; `null` = error.
-type WidgetSQLState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'success'; rows: Record<string, unknown>[] }
-  | { status: 'error'; message: string }
-
 type WidgetSourceInput =
   | { status: 'ok'; value: unknown; label: string }
   | { status: 'loading'; label: string }
@@ -379,66 +362,9 @@ interface ReportDataSnapshot {
 const reportDataCache = new Map<string, ReportDataSnapshot>()
 const reportDataPromises = new Map<string, Promise<ReportDataSnapshot>>()
 
-// Per (db, sql) result cache so re-renders don't re-hit the endpoint.
-const widgetSQLCache = new Map<string, Record<string, unknown>[]>()
-
-function isDataWidget(widget: ReportWidget): boolean {
-  return !!(widget.db && widget.sql)
-}
-
-// useWidgetSQLData runs a data widget's `sql` against its `db` via the read-only
-// query endpoint and returns the rows. Pass `null` for non-data widgets (the
-// hook then stays idle — hooks must be called unconditionally).
-function useWidgetSQLData(widget: ReportWidget | null, workspacePath: string): WidgetSQLState {
-  const db = widget?.db ?? ''
-  const sql = widget?.sql ?? ''
-  const [state, setState] = useState<WidgetSQLState>({ status: 'idle' })
-
-  useEffect(() => {
-    if (!db || !sql) {
-      setState({ status: 'idle' })
-      return
-    }
-    // db is workspace-relative to the workflow root (e.g. "db/db.sqlite").
-    const dbPath = `${workspacePath}/${db}`
-    const cacheKey = `${dbPath}::${sql}`
-    const cached = widgetSQLCache.get(cacheKey)
-    if (cached) {
-      setState({ status: 'success', rows: cached })
-      return
-    }
-
-    let cancelled = false
-    setState({ status: 'loading' })
-    agentApi
-      .queryWorkflowDB(dbPath, sql)
-      .then(res => {
-        if (cancelled) return
-        if (!res.success || !res.data) {
-          setState({ status: 'error', message: res.error || 'Query failed.' })
-          return
-        }
-        widgetSQLCache.set(cacheKey, res.data.rows)
-        setState({ status: 'success', rows: res.data.rows })
-      })
-      .catch(error => {
-        if (cancelled) return
-        const message = error instanceof Error ? error.message : String(error)
-        setState({ status: 'error', message: message || 'Query failed.' })
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [db, sql, workspacePath])
-
-  return state
-}
-
-// File-path sources (for file/file-list/markdown widgets that point `source` at
-// a file). Data widgets contribute none — they bind via db+sql.
+// File-path sources for file/file-list/markdown widgets that point `source` at
+// a file under the workspace.
 function widgetSourcePaths(widget: ReportWidget): string[] {
-  if (isDataWidget(widget)) return []
   return widget.source ? [widget.source] : []
 }
 
@@ -551,7 +477,6 @@ function widgetShouldRender(widget: ReportWidget, raw: unknown) {
   if (isFileArtifactWidget(widget)) return Boolean(widget.source)
   if (raw === undefined || raw === null) return true
   if (!evaluateShowIf(raw, widget.showIf)) return false
-  if (widget.kind === 'stat' || widget.kind === 'alert' || widget.kind === 'pivot') return true
 
   const resolvedRaw = resolveJSONPath(raw, widget.path)
   if (resolvedRaw === undefined) return true
@@ -1332,7 +1257,7 @@ function EmbeddedReportWidget({
   baseSources: SourceCache
 }) {
   const widget = (spec && typeof spec === 'object' ? spec : {}) as ReportWidget
-  const validKind = typeof widget.kind === 'string' && widget.kind in WIDGET_SOURCE_MODE
+  const validKind = typeof widget.kind === 'string' && VALID_WIDGET_KINDS.has(widget.kind)
   const needed = useMemo(() => (validKind ? widgetSourcePaths(widget) : []), [validKind, widget])
   const missing = useMemo(() => needed.filter(p => !(p in baseSources)), [needed, baseSources])
   const missingKey = missing.join('|')
@@ -1359,7 +1284,7 @@ function EmbeddedReportWidget({
       <WidgetError
         widget={widget}
         message={`Unknown embedded widget kind "${String(widget.kind ?? '')}".`}
-        hint="Use a valid kind: table, stat, chart, cards, text, markdown, file, file-list, alert, pivot."
+        hint="Use a valid kind: markdown, file, file-list."
       />
     )
   }
@@ -1423,50 +1348,18 @@ function EntryRenderer({
   )
 }
 
-// Source mode classifies how WidgetCard should resolve data for each widget kind.
-// The modes determine the dispatch path:
-//   - singular   — narrows the source to a single row (for stat / alert)
-//   - pivot      — feeds the raw source straight to the renderer
-//   - collection — resolves `path` + `filter` then hands an array/value to
-//                  the renderer
-type WidgetSourceMode = 'singular' | 'pivot' | 'collection'
+// Reports are documents only. The supported widget kinds are:
+//   - markdown   — renders a .md/.txt source file inline (collection path:
+//                  resolves `path` + `filter` then hands the value to the renderer)
+//   - file       — renders one stored artifact (HTML/markdown/asset)
+//   - file-list  — lists a folder of artifacts
+const VALID_WIDGET_KINDS: ReadonlySet<string> = new Set<ReportWidgetKind>(['markdown', 'file', 'file-list'])
 
-const WIDGET_SOURCE_MODE: Record<ReportWidgetKind, WidgetSourceMode> = {
-  stat: 'singular',
-  alert: 'singular',
-  pivot: 'pivot',
-  text: 'collection',
-  markdown: 'collection',
-  table: 'collection',
-  cards: 'collection',
-  chart: 'collection',
-  file: 'collection',
-  'file-list': 'collection',
-}
-
-// Standalone widgets render their own outer container; everything else gets
-// wrapped in WidgetShell. This is also the set whose loading / missing-source
-// notices use StandaloneWidgetNotice instead of the standard shell.
-const STANDALONE_WIDGET_KINDS: ReadonlySet<ReportWidgetKind> = new Set(['stat', 'alert'])
-
-const isStandaloneWidget = (kind: ReportWidgetKind) => STANDALONE_WIDGET_KINDS.has(kind)
-
-// Renderer registries. Each map covers one source mode. Adding a new widget
-// kind: extend ReportWidgetKind, add an entry to WIDGET_SOURCE_MODE, and
-// register the renderer here — WidgetCard itself doesn't change.
+// Renderer registries. Each map covers one dispatch path.
 type CollectionWidgetRenderer = React.FC<{ value: unknown; widget: ReportWidget }>
-type SingularWidgetRenderer = React.FC<{
-  source: unknown
-  resolution: SingularWidgetSourceResolution
-  widget: ReportWidget
-  onToggleHidden?: () => void
-}>
-type PivotWidgetRenderer = React.FC<{ source: unknown; widget: ReportWidget }>
 type FileWidgetRenderer = React.FC<{ widget: ReportWidget; workspacePath: string }>
 
 const COLLECTION_WIDGET_RENDERERS: Partial<Record<ReportWidgetKind, CollectionWidgetRenderer>> = {}
-const SINGULAR_WIDGET_RENDERERS: Partial<Record<ReportWidgetKind, SingularWidgetRenderer>> = {}
-const PIVOT_WIDGET_RENDERERS: Partial<Record<ReportWidgetKind, PivotWidgetRenderer>> = {}
 const FILE_WIDGET_RENDERERS: Partial<Record<ReportWidgetKind, FileWidgetRenderer>> = {}
 
 function HiddenWidgetCard({
@@ -1504,24 +1397,18 @@ function WidgetCard({
   onToggleHidden?: () => void
   workspacePath: string
 }) {
-  const dataWidget = isDataWidget(widget)
   const sourceInput = useMemo(() => resolveWidgetSourceInput(widget, sources), [widget, sources])
   const raw = sourceInput.status === 'ok' ? sourceInput.value : sourceInput.status === 'loading' ? undefined : null
-  const sqlState = useWidgetSQLData(dataWidget ? widget : null, workspacePath)
 
   if (hidden && onToggleHidden) {
     return <HiddenWidgetCard widget={widget} onShow={onToggleHidden} />
   }
 
-  const mode = WIDGET_SOURCE_MODE[widget.kind]
+  const wrapNotice = (content: React.ReactNode) => (
+    <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>{content}</WidgetShell>
+  )
 
-  const wrapNotice = (content: React.ReactNode) =>
-    isStandaloneWidget(widget.kind) ? (
-      <StandaloneWidgetNotice onToggleHidden={onToggleHidden}>{content}</StandaloneWidgetNotice>
-    ) : (
-      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>{content}</WidgetShell>
-    )
-
+  // file / file-list widgets render a stored artifact (or list a folder) directly.
   if (isFileArtifactWidget(widget)) {
     const Renderer = FILE_WIDGET_RENDERERS[widget.kind]
     if (!Renderer) return null
@@ -1541,8 +1428,8 @@ function WidgetCard({
     )
   }
 
-  // A widget binds to either a data source (db + sql) or a file (source).
-  if (!widget.source && !dataWidget) {
+  // markdown widget binds to a file via `source`.
+  if (!widget.source) {
     return (
       <div
         aria-hidden="true"
@@ -1552,63 +1439,23 @@ function WidgetCard({
     )
   }
 
-  let effectiveRaw: unknown
-  if (dataWidget) {
-    if (sqlState.status === 'idle' || sqlState.status === 'loading') {
-      return wrapNotice(
-        <div className="py-1.5 text-xs italic text-muted-foreground">Running query…</div>,
-      )
-    }
-    if (sqlState.status === 'error') {
-      return wrapNotice(
-        <WidgetError widget={widget} message="SQL query failed." hint={sqlState.message} />,
-      )
-    }
-    effectiveRaw = sqlState.rows
-  } else {
-    if (raw === undefined) {
-      return wrapNotice(
-        <div className="py-1.5 text-xs italic text-muted-foreground">Loading {sourceInput.label}…</div>,
-      )
-    }
-    if (raw === null) {
-      return wrapNotice(
-        <div className="py-1.5 text-xs italic text-muted-foreground">
-          Source not available: <code className="px-1 rounded bg-muted">{sourceInput.label}</code>
-        </div>,
-      )
-    }
-    effectiveRaw = raw
-  }
-
-  const singularSource = mode === 'singular' ? resolveSingularWidgetSource(effectiveRaw, widget) : null
-  const conditionalSource = singularSource?.status === 'ok' ? singularSource.value : effectiveRaw
-  if (!evaluateShowIf(conditionalSource, widget.showIf)) return null
-
-  if (mode === 'singular') {
-    const Renderer = SINGULAR_WIDGET_RENDERERS[widget.kind]
-    if (!Renderer) return null
-    return (
-      <Renderer
-        source={singularSource?.status === 'ok' ? singularSource.value : undefined}
-        resolution={singularSource ?? { status: 'ok', value: effectiveRaw }}
-        widget={widget}
-        onToggleHidden={onToggleHidden}
-      />
+  if (raw === undefined) {
+    return wrapNotice(
+      <div className="py-1.5 text-xs italic text-muted-foreground">Loading {sourceInput.label}…</div>,
     )
   }
-
-  if (mode === 'pivot') {
-    const Renderer = PIVOT_WIDGET_RENDERERS[widget.kind]
-    if (!Renderer) return null
-    return (
-      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
-        <Renderer source={effectiveRaw} widget={widget} />
-      </WidgetShell>
+  if (raw === null) {
+    return wrapNotice(
+      <div className="py-1.5 text-xs italic text-muted-foreground">
+        Source not available: <code className="px-1 rounded bg-muted">{sourceInput.label}</code>
+      </div>,
     )
   }
+  const effectiveRaw: unknown = raw
 
-  // Collection mode: resolve path → filter → render.
+  if (!evaluateShowIf(effectiveRaw, widget.showIf)) return null
+
+  // Resolve path → filter → render.
   const resolvedRaw = resolveJSONPath(effectiveRaw, widget.path)
   let content: React.ReactNode = null
   if (resolvedRaw === undefined) {
@@ -1616,7 +1463,7 @@ function WidgetCard({
       <WidgetError
         widget={widget}
         message={`Path "${widget.path || '(root)'}" doesn't resolve in ${sourceInput.label}.`}
-        hint="Check the source JSON for a matching key. Run validate_report_plan in builder chat for specifics."
+        hint="Check the source for a matching key. Run validate_report_plan in builder chat for specifics."
       />
     )
   } else {
@@ -1647,19 +1494,9 @@ function WidgetCard({
 
 
 // ---------------------------------------------------------------------------
-// Widget registry. Each kind registers its renderer into the map matching its
-// source mode (see WIDGET_SOURCE_MODE). WidgetCard reads from these maps so
-// adding a new widget kind doesn't require editing the dispatcher.
+// Widget registry. WidgetCard reads from these maps to render the kept,
+// documents-only widget kinds.
 // ---------------------------------------------------------------------------
-COLLECTION_WIDGET_RENDERERS.text = TextWidget
 COLLECTION_WIDGET_RENDERERS.markdown = MarkdownWidget
-COLLECTION_WIDGET_RENDERERS.table = TableWidget
-COLLECTION_WIDGET_RENDERERS.cards = CardsWidget
-COLLECTION_WIDGET_RENDERERS.chart = ChartWidget
 FILE_WIDGET_RENDERERS.file = FileWidget
 FILE_WIDGET_RENDERERS['file-list'] = FileListWidget
-
-SINGULAR_WIDGET_RENDERERS.stat = StatWidget
-SINGULAR_WIDGET_RENDERERS.alert = AlertWidget
-
-PIVOT_WIDGET_RENDERERS.pivot = PivotWidget

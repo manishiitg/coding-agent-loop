@@ -176,7 +176,7 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 
 **Layout**:
 - Last 1–2 `regular` steps in the plan, decoupled from the main work
-- Typical writes: `db/db.sqlite` table upsert, KB SKILL.md update, dashboard score, report widget data
+- Typical writes: `db/db.sqlite` table upsert, KB SKILL.md update, dashboard score, report data
 - Each tail step has its own `validation_schema` and is independently re-runnable (idempotent)
 
 **When to use**: when the workflow has downstream consumers (dashboards, weekly reports, accumulated learnings) that need to be updated after every run.

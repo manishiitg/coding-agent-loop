@@ -881,6 +881,20 @@ func reportPlanIsFileWidgetKind(kind string) bool {
 	return kind == "file" || kind == "file-list"
 }
 
+// reportPlanWidgetKindIsLegacy reports whether a widget kind belongs to the
+// deprecated data-viz widget grammar. Going forward a report is documents:
+// `markdown` (inline/static) or `file` (an HTML/markdown/artifact document).
+// Everything else (text/table/cards/chart/stat/alert/pivot/file-list) is legacy
+// and still renders for back-compat, but new reports should be HTML documents.
+func reportPlanWidgetKindIsLegacy(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "text", "table", "cards", "chart", "stat", "alert", "pivot", "file-list":
+		return true
+	default:
+		return false
+	}
+}
+
 func reportPlanValidFileWidgetSource(source string) bool {
 	source = strings.TrimSpace(strings.ReplaceAll(source, "\\", "/"))
 	if source == "" || strings.HasPrefix(source, "/") || strings.Contains(source, "\x00") {
@@ -998,6 +1012,11 @@ func validateReportPlan(
 	sourceCache := map[string]interface{}{}
 	sourceMissing := map[string]bool{}
 
+	// Reports are now documents (HTML primary, Markdown secondary); the data-viz
+	// widget grammar is deprecated. We still validate + render legacy widget plans
+	// (graceful back-compat) so existing dashboards don't break, but emit one
+	// deprecation warning per plan steering new work to an HTML document.
+	legacyWidgetWarned := false
 	for _, section := range sections {
 		for _, w := range section.Widgets {
 			result.Widgets++
@@ -1005,6 +1024,15 @@ func validateReportPlan(
 			locator := fmt.Sprintf("%s@%s", w.Kind, sourceLabel)
 			if w.InRow {
 				locator = fmt.Sprintf("row[%d]:%s", w.RowIndex, locator)
+			}
+
+			if !legacyWidgetWarned && reportPlanWidgetKindIsLegacy(w.Kind) {
+				legacyWidgetWarned = true
+				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+					Severity: "warning", Section: section.Heading, Line: w.LineNum, Widget: locator,
+					Message: fmt.Sprintf("widget kind %q is deprecated — reports are now documents.", w.Kind),
+					Hint:    "New reports should be a single HTML document (live data via window.report.query) registered with a `file` widget (renderFormat: html), or a Markdown document for static narrative. Run /design-reporting-ui. Existing widget reports still render during the transition.",
+				})
 			}
 
 			// 1. Resolve the widget's data binding. File/file-list/markdown widgets

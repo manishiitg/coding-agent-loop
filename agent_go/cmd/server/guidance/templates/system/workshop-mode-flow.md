@@ -113,7 +113,7 @@ criterion.
 
 Workshop is for the run/eval/classify/act loop. If the user asks about:
 
-- **Dashboard widgets, themes, layouts, custom colors** → handle them
+- **Report documents (HTML/Markdown), themes, tabs, custom colors** → handle them
   here with the report-plan tools. Workshop can maintain
   `reports/report_plan.json` when report changes need to reflect
   run/eval/metric evidence.

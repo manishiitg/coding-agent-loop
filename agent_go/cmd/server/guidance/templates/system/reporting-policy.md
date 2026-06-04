@@ -1,161 +1,106 @@
 ## Reporting Policy
 
-The workflow has a **live frontend report viewer** at the top
-toolbar's "Report" tab. It reads `reports/report_plan.json` and
-renders the widget blocks defined there against `db/db.sqlite` (via
-each widget's `sql`), durable `db/assets/` references, `knowledgebase/`
-context/notes, and dedicated
-workflow APIs for built-in `costs` / `evals` / `runs` widgets. It is
-always available — there is **NO separate "generate report" phase** and
-no standalone dashboard artifact that replaces the viewer. (A workflow
-may still write a narrative `.md`/`.html` document into `db/` and surface
-it through a `file` widget — see the document escape hatch below; that is
-content, not a replacement dashboard.)
+The workflow has a **live frontend report viewer** at the top toolbar's
+"Report" tab. It reads `reports/report_plan.json` and renders the
+**document(s)** registered there — each an **HTML** or **Markdown** file
+under `db/reports/`. HTML documents read `db/db.sqlite` live via the
+`window.report` API and render their own visuals; markdown documents are
+static narrative. The viewer is always available — there is **NO separate
+"generate report" phase**: you author the document **once** and it reads
+live data on view.
+
+There is no widget grammar and no declarative dashboard format. A report
+is documents. To show data, write an **HTML** document that queries it via
+`window.report`. To write narrative prose with baked-in numbers, write
+**markdown**.
 
 ## Workshop mode: own the report plan
 
-Workshop mode can author and maintain report widgets when reporting
-needs to reflect optimization/evaluation/run evidence: creating
-dashboard widgets, themes, layouts, custom colors, and
-`reports/report_plan.json` edits. Keep report edits presentation-only
-unless the user also asked for workflow hardening/eval changes.
+Workshop mode can author and maintain the report when it needs to reflect
+optimization/evaluation/run evidence: authoring the HTML/markdown
+document(s), themes, tabs, and `reports/report_plan.json` edits. Keep
+report edits presentation-only unless the user also asked for workflow
+hardening/eval changes.
 
 ### When the user asks "create a report" / "build a reporting UI" / "show me X in a dashboard"
 
-- The answer is almost always: **update `reports/report_plan.json`
-  via the report-plan tools** — add, move, toggle, or remove widgets.
-- If the workflow has routing routes, todo_task predefined routes, or
-  other route-specific outputs, prefer a tabbed report section:
-  `set_section_layout(mode="tabs")`, then give each route's widgets
-  `tab: "<route name>"`. Use one tab per user-meaningful route so the
-  dashboard does not mix unrelated path outputs in one long section.
-- When creating or improving a report for a routed workflow, first
-  inspect the route list and decide the report structure from that
-  route map. Use tabs for route-specific evidence/results by default;
-  use a combined table only when the user explicitly wants cross-route
-  comparison or the route outputs share the same schema.
-- **Prefer `db/`-bound widgets for anything live, structured, or
-  interactive** (tables, charts, stats, file lists) — they auto-refresh
-  and stay in sync with run output.
-- **Do NOT write Python or a step that emits a standalone HTML/PDF
-  *dashboard* file meant to replace the report viewer.** The React
-  frontend renders the report plan; a generated dashboard file
-  duplicates it and goes stale. (This is the anti-pattern — distinct
-  from the document escape hatch below.)
-- If the user wants a NEW kind of visualization the widget grammar
-  can't express, say so explicitly and propose one of: (a) a generated
-  `.md`/`.html` document shown via a `file` widget (see escape hatch
-  below — usually the fastest answer), (b) a new widget type to add to
-  the renderer, or (c) reshaping the underlying `db/` data to fit
-  existing widget types. Don't silently fall back to "I'll write a
-  Python script that makes HTML."
+- The answer is: **author an HTML document** (live data via `window.report`,
+  renders its own charts/tables/branded layout) and register it in
+  `reports/report_plan.json` with a `file` widget
+  (`renderFormat: "html"`). For a purely narrative report whose numbers are
+  baked in at generation, a **markdown** document is the simpler choice.
+- **Author the document once; wire it to read data LIVE.** Do NOT add a
+  workflow step that (re)generates the report each run — the workflow's
+  normal steps already write the data to `db/db.sqlite`, and an HTML report
+  reads it live via `window.report`, so there is nothing to "generate."
+  (Writing the `.html` file once is correct and expected — this is NOT a
+  "generated dashboard file" that goes stale; the staleness anti-pattern is
+  *re-emitting* the report each run, or baking live data into a static file.)
+- If the workflow has routing routes, predefined task routes, or other
+  per-entity outputs (per-PAN, per-account), use a **tabbed** section: one
+  document per entity, `set_section_layout(mode="tabs")`, and give each
+  document `tab: "<entity/route name>"`. One tab per user-meaningful entity
+  so the report doesn't mix unrelated outputs in one long page.
+- When creating or improving a report for a routed workflow, first inspect
+  the route list and decide the report structure (which tabs, what each
+  shows) from that route map.
 
-### The md/html document escape hatch — suggest this proactively
+### Choosing the format — one decision the agent makes for the user
 
-When the user wants a rich, narrative, or highly custom layout the widget
-grammar can't express cleanly — or dislikes the widget-composed look —
-**author a `.md`/`.html` report document once** (a workspace file under
-`db/reports/`) and surface it with a single `file` widget:
+Two formats, picked by the job:
 
-```json
-{ "kind": "file", "source": "db/reports/<name>.html", "renderFormat": "html" }
-{ "kind": "file", "source": "db/reports/<name>.md",   "renderFormat": "markdown" }
-```
+| Format | Best for | Data |
+|---|---|---|
+| **HTML** (primary) | dashboards, charts, at-a-glance metrics/tables, branded/print layouts, anything that should stay live | live via `window.report` (or baked in) |
+| **Markdown** (secondary) | narrative reports read top-to-bottom; per-entity prose with baked-in tables | static — whatever the generating step wrote in |
 
-**Do NOT add a workflow STEP that (re)generates the report each run.**
-Author the document once and wire it to read data **live**, so it stays
-current with no per-run work — the workflow's normal steps already write
-the data to `db/db.sqlite`; the report just reads it, there is nothing to
-"generate":
-- **HTML** reads `db/db.sqlite` live via the `window.report` API
-  (`query`/`get`/`getText`) and renders its own visuals — authored once,
-  always current.
-- **Markdown** embeds live db-bound widgets via ` ```report-widget `
-  fenced blocks — authored once, always current.
+Decision rule: **visualizing data or want it live on view → HTML. Writing a
+narrative document with the numbers already in it → markdown.** Markdown is
+cheaper to author and themes automatically, so prefer it for static
+narrative; reach for HTML whenever the report needs charts, bespoke layout,
+or data that re-reads the db when viewed.
 
-The viewer renders Markdown via its renderer and HTML in a sandboxed
-iframe — self-contained HTML (inline CSS/JS, tables, charts, dark mode)
-all work, and file/PDF links inside the document are clickable. First-class
-supported pattern, NOT the dashboard-file anti-pattern above.
+**Live data (HTML only):** the viewer exposes `window.report` inside the
+iframe — `await query(sql)` against `db/db.sqlite`, plus
+`await get(path)` / `await getText(path)` / `await fileUrl(path)` for files,
+and `openFile(path)` for the preview modal. It fires a `report:data` event
+on load/refresh and `report:theme` on light/dark toggle. The HTML draws its
+own charts/tables/branded CSS from that data — full styling control. Markdown
+does not read the db; its numbers are whatever the generating step baked in.
 
-The ONLY variant that goes stale is a document with **data baked in**
-(numbers hardcoded at author time) — that one would need regeneration and
-is the discouraged path (stale, costs tokens each run). Prefer
-live-reading docs; bake data in only for a deliberate one-off export.
-
-So all three live shapes need **no reporting step**: pick by layout need —
-- **Widget plan** — db-bound widgets, auto-refresh; best for dashboards.
-- **Markdown doc + embedded widgets** — narrative + live numbers/tables.
-- **HTML doc + `window.report`** — bespoke/branded layout + live data.
-
-### Choosing a report shape — one decision the agent makes for the user
-
-There are three shapes on a spectrum from structured/live to freeform/
-static. The user should NOT have to learn all three — you pick and name
-the tradeoff:
-
-| Shape | Layout | Live data? | Best for |
-|---|---|---|---|
-| **Widget plan** | structured (grid, tabs, spans, themes) | live, auto-refresh | dashboards, at-a-glance metrics/tables/charts, multi-route reports |
-| **Markdown doc (+ embedded widgets)** | narrative / linear | live (embedded widgets) | a report read top-to-bottom — prose plus a few live numbers/tables |
-| **HTML doc (+ embedded widgets)** | pixel-perfect / branded | live (embedded widgets) | highly designed/branded/print-like layouts that also want live data |
-
-Decision rule: default to a **widget plan** for dashboards/live metrics;
-for a narrative report **prefer a markdown doc** (renders richly, simplest
-and most robust to author, no iframe caveats); reach for an **HTML doc**
-only when you genuinely need pixel-perfect/branded/print layout markdown
-can't express. Both document shapes can embed live widgets, so the old
-"documents are static" tradeoff is mostly gone — a doc with no embedded
-widgets is a static snapshot, a doc full of them ≈ a widget plan with
-custom layout.
-
-**Live data in a document — two different models:**
-- **Markdown** embeds our widgets: a fenced ` ```report-widget ` block whose
-  body is a widget JSON spec renders as a live db-bound widget inline (same
-  schema as `report_plan.json`, any kind). Zero styling work; looks
-  consistent with the rest of the report.
-- **HTML** gets the data and renders its own visuals: the viewer exposes
-  `window.report` inside the iframe (`await query(sql)` against db/db.sqlite,
-  plus `await get(path)` / `await getText(path)` for files) and fires a
-  `report:data` event on load/refresh. The HTML draws its own charts/tables/
-  branded CSS from that data — full styling control, no embedded widgets. Use
-  HTML when you want bespoke visuals and will write the rendering; otherwise
-  prefer markdown.
-
-Full syntax + examples, and the **"writing a good report document" formatting
-guide** (lead with a summary, structure with headings, data as tables/widgets
-not raw JSON, self-contained + responsive HTML, dark mode):
-`get_reference_doc(kind="report-plan")`.
+Full syntax + examples, the `window.report` API, and the **"writing a good
+report document" formatting guide** (lead with a summary, structure with
+headings, data as tables not raw JSON, self-contained + responsive HTML,
+dark mode, design-quality bar): `get_reference_doc(kind="report-plan")`.
 
 ### Diagnosis
 
 - **When the report shows "No report yet":** `reports/report_plan.json`
-  is missing or contains zero usable widgets. Fix by creating/updating
-  the report plan.
-- **When the report renders but is empty/missing widgets the user
-  expects:** the plan resolved correctly but the widget's `sql` returns
-  no rows yet (the table is empty), or the widget points at the wrong
-  table/column. Either a step hasn't run, or the query is off. Inspect
-  `reports/report_plan.json` and query `db/db.sqlite` with sqlite3 to
-  diagnose.
+  is missing or registers no usable document. Fix by authoring the
+  document and registering it.
+- **When an HTML report renders but is empty/missing data the user
+  expects:** the document loaded but its `window.report.query` returns no
+  rows yet (the table is empty), or it points at the wrong table/column.
+  Either a step hasn't run, or the query is off. Inspect the report HTML and
+  query `db/db.sqlite` with sqlite3 to diagnose.
 
 ### Refresh discipline
 
 **Report viewer auto-updates** when the user opens or switches to the
-Report tab — no rebuild step needed. After the agent updates
-`report_plan.json`, the user just clicks Report (or refreshes if
-they're already on it) to see the new widgets.
+Report tab — no rebuild step needed. After the agent updates the document
+or `report_plan.json`, the user just clicks Report (or refreshes if they're
+already on it) to see the new content.
 
-## Run mode: do not edit dashboards
+## Run mode: do not edit reports
 
-Run mode does not own report widget authoring. If the user asks to
-create dashboard widgets, themes, layouts, custom colors, or
-`reports/report_plan.json` edits, tell them to switch to Workshop
-mode. Do not offer to draft or edit `reports/report_plan.json` via
-shell/direct file writes from Run mode.
+Run mode does not own report authoring. If the user asks to create or edit
+the report, themes, tabs, or `reports/report_plan.json`, tell them to switch
+to Workshop mode. Do not offer to draft or edit `reports/report_plan.json`
+via shell/direct file writes from Run mode.
 
 ## See also
 
-For the report-plan toolchain (layouts/tabs, per-report themes,
-route-tab patterns, missing-data triage, do-not rules, full
-workflow), call `get_reference_doc(kind="report-plan")`.
+For the report-plan toolchain (registering documents, tabs, per-report
+themes, the `window.report` API, the good-document + design-quality guide,
+missing-data triage, full workflow), call
+`get_reference_doc(kind="report-plan")`.

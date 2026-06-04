@@ -21,6 +21,7 @@ import {
   WidgetShell,
   WidgetVisibilityButton,
   isDocumentWidget,
+  isHtmlDocumentWidget,
   resolveSingularWidgetSource,
   type SingularWidgetSourceResolution,
 } from './reportWidgets/shared'
@@ -141,6 +142,73 @@ function renderReportElementToSvg(reportElement: HTMLElement): string {
   const html = new XMLSerializer().serializeToString(clone)
   const svg = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${width} ${height}">`,
+    `<foreignObject width="100%" height="100%">${html}</foreignObject>`,
+    '</svg>',
+  ].join('')
+  return `data:image/svg+xml;base64,${utf8ToBase64(svg)}`
+}
+
+// HTML report widgets render inside a sandboxed `srcDoc` iframe, whose content is
+// a SEPARATE document — serializing the outer report DOM (renderReportElementToSvg)
+// produces an empty box where the iframe sits, so the PNG export comes out blank.
+// The iframe is `allow-same-origin`, so we can reach its contentDocument and
+// rasterize the INNER document directly.
+//
+// We serialize the WHOLE document (<html> incl. <head>), NOT a style-inlined <body>
+// clone: the report's styling lives in <head><style> blocks, the injected theme
+// tokens are a <style> node, and the light/dark state is the `.dark` class +
+// CSS variables on <html>. Carrying the full document verbatim preserves all of
+// that (stylesheets, custom properties, pseudo-elements, fonts); element-by-element
+// computed-style inlining silently dropped it. Returns null if the frame isn't
+// reachable, so the caller can fall back to the normal outer-DOM capture.
+function renderIframeDocumentToSvg(iframe: HTMLIFrameElement): string | null {
+  const doc = iframe.contentDocument
+  const docEl = doc?.documentElement
+  const body = doc?.body
+  if (!doc || !docEl || !body) return null
+  const width = Math.max(1, Math.ceil(docEl.scrollWidth || body.scrollWidth || iframe.clientWidth))
+  const height = Math.max(1, Math.ceil(docEl.scrollHeight || body.scrollHeight || iframe.clientHeight))
+  const exportWidth = width * REPORT_SVG_EXPORT_SCALE
+  const exportHeight = height * REPORT_SVG_EXPORT_SCALE
+  const clone = docEl.cloneNode(true) as HTMLElement
+  clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml')
+  // A cloned <canvas> is blank — its drawn bitmap doesn't clone. Charting libs
+  // (Chart.js etc.) draw to canvas, so snapshot each live canvas into an <img> at
+  // the matching position in the clone. SVG/DOM charts clone fine and are untouched.
+  const liveCanvases = doc.querySelectorAll('canvas')
+  const cloneCanvases = clone.querySelectorAll('canvas')
+  liveCanvases.forEach((live, i) => {
+    const target = cloneCanvases[i]
+    if (!target) return
+    try {
+      const png = (live as HTMLCanvasElement).toDataURL('image/png')
+      const img = doc.createElement('img')
+      img.setAttribute('src', png)
+      img.setAttribute('width', String(live.clientWidth || (live as HTMLCanvasElement).width))
+      img.setAttribute('height', String(live.clientHeight || (live as HTMLCanvasElement).height))
+      img.setAttribute('style', target.getAttribute('style') || '')
+      target.replaceWith(img)
+    } catch {
+      /* tainted canvas (cross-origin draw) — leave the blank clone */
+    }
+  })
+  // Pin the document box to the measured content size so foreignObject lays it out
+  // identically to the live frame (the iframe auto-sizes to content).
+  clone.style.width = `${width}px`
+  clone.style.height = `${height}px`
+  clone.style.margin = '0'
+  // Backstop background: <html>/<body> are often transparent over the iframe's
+  // default white, which rasterizes to black on some platforms. Use the resolved
+  // page background, falling back to the theme surface so the export is never black.
+  const view = doc.defaultView || window
+  const transparent = (c: string) => !c || c === 'transparent' || c === 'rgba(0, 0, 0, 0)'
+  const rootBg = view.getComputedStyle(docEl).backgroundColor
+  const bodyBg = view.getComputedStyle(body).backgroundColor
+  const pageBg = !transparent(bodyBg) ? bodyBg : !transparent(rootBg) ? rootBg : ''
+  const html = new XMLSerializer().serializeToString(clone)
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${width} ${height}">`,
+    pageBg ? `<rect width="100%" height="100%" fill="${pageBg}"/>` : '',
     `<foreignObject width="100%" height="100%">${html}</foreignObject>`,
     '</svg>',
   ].join('')
@@ -629,7 +697,15 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     setIsExportingReport(true)
     try {
       const filename = reportExportFilename(workspacePath, format)
-      const svgDataUrl = renderReportElementToSvg(target)
+      // For an HTML-document report the content is a same-origin srcDoc iframe that
+      // the outer-DOM capture can't see — rasterize the iframe's own document so the
+      // export isn't blank. Fall back to the normal capture if it isn't reachable.
+      let svgDataUrl: string | null = null
+      if (htmlOnlyReport) {
+        const iframe = target.querySelector('iframe')
+        if (iframe) svgDataUrl = renderIframeDocumentToSvg(iframe)
+      }
+      if (!svgDataUrl) svgDataUrl = renderReportElementToSvg(target)
       const dataUrl = format === 'png' ? await svgDataUrlToPngDataUrl(svgDataUrl) : svgDataUrl
       const result = await saveReportImage(dataUrl, filename, format)
       if (result?.canceled) return
@@ -729,32 +805,27 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       : previewMode === 'tablet'
         ? 'mx-auto w-full max-w-[880px] p-1.5 transition-all duration-200'
         : 'mx-auto w-full max-w-full transition-all duration-200'
-  // A report that is just a single HTML document renders edge-to-edge: the HTML
-  // owns its own width / padding / background, so we add no content-width cap, no
-  // scroll padding, and no card chrome around it (avoids double margins/frames).
-  const soleDocumentWidget = useMemo(() => {
-    if (visibleSections.length !== 1) return null
-    const { entries } = visibleSections[0]
-    if (entries.length !== 1 || entries[0].entry.kind !== 'single') return null
-    const w = entries[0].entry.widget
-    return isDocumentWidget(w) ? w : null
-  }, [visibleSections])
-  // A report that is just one document (md or html) drops our chrome — no scroll
-  // padding and no card box around it; the document owns its own spacing.
-  const documentOnlyReport = soleDocumentWidget != null
-  // HTML additionally goes full-width (it sets its own max-width); markdown keeps
-  // the readable content width.
-  const htmlOnlyReport = useMemo(() => {
-    const w = soleDocumentWidget
-    if (!w || w.kind !== 'file') return false
-    const fmt = w.renderFormat || 'auto'
-    if (fmt === 'html') return true
-    if (fmt === 'auto') {
-      const ext = (w.source || '').split('.').pop()?.toLowerCase()
-      return ext === 'html' || ext === 'htm'
+  // A report made only of self-contained documents (md/html) renders edge-to-edge:
+  // each document owns its own width / padding / background, so we add no
+  // content-width cap, no scroll padding, and no card chrome around it (avoids
+  // double margins/frames). This covers a single document AND a tabbed/multi-entry
+  // section of documents (e.g. per-PAN report tabs) — every visible entry must be a
+  // single document widget for the report to count as document-only.
+  const documentWidgets = useMemo(() => {
+    const all: ReportWidget[] = []
+    for (const { entries } of visibleSections) {
+      for (const { entry } of entries) {
+        if (entry.kind !== 'single' || !isDocumentWidget(entry.widget)) return null
+        all.push(entry.widget)
+      }
     }
-    return false
-  }, [soleDocumentWidget])
+    return all.length > 0 ? all : null
+  }, [visibleSections])
+  const documentOnlyReport = documentWidgets != null
+  // HTML documents render in iframes that own their full width/scroll; when EVERY
+  // document is HTML the report goes full-width with no reserved scrollbar gutter.
+  // (Mixed md+html keeps the readable content width so markdown stays legible.)
+  const htmlOnlyReport = documentWidgets != null && documentWidgets.every(isHtmlDocumentWidget)
 
   const previewContentClassName =
     previewMode === 'mobile' || previewMode === 'tablet'
@@ -870,7 +941,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
         </div>
       )}
 
-      <div className={`min-h-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable] ${documentOnlyReport ? '' : 'px-2 py-2 sm:px-3 sm:py-3'}`}>
+      <div className={`min-h-0 flex-1 overflow-y-auto overscroll-y-contain ${htmlOnlyReport ? '' : '[scrollbar-gutter:stable]'} ${documentOnlyReport ? '' : 'px-2 py-2 sm:px-3 sm:py-3'}`}>
         <div ref={reportExportRef} className={previewShellClassName}>
           <div className={`flex flex-col gap-3 ${previewContentClassName}`}>
             {loading && <ReportSkeleton />}
@@ -1166,14 +1237,15 @@ function SectionContainer({
     ? tabGroups.find(tab => tab.key === activeTabKey) ?? tabGroups[0]
     : null
   const renderedEntries = activeTab ? activeTab.entries : entries
-  // A section that is just a single self-contained document (md/html) doesn't
-  // need the section heading + card chrome — the document carries its own title
-  // and should fill the whole section. Common for HTML reports.
+  // A section whose entries are ALL self-contained documents (md/html) doesn't
+  // need the section heading + card chrome — each document carries its own title
+  // and should fill the whole section. This holds whether the documents are
+  // stacked or arranged as tabs (e.g. per-PAN report tabs): the tab bar still
+  // renders, but the card border/padding is dropped so an HTML iframe sits flush
+  // against the report panel instead of inside a framed, padded box.
   const documentOnly =
-    !tabsEnabled &&
-    entries.length === 1 &&
-    entries[0].entry.kind === 'single' &&
-    isDocumentWidget(entries[0].entry.widget)
+    entries.length > 0 &&
+    entries.every(({ entry }) => entry.kind === 'single' && isDocumentWidget(entry.widget))
   return (
     <section className={documentOnly ? 'flex flex-col' : 'flex flex-col gap-2 p-0 sm:gap-2.5 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3 sm:shadow-sm'}>
       {!documentOnly && <SectionHeader heading={section.heading} />}

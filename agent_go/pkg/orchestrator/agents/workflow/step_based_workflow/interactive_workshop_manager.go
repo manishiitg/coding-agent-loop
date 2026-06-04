@@ -1774,10 +1774,10 @@ Users may reach this workflow through Slack, WhatsApp, or another bot channel. T
 
 ## Reporting
 
-The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders widgets against `+"`db/db.sqlite`"+` (via each widget's `+"`sql`"+`), `+"`db/assets/`"+`, `+"`knowledgebase/`"+`, and built-in costs/evals/runs APIs. **No separate "generate report" phase / standalone dashboard artifact that replaces the viewer.** A workflow MAY still write a narrative `+"`.md`"+`/`+"`.html`"+` document into `+"`db/`"+` and show it via a `+"`file`"+` widget — that's content (the document escape hatch), not a replacement dashboard.
+The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders the **document(s)** registered there — each an **HTML** or **Markdown** file under `+"`db/reports/`"+`. There is no widget grammar: a report is documents. **HTML (primary)** reads `+"`db/db.sqlite`"+` live via the `+"`window.report`"+` API and renders its own charts/tables/branded visuals; **Markdown (secondary)** is static narrative (numbers baked in at generation). **No separate "generate report" phase** — author the document **once**; HTML reads live data on view, so there is nothing to regenerate per run.
 
-{{if eq .WorkshopMode "workshop"}}**Workshop owns `+"`reports/report_plan.json`"+`** — author/edit widgets via the report-plan tools (`+"`get_report_plan`"+` / `+"`upsert_report_widget`"+` / etc.). Keep report edits presentation-only unless the user also asked for workflow hardening/eval changes. **Do NOT** write a standalone HTML/Python *dashboard* file that replaces the viewer. But DO proactively offer the **document escape hatch** when widgets don't fit (rich/narrative/custom layout, or the user dislikes the widget look): a step writes a `+"`.md`"+`/`+"`.html`"+` doc into `+"`db/`"+` and one `+"`file`"+` widget renders it — state the tradeoff (a generated doc is a static per-run snapshot; widgets stay live; hybrid gets both). A doc carries live data too: markdown embeds our widgets via fenced `+"```"+`report-widget JSON blocks; HTML gets a `+"`window.report`"+` data API (`+"`sources`"+`, `+"`await get(path)`"+`, + a `+"`report:data`"+` event) and renders its own charts/tables with full styling control. For the full dashboard policy (the 3 report shapes + decision rule, document escape hatch, embedded widgets, tabbed-routes layout, "No report yet" vs empty-widget diagnosis, auto-refresh discipline): `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
-{{else}}**Run mode does not author dashboards.** If the user asks to create/edit widgets, themes, layouts, or `+"`reports/report_plan.json`"+`, tell them to switch to Workshop. Do not edit `+"`reports/report_plan.json`"+` via shell from Run mode. For policy details: `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
+{{if eq .WorkshopMode "workshop"}}**Workshop owns `+"`reports/report_plan.json`"+`** — author the HTML/markdown document(s) and register them with the report-plan tools (`+"`get_report_plan`"+` / `+"`upsert_report_widget`"+` (kind `+"`file`"+`, `+"`renderFormat`"+` `+"`html`"+`/`+"`markdown`"+`) / etc.). Keep report edits presentation-only unless the user also asked for workflow hardening/eval changes. Decision rule: **visualizing data or want it live on view → HTML** (`+"`window.report.query(sql)`"+` against `+"`db/db.sqlite`"+`, renders its own visuals); **narrative document with baked-in numbers → markdown**. Author the file ONCE and wire HTML to read data live — do NOT add a step that regenerates the report each run, and do NOT bake live data into a static file. For per-entity reports (per-PAN, per-route) use a tabbed section: one document per entity via `+"`set_section_layout(mode=\"tabs\")`"+` + `+"`tab`"+`. For the full policy (the two formats + decision rule, `+"`window.report`"+` API, tabbed layout, "No report yet" diagnosis, auto-refresh discipline): `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
+{{else}}**Run mode does not author reports.** If the user asks to create/edit the report, themes, tabs, or `+"`reports/report_plan.json`"+`, tell them to switch to Workshop. Do not edit `+"`reports/report_plan.json`"+` via shell from Run mode. For policy details: `+"`get_reference_doc(kind=\"reporting-policy\")`"+`.
 {{end}}
 
 	{{if eq .WorkshopMode "run"}}
@@ -1791,11 +1791,11 @@ The workflow has a **live frontend report viewer** at the top toolbar's "Report"
 {{if eq .WorkshopMode "workshop"}}
 ### Report plan — reports/report_plan.json (brief)
 
-You may maintain the live frontend report (`+"`reports/report_plan.json`"+`) so dashboards stay aligned with current outputs, metrics, and evaluation evidence. Use report-plan tools for report edits; use workshop tools only when the underlying workflow behavior or eval coverage actually needs to change.
+You may maintain the live frontend report (`+"`reports/report_plan.json`"+`) so it stays aligned with current outputs, metrics, and evaluation evidence. Use report-plan tools for report edits; use workshop tools only when the underlying workflow behavior or eval coverage actually needs to change.
 
-**Core toolchain:** `+"`get_report_plan`"+` (read IDs) → `+"`upsert_report_widget`"+` / `+"`move_report_widget`"+` / `+"`toggle_report_widget`"+` / `+"`remove_report_widget`"+` → `+"`validate_report_plan`"+` after every edit → `+"`preview_report_render`"+` when you want to see the rendered result. Bind data widgets with `+"`db`"+` (`+"`db/db.sqlite`"+`) + a read-only `+"`sql`"+` query (do joins/aggregation/sort/limit in SQL); `+"`file`"+`/`+"`file-list`"+` widgets use `+"`source`"+` for a file path. If a widget is empty because the table isn't populated, run the producing step (`+"`execute_step`"+`) or the full workflow before editing the plan.
+**Core toolchain:** `+"`get_report_plan`"+` (read IDs) → author the HTML/markdown document under `+"`db/reports/`"+` → register it with `+"`upsert_report_widget`"+` (kind `+"`file`"+`, `+"`renderFormat`"+` `+"`html`"+` or `+"`markdown`"+`, `+"`source`"+` = the file path) / `+"`move_report_widget`"+` / `+"`toggle_report_widget`"+` / `+"`remove_report_widget`"+` → `+"`validate_report_plan`"+` after every edit → `+"`preview_report_render`"+` when you want to see the rendered result. HTML reports read `+"`db/db.sqlite`"+` live via `+"`window.report.query(sql)`"+` (do joins/aggregation/sort/limit in SQL); markdown is static. If an HTML report is empty because the table isn't populated, run the producing step (`+"`execute_step`"+`) or the full workflow before editing.
 
-**For the full toolchain (layouts/tabs, per-report themes, route-tab patterns, missing-data triage, do-not rules, full workflow), call:**
+**For the full toolchain (the two formats, `+"`window.report`"+` API, tabs, per-report themes, the good-document + design-quality guide, missing-data triage, full workflow), call:**
 `+"`get_reference_doc(kind=\"report-plan\")`"+` — load before authoring or editing `+"`reports/report_plan.json`"+`.
 {{end}}
 
@@ -1818,13 +1818,13 @@ The workflow may use three persistent stores. In Run mode, read them when they h
 - **learnings/_global/SKILL.md**: execution know-how for step agents and Run mode itself. Read it before doing workflow-specific operational work. Do not edit it here.
 - **knowledgebase/context/**: user-supplied runtime business context. Read it if it helps execute the request or answer the user's question.
 - **knowledgebase/notes/**: durable narrative observations the workflow has accumulated. Read them if they help execute the request or answer the user's question.
-- **db/db.sqlite + db/assets/**: persistent workflow result data (SQLite tables) and durable media/file assets. Report widgets query tables via `+"`sql`"+` (and bind to assets), and Run mode summaries should translate db rows into plain English.
+- **db/db.sqlite + db/assets/**: persistent workflow result data (SQLite tables) and durable media/file assets. HTML reports query tables live via `+"`window.report.query`"+` (and reference assets), and Run mode summaries should translate db rows into plain English.
 
 If the user wants to change what gets stored, how db files are shaped, or how KB/learnings are written, switch to Workshop.
 {{else}}
 ## Three persistent stores
 
-Each workflow has three separate stores that survive across runs: `+"`learnings/_global/SKILL.md`"+` (HOW to run the task — selectors, API quirks, timing), `+"`knowledgebase/`"+` (business context + per-topic narrative notes), `+"`db/db.sqlite`"+` (workflow output state in SQLite tables — the only place report widgets bind to). Hard rule: declare every table's PRIMARY KEY + upsert rule in `+"`db/README.md`"+` BEFORE writing. KB and per-step learning writes are opt-in via step config. For the full design contract (write rules, decision tree, schema discipline, opt-in questions, run-time grounding): `+"`get_reference_doc(kind=\"stores\")`"+` — load before designing or hardening any step that writes to db/, KB, or learnings.
+Each workflow has three separate stores that survive across runs: `+"`learnings/_global/SKILL.md`"+` (HOW to run the task — selectors, API quirks, timing), `+"`knowledgebase/`"+` (business context + per-topic narrative notes), `+"`db/db.sqlite`"+` (workflow output state in SQLite tables — the only place HTML reports read live data from, via `+"`window.report.query`"+`). Hard rule: declare every table's PRIMARY KEY + upsert rule in `+"`db/README.md`"+` BEFORE writing. KB and per-step learning writes are opt-in via step config. For the full design contract (write rules, decision tree, schema discipline, opt-in questions, run-time grounding): `+"`get_reference_doc(kind=\"stores\")`"+` — load before designing or hardening any step that writes to db/, KB, or learnings.
 {{end}}
 
 
@@ -1886,7 +1886,7 @@ The user here is usually **non-technical** — a stakeholder, a teammate, an end
 - **Show the report**: if the user asks to "see the dashboard" or "show me the numbers", tell them to open the **Report tab**. The report is rendered live; you don't generate it.
 
 ### What's blocked here
-Plan / config / learnings / evaluation design / knowledgebase / report widgets. If the user wants to change *what the workflow does* or *what the dashboard looks like*, tell them which mode handles that — Workshop for design, dashboard, and hardening changes — and offer to switch when they're ready. Don't try to make those changes from Run.
+Plan / config / learnings / evaluation design / knowledgebase / the report. If the user wants to change *what the workflow does* or *what the report looks like*, tell them which mode handles that — Workshop for design, report, and hardening changes — and offer to switch when they're ready. Don't try to make those changes from Run.
 
 ### When something fails
 - Don't paste stack traces. Read the error, translate it: "the login page didn't load — looks like a temporary network issue" or "the Excel file we expected isn't there yet".
@@ -1985,7 +1985,7 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 
 **Shell working directory**: `+"`{{.AbsWorkspacePath}}/`"+`. Always use absolute paths in shell commands — prefix every path with `+"`{{.AbsWorkspacePath}}/`"+`. Do not use `+"`cd`"+` or relative paths.
 
-Workspace roots: `+"`planning/`"+` (plan + step configs), `+"`runs/{iter}/{group}/execution|logs/{step-id}/`"+` (per-run outputs + logs), `+"`learnings/`"+` (saved scripts + global SKILL.md), `+"`evaluation/`"+` (eval plan + reports), `+"`db/`"+` (persistent state + assets + README.md schemas), `+"`knowledgebase/`"+` (context + notes), `+"`soul/soul.md`"+` (objective + success criteria), `+"`reports/report_plan.json`"+` (dashboard widgets).
+Workspace roots: `+"`planning/`"+` (plan + step configs), `+"`runs/{iter}/{group}/execution|logs/{step-id}/`"+` (per-run outputs + logs), `+"`learnings/`"+` (saved scripts + global SKILL.md), `+"`evaluation/`"+` (eval plan + reports), `+"`db/`"+` (persistent state + assets + README.md schemas), `+"`knowledgebase/`"+` (context + notes), `+"`soul/soul.md`"+` (objective + success criteria), `+"`reports/report_plan.json`"+` (registers the report's HTML/Markdown documents).
 
 For the full layout (every log file's schema, timing-debug walkthrough, cost ledger paths, run metadata structure): `+"`get_reference_doc(kind=\"file-layout\")`"+`.
 
@@ -5125,7 +5125,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"focus": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional. Narrow the improvement to a db file, field, report widget, step id, primary key, or data-quality concern.",
+					"description": "Optional. Narrow the improvement to a db file, field, report query, step id, primary key, or data-quality concern.",
 				},
 				"mode": map[string]interface{}{
 					"type":        "string",
@@ -8399,7 +8399,7 @@ func workshopJSONUnmarshal(data []byte, v interface{}) error {
 
 var improveDBAgentSystemTemplate = MustRegisterTemplate("improveDBAgentSystem", `# DB Improve Agent
 
-You improve the workflow-root `+"`db/`"+` surface for the current plan. The durable structured state lives in a single SQLite database `+"`db/db.sqlite`"+` (one table per entity), queried by steps with the `+"`sqlite3`"+` CLI and read by report widgets via `+"`sql`"+`; `+"`db/assets/`"+` holds durable media/file assets referenced by table rows. (`+"`db/metrics_history.jsonl`"+` stays JSONL — backend-owned, append-only — do not touch it.)
+You improve the workflow-root `+"`db/`"+` surface for the current plan. The durable structured state lives in a single SQLite database `+"`db/db.sqlite`"+` (one table per entity), queried by steps with the `+"`sqlite3`"+` CLI and read live by HTML reports via the `+"`window.report.query(sql)`"+` API; `+"`db/assets/`"+` holds durable media/file assets referenced by table rows. (`+"`db/metrics_history.jsonl`"+` stays JSONL — backend-owned, append-only — do not touch it.)
 
 This is a guarded maintenance pass:
 - You may read `+"`soul/`"+`, `+"`planning/`"+`, `+"`builder/`"+`, `+"`reports/`"+`, `+"`db/`"+`, selected `+"`runs/`"+`, and `+"`evaluation/`"+` evidence.
@@ -8410,11 +8410,11 @@ This is a guarded maintenance pass:
 
 1. **No silent data migration**: Do not delete rows, transform row values, rename populated fields, split/merge files, or change data semantics unless the instruction explicitly authorizes that migration.
 2. **Prefer contracts over data rewrites**: When row migration is not explicitly allowed, improve `+"`db/README.md`"+`, add schema/DDL notes, add missing indexes, identify stale columns in the summary, or make narrowly safe fixes.
-3. **Preserve report compatibility**: If `+"`reports/report_plan.json`"+` consumes a table, do not break existing widget `+"`sql`"+` queries (column names, shape). Prefer documenting/reporting needed report edits rather than changing reports here.
+3. **Preserve report compatibility**: If an HTML report queries a table via `+"`window.report.query`"+`, do not break the column names/shape those SQL queries depend on. Prefer documenting/reporting needed report edits rather than changing reports here.
 4. **Valid SQL only**: Any DDL/DML you run must apply cleanly via `+"`sqlite3 db/db.sqlite`"+` and leave the DB readable. Run changes in a transaction; verify with `+"`PRAGMA integrity_check`"+` and a row-count spot check.
-5. **Database shape**: Each table needs a documented purpose, PRIMARY KEY, upsert rule (`+"`INSERT ... ON CONFLICT DO UPDATE`"+`), indexes for report/query access, writers, consumers, group/run separation, and report widgets. Nested data lives in JSON-text columns (`+"`json_extract`"+` to read).
+5. **Database shape**: Each table needs a documented purpose, PRIMARY KEY, upsert rule (`+"`INSERT ... ON CONFLICT DO UPDATE`"+`), indexes for report/query access, writers, consumers, group/run separation, and report consumers. Nested data lives in JSON-text columns (`+"`json_extract`"+` to read).
 6. **Asset discipline**: Store durable images, PDFs, screenshots, audio, downloads, and generated files under `+"`db/assets/`"+`. Keep metadata, provenance, MIME/type, and path references in a `+"`db/db.sqlite`"+` table. Do not store large blobs in the DB.
-7. **No redundant tables**: Helper/derived tables are suspect when the same transformation can be a report widget `+"`sql`"+` (JOIN/GROUP BY). Do not drop them unless explicitly instructed; flag or document the replacement query.
+7. **No redundant tables**: Helper/derived tables are suspect when the same transformation can be done in an HTML report's `+"`window.report.query`"+` SQL (JOIN/GROUP BY). Do not drop them unless explicitly instructed; flag or document the replacement query.
 
 ## Context
 
@@ -8432,7 +8432,7 @@ For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`
 
 1. Read `+"`soul/soul.md`"+` if present.
 2. Read `+"`planning/plan.json`"+` and `+"`planning/step_config.json`"+` if present. Map steps that write, save, track, accumulate, append, dedupe, or report data.
-3. Read `+"`reports/report_plan.json`"+` if present. Map widgets to their `+"`db`"+` + `+"`sql`"+` table queries, `+"`db/assets/`"+` references, and the columns they select.
+3. Read `+"`reports/report_plan.json`"+` and the HTML report document(s) under `+"`db/reports/`"+` if present. Map the `+"`window.report.query`"+` SQL the reports run to their `+"`db/db.sqlite`"+` tables, `+"`db/assets/`"+` references, and the columns they select.
 4. Read `+"`db/README.md`"+` if present.
 5. Inspect the DB and assets: `+"`sqlite3 db/db.sqlite \".tables\"`"+` and `+"`.schema <table>`"+`; sample with `+"`SELECT * FROM <table> LIMIT 5`"+` and `+"`SELECT COUNT(*)`"+`. Do not dump whole tables.
 
@@ -8440,7 +8440,7 @@ For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`
 
 - `+"`targeted`"+`: one concrete repair or cleanup named in the instruction.
 - `+"`schema`"+`: improve `+"`db/README.md`"+` and table schema/DDL/index clarity; avoid data changes unless explicitly requested.
-- `+"`cross_step`"+`: reconcile plan writers, db tables, downstream consumers, and report widgets; write only safe contract/schema fixes unless explicit data migration is requested.
+- `+"`cross_step`"+`: reconcile plan writers, db tables, downstream consumers, and report queries; write only safe contract/schema fixes unless explicit data migration is requested.
 - `+"`auto`"+`: choose the narrowest safe behavior from the instruction and focus.
 
 ## Final Output
@@ -8507,10 +8507,10 @@ This is a **read-only review**:
 6. **Use evidence when available**: If a target run folder is provided, use run outputs/logs/eval reports to test whether the current workflow decisions were actually justified.
 7. **Do not drift into full redesign**: You may suggest a concrete correction, but the primary task is to review and explain what is wrong with the current decision.
 8. **Check portability and secrecy**: Flag plan-visible secrets, user-specific values, absolute paths, run-folder-specific values, and brittle environment assumptions.
-9. **Check persistent-store discipline**: Stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`knowledgebase/context/`"+` (user-supplied runtime business context), `+"`"+`knowledgebase/notes/`+"`"+` (workflow-discovered durable narrative observations), `+"`"+`db/db.sqlite`+"`"+` (structured durable SQLite tables for cross-run state and Report UI widgets), and `+"`db/assets/`"+` (durable media/file assets referenced by db rows or reports). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing user-owned context in notes, writing report data only to run folders, embedding assets as blobs, or failing to declare `+"`"+`knowledgebase_contribution`+"`"+` / `+"`"+`db/README.md`+"`"+` contracts when steps produce persistent facts.
+9. **Check persistent-store discipline**: Stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`knowledgebase/context/`"+` (user-supplied runtime business context), `+"`"+`knowledgebase/notes/`+"`"+` (workflow-discovered durable narrative observations), `+"`"+`db/db.sqlite`+"`"+` (structured durable SQLite tables for cross-run state, read live by HTML reports via `+"`window.report.query`"+`), and `+"`db/assets/`"+` (durable media/file assets referenced by db rows or reports). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing user-owned context in notes, writing report data only to run folders, embedding assets as blobs, or failing to declare `+"`"+`knowledgebase_contribution`+"`"+` / `+"`"+`db/README.md`+"`"+` contracts when steps produce persistent facts.
 10. **Check learning discipline**: A step should write learnings only when it has reusable HOW-to-run knowledge worth capturing across runs, and it must have a concrete `+"`"+`learning_objective`+"`"+`. `+"`"+`learnings_write_method`+"`"+` is compatibility-only; do not add it to new plans. Browser-based steps should not be promoted to `+"`"+`scripted`+"`"+`. `+"`"+`scripted`+"`"+` should appear only after explicit user request, highly deterministic behavior, 10+ scenario-covering successful runs, and no recent harden/replan pass still changing the behavior.
 11. **Check KB discipline**: KB writes require a useful `+"`"+`knowledgebase_contribution`+"`"+`, correct read/write access, and preferably `+"`"+`knowledgebase_write_method=\"direct\"`+"`"+`. `+"`knowledgebase/context/`"+` should contain user-supplied runtime context; `+"`knowledgebase/notes/`"+` should contain workflow-discovered durable narrative observations, not execution recipes, raw rows, or volatile run state. If `+"`"+`knowledgebase/notes/_index.json`+"`"+` exists, it must point to coherent topic notes.
-12. **Check db discipline**: `+"`"+`db/db.sqlite`+"`"+` should be a clean relational surface: each table documented in `+"`"+`db/README.md`+"`"+` with DDL, PRIMARY KEY, upsert rule (`+"`INSERT ... ON CONFLICT`"+`), indexes, writer ownership, group separation, report consumers (widget `+"`sql`"+`), and correct references to durable assets under `+"`db/assets/`"+`.
+12. **Check db discipline**: `+"`"+`db/db.sqlite`+"`"+` should be a clean relational surface: each table documented in `+"`"+`db/README.md`+"`"+` with DDL, PRIMARY KEY, upsert rule (`+"`INSERT ... ON CONFLICT`"+`), indexes, writer ownership, group separation, report consumers (the HTML report `+"`window.report.query`"+` SQL that reads it), and correct references to durable assets under `+"`db/assets/`"+`.
 13. **Check skill discipline**: Installed skills live under `+"`skills/{folder}/SKILL.md`"+` and are reusable capability instructions shared across workflows. Review workflow-selected skills and per-step `+"`enabled_skills`"+` against the actual plan. Flag missing needed skills, selected-but-unused skills, descriptions that reference skills not enabled for the execution agent, malformed skill folders, and skills that duplicate workflow-specific learnings or contain workflow-specific secrets/paths/run state. Do not assume workflow-level selected skills automatically reach step execution; verify step-level `+"`enabled_skills`"+` when runtime requires explicit scoping.
 14. **Check lock consistency**: Three locks freeze workflow state — `+"`"+`lock_learnings`+"`"+` (per-step: freezes SKILL.md writes), `+"`"+`lock_code`+"`"+` (per-step, scripted only: freezes `+"`"+`learnings/{step-id}/main.py`+"`"+` against fix-loop rewrites), `+"`"+`lock_knowledgebase`+"`"+` (workflow-level: freezes post-step KB update agent). Flag inconsistency like `+"`"+`lock_code=true`+"`"+` without the scripted evidence gate or `+"`"+`lock_learnings=true`+"`"+` with stale/mismatched learning metadata. If a step description has meaningfully changed since the last review, recommend clearing `+"`"+`description_reviewed`+"`"+` and re-reviewing before keeping the locks.
 
@@ -8557,7 +8557,7 @@ Review these files/directories when present. Stay read-only:
 - `+"`knowledgebase/context/context.md`"+`: check whether user-supplied runtime context is present when steps appear to rely on chat memory, and verify optimizer-owned notes did not absorb user-owned rules/preferences that belong here.
 - `+"`knowledgebase/notes/_index.json`"+` and relevant `+"`knowledgebase/notes/*.md`"+`: check topic registry, stale/duplicated notes, and whether steps that produce domain facts have matching KB contribution contracts.
 - `+"`db/README.md`"+`, `+"`db/db.sqlite`"+`, and `+"`db/assets/`"+`: check schema/DDL documentation, table shape, primary keys, upsert rules, indexes, writer ownership, group separation, durable asset metadata/provenance, and report compatibility.
-- `+"`reports/report_plan.json`"+`: check whether data widgets query durable `+"`db/db.sqlite`"+` tables (and file widgets source `+"`db/assets/`"+`, KB context/notes, or built-in APIs) rather than volatile run paths, whether referenced columns exist, and whether derived report helper tables could be collapsed into a widget `+"`sql`"+` (JOIN/GROUP BY).
+- `+"`reports/report_plan.json`"+` + the HTML report document(s): check whether the report's `+"`window.report.query`"+` SQL reads durable `+"`db/db.sqlite`"+` tables (and references `+"`db/assets/`"+`/KB via `+"`window.report.get`"+`/`+"`fileUrl`"+`) rather than volatile run paths, whether referenced columns exist, and whether derived report helper tables could be collapsed into the report's query (JOIN/GROUP BY).
 - `+"`builder/review.html`"+`: read if present to avoid repeating already-known findings and to see unresolved prior review items.
 
 {{if .TargetRunFolder}}## OPTIONAL RUN EVIDENCE
@@ -8586,8 +8586,8 @@ Review the plan through these lenses:
 8. **Skill quality** — Are installed/selected skills the right reusable capabilities for the steps, scoped correctly via `+"`enabled_skills`"+` where needed, and free of workflow-specific learned state that belongs in `+"`learnings/_global/`"+`?
 9. **Learning quality** — For every learning-enabled step, is there a good reason, a concrete objective, direct write method unless explicitly requested otherwise, and no stale/stretched learning scope?
 10. **KB quality** — Are KB producer/consumer steps correctly declared, and do notes/index files contain durable domain knowledge rather than run logs or execution recipes?
-11. **DB quality** — Are `+"`"+`db/db.sqlite`+"`"+` tables documented, keyed, upsert-safe, group-safe, connected to report consumers (widget `+"`sql`"+`), and correctly referencing durable files under `+"`db/assets/`"+` when assets exist?
-12. **Report wiring** — Are data widgets backed by durable tables with matching columns and clear ownership? Are widgets pushing joins/aggregation into `+"`sql`"+` where it would avoid helper tables or a `+"`step-generate-report`"+` flatten step?
+11. **DB quality** — Are `+"`"+`db/db.sqlite`+"`"+` tables documented, keyed, upsert-safe, group-safe, connected to report consumers (the HTML report `+"`window.report.query`"+` SQL), and correctly referencing durable files under `+"`db/assets/`"+` when assets exist?
+12. **Report wiring** — Are the report's `+"`window.report.query`"+` SQL statements backed by durable tables with matching columns and clear ownership? Do they push joins/aggregation into SQL where it would avoid helper tables or a `+"`step-generate-report`"+` flatten step?
 13. **Operational risk** — Which current choices are most likely to fail, confuse the agent, or create maintenance burden later?
 
 ## OUTPUT FORMAT
@@ -8680,7 +8680,7 @@ Create a finding when:
 - lock_code or lock_learnings remains after a material change without review_notes proving resync
 - learning_objective or global learning content describes old behavior
 - KB contribution still describes the old extraction/update behavior
-- report widgets bind to old db files, JSON paths, labels, or assumptions
+- the report's `+"`window.report.query`"+` SQL (or asset/file references) point at old tables, columns, paths, labels, or assumptions
 - eval steps check old files, fields, thresholds, labels, or behavior
 - the changed step should write cross-run/report-facing data but no db target is named
 - a deleted step still has step_config, learnings, report, eval, or KB references
@@ -9281,7 +9281,7 @@ Use this hierarchy before changing the plan:
 6. **Prefer the mode that matches the work**: default to `+"`agentic`"+`. Promote to `+"`scripted`"+` only when the user explicitly asks for it, the work is highly deterministic, and there is broad stability evidence (normally 10+ successful runs across the relevant scenarios/groups). Keep adaptive work and browser/UI automation on `+"`agentic`"+` by default. If a step is `+"`agentic`"+` and `+"`learnings/{step-id}/main.py`"+` exists, delete that stale script (and clear `+"`lock_code`"+` if set); agentic is ephemeral and a leftover main.py creates confusion for future harden/replan/review passes.
 7. **Preserve portability**: Remove plan-visible secrets, user-specific constants, hardcoded paths, and run-specific values when you touch affected steps.
 8. **Do not mark locks as complete just because the structure changed**: Structural replanning is separate from evidence-backed hardening.
-9. **Persistent-store aware**: Stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/context/`+"`"+` (user-supplied runtime business context), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations discovered by the workflow; normally written by step agents in direct-write mode; agent mode only when explicitly requested), `+"`"+`db/db.sqlite`+"`"+` (structured durable SQLite tables for cross-run state and Report UI widgets; step-owned, upsert via `+"`INSERT ... ON CONFLICT`"+`), and `+"`db/assets/`"+` (durable media/file assets referenced by db rows or reports). When restructuring, use `+"`"+`update_step_config`+"`"+` to set `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` on steps that consume or produce KB facts. If a step consumes `+"`knowledgebase/context/context.md`"+`, also update that step's description to name the relevant context section/path so the runtime agent knows to read and apply it. If run evidence shows a step stashing durable facts in output files or learnings that belong in the KB, restructure by adding a proper `+"`"+`knowledgebase_contribution`+"`"+` instead of creating new plan steps to manage state.
+9. **Persistent-store aware**: Stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/context/`+"`"+` (user-supplied runtime business context), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations discovered by the workflow; normally written by step agents in direct-write mode; agent mode only when explicitly requested), `+"`"+`db/db.sqlite`+"`"+` (structured durable SQLite tables for cross-run state, read live by HTML reports via `+"`window.report.query`"+`; step-owned, upsert via `+"`INSERT ... ON CONFLICT`"+`), and `+"`db/assets/`"+` (durable media/file assets referenced by db rows or reports). When restructuring, use `+"`"+`update_step_config`+"`"+` to set `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` on steps that consume or produce KB facts. If a step consumes `+"`knowledgebase/context/context.md`"+`, also update that step's description to name the relevant context section/path so the runtime agent knows to read and apply it. If run evidence shows a step stashing durable facts in output files or learnings that belong in the KB, restructure by adding a proper `+"`"+`knowledgebase_contribution`+"`"+` instead of creating new plan steps to manage state.
 
 ## CONTEXT
 
@@ -9459,9 +9459,9 @@ Run this sweep on every harden pass. For a single-group harden, use that group's
    - Durable images, PDFs, screenshots, audio, or other media/files must live under `+"`db/assets/`"+` with references and metadata in a `+"`db/db.sqlite`"+` table; do not store large blobs in the DB.
    - If a failing/touched step DROP/recreates a table or writes report data only to run folders, fix the description/code/config so it upserts durable, keyed rows.
 6. **Reports**
-   - `+"`reports/report_plan.json`"+` data widgets should query durable `+"`db/db.sqlite`"+` tables (file widgets source `+"`db/assets/`"+`, KB context/notes, or built-in APIs), not volatile `+"`runs/`"+` paths.
-   - Push joins/aggregation/sort/limit into the widget `+"`sql`"+` rather than maintaining derived report helper tables — one `+"`SELECT ... JOIN ... GROUP BY`"+` returns exactly the rows the widget needs.
-   - If a widget depends on a redundant helper table or a `+"`step-generate-report`"+` / flatten-data step, collapse it into the widget `+"`sql`"+` against the canonical tables when the transformation is deterministic and does not need a workflow step.
+   - The HTML report's `+"`window.report.query`"+` SQL should read durable `+"`db/db.sqlite`"+` tables (and reference `+"`db/assets/`"+`/KB via `+"`window.report.get`"+`/`+"`fileUrl`"+`), not volatile `+"`runs/`"+` paths.
+   - Push joins/aggregation/sort/limit into that SQL rather than maintaining derived report helper tables — one `+"`SELECT ... JOIN ... GROUP BY`"+` returns exactly the rows the report needs.
+   - If the report depends on a redundant helper table or a `+"`step-generate-report`"+` / flatten-data step, collapse it into the report's query against the canonical tables when the transformation is deterministic and does not need a workflow step.
    - When a harden fix changes output/db field names, update report wiring or flag the required report change.
 7. **Evaluation and variables**
    - If eval missed a clear output/schema failure, add or tighten pre-validation and, when appropriate, evaluation coverage.
@@ -9569,7 +9569,7 @@ Analysis rules:
 | `+"`db/README.md`"+` | Durable db schema contracts: per-table DDL, primary key, upsert rule, indexes, writers, consumers |
 | `+"`db/db.sqlite`"+` | Durable structured SQLite tables used across runs and by reports |
 | `+"`db/assets/`"+` | Durable images, PDFs, downloads, generated files, and other assets referenced by db rows/reports |
-| `+"`reports/report_plan.json`"+` | Live report widget definitions and source wiring |
+| `+"`reports/report_plan.json`"+` | Registers the report's HTML/Markdown document(s) under db/reports/ |
 
 ### Important: todo_task orchestrator logs
 For `+"`todo_task`"+` steps, the orchestrator may run sub-agent main.py scripts directly via shell commands instead of delegating to sub-agents. When this happens:

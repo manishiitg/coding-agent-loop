@@ -158,6 +158,18 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
+    command: 'design-reporting-ui',
+    description: 'Design the reporting UI from scratch: pick HTML (live data) or Markdown documents and build them',
+    icon: <CheckCircle className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['workshop'],
+    source: 'builtin',
+    execute: (ctx) => {
+      submitGuidedWorkflowCommand(ctx, 'design-reporting-ui')
+    }
+  },
+  {
     command: 'improve-report',
     description: 'Validate reports/report_plan.json and suggest layout/color improvements',
     icon: <CheckCircle className="w-4 h-4" />,

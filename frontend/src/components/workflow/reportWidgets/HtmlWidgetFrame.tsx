@@ -30,6 +30,20 @@ function injectThemeTokens(host: HTMLElement, doc: Document) {
   style.textContent = `:root{${decls}}`
 }
 
+// Drop the about:srcdoc UA default `body{margin:8px}` so an HTML report renders
+// edge-to-edge inside the report pane (we strip all our own chrome for HTML — the
+// 8px UA margin would otherwise read as a stray gap around every side). Inserted
+// as the FIRST <head> child so the report's own CSS (later, equal specificity)
+// still wins if it sets its own body margin/padding. Idempotent per document.
+function injectBaseReset(doc: Document) {
+  if (doc.getElementById('__report_base_reset')) return
+  const style = doc.createElement('style')
+  style.id = '__report_base_reset'
+  style.textContent = 'html,body{margin:0;padding:0;}'
+  const head = doc.head
+  if (head) head.insertBefore(style, head.firstChild)
+}
+
 // HtmlReportFrame renders an HTML report in a sandboxed iframe and injects a live
 // data API onto the iframe's window as `window.report`, then fires a `report:data`
 // event. The HTML owns ALL rendering (its own charts/tables/branded CSS) — we
@@ -119,6 +133,8 @@ export function HtmlReportFrame({
     const win = frame?.contentWindow as any
     const doc = frame?.contentDocument
     if (!win || !doc) return
+
+    injectBaseReset(doc)
 
     // In a srcDoc iframe the base URL is about:srcdoc, so clicking an in-page
     // `#anchor` link (the report's tab nav) reloads the WHOLE document instead of

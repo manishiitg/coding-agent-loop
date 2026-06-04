@@ -88,7 +88,8 @@ var allKinds = map[string]kindMeta{
 	"improve-workflow":   {Group: "improve", Description: "Unified metric-driven workflow improvement: harden or replan from run/eval evidence", Modes: []string{"workshop"}},
 	"improve-evaluation": {Group: "improve", Description: "Evaluation plan changes and metric-source health checks", Modes: []string{"workshop"}},
 	"auto-improve":       {Group: "improve", Description: "Set up recurring run + optimizer schedules", Modes: []string{"workshop"}},
-	"improve-report":     {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"workshop"}},
+	"design-reporting-ui": {Group: "report", Description: "Design the reporting UI from scratch: pick HTML (live data via window.report) or Markdown documents, author them, and register in reports/report_plan.json", Modes: []string{"workshop"}},
+	"improve-report":      {Group: "report", Description: "Report layout / color / density improvements", Modes: []string{"workshop"}},
 }
 
 // referenceKinds is the registry of system reference docs — content that

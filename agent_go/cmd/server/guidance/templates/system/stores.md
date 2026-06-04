@@ -31,7 +31,7 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 - Durable media/file assets live under `db/assets/`. Store images, PDFs, screenshots, audio, generated files, and other binary assets there when they must survive runs or be used by reports/later steps. Keep metadata, provenance, and references in a `db.sqlite` table; do not embed large assets as blobs.
 - **Written by (runtime):** step code directly (`sqlite3` / Python). Step-owned during runs — `INSERT ... ON CONFLICT DO UPDATE` (upsert by primary key), never recreate or wholesale-overwrite a table (that destroys rows from other groups/runs).
 - **Written by (design time — you):** YOU (the builder) MAY use `sqlite3 db/db.sqlite` directly to create tables, seed initial rows, fix corrupt data, or stage test data for development. Your FolderGuard allows it. Prefer letting steps populate tables during actual runs — your writes are for setup and repair, not ongoing state.
-- Read as: step agents query it directly via `sqlite3`; widgets in reports/report_plan.json bind to it via `db: "db/db.sqlite"` + a `sql` query.
+- Read as: step agents query it directly via `sqlite3`; the HTML report reads it live via `window.report.query("SELECT ...")`.
 - Shape: relational tables with a declared PRIMARY KEY per table, decided by the builder at design time. Nested objects/arrays are stored as JSON-text columns (`json_extract` to read them back).
 - Examples: "table `processed_companies` keyed by company_id", "table `monthly_totals` aggregated across all months", "table `cursors` tracking last-processed dates".
 
@@ -76,10 +76,10 @@ If a step needs business context while running, explicitly wire it in BOTH place
 
 Every non-trivial step has a `context_output` file (e.g. `extracted_data.json`). That's the forward-pipe to the next step and the target of `validation_schema`. It lives under `runs/{iteration}/{group}/execution/{step-id}/` and is **volatile** — deleted on re-execution.
 
-`db/db.sqlite` is different: workspace-level, persistent across runs and groups, and the default source for data-backed report widgets (`table`, `cards`, `chart`, `stat`, `alert`, `pivot`) — they bind via `db: "db/db.sqlite"` + a `sql` query. Artifact report widgets are the exception: `kind: "file"` and `kind: "file-list"` use `source` to render durable files from `db/`, `knowledgebase/`, or `docs/`. Do not point report widgets at volatile `runs/...` paths.
+`db/db.sqlite` is different: workspace-level, persistent across runs and groups, and the live data source for the report. The report is an **HTML document** that reads it on view via `window.report.query("SELECT ...")` and renders its own charts/tables; it can also pull durable files from `db/`, `knowledgebase/`, or `docs/` via `window.report.get`/`fileUrl`. Keep report-facing data in `db/db.sqlite` and durable files under those roots — never have a report read volatile `runs/...` paths.
 
 **When to introduce a db/db.sqlite table:**
-- (a) You want (or might plausibly want) structured data to appear in the Report UI — a db.sqlite table is the default durable option; migrating later means rewriting step code + schema notes, so lean toward it up front. For human-readable documents or media artifacts, use durable `docs/`, `knowledgebase/`, or `db/assets/` paths with `file` / `file-list` widgets.
+- (a) You want (or might plausibly want) structured data to appear in the Report UI — a db.sqlite table is the default durable option (the HTML report queries it live); migrating later means rewriting step code + schema notes, so lean toward it up front. For human-readable documents or media artifacts, use durable `docs/`, `knowledgebase/`, or `db/assets/` paths.
 - (b) Cross-run persistence matters — cursors ("last-processed date"), processed-ID sets for dedup, cumulative rows that grow across runs.
 - (c) Cross-group aggregation matters — combined tallies, per-group rows unified into one view.
 
@@ -102,7 +102,7 @@ Every non-trivial step has a `context_output` file (e.g. `extracted_data.json`).
 - **upsert**: `INSERT ... ON CONFLICT(company_id) DO UPDATE SET ...`; newer `updated_at` wins; never DELETE rows
 - **indexes**: `CREATE INDEX idx_processed_companies_score ON processed_companies(score)`
 - **writers**: step-extract-companies (insert/update), step-score-companies (update score column only)
-- **used by**: report widget `companies-table` in report_plan.json (`SELECT ... FROM processed_companies`); step-rank-companies reads it
+- **used by**: the HTML report (`window.report.query("SELECT ... FROM processed_companies")`); step-rank-companies reads it
 ```
 
 **Before you create or edit any step that writes to `db/db.sqlite`:**
@@ -132,7 +132,7 @@ Use `learnings_access="read-write"` only when the step is expected to discover r
 Keep the step **read-only** (`learnings_access` unset or `"read"`) when it is mainly executing an already-known contract:
 - routing/condition steps,
 - validation/preflight checks that only inspect known fields,
-- mechanical transforms, aggregation, dedupe, formatting, and report-widget data shaping,
+- mechanical transforms, aggregation, dedupe, formatting, and report data shaping,
 - human input/approval/message-only steps,
 - pure db/KB consumers that do not interact with an external system,
 - mature scripted steps where `learnings/{step-id}/main.py` already encodes the HOW.

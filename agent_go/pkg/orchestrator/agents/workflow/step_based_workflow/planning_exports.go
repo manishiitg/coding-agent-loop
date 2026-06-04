@@ -137,9 +137,9 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 // This avoids importing database/scheduler packages in the workshop package.
 type SchedulerCallbacks struct {
 	ListSchedules          func(ctx context.Context, workspacePath string) (string, error)
-	CreateSchedule         func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupNames []string, mode string, messages []string, workshopMode string) (string, error)
+	CreateSchedule         func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupNames []string, mode string, messages []string, workshopMode string, resumePrevious bool) (string, error)
 	CreateCalendarSchedule func(ctx context.Context, workspacePath, name, timezone string, groupNames []string, calendarItemsJSON string, mode string, messages []string, workshopMode string) (string, error)
-	UpdateSchedule         func(ctx context.Context, jobID, name, cronExpr, timezone string, groupNames []string, setGroupNames bool, enabled *bool, mode string, messages []string, workshopMode string) (string, error)
+	UpdateSchedule         func(ctx context.Context, jobID, name, cronExpr, timezone string, groupNames []string, setGroupNames bool, enabled *bool, mode string, messages []string, workshopMode string, resumePrevious *bool) (string, error)
 	DeleteSchedule         func(ctx context.Context, jobID string) error
 	TriggerSchedule        func(ctx context.Context, jobID string) (string, error)
 	GetScheduleRuns        func(ctx context.Context, jobID string, limit int) (string, error)

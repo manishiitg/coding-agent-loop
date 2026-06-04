@@ -570,15 +570,11 @@ func (api *StreamingAPI) buildSessionExecutionTree(session *ActiveSessionInfo) *
 		}
 	}
 
-	switch {
-	case summary.HasRunningMainAgent || summary.HasRunningBackgroundAgents || summary.HasRunningTrackedExecutions || summary.IsSessionBusy:
-		summary.DisplayStatus = sessionExecutionDisplayBusy
-	case summary.CompletedCount > 0 || summary.FailedCount > 0 || summary.CanceledCount > 0 ||
-		session.Status == "completed" || session.Status == "stopped" || session.Status == "inactive" || session.Status == "dismissed":
-		summary.DisplayStatus = sessionExecutionDisplayStopped
-	default:
-		summary.DisplayStatus = sessionExecutionDisplayIdle
-	}
+	hasRunningWork := summary.HasRunningMainAgent || summary.HasRunningBackgroundAgents ||
+		summary.HasRunningTrackedExecutions || summary.IsSessionBusy || api.canSteerSession(session.SessionID)
+	isStopped := summary.CompletedCount > 0 || summary.FailedCount > 0 || summary.CanceledCount > 0 ||
+		isStoppedSessionStatus(session.Status)
+	summary.DisplayStatus = deriveSessionDisplayStatus(hasRunningWork, isStopped)
 
 	sortSessionExecutionTree(root)
 

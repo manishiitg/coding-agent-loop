@@ -7602,6 +7602,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"description": "Only set when mode='workshop'. Defaults to 'run'. Use 'optimizer' for scheduled improvement/hardening loops that generate learnings and analyze steps.",
 					"enum":        []string{"run", "optimizer"},
 				},
+				"resume_previous": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Only when this workflow runs on a coding-agent CLI (claude-code, cursor-cli, codex-cli, gemini-cli, opencode-cli, agy-cli). When true, each scheduled run resumes the previous run's thread (same CLI) instead of starting a fresh session, so the agent keeps prior context across runs. Ignored for API model providers and non-resumable runs. Defaults to false.",
+				},
 			},
 			"required": []string{"name", "cron_expression", "timezone", "group_names"},
 		},
@@ -7637,6 +7641,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 			workshopMode, _ := args["workshop_mode"].(string)
+			resumePrevious, _ := args["resume_previous"].(bool)
 			if name == "" {
 				return "name is required.", nil
 			}
@@ -7653,7 +7658,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if mode == "workshop" && len(messages) == 0 {
 				return "messages is required when mode='workshop'. Provide at least one message, e.g. ['Run the full workflow using run_full_workflow(group_name=\"group-1\")'].", nil
 			}
-			return iwm.schedulerFuncs.CreateSchedule(ctx, iwm.schedulerWorkspacePath, name, cronExpr, timezone, groupNames, mode, messages, workshopMode)
+			return iwm.schedulerFuncs.CreateSchedule(ctx, iwm.schedulerWorkspacePath, name, cronExpr, timezone, groupNames, mode, messages, workshopMode, resumePrevious)
 		},
 		"workflow",
 	); err != nil {
@@ -7791,6 +7796,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"description": "Workshop builder mode: 'run' (default) or 'optimizer'.",
 					"enum":        []string{"run", "optimizer"},
 				},
+				"resume_previous": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Only when this workflow runs on a coding-agent CLI. When true, scheduled runs resume the previous thread (same CLI) instead of starting fresh. Set false to go back to fresh sessions. Omit to keep the current setting.",
+				},
 			},
 			"required": []string{"job_id"},
 		},
@@ -7843,7 +7852,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 			workshopMode, _ := args["workshop_mode"].(string)
-			return iwm.schedulerFuncs.UpdateSchedule(ctx, jobID, name, cronExpr, timezone, groupNames, setGroupNames, enabled, mode, messages, workshopMode)
+			var resumePrevious *bool
+			if raw, ok := args["resume_previous"]; ok && raw != nil {
+				if b, ok := raw.(bool); ok {
+					resumePrevious = &b
+				}
+			}
+			return iwm.schedulerFuncs.UpdateSchedule(ctx, jobID, name, cronExpr, timezone, groupNames, setGroupNames, enabled, mode, messages, workshopMode, resumePrevious)
 		},
 		"workflow",
 	); err != nil {

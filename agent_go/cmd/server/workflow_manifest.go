@@ -95,6 +95,7 @@ type WorkflowSchedule struct {
 	Messages       []string               `json:"messages,omitempty"`      // Predefined message queue for workshop mode (sent one-by-one)
 	WorkshopMode   string                 `json:"workshop_mode,omitempty"` // Workshop builder mode for scheduled runs: "run" (default) or "optimizer" (legacy "ask"/"runner"/"debugger" auto-migrated to "run")
 	Query          string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
+	ResumePrevious bool                   `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume the latest prior thread (same provider) instead of starting a fresh session each run
 }
 
 type CalendarScheduleItem struct {

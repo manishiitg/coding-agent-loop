@@ -30,6 +30,7 @@ type ScheduledJobResponse struct {
 	Messages            []string               `json:"messages,omitempty"`      // Predefined messages for workshop mode
 	WorkshopMode        string                 `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
 	Query               string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
+	ResumePrevious      bool                   `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume latest prior thread instead of fresh session
 	UserID              string                 `json:"user_id,omitempty"`       // User context (multi-agent mode)
 	ScheduleType        string                 `json:"schedule_type,omitempty"`
 	CalendarItems       []CalendarScheduleItem `json:"calendar_items,omitempty"`
@@ -66,6 +67,7 @@ type CreateScheduleRequest struct {
 	Messages       []string               `json:"messages,omitempty"`      // Predefined messages for workshop mode
 	WorkshopMode   string                 `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
 	Query          string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
+	ResumePrevious bool                   `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume latest prior thread instead of fresh session
 }
 
 // UpdateScheduleRequest is the request body for updating a schedule.
@@ -83,6 +85,7 @@ type UpdateScheduleRequest struct {
 	Messages       []string               `json:"messages,omitempty"`      // Predefined messages for workshop mode
 	WorkshopMode   string                 `json:"workshop_mode,omitempty"` // builder, optimizer, runner, debugger
 	Query          string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
+	ResumePrevious *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume latest prior thread instead of fresh session
 }
 
 func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched WorkflowSchedule, state ScheduleRuntimeState, missed WorkflowScheduleMissedStatus) ScheduledJobResponse {
@@ -100,6 +103,7 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 		Mode:                sched.Mode,
 		Messages:            sched.Messages,
 		WorkshopMode:        sched.WorkshopMode,
+		ResumePrevious:      sched.ResumePrevious,
 		ScheduleType:        scheduleTypeOrDefault(sched.ScheduleType),
 		CalendarItems:       sched.CalendarItems,
 		CronExpression:      sched.CronExpression,
@@ -129,6 +133,7 @@ func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state Sch
 		WorkspacePath:       "_users/" + userID,
 		Mode:                "multi-agent",
 		Query:               sched.Query,
+		ResumePrevious:      sched.ResumePrevious,
 		UserID:              userID,
 		ScheduleType:        scheduleTypeOrDefault(sched.ScheduleType),
 		CalendarItems:       sched.CalendarItems,
@@ -428,6 +433,7 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 				Enabled:        req.Enabled,
 				Mode:           "multi-agent",
 				Query:          req.Query,
+				ResumePrevious: req.ResumePrevious,
 			}
 
 			f.Schedules = append(f.Schedules, newSched)
@@ -486,6 +492,7 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			Mode:           req.Mode,
 			Messages:       req.Messages,
 			WorkshopMode:   req.WorkshopMode,
+			ResumePrevious: req.ResumePrevious,
 		}
 
 		manifest.Schedules = append(manifest.Schedules, newSched)
@@ -598,6 +605,9 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			if req.Query != "" {
 				sched.Query = req.Query
 			}
+			if req.ResumePrevious != nil {
+				sched.ResumePrevious = *req.ResumePrevious
+			}
 			if err := validateScheduleRequest(scheduleTypeOrDefault(sched.ScheduleType), sched.CronExpression, sched.CalendarItems); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
@@ -666,6 +676,9 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		}
 		if req.WorkshopMode != "" {
 			sched.WorkshopMode = req.WorkshopMode
+		}
+		if req.ResumePrevious != nil {
+			sched.ResumePrevious = *req.ResumePrevious
 		}
 		validGroupNames, err := validateScheduleGroupNamesForWorkspace(r.Context(), workspacePath, sched.GroupNames)
 		if err != nil {

@@ -146,14 +146,29 @@ export function HtmlReportFrame({
       ;(doc as any).__anchorScrollBound = true
       doc.addEventListener('click', (e: Event) => {
         const el = e.target as Element | null
-        const anchor = el?.closest?.('a[href^="#"]') as HTMLAnchorElement | null
-        if (!anchor) return
-        const id = anchor.getAttribute('href')?.slice(1)
-        if (!id) return
-        const target = doc.getElementById(id)
-        if (!target) return
-        e.preventDefault()
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        const link = el?.closest?.('a[href]') as HTMLAnchorElement | null
+        if (!link) return
+        const href = link.getAttribute('href') || ''
+
+        // In-page `#anchor` links (the report's tab nav): the srcDoc base URL is
+        // about:srcdoc, so a default click reloads the whole document instead of
+        // scrolling. Intercept and scroll manually.
+        if (href.startsWith('#')) {
+          const target = doc.getElementById(href.slice(1))
+          if (!target) return
+          e.preventDefault()
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          return
+        }
+
+        // External links (Notion, Jira, GitHub, docs, …): the iframe sandbox has
+        // no allow-popups/allow-top-navigation, so a click would be silently
+        // swallowed. Open them in a new browser tab from the parent window
+        // instead, keeping the sandbox locked down.
+        if (/^https?:\/\//i.test(href)) {
+          e.preventDefault()
+          window.open(href, '_blank', 'noopener,noreferrer')
+        }
       })
     }
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -674,36 +673,6 @@ func resolveReportPlanPath(data interface{}, path string) (interface{}, bool) {
 	return current, true
 }
 
-func applyReportPlanFilter(value interface{}, filter string) interface{} {
-	if filter == "" {
-		return value
-	}
-	arr, ok := value.([]interface{})
-	if !ok {
-		return value
-	}
-	eq := strings.Index(filter, "=")
-	if eq <= 0 {
-		return value
-	}
-	key := strings.TrimSpace(filter[:eq])
-	match := strings.TrimSpace(filter[eq+1:])
-	if key == "" {
-		return value
-	}
-	filtered := make([]interface{}, 0, len(arr))
-	for _, item := range arr {
-		obj, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if fmt.Sprintf("%v", obj[key]) == match {
-			filtered = append(filtered, obj)
-		}
-	}
-	return filtered
-}
-
 func reportPlanIsFileWidgetKind(kind string) bool {
 	return kind == "file" || kind == "file-list"
 }
@@ -1202,66 +1171,6 @@ func reportPlanAsNumber(v interface{}) (float64, bool) {
 		n, err := strconv.ParseFloat(fmt.Sprintf("%v", v), 64)
 		return n, err == nil
 	}
-}
-
-func reportPlanSummarizeWidgetData(w *reportPlanWidget, resolved interface{}) string {
-	switch value := resolved.(type) {
-	case nil:
-		return "resolved value is null"
-	case []interface{}:
-		count := len(value)
-		if w.Kind == "table" || w.Kind == "chart" || w.Kind == "pivot" {
-			return fmt.Sprintf("%d row(s) resolved", count)
-		}
-		return fmt.Sprintf("%d item(s) resolved", count)
-	case map[string]interface{}:
-		return fmt.Sprintf("object with %d key(s)", len(value))
-	case string:
-		if len(value) > 120 {
-			return fmt.Sprintf("text (%d chars)", len(value))
-		}
-		return fmt.Sprintf("text: %q", value)
-	default:
-		return fmt.Sprintf("value: %v", value)
-	}
-}
-
-func reportPlanPreviewValue(v interface{}) interface{} {
-	switch typed := v.(type) {
-	case nil:
-		return nil
-	case string:
-		if len(typed) > 240 {
-			return typed[:240] + "..."
-		}
-		return typed
-	case []interface{}:
-		return previewSlice(typed, 3)
-	case map[string]interface{}:
-		keys := make([]string, 0, len(typed))
-		for k := range typed {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		preview := map[string]interface{}{}
-		for i, key := range keys {
-			if i >= 8 {
-				preview["..."] = fmt.Sprintf("%d more key(s)", len(keys)-i)
-				break
-			}
-			preview[key] = reportPlanPreviewValue(typed[key])
-		}
-		return preview
-	default:
-		return typed
-	}
-}
-
-func previewSlice[T any](items []T, max int) []T {
-	if len(items) <= max {
-		return items
-	}
-	return items[:max]
 }
 
 type reportPlanWidgetLocation struct {

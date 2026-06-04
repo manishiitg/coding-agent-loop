@@ -3,7 +3,10 @@
 // widgets fetch their `source` file directly.
 // See docs/workflow/persistent_stores_design.md.
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { MarkdownWidget } from './reportWidgets/MarkdownWidget'
 import { FileListWidget, FileWidget } from './reportWidgets/FileWidget'
 import { FilePreviewModal } from './reportWidgets/FilePreviewModal'
@@ -946,6 +949,22 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
         return text
       }
     }
+    // Render a markdown file to an HTML string (same engine as the markdown
+    // file widget: react-markdown + GFM), wrapped so an HTML report can inject a
+    // rendered .md inline and the iframe's default .report-markdown prose style
+    // (or the report's own) can target it.
+    const getHtml = async (path: string): Promise<string | null> => {
+      const text = await getText(path)
+      if (text == null) return null
+      try {
+        const body = renderToStaticMarkup(
+          createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, text),
+        )
+        return `<div class="report-markdown">${body}</div>`
+      } catch {
+        return null
+      }
+    }
     const fileUrl = async (path: string): Promise<string | null> => {
       const n = allowed(path)
       if (!n) return null
@@ -967,7 +986,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       if (!n) return
       useReportFilePreviewStore.getState().show({ path: `${workspacePath}/${n}` })
     }
-    return { workspacePath, query, get, getText, fileUrl, openFile }
+    return { workspacePath, query, get, getText, getHtml, fileUrl, openFile }
   }, [workspacePath])
 
   const reportRuntime = useMemo(

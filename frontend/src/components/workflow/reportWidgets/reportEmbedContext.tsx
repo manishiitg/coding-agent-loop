@@ -16,6 +16,12 @@ export interface ReportDataApi {
   query: (sql: string) => Promise<Record<string, unknown>[]>
   get: (path: string) => Promise<unknown>
   getText: (path: string) => Promise<string | null>
+  // getHtml renders a markdown (db/ knowledgebase/ docs/) file to an HTML string
+  // (the app's markdown engine + GFM), wrapped in <div class="report-markdown">,
+  // so an HTML report can drop a rendered .md inline: el.innerHTML = await
+  // window.report.getHtml(path). The iframe ships a default .report-markdown prose
+  // style (theme-aware, overridable).
+  getHtml: (path: string) => Promise<string | null>
   // File access (parity with file widgets): fileUrl returns an authenticated
   // blob URL usable in <img src> / <a href> / <iframe src> for images, PDFs,
   // etc.; openFile opens the file in the in-report preview modal. Both scoped to

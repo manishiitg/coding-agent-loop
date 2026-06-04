@@ -44,6 +44,35 @@ function injectBaseReset(doc: Document) {
   if (head) head.insertBefore(style, head.firstChild)
 }
 
+// Default prose style for markdown injected via window.report.getHtml() — the
+// helper wraps output in `.report-markdown`, and this gives it readable,
+// theme-aware typography (using the app tokens injected by injectThemeTokens) so
+// an embedded .md looks right with zero effort. The report can override any of
+// these in its own CSS. Inserted after the theme-token style so var(--…) resolve.
+function injectMarkdownStyles(doc: Document) {
+  if (doc.getElementById('__report_markdown_styles')) return
+  const style = doc.createElement('style')
+  style.id = '__report_markdown_styles'
+  style.textContent = `
+.report-markdown{color:hsl(var(--foreground,222 47% 11%));line-height:1.6;font-size:0.95rem}
+.report-markdown h1,.report-markdown h2,.report-markdown h3,.report-markdown h4{line-height:1.25;font-weight:650;margin:1.4em 0 .5em}
+.report-markdown h1{font-size:1.5em}.report-markdown h2{font-size:1.25em}.report-markdown h3{font-size:1.1em}
+.report-markdown p,.report-markdown ul,.report-markdown ol{margin:.6em 0}
+.report-markdown ul,.report-markdown ol{padding-left:1.4em}
+.report-markdown a{color:hsl(var(--primary,222 89% 55%));text-decoration:underline;text-underline-offset:2px}
+.report-markdown code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;background:hsl(var(--muted,210 40% 96%));padding:.12em .35em;border-radius:4px}
+.report-markdown pre{background:hsl(var(--muted,210 40% 96%));padding:.8em 1em;border-radius:8px;overflow:auto}
+.report-markdown pre code{background:none;padding:0}
+.report-markdown blockquote{margin:.6em 0;padding:.2em .9em;border-left:3px solid hsl(var(--border,214 32% 88%));color:hsl(var(--muted-foreground,215 16% 47%))}
+.report-markdown table{border-collapse:collapse;width:100%;margin:.7em 0;font-size:.9em}
+.report-markdown th,.report-markdown td{border:1px solid hsl(var(--border,214 32% 88%));padding:.4em .6em;text-align:left}
+.report-markdown th{background:hsl(var(--muted,210 40% 96%));font-weight:600}
+.report-markdown img{max-width:100%;height:auto}
+.report-markdown hr{border:0;border-top:1px solid hsl(var(--border,214 32% 88%));margin:1.2em 0}
+`.trim()
+  doc.head?.appendChild(style)
+}
+
 // HtmlReportFrame renders an HTML report in a sandboxed iframe and injects a live
 // data API onto the iframe's window as `window.report`, then fires a `report:data`
 // event. The HTML owns ALL rendering (its own charts/tables/branded CSS) — we
@@ -56,6 +85,9 @@ function injectBaseReset(doc: Document) {
 //   await window.report.query(sql)   // read-only SQL against db/db.sqlite -> array of row objects
 //   await window.report.get(path)    // any db/ knowledgebase/ docs file -> parsed JSON (or text)
 //   await window.report.getText(path)// raw file text
+//   await window.report.getHtml(path) // a markdown file rendered to an HTML string (wrapped in
+//                                      // .report-markdown, default prose style injected) — drop a
+//                                      // rendered .md inline: el.innerHTML = await window.report.getHtml(p)
 //   await window.report.fileUrl(path)// blob URL for <img>/<a>/<iframe> (images, PDFs, …)
 //   window.report.openFile(path)     // open a file in the in-report preview modal
 //   window.report.theme              // 'dark' | 'light' — the APP's current theme
@@ -135,6 +167,7 @@ export function HtmlReportFrame({
     if (!win || !doc) return
 
     injectBaseReset(doc)
+    injectMarkdownStyles(doc)
 
     // In a srcDoc iframe the base URL is about:srcdoc, so clicking an in-page
     // `#anchor` link (the report's tab nav) reloads the WHOLE document instead of
@@ -178,6 +211,7 @@ export function HtmlReportFrame({
         query: dataApi.query,
         get: dataApi.get,
         getText: dataApi.getText,
+        getHtml: dataApi.getHtml,
         fileUrl: dataApi.fileUrl,
         openFile: dataApi.openFile,
         theme: 'light',

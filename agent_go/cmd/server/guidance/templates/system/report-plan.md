@@ -28,6 +28,7 @@ The viewer hands the HTML the live data and the HTML renders its own visuals (ch
 - `await window.report.query(sql)` — run a read-only SQL query against `db/db.sqlite` → array of row objects (the primary data source). Do the joining, summing, filtering, grouping, and latest-row selection in SQL (`JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, `LIMIT`).
 - `await window.report.get(path)` — fetch any `db/`/`knowledgebase/`/`docs/` file live → parsed JSON (or text); use for text/assets, not structured data
 - `await window.report.getText(path)` — raw file text
+- `await window.report.getHtml(path)` — render a **markdown file** to an HTML string (the app's markdown engine + GFM tables), wrapped in `<div class="report-markdown">` with a default theme-aware prose style. Use it to **embed a rendered `.md` inline inside your HTML report**: `el.innerHTML = await window.report.getHtml('db/reports/notes.md')`. Lets you keep your custom HTML design and drop a markdown-rendered section in between. Override `.report-markdown` in your CSS to restyle.
 - `await window.report.fileUrl(path)` — an authenticated blob URL for a workspace file (image/PDF/etc.); use it in `<img src>`, `<a href>`, or `<iframe src>` to show artifacts
 - `window.report.openFile(path)` — open a file in the in-report preview modal (e.g. a "view PDF" button)
 - `window.report.theme` — `'dark'`/`'light'` (the app's current mode); the `report:data` event fires on load + refresh, `report:theme` on toggle — render/restyle in their handlers

@@ -134,7 +134,7 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'improve-data',
+    command: 'improve-database',
     description: 'Improve durable data contracts, schemas, and report compatibility',
     icon: <Server className="w-4 h-4" />,
     modes: ['workflow'],
@@ -142,7 +142,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: ['workshop'],
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'improve-data')
+      submitGuidedWorkflowCommand(ctx, 'improve-database')
     }
   },
   {

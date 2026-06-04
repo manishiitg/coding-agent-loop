@@ -78,7 +78,7 @@ var allKinds = map[string]kindMeta{
 	"improve-learnings": {Group: "learning", Description: "Improve learnings/_global with targeted cleanup or current-plan consolidation", Modes: []string{"workshop"}},
 
 	// DB maintenance — applies guarded schema/contract cleanup to db/db.sqlite
-	"improve-data": {Group: "db", Description: "Improve db/db.sqlite table contracts, schemas, and report compatibility", Modes: []string{"workshop"}},
+	"improve-database": {Group: "db", Description: "Improve db/db.sqlite table contracts, schemas, and report compatibility", Modes: []string{"workshop"}},
 
 	// DB migration — one-time conversion of db/*.json into db/db.sqlite + rewrites report widgets to SQL
 	"migrate-to-sql": {Group: "db", Description: "Migrate this workflow's db/*.json into a single db/db.sqlite (one table per file) and rewrite report widgets to query SQL", Modes: []string{"workshop"}},

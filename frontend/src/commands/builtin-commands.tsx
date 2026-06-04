@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, Wrench, GitBranch, CheckCircle, Search, BookOpen, History } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, Wrench, GitBranch, CheckCircle, Search, BookOpen } from 'lucide-react'
 import type { CommandContext, CommandDefinition } from './types'
 
 function submitGuidedWorkflowCommand(
@@ -23,18 +23,6 @@ function submitGuidedWorkflowCommand(
 }
 
 export const builtinCommands: CommandDefinition[] = [
-  {
-    command: 'resume',
-    description: 'Attach a previous chat conversation as context',
-    icon: <History className="w-4 h-4" />,
-    modes: ['workflow', 'multi-agent'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['workshop', 'run'],
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.openResumeDialog?.()
-    }
-  },
   {
     command: 'design-flow',
     description: 'Validate context dependency chain between steps',

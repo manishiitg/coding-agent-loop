@@ -6385,19 +6385,23 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 		// workflow-builder workshop template. See ChatHistoryAgentRuntime
 		// SystemPrompt field docs in chat_history_persistence.go.
 		//
-		// GetSystemPrompt() returns the fully assembled prompt (base + every
-		// AppendSystemPrompt entry merged in with "\n\n" separators). On
-		// restore we SetSystemPrompt(SystemPrompt) and then re-AppendSystemPrompt
-		// each AppendedSystemPrompts entry, so if we stored the assembled form
-		// the appendix would land twice and accumulate on every save/restore
-		// cycle. Strip the appendix here so SystemPrompt is the pre-append base.
-		sp := strings.TrimSpace(underlyingAgent.GetSystemPrompt())
+		// On restore we SetSystemPrompt(SystemPrompt) and then re-AppendSystemPrompt
+		// each AppendedSystemPrompts entry. So we must persist the CLEAN base
+		// prompt (without the appendix) separately from the appended list —
+		// otherwise the appendix lands twice and accumulates on every
+		// save/restore cycle.
+		//
+		// Use the agent's tracked base (GetBaseSystemPrompt) rather than
+		// string-stripping the assembled prompt. The old TrimSuffix approach
+		// broke whenever the assembled tail was altered — TrimSpace eating the
+		// trailing newline of the last block, or AppendSystemPrompt's
+		// RemoveAIStaffEngineerText mutation — leaving the appendix embedded in
+		// SystemPrompt. That doubled the capability snapshot / secrets / browser
+		// sections in the coding-CLI rule file (CLAUDE.md) on each resume.
+		base := strings.TrimSpace(underlyingAgent.GetBaseSystemPrompt())
 		appended := underlyingAgent.GetAppendedSystemPrompts()
-		for i := len(appended) - 1; i >= 0; i-- {
-			sp = strings.TrimSuffix(sp, "\n\n"+appended[i])
-		}
-		if sp != "" {
-			runtime.SystemPrompt = sp
+		if base != "" {
+			runtime.SystemPrompt = base
 		}
 		if len(appended) > 0 {
 			runtime.AppendedSystemPrompts = append([]string(nil), appended...)
@@ -10588,7 +10592,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			}
 			return sb.String(), nil
 		},
-		CreateSchedule: func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupNames []string, mode string, messages []string, workshopMode string) (string, error) {
+		CreateSchedule: func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupNames []string, mode string, messages []string, workshopMode string, resumePrevious bool) (string, error) {
 			if err := ValidateCronExpression(cronExpr); err != nil {
 				return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
 			}
@@ -10613,6 +10617,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				Mode:           mode,
 				Messages:       messages,
 				WorkshopMode:   workshopMode,
+				ResumePrevious: resumePrevious,
 			}
 			manifest.Schedules = append(manifest.Schedules, newSched)
 			if err := WriteWorkflowManifest(ctx, workspacePath, manifest); err != nil {
@@ -10681,7 +10686,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			}
 			return fmt.Sprintf("Calendar schedule created and activated.\n- **ID**: `%s`\n- **Name**: %s\n- **Items**: %d\n- **Timezone**: %s\n- **Next Run**: %s", newSched.ID, name, len(calendarItems), timezone, nextRunStr), nil
 		},
-		UpdateSchedule: func(ctx context.Context, jobID, name, cronExpr, timezone string, groupNames []string, setGroupNames bool, enabled *bool, mode string, messages []string, workshopMode string) (string, error) {
+		UpdateSchedule: func(ctx context.Context, jobID, name, cronExpr, timezone string, groupNames []string, setGroupNames bool, enabled *bool, mode string, messages []string, workshopMode string, resumePrevious *bool) (string, error) {
 			if cronExpr != "" {
 				if err := ValidateCronExpression(cronExpr); err != nil {
 					return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
@@ -10724,6 +10729,9 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			}
 			if workshopMode != "" {
 				sched.WorkshopMode = workshopMode
+			}
+			if resumePrevious != nil {
+				sched.ResumePrevious = *resumePrevious
 			}
 			validGroupNames, err := validateScheduleGroupNamesForWorkspace(ctx, workspacePath, sched.GroupNames)
 			if err != nil {

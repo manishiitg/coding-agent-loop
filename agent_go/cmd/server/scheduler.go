@@ -1253,6 +1253,14 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		}
 		reqMap["query"] = msg
 
+		// Resume the workflow's latest thread (same CLI) on the first message
+		// only — later messages already share this run's live session.
+		if i == 0 {
+			if resumed := s.maybeResumeLatestWorkflowThread(sctx, reqMap); resumed != "" {
+				s.sessionLogf(sctx, sessionID, "[SCHEDULER] Resuming latest workflow thread %s for schedule %s", resumed, sctx.Schedule.ID)
+			}
+		}
+
 		if err := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil); err != nil {
 			return sessionID, runFolder, fmt.Errorf("workshop message %d/%d failed: %w", i+1, len(messages), err)
 		}
@@ -1284,6 +1292,73 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 }
 
 // executeMultiAgentJob runs a multi-agent chat session with the configured query.
+// maxWorkflowResumeScan bounds how many of the workflow's most recent threads the
+// scheduler inspects when resuming: if a same-CLI resumable thread is among the
+// latest few, resume it; otherwise start a fresh session.
+const maxWorkflowResumeScan = 5
+
+// maybeResumeLatestWorkflowThread wires restored_conversation_session_id into reqMap
+// so a scheduled WORKFLOW run (a normal chat seeded with the schedule's message)
+// continues the workflow's most recent thread instead of starting fresh.
+//
+// The scheduled run has no session of its own to reference — the builder only
+// creates the schedule, it doesn't run or track sessions. So we look up the
+// workflow's persisted threads (ListChatHistorySessions, newest-first, scoped to
+// the workflow workspace — this covers both interactive builder chats and prior
+// scheduled runs) and resume the latest one that ran on the SAME coding-agent CLI
+// and is resumable. A different CLI's external session ID is meaningless to the
+// new one. Prior run status (success/error) is intentionally ignored: resume
+// happens regardless so the agent can recover from a failed run.
+// Returns the resumed thread's session ID, or "" when the run should start fresh.
+func (s *SchedulerService) maybeResumeLatestWorkflowThread(sctx *ScheduleContext, reqMap map[string]interface{}) string {
+	if !sctx.Schedule.ResumePrevious {
+		return ""
+	}
+
+	currentProvider := ""
+	if sctx.Capabilities.LLMConfig != nil {
+		currentProvider = strings.TrimSpace(sctx.Capabilities.LLMConfig.Provider)
+	}
+	if currentProvider == "" {
+		return ""
+	}
+
+	sessions, err := ListChatHistorySessions(sctx.UserID, maxWorkflowResumeScan, 0, sctx.WorkspacePath)
+	if err != nil || len(sessions) == 0 {
+		return ""
+	}
+
+	// Threads are newest-first. Within the latest maxWorkflowResumeScan, resume
+	// the most recent one that is a resumable coding-agent thread on the same CLI;
+	// skip any that don't qualify (e.g. an API-model thread). If none qualify,
+	// start fresh.
+	//
+	// Validate via ReadChatHistoryRuntimeForSession(sessionID, workspace) — the
+	// SAME resolver handleQuery uses when it later honors
+	// restored_conversation_session_id — so what we match here is provably what
+	// gets resumed.
+	for _, sess := range sessions {
+		rt, ok, rErr := ReadChatHistoryRuntimeForSession(sctx.UserID, sess.SessionID, sctx.WorkspacePath)
+		if rErr != nil || !ok || rt == nil {
+			continue
+		}
+		// A coding-agent thread the CLI can resume: kind, matching CLI provider,
+		// and a captured external session ID to hand to the CLI's --resume.
+		if rt.Kind != "coding_agent" {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(rt.Provider), currentProvider) {
+			continue
+		}
+		if !rt.ResumeSupported || strings.TrimSpace(rt.ExternalSessionID) == "" {
+			continue
+		}
+		reqMap["restored_conversation_session_id"] = sess.SessionID
+		return sess.SessionID
+	}
+	return ""
+}
+
 func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
 	query := strings.TrimSpace(sctx.Schedule.Query)
 	if query == "" {
@@ -1382,9 +1457,7 @@ func (s *SchedulerService) waitForSessionComplete(ctx context.Context, sessionID
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			hasRunning := s.api.bgAgentRegistry.HasRunningAgents(sessionID)
-			isBusy := s.api.isSessionBusy(sessionID)
-			if !hasRunning && !isBusy {
+			if !s.api.sessionIsBusy(sessionID) {
 				return nil
 			}
 		}
@@ -1442,12 +1515,11 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 		"run_mode":            "use_same_run",
 		"selected_run_folder": "iteration-0",
 		"execution_strategy":  "start_from_beginning_no_human",
-		"workshop_mode": func() string {
-			if sctx.Schedule.WorkshopMode != "" {
-				return sctx.Schedule.WorkshopMode
-			}
-			return "run"
-		}(),
+		// Scheduled runs execute the workflow builder exactly like a normal
+		// interactive chat — workshop mode. This keeps the scheduled run on the
+		// same mode as the user's interactive sessions, so it natively resumes
+		// the workflow's latest thread (same-mode) with no special handling.
+		"workshop_mode": "workshop",
 	}
 	if len(sctx.Schedule.GroupNames) > 0 {
 		execOpts["enabled_group_names"] = sctx.Schedule.GroupNames
@@ -1467,9 +1539,10 @@ func (s *SchedulerService) waitForWorkshopIdle(ctx context.Context, sessionID st
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			hasRunning := s.api.bgAgentRegistry.HasRunningAgents(sessionID)
-			isBusy := s.api.isSessionBusy(sessionID)
-			if !hasRunning && !isBusy {
+			// Consolidated status — same busy/idle/stopped the UI sees, so the
+			// scheduler doesn't fire the next message while the (possibly tmux-
+			// backed) agent is still working.
+			if !s.api.sessionIsBusy(sessionID) {
 				return nil
 			}
 		}

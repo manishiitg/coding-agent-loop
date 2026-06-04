@@ -94,6 +94,10 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 							"description": "Only set when mode='workshop'. Defaults to 'run'. Use 'optimizer' for scheduled improvement/hardening loops that also generate learnings.",
 							"enum":        []string{"run", "optimizer"},
 						},
+						"resume_previous": map[string]interface{}{
+							"type":        "boolean",
+							"description": "For mode='workshop' (workflow builder) runs backed by a coding-agent CLI (claude-code, cursor-cli, codex-cli, gemini-cli, opencode-cli, agy-cli). When true, each scheduled run resumes the previous run's thread (same CLI) instead of starting a fresh session, so the agent keeps prior context across runs. Ignored for mode='workflow'/'multi-agent', API model providers, and non-resumable runs. Defaults to false.",
+						},
 					},
 					Required: []string{"workflow_path", "name", "cron_expression", "timezone"},
 				},
@@ -146,6 +150,10 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 							"type":        "string",
 							"description": "Workshop builder mode override.",
 							"enum":        []string{"run", "optimizer"},
+						},
+						"resume_previous": map[string]interface{}{
+							"type":        "boolean",
+							"description": "For mode='workshop' or 'multi-agent' backed by a coding-agent CLI. When true, runs resume the previous thread (same CLI) instead of starting fresh. Set false to go back to fresh sessions. Omit to keep the current setting.",
 						},
 					},
 					Required: []string{"job_id"},
@@ -318,6 +326,7 @@ func createWorkflowScheduleExecutors(api *StreamingAPI, currentUserID string) ma
 			mode, _ := args["mode"].(string)
 			messages := stringSlice(args["messages"])
 			workshopMode, _ := args["workshop_mode"].(string)
+			resumePrevious, _ := args["resume_previous"].(bool)
 
 			if mode == "workshop" && len(messages) == 0 {
 				return "messages is required when mode='workshop'.", nil
@@ -325,7 +334,7 @@ func createWorkflowScheduleExecutors(api *StreamingAPI, currentUserID string) ma
 			if mode != "multi-agent" && len(groupNames) == 0 {
 				return "group_names is required for mode='workflow' or 'workshop'. Read variables.json and provide at least one group.", nil
 			}
-			return cb.CreateSchedule(ctx, workflowPath, name, cronExpr, timezone, groupNames, mode, messages, workshopMode)
+			return cb.CreateSchedule(ctx, workflowPath, name, cronExpr, timezone, groupNames, mode, messages, workshopMode, resumePrevious)
 		},
 
 		"create_calendar_workflow_schedule": func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -397,7 +406,14 @@ func createWorkflowScheduleExecutors(api *StreamingAPI, currentUserID string) ma
 				messages = stringSlice(raw)
 			}
 
-			return cb.UpdateSchedule(ctx, jobID, name, cronExpr, timezone, groupNames, setGroupNames, enabled, mode, messages, workshopMode)
+			var resumePrevious *bool
+			if raw, ok := args["resume_previous"]; ok && raw != nil {
+				if b, ok := raw.(bool); ok {
+					resumePrevious = &b
+				}
+			}
+
+			return cb.UpdateSchedule(ctx, jobID, name, cronExpr, timezone, groupNames, setGroupNames, enabled, mode, messages, workshopMode, resumePrevious)
 		},
 
 		"delete_workflow_schedule": func(ctx context.Context, args map[string]interface{}) (string, error) {

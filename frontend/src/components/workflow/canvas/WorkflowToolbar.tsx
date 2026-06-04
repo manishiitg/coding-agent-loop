@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useMemo, useCallback, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
-  Square,
   BookOpen,
   Settings,
   FileText,
@@ -16,12 +15,10 @@ import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { useChatStore } from '../../../stores/useChatStore'
 import { useAuthStore } from '../../../stores/useAuthStore'
-import type { ActiveSessionInfo, VariablesManifest } from '../../../services/api-types'
+import type { VariablesManifest } from '../../../services/api-types'
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
-import { agentApi } from '../../../services/api'
-import { useSessionExecutionTree } from '../../../hooks/useSessionExecutionTree'
 import { useCommandDialogStore } from '../../../stores/useCommandDialogStore'
 import LearningsPopup from '../LearningsPopup'
 import KBPopup from '../KBPopup'
@@ -39,17 +36,6 @@ import { hasWorkflowWriteAccess, hasWorkflowOwnerAccess } from '../../../utils/w
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
-const isActiveRuntimeSession = (session?: ActiveSessionInfo | null): boolean => {
-  if (!session) return false
-  const status = (session.status || '').toLowerCase()
-  return status === 'running' ||
-    status === 'paused' ||
-    status === 'waiting' ||
-    status === 'waiting_feedback' ||
-    status === 'idle' ||
-    session.has_running_background_agents === true ||
-    (session.running_background_agent_count ?? 0) > 0
-}
 
 interface WorkflowToolbarProps {
   status: WorkflowExecutionStatus
@@ -224,35 +210,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
   }) // Zustand will handle memoization - only re-render if result changes
 
-  const {
-    activeWorkflowTab,
-    activeWorkflowRuntimeSession,
-    setTabStreaming,
-    setTabHasRunningBgAgents,
-  } = useChatStore(useShallow(state => {
-    const activeTab = state.activeTabId ? state.chatTabs[state.activeTabId] : null
-    const activeWorkflowTab =
-      activeTab?.metadata?.mode === 'workflow' &&
-      activeTab.metadata?.presetQueryId === presetQueryId
-        ? activeTab
-        : null
-    const activeWorkflowRuntimeSession = state.activeSessionsCache.find(session => {
-      if (presetQueryId && session.preset_query_id === presetQueryId) return true
-      if (workspacePath && session.workspace_path === workspacePath) return true
-      return false
-    })
-
-    return {
-      activeWorkflowTab,
-      activeWorkflowRuntimeSession,
-      setTabStreaming: state.setTabStreaming,
-      setTabHasRunningBgAgents: state.setTabHasRunningBgAgents,
-    }
-  }))
-  const activeWorkflowSessionId = activeWorkflowTab?.sessionId ?? activeWorkflowRuntimeSession?.session_id ?? null
-  const { data: activeWorkflowExecutionTree } = useSessionExecutionTree(activeWorkflowSessionId, !!activeWorkflowSessionId)
-  const runtimeDisplayStatus = isActiveRuntimeSession(activeWorkflowRuntimeSession) ? 'busy' : null
-  const backendWorkflowDisplayStatus = runtimeDisplayStatus ?? activeWorkflowExecutionTree?.summary.display_status ?? null
+  // Per-tab live status (busy/idle/stopped) + Stop now live inside each chat tab
+  // pill (see WorkflowChatTabs), so the toolbar no longer renders a status badge.
 
   // Load saved settings when preset changes
   useEffect(() => {
@@ -322,45 +281,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const isBuilderModeActive = workflowWorkspaceView === 'builder' || isBuilderPaneVisible
   const isReportWorkspace = showWorkspacePane && canvasViewMode === 'report'
   const isFlowWorkspace = showWorkspacePane && canvasViewMode === 'flow'
-  const canStopActiveWorkflowSession = !!(
-    activeWorkflowTab?.sessionId &&
-    activeWorkflowTab.metadata?.phaseId !== EXECUTION_PHASE_ID &&
-    backendWorkflowDisplayStatus === 'busy'
-  )
-  const workflowActivityStatus = useMemo(() => {
-    if (backendWorkflowDisplayStatus === 'busy') {
-      return {
-        label: 'Busy',
-        className: 'border-[hsl(var(--info)/0.22)] bg-[hsl(var(--info)/0.1)] text-[hsl(var(--info))]',
-        dotClassName: 'bg-[hsl(var(--info))]',
-      }
-    }
-    if (backendWorkflowDisplayStatus === 'stopped') {
-      return {
-        label: 'Stopped',
-        className: 'border-border bg-muted/60 text-muted-foreground',
-        dotClassName: 'bg-muted-foreground/70',
-      }
-    }
-    return {
-      label: 'Idle',
-      className: 'border-[hsl(var(--success)/0.22)] bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))]',
-      dotClassName: 'bg-[hsl(var(--success))]',
-    }
-  }, [backendWorkflowDisplayStatus])
-
-  const handleStopActiveWorkflowSession = useCallback(async () => {
-    if (!activeWorkflowTab?.sessionId) return
-
-    try {
-      await agentApi.stopSession(activeWorkflowTab.sessionId, true)
-      setTabStreaming(activeWorkflowTab.tabId, false)
-      setTabHasRunningBgAgents(activeWorkflowTab.tabId, false)
-    } catch (error) {
-      console.error('[WorkflowToolbar] Failed to stop active workflow session:', error)
-    }
-  }, [activeWorkflowTab, setTabHasRunningBgAgents, setTabStreaming])
-
   return (
     <>
     <div className={`
@@ -369,35 +289,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       relative z-10
       ${className}
     `}>
-      {/* Left side - chat tab strip (grows) + workflow status */}
+      {/* Left side - chat tab strip (grows). Per-tab status dot + Stop live
+          inside each tab pill (WorkflowChatTabs), not as a separate badge here. */}
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        {/* Chat tabs + new-chat live here so they share this row instead of a
-            separate bar below. Plan/Report live as an on-pane segmented switch. */}
         {chatTabsSlot}
-
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Status
-          </span>
-          <div
-            data-tour="workflow-status"
-            data-testid="tour-workflow-status"
-            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold ${workflowActivityStatus.className}`}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${workflowActivityStatus.dotClassName}`} />
-            {workflowActivityStatus.label}
-          </div>
-          {canStopActiveWorkflowSession && (
-            <button
-              onClick={handleStopActiveWorkflowSession}
-              className="inline-flex items-center gap-1 rounded-md border border-[hsl(var(--destructive)/0.22)] bg-[hsl(var(--destructive)/0.1)] px-2.5 py-1 text-xs font-semibold text-[hsl(var(--destructive))] transition-colors hover:bg-[hsl(var(--destructive)/0.16)]"
-              title="Stop current workflow chat session"
-            >
-              <Square className="w-3 h-3" fill="currentColor" />
-              <span>Stop</span>
-            </button>
-          )}
-        </div>
       </div>
 
       {/* Center - Status indicator */}

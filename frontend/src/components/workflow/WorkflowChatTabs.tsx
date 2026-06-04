@@ -1,7 +1,9 @@
 import React, { useMemo, useEffect, useCallback, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { ArrowDown, ListTree, MessageSquare, Plus, Terminal, X } from 'lucide-react'
+import { ArrowDown, ListTree, MessageSquare, Plus, Square, Terminal, X } from 'lucide-react'
 import { normalizeEventViewMode, useChatStore, type ChatTab } from '../../stores/useChatStore'
+import { useSessionExecutionTree } from '../../hooks/useSessionExecutionTree'
+import { agentApi } from '../../services/api'
 import { activateTab } from '../../utils/activateTab'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
@@ -19,6 +21,15 @@ interface WorkflowTabItemProps {
   onTabClick: (tabId: string) => void
   onCloseTab: (tabId: string) => void
   onMakeInteractive: (tabId: string) => void
+  onStop: (tabId: string) => void
+}
+
+// Per-tab live status — mirrors the backend's consolidated busy/idle/stopped
+// (sessionDisplayStatus). The dot lives in the tab pill instead of the toolbar.
+const TAB_STATUS_DOT: Record<'busy' | 'idle' | 'stopped', { cls: string; label: string }> = {
+  busy: { cls: 'bg-[hsl(var(--info))] animate-pulse', label: 'Busy' },
+  idle: { cls: 'bg-[hsl(var(--success))]', label: 'Idle' },
+  stopped: { cls: 'bg-muted-foreground/60', label: 'Stopped' },
 }
 
 const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
@@ -28,10 +39,24 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   onTabClick,
   onCloseTab,
   onMakeInteractive,
+  onStop,
 }) => {
   const displayName = tab.metadata?.phaseId === 'workflow-builder' && tab.name === 'Workflow Builder'
     ? 'Chat'
     : tab.name
+
+  // Pull this tab's own backend status (only polls while busy). Combine with the
+  // local streaming flags so "busy" shows immediately, before the tree catches up.
+  const { data: execTree } = useSessionExecutionTree(tab.sessionId, !!tab.sessionId)
+  const treeStatus = execTree?.summary.display_status
+  const status: 'busy' | 'idle' | 'stopped' =
+    tab.isStreaming || tab.hasRunningBgAgents || treeStatus === 'busy'
+      ? 'busy'
+      : treeStatus === 'stopped'
+        ? 'stopped'
+        : 'idle'
+  const dot = TAB_STATUS_DOT[status]
+  const isBusy = status === 'busy'
 
   return (
     <div
@@ -40,15 +65,34 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
       role="button"
       tabIndex={0}
       className={`
-        flex min-w-0 items-center gap-1.5 px-2 py-1 rounded-t-md text-xs font-medium transition-colors cursor-pointer outline-none
+        group flex min-w-0 items-center gap-1.5 px-2 py-1 rounded-t-md text-xs font-medium transition-colors cursor-pointer outline-none
         ${isActive
           ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b-2 border-blue-500'
           : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
         }
       `}
     >
+      {/* Live status dot (busy/idle/stopped) */}
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot.cls}`} title={dot.label} aria-label={dot.label} />
+
       {/* Tab Name */}
       <span className="min-w-0 max-w-[14rem] truncate whitespace-nowrap">{displayName}</span>
+
+      {/* In-tab Stop — only while this tab is busy */}
+      {isBusy && tab.sessionId && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onStop(tab.tabId)
+          }}
+          className="ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-[hsl(var(--destructive))] opacity-70 transition-colors hover:bg-[hsl(var(--destructive)/0.12)] hover:opacity-100"
+          aria-label={`Stop ${displayName}`}
+          title="Stop this session"
+        >
+          <Square className="h-2.5 w-2.5" fill="currentColor" />
+        </button>
+      )}
 
       {/* Convert a read-only scheduled/bot run into an interactive Workflow Builder chat */}
       {tab.metadata?.isViewOnly && (tab.metadata?.isScheduledRun || tab.metadata?.isBotRun) && (
@@ -110,6 +154,8 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
     autoScroll,
     setAutoScroll,
     setTabViewMode,
+    setTabStreaming,
+    setTabHasRunningBgAgents,
   } = useChatStore(useShallow(state => ({
     chatTabs: state.chatTabs,
     activeTabId: state.activeTabId,
@@ -117,6 +163,8 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
     autoScroll: state.autoScroll,
     setAutoScroll: state.setAutoScroll,
     setTabViewMode: state.setTabViewMode,
+    setTabStreaming: state.setTabStreaming,
+    setTabHasRunningBgAgents: state.setTabHasRunningBgAgents,
   })))
 
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
@@ -240,6 +288,19 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
     setShowChatArea(true)
   }, [setShowChatArea])
 
+  // Stop this tab's running session (from the in-tab Stop control).
+  const handleStopTab = useCallback(async (tabId: string) => {
+    const t = useChatStore.getState().getTab(tabId)
+    if (!t?.sessionId) return
+    try {
+      await agentApi.stopSession(t.sessionId, true)
+      setTabStreaming(tabId, false)
+      setTabHasRunningBgAgents(tabId, false)
+    } catch (error) {
+      console.error('[WorkflowChatTabs] Failed to stop session:', error)
+    }
+  }, [setTabStreaming, setTabHasRunningBgAgents])
+
   // Close chat area when all workflow tabs are closed (but not on first render)
   useEffect(() => {
     if (!hasRenderedRef.current) {
@@ -274,6 +335,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
               onTabClick={handleTabClick}
               onCloseTab={handleCloseTab}
               onMakeInteractive={handleMakeInteractive}
+              onStop={handleStopTab}
             />
           ))}
         </div>
@@ -293,6 +355,46 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
             <span className="hidden sm:inline">New Chat</span>
           </button>
         )}
+
+        {/* Layout Mode — tree vs terminal, sits right after New Chat */}
+        <div
+          data-tour="event-view-mode"
+          data-testid="tour-event-view-mode"
+          className="ml-1 inline-flex shrink-0 items-center rounded-full border border-gray-200 bg-gray-100 p-0.5 dark:border-gray-700 dark:bg-gray-800"
+          role="group"
+          aria-label="Event layout mode"
+        >
+          {([
+            { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by workflow and agent' },
+            { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal', tip: 'Terminal view — show only the terminal panes, no events' },
+          ]).map(({ mode, Icon, label, tip }) => (
+            <Tooltip key={mode}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (activeTabId) {
+                      requestViewMode(activeTabId, mode)
+                    }
+                  }}
+                  aria-label={label}
+                  aria-pressed={activeViewMode === mode}
+                  className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors ${
+                    activeViewMode === mode
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{tip}</p>
+              </TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
 
         {/* Spacer pushes the view controls to the right, beside status/tools */}
         <div className="min-w-[0.5rem] flex-1" />
@@ -337,46 +439,6 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ onNewChat, e
               </span>
             </button>
             )}
-
-            {/* Layout Mode */}
-            <div
-              data-tour="event-view-mode"
-              data-testid="tour-event-view-mode"
-              className="inline-flex items-center rounded-full border border-gray-200 bg-gray-100 p-0.5 dark:border-gray-700 dark:bg-gray-800"
-              role="group"
-              aria-label="Event layout mode"
-            >
-              {([
-                { mode: 'tree' as const, Icon: ListTree, label: 'Tree', tip: 'Tree view — group events by workflow and agent' },
-                { mode: 'terminal' as const, Icon: Terminal, label: 'Terminal', tip: 'Terminal view — show only the terminal panes, no events' },
-              ]).map(({ mode, Icon, label, tip }) => (
-                <Tooltip key={mode}>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (activeTabId) {
-                          requestViewMode(activeTabId, mode)
-                        }
-                      }}
-                      aria-label={label}
-                      aria-pressed={activeViewMode === mode}
-                      className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors ${
-                        activeViewMode === mode
-                          ? 'bg-blue-600 text-white shadow-sm'
-                          : 'text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
-                      }`}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{tip}</p>
-                  </TooltipContent>
-                </Tooltip>
-              ))}
-            </div>
           </div>
         )}
       </div>

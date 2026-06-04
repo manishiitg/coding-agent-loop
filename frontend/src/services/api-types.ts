@@ -1985,6 +1985,7 @@ export interface ScheduledJob {
   messages?: string[]  // predefined messages for workshop mode
   workshop_mode?: 'runner' | 'optimizer'  // workshop builder mode (default: runner)
   query?: string  // message to execute (multi-agent mode)
+  resume_previous?: boolean  // coding-agent CLI only: resume latest prior thread instead of fresh session
   user_id?: string  // user context (multi-agent mode)
   schedule_type?: 'cron' | 'calendar'
   calendar_items?: CalendarScheduleItem[]

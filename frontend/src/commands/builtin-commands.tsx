@@ -36,18 +36,6 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'ready-to-optimize',
-    description: 'Check if workflow is ready to move to optimizer mode',
-    icon: <CheckCircle className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'workshop',
-    source: 'builtin',
-    execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'ready-to-optimize')
-    }
-  },
-  {
     command: 'review-plan',
     description: 'Critically analyze the workflow plan and dependent artifacts',
     icon: <Search className="w-4 h-4" />,

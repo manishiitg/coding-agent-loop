@@ -385,7 +385,6 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
   Builder-mode audits:
     - design-flow            → context dependency / handoff design
-    - ready-to-optimize      → pre-optimizer readiness checklist
 
   Reviews (recommend, don't apply; appends to ` + "`builder/review.html`" + `):
     - review-plan            → comprehensive plan audit (structure + per-step descriptions + todo_task orchestrators)

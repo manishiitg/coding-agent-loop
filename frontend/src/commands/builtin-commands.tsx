@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, Wrench, GitBranch, CheckCircle, Search, BookOpen } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, RefreshCw, GitBranch, CheckCircle, Search, BookOpen } from 'lucide-react'
 import type { CommandContext, CommandDefinition } from './types'
 
 function submitGuidedWorkflowCommand(
@@ -332,18 +332,6 @@ After the tool returns, tell me:
   // The builder agent's system prompt teaches it to recognize business
   // rules in conversation and offer to persist them via the
   // capture_context tool. A separate slash command would be redundant.
-  {
-    command: 'define-success',
-    description: 'Define success for optimization: workflow profile, metrics, and context anchors',
-    icon: <Wrench className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'workshop',
-    source: 'builtin',
-    execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'define-success')
-    }
-  },
   {
     command: 'enrich-memory',
     description: 'Distil recent chats into memory and consolidate (deletes chats older than 7 days)',

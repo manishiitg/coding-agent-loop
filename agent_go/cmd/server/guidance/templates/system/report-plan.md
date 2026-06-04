@@ -2,27 +2,21 @@
 
 Workshop may maintain the live frontend report defined by `reports/report_plan.json` so the report stays aligned with current outputs, metrics, and evaluation evidence. Use report-plan tools for report edits; use workshop tools only when the underlying workflow behavior or eval coverage actually needs to change.
 
-### The report model — two document formats, nothing else
+### The report model — an HTML document
 
-A report is a set of **documents**. Each document is one of exactly two formats:
+A report is one or more **HTML documents**. There is no widget grammar and no second format: every report is HTML. The viewer renders each document in a sandboxed iframe and hands it the live data via the `window.report` API; the HTML renders its own visuals (charts, tables, KPI tiles, branded CSS — whatever) with full styling control.
 
-- **HTML (primary)** — for anything designed, visual, or live: charts, tables, dashboards, branded layouts. The viewer renders it in a sandboxed iframe and hands it the live data via the `window.report` API; the HTML renders its own visuals (Chart.js, custom tables, whatever) with full styling control.
-- **Markdown (secondary)** — for narrative/static documents: prose, headings, baked-in tables of numbers. Renders with the app's typography automatically (zero styling work). Markdown is **static** — its data is whatever the generating step wrote into the file; it does not read the db live.
-
-There is no widget grammar. To put data on screen you write an **HTML** document that queries it via `window.report`. To write a narrative document with the numbers already in it, use **markdown**.
-
-Decision rule: **visualizing or live data → HTML. Writing a document → markdown.** Reach for markdown when the data is baked in at generation time and you just need readable prose + tables (e.g. a per-entity narrative report); reach for HTML whenever the report should re-read the db when viewed, or needs charts / bespoke layout.
+HTML is a superset of anything a plain document needs — prose, headings, tables, links — AND it can read the db live and draw charts. Start every report from the shipped HTML skeleton so even a simple narrative report is quick to author and looks consistent: load `get_reference_doc(kind="html-output")` for the layout baseline, dark-mode styles, and inline chart pattern.
 
 ### The reporting toolchain
 
 - Before move/remove/toggle operations, call `get_report_plan` so you have stable section, entry, and document IDs.
-- A report is registered in `reports/report_plan.json` as one or more **document widgets** pointing at a file:
+- A report is registered in `reports/report_plan.json` as one or more **HTML document widgets** pointing at a file:
   ```json
   { "kind": "file", "source": "db/reports/<name>.html", "renderFormat": "html" }
-  { "kind": "file", "source": "db/reports/<name>.md",   "renderFormat": "markdown" }
   ```
-  Use `upsert_report_widget` (kind `file`, `renderFormat` `html` or `markdown`) to create/update, `move_report_widget` to reposition, `toggle_report_widget` to hide/show, and `remove_report_widget` to delete. Document files live under `db/reports/` and may reference `db/`, `knowledgebase/`, or `docs/` assets.
-- **Author the document once; wire it to read data LIVE. Do NOT add a workflow step that (re)generates the report each run.** An HTML report reads `db/db.sqlite` live via `window.report` (below), so the workflow's normal steps write the data and the report just reads it — always current, zero per-run work. (A markdown doc whose numbers are baked in at generation IS a static snapshot; that's the correct use of markdown for narrative reports, but if those numbers must stay live, use HTML instead.)
+  Use `upsert_report_widget` (kind `file`, `renderFormat` `html`) to create/update, `move_report_widget` to reposition, `toggle_report_widget` to hide/show, and `remove_report_widget` to delete. Document files live under `db/reports/` and may reference `db/`, `knowledgebase/`, or `docs/` assets.
+- **Author the document once; wire it to read data LIVE. Do NOT add a workflow step that (re)generates the report each run.** An HTML report reads `db/db.sqlite` live via `window.report` (below), so the workflow's normal steps write the data and the report just reads it — always current, zero per-run work. (Baking live data into the HTML as static text is the anti-pattern — it goes stale and costs tokens every run.)
 - For a multi-entity report (per-PAN, per-account, per-route), put one document per entity into a **tabbed** section: call `set_section_layout(mode="tabs")`, then pass `tab: "<entity name>"` to `upsert_report_widget` for each document so they render under one tabbed area instead of many sections.
 - For per-report color palettes: call `set_report_theme` with `brand` / `warm` / `cool` for bundled themes, or pass `colors: { primary, accent, card, muted, border, chart: [...] }` (hex strings) for an inline custom palette. Omit fields you don't want to override; pass null/empty to clear.
 - After every edit to `reports/report_plan.json`, call `validate_report_plan`.
@@ -30,9 +24,9 @@ Decision rule: **visualizing or live data → HTML. Writing a document → markd
 
 ### HTML reports get LIVE data via `window.report`
 
-The `.html` document is for full styling control: the viewer hands it the live data and the HTML renders its own visuals (Chart.js, custom tables, branded CSS — whatever). Inside the iframe the viewer exposes `window.report`:
+The viewer hands the HTML the live data and the HTML renders its own visuals (charts, custom tables, branded CSS). Inside the iframe the viewer exposes `window.report`:
 - `await window.report.query(sql)` — run a read-only SQL query against `db/db.sqlite` → array of row objects (the primary data source). Do the joining, summing, filtering, grouping, and latest-row selection in SQL (`JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, `LIMIT`).
-- `await window.report.get(path)` — fetch any `db/`/`knowledgebase/`/`docs/` file live → parsed JSON (or text); use for markdown/text/assets, not structured data
+- `await window.report.get(path)` — fetch any `db/`/`knowledgebase/`/`docs/` file live → parsed JSON (or text); use for text/assets, not structured data
 - `await window.report.getText(path)` — raw file text
 - `await window.report.fileUrl(path)` — an authenticated blob URL for a workspace file (image/PDF/etc.); use it in `<img src>`, `<a href>`, or `<iframe src>` to show artifacts
 - `window.report.openFile(path)` — open a file in the in-report preview modal (e.g. a "view PDF" button)
@@ -54,15 +48,15 @@ The `.html` document is for full styling control: the viewer hands it the live d
 </script>
 ```
 
-### Writing a GOOD report document (md/html)
+### Writing a GOOD report document
 
-Mechanics above place content; these make it readable — instruct the step that generates the doc accordingly:
+Mechanics above place content; these make it readable — instruct the step that generates the data accordingly, and apply them when you author the HTML:
 - **Lead with the answer.** Title, then a short summary/TL;DR block up top — the key numbers, status, and "what needs action" — before any detail. A reader should get the verdict in the first screen.
 - **Structure + scannability.** Use clear section headings; short paragraphs and bullets over walls of prose; **bold** the key figures; one logical section per topic/entity. For multi-entity reports, one document (tab) per entity.
 - **Show data as data.** Use tables for numbers — never dump raw JSON or logs into the prose. Use status labels/semantic colour (✅ ok / ⚠️ attention / ❌ fail) for pass-fail fields.
-- **Keep live data live.** For anything that changes (totals, per-entity tables, file lists, metrics), use an **HTML** document reading `window.report` so the report never goes stale. Use **markdown** only when the data is genuinely a baked-in snapshot at generation time.
+- **Keep live data live.** For anything that changes (totals, per-entity tables, file lists, metrics), read it from `window.report` so the report never goes stale. Only hardcode genuinely static narrative.
 - **Link, don't inline, big artifacts.** Reference PDFs/files with relative links (clickable, open in the in-report viewer) instead of pasting their contents.
-- **HTML specifics:** make it **self-contained** — inline all CSS/JS, no external CDN. **Height auto-sizes to your content** — do NOT pin the body to a fixed or viewport height (`height: 100vh`/`100%`) and do NOT build your own scroll container; let content flow top-to-bottom and the report frame grows to fit it (no clipping, no inner scrollbar). Get live data from `window.report` (above).
+- **Self-contained.** Inline all CSS/JS, no external CDN. **Height auto-sizes to your content** — do NOT pin the body to a fixed or viewport height (`height: 100vh`/`100%`) and do NOT build your own scroll container; let content flow top-to-bottom and the report frame grows to fit it (no clipping, no inner scrollbar). Get live data from `window.report` (above).
 - **Design quality — aim for a polished, "designed" report, not a default-styled page.** You own the look; hold a high bar:
   - **Restraint & hierarchy.** One accent colour, a small neutral palette, generous whitespace. Establish clear typographic hierarchy (a few sizes/weights, not many). Align everything to a consistent spacing scale (e.g. 4/8px steps). Let whitespace do the work — crowded ≠ informative.
   - **Typography.** Use a clean system stack (`system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`); comfortable line-height (~1.5) and line length (~60–80ch for prose); tabular/aligned numbers in tables (`font-variant-numeric: tabular-nums`).
@@ -85,7 +79,7 @@ Mechanics above place content; these make it readable — instruct the step that
   .muted { color: hsl(var(--muted-foreground)); }
   ```
   Available: `--background --foreground --card --card-foreground --primary --primary-foreground --secondary --muted --muted-foreground --accent --accent-foreground --border --input --ring --destructive` and chart colours `--chart-1 … --chart-5`. These already reflect the active light/dark theme (and any report theme), so a report built on them matches the rest of the app and flips correctly when the user toggles — no extra work. (You may still define your own palette if you want a bespoke brand look; the tokens are there when you want consistency.)
-- **Responsive design (raw HTML is YOUR job).** The report renders at three widths: **mobile ≈ 480px, tablet ≈ 880px, desktop full (content ≈ 1024px)**. Author HTML that flows at all three: use **fluid widths** (`%` / `max-width: 100%`, never fixed `px` page widths), make wide tables wrap or scroll (`overflow-x:auto`), **stack multi-column layouts on narrow screens** with `@media (max-width: 640px)` and `(max-width: 960px)`, use relative font sizes, and never assume a desktop width. A quick check: it must read with no horizontal overflow at ~480px. (Markdown documents reflow automatically — this only applies to hand-written HTML.)
+- **Responsive design (raw HTML is YOUR job).** The report renders at three widths: **mobile ≈ 480px, tablet ≈ 880px, desktop full (content ≈ 1024px)**. Author HTML that flows at all three: use **fluid widths** (`%` / `max-width: 100%`, never fixed `px` page widths), make wide tables wrap or scroll (`overflow-x:auto`), **stack multi-column layouts on narrow screens** with `@media (max-width: 640px)` and `(max-width: 960px)`, use relative font sizes, and never assume a desktop width. A quick check: it must read with no horizontal overflow at ~480px.
 - **Optional visual review.** If the user asks you to review the report visually, critique the design, or verify screenshots, render it and look. Otherwise do not spend time/tokens on browser screenshots just because you authored or changed an HTML report. When reviewing, use the dedicated frontend report URL so the app renders the same live report the user sees:
   1. Build the URL: `/report?path=<base64url UTF-8 workspace path>`, where the decoded path is the workflow root, e.g. `Workflow/My Workflow`.
   2. Open that short URL with **`agent-browser`** at desktop/tablet/mobile widths and screenshot only as needed. **Do NOT paste base64 HTML or a long `data:` URL into a tool call** — it bloats the transcript and can dominate token usage. Also do not use `file://`; agent-browser may run away from the host filesystem and open `about:blank`.
@@ -121,7 +115,7 @@ If an HTML report renders empty because the underlying `db/db.sqlite` table hasn
 1. Clarify what the user wants to see.
 2. Call `get_report_plan` for IDs / current structure.
 3. If the data isn't there yet, run the right step(s) (or full workflow) to populate `db/db.sqlite`.
-4. Author/update the HTML or markdown document, then register/update it with `upsert_report_widget` (kind `file`).
+4. Author/update the HTML document (start from the `html-output` skeleton), then register/update it with `upsert_report_widget` (kind `file`, `renderFormat` `html`).
 5. Call `validate_report_plan`. Fix errors, validate again.
 6. Optionally call `preview_report_render` to show the user what it will look like.
 

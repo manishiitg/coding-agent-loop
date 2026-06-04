@@ -1,77 +1,61 @@
 ## Reporting Policy
 
 The workflow has a **live frontend report viewer** at the top toolbar's
-"Report" tab. It reads `reports/report_plan.json` and renders the
-**document(s)** registered there — each an **HTML** or **Markdown** file
-under `db/reports/`. HTML documents read `db/db.sqlite` live via the
-`window.report` API and render their own visuals; markdown documents are
-static narrative. The viewer is always available — there is **NO separate
-"generate report" phase**: you author the document **once** and it reads
-live data on view.
+"Report" tab. It reads `reports/report_plan.json` and renders the **HTML
+document(s)** registered there — each an HTML file under `db/reports/`. HTML
+documents read `db/db.sqlite` live via the `window.report` API and render their
+own visuals. The viewer is always available — there is **NO separate "generate
+report" phase**: you author the document **once** and it reads live data on view.
 
-There is no widget grammar and no declarative dashboard format. A report
-is documents. To show data, write an **HTML** document that queries it via
-`window.report`. To write narrative prose with baked-in numbers, write
-**markdown**.
+There is no widget grammar and no second format — a report is HTML. HTML is a
+superset of anything a plain document needs (prose, headings, tables, links) AND
+it can read the db live and draw charts, so it covers every report. To show data,
+write an HTML document that queries it via `window.report`.
 
 ## Workshop mode: own the report plan
 
 Workshop mode can author and maintain the report when it needs to reflect
-optimization/evaluation/run evidence: authoring the HTML/markdown
-document(s), themes, tabs, and `reports/report_plan.json` edits. Keep
-report edits presentation-only unless the user also asked for workflow
-hardening/eval changes.
+optimization/evaluation/run evidence: authoring the HTML document(s), themes,
+tabs, and `reports/report_plan.json` edits. Keep report edits presentation-only
+unless the user also asked for workflow hardening/eval changes.
 
 ### When the user asks "create a report" / "build a reporting UI" / "show me X in a dashboard"
 
 - The answer is: **author an HTML document** (live data via `window.report`,
   renders its own charts/tables/branded layout) and register it in
-  `reports/report_plan.json` with a `file` widget
-  (`renderFormat: "html"`). For a purely narrative report whose numbers are
-  baked in at generation, a **markdown** document is the simpler choice.
+  `reports/report_plan.json` with a `file` widget (`renderFormat: "html"`).
+  Start from the shipped HTML skeleton — `get_reference_doc(kind="html-output")`
+  — so even a simple narrative report is quick to author and looks consistent.
 - **Author the document once; wire it to read data LIVE.** Do NOT add a
-  workflow step that (re)generates the report each run — the workflow's
-  normal steps already write the data to `db/db.sqlite`, and an HTML report
-  reads it live via `window.report`, so there is nothing to "generate."
-  (Writing the `.html` file once is correct and expected — this is NOT a
-  "generated dashboard file" that goes stale; the staleness anti-pattern is
-  *re-emitting* the report each run, or baking live data into a static file.)
+  workflow step that (re)generates the report each run — the workflow's normal
+  steps already write the data to `db/db.sqlite`, and the HTML report reads it
+  live via `window.report`, so there is nothing to "generate." (Writing the
+  `.html` file once is correct and expected — the staleness anti-pattern is
+  *re-emitting* the report each run, or baking live data into the file as static
+  text.)
 - If the workflow has routing routes, predefined task routes, or other
   per-entity outputs (per-PAN, per-account), use a **tabbed** section: one
-  document per entity, `set_section_layout(mode="tabs")`, and give each
-  document `tab: "<entity/route name>"`. One tab per user-meaningful entity
-  so the report doesn't mix unrelated outputs in one long page.
-- When creating or improving a report for a routed workflow, first inspect
-  the route list and decide the report structure (which tabs, what each
-  shows) from that route map.
+  HTML document per entity, `set_section_layout(mode="tabs")`, and give each
+  document `tab: "<entity/route name>"`. One tab per user-meaningful entity so
+  the report doesn't mix unrelated outputs in one long page.
+- When creating or improving a report for a routed workflow, first inspect the
+  route list and decide the report structure (which tabs, what each shows) from
+  that route map.
 
-### Choosing the format — one decision the agent makes for the user
+### Live data — the `window.report` API
 
-Two formats, picked by the job:
-
-| Format | Best for | Data |
-|---|---|---|
-| **HTML** (primary) | dashboards, charts, at-a-glance metrics/tables, branded/print layouts, anything that should stay live | live via `window.report` (or baked in) |
-| **Markdown** (secondary) | narrative reports read top-to-bottom; per-entity prose with baked-in tables | static — whatever the generating step wrote in |
-
-Decision rule: **visualizing data or want it live on view → HTML. Writing a
-narrative document with the numbers already in it → markdown.** Markdown is
-cheaper to author and themes automatically, so prefer it for static
-narrative; reach for HTML whenever the report needs charts, bespoke layout,
-or data that re-reads the db when viewed.
-
-**Live data (HTML only):** the viewer exposes `window.report` inside the
-iframe — `await query(sql)` against `db/db.sqlite`, plus
-`await get(path)` / `await getText(path)` / `await fileUrl(path)` for files,
-and `openFile(path)` for the preview modal. It fires a `report:data` event
-on load/refresh and `report:theme` on light/dark toggle. The HTML draws its
-own charts/tables/branded CSS from that data — full styling control. Markdown
-does not read the db; its numbers are whatever the generating step baked in.
+The viewer exposes `window.report` inside the iframe — `await query(sql)`
+against `db/db.sqlite`, plus `await get(path)` / `await getText(path)` /
+`await fileUrl(path)` for files, and `openFile(path)` for the preview modal. It
+fires a `report:data` event on load/refresh and `report:theme` on light/dark
+toggle. The HTML draws its own charts/tables/branded CSS from that data — full
+styling control.
 
 Full syntax + examples, the `window.report` API, and the **"writing a good
 report document" formatting guide** (lead with a summary, structure with
 headings, data as tables not raw JSON, self-contained + responsive HTML,
-dark mode, design-quality bar): `get_reference_doc(kind="report-plan")`.
+dark mode, design-quality bar): `get_reference_doc(kind="report-plan")`. For the
+HTML layout baseline + dark-mode skeleton: `get_reference_doc(kind="html-output")`.
 
 ### Diagnosis
 

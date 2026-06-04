@@ -285,6 +285,7 @@ func BuildPythonBestPractices(varMappingLines []string, hasInputArgs bool) strin
 	sb.WriteString("\n# Special vars always available:\n")
 	sb.WriteString("output_dir    = os.environ['STEP_OUTPUT_DIR']      # write all output files here\n")
 	sb.WriteString("execution_dir = os.environ['STEP_EXECUTION_DIR']  # parent folder for sibling-step reads only (fallback only — prefer sys.argv for input data)\n")
+	sb.WriteString("db_path       = os.environ['DB_PATH']             # ABSOLUTE path to the workflow db/db.sqlite — ALWAYS use this for sqlite, never relative 'db/db.sqlite' (the step's CWD is not the workflow root)\n")
 	sb.WriteString("mcp_url       = os.environ['MCP_API_URL']\n")
 	sb.WriteString("mcp_token     = os.environ['MCP_API_TOKEN']\n")
 	sb.WriteString("group_name    = os.environ.get('VAR_GROUP_NAME', '')  # current group name (e.g., 'production'); empty if no group\n")

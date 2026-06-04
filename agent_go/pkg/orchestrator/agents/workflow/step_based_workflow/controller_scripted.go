@@ -680,7 +680,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveScriptedShellGuard(
 	kbWriteMethod := resolveKnowledgebaseWriteMethod(stepConfig)
 	learningsAccess := resolveLearningsAccess(stepConfig)
 
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, learningsAccess, kbWriteMethod)
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, learningsAccess, kbWriteMethod, resolveDBAccess(stepConfig))
 	if includeCodeDir && len(writePaths) > 0 {
 		writePaths = append(writePaths, writePaths[0]+"/code")
 	}

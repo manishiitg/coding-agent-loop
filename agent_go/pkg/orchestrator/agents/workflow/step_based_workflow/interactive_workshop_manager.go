@@ -1954,7 +1954,7 @@ For the full debugging playbook (workshop vs run investigation workflow steps, r
 
 Priority order when reviewing a step: (1) Correctness — description precision, validation schema completeness, context I/O wiring. (2) Knowledge — learnings quality, lock lifecycle. (3) Efficiency — tool-call waste, workflow structure (merge/split/reorder).
 
-	Hard rules: `+"`validation_schema`"+` is the only automated gate (catch stale files, field completeness, constraints); default `+"`learnings_access`"+` = `+"`\"read\"`"+`; use `+"`\"read-write\"`"+` + `+"`learning_objective`"+` only for reusable execution HOW (browser selectors/timing/auth, API/MCP quirks, CLI/SDK command patterns, parsing/retry/recovery rules). Routing, validation, mechanical transforms, aggregation/report shaping, human approval, pure db/KB readers, and mature scripted steps should usually stay read-only. `+"`lock_learnings=true`"+` is a deliberate builder/user decision, never a runtime side effect; `+"`lock_code=true`"+` only after user-explicit scripted + 10+ scenario-covering runs; workshop-created steps arrive as `+"`agentic`"+`, promote to `+"`scripted`"+` only with explicit ask + determinism + 10+ runs. Three locks: `+"`lock_learnings`"+` (per-step, freezes SKILL.md), `+"`lock_code`"+` (per-step scripted, freezes main.py), `+"`lock_knowledgebase`"+` (workflow-wide, freezes notes/ auto-updates).
+	Hard rules: `+"`validation_schema`"+` is the only automated gate (catch stale files, field completeness, constraints); default `+"`learnings_access`"+` = `+"`\"read\"`"+`; use `+"`\"read-write\"`"+` + `+"`learning_objective`"+` only for reusable execution HOW (browser selectors/timing/auth, API/MCP quirks, CLI/SDK command patterns, parsing/retry/recovery rules). Routing, validation, mechanical transforms, aggregation/report shaping, human approval, pure db/KB readers, and mature scripted steps should usually stay read-only. `+"`db_access`"+` defaults to `+"`\"read-write\"`"+` (every step can read+write `+"`db/db.sqlite`"+` via `+"`$DB_PATH`"+`); set `+"`\"read\"`"+` for least-privilege steps that must never mutate the db (pure readers, report-shaping/aggregation, validation) so an accidental write is sandbox-denied. `+"`lock_learnings=true`"+` is a deliberate builder/user decision, never a runtime side effect; `+"`lock_code=true`"+` only after user-explicit scripted + 10+ scenario-covering runs; workshop-created steps arrive as `+"`agentic`"+`, promote to `+"`scripted`"+` only with explicit ask + determinism + 10+ runs. Three locks: `+"`lock_learnings`"+` (per-step, freezes SKILL.md), `+"`lock_code`"+` (per-step scripted, freezes main.py), `+"`lock_knowledgebase`"+` (workflow-wide, freezes notes/ auto-updates).
 
 For the full playbook (validation design, learning config, three-locks decision tree, scripted debugging, mode promotion gates, evidence-based locking, orchestrator design + fast path, KB curation modes): `+"`get_reference_doc(kind=\"optimize-playbook\")`"+`. When patching `+"`learnings/{step-id}/main.py`"+`: also load `+"`code-authoring`"+`.
 {{end}}
@@ -3518,7 +3518,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"clear_fields": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Field names to CLEAR (remove from step_config.json) so the step uses preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Clearing enabled_skills removes explicit step skills; step execution does not inherit workflow-selected skills, so set enabled_skills explicitly when the step needs installed skills. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, coding_agent_tmux_lifecycle, transport, description_reviewed, knowledgebase_access, knowledgebase_contribution, knowledgebase_write_method, learnings_access, learnings_write_method, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
+					"description": "Field names to CLEAR (remove from step_config.json) so the step uses preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Clearing enabled_skills removes explicit step skills; step execution does not inherit workflow-selected skills, so set enabled_skills explicitly when the step needs installed skills. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, coding_agent_tmux_lifecycle, transport, description_reviewed, knowledgebase_access, knowledgebase_contribution, knowledgebase_write_method, learnings_access, learnings_write_method, db_access, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
 				},
 				"servers": map[string]interface{}{
 					"type":        "array",
@@ -3561,6 +3561,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"enum":        []string{"read", "read-write", "none"},
 					"description": "Access mode for this step against learnings/_global/ (SKILL.md + references/). Defaults to 'read' — every step sees the workflow's accumulated how-to knowledge in its prompt. 'read-write' — step contributes reusable execution HOW and requires a concrete learning_objective; use for browser/API/CLI/SDK/MCP/parsing/retry discoveries. Keep routing, validation, mechanical transform, aggregation/report-shaping, human approval, pure db/KB reader, and mature scripted steps read-only. 'none' — step neither reads global skill nor contributes; use rarely, only when shared HOW would mislead the step or token isolation is important. Omit to keep the default.",
+				},
+				"db_access": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"read", "read-write"},
+					"description": "Access mode for this step against db/db.sqlite (and db/). Defaults to 'read-write' — every step can read AND write the workflow db (the back-compat default; db is the shared structured-state surface). Set 'read' for least-privilege read-only steps that should never mutate the db — pure readers, report-shaping/aggregation, validation/preflight checks: db/ stays readable but is removed from the step's write paths, so an accidental write is sandbox-denied. Steps always reference the db via the absolute $DB_PATH env var. Omit to keep the read-write default.",
 				},
 				"knowledgebase_contribution": map[string]interface{}{
 					"type":        "string",
@@ -3838,6 +3843,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if val, ok := args["learnings_write_method"]; ok && val != nil {
 				if s, ok := val.(string); ok {
 					targetConfig.AgentConfigs.LearningsWriteMethod = s
+				}
+			}
+			if val, ok := args["db_access"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetConfig.AgentConfigs.DBAccess = s
 				}
 			}
 			if val, ok := args["disable_parallel_tool_execution"]; ok && val != nil {

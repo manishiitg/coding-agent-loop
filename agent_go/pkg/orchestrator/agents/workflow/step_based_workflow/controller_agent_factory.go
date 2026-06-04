@@ -202,7 +202,7 @@ func buildSessionScopedMCPAPIURL(sessionID string) string {
 	return strings.TrimRight(baseURL, "/") + "/s/" + sessionID
 }
 
-func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutputAbsPath, stepExecutionAbsPath string, mcpSessionID string) {
+func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath string, mcpSessionID string) {
 	if len(executors) == 0 || strings.TrimSpace(stepOutputAbsPath) == "" {
 		return
 	}
@@ -214,9 +214,16 @@ func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutput
 		if args == nil {
 			args = make(map[string]interface{})
 		}
+		// DB_PATH is the ABSOLUTE path to the workflow's db/db.sqlite. Step shells run
+		// with their working directory set to the step's execution folder (not the
+		// workflow root), so a relative "db/db.sqlite" would resolve to the wrong place
+		// ("unable to open database file"). Steps must use "$DB_PATH".
 		mergedEnv := map[string]interface{}{
 			"STEP_OUTPUT_DIR":    stepOutputAbsPath,
 			"STEP_EXECUTION_DIR": stepExecutionAbsPath,
+		}
+		if strings.TrimSpace(dbAbsPath) != "" {
+			mergedEnv["DB_PATH"] = dbAbsPath
 		}
 		if rawExtraEnv, exists := args["extra_env"]; exists {
 			switch typed := rawExtraEnv.(type) {
@@ -233,6 +240,9 @@ func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutput
 		// Per-step values must always win over any stale caller-provided value.
 		mergedEnv["STEP_OUTPUT_DIR"] = stepOutputAbsPath
 		mergedEnv["STEP_EXECUTION_DIR"] = stepExecutionAbsPath
+		if strings.TrimSpace(dbAbsPath) != "" {
+			mergedEnv["DB_PATH"] = dbAbsPath
+		}
 		if strings.TrimSpace(mcpSessionID) != "" {
 			// Shell/file tools must resolve against the step-local MCP session so the
 			// session-level folder guard matches the prompt's narrow read/write scope.
@@ -534,7 +544,7 @@ func isGenericAgentStep(stepID, stepPath string) bool {
 // resolveLearningsAccess. kbWriteMethod must be one of KBWriteMethodAgent / Direct and
 // is only consulted when kbAccess permits writes; callers resolve it via
 // resolveKnowledgebaseWriteMethod. Returns readPaths and writePaths.
-func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, kbAccess string, learningsAccess string, kbWriteMethod string) (readPaths, writePaths []string) {
+func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, kbAccess string, learningsAccess string, kbWriteMethod string, dbAccess string) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
 	var runWorkspacePath string
@@ -573,11 +583,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 		writePaths = []string{stepFolderPath, downloadsPath}
 	}
 
-	// Always add db/ folder to read+write paths (no preset toggle). Evaluation DBWrite enforcement
-	// is applied by callers that know the step is an eval step (they post-process writePaths).
+	// db/ is always READABLE. It's also writable by default (read-write), the back-compat
+	// behavior for execution steps. An explicit dbAccess="read" downgrades the step to
+	// read-only db (least privilege) by omitting db/ from writePaths. (Evaluation DBWrite
+	// enforcement is a separate post-process applied by callers that know it's an eval step.)
 	dbPath := getDBPath(baseWorkspacePath)
 	readPaths = append(readPaths, dbPath)
-	writePaths = append(writePaths, dbPath)
+	if dbAccess != DBAccessRead {
+		writePaths = append(writePaths, dbPath)
+	}
 
 	// Add knowledgebase folder to READ paths when the mode grants read. Under
 	// kbWriteMethod=direct, also add knowledgebase/notes/ to WRITE paths so the step
@@ -1443,7 +1457,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
 	kbWriteMethod := resolveKnowledgebaseWriteMethod(stepConfig)
 	learningsAccess := resolveLearningsAccess(stepConfig)
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, kbAccess, learningsAccess, kbWriteMethod)
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, kbAccess, learningsAccess, kbWriteMethod, resolveDBAccess(stepConfig))
 	stepEnvOutputPathOverride := ""
 	if override, ok := ctx.Value(messageSequenceFolderGuardOverrideKey{}).(*messageSequenceFolderGuardOverride); ok && override != nil {
 		readPaths = append([]string{}, override.ReadPaths...)
@@ -1567,7 +1581,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		}
 		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionPath)
 		stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
-		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, config.MCPSessionID)
+		dbAbsPath := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
+		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, config.MCPSessionID)
 		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting step shell env into execute_shell_command for %s: STEP_OUTPUT_DIR=%s MCP_SESSION_ID=%s", stepID, stepOutputAbsPath, config.MCPSessionID))
 	}
 
@@ -2151,7 +2166,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		// The todo-task orchestrator now uses a dedicated MCP session for shell/file tools.
 		// Browser reuse is bound separately above, so this session override narrows
 		// filesystem scope without breaking shared browser behavior with the builder.
-		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, config.MCPSessionID)
+		dbAbsPath := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
+		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, config.MCPSessionID)
 		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting step shell env into execute_shell_command for todo task %s: STEP_OUTPUT_DIR=%s MCP_SESSION_ID=%s", stepID, stepOutputAbsPath, config.MCPSessionID))
 	}
 

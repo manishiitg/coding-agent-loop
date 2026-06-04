@@ -145,6 +145,25 @@ func resolveKnowledgebaseAccess(stepConfig *AgentConfigs, presetEnabled bool) st
 	return KBAccessNone
 }
 
+// DB access modes. Unlike KB, db/ is read+write by DEFAULT for every execution step
+// (the workflow's structured state surface) — "read-write" is the back-compat default
+// when db_access is empty. "read" is opt-in least-privilege: db/ stays readable but is
+// stripped from the step's write paths (mirrors the eval-step db_write opt-out).
+const (
+	DBAccessReadWrite = "read-write"
+	DBAccessRead      = "read"
+)
+
+// resolveDBAccess returns the effective db/ access mode for a step. Empty / unknown →
+// "read-write" (default), so existing plans are unchanged. Only an explicit "read"
+// downgrades the step to read-only db.
+func resolveDBAccess(stepConfig *AgentConfigs) string {
+	if stepConfig != nil && stepConfig.DBAccess == DBAccessRead {
+		return DBAccessRead
+	}
+	return DBAccessReadWrite
+}
+
 // kbAccessAllowsRead reports whether the given access mode grants read access.
 func kbAccessAllowsRead(mode string) bool {
 	return mode == KBAccessRead || mode == KBAccessReadWrite
@@ -1244,7 +1263,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		narrowKBAccess := resolveKnowledgebaseAccess(narrowAgentCfg, hcpo.UseKnowledgebase())
 		narrowKBWriteMethod := resolveKnowledgebaseWriteMethod(narrowAgentCfg)
 		narrowLearningsAccess := resolveLearningsAccess(narrowAgentCfg)
-		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, narrowKBAccess, narrowLearningsAccess, narrowKBWriteMethod)
+		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, narrowKBAccess, narrowLearningsAccess, narrowKBWriteMethod, resolveDBAccess(narrowAgentCfg))
 		var prevRead, prevWrite []string
 		if prevCfg := common.GetSessionShellConfig(sessionID); prevCfg != nil {
 			prevRead = prevCfg.ReadPaths
@@ -1366,7 +1385,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 		// Get folder guard paths for template (so agent knows exact paths it can access)
 		learningsAccess := resolveLearningsAccess(agentConfigs)
-		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, kbAccess, learningsAccess, kbWriteMethod)
+		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, kbAccess, learningsAccess, kbWriteMethod, resolveDBAccess(agentConfigs))
 
 		// Evaluation steps: db/ read is always allowed, but db/ write is opt-in via DBWrite flag.
 		// Strip db/ from writePaths when the step is an eval step with DBWrite == false.

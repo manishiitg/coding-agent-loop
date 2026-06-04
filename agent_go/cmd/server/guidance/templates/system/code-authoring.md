@@ -6,7 +6,7 @@ Apply these when writing or patching a step's `main.py`. Scripts must run identi
 - `os.environ['KEY']` ALWAYS. NEVER `os.environ.get('KEY', 'fallback')`. A missing env var must raise KeyError — silent fallbacks hide misconfig.
 - Workflow variables → `VAR_<NAME>` (config: user IDs, sheet IDs, URLs).
 - Secrets → `SECRET_<NAME>` (passwords, API keys, tokens).
-- Special vars: `STEP_OUTPUT_DIR` (write all step outputs here), `STEP_EXECUTION_DIR` (parent execution folder; use for sibling-step reads only, never as a write target), `MCP_API_URL`, `MCP_API_TOKEN`, `VAR_GROUP_NAME` (use `.get('VAR_GROUP_NAME', '')` — this one is optional).
+- Special vars: `STEP_OUTPUT_DIR` (write all step outputs here), `STEP_EXECUTION_DIR` (parent execution folder; use for sibling-step reads only, never as a write target), `DB_PATH` (**ABSOLUTE** path to the workflow `db/db.sqlite` — ALWAYS use `os.environ['DB_PATH']` / `"$DB_PATH"` for sqlite; never a relative `db/db.sqlite`: a step's working directory is its own execution folder, not the workflow root, so a relative path fails with "unable to open database file" or silently writes a stray empty db), `MCP_API_URL`, `MCP_API_TOKEN`, `VAR_GROUP_NAME` (use `.get('VAR_GROUP_NAME', '')` — this one is optional).
 - NO hardcoded user IDs, account numbers, URLs, paths, or credentials. Every dynamic value flows from env or sys.argv.
 - **The step description shows RESOLVED current-run values.** Those are for context only. NEVER copy any name, ID, or literal value from the description into the script — or into any `export` you issue manually. The same script runs for every group/user; a copied value from one run breaks the others.
 

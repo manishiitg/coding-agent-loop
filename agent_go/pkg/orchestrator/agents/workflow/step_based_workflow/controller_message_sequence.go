@@ -966,6 +966,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runMessageSequencePython(ctx context.
 	extraEnv := map[string]string{
 		"STEP_OUTPUT_DIR":                    itemAbs,
 		"STEP_EXECUTION_DIR":                 itemAbs,
+		"DB_PATH":                            filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite"),
 		"MESSAGE_SEQUENCE_STEP_ID":           stepID,
 		"MESSAGE_SEQUENCE_ITEM_ID":           item.ID,
 		"MESSAGE_SEQUENCE_ITEM_DIR":          itemAbs,

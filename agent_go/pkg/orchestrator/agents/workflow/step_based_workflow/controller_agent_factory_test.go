@@ -283,6 +283,7 @@ func TestInjectStepEnvIntoShellExecutor_OverridesStaleMCPSessionEnv(t *testing.T
 		executors,
 		"/tmp/workflow/execution/math-solver",
 		"/tmp/workflow/execution",
+		"/tmp/workflow/db/db.sqlite",
 		"step-session-123",
 	)
 
@@ -363,6 +364,7 @@ func TestSetupExecutionFolderGuardHonorsLearningsAndKBNone(t *testing.T) {
 		KBAccessNone,
 		LearningsAccessNone,
 		KBWriteMethodAgent,
+		DBAccessReadWrite,
 	)
 
 	forbiddenReads := []string{
@@ -421,6 +423,7 @@ func TestSetupExecutionFolderGuardAddsOnlyConfiguredStores(t *testing.T) {
 		KBAccessReadWrite,
 		LearningsAccessRead,
 		KBWriteMethodDirect,
+		DBAccessReadWrite,
 	)
 
 	for _, expected := range []string{

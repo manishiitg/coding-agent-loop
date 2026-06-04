@@ -70,6 +70,8 @@ func clearStepConfigField(sc *StepConfig, name string) bool {
 		ac.KnowledgebaseContribution = ""
 	case "knowledgebase_write_method":
 		ac.KnowledgebaseWriteMethod = ""
+	case "db_access":
+		ac.DBAccess = ""
 	case "review_notes":
 		ac.ReviewNotes = ""
 	case "declared_execution_mode":
@@ -103,7 +105,7 @@ func isKnownAgentConfigClearField(name string) bool {
 		"description_reviewed",
 		"learning_mode", "knowledgebase_access", "knowledgebase_contribution",
 		"knowledgebase_write_method",
-		"learnings_write_method",
+		"learnings_write_method", "db_access",
 		"review_notes", "declared_execution_mode", "declared_execution_mode_reason",
 		"global_skill_objective", "coding_agent_tmux_lifecycle",
 		"transport":

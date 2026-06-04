@@ -20,7 +20,7 @@ DISCOVERY
 6. Read builder/review.html if present. Carry unresolved `F-...` findings into the scheduled optimizer message.
 7. Read planning/metrics.json and recent db/metrics_history.jsonl rows. Metrics are evidence for harden/replan decisions; they do not create a separate action path.
 8. Read planning/changelog/ if present and compare recent plan/config changes against builder/improve.html and builder/review.html. Recent plan changes increase regression risk and require tighter improve cadence until one or two post-change runs have been reviewed.
-9. If builder/improve.html has no "## Workflow Profile" section, stop and redirect: "Run /define-success first." If the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty, also redirect.
+9. **Success must be defined before scheduling — check it FIRST and bootstrap it if missing.** auto-improve cannot optimize toward an undefined goal, so never set up an optimizer schedule for a workflow with no success definition. If builder/improve.html has no "## Workflow Profile" section — or the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty — do NOT skip ahead and do NOT just tell the user to "run /define-success" and stop. Instead, run the define-success bootstrap **inline now**: call `get_workflow_command_guidance(kind="define-success")` and follow it to completion with the user (establish the Workflow Profile + metrics), then resume these steps and continue to scheduling. Only proceed directly to the schedule steps when a Workflow Profile already exists and metrics are defined.
 
 SCHEDULE STRATEGY
 1. Prefer updating or reusing good existing schedules instead of creating duplicates.

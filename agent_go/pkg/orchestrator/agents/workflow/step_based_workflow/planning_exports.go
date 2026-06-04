@@ -1986,9 +1986,8 @@ func RegisterReportPlanValidationTools(
 	workspacePath string,
 	logger loggerv2.Logger,
 	readFile func(context.Context, string) (string, error),
-	queryDB func(ctx context.Context, dbPath, sql string) ([]map[string]interface{}, error),
 ) error {
-	return registerReportPlanValidationTools(mcpAgent, workspacePath, logger, readFile, queryDB)
+	return registerReportPlanValidationTools(mcpAgent, workspacePath, logger, readFile)
 }
 
 // RegisterReportPlanManagementTools is the exported wrapper for registering the
@@ -2013,9 +2012,8 @@ func RegisterReportRenderPreviewTool(
 	workspacePath string,
 	logger loggerv2.Logger,
 	readFile func(context.Context, string) (string, error),
-	queryDB func(ctx context.Context, dbPath, sql string) ([]map[string]interface{}, error),
 ) error {
-	return registerReportRenderPreviewTool(mcpAgent, workspacePath, logger, readFile, queryDB)
+	return registerReportRenderPreviewTool(mcpAgent, workspacePath, logger, readFile)
 }
 
 // RegisterPlanModificationTools is the exported wrapper for registering plan modification tools

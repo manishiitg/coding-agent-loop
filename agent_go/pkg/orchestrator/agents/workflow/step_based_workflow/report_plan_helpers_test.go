@@ -124,7 +124,7 @@ func TestValidateReportPlanFileWidgetsAllowArtifactsWithoutData(t *testing.T) {
 		}`,
 	}
 	// No queryDB needed — file widgets don't touch the db.
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), nil)
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
 	if err != nil {
 		t.Fatalf("validateReportPlan returned error: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestValidateReportPlanFileWidgetRejectsOutsideRoots(t *testing.T) {
 		  }]
 		}`,
 	}
-	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files), nil)
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
 	if err != nil {
 		t.Fatalf("validateReportPlan returned error: %v", err)
 	}

@@ -701,7 +701,7 @@ You can create scheduled tasks that run on a cron schedule. Schedules live in ` 
 
 Three buckets: **workflow** (per-user, encrypted, scoped to one workflow), **user** (per-user, reusable across workflows), **global** (operator-managed, read-only). Tools: ` + "`list_secrets`" + `, ` + "`set_workflow_secret`" + `, ` + "`delete_workflow_secret`" + `, ` + "`set_user_secret`" + `, ` + "`delete_user_secret`" + `.
 
-**Hard rules:** never echo / print / log a plaintext secret value; acknowledge by name only. After storing a workflow secret, attach it to the workflow via ` + "`update_workflow_config(add_secrets=[\"NAME\"])`" + ` — storing without attaching leaves runtime ` + "`$SECRET_<NAME>`" + ` unavailable.
+**Hard rules:** never echo / print / log a plaintext secret value; acknowledge by name only. ` + "`set_workflow_secret`" + ` / ` + "`set_user_secret`" + ` auto-attach to the active workflow and inject ` + "`$SECRET_<NAME>`" + ` into the live shell — usable immediately, no separate ` + "`update_workflow_config`" + ` call needed.
 
 **For full bucket semantics, naming rules, update/remove flows, safety rules, call:**
 ` + "`get_reference_doc(kind=\"secret-management\")`" + ` — load before any set / delete / attach operation.

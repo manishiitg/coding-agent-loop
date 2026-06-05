@@ -844,6 +844,92 @@ func (s *WorkshopChatSession) Close() {
 	}
 }
 
+// AttachSecretToWorkflow adds (or updates the value of) a secret in the workshop's
+// in-memory state, workflow.json manifest, and live workshop shell env so the
+// freshly-stored secret is immediately usable as $SECRET_<NAME> in the SAME
+// session — no new chat or restart required. Intended to be invoked right after
+// set_workflow_secret / set_user_secret so storing a secret and making it
+// available is a single user action. The plaintext value is passed in directly
+// (the upsert handler already holds it), avoiding a DB round-trip. Mirrors
+// DetachSecretFromWorkflow.
+func (s *WorkshopChatSession) AttachSecretToWorkflow(ctx context.Context, name, value string) error {
+	if s == nil || s.controller == nil || name == "" {
+		return nil
+	}
+
+	current := s.controller.GetSecrets()
+	updated := make([]orchestrator.SecretEntry, 0, len(current)+1)
+	found := false
+	for _, entry := range current {
+		if entry.Name == name {
+			entry.Value = value
+			found = true
+		}
+		updated = append(updated, entry)
+	}
+	if !found {
+		updated = append(updated, orchestrator.SecretEntry{Name: name, Value: value})
+	}
+
+	s.controller.SetSecrets(updated)
+	if s.config != nil {
+		cloned := make([]orchestrator.SecretEntry, len(updated))
+		copy(cloned, updated)
+		s.config.Secrets = cloned
+	}
+
+	// Inject into the live shell env map (the same reference execute_shell_command
+	// reads at execution time), so the very next shell command in this session
+	// sees $SECRET_<NAME> without a session rebuild.
+	if envRef := s.controller.GetWorkspaceEnvRef(); envRef != nil {
+		s.controller.LockWorkspaceEnv()
+		envRef["SECRET_"+name] = value
+		s.controller.UnlockWorkspaceEnv()
+	}
+
+	// Persist the updated secret-name list to workflow.json so the attachment
+	// survives a session restart. Mirrors DetachSecretFromWorkflow.
+	wsPath := s.controller.GetWorkspacePath()
+	if wsPath == "" {
+		return nil
+	}
+	manifestPath := "workflow.json"
+	content, readErr := s.controller.ReadWorkspaceFile(ctx, manifestPath)
+	if readErr != nil {
+		// No manifest yet — in-memory + env are attached; nothing to persist.
+		return nil
+	}
+	var manifest map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+		return fmt.Errorf("parse workflow.json: %w", err)
+	}
+	caps, _ := manifest["capabilities"].(map[string]interface{})
+	if caps == nil {
+		caps = map[string]interface{}{}
+	}
+	names := make([]string, 0, len(updated))
+	for _, sec := range updated {
+		if sec.Name != "" {
+			names = append(names, sec.Name)
+		}
+	}
+	// Write to BOTH fields - see persistWorkflowConfigToManifest for why (workflow/user
+	// secrets are looked up via selected_secrets; globals via selected_global_secret_names).
+	caps["selected_secrets"] = names
+	caps["selected_global_secret_names"] = names
+	manifest["capabilities"] = caps
+	manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+
+	updatedJSON, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal workflow.json: %w", err)
+	}
+	if err := s.controller.WriteWorkspaceFile(ctx, manifestPath, string(updatedJSON)); err != nil {
+		return fmt.Errorf("write workflow.json: %w", err)
+	}
+	return nil
+}
+
 // DetachSecretFromWorkflow removes a secret name from the workshop's in-memory
 // state, workflow.json manifest, and workshop shell env. Safe to call even if
 // the name was never attached — in that case it is a no-op. Intended to be

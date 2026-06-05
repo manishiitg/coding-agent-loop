@@ -235,13 +235,19 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 			log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools for %s (execute_step, query_step, stop_step, list_steps, etc.)", workflowPhaseID)
 
 			builderSession := workshopSession
+			afterUpsert := func(ctx context.Context, name, value string) error {
+				if builderSession == nil {
+					return nil
+				}
+				return builderSession.AttachSecretToWorkflow(ctx, name, value)
+			}
 			afterDelete := func(ctx context.Context, name string) error {
 				if builderSession == nil {
 					return nil
 				}
 				return builderSession.DetachSecretFromWorkflow(ctx, name)
 			}
-			if err := api.registerSecretManagementTools(underlyingAgent, userID, phaseWorkspacePath, "secret_tools", afterDelete); err != nil {
+			if err := api.registerSecretManagementTools(underlyingAgent, userID, phaseWorkspacePath, "secret_tools", afterUpsert, afterDelete); err != nil {
 				log.Printf("[WORKFLOW_PHASE] Warning: Failed to register secret tools in %s: %v", workflowPhaseID, err)
 			} else {
 				log.Printf("[WORKFLOW_PHASE] Registered secret tools in %s (list_secrets, set_workflow_secret, delete_workflow_secret, set_user_secret, delete_user_secret) with workflow auto-detach", workflowPhaseID)

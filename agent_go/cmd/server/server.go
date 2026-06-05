@@ -4743,7 +4743,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				logfWithContext(queryLogCtx, "[EMPLOYEE TOOLS] Registered employee management tools")
 
-				if err := api.registerSecretManagementTools(underlyingAgent, currentUserID, "", "secret_tools", nil); err != nil {
+				if err := api.registerSecretManagementTools(underlyingAgent, currentUserID, "", "secret_tools", nil, nil); err != nil {
 					logfWithContext(queryLogCtx, "[SECRET TOOLS] Failed to register multi-agent secret tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent secret tools: %v", err), true)
 					return

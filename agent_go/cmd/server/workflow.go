@@ -238,6 +238,48 @@ func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, 
 	return content, true, nil
 }
 
+// readWorkspaceFileMeta returns whether a workspace file exists and its
+// RFC3339 last-modified time. Used for cheap freshness checks (e.g. badging
+// unseen builder docs) — it does not return the body. Errors resolve to
+// (false, "") so callers can treat them as "no update".
+func readWorkspaceFileMeta(ctx context.Context, filePath string) (bool, string) {
+	pathSegments := strings.Split(filePath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + strings.Join(encodedSegments, "/")
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return false, ""
+	}
+	resp, err := workspaceHTTPClient.Do(req)
+	if err != nil {
+		return false, ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, ""
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return false, ""
+	}
+	var apiResp virtualtools.WorkspaceAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil || !apiResp.Success {
+		return false, ""
+	}
+	if strings.Contains(apiResp.Message, "File does not exist") || strings.Contains(apiResp.Error, "File not found") {
+		return false, ""
+	}
+	if dataMap, ok := apiResp.Data.(map[string]interface{}); ok {
+		if lm, ok := dataMap["last_modified"].(string); ok {
+			return true, lm
+		}
+	}
+	return true, ""
+}
+
 // deleteWorkspaceFile deletes a file from the workspace via the workspace API.
 // Returns nil if the file doesn't exist (404) or was successfully deleted.
 func deleteWorkspaceFile(ctx context.Context, configPath string) error {

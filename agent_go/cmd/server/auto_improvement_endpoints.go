@@ -275,6 +275,54 @@ func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Requ
 	writeAIJSON(w, BuilderDocResponse{Success: true, Doc: doc, Path: rel, Exists: true, Content: content})
 }
 
+// BuilderDocStatus reports a builder doc's existence + last-modified time.
+type BuilderDocStatus struct {
+	Exists       bool   `json:"exists"`
+	LastModified string `json:"last_modified,omitempty"` // RFC3339; empty if unknown/absent
+	Path         string `json:"path"`
+}
+
+// BuilderDocsStatusResponse is the lightweight freshness payload the workflow
+// toolbar polls to badge unseen review/improve updates (no doc content).
+type BuilderDocsStatusResponse struct {
+	Success bool             `json:"success"`
+	Improve BuilderDocStatus `json:"improve"`
+	Review  BuilderDocStatus `json:"review"`
+	Error   string           `json:"error,omitempty"`
+}
+
+// handleGetBuilderDocsStatus: GET /api/workflow/builder-docs-status?workspace_path=...
+// Returns existence + last-modified for builder/improve.html and
+// builder/review.html (falling back to the legacy .md) so the toolbar can show
+// a "new since you last looked" dot without downloading the docs repeatedly.
+func (api *StreamingAPI) handleGetBuilderDocsStatus(w http.ResponseWriter, r *http.Request) {
+	if !setupCORS(w, r, http.MethodGet) {
+		return
+	}
+	workspacePath, ok := requireWorkspacePath(w, r)
+	if !ok {
+		return
+	}
+	writeAIJSON(w, BuilderDocsStatusResponse{
+		Success: true,
+		Improve: builderDocStatus(r.Context(), workspacePath, "builder/improve.html"),
+		Review:  builderDocStatus(r.Context(), workspacePath, "builder/review.html"),
+	})
+}
+
+func builderDocStatus(ctx context.Context, workspacePath, rel string) BuilderDocStatus {
+	base := strings.Trim(workspacePath, "/")
+	if exists, lm := readWorkspaceFileMeta(ctx, path.Join(base, rel)); exists {
+		return BuilderDocStatus{Exists: true, LastModified: lm, Path: rel}
+	}
+	// Legacy fallback: builder/<doc>.md
+	mdRel := strings.TrimSuffix(rel, ".html") + ".md"
+	if exists, lm := readWorkspaceFileMeta(ctx, path.Join(base, mdRel)); exists {
+		return BuilderDocStatus{Exists: true, LastModified: lm, Path: mdRel}
+	}
+	return BuilderDocStatus{Exists: false, Path: rel}
+}
+
 func (api *StreamingAPI) handleGetBuilderDocArchives(w http.ResponseWriter, r *http.Request) {
 	if !setupCORS(w, r, http.MethodGet) {
 		return

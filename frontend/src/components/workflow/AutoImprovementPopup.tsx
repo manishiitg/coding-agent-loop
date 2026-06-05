@@ -39,6 +39,9 @@ interface AutoImprovementPopupProps {
   onClose: () => void
   workspacePath: string | null
   selectedRunFolder?: string | null
+  // Called when the user actually views the improve/review doc tab, so the
+  // toolbar can clear that doc's "unseen" badge dot.
+  onViewDoc?: (which: 'improve' | 'review') => void
 }
 
 type Tab = 'metrics' | 'evaluation' | 'soul' | 'improve' | 'review'
@@ -608,7 +611,7 @@ const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, 
   )
 }
 
-const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onClose, workspacePath, selectedRunFolder }) => {
+const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onClose, workspacePath, selectedRunFolder, onViewDoc }) => {
   const [tab, setTab] = useState<Tab>('metrics')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -753,6 +756,13 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
       }
     }
   }, [isOpen, workspacePath, tab, soulDoc, improveDoc, selectedImprovePath, reviewDoc, selectedReviewPath, fetchDoc, fetchDocArchives])
+
+  // When the user actually views the improve/review doc, clear its toolbar dot.
+  useEffect(() => {
+    if (!isOpen) return
+    if (tab === 'improve' && improveDoc?.exists) onViewDoc?.('improve')
+    if (tab === 'review' && reviewDoc?.exists) onViewDoc?.('review')
+  }, [isOpen, tab, improveDoc?.exists, reviewDoc?.exists, onViewDoc])
 
   if (!isOpen) return null
 

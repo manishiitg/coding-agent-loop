@@ -1615,6 +1615,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/metrics", api.handleGetMetrics).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/metrics-history", api.handleGetMetricsHistory).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/builder-doc", api.handleGetBuilderDoc).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/builder-docs-status", api.handleGetBuilderDocsStatus).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/builder-doc-archives", api.handleGetBuilderDocArchives).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/framework-health", api.handleGetFrameworkHealth).Methods("GET", "OPTIONS")
 

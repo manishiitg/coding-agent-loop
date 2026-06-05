@@ -37,6 +37,12 @@ LENS A2 — Installed / Selected Skill Fit
 - **Workflow-level vs step-level mismatch**: workflow-selected skills are builder/workshop context and do not cascade into runtime step agents. If a selected skill is intended to affect step execution, each relevant step must list it in `enabled_skills`; otherwise flag the mismatch and recommend explicit per-step `enabled_skills` or moving shared workflow-specific HOW to `learnings/_global/`.
 - **Skill vs learnings ownership**: external reusable capability docs belong in `skills/{folder}/SKILL.md`; workflow-specific discovered HOW belongs in `learnings/_global/`. Flag duplicate or misplaced content in either direction.
 
+LENS A3 — Stale / Accumulated Description Bloat
+- **Dated or transient notes**: descriptions accumulate situational content over iterations — dated verification stamps (`VERIFIED 2026-...`, `as of <date>`), `until X lands do Y` caveats, `currently the only ...` observations, single-run debugging scaffolding. Flag content tied to a past moment that has likely gone stale and recommend trimming to the durable instruction.
+- **Obsolete workarounds**: instructions that work around a bug or limitation whose premise no longer holds (e.g. "tool X times out so do Y", "the db can't be opened directly so use the CLI"). Flag when the workaround is no longer needed and recommend removing it.
+- **Redundant accumulation**: the same guidance restated multiple times from successive edits, or long historical preamble that buries the actual task. Recommend collapsing to one clear current instruction.
+- **Boundary**: reusable run-discovered HOW belongs in `learnings/_global/SKILL.md`, not piled into the description; transient/dated context belongs nowhere — recommend deletion. The description should read as the current, minimal task contract, not a changelog of past test runs.
+
 LENS B — Hardcoded Values
 - **Hardcoded paths**: absolute paths like `/app/workspace-docs/...`, `/Users/...`, `/home/...`, or specific local paths. Should use workspace-relative or workspace-rooted paths instead.
 - **Hardcoded run/iteration paths**: references to `runs/iteration-0/...`, `execution/step-3/...`, or hardcoded group names like `group-1`. These break across runs and groups — the orchestrator resolves these via context_dependencies at runtime.
@@ -143,6 +149,7 @@ For each step, produce a per-step report:
 **Lens 0 — Durable boundary fit:** <findings or "clean">
 **Lens A — Description vs Skill:** <findings or "clean">
 **Lens A2 — Installed / selected skill fit:** <needed/missing/noisy skill findings or "clean">
+**Lens A3 — Stale description bloat:** <dated notes / obsolete workarounds / accumulated cruft to trim, or "clean">
 **Lens B — Hardcoded:** <findings or "clean">
 **Lens C — Browser:** <findings or "n/a (no browser capability)" or "clean">
 **Lens D — Validation:** <findings or "clean">
@@ -161,7 +168,7 @@ For each step, produce a per-step report:
 Then a cross-step summary:
 
 - **Phase 1 structural findings** (from review_plan tool): list by severity.
-- **Steps with boundary/description issues** (Lens 0/A/B/C/D): per-step, which lenses fired.
+- **Steps with boundary/description issues** (Lens 0/A/A3/B/C/D): per-step, which lenses fired. Call out stale/accumulated description bloat (Lens A3) explicitly — dated notes and obsolete workarounds to trim.
 - **Skill findings** (Lens A2 / Phase 4): list missing needed skills, selected-but-unused skills, step scoping mistakes, malformed skill folders, and skill-vs-learning ownership problems.
 - **Todo_task/routing/orchestration steps with parent/route issues** (Lens E/F/G): per-step, which lenses fired.
 - **Learning findings** (Phase 4): list steps with unjustified learning, missing objective, wrong write method, missing/stale `.learning_metadata.json`, unsupported learning locks, agentic steps with leftover main.py, stale global skill content, stale main.py, or browser scripted.

@@ -1311,7 +1311,7 @@ const maxWorkflowResumeScan = 5
 // happens regardless so the agent can recover from a failed run.
 // Returns the resumed thread's session ID, or "" when the run should start fresh.
 func (s *SchedulerService) maybeResumeLatestWorkflowThread(sctx *ScheduleContext, reqMap map[string]interface{}) string {
-	if !sctx.Schedule.ResumePrevious {
+	if !sctx.Schedule.ShouldResumePrevious() {
 		return ""
 	}
 

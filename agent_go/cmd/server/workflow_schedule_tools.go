@@ -326,7 +326,12 @@ func createWorkflowScheduleExecutors(api *StreamingAPI, currentUserID string) ma
 			mode, _ := args["mode"].(string)
 			messages := stringSlice(args["messages"])
 			workshopMode, _ := args["workshop_mode"].(string)
-			resumePrevious, _ := args["resume_previous"].(bool)
+			var resumePrevious *bool
+			if raw, ok := args["resume_previous"]; ok && raw != nil {
+				if b, ok2 := raw.(bool); ok2 {
+					resumePrevious = &b
+				}
+			}
 
 			if mode == "workshop" && len(messages) == 0 {
 				return "messages is required when mode='workshop'.", nil

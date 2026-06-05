@@ -10586,7 +10586,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			}
 			return sb.String(), nil
 		},
-		CreateSchedule: func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupNames []string, mode string, messages []string, workshopMode string, resumePrevious bool) (string, error) {
+		CreateSchedule: func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupNames []string, mode string, messages []string, workshopMode string, resumePrevious *bool) (string, error) {
 			if err := ValidateCronExpression(cronExpr); err != nil {
 				return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
 			}
@@ -10725,7 +10725,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				sched.WorkshopMode = workshopMode
 			}
 			if resumePrevious != nil {
-				sched.ResumePrevious = *resumePrevious
+				sched.ResumePrevious = resumePrevious
 			}
 			validGroupNames, err := validateScheduleGroupNamesForWorkspace(ctx, workspacePath, sched.GroupNames)
 			if err != nil {

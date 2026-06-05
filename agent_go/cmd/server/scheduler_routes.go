@@ -67,7 +67,7 @@ type CreateScheduleRequest struct {
 	Messages       []string               `json:"messages,omitempty"`      // Predefined messages for workshop mode
 	WorkshopMode   string                 `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
 	Query          string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
-	ResumePrevious bool                   `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume latest prior thread instead of fresh session
+	ResumePrevious *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume latest prior thread instead of fresh session (nil = default ON; explicit false opts out)
 }
 
 // UpdateScheduleRequest is the request body for updating a schedule.
@@ -103,7 +103,7 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 		Mode:                sched.Mode,
 		Messages:            sched.Messages,
 		WorkshopMode:        sched.WorkshopMode,
-		ResumePrevious:      sched.ResumePrevious,
+		ResumePrevious:      sched.ShouldResumePrevious(),
 		ScheduleType:        scheduleTypeOrDefault(sched.ScheduleType),
 		CalendarItems:       sched.CalendarItems,
 		CronExpression:      sched.CronExpression,
@@ -133,7 +133,7 @@ func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state Sch
 		WorkspacePath:       "_users/" + userID,
 		Mode:                "multi-agent",
 		Query:               sched.Query,
-		ResumePrevious:      sched.ResumePrevious,
+		ResumePrevious:      sched.ShouldResumePrevious(),
 		UserID:              userID,
 		ScheduleType:        scheduleTypeOrDefault(sched.ScheduleType),
 		CalendarItems:       sched.CalendarItems,
@@ -606,7 +606,7 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 				sched.Query = req.Query
 			}
 			if req.ResumePrevious != nil {
-				sched.ResumePrevious = *req.ResumePrevious
+				sched.ResumePrevious = req.ResumePrevious
 			}
 			if err := validateScheduleRequest(scheduleTypeOrDefault(sched.ScheduleType), sched.CronExpression, sched.CalendarItems); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -678,7 +678,7 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			sched.WorkshopMode = req.WorkshopMode
 		}
 		if req.ResumePrevious != nil {
-			sched.ResumePrevious = *req.ResumePrevious
+			sched.ResumePrevious = req.ResumePrevious
 		}
 		validGroupNames, err := validateScheduleGroupNamesForWorkspace(r.Context(), workspacePath, sched.GroupNames)
 		if err != nil {

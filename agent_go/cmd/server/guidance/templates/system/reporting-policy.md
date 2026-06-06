@@ -7,10 +7,11 @@ documents read `db/db.sqlite` live via the `window.report` API and render their
 own visuals. The viewer is always available — there is **NO separate "generate
 report" phase**: you author the document **once** and it reads live data on view.
 
-There is no widget grammar and no second format — a report is HTML. HTML is a
-superset of anything a plain document needs (prose, headings, tables, links) AND
-it can read the db live and draw charts, so it covers every report. To show data,
-write an HTML document that queries it via `window.report`.
+There is no widget grammar and no second format — a report is HTML document(s)
+that read the db live via `window.report`. The canonical report model, the full
+`window.report` API, and the content + formatting + design guide all live in
+`get_reference_doc(kind="report-plan")` — load it before authoring or editing a
+report. This policy only covers when/where reports apply and the mode boundary.
 
 ## Workshop mode: own the report plan
 
@@ -42,20 +43,14 @@ unless the user also asked for workflow hardening/eval changes.
   route list and decide the report structure (which tabs, what each shows) from
   that route map.
 
-### Live data — the `window.report` API
+### Live data + how to author
 
-The viewer exposes `window.report` inside the iframe — `await query(sql)`
-against `db/db.sqlite`, plus `await get(path)` / `await getText(path)` /
-`await fileUrl(path)` for files, and `openFile(path)` for the preview modal. It
-fires a `report:data` event on load/refresh and `report:theme` on light/dark
-toggle. The HTML draws its own charts/tables/branded CSS from that data — full
-styling control.
-
-Full syntax + examples, the `window.report` API, and the **"writing a good
-report document" formatting guide** (lead with a summary, structure with
-headings, data as tables not raw JSON, self-contained + responsive HTML,
-dark mode, design-quality bar): `get_reference_doc(kind="report-plan")`. For the
-HTML layout baseline + dark-mode skeleton: `get_reference_doc(kind="html-output")`.
+HTML reports read `db/db.sqlite` live via `window.report` and draw their own
+charts/tables/CSS. The full `window.report` API, **what to put in the report
+(content/insight), the formatting + design-quality bar, theming, and responsive
+rules** are all in `get_reference_doc(kind="report-plan")`; the HTML skeleton is
+in `get_reference_doc(kind="html-output")`. Load those before authoring — don't
+restate them here.
 
 ### Diagnosis
 

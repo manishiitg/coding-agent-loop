@@ -49,10 +49,19 @@ The viewer hands the HTML the live data and the HTML renders its own visuals (ch
 </script>
 ```
 
-### Writing a GOOD report document
+### What to put in the report (content, not just chrome)
 
-Mechanics above place content; these make it readable — instruct the step that generates the data accordingly, and apply them when you author the HTML:
-- **Lead with the answer.** Title, then a short summary/TL;DR block up top — the key numbers, status, and "what needs action" — before any detail. A reader should get the verdict in the first screen.
+A report answers questions and drives action — it is not a mirror of the database. Decide the content before the layout:
+- **Lead with the verdict + what needs action.** The top states the bottom line — pass/fail, the headline number, and the 1–3 things that need attention — before any detail. A reader who leaves after the first screen should still have the answer.
+- **Show numbers in context, never bare.** A lone value means little — compare it: vs. the previous run/period (delta, ▲/▼), vs. a target/baseline/threshold, vs. other entities. Trends and deltas usually beat a single snapshot.
+- **Surface the exceptions.** Call out outliers, failures, regressions, and stale/missing data explicitly — sort/filter so what matters is on top; don't make the reader hunt the one red row in a long table.
+- **Assign status from explicit thresholds.** Drive ✅ ok / ⚠️ attention / ❌ fail from stated rules (e.g. "≥90% = ok") so the colour is consistent and trustworthy.
+- **One entity per tab.** Per-PAN/route/account reports give each entity its own document/tab with its own verdict — never blend unrelated entities into one page.
+- **Content quality starts upstream.** The report only shows what the workflow's steps write to `db/db.sqlite`. If the data needed to answer the key question isn't there (a computed metric, a baseline, a status flag), the fix is in the producing step — instruct it to emit that — not in the HTML.
+
+### Writing a GOOD report document (formatting)
+
+The content section above decides WHAT to show; these make it READABLE when you author the HTML:
 - **Structure + scannability.** Use clear section headings; short paragraphs and bullets over walls of prose; **bold** the key figures; one logical section per topic/entity. For multi-entity reports, one document (tab) per entity.
 - **Show data as data.** Use tables for numbers — never dump raw JSON or logs into the prose. Use status labels/semantic colour (✅ ok / ⚠️ attention / ❌ fail) for pass-fail fields.
 - **Keep live data live.** For anything that changes (totals, per-entity tables, file lists, metrics), read it from `window.report` so the report never goes stale. Only hardcode genuinely static narrative.

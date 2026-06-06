@@ -1149,12 +1149,14 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 		active := w.activeSlug(chatJID)
 		if active == "" {
 			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("No active workflow. %s Use @list.", w.formatWhatsAppDetailModeStatus(chatJID)))
+			w.forwardWhatsAppBotSessionControl(cmd, arg, chatJID, owner, info)
 			return true
 		}
 		route := w.resolveSlugRoute(active)
 		if route == nil {
 			w.clearActiveSlug(chatJID)
 			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("No active workflow. %s Use @list.", w.formatWhatsAppDetailModeStatus(chatJID)))
+			w.forwardWhatsAppBotSessionControl(cmd, arg, chatJID, owner, info)
 			return true
 		}
 		label := active
@@ -1162,27 +1164,11 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 			label = candidate.Label
 		}
 		w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Using %s (@%s, %s). %s Off: @off", label, active, formatWhatsAppRouteMode(route.WorkshopMode), w.formatWhatsAppDetailModeStatus(chatJID)))
+		w.forwardWhatsAppBotSessionControl(cmd, arg, chatJID, owner, info)
 		return true
 
-	case "full", "verbose", "details", "concise", "short", "brief", "done", "end", "reset", "new", "newsession", "quit", "exit":
-		if w.messageHandler == nil {
-			w.sendWorkflowCommandReply(ctx, chatJID, "Bot session controls are not available yet.")
-			return true
-		}
-		w.messageHandler(BotIncomingMessage{
-			Platform:        "whatsapp",
-			UserID:          info.Sender.User,
-			UserName:        info.PushName,
-			UserEmail:       owner.Email,
-			WorkspaceUserID: owner.UserID,
-			ChannelID:       chatJID,
-			ThreadTS:        "",
-			Text:            "@" + cmd,
-			MessageTS:       info.ID,
-			Timestamp:       info.Timestamp,
-			IsThreadReply:   false,
-			IsMention:       true,
-		})
+	case "resume", "continue", "sessions", "session", "chats", "runs", "full", "verbose", "details", "concise", "short", "brief", "done", "end", "reset", "new", "newsession", "quit", "exit":
+		w.forwardWhatsAppBotSessionControl(cmd, arg, chatJID, owner, info)
 		return true
 
 	case "deactivate", "deactive", "off", "stop":
@@ -1197,6 +1183,33 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 	}
 
 	return false
+}
+
+func (w *WhatsAppService) forwardWhatsAppBotSessionControl(cmd, arg, chatJID string, owner *WhatsAppOwner, info types.MessageInfo) {
+	if w.messageHandler == nil {
+		w.sendWorkflowCommandReply(context.Background(), chatJID, "Bot session controls are not available yet.")
+		return
+	}
+	botText := "@" + cmd
+	if cmd == "sessions" || cmd == "session" || cmd == "chats" || cmd == "runs" {
+		botText = "@status"
+	} else if strings.TrimSpace(arg) != "" {
+		botText += " " + strings.TrimSpace(arg)
+	}
+	w.messageHandler(BotIncomingMessage{
+		Platform:        "whatsapp",
+		UserID:          info.Sender.User,
+		UserName:        info.PushName,
+		UserEmail:       owner.Email,
+		WorkspaceUserID: owner.UserID,
+		ChannelID:       chatJID,
+		ThreadTS:        "",
+		Text:            botText,
+		MessageTS:       info.ID,
+		Timestamp:       info.Timestamp,
+		IsThreadReply:   false,
+		IsMention:       true,
+	})
 }
 
 func parseWhatsAppWorkflowCommand(text string) (cmd, arg string, ok bool) {
@@ -1217,7 +1230,7 @@ func parseWhatsAppWorkflowCommand(text string) (cmd, arg string, ok bool) {
 		return "switch", strings.TrimSpace(strings.Join(fields[1:], " ")), true
 	case "status":
 		return "status", strings.TrimSpace(strings.Join(fields[1:], " ")), true
-	case "full", "verbose", "details", "concise", "short", "brief", "done", "end", "reset", "new", "newsession", "quit", "exit":
+	case "resume", "continue", "sessions", "session", "chats", "runs", "full", "verbose", "details", "concise", "short", "brief", "done", "end", "reset", "new", "newsession", "quit", "exit":
 		return first, strings.TrimSpace(strings.Join(fields[1:], " ")), true
 	case "deactivate", "deactive", "off", "stop":
 		return first, strings.TrimSpace(strings.Join(fields[1:], " ")), true
@@ -1594,9 +1607,9 @@ func parseWhatsAppSlugPrefix(text string) (slug string, rest string, ok bool) {
 
 func unknownWhatsAppWorkflowCommandMessage(slug string) string {
 	if slug = strings.TrimSpace(slug); slug != "" {
-		return fmt.Sprintf("Unknown @%s. Try @list, @switch <number>, @status, @full, @concise, @done, or @off.", slug)
+		return fmt.Sprintf("Unknown @%s. Try @list, @switch <number>, @status, @sessions, @resume, @full, @concise, @done, or @off.", slug)
 	}
-	return "Commands: @list, @switch <number> [mode], @status, @full, @concise, @done, @off"
+	return "Commands: @list, @switch <number> [mode], @status, @sessions, @resume, @full, @concise, @done, @off"
 }
 
 // GetOwner returns the currently-bound owner, or nil when unclaimed.

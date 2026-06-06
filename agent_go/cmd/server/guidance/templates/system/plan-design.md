@@ -1,6 +1,6 @@
 ## PLAN DESIGN — From Requirements to Steps (DESIGN phase)
 
-When a user describes what they want to automate, follow this process to design the plan. **Present the plan to the user and get explicit confirmation before creating any steps.** The user may be exploring or testing ideas — do not assume they are ready to commit to a workflow structure.
+When a user describes what they want to automate, design and create the best-practice workflow structure using the information available. Do not ask broad planning questions or wait for confirmation before adding steps unless the missing answer would materially change behavior, safety, credentials, scheduling, external side effects, or irreversible actions. When you make a reasonable assumption, state it briefly and proceed.
 
 ### Step 1: Identify Durable Workflow Boundaries
 
@@ -24,19 +24,22 @@ Combine actions into one step when they share one objective and output contract,
 | Scenario | Step Type | Why |
 |----------|-----------|-----|
 | Agent performs a task and writes output | **Regular** | Simplest type — one agent, one output |
+| Several ordered agent turns share the same context and need to build on each other | **Message Sequence** | Keeps the work in one conversation instead of creating handoff artifacts between similar regular steps |
 | Task has multiple known sub-tasks that repeat | **Todo Task** (sub-workflow/pipeline) with sub-agents | Each sub-task gets its own learning, validation, and tools |
 | Need to branch based on prior step output or context | **Routing** | Supported branch primitive — reads `route_selection.json` and picks a route |
 | Need user input before proceeding | **Human Input** | Blocks until user responds |
-| User input determines the path | **Human Input** → **Routing** | Collect input first, then pass/write `route_selection.json` |
+| User already told the builder which fixed branch to run | **Routing** | The builder/caller passes `route_selections` to `run_workflow` / `run_full_workflow`; do not add a `human_input` step just to ask the same choice again. |
+| The running workflow must ask a human before it can continue | **Human Input** | Use only when the answer is not already known at launch. If the answer branches, use `option_routes` for a small in-run menu or feed a later deterministic router. |
 | Utility/debug tool available but not auto-run | **Orphan** (is_orphan: true) | Not in main flow; manual execution from workshop only |
 
-**Default to Regular** unless the task clearly needs branching, iteration, or sub-agents.
+**Default to Regular** unless the task clearly needs branching, iteration, sub-agents, or same-context ordered turns that should share one conversation.
 
 **For recurring multi-step shapes** (Phase Router, Scoped Investigation, Linear Pipeline, Fan-out & Consolidate, Verification Gate, Pre-flight Probe, Human Checkpoint, Critique Loop, Persistence Tail), call `get_reference_doc(kind="workflow-patterns")` — load when starting a new plan or restructuring an existing one.
 
 ### Step 3: Design Context Flow
 
 Every step reads from prior steps and writes for downstream steps:
+- **description** is executable for agentic steps. For `regular`, it is the main step prompt. For `message_sequence`, it is the opening instruction prepended to the first item. For `todo_task`, it is the orchestrator's first turn. For `routing`, leave it empty because routing never runs an agent.
 - **context_dependencies**: Files from prior steps this step needs (e.g., ["login_status.json"])
 - **context_output**: The file this step produces (e.g., "extracted_data.json")
 - **Flow must be forward-only** — no circular dependencies
@@ -69,20 +72,23 @@ Use a `message_sequence` route when the parent orchestrator should be able to ca
 
 ### Step 5: When to Use Message Sequence
 
-Use `message_sequence` only when the user explicitly wants one persistent agent conversation with a known ordered queue of user messages.
+Use `message_sequence` when multiple ordered agent turns should share the same working context and build on each other, and the boundary between turns is not a durable workflow boundary. This is usually better than several regular steps that all read the same files, need each other's transient reasoning, and produce only one final output.
 
 - Break one large task into small user_message items: one instruction per turn.
+- Prefer it when turns share the same inputs, tools, credentials, runtime, and security context; fail/retry together; and can be validated as one unit.
+- Keep separate regular steps when each turn has its own durable artifact, validation gate, retry/failure domain, tool/security context, or downstream consumer.
 - Add learning / knowledgebase / db update items as user messages at the exact point they should happen.
 - Add explicit reference-check, hallucination-check, critique, or self-validation items when reliability needs it.
 - Reads for KB, db, and learnings are always available. Writes are item-scoped through `write_access`.
 - Python `code` items are for deterministic parsing/transforms. On success, the next user_message gets script path, output paths, and summarized logs as prepended context.
 - As a todo_task predefined route, a message_sequence behaves like a reusable specialist sub-agent: reuse the same route for critique, test feedback, validation feedback, or follow-up work that should keep prior context; restart only when the prior conversation is stale, wrong, or contaminated.
+- For row/item iteration, use a `foreach` item inside message_sequence when one shared conversation should process every row. Use todo_task when each item needs independent sub-agent delegation.
 
 ### Step 6: When to Use Routing (brief)
 
 Use `routing` when the next step must be **exactly one of N mutually exclusive paths** (e.g., "did login succeed, hit MFA, or fail?"). Routing is deterministic: a caller or prior step must provide `route_selection.json` (or `route_selections`) with the selected route. For running every sub-task, use todo_task. For a linear conversation, use message_sequence.
 
-Routing has one mode: leave `description` and `context_output` empty, read an existing route file/source, then switch. If an agent/probe/judgment is needed, add a prior `regular` step that writes `route_selection.json` and have the routing step consume it with `route_source_file` or `context_dependencies: ["route_selection.json"]`. Each `routes` entry needs a stable `route_id`, a `condition` explaining when that route should be selected, and a `next_step_id` that points to another step in the plan (routing routes do **not** define inline sub-agents — they branch to existing steps); set `default_route_id` only as a missing-file fallback.
+Routing has one mode: leave `description` and `context_output` empty, read an existing route file/source, then switch. The common case is that the builder/caller selects the fixed branch from the user's request with `route_selections`. If an agent/probe/judgment is needed, add a prior `regular` step that writes `route_selection.json` and have the routing step consume it with `route_source_file` or `context_dependencies: ["route_selection.json"]`. Each `routes` entry needs a stable `route_id`, a `condition` explaining when that route should be selected, and a `next_step_id` that points to another step in the plan (routing routes do **not** define inline sub-agents — they branch to existing steps); set `default_route_id` only as a missing-file fallback.
 
 For full route structure, file contract, and anti-patterns, call `get_reference_doc(kind="routing")` — load before designing or hardening any routing step.
 
@@ -105,6 +111,7 @@ Step-level `success_criteria` is deprecated. Rely on a strong `description` plus
 
 - **Monster boundaries**: A single step owns unrelated durable outputs, validation gates, failure domains, or persistent stores — split at those boundaries. Many tool calls alone are not a reason to split.
 - **Trivial steps**: A step that just reads a file and passes it through — merge with the consumer
+- **Over-splitting same-context turns**: Several regular steps mostly reread the same context and depend on each other's transient reasoning. Collapse into a `message_sequence` unless separate durable artifacts, validation gates, retry boundaries, or tool/security contexts are needed.
 - **Missing validation**: No validation_schema means no automated quality gate
 - **Vague descriptions**: "Process the data appropriately" — be specific about WHAT, HOW, and WHERE
 - **Over-sequencing**: Steps that don't depend on each other can potentially run in parallel via independent step groups
@@ -114,7 +121,7 @@ Step-level `success_criteria` is deprecated. Rely on a strong `description` plus
 
 - **Regular** (type: "regular"): Standard task. Executes an agent that produces a context_output file.
 - **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes**. Each route can either define an inline **sub_agent_step** or reuse a plan-local orphan definition via **orphan_step_ref**. Route sub-agents are usually **regular** steps, can be **message_sequence** when the route needs persistent specialist memory with re-entry/restart behavior, and can be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
-- **Message Sequence** (type: "message_sequence"): Persistent single-agent conversation with ordered `items`. Use short user_message items, optional prevalidation items, and optional Python code items. The sequence can resume and receive a new user message without replaying the queue.
+- **Message Sequence** (type: "message_sequence"): Single-agent ordered conversation with `items`. Use it for same-context ordered turns, short user_message items, optional prevalidation items, and optional Python code items. As a top-level step the queue runs once; as a todo_task route it can be re-entered during the same workflow run and receive new instructions without replaying the queue.
 - **Routing** (type: "routing"): N-way deterministic branching. Reads `route_selection.json` (or caller `route_selections`) and picks exactly one **routes[]** entry. Each route has **route_id**, **condition**, and **next_step_id** (pointer to an existing step). Optional **default_route_id** is a missing-file fallback. Optional **route_source_file** points at a prior step's route file.
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports: 'text', 'yesno', 'multiple_choice'. Can route based on response.
 - **Orphan** (is_orphan: true): Not part of the main execution flow. Orphan steps are plan-local reusable definitions and manual utility agents. Use them for data checks, environment validation, one-off investigations, or shared sub-agent definitions that multiple orchestrators in the same plan may reuse. Reuse is explicit: an orphan step must declare `shared_with.orchestrator_ids`, and a todo_task route must point to it with `orphan_step_ref`. Do not assume every orphan step is shared with every orchestrator.

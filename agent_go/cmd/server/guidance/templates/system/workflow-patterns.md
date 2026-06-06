@@ -210,7 +210,7 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 
 ## Notes on the pattern set
 
-**Why message_sequence is rarely referenced here**: only 2 of 28 real plans use `message_sequence` at the top level. It's still the right choice for stateful specialist conversations (see the Message Sequence brief and `get_reference_doc(kind="message-sequence")`), but most workflows decompose cleanly into the patterns above.
+**Why message_sequence is referenced differently here**: it is a step-internal conversation pattern, not a whole-workflow topology. Prefer it inside these patterns whenever several ordered turns need the same context and one durable validation/output boundary.
 
 **Industry patterns not used here**:
 - *Swarm* / *Shared Scratchpad* (LangGraph) — this builder does not support peer agents with shared memory. Use #2 (Scoped Investigation) or #4 (Fan-out) instead.

@@ -64,6 +64,10 @@ Shell commands may use the absolute paths below. Workspace tools that accept a f
 - Allowed READ: {{.FolderGuardReadPaths}}
 - Allowed WRITE: {{.FolderGuardWritePaths}}
 - Step folder is **volatile** — deleted on re-execution. Only write primary results here.
+{{if .MessageSequenceAccessNote}}
+
+**Message sequence item access:** {{.MessageSequenceAccessNote}}
+{{end}}
 
 **Three persistent stores — do not confuse them. Only access a store when it appears in Allowed READ/WRITE or a dedicated prompt section grants access:**
 - **soul/soul.md** — workflow north star: objective and success criteria. At step start, read it if present and use it to resolve ambiguity, prioritize tradeoffs, and avoid technically-correct work that misses the workflow goal. Treat it as READ-ONLY during step execution.
@@ -200,8 +204,8 @@ type WorkflowExecutionOnlyTemplate struct {
 	BaseDescription          string // Step description without orchestrator instructions
 	OrchestratorInstructions string // Orchestrator instructions (split from description)
 	HasSkill                 string // "true" if skill files are available
-	IsScriptedMode          string // "true" when scripted mode is enabled
-	ScriptedPriorContext    string // Prior script context (failed script + error, or existing script for update)
+	IsScriptedMode           string // "true" when scripted mode is enabled
+	ScriptedPriorContext     string // Prior script context (failed script + error, or existing script for update)
 }
 
 // WorkflowExecutionOnlyAgent executes steps using pre-discovered learning context
@@ -377,8 +381,9 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"KBGuidanceBlock":           templateVars["KBGuidanceBlock"],           // Pre-built KB guidance block — non-empty only when KbWriteMethod == "direct"
 		"FolderGuardReadPaths":      folderGuardReadPaths,                      // Folder guard read paths for agent guidance
 		"FolderGuardWritePaths":     folderGuardWritePaths,                     // Folder guard write paths for agent guidance
+		"MessageSequenceAccessNote": templateVars["MessageSequenceAccessNote"], // Per-item write_access note for message_sequence turns
 		"IsEvaluationMode":          templateVars["IsEvaluationMode"],          // Evaluation mode flag
-		"IsScriptedMode":           templateVars["IsScriptedMode"],           // Learn code mode flag (validation schema shown in scripted section instead)
+		"IsScriptedMode":            templateVars["IsScriptedMode"],            // Learn code mode flag (validation schema shown in scripted section instead)
 		"WorkflowRoot":              templateVars["WorkflowRoot"],              // Workflow root path for absolute cwd display
 		"DocsRoot":                  GetPromptDocsRoot(),                       // Workspace docs base path — differs between macOS dev (/Users/.../workspace-docs) and Docker (/app/workspace-docs); do NOT hardcode.
 		// Browser authoring rules (refs-are-ephemeral + durable-selector priority
@@ -431,8 +436,8 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		WorkshopHumanInput:       templateVars["WorkshopHumanInput"],
 		StepSuccessCriteria:      templateVars["StepSuccessCriteria"],
 		HasSkill:                 fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
-		IsScriptedMode:          fmt.Sprintf("%t", isScriptedMode),
-		ScriptedPriorContext:    BuildScriptedPriorContext(templateVars["ScriptedPriorScript"], templateVars["ScriptedPriorError"], templateVars["ScriptedMetadataPath"], templateVars["IsScriptedLocked"] == "true"),
+		IsScriptedMode:           fmt.Sprintf("%t", isScriptedMode),
+		ScriptedPriorContext:     BuildScriptedPriorContext(templateVars["ScriptedPriorScript"], templateVars["ScriptedPriorError"], templateVars["ScriptedMetadataPath"], templateVars["IsScriptedLocked"] == "true"),
 	}
 
 	// Execute the pre-parsed template

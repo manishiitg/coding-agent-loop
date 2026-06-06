@@ -1,15 +1,29 @@
 ## Planning Steps
 
-When a user describes what to automate: **present the plan and get
-explicit confirmation before creating any steps.** The user may be
-exploring — do not assume they are ready to commit.
+When a user describes what to automate: take action. Create or update
+the plan using workflow-builder best practices and the available
+context. Ask the user only for blocking choices that would materially
+change behavior, safety, credentials, schedules, external side effects,
+or irreversible actions. State reasonable assumptions briefly and
+proceed.
 
 ## Step composition defaults
 
 Default to `regular` unless the task clearly needs branching,
-iteration, or sub-agents. Every step must have a `validation_schema`.
-Context flow is forward-only via `context_dependencies` →
-`context_output`.
+iteration, sub-agents, or same-context ordered turns that should share
+one conversation. Every step must have a `validation_schema`. Context
+flow is forward-only via `context_dependencies` → `context_output`.
+
+For fixed branch choices the user already gave the builder, prefer a
+deterministic `routing` step and pass `route_selections` when running.
+Do not add a `human_input` step just to ask the same branch choice
+again.
+
+If multiple ordered agent actions share the same context and mainly
+need to build on each other, prefer `message_sequence` over multiple
+regular steps. Split into regular steps only when a durable output,
+validation gate, retry/failure domain, different tool/security context,
+or downstream consumer needs a separate artifact.
 
 ## Step types
 
@@ -19,7 +33,7 @@ Context flow is forward-only via `context_dependencies` →
   deep only)
 - **`routing`** — choose next step from a fixed route map
 - **`human_input`** — pause for operator input
-- **`message_sequence`** — multi-message conversation pattern
+- **`message_sequence`** — ordered turns sharing one conversation/context
 - **orphan** (`is_orphan: true`) — reusable across orchestrators via
   `shared_with.orchestrator_ids` + `orphan_step_ref`
 

@@ -1,3 +1,20 @@
+## WHEN TO USE MESSAGE SEQUENCE
+
+Use `message_sequence` when a unit of work needs multiple ordered agent turns that share the same context and should build on each other. It is the best-practice shape for "do A, then critique/check it, then improve/write the final output" when those turns use the same files, tools, credentials, security context, and final validation boundary.
+
+Prefer `message_sequence` over several regular steps when:
+- The turns mostly read the same upstream context.
+- The later turns need the earlier turns' transient reasoning, critique, tool output, or accumulated conversation state.
+- There is one final durable output, or tightly coupled outputs that can be validated together.
+- Intermediate artifacts are only scratch/context handoff and are not useful to downstream workflow steps.
+- The whole unit should fail/retry together.
+
+Do not use it when:
+- Each phase has an independent durable artifact, validation gate, retry/failure domain, or downstream consumer.
+- Different phases require different tools, credentials, security isolation, or persistent-store contracts.
+- The workflow needs deterministic branching; use `routing`.
+- The workflow needs independent sub-agent delegation or progress over many tasks; use `todo_task`.
+
 ## MESSAGE SEQUENCE ROUTE PATTERNS
 
 Use these patterns when designing or hardening todo_task predefined routes:
@@ -38,7 +55,7 @@ Practical consequences for plan design:
 
 ## SINGLE-STEP QUALITY PATTERNS
 
-The patterns above use message_sequence as a todo_task route (a reusable specialist the orchestrator re-enters). message_sequence is equally useful as a **standalone step** that makes one unit of work trustworthy, using the item queue (`user_message` + `code` + `prevalidation`, all sharing one conversation):
+The patterns above use message_sequence as a todo_task route (a reusable specialist the orchestrator re-enters). message_sequence is equally useful as a **standalone step** that keeps same-context ordered turns together and makes one unit of work trustworthy, using the item queue (`user_message` + `code` + `prevalidation`, all sharing one conversation):
 
 - **Self-Validation Gate**: after a work turn, add `user_message` items that interrogate the same conversation about what it actually did — "Did you actually call `xyz`? Quote the exact output. Did you actually produce `abc`?" — then a `prevalidation` item whose schema checks the concrete artifacts. Interleave several interrogate→prevalidation pairs, each prevalidation using a different schema, to gate distinct claims before the step completes.
 - **Compute-then-Reason**: alternate `code` items (fetch/parse/compute ground truth) with `user_message` items that reason over the result. The runtime feeds each code item's stdout + exit code into the next message turn, so the agent reasons over real computed data instead of its own assumptions.

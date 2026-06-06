@@ -32,32 +32,43 @@ Set the `input_type` on the step:
 
 - **`text`** — free-form text response. Use when the answer space is
   open (e.g., "What's the company name?", "Paste the OTP from email").
-- **`yesno`** — boolean response. Use for confirmation gates (e.g.,
-  "Send the report now?"). Pair with a `routing` step that branches on
-  yes vs no.
+- **`yesno`** — boolean response. Use for confirmation gates inside a
+  running workflow (e.g., "Send the report now?").
 - **`multiple_choice`** — one selection from a fixed list. Use when the
-  answer space is enumerable and small (e.g., "Which environment?"
-  → ["staging", "production"]). Pair with `routing` that branches on
-  each choice.
+  running workflow must ask for one enumerable answer (e.g., "Which
+  environment?" -> ["staging", "production"]).
 
-## Pairing with routing
+## Branching from human_input
 
-`human_input` returns a response into the workflow context, but
-human_input itself doesn't branch. To branch based on the user's
-answer, place a `routing` step **right after** the human_input step,
-with routes keyed on the response value:
+Do not add `human_input` just to ask which fixed branch to run when the
+user already told the builder in chat. In that common case, model the
+choice as a deterministic `routing` step and have the builder/caller
+pass `route_selections` when starting the workflow.
+
+Use `human_input` only when the running workflow truly has to stop and
+ask a human because the answer is not already available at launch. If
+that in-run answer branches a small fixed menu, `option_routes` is fine.
+If the branch must be visible as an explicit deterministic router, map
+the answer to `route_selection.json` and route after it.
 
 ```
-human_input(prompt="Send report now?", input_type="yesno", context_output="approval")
-  ↓
-routing(condition="$approval", routes=[
-  {route_id: "yes", condition: "yes", next_step_id: "send-report"},
-  {route_id: "no",  condition: "no",  next_step_id: "skip-send"},
-])
+routing(
+  id="pick-job",
+  routes=[
+    {route_id: "lead-verification", next_step_id: "ask-target"},
+    {route_id: "withdrawals-cleanup", next_step_id: "withdrawals-check"}
+  ]
+)
+
+run_full_workflow(
+  group_name="aayush",
+  route_selections={"pick-job": "lead-verification"},
+  human_inputs={"ask-target": "Mar26"}
+)
 ```
 
-The `routing` skill has the full route-structure rules; this is the
-single most common pairing.
+The `routing` skill has the full deterministic route-structure rules
+for workflows that need an explicit router node.
 
 ## Schedule / unattended runs
 
@@ -72,8 +83,10 @@ scheduled cannot wait for a real human. Two strategies:
    default to a safe choice for scheduled runs and only ask
    interactively.
 
-When you add a human_input step, immediately ask: "will this workflow
-ever be scheduled?" If yes, plan for response preparation.
+When you add a human_input step, decide from context whether the
+workflow may be scheduled. If yes, plan for response preparation and
+state the assumption briefly instead of asking unless the schedule
+policy is blocking.
 
 ## Validation
 
@@ -97,9 +110,9 @@ into a text field).
 - **Multiple human_inputs in sequence**: feels chatty. Either gather
   context upfront with variables, or use a single message_sequence
   step that has a conversation.
-- **human_input + no routing**: if the response doesn't drive a
-  decision, you're collecting data — store it in `context_output` and
-  use it downstream, but consider whether the question is necessary.
+- **Asking twice**: do not add a `human_input` branch picker when the
+  builder can infer the route from the user's launch request and pass
+  `route_selections`.
 
 ## Tools
 

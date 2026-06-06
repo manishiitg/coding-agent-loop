@@ -15,6 +15,7 @@ import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
 import { nodeTypes } from '../nodes'
+import { edgeTypes } from '../edges'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { VariablesSidebar } from './VariablesSidebar'
 import { BatchProgressHeader } from '../BatchProgressHeader'
@@ -2740,6 +2741,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           onlyRenderVisibleElements={false}
           onViewportChange={onViewportChange}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           fitView={false}
           fitViewOptions={{ padding: FLOW_FIT_PADDING, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM }}
           minZoom={FLOW_FIT_MIN_ZOOM}

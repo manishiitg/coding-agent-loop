@@ -1076,7 +1076,7 @@ func getAddRegularStepSchema() string {
 			},
 			"description": {
 				"type": "string",
-				"description": "REQUIRED: COMPREHENSIVE, DETAILED description of what this step accomplishes. Be thorough and complete - include specific details about what needs to be done, what tools or approaches might be needed, what outcomes are expected, key considerations, and any important context."
+				"description": "REQUIRED: COMPREHENSIVE, DETAILED executable instruction for the step agent. This is the main prompt the regular step agent runs, not metadata. Be thorough and complete - include specific details about what needs to be done, what tools or approaches might be needed, what outcomes are expected, key considerations, and any important context."
 			},
 			"context_dependencies": {
 				"type": "array",

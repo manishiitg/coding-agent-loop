@@ -89,11 +89,12 @@ a declared route source.
 → if an explicit value is present but invalid → error (no silent default)
 ```
 
-### `run_workflow` / `run_step` parameter
+### `run_workflow` / `run_step` / `run_full_workflow` parameter
 
-Both tools have an **optional** `route_selections` parameter. The runner carries
-that map into execution options; the workflow controller pre-seeds route files
-after run-folder/group resolution and cleanup, before the first step executes.
+`run_workflow`, `run_step`, and the workshop builder's `run_full_workflow`
+tool have an **optional** `route_selections` parameter. The runner carries that
+map into execution options; the workflow controller pre-seeds route files after
+run-folder/group resolution and cleanup, before the first step executes.
 
 ```jsonc
 run_workflow(
@@ -132,6 +133,7 @@ else → error (not a valid route for this router)
 | `controller_routing.go` (`executeRoutingStep`) | Replaced the `conditionalAgent.EvaluateRouting(...)` call path with deterministic file/default resolution. The branch selection is now "read file → validate → switch"; routing descriptions are rejected. |
 | `controller_routing_deterministic.go` | Added the deterministic resolver, route value normalization, prior-step source lookup, and `route_selections` pre-seeding. |
 | `workflow_run_tools.go` (`run_workflow`, `run_step`) | Added optional `route_selections` to the tool schemas and parser. No scalar `route` sugar was added. |
+| `planning_exports.go` (`run_full_workflow`) | Added optional `route_selections` so the workflow builder can select fixed branches from the user's chat request without adding a redundant `human_input` step. |
 | `runWorkflowInternal` / server request path | Parses `route_selections` and carries it through `execution_options`; file writing happens later because final group run folders are resolved during execution. |
 | execution controller / batch setup | Validates `route_selections` against each router's `routes[]`, then writes `route_selection.json` into each routing step's output dir after cleanup and before step execution. |
 | routing source resolution | Checks the router's own preseeded route file first, then `route_source_file`, then `context_dependencies` entries named `route_selection.json`, preserving folder ownership. |

@@ -20,7 +20,7 @@ For every executable step in plan.json, read the description. This includes top-
 LENS 0 — Durable Boundary Fit
 - **Do not flag size alone**: modern agents can handle long context and many tool calls. A step is not wrong just because it performs many screen actions, file reads, API calls, or small transformations.
 - **Over-merged boundary**: flag when one step owns unrelated durable outputs, validation gates, retry/failure domains, tool/security contexts, downstream contracts, persistent stores, human approvals, or routing decisions.
-- **Over-split boundary**: flag when adjacent steps share the same objective/output contract, fail and retry together, use the same tools/security context, produce only pass-through artifacts, or exist only to hand context to the next step.
+- **Over-split boundary**: flag when adjacent steps share the same objective/output contract, fail and retry together, use the same tools/security context, produce only pass-through artifacts, depend on each other's transient reasoning, or exist only to hand context to the next step. Recommend `message_sequence` when several ordered turns should share one conversation and one durable output/validation boundary; recommend one stronger regular step only when a single turn is enough.
 - **Boundary truth**: split for durable contracts; combine for scratch intermediates and coherent agentic work.
 
 LENS A — Description vs Skill Confusion
@@ -64,7 +64,7 @@ For every step where `step_type == "todo_task"`, `routing`, or `orchestration`, 
 
 LENS E — Orchestrator / Router Description Quality
 - **Missing objective/intent**: the parent description must clearly state WHAT we are trying to achieve — the overall goal. Without this, the orchestrator/router can't make intelligent decisions when things go wrong or unexpected situations arise. A good parent description answers: "Why do these routes/sub-agents exist together? What outcome are we after?"
-- **Reduced to a sequencer**: if the description is just "run route A, then route B, then route C" or a fixed checklist, the parent may be over-engineered. If all it does is follow a fixed order, these should often be regular steps in sequence instead.
+- **Reduced to a sequencer**: if the description is just "run route A, then route B, then route C" or a fixed checklist, the parent may be over-engineered. If all it does is follow a fixed order, use regular steps when each task has a durable boundary, or `message_sequence` when the ordered turns share context and one output/validation boundary.
 - **No edge case / failure guidance**: the description should explain how to handle failures, retries, partial results, missing data, or unexpected route/sub-agent states.
 - **No routing criteria**: the description doesn't explain WHEN or WHY to pick each route. The parent needs to know what conditions, inputs, or states map to which sub-agent.
 

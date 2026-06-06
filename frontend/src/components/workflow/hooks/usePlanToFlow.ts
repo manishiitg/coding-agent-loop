@@ -12,6 +12,7 @@ import { useLLMStore } from '../../../stores/useLLMStore'
 const ROUTE_EDGE_LABEL_STYLE = { fill: 'hsl(var(--muted-foreground))', fontWeight: 500, fontSize: 10 }
 const COMPLETION_EDGE_LABEL_STYLE = { fill: 'hsl(var(--primary))', fontWeight: 600, fontSize: 11 }
 const EDGE_LABEL_BG_STYLE = { fill: 'hsl(var(--popover))', fillOpacity: 0.92 }
+const ROUTING_EDGE_COLORS = ['#0f766e', '#2563eb', '#7c3aed', '#ea580c', '#0891b2']
 
 // Node data types for our custom nodes
 export interface StepNodeData extends Record<string, unknown> {
@@ -479,7 +480,21 @@ function getWorkflowBranchFootprint(
 function applyVerticalRoutingTreeLayout(nodes: WorkflowNode[], edges: WorkflowEdge[]): WorkflowNode[] {
   const positionedNodes = nodes.map(node => ({ ...node, position: { ...node.position } }))
   const nodeIndexById = new Map(positionedNodes.map((node, index) => [node.id, index]))
+  const nodeById = new Map(positionedNodes.map(node => [node.id, node]))
   const todoParentIds = new Set(positionedNodes.filter(node => node.type === 'todo_task').map(node => node.id))
+  const incomingEdgesByTarget = new Map<string, WorkflowEdge[]>()
+  const outgoingEdgesBySource = new Map<string, WorkflowEdge[]>()
+
+  edges.forEach(edge => {
+    const incomingEdges = incomingEdgesByTarget.get(edge.target) || []
+    incomingEdges.push(edge)
+    incomingEdgesByTarget.set(edge.target, incomingEdges)
+
+    const outgoingEdges = outgoingEdgesBySource.get(edge.source) || []
+    outgoingEdges.push(edge)
+    outgoingEdgesBySource.set(edge.source, outgoingEdges)
+  })
+
   const routedTargets = new Set(
     positionedNodes
       .filter(node => node.type === 'routing')
@@ -493,6 +508,37 @@ function applyVerticalRoutingTreeLayout(nodes: WorkflowNode[], edges: WorkflowEd
       ...positionedNodes[nodeIndex],
       position: { x, y }
     }
+  }
+
+  const isSimpleRoutingTreeRoot = (nodeId: string, visited: Set<string> = new Set()): boolean => {
+    if (visited.has(nodeId)) return false
+    const node = nodeById.get(nodeId)
+    if (!node || node.type !== 'routing') return false
+
+    const nextVisited = new Set(visited)
+    nextVisited.add(nodeId)
+    const childIds = getRoutingChildren(nodeId, positionedNodes, edges)
+    if (childIds.length === 0) return false
+
+    return childIds.every(childId => {
+      const child = nodeById.get(childId)
+      if (!child) return false
+
+      const nonParentIncomingEdges = (incomingEdgesByTarget.get(childId) || [])
+        .filter(edge => edge.source !== nodeId)
+      if (nonParentIncomingEdges.length > 0) {
+        return false
+      }
+
+      const nonEndOutgoingEdges = (outgoingEdgesBySource.get(childId) || [])
+        .filter(edge => edge.target !== 'end')
+
+      if (child.type === 'routing') {
+        return isSimpleRoutingTreeRoot(childId, nextVisited)
+      }
+
+      return nonEndOutgoingEdges.length === 0
+    })
   }
 
   const placeBranch = (nodeId: string, left: number, top: number, visited: Set<string> = new Set()) => {
@@ -528,7 +574,11 @@ function applyVerticalRoutingTreeLayout(nodes: WorkflowNode[], edges: WorkflowEd
   }
 
   positionedNodes
-    .filter(node => node.type === 'routing' && !routedTargets.has(node.id))
+    .filter(node => (
+      node.type === 'routing' &&
+      !routedTargets.has(node.id) &&
+      isSimpleRoutingTreeRoot(node.id)
+    ))
     .forEach(node => {
       const footprint = getWorkflowBranchFootprint(node.id, positionedNodes, edges, todoParentIds)
       const nodeDimensions = getNodeLayoutDimensions(node)
@@ -1761,8 +1811,9 @@ function processSteps(
       const sourceNodeId = (typeof lastExitNodeId === 'string' ? lastExitNodeId : node.id)
 
       if (step.routes) {
-        step.routes.forEach((route) => {
+        step.routes.forEach((route, routeIndex) => {
           const targetNodeId = stepIdToNodeIdMap?.get(route.next_step_id)
+          const routeColor = ROUTING_EDGE_COLORS[routeIndex % ROUTING_EDGE_COLORS.length]
 
           if (targetNodeId) {
             const isSelectedRoute = !step.selected_route_id || route.route_id === step.selected_route_id
@@ -1771,17 +1822,25 @@ function processSteps(
               source: sourceNodeId,
               sourceHandle: `route-${route.route_id}`,
               target: targetNodeId,
-              type: 'step',
+              type: 'routing',
               label: route.route_name || route.route_id,
               labelStyle: { ...ROUTE_EDGE_LABEL_STYLE, opacity: isSelectedRoute ? 1 : 0.5 },
               labelBgStyle: EDGE_LABEL_BG_STYLE,
               labelBgPadding: [3, 3] as [number, number],
               labelBgBorderRadius: 4,
+              data: {
+                routeIndex,
+                routeCount: step.routes?.length || 0,
+                routeName: route.route_name || route.route_id,
+                selected: isSelectedRoute,
+                color: routeColor
+              },
               style: {
-                stroke: isSelectedRoute ? '#0f766e' : '#94a3b8',
+                stroke: isSelectedRoute ? routeColor : '#94a3b8',
                 strokeWidth: isSelectedRoute ? 2.5 : 1.25,
                 opacity: isSelectedRoute ? 1 : 0.4
               },
+              zIndex: 2,
               animated: false
             })
           } else if (route.next_step_id === 'end') {
@@ -1791,17 +1850,25 @@ function processSteps(
               source: sourceNodeId,
               sourceHandle: `route-${route.route_id}`,
               target: 'end',
-              type: 'step',
+              type: 'routing',
               label: route.route_name || route.route_id,
               labelStyle: { ...ROUTE_EDGE_LABEL_STYLE, opacity: isSelectedRoute ? 1 : 0.5 },
               labelBgStyle: EDGE_LABEL_BG_STYLE,
               labelBgPadding: [3, 3] as [number, number],
               labelBgBorderRadius: 4,
+              data: {
+                routeIndex,
+                routeCount: step.routes?.length || 0,
+                routeName: route.route_name || route.route_id,
+                selected: isSelectedRoute,
+                color: routeColor
+              },
               style: {
-                stroke: isSelectedRoute ? '#0f766e' : '#94a3b8',
+                stroke: isSelectedRoute ? routeColor : '#94a3b8',
                 strokeWidth: isSelectedRoute ? 2.5 : 1.25,
                 opacity: isSelectedRoute ? 1 : 0.4
               },
+              zIndex: 2,
               animated: false
             })
           }

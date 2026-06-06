@@ -2,8 +2,8 @@
 
 A `regular` step is one agent doing one unit of work in a single execution (with a
 validation-driven retry loop). It is the **default** step type — reach for it unless
-the task needs branching (`routing`), sub-agent coordination (`todo_task`), a scripted
-or re-entrant conversation (`message_sequence`), or operator input (`human_input`).
+the task needs branching (`routing`), sub-agent coordination (`todo_task`), same-context
+ordered turns / re-entrant conversation (`message_sequence`), or operator input (`human_input`).
 
 ## When to use
 
@@ -11,12 +11,13 @@ or re-entrant conversation (`message_sequence`), or operator input (`human_input
 - One clear objective expressible as a `description` plus a `validation_schema`.
 - The building block of the **Linear Pipeline** pattern (see `get_reference_doc(kind="workflow-patterns")`).
 
-If the work fans out over items, branches on a decision, or needs a specialist that
-remembers across calls, it is **not** a regular step — see the redirects below.
+If the work fans out over items, branches on a decision, needs several turns that
+share one conversation, or needs a specialist that remembers across calls, it is
+**not** a regular step — see the redirects below.
 
 ## Anatomy
 
-- `description` — the objective. Resolved variable values are available as `$VAR_*`.
+- `description` — the executable instruction/prompt for the step agent, not metadata. Resolved variable values are available as `$VAR_*`.
 - `context_dependencies` → `context_output` — forward-only context flow between steps.
 - `validation_schema` — **required**; gates the step (file checks + json_checks). On
   failure the agent retries with the failed-check feedback.
@@ -35,8 +36,9 @@ remembers across calls, it is **not** a regular step — see the redirects below
 
 - Branching on a decision or run flag → **`routing`**.
 - Coordinating ≥2 specialized sub-agents, or dynamic per-item work → **`todo_task`**.
-- A stateful conversation, self-validation/grounding gate, or stepping through a db
-  array row-by-row → **`message_sequence`** (incl. its `foreach` item).
+- Same-context ordered turns, a stateful conversation, self-validation/grounding
+  gate, or stepping through a db array row-by-row → **`message_sequence`**
+  (incl. its `foreach` item).
 - Pausing for human approval/selection → **`human_input`**.
 
 ## Anti-patterns

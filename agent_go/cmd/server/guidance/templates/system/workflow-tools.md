@@ -18,7 +18,7 @@ returns the live JSON schema for the tool.
 - **`list_executions(status_filter?)`** — List all background executions.
 - **`stop_step(execution_id)` / `stop_all_executions()`** — Cancel running steps.
 - **`run_in_background(name, instruction)`** — Spawn an independent background agent with the same tools.
-- **`run_full_workflow(group_name, human_inputs?, disable_eval?)`** — Execute the complete workflow (all steps) for a single variable group in background. Always uses `iteration-0` and starts from the beginning. If the plan has `human_input` steps, you MUST provide `human_inputs` (object mapping step_id to response string) — the tool will error listing missing steps if omitted. Pass `disable_eval=true` only when the user explicitly wants to skip the automatic evaluation pass. Returns `execution_id`.
+- **`run_full_workflow(group_name, human_inputs?, route_selections?, disable_eval?)`** — Execute the complete workflow (all steps) for a single variable group in background. Always uses `iteration-0` and starts from the beginning. If the selected path has `human_input` steps, provide `human_inputs` (object mapping step_id to response string). For deterministic routers, pass `route_selections` keyed by routing step ID, with each value as a `route_id` or unique `next_step_id`. Pass `disable_eval=true` only when the user explicitly wants to skip the automatic evaluation pass. Returns `execution_id`.
 
 ## Step Config & Analysis (Workshop mode)
 

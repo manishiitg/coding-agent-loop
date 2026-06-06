@@ -2,11 +2,12 @@
 
 A routing step is a deterministic switch. It reads `route_selection.json`, resolves the selected value to one of its `routes[]`, and branches to that route's `next_step_id`.
 
-Use routing when the workflow must run **exactly one** of N existing downstream steps. Do not put judgment inside the routing step itself; put judgment in an earlier regular step, human_input step, or caller-provided `route_selections`. If an agent decision is needed, add a regular step before routing that writes `route_selection.json` in its own output folder.
+Use routing when the workflow must run **exactly one** of N existing downstream steps. The common case is a fixed branch selected from the user's request to the builder; the builder/caller passes that choice as `route_selections` when starting the workflow. Do not put judgment inside the routing step itself; put judgment in an earlier regular step or caller-provided `route_selections`. If an agent decision is needed, add a regular step before routing that writes `route_selection.json` in its own output folder.
 
 ### When to use routing
 
 - The path forward is conditional on a known signal (e.g., "logged in", "MFA required", "document type is invoice")
+- The user already told the builder which fixed workflow mode/job/branch to run
 - There are 2-N mutually exclusive paths and only one should run
 - The selected path can be represented as a stable `route_id` or a unique `next_step_id`
 
@@ -59,7 +60,7 @@ Routing routes do **not** define inline sub-agents. Unlike todo_task `predefined
 
 - **Routing vs. todo_task**: todo_task can run multiple sub-tasks. Routing runs exactly one alternative.
 - **Routing vs. message_sequence**: message_sequence is one ordered conversation with no branching.
-- **Routing after human_input**: pair `human_input` -> `routing` when the user's answer determines the path. Either pass `route_selections` from the caller or add a small step that maps the answer to `route_selection.json`.
+- **Routing vs. human_input**: do not ask the user again when the builder already knows the requested branch. Use `route_selections`. Use `human_input` only when the workflow must pause mid-run for information that was not available at launch.
 
 ### Example
 

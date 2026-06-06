@@ -906,6 +906,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, message string, readPaths []string, writePaths []string) map[string]string {
 	stepExecRel := hcpo.messageSequenceExecutionRelPath(stepPath, step.GetID())
 	docsRoot := GetPromptDocsRoot()
+	writeAccess := resolveMessageSequenceItemWriteAccess(item)
+	kbAccess := KBAccessRead
+	if writeAccess.Knowledgebase {
+		kbAccess = KBAccessReadWrite
+	}
 	// Honor the step's declared context_output so the sequence writes the file
 	// downstream steps expect (in execution/<stepID>/, the normal step folder).
 	// Fall back to the generic name only when the step declares no output.
@@ -914,30 +919,46 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step
 		contextOutput = "message_sequence_result.json"
 	}
 	return map[string]string{
-		"StepTitle":                step.GetTitle(),
-		"StepDescription":          message,
-		"BaseDescription":          message,
-		"OrchestratorInstructions": message,
-		"StepContextDependencies":  strings.Join(step.GetContextDependencies(), "\n"),
-		"StepContextOutput":        contextOutput,
-		"WorkspacePath":            hcpo.messageSequenceAbsPath(filepath.Join("runs", hcpo.selectedRunFolder, "execution")),
-		"WorkflowRoot":             hcpo.messageSequenceAbsPath(""),
-		"DocsRoot":                 docsRoot,
-		"StepExecutionPath":        hcpo.messageSequenceAbsPath(stepExecRel),
-		"DBPath":                   hcpo.messageSequenceAbsPath(DBFolderName),
-		"KnowledgebasePath":        hcpo.messageSequenceAbsPath(KnowledgebaseFolderName),
-		"FolderGuardReadPaths":     strings.Join(toAbsPaths(docsRoot, readPaths), ", "),
-		"FolderGuardWritePaths":    strings.Join(toAbsPaths(docsRoot, writePaths), ", "),
-		"StepNumber":               fmt.Sprintf("%d", stepIndex+1),
-		"IsCodeExecutionMode":      "false",
-		"UseCodeStyleRules":        "",
-		"KbAccess":                 KBAccessRead,
-		"KbAccessLabel":            kbAccessLabel(KBAccessRead),
-		"KbWriteMethod":            KBWriteMethodDirect,
-		"HasLearnings":             "false",
-		"CurrentDate":              time.Now().Format("2006-01-02"),
-		"CurrentTime":              time.Now().Format("15:04:05"),
+		"StepTitle":                 step.GetTitle(),
+		"StepDescription":           message,
+		"BaseDescription":           message,
+		"OrchestratorInstructions":  message,
+		"StepContextDependencies":   strings.Join(step.GetContextDependencies(), "\n"),
+		"StepContextOutput":         contextOutput,
+		"WorkspacePath":             hcpo.messageSequenceAbsPath(filepath.Join("runs", hcpo.selectedRunFolder, "execution")),
+		"WorkflowRoot":              hcpo.messageSequenceAbsPath(""),
+		"DocsRoot":                  docsRoot,
+		"StepExecutionPath":         hcpo.messageSequenceAbsPath(stepExecRel),
+		"DBPath":                    hcpo.messageSequenceAbsPath(DBFolderName),
+		"KnowledgebasePath":         hcpo.messageSequenceAbsPath(KnowledgebaseFolderName),
+		"FolderGuardReadPaths":      strings.Join(toAbsPaths(docsRoot, readPaths), ", "),
+		"FolderGuardWritePaths":     strings.Join(toAbsPaths(docsRoot, writePaths), ", "),
+		"StepNumber":                fmt.Sprintf("%d", stepIndex+1),
+		"IsCodeExecutionMode":       "false",
+		"UseCodeStyleRules":         "",
+		"KbAccess":                  kbAccess,
+		"KbAccessLabel":             kbAccessLabel(kbAccess),
+		"KbWriteMethod":             KBWriteMethodDirect,
+		"KBGuidanceBlock":           BuildStepKBGuidance(kbAccess, KBWriteMethodDirect, ""),
+		"MessageSequenceAccessNote": buildMessageSequenceAccessNote(writeAccess),
+		"HasLearnings":              "false",
+		"CurrentDate":               time.Now().Format("2006-01-02"),
+		"CurrentTime":               time.Now().Format("15:04:05"),
 	}
+}
+
+func buildMessageSequenceAccessNote(writeAccess MessageSequenceWriteAccess) string {
+	grants := []string{"step folder", "Downloads"}
+	if writeAccess.DB {
+		grants = append(grants, "db/")
+	}
+	if writeAccess.Knowledgebase {
+		grants = append(grants, "knowledgebase/notes/")
+	}
+	if writeAccess.Learnings {
+		grants = append(grants, "learnings/_global/")
+	}
+	return "Reads are available for execution outputs, soul, builder logs, db/, knowledgebase/, and learnings/_global/. Writes for this item are limited to: " + strings.Join(grants, ", ") + "."
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) runMessageSequencePython(ctx context.Context, stepPath string, stepID string, item MessageSequenceItem, mainRel string, codeRel string, itemRel string) (string, int, error) {

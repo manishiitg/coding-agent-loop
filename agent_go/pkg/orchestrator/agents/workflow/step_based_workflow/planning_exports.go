@@ -258,13 +258,13 @@ func workflowRunValidationVariableValues(ctx context.Context, session *WorkshopC
 	return MergeGroupWithDefaults(manifest, nil)
 }
 
-func routeScopedValidationSteps(steps []PlanStep, variableValues map[string]string, humanInputs map[string]string) []PlanStep {
+func routeScopedValidationSteps(steps []PlanStep, variableValues map[string]string, humanInputs map[string]string, routeSelections map[string]string) []PlanStep {
 	for i, step := range steps {
 		routingStep, ok := step.(*RoutingPlanStep)
 		if !ok || len(routingStep.Routes) == 0 {
 			continue
 		}
-		route := inferValidationRoute(routingStep, variableValues, humanInputs)
+		route := inferValidationRoute(routingStep, variableValues, humanInputs, routeSelections)
 		if route == nil || strings.EqualFold(route.NextStepID, "end") {
 			continue
 		}
@@ -284,9 +284,21 @@ func routeScopedValidationSteps(steps []PlanStep, variableValues map[string]stri
 	return steps
 }
 
-func inferValidationRoute(step *RoutingPlanStep, variableValues map[string]string, humanInputs map[string]string) *RoutingRoute {
+func inferValidationRoute(step *RoutingPlanStep, variableValues map[string]string, humanInputs map[string]string, routeSelections map[string]string) *RoutingRoute {
 	if step == nil {
 		return nil
+	}
+	if routeSelections != nil {
+		if raw := strings.TrimSpace(routeSelections[step.GetID()]); raw != "" {
+			if routeID, err := resolveRouteSelectionValue(step.Routes, raw); err == nil {
+				for i := range step.Routes {
+					route := &step.Routes[i]
+					if route.RouteID == routeID {
+						return route
+					}
+				}
+			}
+		}
 	}
 	if humanInputs != nil {
 		if raw := strings.TrimSpace(humanInputs[step.GetID()]); raw != "" {
@@ -294,6 +306,16 @@ func inferValidationRoute(step *RoutingPlanStep, variableValues map[string]strin
 			for i := range step.Routes {
 				route := &step.Routes[i]
 				if strings.ToLower(route.RouteID) == normalized || strings.ToLower(route.RouteName) == normalized {
+					return route
+				}
+			}
+		}
+	}
+	if defaultRouteID := strings.TrimSpace(step.DefaultRouteID); defaultRouteID != "" {
+		if routeID, err := resolveRouteSelectionValue(step.Routes, defaultRouteID); err == nil {
+			for i := range step.Routes {
+				route := &step.Routes[i]
+				if route.RouteID == routeID {
 					return route
 				}
 			}
@@ -1708,7 +1730,7 @@ func RegisterRunFullWorkflowTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_workflow",
-		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Always uses iteration-0 and starts from the beginning. Runs in background — you will be notified when complete. If the plan contains human_input steps, you MUST provide human_inputs with a response for each one — the tool will error if any are missing. For routing steps, you can also pass human_inputs with the user's choice to guide the routing decision. Pass disable_eval=true to skip the automatic evaluation pass after the workflow completes.",
+		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Always uses iteration-0 and starts from the beginning. Runs in background - you will be notified when complete. If the plan contains human_input steps on the selected path, you MUST provide human_inputs with a response for each one. If the plan contains deterministic routing steps and the user's request already selected a branch, pass route_selections keyed by routing step ID. Pass disable_eval=true to skip the automatic evaluation pass after the workflow completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1718,7 +1740,14 @@ func RegisterRunFullWorkflowTool(
 				},
 				"human_inputs": map[string]interface{}{
 					"type":        "object",
-					"description": "Responses for human_input and routing steps, keyed by step ID. Required if the plan has human_input steps. Also supports routing steps — pass the user's choice so the routing execution agent can use it instead of defaulting. Example: {\"choose-workflow\": \"Option 2\", \"route-workflow\": \"Option 2 - execute tests for ai-workshop\"}. Read the plan to see which human_input and routing steps exist.",
+					"description": "Responses for human_input steps, keyed by step ID. Required for human_input steps on the selected route. Example: {\"ask-target\": \"Mar26\"}. Do not use this for routing steps; use route_selections instead.",
+					"additionalProperties": map[string]interface{}{
+						"type": "string",
+					},
+				},
+				"route_selections": map[string]interface{}{
+					"type":        "object",
+					"description": "Deterministic route choices, keyed by routing step ID. Values may be a route_id or a unique next_step_id for that routing step. Use this when the user has already told the builder which fixed branch to run. Example: {\"pick-job\": \"lead-verification\"}.",
 					"additionalProperties": map[string]interface{}{
 						"type": "string",
 					},
@@ -1762,6 +1791,27 @@ func RegisterRunFullWorkflowTool(
 					}
 				}
 			}
+			// Parse route_selections (optional map of routing_step_id -> route_id or next_step_id)
+			var routeSelections map[string]string
+			if rs, ok := args["route_selections"]; ok && rs != nil {
+				rsMap, ok := rs.(map[string]interface{})
+				if !ok {
+					return "route_selections must be an object keyed by routing step ID.", nil
+				}
+				routeSelections = make(map[string]string, len(rsMap))
+				for k, v := range rsMap {
+					stepID := strings.TrimSpace(k)
+					value, ok := v.(string)
+					if !ok {
+						return fmt.Sprintf("route_selections[%q] must be a string route_id or next_step_id.", k), nil
+					}
+					value = strings.TrimSpace(value)
+					if stepID == "" || value == "" {
+						return "route_selections entries must have non-empty step IDs and route values.", nil
+					}
+					routeSelections[stepID] = value
+				}
+			}
 
 			// Validate: if the selected route has human_input steps, human_inputs must cover them.
 			// Route-scoped validation matters for workflows like Upwork where one plan contains
@@ -1788,7 +1838,9 @@ func RegisterRunFullWorkflowTool(
 				var legacyRoutingSteps []string
 				validationSteps := session.controller.approvedPlan.Steps
 				if variableValues := workflowRunValidationVariableValues(ctx, session, groupName); len(variableValues) > 0 {
-					validationSteps = routeScopedValidationSteps(session.controller.approvedPlan.Steps, variableValues, humanInputs)
+					validationSteps = routeScopedValidationSteps(session.controller.approvedPlan.Steps, variableValues, humanInputs, routeSelections)
+				} else if len(routeSelections) > 0 {
+					validationSteps = routeScopedValidationSteps(session.controller.approvedPlan.Steps, nil, humanInputs, routeSelections)
 				}
 				for _, step := range validationSteps {
 					if step.StepType() == StepTypeHumanInput {
@@ -1987,6 +2039,7 @@ func RegisterRunFullWorkflowTool(
 					ExecutionStrategy: strategy,
 					EnabledGroupNames: enabledGroupNames,
 					HumanInputs:       humanInputs,
+					RouteSelections:   routeSelections,
 					DisableEval:       disableEval,
 				}
 				workflowController.SetExecutionOptions(execOpts)

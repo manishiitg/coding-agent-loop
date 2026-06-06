@@ -3,8 +3,9 @@ package types
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	stepworkflow "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
@@ -67,7 +69,7 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 		wsAPI = "http://127.0.0.1:18744"
 		_ = os.Setenv("WORKSPACE_API_URL", wsAPI)
 	}
-	if resp, err := exec.Command("curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}", wsAPI+"/api/documents/_index.json").Output(); err != nil || len(resp) == 0 {
+	if err := requireWorkspaceAPIReachable(wsAPI); err != nil {
 		t.Skipf("workspace API at %s unreachable (is the dev server running?): %v", wsAPI, err)
 	}
 
@@ -282,6 +284,15 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWorkflowOrchestrator: %v", err)
 	}
+	wo.SetExecutionOptions(&stepworkflow.ExecutionOptions{
+		RunMode:           "use_same_run",
+		SelectedRunFolder: "iteration-0",
+		ExecutionStrategy: stepworkflow.ExecutionStrategyStartFromBeginningNoHuman,
+		EnabledGroupNames: []string{"default"},
+		RouteSelections: map[string]string{
+			stepIDs[1]: "route_even",
+		},
+	})
 
 	// Generous budget: 5 step types × ~30-60s each on vertex/Flash
 	// plus workflow scaffolding overhead. Cold runs land in ~3-5 min;
@@ -301,6 +312,7 @@ func TestWorkflowE2ESingleRegularStepVertex(t *testing.T) {
 
 	walkRoot := filepath.Join(wsRoot, relWorkspace)
 	assertAllStepsExecutedAndDecisionsMatch(t, walkRoot, stepIDs)
+	assertSeededRouteSelectionFile(t, walkRoot, stepIDs[1], "route_even")
 	// step-compute: the top-level workflow agent receives a "code_exec
 	// mode" preamble (see prompts injected at controller_execution.go
 	// agent factory) even when useCodeExecutionMode=false is passed to
@@ -349,7 +361,7 @@ func TestWorkflowE2EMessageSequenceVertex(t *testing.T) {
 		wsAPI = "http://127.0.0.1:18744"
 		_ = os.Setenv("WORKSPACE_API_URL", wsAPI)
 	}
-	if resp, err := exec.Command("curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}", wsAPI+"/api/documents/_index.json").Output(); err != nil || len(resp) == 0 {
+	if err := requireWorkspaceAPIReachable(wsAPI); err != nil {
 		t.Skipf("workspace API at %s unreachable (is the dev server running?): %v", wsAPI, err)
 	}
 
@@ -591,13 +603,47 @@ func executionAttemptResultLogs(pattern string) []string {
 	return filtered
 }
 
+func requireWorkspaceAPIReachable(baseURL string) error {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(strings.TrimRight(baseURL, "/") + "/api/documents/_index.json")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func assertSeededRouteSelectionFile(t *testing.T, walkRoot, stepID, wantRouteID string) {
+	t.Helper()
+	matches, _ := filepath.Glob(filepath.Join(walkRoot, "runs", "*", "*", "execution", stepID, "route_selection.json"))
+	if len(matches) == 0 {
+		t.Fatalf("%s: seeded route_selection.json not found under %s", stepID, walkRoot)
+	}
+	body, err := os.ReadFile(matches[len(matches)-1])
+	if err != nil {
+		t.Fatalf("%s: read route_selection.json: %v", stepID, err)
+	}
+	var payload struct {
+		SelectRoute string `json:"select_route"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("%s: parse route_selection.json: %v\nbody=%s", stepID, err, body)
+	}
+	if payload.SelectRoute != wantRouteID {
+		t.Fatalf("%s: select_route = %q, want %q\nfile=%s", stepID, payload.SelectRoute, wantRouteID, matches[len(matches)-1])
+	}
+}
+
 // assertAllStepsExecutedAndDecisionsMatch is the Tier-1 assertion: for
 // each step type it confirms (a) the engine wrote per-type execution
-// evidence AND (b) where the evidence carries the LLM's decision
-// (routing), the decision matches the deterministic value
-// our prompts steered the LLM toward. Catches silent-skip bugs
-// (smoke-pass with no execution) and LLM/prompt drift that previously
-// would have passed the lower-bar "did it produce a file" check.
+// evidence AND (b) where the evidence carries the routing decision,
+// the decision matches the deterministic route selection. Catches
+// silent-skip bugs (smoke-pass with no execution) and route-selection
+// regressions that would have passed the lower-bar "did it produce a
+// file" check.
 func assertAllStepsExecutedAndDecisionsMatch(t *testing.T, walkRoot string, stepIDs []string) {
 	t.Helper()
 	type evidence struct {
@@ -612,10 +658,9 @@ func assertAllStepsExecutedAndDecisionsMatch(t *testing.T, walkRoot string, step
 	evidenceByStep := map[string]evidence{
 		"step-compute":     {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "logs", "step-compute", "execution", "execution-attempt-*-iteration-*.json")}},
 		"step-verify-even": {globs: []string{filepath.Join(walkRoot, "runs", "*", "*", "logs", "step-verify-even", "execution", "execution-attempt-*-iteration-*.json")}},
-		// routing-evaluation.json records the LLM's selected_route_id.
-		// The prompt instructs "Is 42 even? Pick route_even"; the engine
-		// must actually pick route_even or either the routing path is
-		// broken or the LLM doesn't know 42 is even.
+		// routing-evaluation.json records the deterministic selected_route_id.
+		// The e2e passes RouteSelections for this router; the engine must
+		// seed, read, validate, and persist route_even.
 		"step-classify": {
 			globs:       []string{filepath.Join(walkRoot, "runs", "*", "*", "logs", "step-classify", "routing-evaluation.json")},
 			assertField: "selected_route_id",

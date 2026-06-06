@@ -15,6 +15,7 @@ These docs cover workflow design, execution, and workflow-scoped runtime behavio
 - `auto_improvement_framework.md` — metric-backed workflow improvement: metrics as evidence, harden/replan decisions, schedules, and audit logs
 - `browser_automation.md` — durable selector and browser-discovery guidance for workflow browser steps
 - `cost_and_log_measurement.md` — token usage, cost files, phase/run aggregation, and log storage
+- `deterministic_routing.md` — route-by-file routing: deterministic switch, route file producers, and `run_workflow` `route_selections`
 - `evaluation_system.md` — workflow evaluation runs, eval step execution, and scoring reports
 - `human_feedback_system.md` — human-in-the-loop requests, UI responses, and Slack notification fallback
 - `iteration_run_folder_architecture.md` — run folder layout and iteration/run isolation

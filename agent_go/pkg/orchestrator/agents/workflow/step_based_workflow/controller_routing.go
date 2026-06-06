@@ -26,7 +26,7 @@ type routingPickNotification struct {
 
 // executeRoutingStep executes a routing step by:
 // 1. (Optional) Executing the step itself if Description is set (execute-then-route mode)
-// 2. Evaluating the routing question using ConditionalLLM to select a route
+// 2. Reading route_selection.json or using default_route_id to select a route
 // 3. Returning the selected route ID for routing (handled by main execution loop)
 //
 // Returns: (selectedRouteID string, executionResult string, error)
@@ -72,7 +72,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 	}
 
 	var executionResult string
-	var conditionContext string
 
 	// Mode check: execute-then-route vs pure routing
 	if routingStep.Description != "" {
@@ -138,79 +137,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 			}
 		}
 	} else {
-		// Pure routing mode - build context from previous execution results (in-memory)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔀 Evaluating routing step: %s (run %d) - pure routing mode", step.GetTitle(), runNumber))
-		contextBuilder := strings.Builder{}
-
-		// Scan all previous execution results to include:
-		// 1. Any human_input step results (with CRITICAL marker) - regardless of how far back
-		// 2. The most recent non-human-input execution result
-		if len(previousExecutionResults) > 0 {
-			// First pass: include all human_input step results (they are always critical for routing)
-			humanFeedbackIncluded := false
-			for idx := 0; idx < len(previousExecutionResults) && idx < stepIndex; idx++ {
-				if previousExecutionResults[idx] == "" {
-					continue
-				}
-				if idx < len(allSteps) && allSteps[idx].StepType() == StepTypeHumanInput {
-					stepTitle := allSteps[idx].GetTitle()
-					contextBuilder.WriteString(fmt.Sprintf("HUMAN FEEDBACK from Step %d (%s) (CRITICAL - This takes priority over other context):\n", idx+1, stepTitle))
-					contextBuilder.WriteString(fmt.Sprintf("%s\n\n", previousExecutionResults[idx]))
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Included human feedback from step %d (length: %d chars)", idx+1, len(previousExecutionResults[idx])))
-					humanFeedbackIncluded = true
-				}
-			}
-
-			// Second pass: include the last non-human-input execution result for general context
-			for idx := len(previousExecutionResults) - 1; idx >= 0; idx-- {
-				if previousExecutionResults[idx] == "" {
-					continue
-				}
-				if idx < len(allSteps) && allSteps[idx].StepType() == StepTypeHumanInput {
-					continue // Already included above
-				}
-				if humanFeedbackIncluded {
-					contextBuilder.WriteString("Most Recent Step Execution Output:\n")
-				} else {
-					contextBuilder.WriteString("Previous Step Execution Output:\n")
-				}
-				contextBuilder.WriteString(fmt.Sprintf("%s\n", previousExecutionResults[idx]))
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Included last execution output from step %d (length: %d chars)", idx+1, len(previousExecutionResults[idx])))
-				break
-			}
-		}
-
-		conditionContext = contextBuilder.String()
-
-		// In pure routing mode, also surface any human_inputs override for this step
-		// so the routing evaluator can factor in the user's explicit intent.
-		if hcpo.IsSkipHumanInput() {
-			if val, ok := hcpo.humanInputOverrides[step.GetID()]; ok && val != "" {
-				humanOverride := fmt.Sprintf("## Human Input Override (CRITICAL — use this to guide route selection)\n%s\n\n", val)
-				conditionContext = humanOverride + conditionContext
-				hcpo.GetLogger().Info(fmt.Sprintf("🔀 Routing step '%s' (pure mode): prepended human_inputs override to conditionContext (length=%d chars)", step.GetID(), len(val)))
-			}
-		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔀 Resolving routing step: %s (run %d) - deterministic file mode", step.GetTitle(), runNumber))
 	}
-
-	// For execute-then-route mode, if a human_inputs override was provided, also include it
-	// as conditionContext so the routing evaluator knows the user's original intent directly.
-	// This is needed because the routing evaluator only sees the execution output, not the
-	// original human_input that was injected into the execution agent.
-	if routingStep.Description != "" && conditionContext == "" {
-		if hcpo.IsSkipHumanInput() {
-			if val, ok := hcpo.humanInputOverrides[step.GetID()]; ok && val != "" {
-				conditionContext = fmt.Sprintf("## Human Input (provided to guide this routing step)\n%s", val)
-				hcpo.GetLogger().Info(fmt.Sprintf("🔀 Routing step '%s' (execute-then-route mode): set conditionContext to human_inputs override for routing evaluator", step.GetID()))
-			}
-		}
-	}
-
-	// Code execution mode is determined by createConditionalAgent's 3-rule priority:
-	// Rule 1: CLI providers (claude-code, gemini-cli) always use code execution
-	// Rule 2: Step config if explicitly set by user
-	// Rule 3: Non-CLI providers default to false
-	// We do NOT override UseCodeExecutionMode here — let the factory decide based on the actual resolved LLM provider
 
 	// Ensure step execution folder exists
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
@@ -220,85 +148,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure routing step execution folder exists: %v", err))
 	}
 
-	// Get conditional agent
-	conditionalAgent := hcpo.getConditionalAgentForStep(ctx, step, stepIndex, "routing-step-evaluation", "routing_evaluation")
-
-	// Format variables
-	var variableNames, variableValues string
-	if hcpo.variablesManifest != nil {
-		variableNames = FormatVariableNames(hcpo.variablesManifest)
-		variableValues = FormatVariableValues(hcpo.variablesManifest, hcpo.variableValues)
+	selection, err := hcpo.resolveDeterministicRoutingSelection(ctx, routingStep, stepIndex, routingStepPath, allSteps)
+	if err != nil {
+		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to resolve routing step %d deterministically: %v", stepIndex+1, err), nil)
+		hcpo.EmitOrchestratorAgentError(ctx, "workflow", "routing-step-deterministic", fmt.Sprintf("Resolve routing step: %s", step.GetTitle()), err.Error(), stepIndex, iteration)
+		return "", "", fmt.Errorf("failed to resolve routing step deterministically: %w", err)
 	}
-
-	// Pre-save prompts.json so get_step_prompts works during execution
-	{
-		var routesDesc strings.Builder
-		for i, route := range routingStep.Routes {
-			routesDesc.WriteString(fmt.Sprintf("%d. **%s** (route_id: `%s`)\n   Condition: %s\n   Routes to: %s\n\n", i+1, route.RouteName, route.RouteID, route.Condition, route.NextStepID))
-		}
-		tv := map[string]string{
-			"ExecutionOutput":   executionResult,
-			"ConditionContext":  conditionContext,
-			"Question":          routingStep.RoutingQuestion,
-			"RoutesDescription": routesDesc.String(),
-			"VariableNames":     variableNames,
-			"VariableValues":    variableValues,
-		}
-		sp := conditionalAgent.routingSystemPromptProcessor(tv)
-		um := conditionalAgent.routingUserMessageProcessor(tv)
-		model := agentConfigModelLabel(conditionalAgent.GetConfig())
-		hcpo.preSavePromptsJSON(stepIndex, step.GetID(), routingStepPath, "routing_evaluation", sp, um, model, "routing-prompts.json")
-	}
-
-	// If this workflow was launched from a builder chat session, route the
-	// routing decision to the builder instead of evaluating via LLM: the
-	// builder already has conversation context and can pick (or ask the user
-	// to pick) directly. Falls through to LLM evaluation on any failure.
-	var routingResponse *RoutingResponse
-	if chatResp, ok := hcpo.evaluateRoutingViaBuilderChat(ctx, routingStep, executionResult, conditionContext); ok {
-		routingResponse = chatResp
-	} else {
-		// Evaluate routing via LLM
-		hcpo.GetLogger().Info(fmt.Sprintf("🤔 Evaluating routing question: %s", routingStep.RoutingQuestion))
-		var err error
-		routingResponse, err = conditionalAgent.EvaluateRouting(ctx, executionResult, conditionContext, routingStep.RoutingQuestion, routingStep.Routes, stepIndex, 0, agentConfigUseCodeExecutionMode(conditionalAgent.GetConfig()), variableNames, variableValues)
-		if err != nil {
-			if isWorkflowCancellationErr(ctx, err) {
-				hcpo.GetLogger().Info(fmt.Sprintf("Routing step %d canceled while evaluating route", stepIndex+1))
-				return "", "", context.Canceled
-			}
-			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate routing step %d: %v", stepIndex+1, err), nil)
-			hcpo.EmitOrchestratorAgentError(ctx, "conditional", "routing-step-evaluation", fmt.Sprintf("Evaluate routing: %s", routingStep.RoutingQuestion), err.Error(), stepIndex, 0)
-			return "", "", fmt.Errorf("failed to evaluate routing step: %w", err)
-		}
-	}
-
-	// Validate selected route ID
+	routingResponse := selection.routingResponse()
 	selectedRouteID := routingResponse.SelectedRouteID
-	validRoute := false
-	for _, route := range routingStep.Routes {
-		if route.RouteID == selectedRouteID {
-			validRoute = true
-			break
-		}
-	}
-	if !validRoute {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Invalid route ID '%s' selected, attempting fallback", selectedRouteID))
-		if routingStep.DefaultRouteID != "" {
-			selectedRouteID = routingStep.DefaultRouteID
-			hcpo.GetLogger().Info(fmt.Sprintf("🔄 Using default route: %s", selectedRouteID))
-		} else {
-			// Use first route as last resort
-			selectedRouteID = routingStep.Routes[0].RouteID
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ No default route, using first route: %s", selectedRouteID))
-		}
-	}
 
 	// Store result on step struct
 	routingStep.SelectedRouteID = selectedRouteID
 	routingStep.RoutingResponse = routingResponse
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Routing step evaluated: selected route=%s", selectedRouteID))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Routing step evaluated deterministically: selected route=%s source=%s", selectedRouteID, selection.SourceKind))
 
 	// Emit routing_evaluated event
 	hcpo.emitRoutingEvaluatedEvent(ctx, step, stepIndex, routingStepPath, routingResponse, routingStep.Routes, allSteps)
@@ -325,8 +188,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		"routing_question":  routingStep.RoutingQuestion,
 		"selected_route_id": selectedRouteID,
 		"routing_reasoning": routingResponse.Reasoning,
-		"route_next_steps":  routeNextStepIDs,
-		"timestamp":         time.Now().Format(time.RFC3339),
+		"route_selection": map[string]interface{}{
+			"source_kind": selection.SourceKind,
+			"source_path": selection.SourcePath,
+			"raw_value":   selection.RawValue,
+		},
+		"route_next_steps": routeNextStepIDs,
+		"timestamp":        time.Now().Format(time.RFC3339),
 	}
 
 	routingJSON, err := json.MarshalIndent(routingEvalResponse, "", "  ")

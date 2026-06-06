@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
@@ -35,6 +36,11 @@ func createWorkflowRunTools() []llmtypes.Tool {
 							"type":        "string",
 							"description": "Optional context or instructions for the workflow agent (e.g. 'only process Q1 data', 'skip validation'). Passed as the user message to the workflow.",
 						},
+						"route_selections": map[string]interface{}{
+							"type":                 "object",
+							"description":          "Optional deterministic routing selections keyed by routing step ID. Each value may be a route_id or a unique next_step_id.",
+							"additionalProperties": map[string]interface{}{"type": "string"},
+						},
 					},
 					Required: []string{"workflow_path", "group_name"},
 				},
@@ -63,6 +69,11 @@ func createWorkflowRunTools() []llmtypes.Tool {
 						"instructions": map[string]interface{}{
 							"type":        "string",
 							"description": "Optional context or instructions for the step agent (e.g. 'use the new API endpoint', 'focus on error handling').",
+						},
+						"route_selections": map[string]interface{}{
+							"type":                 "object",
+							"description":          "Optional deterministic routing selections keyed by routing step ID. Each value may be a route_id or a unique next_step_id.",
+							"additionalProperties": map[string]interface{}{"type": "string"},
 						},
 					},
 					Required: []string{"workflow_path", "step_id", "group_name"},
@@ -115,8 +126,12 @@ func handleRunWorkflow(ctx context.Context, api *StreamingAPI, args map[string]i
 		return "", fmt.Errorf("group_name is required")
 	}
 	instructions, _ := args["instructions"].(string)
+	routeSelections, err := parseRouteSelectionsArg(args["route_selections"])
+	if err != nil {
+		return "", err
+	}
 
-	return runWorkflowInternal(ctx, api, workflowPath, groupName, "", instructions)
+	return runWorkflowInternal(ctx, api, workflowPath, groupName, "", instructions, routeSelections)
 }
 
 func handleRunStep(ctx context.Context, api *StreamingAPI, args map[string]interface{}) (string, error) {
@@ -133,8 +148,49 @@ func handleRunStep(ctx context.Context, api *StreamingAPI, args map[string]inter
 		return "", fmt.Errorf("group_name is required")
 	}
 	instructions, _ := args["instructions"].(string)
+	routeSelections, err := parseRouteSelectionsArg(args["route_selections"])
+	if err != nil {
+		return "", err
+	}
 
-	return runWorkflowInternal(ctx, api, workflowPath, groupName, stepID, instructions)
+	return runWorkflowInternal(ctx, api, workflowPath, groupName, stepID, instructions, routeSelections)
+}
+
+func parseRouteSelectionsArg(raw interface{}) (map[string]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	rawMap, ok := raw.(map[string]interface{})
+	if !ok {
+		if typed, ok := raw.(map[string]string); ok {
+			cleaned := make(map[string]string, len(typed))
+			for stepID, routeID := range typed {
+				stepID = strings.TrimSpace(stepID)
+				routeID = strings.TrimSpace(routeID)
+				if stepID == "" || routeID == "" {
+					return nil, fmt.Errorf("route_selections entries must have non-empty step IDs and route values")
+				}
+				cleaned[stepID] = routeID
+			}
+			return cleaned, nil
+		}
+		return nil, fmt.Errorf("route_selections must be an object keyed by routing step ID")
+	}
+
+	cleaned := make(map[string]string, len(rawMap))
+	for stepID, routeValue := range rawMap {
+		stepID = strings.TrimSpace(stepID)
+		value, ok := routeValue.(string)
+		if !ok {
+			return nil, fmt.Errorf("route_selections[%q] must be a string route_id or next_step_id", stepID)
+		}
+		value = strings.TrimSpace(value)
+		if stepID == "" || value == "" {
+			return nil, fmt.Errorf("route_selections entries must have non-empty step IDs and route values")
+		}
+		cleaned[stepID] = value
+	}
+	return cleaned, nil
 }
 
 func handleStopWorkflowRun(ctx context.Context, api *StreamingAPI, args map[string]interface{}) (string, error) {
@@ -266,7 +322,7 @@ func (api *StreamingAPI) stopWorkflowRunSession(sessionID string) []string {
 // runWorkflowInternal is the shared implementation for both run_workflow and run_step.
 // When stepID is empty, it runs the full workflow. When set, it runs a single step.
 // instructions is optional user context passed as the query to the workflow agent.
-func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, groupName, stepID, instructions string) (string, error) {
+func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, groupName, stepID, instructions string, routeSelections map[string]string) (string, error) {
 	// Load manifest to get capabilities
 	caps, found, err := LoadManifestForExecution(context.Background(), workflowPath)
 	if err != nil {
@@ -329,6 +385,9 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 	}
 	if stepID != "" {
 		execOpts["step_id"] = stepID
+	}
+	if len(routeSelections) > 0 {
+		execOpts["route_selections"] = routeSelections
 	}
 	reqMap["execution_options"] = execOpts
 

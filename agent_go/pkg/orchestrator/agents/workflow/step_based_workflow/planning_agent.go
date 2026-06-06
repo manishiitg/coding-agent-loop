@@ -337,23 +337,24 @@ type RoutingRoute struct {
 
 // RoutingResponse represents the structured response from routing evaluation
 type RoutingResponse struct {
-	SelectedRouteID string `json:"selected_route_id"` // The route selected by the LLM
+	SelectedRouteID string `json:"selected_route_id"` // The selected route ID
 	Reasoning       string `json:"reasoning"`         // Reasoning for the selection
 }
 
 // RoutingPlanStep represents a routing step that evaluates N-way routing
 // Two modes:
-// - Execute-then-route: Has Description/SuccessCriteria -> executes first, then LLM evaluates output to pick a route
-// - Pure routing: No Description/SuccessCriteria -> LLM evaluates prior context to pick a route (multi-way conditional)
+// - Execute-then-route: Has Description/SuccessCriteria -> executes first, then reads route_selection.json
+// - Pure routing: No Description/SuccessCriteria -> reads a declared route_selection.json source
 type RoutingPlanStep struct {
 	Type StepType `json:"type"` // Always "routing" - required for JSON marshaling/unmarshaling
 	CommonStepFields
-	RoutingQuestion string           `json:"routing_question"`           // Question to evaluate for route selection (required)
-	Routes          []RoutingRoute   `json:"routes"`                     // Available routes (min 2, required)
-	DefaultRouteID  string           `json:"default_route_id,omitempty"` // Optional fallback route_id if LLM picks invalid route
-	SelectedRouteID string           `json:"-"`                          // runtime: stores selected route ID
-	RoutingResponse *RoutingResponse `json:"-"`                          // runtime: stores structured routing response
-	AgentConfigs    *AgentConfigs    `json:"-"`                          // runtime: per-agent configuration
+	RoutingQuestion string           `json:"routing_question"`            // Question to evaluate for route selection (required)
+	Routes          []RoutingRoute   `json:"routes"`                      // Available routes (min 2, required)
+	DefaultRouteID  string           `json:"default_route_id,omitempty"`  // Optional fallback route_id when no route file is available
+	RouteSourceFile string           `json:"route_source_file,omitempty"` // Optional route_selection.json source produced by a prior step
+	SelectedRouteID string           `json:"-"`                           // runtime: stores selected route ID
+	RoutingResponse *RoutingResponse `json:"-"`                           // runtime: stores structured routing response
+	AgentConfigs    *AgentConfigs    `json:"-"`                           // runtime: per-agent configuration
 }
 
 // Implement PlanStepInterface for RoutingPlanStep
@@ -848,9 +849,10 @@ type PartialPlanStep struct {
 	// Routing fields
 	NextStepID string `json:"next_step_id,omitempty"` // Optional: Updated next_step_id (for routing steps)
 	// Routing step fields
-	RoutingQuestion string         `json:"routing_question,omitempty"` // Optional: Updated routing question
-	Routes          []RoutingRoute `json:"routes,omitempty"`           // Optional: Updated routes
-	DefaultRouteID  string         `json:"default_route_id,omitempty"` // Optional: Updated default route ID
+	RoutingQuestion string         `json:"routing_question,omitempty"`  // Optional: Updated routing question
+	Routes          []RoutingRoute `json:"routes,omitempty"`            // Optional: Updated routes
+	DefaultRouteID  string         `json:"default_route_id,omitempty"`  // Optional: Updated default route ID
+	RouteSourceFile string         `json:"route_source_file,omitempty"` // Optional: Updated deterministic route source file
 	// Human input step fields
 	Question         string            `json:"question,omitempty"`            // Optional: Updated question
 	VariableName     string            `json:"variable_name,omitempty"`       // Optional: Updated variable name
@@ -1274,7 +1276,11 @@ func getAddRoutingStepSchema() string {
 			},
 			"default_route_id": {
 				"type": "string",
-				"description": "OPTIONAL: Fallback route_id to use if LLM picks an invalid route. Must match one of the route_ids in routes."
+				"description": "OPTIONAL: Fallback route_id to use when no route_selection.json is available. Must match one of the route_ids in routes."
+			},
+			"route_source_file": {
+				"type": "string",
+				"description": "OPTIONAL: Explicit route_selection.json source file, usually a context output from a prior step. The file must contain {\"select_route\":\"<route_id>\"}."
 			},
 			"insert_after_step_id": {
 				"type": "string",
@@ -1337,6 +1343,10 @@ func getUpdateRoutingStepSchema() string {
 			"default_route_id": {
 				"type": "string",
 				"description": "OPTIONAL: Updated default route ID."
+			},
+			"route_source_file": {
+				"type": "string",
+				"description": "OPTIONAL: Updated route_selection.json source file."
 			},
 			"reason": {
 				"type": "string",
@@ -2619,6 +2629,9 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.DefaultRouteID != "" {
 			updated.DefaultRouteID = partialUpdate.DefaultRouteID
 		}
+		if partialUpdate.RouteSourceFile != "" {
+			updated.RouteSourceFile = partialUpdate.RouteSourceFile
+		}
 		return &updated
 
 	default:
@@ -3034,6 +3047,19 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			NewValue: partialUpdate.DefaultRouteID,
 		})
 	}
+	if partialUpdate.RouteSourceFile != "" {
+		changedFields = append(changedFields, "route_source_file")
+		oldRouteSourceFile := ""
+		if routingStep, ok := existingStep.(*RoutingPlanStep); ok {
+			oldRouteSourceFile = routingStep.RouteSourceFile
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "route_source_file",
+			OldValue: oldRouteSourceFile,
+			NewValue: partialUpdate.RouteSourceFile,
+		})
+	}
 	if partialUpdate.ValidationSchema != nil {
 		changedFields = append(changedFields, "validation_schema")
 		oldSchema := existingStep.GetValidationSchema()
@@ -3099,6 +3125,7 @@ func planStepUpdateInvalidatesDescriptionReview(fieldChanges []PlanFieldChange) 
 			field == "routing_question" ||
 			field == "routes" ||
 			field == "default_route_id" ||
+			field == "route_source_file" ||
 			field == "question" ||
 			field == "variable_name" ||
 			field == "response_type" ||

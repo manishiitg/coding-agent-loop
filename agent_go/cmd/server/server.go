@@ -375,6 +375,16 @@ func spaStaticFileHandler(root string) http.Handler {
 	fileServer := http.FileServer(http.Dir(root))
 	indexPath := filepath.Join(root, "index.html")
 
+	// serveShell serves the SPA shell with no-cache so an upgraded desktop build's
+	// new UI shows up on next launch without a manual hard reload. The agent server
+	// runs on a stable localhost origin/port across upgrades, so without this header
+	// Chromium's heuristic cache keeps serving the previous index.html (and its old
+	// asset references). no-cache lets the browser store but forces revalidation.
+	serveShell := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeFile(w, r, indexPath)
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			fileServer.ServeHTTP(w, r)
@@ -382,7 +392,7 @@ func spaStaticFileHandler(root string) http.Handler {
 		}
 
 		if r.URL.Path == "/" {
-			fileServer.ServeHTTP(w, r)
+			serveShell(w, r)
 			return
 		}
 
@@ -390,13 +400,18 @@ func spaStaticFileHandler(root string) http.Handler {
 		if relativePath != "." && !strings.HasPrefix(relativePath, "..") {
 			requestedPath := filepath.Join(root, relativePath)
 			if info, err := os.Stat(requestedPath); err == nil && !info.IsDir() {
+				// Build assets are content-hashed (assets/index-<hash>.js), so a
+				// given URL is immutable and safe to cache for a year.
+				if strings.HasPrefix(relativePath, "assets/") {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				fileServer.ServeHTTP(w, r)
 				return
 			}
 		}
 
 		if _, err := os.Stat(indexPath); err == nil {
-			http.ServeFile(w, r, indexPath)
+			serveShell(w, r)
 			return
 		}
 

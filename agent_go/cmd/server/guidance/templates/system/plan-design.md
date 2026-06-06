@@ -27,7 +27,7 @@ Combine actions into one step when they share one objective and output contract,
 | Task has multiple known sub-tasks that repeat | **Todo Task** (sub-workflow/pipeline) with sub-agents | Each sub-task gets its own learning, validation, and tools |
 | Need to branch based on prior step output or context | **Routing** | Supported branch primitive — evaluates context and picks a route |
 | Need user input before proceeding | **Human Input** | Blocks until user responds |
-| User input determines the path | **Human Input** → **Routing** | Collect input first, then LLM routes based on it |
+| User input determines the path | **Human Input** → **Routing** | Collect input first, then pass/write `route_selection.json` |
 | Utility/debug tool available but not auto-run | **Orphan** (is_orphan: true) | Not in main flow; manual execution from workshop only |
 
 **Default to Regular** unless the task clearly needs branching, iteration, or sub-agents.
@@ -80,9 +80,9 @@ Use `message_sequence` only when the user explicitly wants one persistent agent 
 
 ### Step 6: When to Use Routing (brief)
 
-Use `routing` when the next step depends on a decision that needs **LLM judgment** to pick **exactly one of N mutually exclusive paths** (e.g., "did login succeed, hit MFA, or fail?"). For deterministic checks, use validation_schema + retry, not routing. For running every sub-task, use todo_task. For a linear conversation, use message_sequence. Pair `human_input` → `routing` when the user's answer determines the path.
+Use `routing` when the next step must be **exactly one of N mutually exclusive paths** (e.g., "did login succeed, hit MFA, or fail?"). Routing is deterministic: a caller, prior step, or execute-then-route probe must provide `route_selection.json` (or `route_selections`) with the selected route. For running every sub-task, use todo_task. For a linear conversation, use message_sequence.
 
-Two modes: **pure routing** (omit `description`, route on prior context) or **execute-then-route** (provide `description`, perform a probe, then route on the result). Each `routes` entry needs a stable `route_id`, a `condition` the router matches against `routing_question`, and a `next_step_id` that points to another step in the plan (routing routes do **not** define inline sub-agents — they branch to existing steps); set `default_route_id` for the fallback.
+Two modes: **pure routing** (omit `description`, read an existing route file/source) or **execute-then-route** (provide `description`, perform a probe, write `route_selection.json`, then route on it). Each `routes` entry needs a stable `route_id`, a `condition` explaining when that route should be selected, and a `next_step_id` that points to another step in the plan (routing routes do **not** define inline sub-agents — they branch to existing steps); set `default_route_id` only as a missing-file fallback.
 
 For full route structure, mode trade-offs, and anti-patterns, call `get_reference_doc(kind="routing")` — load before designing or hardening any routing step.
 
@@ -115,7 +115,7 @@ Step-level `success_criteria` is deprecated. Rely on a strong `description` plus
 - **Regular** (type: "regular"): Standard task. Executes an agent that produces a context_output file.
 - **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes**. Each route can either define an inline **sub_agent_step** or reuse a plan-local orphan definition via **orphan_step_ref**. Route sub-agents are usually **regular** steps, can be **message_sequence** when the route needs persistent specialist memory with re-entry/restart behavior, and can be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
 - **Message Sequence** (type: "message_sequence"): Persistent single-agent conversation with ordered `items`. Use short user_message items, optional prevalidation items, and optional Python code items. The sequence can resume and receive a new user message without replaying the queue.
-- **Routing** (type: "routing"): N-way LLM-based branching. Has a **routing_question** and **routes[]**, each with **route_id**, **condition**, and **next_step_id** (pointer to an existing step). Optional **default_route_id** is the fallback. Two modes: pure routing (no `description`, routes on prior context) or execute-then-route (with `description`, executes first then routes on its own output).
+- **Routing** (type: "routing"): N-way deterministic branching. Reads `route_selection.json` (or caller `route_selections`) and picks exactly one **routes[]** entry. Each route has **route_id**, **condition**, and **next_step_id** (pointer to an existing step). Optional **default_route_id** is a missing-file fallback. Optional **route_source_file** points at a prior step's route file.
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports: 'text', 'yesno', 'multiple_choice'. Can route based on response.
 - **Orphan** (is_orphan: true): Not part of the main execution flow. Orphan steps are plan-local reusable definitions and manual utility agents. Use them for data checks, environment validation, one-off investigations, or shared sub-agent definitions that multiple orchestrators in the same plan may reuse. Reuse is explicit: an orphan step must declare `shared_with.orchestrator_ids`, and a todo_task route must point to it with `orphan_step_ref`. Do not assume every orphan step is shared with every orchestrator.
 

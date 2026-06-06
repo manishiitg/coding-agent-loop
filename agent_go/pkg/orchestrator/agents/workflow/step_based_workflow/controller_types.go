@@ -64,6 +64,10 @@ type ExecutionOptions struct {
 	// When SkipHumanInput is true, these take priority over variableValues fallback.
 	HumanInputs map[string]string `json:"human_inputs,omitempty"`
 
+	// RouteSelections overrides routing steps deterministically by step ID.
+	// Values may be route_id or a unique next_step_id for that routing step.
+	RouteSelections map[string]string `json:"route_selections,omitempty"`
+
 	// DisableEval skips the automatic evaluation pass after a successful full workflow run.
 	DisableEval bool `json:"disable_eval,omitempty"`
 }

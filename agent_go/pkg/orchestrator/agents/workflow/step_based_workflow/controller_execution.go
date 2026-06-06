@@ -2907,6 +2907,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 		return fmt.Errorf(fmt.Sprintf("run folder not resolved - this should have been set after plan approval"), nil)
 	}
 
+	if err := hcpo.seedRouteSelectionsForRun(ctx, breakdownSteps); err != nil {
+		return fmt.Errorf("failed to seed route selections: %w", err)
+	}
+
 	// Track execution results in memory (instead of reading from files)
 	// This allows conditional steps to use execution results directly
 	previousExecutionResults := make([]string, 0)

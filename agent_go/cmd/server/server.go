@@ -3427,6 +3427,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					ResumeFromStep:    req.ExecutionOptions.ResumeFromStep,
 					PlanChangeAction:  req.ExecutionOptions.PlanChangeAction,
 					EnabledGroupNames: req.ExecutionOptions.EnabledGroupNames,
+					RouteSelections:   req.ExecutionOptions.RouteSelections,
 				}
 
 				// Set execution options on the workflow orchestrator

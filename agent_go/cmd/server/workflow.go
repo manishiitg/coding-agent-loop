@@ -729,6 +729,9 @@ type ExecutionOptions struct {
 	// Logging options
 	SaveValidationResponses bool `json:"save_validation_responses,omitempty"` // If true, save validation responses and execution logs to workspace (default: true)
 
+	// Deterministic routing overrides: routing step ID -> route_id or unique next_step_id.
+	RouteSelections map[string]string `json:"route_selections,omitempty"`
+
 	// Workshop mode override (builder/optimizer/runner) — sent from frontend toggle
 	WorkshopMode string `json:"workshop_mode,omitempty"`
 }

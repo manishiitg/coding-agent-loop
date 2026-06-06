@@ -107,7 +107,7 @@ jobs:
       - name: Upload DMG Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AgentForge-${{ github.run_number }}-${{ github.sha }}-mac-arm64
+          name: Runloop-${{ github.run_number }}-${{ github.sha }}-mac-arm64
           path: |
             desktop/dist/*.dmg
             desktop/dist/*.zip

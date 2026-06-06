@@ -24,10 +24,9 @@ type routingPickNotification struct {
 	completed       bool
 }
 
-// executeRoutingStep executes a routing step by:
-// 1. (Optional) Executing the step itself if Description is set (execute-then-route mode)
-// 2. Reading route_selection.json or using default_route_id to select a route
-// 3. Returning the selected route ID for routing (handled by main execution loop)
+// executeRoutingStep executes a deterministic routing step by:
+// 1. Reading route_selection.json or using default_route_id to select a route
+// 2. Returning the selected route ID for routing (handled by main execution loop)
 //
 // Returns: (selectedRouteID string, executionResult string, error)
 func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
@@ -55,6 +54,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 	if len(routingStep.Routes) < 2 {
 		return "", "", fmt.Errorf("routing step %d (%s) must have at least 2 routes, got %d", stepIndex+1, step.GetTitle(), len(routingStep.Routes))
 	}
+	if strings.TrimSpace(routingStep.Description) != "" {
+		return "", "", fmt.Errorf("routing step %d (%s) sets description, but routing is deterministic-only; move any probe or judgment into a prior regular step that writes %s, then point the routing step at that file via route_source_file or context_dependencies", stepIndex+1, step.GetTitle(), routeSelectionFileName)
+	}
 
 	// Emit step_started event
 	routingStepPath := fmt.Sprintf("step-%d", stepIndex+1)
@@ -71,74 +73,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		runNumber = totalEvals + 1
 	}
 
-	var executionResult string
-
-	// Mode check: execute-then-route vs pure routing
-	if routingStep.Description != "" {
-		// Execute-then-route mode
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing routing step: %s (run %d) - execute-then-route mode", step.GetTitle(), runNumber))
-		executionStepPath := fmt.Sprintf("step-%d-routing", stepIndex+1)
-
-		_ = ApplyStepConfigFromFile(ctx, step, hcpo)
-
-		var err error
-		executionResult, _, err = hcpo.executeSingleStep(
-			ctx,
-			step,
-			stepIndex,
-			executionStepPath,
-			1,
-			iteration,
-			previousContextFiles,
-			progress,
-			false,
-			execCtx,
-			allSteps,
-			false,
-			[]string{},
-			nil,
-		)
-		if err != nil {
-			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute routing step '%s': %v", step.GetTitle(), err), nil)
-			return "", "", fmt.Errorf("failed to execute routing step '%s': %w", step.GetTitle(), err)
-		}
-
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Routing step execution completed. Output length: %d chars", len(executionResult)))
-
-		// Check for workflow termination signal
-		executionResultUpper := strings.ToUpper(executionResult)
-		if strings.Contains(executionResultUpper, "WORKFLOW_END") || strings.Contains(executionResultUpper, "END_WORKFLOW") {
-			hcpo.GetLogger().Info(fmt.Sprintf("🏁 Routing step '%s' signaled workflow termination", step.GetTitle()))
-			return "", executionResult, fmt.Errorf("WORKFLOW_END: routing step '%s' signaled workflow termination", step.GetTitle())
-		}
-
-		// Save execution result to logs
-		var validationWorkspacePath string
-		if hcpo.selectedRunFolder != "" {
-			validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
-		} else {
-			validationWorkspacePath = hcpo.GetWorkspacePath()
-		}
-		executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, step.GetID(), executionStepPath)
-		executionResultFilePath := fmt.Sprintf("%s/routing-execution.json", executionLogsFolderPath)
-		executionResponse := map[string]interface{}{
-			"step_index":       stepIndex + 1,
-			"step_path":        executionStepPath,
-			"routing_step_id":  step.GetID(),
-			"execution_result": executionResult,
-			"timestamp":        time.Now().Format(time.RFC3339),
-		}
-		executionJSON, err := json.MarshalIndent(executionResponse, "", "  ")
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal routing execution response: %v", err))
-		} else {
-			if err := hcpo.WriteWorkspaceFile(ctx, executionResultFilePath, string(executionJSON)); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write routing execution response: %v", err))
-			}
-		}
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔀 Resolving routing step: %s (run %d) - deterministic file mode", step.GetTitle(), runNumber))
-	}
+	hcpo.GetLogger().Info(fmt.Sprintf("🔀 Resolving routing step: %s (run %d) - deterministic file mode", step.GetTitle(), runNumber))
 
 	// Ensure step execution folder exists
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
@@ -209,7 +144,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 	// Emit step_finished event
 	hcpo.emitStepFinishedEvent(ctx, step, stepIndex, routingStepPath, false)
 
-	return selectedRouteID, executionResult, nil
+	return selectedRouteID, "", nil
 }
 
 // emitRoutingEvaluatedEvent emits a routing_evaluated event

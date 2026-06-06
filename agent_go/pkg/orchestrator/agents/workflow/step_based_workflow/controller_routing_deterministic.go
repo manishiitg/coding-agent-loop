@@ -185,7 +185,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveDeterministicRoutingSelection(
 	}
 
 	for _, ownRouteFilePath := range hcpo.routingStepOwnRouteFileCandidates(routingStep, stepIndex, routingStepPath) {
-		if selection, found, err := hcpo.readDeterministicRoutingSource(ctx, routingStep, ownRouteFilePath, "routing step output"); err != nil {
+		if selection, found, err := hcpo.readDeterministicRoutingSource(ctx, routingStep, ownRouteFilePath, "routing step preseed"); err != nil {
 			return nil, err
 		} else if found {
 			return selection, nil
@@ -238,19 +238,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) routingStepOwnRouteFileCandidates(rou
 		routingStepPath = fmt.Sprintf("step-%d", stepIndex+1)
 	}
 
-	candidates := []string{
+	return []string{
 		filepath.Join(hcpo.routingStepExecutionPathForStepPath(routingStep, stepIndex, routingStepPath), routeSelectionFileName),
 	}
-
-	if strings.TrimSpace(routingStep.Description) != "" {
-		executeStepPath := fmt.Sprintf("step-%d-routing", stepIndex+1)
-		executeRouteFilePath := filepath.Join(hcpo.routingStepExecutionPathForStepPath(routingStep, stepIndex, executeStepPath), routeSelectionFileName)
-		if executeRouteFilePath != candidates[0] {
-			candidates = append(candidates, executeRouteFilePath)
-		}
-	}
-
-	return candidates
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) resolveRouteSourceCandidates(

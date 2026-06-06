@@ -341,10 +341,10 @@ type RoutingResponse struct {
 	Reasoning       string `json:"reasoning"`         // Reasoning for the selection
 }
 
-// RoutingPlanStep represents a routing step that evaluates N-way routing
-// Two modes:
-// - Execute-then-route: Has Description/SuccessCriteria -> executes first, then reads route_selection.json
-// - Pure routing: No Description/SuccessCriteria -> reads a declared route_selection.json source
+// RoutingPlanStep represents a deterministic N-way switch.
+// Routing steps never execute agents. If an agent/probe/judgment is needed, put
+// it in a prior regular step that writes route_selection.json, then point this
+// routing step at that file via route_source_file or context_dependencies.
 type RoutingPlanStep struct {
 	Type StepType `json:"type"` // Always "routing" - required for JSON marshaling/unmarshaling
 	CommonStepFields
@@ -836,6 +836,7 @@ type PartialPlanStep struct {
 	ExistingStepID      string                `json:"existing_step_id"`               // Required: ID of existing step to update
 	Title               string                `json:"title,omitempty"`                // Optional: New title (if renaming)
 	Description         string                `json:"description,omitempty"`          // Optional: Updated description
+	ClearDescription    bool                  `json:"clear_description,omitempty"`    // Optional: Clear legacy descriptions that are no longer valid for routing steps
 	ContextDependencies []string              `json:"context_dependencies,omitempty"` // Optional: Updated context dependencies
 	ContextOutput       FlexibleContextOutput `json:"context_output,omitempty"`       // Optional: Updated context output
 	HasLoop             *bool                 `json:"has_loop,omitempty"`             // DEPRECATED: loop feature removed, kept for JSON backward compatibility
@@ -1232,7 +1233,7 @@ func getAddRoutingStepSchema() string {
 			},
 			"description": {
 				"type": "string",
-				"description": "OPTIONAL: Description of the small probe/classifier to run before routing. If provided, the step must write route_selection.json, then routing reads that file. If omitted, this is pure routing and the route comes from caller route_selections, route_source_file, a route_selection.json dependency, or default_route_id."
+				"description": "DO NOT SET for routing steps. Routing is deterministic-only and never executes an agent. If a probe/judgment is needed, add a prior regular step that writes route_selection.json, then route from that file."
 			},
 			"context_dependencies": {
 				"type": "array",
@@ -1241,11 +1242,11 @@ func getAddRoutingStepSchema() string {
 			},
 			"context_output": {
 				"type": "string",
-				"description": "OPTIONAL: Context file this step will create. Only needed for execute-then-route mode, usually route_selection.json."
+				"description": "Do not set for routing steps. Routing steps do not create outputs; a prior regular step should declare route_selection.json in its context_output when it produces the route decision."
 			},
 			"routing_question": {
 				"type": "string",
-				"description": "REQUIRED for compatibility/readability: Human-readable route decision prompt. It is not evaluated by an LLM at runtime; the selected route must come from route_selection.json, caller route_selections, or default_route_id."
+				"description": "REQUIRED for compatibility/readability: Human-readable route decision prompt. It is not evaluated by an LLM at runtime; the selected route must come from caller route_selections, route_source_file, route_selection.json dependency, or default_route_id."
 			},
 			"routes": {
 				"type": "array",
@@ -1310,7 +1311,11 @@ func getUpdateRoutingStepSchema() string {
 			},
 			"description": {
 				"type": "string",
-				"description": "OPTIONAL: Updated probe/classifier description. Provide only when this routing step should execute first and write route_selection.json before routing."
+				"description": "DO NOT SET for routing steps. Routing is deterministic-only and never executes an agent. Use clear_description=true to remove a legacy routing description; put any probe/judgment in a prior regular step that writes route_selection.json."
+			},
+			"clear_description": {
+				"type": "boolean",
+				"description": "OPTIONAL: Set true to clear a legacy routing description during migration. New routing steps must keep description empty."
 			},
 			"context_dependencies": {
 				"type": "array",
@@ -1319,7 +1324,7 @@ func getUpdateRoutingStepSchema() string {
 			},
 			"context_output": {
 				"type": "string",
-				"description": "OPTIONAL: Updated context output. Only needed for execute-then-route mode, usually route_selection.json."
+				"description": "Do not set for routing steps. Routing steps do not create outputs; route_selection.json should be produced by a prior regular step or preseeded by caller route_selections."
 			},
 			"routing_question": {
 				"type": "string",
@@ -2608,7 +2613,9 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.Title != "" {
 			updated.Title = partialUpdate.Title
 		}
-		if partialUpdate.Description != "" {
+		if partialUpdate.ClearDescription {
+			updated.Description = ""
+		} else if partialUpdate.Description != "" {
 			updated.Description = partialUpdate.Description
 		}
 		if partialUpdate.ContextDependencies != nil {
@@ -2730,6 +2737,15 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			Field:    "description",
 			OldValue: existingStep.GetDescription(),
 			NewValue: partialUpdate.Description,
+		})
+	}
+	if partialUpdate.ClearDescription {
+		changedFields = append(changedFields, "description")
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "description",
+			OldValue: existingStep.GetDescription(),
+			NewValue: "",
 		})
 	}
 	if partialUpdate.ContextDependencies != nil {
@@ -3882,6 +3898,9 @@ func validateRoutingStepFieldsTyped(step *RoutingPlanStep) error {
 	if step.ID == "" {
 		return fmt.Errorf("routing step (title: %q) is missing required ID field", step.Title)
 	}
+	if strings.TrimSpace(step.Description) != "" {
+		return fmt.Errorf("routing step (title: %q, ID: %s) must not set description; routing is deterministic-only. Put any probe or judgment in a prior regular step that writes %s", step.Title, step.ID, routeSelectionFileName)
+	}
 	if step.RoutingQuestion == "" {
 		return fmt.Errorf("routing step (title: %q, ID: %s) is missing required routing_question field", step.Title, step.ID)
 	}
@@ -3917,6 +3936,11 @@ func createUpdateRoutingStepExecutor(workspacePath string, logger loggerv2.Logge
 		reason, err := requireReason(args)
 		if err != nil {
 			return "", err
+		}
+		if clearDescription, _ := args["clear_description"].(bool); clearDescription {
+			if description, ok := args["description"].(string); ok && strings.TrimSpace(description) != "" {
+				return "", fmt.Errorf("description must be empty when clear_description=true")
+			}
 		}
 
 		stepJSON, err := json.Marshal(args)
@@ -4730,7 +4754,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_routing_step",
-		"Add a deterministic routing step to the plan. Use this when the workflow must choose exactly one of multiple existing downstream steps. Routing does not LLM-evaluate routing_question at runtime; it reads route_selection.json, caller-provided route_selections, route_source_file, or default_route_id. Two modes: (1) Execute-then-route: provide a description for a small probe/classifier that writes route_selection.json; (2) Pure routing: omit description and consume caller route_selections, route_source_file, a context_dependencies entry named route_selection.json, or default_route_id. Provide: id, title, routing_question (readability/compatibility), routes (min 2 with route_id/route_name/condition/next_step_id), context_dependencies, optional default_route_id, optional route_source_file, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
+		"Add a deterministic routing step to the plan. Use this when the workflow must choose exactly one of multiple existing downstream steps. Routing has one mode only: read caller route_selections, the routing step's preseeded route_selection.json, route_source_file, a context_dependencies entry named route_selection.json, or default_route_id, then switch to the selected route. Do not set description or context_output on routing steps; if an agent/probe/judgment is needed, add a prior regular step that writes route_selection.json and declare that file in the routing step's route_source_file or context_dependencies. Provide: id, title, routing_question (readability/compatibility only), routes (min 2 with route_id/route_name/condition/next_step_id), context_dependencies, optional default_route_id, optional route_source_file, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
 		routingParams,
 		createAddRoutingStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
@@ -4745,7 +4769,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_routing_step",
-		"Update a deterministic routing step in the plan. Provide existing_step_id (required) and only include fields you want to change: title, description, routing_question, routes, default_route_id, route_source_file, context_dependencies, context_output. Runtime routing reads route_selection.json/caller route_selections/default_route_id; it does not LLM-evaluate routing_question. The plan.json file is updated immediately when this tool is called. After a substantive change, review whether saved artifacts still match the new plan — they can drift out of sync; run get_workflow_command_guidance(kind=\"review-artifact-drift\").",
+		"Update a deterministic routing step in the plan. Provide existing_step_id (required) and only include fields you want to change: title, routing_question, routes, default_route_id, route_source_file, context_dependencies, or clear_description=true for legacy migration. Do not set description or context_output; routing never executes an agent and never LLM-evaluates routing_question. The selected route must come from caller route_selections, route_selection.json, route_source_file, context_dependencies, or default_route_id. The plan.json file is updated immediately when this tool is called. After a substantive change, review whether saved artifacts still match the new plan — they can drift out of sync; run get_workflow_command_guidance(kind=\"review-artifact-drift\").",
 		routingUpdateParams,
 		createUpdateRoutingStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",

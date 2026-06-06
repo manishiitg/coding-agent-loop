@@ -25,7 +25,7 @@ Combine actions into one step when they share one objective and output contract,
 |----------|-----------|-----|
 | Agent performs a task and writes output | **Regular** | Simplest type — one agent, one output |
 | Task has multiple known sub-tasks that repeat | **Todo Task** (sub-workflow/pipeline) with sub-agents | Each sub-task gets its own learning, validation, and tools |
-| Need to branch based on prior step output or context | **Routing** | Supported branch primitive — evaluates context and picks a route |
+| Need to branch based on prior step output or context | **Routing** | Supported branch primitive — reads `route_selection.json` and picks a route |
 | Need user input before proceeding | **Human Input** | Blocks until user responds |
 | User input determines the path | **Human Input** → **Routing** | Collect input first, then pass/write `route_selection.json` |
 | Utility/debug tool available but not auto-run | **Orphan** (is_orphan: true) | Not in main flow; manual execution from workshop only |
@@ -80,11 +80,11 @@ Use `message_sequence` only when the user explicitly wants one persistent agent 
 
 ### Step 6: When to Use Routing (brief)
 
-Use `routing` when the next step must be **exactly one of N mutually exclusive paths** (e.g., "did login succeed, hit MFA, or fail?"). Routing is deterministic: a caller, prior step, or execute-then-route probe must provide `route_selection.json` (or `route_selections`) with the selected route. For running every sub-task, use todo_task. For a linear conversation, use message_sequence.
+Use `routing` when the next step must be **exactly one of N mutually exclusive paths** (e.g., "did login succeed, hit MFA, or fail?"). Routing is deterministic: a caller or prior step must provide `route_selection.json` (or `route_selections`) with the selected route. For running every sub-task, use todo_task. For a linear conversation, use message_sequence.
 
-Two modes: **pure routing** (omit `description`, read an existing route file/source) or **execute-then-route** (provide `description`, perform a probe, write `route_selection.json`, then route on it). Each `routes` entry needs a stable `route_id`, a `condition` explaining when that route should be selected, and a `next_step_id` that points to another step in the plan (routing routes do **not** define inline sub-agents — they branch to existing steps); set `default_route_id` only as a missing-file fallback.
+Routing has one mode: leave `description` and `context_output` empty, read an existing route file/source, then switch. If an agent/probe/judgment is needed, add a prior `regular` step that writes `route_selection.json` and have the routing step consume it with `route_source_file` or `context_dependencies: ["route_selection.json"]`. Each `routes` entry needs a stable `route_id`, a `condition` explaining when that route should be selected, and a `next_step_id` that points to another step in the plan (routing routes do **not** define inline sub-agents — they branch to existing steps); set `default_route_id` only as a missing-file fallback.
 
-For full route structure, mode trade-offs, and anti-patterns, call `get_reference_doc(kind="routing")` — load before designing or hardening any routing step.
+For full route structure, file contract, and anti-patterns, call `get_reference_doc(kind="routing")` — load before designing or hardening any routing step.
 
 ### Step 7: Design Validation
 

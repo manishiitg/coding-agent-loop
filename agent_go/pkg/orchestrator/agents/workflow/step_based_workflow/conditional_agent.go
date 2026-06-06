@@ -62,8 +62,8 @@ func NewWorkflowConditionalAgent(config *agents.OrchestratorAgentConfig, logger 
 	}
 }
 
-// EvaluateRouting evaluates a routing question and selects one of N routes
-// executionOutput is non-empty for execute-then-route mode, conditionContext is for pure routing mode
+// EvaluateRouting is the legacy LLM routing helper. Workflow routing is now
+// deterministic and does not call this path.
 func (hctpca *WorkflowConditionalAgent) EvaluateRouting(ctx context.Context, executionOutput, conditionContext, question string, routes []RoutingRoute, stepIndex, iteration int, isCodeExecutionMode bool, variableNames, variableValues string) (*RoutingResponse, error) {
 	// Build routes description
 	var routesDesc strings.Builder

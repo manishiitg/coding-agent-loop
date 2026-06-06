@@ -3,6 +3,9 @@ package step_based_workflow
 import (
 	"strings"
 	"testing"
+
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
 func TestParseRouteSelectionPayloadAcceptsCanonicalAndLegacyFields(t *testing.T) {
@@ -99,6 +102,91 @@ func TestResolveRouteSelectionValueRejectsUnknownValue(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("expected mismatch error, got %v", err)
+	}
+}
+
+func TestValidateRoutingStepRejectsDescription(t *testing.T) {
+	step := &RoutingPlanStep{
+		CommonStepFields: CommonStepFields{
+			ID:          "route-by-mode",
+			Title:       "Route by Mode",
+			Description: "Decide the route first.",
+		},
+		RoutingQuestion: "Which path should run?",
+		Routes:          deterministicRoutingTestRoutes(),
+	}
+
+	err := validateRoutingStepFieldsTyped(step)
+	if err == nil {
+		t.Fatal("expected routing description to be rejected")
+	}
+	if !strings.Contains(err.Error(), "must not set description") {
+		t.Fatalf("expected deterministic-only description error, got %v", err)
+	}
+}
+
+func TestRoutingStepOwnRouteFileCandidatesIgnoresLegacyDescription(t *testing.T) {
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewDefault(),
+		nil,
+		orchestrator.OrchestratorTypeWorkflow,
+		"Workflow/demo",
+		0,
+		"",
+		nil,
+		nil,
+		false,
+		&orchestrator.LLMConfig{},
+		1,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+	hcpo := &StepBasedWorkflowOrchestrator{
+		BaseOrchestrator:  base,
+		selectedRunFolder: "run-1",
+	}
+	step := &RoutingPlanStep{
+		CommonStepFields: CommonStepFields{
+			ID:          "route-by-mode",
+			Description: "legacy routing agent body",
+		},
+	}
+
+	candidates := hcpo.routingStepOwnRouteFileCandidates(step, 0, "step-1")
+	if len(candidates) != 1 {
+		t.Fatalf("expected one own route file candidate, got %d: %v", len(candidates), candidates)
+	}
+	if strings.Contains(candidates[0], "step-1-routing") {
+		t.Fatalf("legacy execute path should not be considered, got %q", candidates[0])
+	}
+}
+
+func TestUpdateStepFromPartialCanClearRoutingDescription(t *testing.T) {
+	original := &RoutingPlanStep{
+		CommonStepFields: CommonStepFields{
+			ID:          "route-by-mode",
+			Title:       "Route by Mode",
+			Description: "legacy routing agent body",
+		},
+		RoutingQuestion: "Which path should run?",
+		Routes:          deterministicRoutingTestRoutes(),
+	}
+
+	updated, ok := mergePartialStepUpdate(original, PartialPlanStep{
+		ClearDescription: true,
+	}).(*RoutingPlanStep)
+	if !ok {
+		t.Fatalf("expected updated routing step")
+	}
+	if updated.Description != "" {
+		t.Fatalf("expected description to be cleared, got %q", updated.Description)
+	}
+	if err := validateRoutingStepFieldsTyped(updated); err != nil {
+		t.Fatalf("cleared routing step should validate: %v", err)
 	}
 }
 

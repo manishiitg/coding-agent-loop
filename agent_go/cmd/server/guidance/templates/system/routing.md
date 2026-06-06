@@ -2,7 +2,7 @@
 
 A routing step is a deterministic switch. It reads `route_selection.json`, resolves the selected value to one of its `routes[]`, and branches to that route's `next_step_id`.
 
-Use routing when the workflow must run **exactly one** of N existing downstream steps. Do not put judgment inside the routing step itself; put judgment in an earlier regular step, human_input step, caller-provided `route_selections`, or execute-then-route probe that writes the route file.
+Use routing when the workflow must run **exactly one** of N existing downstream steps. Do not put judgment inside the routing step itself; put judgment in an earlier regular step, human_input step, or caller-provided `route_selections`. If an agent decision is needed, add a regular step before routing that writes `route_selection.json` in its own output folder.
 
 ### When to use routing
 
@@ -29,10 +29,14 @@ The value may be:
 
 If the file exists but is invalid, routing fails. If no file exists, `default_route_id` is used when set; otherwise routing fails. Routing never silently chooses the first route.
 
-### Two modes
+### Single mode
 
-- **Pure routing**: omit `description`. The routing step reads its own `route_selection.json`, `route_source_file`, or a `context_dependencies` entry named `route_selection.json`. Use this when a prior step already produced the route file or the caller will pass `route_selections`.
-- **Execute-then-route**: provide `description`. The step first performs a small deterministic/probe task and writes `route_selection.json` into its own output folder, then the router reads it.
+Routing steps never execute agents. Leave `description` and `context_output` empty. The step reads a caller-preseeded `route_selection.json`, an explicit `route_source_file`, a `context_dependencies` entry named `route_selection.json`, or `default_route_id`.
+
+When an agent/probe/classifier must decide the route, model it as:
+
+- prior `regular` step: performs the probe/classification and writes `route_selection.json`
+- routing step: declares `route_source_file` or `context_dependencies: ["route_selection.json"]` and branches from that file
 
 ### Route structure
 
@@ -79,5 +83,6 @@ Each `next_step_id` must already exist as a step in the plan.
 
 - Routing with only one route, or with a generic catch-all route that should be normal step logic.
 - Asking the routing step to infer the route from prose without writing `route_selection.json`.
+- Setting `description` on a routing step. Use a prior regular step for probe/judgment work.
 - `next_step_id` pointing to a step that does not exist yet.
-- Pure routing with no caller `route_selections`, no `route_source_file`, no `route_selection.json` dependency, and no `default_route_id`.
+- Routing with no caller `route_selections`, no `route_source_file`, no `route_selection.json` dependency, and no `default_route_id`.

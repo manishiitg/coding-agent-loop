@@ -35,8 +35,8 @@ point for any plan-composition decision. From there:
   nested + scripted fast-path), `human-input` (input types + routing
   pairing + unattended schedules), `message-sequence` (full pattern
   catalog: Stateful Specialist, Test/Fix Loop, Maker+Reviewer, Panel,
-  Clean-Room Retry, HITL Re-entry, Scripted Conversation), `routing`
-  (pure vs execute-then-route, anti-patterns).
+	  Clean-Room Retry, HITL Re-entry, Scripted Conversation), `routing`
+	  (deterministic route_selection.json contract, anti-patterns).
 - **Recurring multi-step shapes**: `workflow-patterns` (Phase Router,
   Scoped Investigation, Linear Pipeline, Fan-out & Consolidate,
   Verification Gate, Pre-flight Probe, Human Checkpoint, Critique

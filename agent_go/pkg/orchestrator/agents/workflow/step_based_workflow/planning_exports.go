@@ -1785,7 +1785,7 @@ func RegisterRunFullWorkflowTool(
 			}
 			if session.controller.approvedPlan != nil {
 				var missingSteps []string
-				var routingStepHints []string
+				var legacyRoutingSteps []string
 				validationSteps := session.controller.approvedPlan.Steps
 				if variableValues := workflowRunValidationVariableValues(ctx, session, groupName); len(variableValues) > 0 {
 					validationSteps = routeScopedValidationSteps(session.controller.approvedPlan.Steps, variableValues, humanInputs)
@@ -1798,31 +1798,17 @@ func RegisterRunFullWorkflowTool(
 							missingSteps = append(missingSteps, fmt.Sprintf("  - %s (id: %s, question: %q)", hiStep.GetTitle(), stepID, hiStep.Question))
 						}
 					}
-					// Hint about routing steps that have a description (execute-then-route)
-					// so the builder knows to pass human_inputs for them too.
 					if step.StepType() == StepTypeRouting {
 						if routingStep, ok := step.(*RoutingPlanStep); ok && routingStep.Description != "" {
-							stepID := step.GetID()
-							if _, ok := humanInputs[stepID]; !ok {
-								routingStepHints = append(routingStepHints, fmt.Sprintf("  - %s (id: %s) — pass the user's choice so the agent knows what to do", step.GetTitle(), stepID))
-							}
+							legacyRoutingSteps = append(legacyRoutingSteps, fmt.Sprintf("  - %s (id: %s)", step.GetTitle(), step.GetID()))
 						}
 					}
 				}
 				if len(missingSteps) > 0 {
 					return fmt.Sprintf("❌ Plan has human_input steps that require responses via human_inputs parameter. Missing:\n%s\n\nProvide human_inputs with a response for each step ID listed above.", strings.Join(missingSteps, "\n")), nil
 				}
-				// Note: routing steps without human_inputs are allowed — they will use LLM evaluation
-				// with context from prior steps to pick a route. We log the hint but do NOT block.
-				if len(routingStepHints) > 0 {
-					exampleStepID := "route-step"
-					for _, step := range session.controller.approvedPlan.Steps {
-						if step.StepType() == StepTypeRouting {
-							exampleStepID = step.GetID()
-							break
-						}
-					}
-					logger.Info(fmt.Sprintf("ℹ️ [run_full_workflow] Routing steps without human_inputs will use default LLM evaluation. To guide route selection, pass human_inputs: {\"%s\": \"<user intent>\"}. Missing: %s", exampleStepID, strings.Join(routingStepHints, ", ")))
+				if len(legacyRoutingSteps) > 0 {
+					return fmt.Sprintf("❌ Plan has routing steps with legacy descriptions. Routing is deterministic-only and routing steps no longer execute agents:\n%s\n\nMove each probe/judgment into a prior regular step that writes route_selection.json, then clear the routing description and point the routing step at that file via route_source_file or context_dependencies.", strings.Join(legacyRoutingSteps, "\n")), nil
 				}
 			}
 

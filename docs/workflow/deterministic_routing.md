@@ -1,6 +1,6 @@
 # Deterministic Routing (route-by-file)
 
-**Status:** Runtime implemented; active workflow-plan migrations applied; caller/schedule migrations still pending
+**Status:** Runtime deterministic-only; active workflow-plan migrations applied; caller/schedule migrations still pending
 **Owners:** workflow / orchestrator
 **Last updated:** 2026-06-06
 
@@ -27,11 +27,11 @@ An audit of all workflow plans found **12 routing steps across 5 workflows**
 | Genuine LLM judgment | 2 | and even these read a file/JSON signal |
 
 So **10 of 12 routers are not doing real LLM branching** — they're switches,
-phase-chain dispatchers, or no-ops. Several already use a hack: an
-"execute-then-route" step whose `description`
-tells an agent to write `route_selection.json`, after which the routing LLM is asked
-to *copy* that value into its answer. The LLM in the loop is wasteful and forces a
-`default_route_id` fallback because the copy can fumble.
+phase-chain dispatchers, or no-ops. Several already used a legacy pattern where
+the routing step `description` told an agent to write `route_selection.json`,
+after which the routing LLM was asked to *copy* that value into its answer. That
+put the LLM in the loop for no real branching decision and forced a
+`default_route_id` fallback because the copy could fumble.
 
 The two "genuine judgment" cases collapse too: the upstream step that produced the
 signal (e.g. `connection_test.json`, or a findings analysis) is the natural place to
@@ -51,7 +51,7 @@ route file (canonical):   { "select_route": "<route_id>" }
 
 routing step logic (pure Go, no LLM):
   1. read route_selection.json from the first available source:
-     a. routing step's output dir (runner preseed or execute-then-route output)
+     a. routing step's output dir (runner/caller preseed)
      b. declared prior-step route source
   2. find the route in routes[] whose route_id == select_route
   3. jump to that route's next_step_id
@@ -62,7 +62,9 @@ routing step logic (pure Go, no LLM):
 
 The step keeps its existing shape (`routes[]`, `default_route_id`,
 `next_step_id` per route). What is removed is the LLM evaluation
-(`routing_question` is no longer evaluated by a model).
+(`routing_question` is no longer evaluated by a model). A routing step's
+`description` must be empty; any agent/probe/judgment work belongs in a prior
+regular step that writes `route_selection.json`.
 
 ### Where the route file comes from (producers)
 
@@ -73,7 +75,6 @@ a declared route source.
 | Producer | When | Who decides |
 |----------|------|-------------|
 | **`run_workflow` / `run_step` param** | Caller already knows the flow | the caller; orchestrator writes the router's own route file |
-| **Routing step execution** | Execute-then-route mode | the routing step writes its own route file |
 | **A prior agent step** | The route needs judgment | the prior step writes a route file in its own output folder |
 | **Builder / plan default** | A fixed default baked into the plan | the plan author |
 | _(none)_ → `default_route_id` | No source file exists | fallback |
@@ -82,7 +83,7 @@ a declared route source.
 
 ```
 1. run_workflow / run_step param          (caller's explicit choice — wins)
-2. routing step's own route_selection.json        (execute-then-route output)
+2. routing step's own route_selection.json        (caller-preseeded file)
 3. declared prior-step route source               (agent judgment)
 4. default_route_id                        (only when no route file exists)
 → if an explicit value is present but invalid → error (no silent default)
@@ -128,12 +129,12 @@ else → error (not a valid route for this router)
 
 | Layer | Change |
 |-------|--------|
-| `controller_routing.go` (`executeRoutingStep`) | Replaced the `conditionalAgent.EvaluateRouting(...)` call path with deterministic file/default resolution. The branch selection is now "read file → validate → switch". |
+| `controller_routing.go` (`executeRoutingStep`) | Replaced the `conditionalAgent.EvaluateRouting(...)` call path with deterministic file/default resolution. The branch selection is now "read file → validate → switch"; routing descriptions are rejected. |
 | `controller_routing_deterministic.go` | Added the deterministic resolver, route value normalization, prior-step source lookup, and `route_selections` pre-seeding. |
 | `workflow_run_tools.go` (`run_workflow`, `run_step`) | Added optional `route_selections` to the tool schemas and parser. No scalar `route` sugar was added. |
 | `runWorkflowInternal` / server request path | Parses `route_selections` and carries it through `execution_options`; file writing happens later because final group run folders are resolved during execution. |
 | execution controller / batch setup | Validates `route_selections` against each router's `routes[]`, then writes `route_selection.json` into each routing step's output dir after cleanup and before step execution. |
-| routing source resolution | Checks the router's own output dir first, then `route_source_file`, then `context_dependencies` entries named `route_selection.json`, preserving folder ownership. |
+| routing source resolution | Checks the router's own preseeded route file first, then `route_source_file`, then `context_dependencies` entries named `route_selection.json`, preserving folder ownership. |
 | `routing.md` guidance | Rewritten: routing is a deterministic switch; judgment goes in an upstream step or the caller; document the file contract and `route_selections`. |
 | active workflow plans | Migrated active `upwork`, `social-media`, `linkedin`, `HRMS`, and `citymall-exploit-hacker` plans away from routing-step LLM classification. Variable-mode routers now expect caller `route_selections`; judgment routers consume producer-owned `route_selection.json`. |
 
@@ -151,8 +152,8 @@ before an "infinite loop" error) is unaffected and still bounds backward-jump lo
 Active `upwork` plan migration is applied.
 
 1. Drop the routing **LLM** (deterministic read replaces it).
-2. `route-by-mode`: the `FLOW_MODE` variable and the execute step that copies it into
-   the file are replaced by the `run_workflow` `route_selections` param (the runner
+2. `route-by-mode`: the `FLOW_MODE` variable and legacy routing description that copied it
+   into the file are replaced by the `run_workflow` `route_selections` param (the runner
    writes the file). Remove `FLOW_MODE` from `variables/variables.json` groups.
 3. Repoint upwork's schedules from "group with `FLOW_MODE=search`" to
    `route_selections = { "route-by-mode": "search" }`.
@@ -194,7 +195,7 @@ the new runtime code and migrated local plan JSON.
 
 3. **Migrate variable routers to caller `route_selections`.** Remove routing-step
    descriptions that read variables like `FLOW_MODE`, `RUN_MODE`, or
-   `WORKFLOW_MODE`. Keep the router pure (`description: ""`) and pass the choice
+   `WORKFLOW_MODE`. Keep the router deterministic (`description: ""`) and pass the choice
    when starting the workflow:
 
    ```jsonc
@@ -212,8 +213,9 @@ the new runtime code and migrated local plan JSON.
    route's `route_id` or a unique `next_step_id`; `route_id` is preferred.
 
 4. **Migrate judgment routers to producer-owned files.** The prior step that makes
-   the decision should write `route_selection.json` in its own output folder and
-   declare it in `context_output`:
+   the decision must be a normal step before the routing step. It writes
+   `route_selection.json` in its own output folder and declares it in
+   `context_output`:
 
    ```json
    {
@@ -273,6 +275,7 @@ the new runtime code and migrated local plan JSON.
        if (step.type !== "routing") continue;
        const routes = step.routes || [];
        const routeIDs = new Set(routes.map(r => r.route_id));
+       if (String(step.description || "").trim()) errors.push(`${file}: ${step.id} must clear routing description`);
        if (routes.length < 2) errors.push(`${file}: ${step.id} has fewer than 2 routes`);
        if (step.default_route_id && !routeIDs.has(step.default_route_id)) errors.push(`${file}: ${step.id} invalid default_route_id`);
        for (const route of routes) {

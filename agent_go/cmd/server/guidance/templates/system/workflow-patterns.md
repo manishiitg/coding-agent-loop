@@ -22,7 +22,7 @@ The builder's primitives referenced below: `regular`, `todo_task`, `routing`, `h
 **When to use**: one logical workflow has distinct entry modes (dry-run vs apply, learn vs execute, daily vs weekly). Avoids two near-duplicate plans.
 
 **Pitfalls**:
-- Routing on a signal that isn't actually in context yet — set `description` on the routing step (execute-then-route) to produce the signal first.
+	- Routing on a signal that isn't actually in context yet — add a prior `regular` probe step that writes `route_selection.json`, then have the routing step read that file.
 - Branches drift apart over time — keep shared steps (login, KB read) outside the router so both branches benefit.
 - Using a Phase Router when a single linear plan would do — only use it when the branches are genuinely different.
 

@@ -693,6 +693,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getMessageSequenceRuntime(ctx context
 	}
 	session.RuntimeSessionID = sessionID
 	hcpo.configureSubAgentSessionGuard(sessionID, "message-sequence", step.GetID(), readPaths, writePaths)
+	hcpo.setMessageSequenceShellEnv(sessionID, stepPath, step.GetID())
 
 	folderOverride := &messageSequenceFolderGuardOverride{ReadPaths: readPaths, WritePaths: writePaths}
 	sessionOverride := &messageSequenceRuntimeSessionOverride{SessionID: sessionID, KeepAlive: true}
@@ -715,6 +716,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getMessageSequenceRuntime(ctx context
 			sessionID = strings.TrimSpace(cfg.MCPSessionID)
 			session.RuntimeSessionID = sessionID
 			hcpo.configureSubAgentSessionGuard(sessionID, "message-sequence", step.GetID(), readPaths, writePaths)
+			hcpo.setMessageSequenceShellEnv(sessionID, stepPath, step.GetID())
 		}
 	}
 	session.runtime = &messageSequenceRuntime{
@@ -723,6 +725,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) getMessageSequenceRuntime(ctx context
 		Provider:  provider,
 	}
 	return session.runtime, agentCtx, nil
+}
+
+// setMessageSequenceShellEnv exports the per-step shell env (DB_PATH,
+// STEP_OUTPUT_DIR, STEP_EXECUTION_DIR) onto the session so the server-side bridge
+// shell (api-bridge.execute_shell_command) resolves "$DB_PATH" the same way the
+// in-process built-in executor does. Without this, message-sequence items routed
+// to the bridge shell run with an unset $DB_PATH and every sqlite3 "$DB_PATH"
+// write fails (falling back to the read-only relative db path).
+func (hcpo *StepBasedWorkflowOrchestrator) setMessageSequenceShellEnv(sessionID, stepPath, stepID string) {
+	if strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	stepOutputAbs := hcpo.messageSequenceAbsPath(hcpo.messageSequenceExecutionRelPath(stepPath, stepID))
+	dbAbs := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
+	common.SetSessionShellEnv(sessionID, map[string]string{
+		"DB_PATH":            dbAbs,
+		"STEP_OUTPUT_DIR":    stepOutputAbs,
+		"STEP_EXECUTION_DIR": filepath.Dir(stepOutputAbs),
+	})
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceRuntimeSessionID(stepPath string, stepID string) string {

@@ -279,3 +279,53 @@ EOF`
 		t.Fatalf("expected allowed absolute execution paths to pass, got: %v", err)
 	}
 }
+
+// TestExecuteShellCommand_InjectsSessionEnv proves that per-session shell env
+// (e.g. DB_PATH set by the workflow orchestrator) reaches the bridge request,
+// and that an explicit per-call extra_env overrides the session value.
+func TestExecuteShellCommand_InjectsSessionEnv(t *testing.T) {
+	sessionID := "test-session-env"
+	common.SetSessionShellEnv(sessionID, map[string]string{
+		"DB_PATH":         "/abs/workflow/db/db.sqlite",
+		"STEP_OUTPUT_DIR": "/abs/workflow/runs/r/execution/step",
+	})
+	defer ClearSessionShellConfig(sessionID)
+
+	var got ExecuteShellCommandParams
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    map[string]interface{}{"stdout": "ok", "exit_code": 0},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sessionID)
+
+	// Per-call extra_env sets DB_PATH explicitly — it must win over the session value.
+	if _, err := client.ExecuteShellCommand(ctx, ExecuteShellCommandParams{
+		Command:  `sqlite3 "$DB_PATH" "select 1"`,
+		ExtraEnv: map[string]string{"DB_PATH": "/per/call/override.sqlite"},
+	}); err != nil {
+		t.Fatalf("ExecuteShellCommand error: %v", err)
+	}
+
+	if got.ExtraEnv["DB_PATH"] != "/per/call/override.sqlite" {
+		t.Fatalf("per-call extra_env should win: DB_PATH=%q", got.ExtraEnv["DB_PATH"])
+	}
+	if got.ExtraEnv["STEP_OUTPUT_DIR"] != "/abs/workflow/runs/r/execution/step" {
+		t.Fatalf("session STEP_OUTPUT_DIR not injected: %q", got.ExtraEnv["STEP_OUTPUT_DIR"])
+	}
+
+	// Without a per-call override, the session DB_PATH must be injected.
+	got = ExecuteShellCommandParams{}
+	if _, err := client.ExecuteShellCommand(ctx, ExecuteShellCommandParams{Command: `sqlite3 "$DB_PATH" "select 1"`}); err != nil {
+		t.Fatalf("ExecuteShellCommand error: %v", err)
+	}
+	if got.ExtraEnv["DB_PATH"] != "/abs/workflow/db/db.sqlite" {
+		t.Fatalf("session DB_PATH not injected: %q", got.ExtraEnv["DB_PATH"])
+	}
+}

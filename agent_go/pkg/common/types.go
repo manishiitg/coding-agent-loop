@@ -94,6 +94,11 @@ type SessionShellConfig struct {
 	GeminiProjectDirID string   // Active Gemini CLI project dir for this session
 	BrowserMode        string   // Resolved browser mode: "playwright", "headless", "cdp", ""
 	BrowserSessionID   string   // Shared browser identity for browser tools when "default" session is used
+	// Env is extra environment variables exported into this session's shell
+	// (bridge execute_shell_command). Lets per-step values like DB_PATH and
+	// STEP_OUTPUT_DIR reach the server-side bridge shell, which — unlike the
+	// in-process built-in executor — has no other channel for them.
+	Env map[string]string
 }
 
 var (
@@ -148,6 +153,48 @@ func SetSessionFolderGuardBlockedWritePaths(sessionID string, blockedWritePaths 
 	}
 	cfg.BlockedWritePaths = blockedWritePaths
 	log.Printf("[SHELL] Set folder guard blocked-write paths for session %s: %v", sessionID, blockedWritePaths)
+}
+
+// SetSessionShellEnv merges extra environment variables into a session's shell
+// config (later calls override earlier keys). The map is replaced wholesale
+// under lock so concurrent readers always observe a complete map, never a
+// partially-written one.
+func SetSessionShellEnv(sessionID string, env map[string]string) {
+	if len(env) == 0 {
+		return
+	}
+	sessionShellConfigsMu.Lock()
+	defer sessionShellConfigsMu.Unlock()
+	cfg := sessionShellConfigs[sessionID]
+	if cfg == nil {
+		cfg = &SessionShellConfig{}
+		sessionShellConfigs[sessionID] = cfg
+	}
+	merged := make(map[string]string, len(cfg.Env)+len(env))
+	for k, v := range cfg.Env {
+		merged[k] = v
+	}
+	for k, v := range env {
+		merged[k] = v
+	}
+	cfg.Env = merged
+	log.Printf("[SHELL] Set %d shell env var(s) for session %s", len(env), sessionID)
+}
+
+// GetSessionShellEnv returns a copy of the session's shell env vars (nil if none),
+// safe to read without holding the config lock.
+func GetSessionShellEnv(sessionID string) map[string]string {
+	sessionShellConfigsMu.RLock()
+	defer sessionShellConfigsMu.RUnlock()
+	cfg := sessionShellConfigs[sessionID]
+	if cfg == nil || len(cfg.Env) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(cfg.Env))
+	for k, v := range cfg.Env {
+		out[k] = v
+	}
+	return out
 }
 
 // SetSessionGeminiProjectDirID stores the active Gemini CLI project dir ID for a session.

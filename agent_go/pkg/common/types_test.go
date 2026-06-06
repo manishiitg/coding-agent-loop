@@ -53,3 +53,29 @@ func TestPopulateMCPBridgeShortEnvClearsStaleValues(t *testing.T) {
 		}
 	}
 }
+
+func TestSetSessionShellEnvMergesAndCopies(t *testing.T) {
+	sid := "sess-env-merge"
+	defer ClearSessionShellConfig(sid)
+
+	SetSessionShellEnv(sid, map[string]string{"DB_PATH": "/a", "STEP_OUTPUT_DIR": "/out"})
+	SetSessionShellEnv(sid, map[string]string{"DB_PATH": "/b"}) // override one, keep the other
+
+	env := GetSessionShellEnv(sid)
+	if env["DB_PATH"] != "/b" {
+		t.Fatalf("DB_PATH = %q, want /b (later call overrides)", env["DB_PATH"])
+	}
+	if env["STEP_OUTPUT_DIR"] != "/out" {
+		t.Fatalf("STEP_OUTPUT_DIR = %q, want /out (preserved)", env["STEP_OUTPUT_DIR"])
+	}
+	// Returned map must be a copy — mutating it must not affect stored config.
+	env["DB_PATH"] = "/mutated"
+	if GetSessionShellEnv(sid)["DB_PATH"] != "/b" {
+		t.Fatal("GetSessionShellEnv must return a copy, not the live map")
+	}
+	// Empty input is a no-op.
+	SetSessionShellEnv(sid, nil)
+	if GetSessionShellEnv(sid)["DB_PATH"] != "/b" {
+		t.Fatal("nil env should be a no-op")
+	}
+}

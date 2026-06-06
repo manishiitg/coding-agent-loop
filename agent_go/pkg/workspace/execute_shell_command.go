@@ -248,6 +248,22 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		}
 	}
 
+	// Inject per-session env vars (e.g. DB_PATH, STEP_OUTPUT_DIR set by the
+	// workflow orchestrator). The server-side bridge shell has no other channel
+	// for these — unlike the in-process built-in executor, which is wrapped to
+	// inject them. Explicit per-call extra_env wins; session env wins over the
+	// client-level vars merged below.
+	if sessionEnv := common.GetSessionShellEnv(sessionID); len(sessionEnv) > 0 {
+		if params.ExtraEnv == nil {
+			params.ExtraEnv = make(map[string]string)
+		}
+		for k, v := range sessionEnv {
+			if _, exists := params.ExtraEnv[k]; !exists {
+				params.ExtraEnv[k] = v
+			}
+		}
+	}
+
 	// Inject extra env vars from client (e.g., MCP_API_URL, MCP_API_TOKEN, SECRET_*)
 	if len(c.ExtraEnv) > 0 {
 		if params.ExtraEnv == nil {

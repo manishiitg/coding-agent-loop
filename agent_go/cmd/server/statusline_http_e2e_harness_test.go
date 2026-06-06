@@ -32,6 +32,10 @@ type statusLineE2ECase struct {
 	// run performs a real CLI turn under sessionID and returns the statusline the
 	// CLI produced — typically GenerateContent followed by GetStatusLine.
 	run func(ctx context.Context, sessionID string) (*llmtypes.StatusLine, error)
+	// wantStatusExtras asserts the provider surfaced generic statusline extras
+	// (e.g. plan rate-limit usage) under status_meta.status_extras, reaching the
+	// HTTP response after the full clone/fan-out chain.
+	wantStatusExtras bool
 }
 
 // runStatusLineHTTPE2E drives the full consumer chain the frontend depends on:
@@ -123,8 +127,23 @@ func runStatusLineHTTPE2E(t *testing.T, c statusLineE2ECase) {
 		t.Fatalf("%s: no telemetry reached /api/terminals: %+v", c.name, st)
 	}
 
-	t.Logf("✅ %s statusline HTTP e2e: provider=%q in=%d out=%d cacheRead=%d cost=$%.6f model=%q",
-		c.name, st.ProviderLabel, st.InputTokens, st.OutputTokens, st.CacheReadInputTokens, st.CostUSD, sl.Model)
+	// Generic statusline extras (e.g. "5h 24%", "7d 41%") arrive as JSON
+	// strings under status_meta.status_extras — i.e. []interface{} after the
+	// HTTP roundtrip. Decode them so the assertion sees real display segments.
+	var statusExtras []string
+	if raw, ok := st.StatusMeta["status_extras"].([]interface{}); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				statusExtras = append(statusExtras, s)
+			}
+		}
+	}
+	if c.wantStatusExtras && len(statusExtras) == 0 {
+		t.Fatalf("%s: expected status_extras (plan rate-limit usage) in status_meta after HTTP roundtrip, got none: status_meta=%+v", c.name, st.StatusMeta)
+	}
+
+	t.Logf("✅ %s statusline HTTP e2e: provider=%q in=%d out=%d cacheRead=%d cost=$%.6f model=%q extras=%v",
+		c.name, st.ProviderLabel, st.InputTokens, st.OutputTokens, st.CacheReadInputTokens, st.CostUSD, sl.Model, statusExtras)
 }
 
 // statusLineOKPrompt elicits a quick single-turn CLI run that still produces a

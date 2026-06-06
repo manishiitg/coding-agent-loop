@@ -4369,6 +4369,14 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       : ''
                     const toolCount = typeof st.tool_count === 'number' ? st.tool_count : 0
                     const tools = toolCount > 0 ? `${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}` : ''
+                    // Provider-agnostic statusline extras (e.g. plan rate-limit usage).
+                    // Each CLI adapter normalizes its own schema into these display-ready
+                    // segments upstream (status_meta.status_extras); render them verbatim
+                    // with no per-provider knowledge here.
+                    const rawExtras = (st.status_meta as Record<string, unknown> | undefined)?.status_extras
+                    const extraSegs = Array.isArray(rawExtras)
+                      ? rawExtras.filter((x): x is string => typeof x === 'string')
+                      : []
                     const segments = [
                       st.provider_label || selectedTerminalView.label || selectedTerminalView.execution_kind || 'pane',
                       tools,
@@ -4376,6 +4384,7 @@ export const TerminalCenter: React.FC<TerminalCenterProps> = ({ currentSessionId
                       cacheSeg,
                       cost,
                       dur,
+                      ...extraSegs,
                     ].filter(Boolean)
                     return (
                       <div className={`flex items-center gap-2 border-t border-neutral-700/70 bg-[#101211] px-3 py-1 font-mono text-neutral-500 ${terminalTheme.footerText}`}>

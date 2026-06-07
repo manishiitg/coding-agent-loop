@@ -557,8 +557,14 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
     presetStore.applyPreset(item.preset, 'workflow')
 
+    // Use the cached active sessions (30s TTL + background poller keep it fresh,
+    // and the switcher list itself is rendered from this same cache) instead of a
+    // forced server round-trip. The forced refresh made Ctrl+K block on the network
+    // for idle workflows — where item.activeSession is undefined — even though the
+    // fetch only ever confirmed there was nothing to restore. Running workflows
+    // already short-circuit via the pre-computed item.activeSession.
     const refreshedActiveSession = item.activeSession ||
-      pickWorkflowActiveSession(await useChatStore.getState().getActiveSessions(true), item.preset, useChatStore.getState().chatTabs)
+      pickWorkflowActiveSession(await useChatStore.getState().getActiveSessions(), item.preset, useChatStore.getState().chatTabs)
 
     if (refreshedActiveSession) {
       if (isScheduledWorkflowSession(refreshedActiveSession)) {

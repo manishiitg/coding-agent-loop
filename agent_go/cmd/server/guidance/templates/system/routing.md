@@ -43,7 +43,7 @@ When an agent/probe/classifier must decide the route, model it as:
 
 A routing step has:
 
-- `routing_question` — retained for plan readability and compatibility
+- `routing_question` — **REQUIRED (non-empty)**: the runtime errors if it is missing. It is no longer evaluated by an LLM; it is kept for plan readability/compatibility, but you must still set it.
 - `routes[]` — minimum 2 entries (required)
 - `default_route_id` — optional fallback `route_id` used when no route file exists
 - `route_source_file` — optional explicit route file source produced by a prior step

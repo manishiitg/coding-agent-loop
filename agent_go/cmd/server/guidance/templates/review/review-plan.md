@@ -60,13 +60,18 @@ LENS D — Missing Pre-Validation Schema
 
 PHASE 3 — ORCHESTRATOR / ROUTE AUDIT (skip if no todo_task, routing, or orchestration steps)
 
-For every step where `step_type == "todo_task"`, `routing`, or `orchestration`, read its description and ALL route/sub-agent descriptions, including referenced orphan_steps. Apply each lens.
+For every `todo_task` or `orchestration` step, read its description and ALL route/sub-agent descriptions (including referenced orphan_steps) and apply Lens E/F/G. **Routing steps are deterministic — they have NO description and run no agent — audit them with Lens R, not Lens E/F.**
 
-LENS E — Orchestrator / Router Description Quality
-- **Missing objective/intent**: the parent description must clearly state WHAT we are trying to achieve — the overall goal. Without this, the orchestrator/router can't make intelligent decisions when things go wrong or unexpected situations arise. A good parent description answers: "Why do these routes/sub-agents exist together? What outcome are we after?"
+LENS E — Orchestrator Description Quality (todo_task / orchestration only)
+- **Missing objective/intent**: the parent description must clearly state WHAT we are trying to achieve — the overall goal. Without this, the orchestrator can't make intelligent decisions when things go wrong or unexpected situations arise. A good parent description answers: "Why do these routes/sub-agents exist together? What outcome are we after?"
 - **Reduced to a sequencer**: if the description is just "run route A, then route B, then route C" or a fixed checklist, the parent may be over-engineered. If all it does is follow a fixed order, use regular steps when each task has a durable boundary, or `message_sequence` when the ordered turns share context and one output/validation boundary.
-- **No edge case / failure guidance**: the description should explain how to handle failures, retries, partial results, missing data, or unexpected route/sub-agent states.
-- **No routing criteria**: the description doesn't explain WHEN or WHY to pick each route. The parent needs to know what conditions, inputs, or states map to which sub-agent.
+- **No edge case / failure guidance**: the description should explain how to handle failures, retries, partial results, missing data, or unexpected sub-agent states.
+- **No dispatch criteria**: the description doesn't explain WHEN or WHY to pick each sub-agent/route. The orchestrator needs to know what conditions, inputs, or states map to which sub-agent.
+
+LENS R — Routing Step Contract (routing steps only — deterministic, never run an agent)
+- **Has a description or context_output**: a routing step MUST leave `description` and `context_output` empty — a non-empty description is a hard error at plan time. Flag CRITICAL; move any probe/judgment into a prior regular step.
+- **No route source**: the selection must come from caller `route_selections`, a `route_source_file`, a `context_dependencies` entry named `route_selection.json` (written by a prior regular step as that step's `context_output`), or a `default_route_id`. Flag if none is present.
+- **Dangling routes**: every route's `next_step_id` must exist (or be `end`); `default_route_id` must match one of the routes; `routing_question` must be non-empty (required).
 
 LENS F — Orchestrator vs Sub-Agent Boundary
 - **Inline execution logic**: detailed task instructions for a specific sub-task written inside the orchestrator description. Each distinct task should be its own route with its own description, learnings, and tools. Orchestrator dispatches; sub-agents execute.
@@ -170,10 +175,10 @@ Then a cross-step summary:
 - **Phase 1 structural findings** (from review_plan tool): list by severity.
 - **Steps with boundary/description issues** (Lens 0/A/A3/B/C/D): per-step, which lenses fired. Call out stale/accumulated description bloat (Lens A3) explicitly — dated notes and obsolete workarounds to trim.
 - **Skill findings** (Lens A2 / Phase 4): list missing needed skills, selected-but-unused skills, step scoping mistakes, malformed skill folders, and skill-vs-learning ownership problems.
-- **Todo_task/routing/orchestration steps with parent/route issues** (Lens E/F/G): per-step, which lenses fired.
+- **Todo_task/orchestration steps (Lens E/F/G) and routing steps (Lens R)**: per-step, which lenses fired.
 - **Learning findings** (Phase 4): list steps with unjustified learning, missing objective, wrong write method, missing/stale `.learning_metadata.json`, unsupported learning locks, agentic steps with leftover main.py, stale global skill content, stale main.py, or browser scripted.
 - **Knowledgebase findings** (Phase 4): list missing or unjustified KB access/contribution, stale/malformed topic notes, and facts stored in the wrong place.
-- **Database structure findings** (Phase 4): list by `db/<file>.json`, then by writer step. Include missing `db/README.md` entries, missing primary keys, unsafe overwrite/append behavior, asset metadata issues under `db/assets/`, report incompatibilities, and duplicate/stale rows.
+- **Database structure findings** (Phase 4): list by `db/db.sqlite` table, then by writer step. Include missing `db/README.md` entries, missing primary keys, unsafe overwrite/append behavior, asset metadata issues under `db/assets/`, report incompatibilities, and duplicate/stale rows.
 - **Report/eval/variable findings** (Phase 4): list stale report wiring, missed `sql` join/aggregation opportunities, unnecessary report helper tables/flatten steps, missing eval coverage, and values that should be variables.
 - **Steps that look clean across all phases.**
 - **Top 5 issues to fix first** (highest-impact across all phases).

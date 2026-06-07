@@ -25,7 +25,7 @@ When running a step or the full workflow:
    `execute_step("step-id", group_name=group_name)` → get
    `execution_id`.
 2. `execute_step` follows the step's persistent learnings config
-   (`learnings_access`, `learnings_write_method`, `lock_learnings`).
+   (`learnings_access`, `lock_learnings`).
 3. **Human input steps**: Pass `human_input` parameter with the
    appropriate answer from your conversation context. This prevents
    blocking for manual UI input.

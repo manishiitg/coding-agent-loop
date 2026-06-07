@@ -29,7 +29,7 @@ Use these patterns when designing or hardening todo_task predefined routes:
 
 For a todo_task route, use `message_sequence` when the orchestrator should preserve specialist memory across critique, test feedback, validation feedback, or follow-up calls. Reuse the same route for re-entry; restart only when the prior conversation is stale, wrong, or contaminated.
 
-Route sub-agents can be `regular` for stateless one-off work, `message_sequence` for a stateful specialist conversation, or `generic_agent` for an agent with broad workspace access. Normal repeated calls reuse the route conversation — the orchestrator sends the next re-entry user message to the same conversation. Set `message_sequence_restart=true` only when starting fresh is required (stale, contaminated, or wrong-direction conversations). As a todo_task predefined route, a message_sequence behaves like a reusable specialist sub-agent.
+Route sub-agents can be `regular` for stateless one-off work or `message_sequence` for a stateful specialist conversation (a route may also be a nested `todo_task`). For ad-hoc broad-access work the orchestrator can `call_generic_agent` at runtime — that is a delegation tool, not a route sub-agent type, so do not author a route with `type: "generic_agent"`. Normal repeated calls reuse the route conversation — the orchestrator sends the next re-entry user message to the same conversation. Set `message_sequence_restart=true` only when starting fresh is required (stale, contaminated, or wrong-direction conversations). As a todo_task predefined route, a message_sequence behaves like a reusable specialist sub-agent.
 
 ## HOW MEMORY WORKS (route vs standalone)
 

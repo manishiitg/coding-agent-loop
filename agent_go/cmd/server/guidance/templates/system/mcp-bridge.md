@@ -33,6 +33,7 @@ writes, and commands; other workspace tools when explicitly available).
 | `$MCP_API_URL` + `$MCP_API_TOKEN` | Full endpoint + bearer token fallback |
 | `$STEP_OUTPUT_DIR` | Write primary outputs here. The folder exists — do not `mkdir` it |
 | `$STEP_EXECUTION_DIR` | Parent of `$STEP_OUTPUT_DIR`. Use only as a fallback when reaching a sibling step's folder and `sys.argv` wasn't used |
+| `$DB_PATH` | ABSOLUTE path to the workflow's `db/db.sqlite`. Always `sqlite3 "$DB_PATH"` — never the relative `db/db.sqlite` (the shell runs in the step folder, so a relative path resolves to the wrong place or read-only) |
 | `$VAR_<NAME>` | Workflow config values (e.g. `$VAR_PAN`, `$VAR_SHEET_URL`). Reference always; never hardcode the literal value |
 | `$SECRET_<NAME>` | Credentials (e.g. `$SECRET_API_KEY`). Never echo to stdout, never write to files |
 | `$VAR_GROUP_NAME` | Current group (may be empty when no group is active). The only var where empty/absent is acceptable |

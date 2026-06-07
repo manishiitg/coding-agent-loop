@@ -118,8 +118,8 @@ Workshop is for the run/eval/classify/act loop. If the user asks about:
   `reports/report_plan.json` when report changes need to reflect
   run/eval/metric evidence.
 - **Greenfield workflow design — adding new execution steps or
-  defining a new workflow's structure from scratch** → switch to
-  **Workshop mode**. Workshop hardens an existing structure.
+  defining a new workflow's structure from scratch** → handle it here.
+  Workshop owns both greenfield design and hardening of an existing structure.
 - **Evaluation coverage — drafting or improving
   `evaluation/evaluation_plan.json`** → handle it in Workshop. Workshop
   owns eval design, validation, scoring, and hardening.

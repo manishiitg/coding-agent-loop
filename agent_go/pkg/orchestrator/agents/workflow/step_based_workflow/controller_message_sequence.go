@@ -71,6 +71,57 @@ type messageSequenceCallOptions struct {
 	Restart        bool
 }
 
+// messageSequenceClosingItems builds synthetic trailing items so a standalone
+// message_sequence honors its step-level learning_objective and
+// knowledgebase_contribution — the same post-step learnings/KB a regular step
+// runs (a message_sequence otherwise skips the learning/KB phase entirely). Each
+// is a user_message turn carrying the matching write access; the item machinery
+// already grants learnings/_global or notes/ from kind + write_access.
+func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceClosingItems(seq *MessageSequencePlanStep) []MessageSequenceItem {
+	cfg := seq.AgentConfigs
+	if cfg == nil {
+		return nil
+	}
+	var items []MessageSequenceItem
+	stepID := seq.GetID()
+	desc := seq.GetDescription()
+
+	// Learnings: same gate the regular-step path uses (learnings_access write +
+	// a non-empty learning_objective; BuildLearningsContributionTurn returns ""
+	// when the objective is empty, so this is double-gated).
+	if shouldDirectWriteLearnings(cfg, seq, hcpo.isEvaluationMode) {
+		if msg := BuildLearningsContributionTurn(stepID, desc, strings.TrimSpace(cfg.LearningObjective), false); msg != "" {
+			items = append(items, MessageSequenceItem{
+				ID:          fmt.Sprintf("%s-learnings-contribution", stepID),
+				Type:        "user_message",
+				Kind:        "learning",
+				Title:       "Learnings contribution",
+				Message:     msg,
+				WriteAccess: MessageSequenceWriteAccess{Learnings: true},
+			})
+		}
+	}
+
+	// Knowledgebase: write-capable access + a non-empty contribution instruction.
+	if contribution := strings.TrimSpace(kbContributionForPrompt(cfg)); contribution != "" && kbAccessAllowsWrite(cfg.KnowledgebaseAccess) {
+		var b strings.Builder
+		b.WriteString("## Knowledgebase Contribution (dedicated turn)\n\n")
+		b.WriteString("The sequence is complete. In this turn you have WRITE access to the knowledgebase. Fulfill this step's knowledgebase contribution, then stop.\n\n")
+		b.WriteString("**Contribution instruction:**\n")
+		b.WriteString(contribution)
+		b.WriteString("\n\nWrite durable, deduplicated notes under `knowledgebase/notes/`. If there is nothing new worth recording, say so explicitly and write nothing.")
+		items = append(items, MessageSequenceItem{
+			ID:          fmt.Sprintf("%s-kb-contribution", stepID),
+			Type:        "user_message",
+			Kind:        "knowledgebase",
+			Title:       "Knowledgebase contribution",
+			Message:     b.String(),
+			WriteAccess: MessageSequenceWriteAccess{Knowledgebase: true},
+		})
+	}
+	return items
+}
+
 func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 	ctx context.Context,
 	step PlanStepInterface,
@@ -150,7 +201,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 			Status:    "running",
 			CreatedAt: time.Now(),
 		}
-		plannedItems = sequenceStep.Items
+		// Run the configured queue, then append synthetic learnings/KB contribution
+		// turns so a standalone message_sequence honors its step-level
+		// learning_objective / knowledgebase_contribution — the same post-step
+		// learnings/KB a regular step runs. (Copy first so we never mutate the plan's
+		// Items slice.)
+		plannedItems = append(append([]MessageSequenceItem{}, sequenceStep.Items...), hcpo.messageSequenceClosingItems(sequenceStep)...)
 		// description = turn 0 (consistent across all sequence-like steps): the step
 		// description is the opening instruction and leads the first conversational
 		// turn — it is prepended to items[0] in executeMessageSequenceUserMessage.

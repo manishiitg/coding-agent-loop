@@ -33,13 +33,30 @@ aggregate:
 - Anything over ~25 MB per file
 - Anything that pushes a single git repo over ~500 MB total
 
-Never commit and never push to either backend:
+Secret handling depends on the **per-workflow git repo's visibility** —
+check it first and let it decide, do NOT skip the whole backup just because
+the workflow has a password:
 
-- Secrets — `secrets.json`, `workflow_secrets/`, `*.key`, `*.pem`,
-  `.env*`, `credentials*`, `*.token`. Use the workflow secret tools
-  instead (see `secret-management`).
-- Operator credentials, OAuth tokens, API keys in any form.
-- PII unless the destination is explicitly approved for it.
+```
+gh repo view <owner/repo> --json visibility -q .visibility   # PRIVATE | PUBLIC
+```
+
+- **Private GitHub repo** — you MAY include the workflow's OWN secrets
+  (`secrets.json`, `workflow_secrets/`) so the backup is self-contained and
+  the workflow restores to a working state. Stage them explicitly
+  (`git add secrets.json workflow_secrets/`). The trade-off is plaintext in a
+  private repo, so only do this once visibility is **confirmed PRIVATE**.
+- **Public repo, unknown visibility, or ANY large-file backend** — never
+  commit/push secrets (`secrets.json`, `workflow_secrets/`, `*.key`, `*.pem`,
+  `.env*`, `credentials*`, `*.token`). Back up everything else and keep
+  secrets out (use the workflow secret tools — see `secret-management`).
+- **Never, regardless of visibility** — operator / global (env-backed
+  `GLOBAL_SECRET_*`) credentials, OAuth tokens, or API keys that are not the
+  workflow's own; and PII unless the destination is explicitly approved.
+
+The presence of a secret file is never a reason to abandon the backup: at
+minimum commit everything non-secret; on a confirmed-private repo, include the
+workflow's own secrets too.
 
 ## Git workflow per per-workflow repo
 

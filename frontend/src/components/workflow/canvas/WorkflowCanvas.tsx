@@ -1050,7 +1050,9 @@ function ReadOnlyStepDetailPanel({
             <p className="mb-2 text-xs text-muted-foreground">Ordered items the step runs top to bottom.</p>
             <ol className="space-y-2">
               {sequenceItems.map((item, index) => {
-                const kind = item.type || 'user_message'
+                // Normalize so it reads consistently with the node card and the
+                // orchestrator's scripted messages ("message", not "user message").
+                const kind = (!item.type || item.type === 'user_message') ? 'message' : item.type
                 const subKind = item.kind && item.kind !== 'execution' ? item.kind : undefined
                 const chipClass =
                   kind === 'prevalidation' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'

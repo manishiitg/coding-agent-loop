@@ -1,6 +1,6 @@
-import { memo, type ReactElement } from 'react'
+import { memo, useEffect, type ReactElement } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, ListOrdered, MessageSquare, Code2, ShieldCheck, Repeat } from 'lucide-react'
+import { BookOpen, CheckCircle, Database, FileText, XCircle, Loader2, Plus, RefreshCw, ListOrdered, MessageSquare, Code2, ShieldCheck, Repeat } from 'lucide-react'
 import type { MessageSequenceNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import type { MessageSequenceItem } from '../../../utils/stepConfigMatching'
@@ -36,6 +36,16 @@ const statusIcons: Record<string, ReactElement | null> = {
   executing: <Loader2 className="w-4 h-4 text-violet-500 animate-spin" />,
   completed: <CheckCircle className="w-4 h-4 text-green-500" />,
   failed: <XCircle className="w-4 h-4 text-red-500" />
+}
+
+const metadataChipBase = 'inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-gray-300/80 bg-white/80 px-1.5 text-[10px] font-medium leading-none text-gray-700 dark:border-gray-600/80 dark:bg-gray-900/90 dark:text-gray-200'
+
+function textReferencesKnowledgebase(text: string): boolean {
+  return /\bknowledgebase[\\/]/i.test(text)
+}
+
+function textReferencesDatabase(text: string): boolean {
+  return /\$DB_PATH\b|\bdb[\\/]|db\.sqlite|\bsqlite3?\b/i.test(text)
 }
 
 // Per-item-type presentation: short label, badge colors, and icon. Falls back
@@ -82,7 +92,7 @@ function itemPrimaryText(item: MessageSequenceItem): string {
 }
 
 export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNodeProps) => {
-  const { title, description, items, status, stepIndex, changeType, isOrphan } = data
+  const { id, title, description, items, status, stepIndex, changeType, isOrphan, step } = data
 
   const borderColor = statusBorderColors[status] || statusBorderColors.pending
   const statusIcon = statusIcons[status] || null
@@ -96,6 +106,55 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
   const MAX_VISIBLE = 6
   const visibleItems = seqItems.slice(0, MAX_VISIBLE)
   const hiddenCount = seqItems.length - visibleItems.length
+  const writesDb = seqItems.some(item => item.write_access?.db === true)
+  const writesKnowledgebase = seqItems.some(item => item.write_access?.knowledgebase === true)
+  const writesLearnings = seqItems.some(item => item.write_access?.learnings === true)
+  const storeReferenceText = [
+    description,
+    ...seqItems.flatMap(item => [
+      item.title,
+      item.message,
+      item.script_path,
+      item.source,
+      ...(item.input_files || []),
+      ...(item.output_files || []),
+      ...(item.validation_schema?.files?.map(file => file.file_name) || []),
+      ...(item.prevalidation?.files?.map(file => file.file_name) || [])
+    ])
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0).join('\n')
+  const referencesDb = textReferencesDatabase(storeReferenceText)
+  const referencesKnowledgebase = textReferencesKnowledgebase(storeReferenceText)
+  const hasDbItem = writesDb || referencesDb || seqItems.some(item => item.kind === 'db')
+  const hasKnowledgebaseItem = writesKnowledgebase || referencesKnowledgebase || seqItems.some(item => item.kind === 'knowledgebase')
+  const dbBadgeLabel = writesDb ? 'DB write' : referencesDb ? 'Uses DB' : 'DB'
+  const knowledgebaseBadgeLabel = writesKnowledgebase ? 'KB write' : referencesKnowledgebase ? 'Uses KB' : 'KB'
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    if (!hasDbItem && !hasKnowledgebaseItem && !writesLearnings) return
+
+    console.log('[WorkflowMessageSequenceNode] store metadata', {
+      nodeId: id,
+      stepId: step?.id,
+      title: displayTitle,
+      writes_db: writesDb,
+      writes_knowledgebase: writesKnowledgebase,
+      writes_learnings: writesLearnings,
+      references_database: referencesDb,
+      references_knowledgebase: referencesKnowledgebase
+    })
+  }, [
+    displayTitle,
+    hasDbItem,
+    hasKnowledgebaseItem,
+    id,
+    referencesDb,
+    referencesKnowledgebase,
+    step?.id,
+    writesDb,
+    writesKnowledgebase,
+    writesLearnings
+  ])
 
   return (
     <div
@@ -139,6 +198,37 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
         {description && (
           <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
             {description}
+          </div>
+        )}
+        {(hasDbItem || hasKnowledgebaseItem || writesLearnings) && (
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+            {hasDbItem && (
+              <span
+                className={metadataChipBase}
+                title={writesDb ? 'Message sequence writes to DB' : referencesDb ? 'Message sequence references DB paths or SQLite' : 'Message sequence has a DB item'}
+              >
+                <Database className="h-3 w-3" />
+                <span>{dbBadgeLabel}</span>
+              </span>
+            )}
+            {hasKnowledgebaseItem && (
+              <span
+                className={metadataChipBase}
+                title={writesKnowledgebase ? 'Message sequence writes to KB' : referencesKnowledgebase ? 'Message sequence references knowledgebase paths' : 'Message sequence has a KB item'}
+              >
+                <FileText className="h-3 w-3" />
+                <span>{knowledgebaseBadgeLabel}</span>
+              </span>
+            )}
+            {writesLearnings && (
+              <span
+                className={metadataChipBase}
+                title="Message sequence writes to learnings"
+              >
+                <BookOpen className="h-3 w-3" />
+                <span>Learning write</span>
+              </span>
+            )}
           </div>
         )}
       </div>

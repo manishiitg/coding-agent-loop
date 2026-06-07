@@ -58,6 +58,7 @@ export interface AgentConfigs {
   global_skill_objective?: string;            // Objective for the global skill — what domain knowledge should it capture
   knowledgebase_access?: 'read' | 'write' | 'read-write' | 'none';
   knowledgebase_contribution?: string;
+  db_access?: 'read' | 'write' | 'read-write' | 'none';
   description_reviewed?: boolean;
   review_notes?: string;
   declared_execution_mode?: string;           // "scripted" | "agentic" | "tool_calling" — authoring hint; resolution in backend

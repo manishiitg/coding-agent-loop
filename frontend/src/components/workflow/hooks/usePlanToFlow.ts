@@ -206,6 +206,7 @@ const NODE_DIMENSIONS = {
   step: { width: 280, height: 120 },
   conditional: { width: 240, height: 100 },
   routing: { width: 280, height: 200 },
+  message_sequence: { width: 320, height: 240 },
   todo_task: { width: 300, height: 120 },
   human_input: { width: 260, height: 120 },
   loop: { width: 300, height: 140 },
@@ -220,6 +221,12 @@ const SUB_AGENT_LAYOUT = {
   cellGap: 32,
   cellWidth: Math.max(NODE_DIMENSIONS.step.width, NODE_DIMENSIONS.todo_task.width),
   cellHeight: NODE_DIMENSIONS.step.height
+}
+
+const ROUTING_TREE_LAYOUT = {
+  parentGap: 96,
+  laneGap: 96,
+  minLaneWidth: NODE_DIMENSIONS.routing.width
 }
 
 function getSubAgentGridMetrics(count: number, direction: 'LR' | 'TB') {
@@ -243,6 +250,14 @@ function getSubAgentGridMetrics(count: number, direction: 'LR' | 'TB') {
   }
 }
 
+function textReferencesKnowledgebase(text: string): boolean {
+  return /\bknowledgebase[\\/]/i.test(text)
+}
+
+function textReferencesDatabase(text: string): boolean {
+  return /\$DB_PATH\b|\bdb[\\/]|db\.sqlite|\bsqlite3?\b/i.test(text)
+}
+
 /**
  * Estimate node height based on content
  * Simplified version - nodes no longer show description, success criteria, or validation schema
@@ -263,20 +278,97 @@ function estimateNodeHeight(node: WorkflowNode): number {
   // Content height estimation - only for context files
   let contentHeight = 0
 
-  // Context files (from step.agent_configs)
+  // Step metadata and context files
   if ('step' in data && data.step && typeof data.step === 'object') {
     const step = data.step as PlanStep
 
-    // Context files (inputs and outputs)
+    const learningConfig = step.agent_configs
+    const learningObjective = typeof learningConfig?.learning_objective === 'string'
+      ? learningConfig.learning_objective.trim()
+      : ''
+    const knowledgebaseContribution = typeof learningConfig?.knowledgebase_contribution === 'string'
+      ? learningConfig.knowledgebase_contribution.trim()
+      : ''
+    const learningAccess = learningConfig?.learnings_access
+    const knowledgebaseAccess = learningConfig?.knowledgebase_access
+    const dbAccess = learningConfig?.db_access
     const contextInputs = Array.isArray(step.context_dependencies) ? step.context_dependencies : []
     const contextOutput = step.context_output
     const contextOutputs = Array.isArray(contextOutput)
       ? contextOutput
       : (contextOutput ? [contextOutput] : [])
+    const validationFiles = step.validation_schema?.files?.map(file => file.file_name) || []
+    const referenceText = [
+      step.description,
+      step.success_criteria,
+      ...contextInputs,
+      ...contextOutputs,
+      ...validationFiles
+    ].filter((value): value is string => typeof value === 'string' && value.length > 0).join('\n')
+    const referencesKnowledgebase = textReferencesKnowledgebase(referenceText)
+    const referencesDatabase = textReferencesDatabase(referenceText)
+    const hasLearningMetadata = (
+      learningObjective.length > 0 ||
+      learningConfig?.lock_learnings === true ||
+      learningAccess === 'read' ||
+      learningAccess === 'read-write' ||
+      learningAccess === 'none'
+    )
+    const hasKnowledgebaseMetadata = (
+      knowledgebaseContribution.length > 0 ||
+      knowledgebaseAccess === 'read' ||
+      knowledgebaseAccess === 'write' ||
+      knowledgebaseAccess === 'read-write' ||
+      knowledgebaseAccess === 'none' ||
+      referencesKnowledgebase
+    )
+    const hasDbMetadata = dbAccess === 'read' || dbAccess === 'write' || dbAccess === 'read-write' || dbAccess === 'none' || referencesDatabase
+    const metadataRowCount = [hasLearningMetadata, hasKnowledgebaseMetadata, hasDbMetadata].filter(Boolean).length
+    if (metadataRowCount > 0) {
+      contentHeight += (hasLearningMetadata ? 44 : 0) + (hasKnowledgebaseMetadata ? 44 : 0) + (hasDbMetadata ? 28 : 0) +
+        Math.max(0, metadataRowCount - 1) * 6 + 8
+      if (learningObjective.length > 120) contentHeight += 10
+      if (knowledgebaseContribution.length > 120) contentHeight += 10
+    }
+
     if (contextInputs.length > 0 || contextOutputs.length > 0) {
       const totalFiles = contextInputs.length + contextOutputs.length
       contentHeight += 20 + (totalFiles * 20) + 8 // Base + per file + spacing
     }
+  }
+
+  // For message_sequence nodes, add height for title, badges, and item rows
+  if (node.type === 'message_sequence') {
+    const messageData = data as MessageSequenceNodeData
+    const seqItems = messageData.items || []
+    const visibleCount = Math.min(seqItems.length, 6)
+    const hiddenCount = seqItems.length - visibleCount
+    const hasStoreBadges = seqItems.some(item => {
+      const itemReferenceText = [
+        item.title,
+        item.message,
+        item.script_path,
+        item.source,
+        ...(item.input_files || []),
+        ...(item.output_files || [])
+      ].filter((value): value is string => typeof value === 'string' && value.length > 0).join('\n')
+
+      return (
+        item.write_access?.db === true ||
+        item.write_access?.knowledgebase === true ||
+        item.write_access?.learnings === true ||
+        item.kind === 'db' ||
+        item.kind === 'knowledgebase' ||
+        textReferencesDatabase(itemReferenceText) ||
+        textReferencesKnowledgebase(itemReferenceText)
+      )
+    })
+
+    contentHeight += 35
+    if (messageData.description) contentHeight += 20
+    if (hasStoreBadges) contentHeight += 24
+    contentHeight += 20 + Math.max(visibleCount, 1) * 24
+    if (hiddenCount > 0) contentHeight += 18
   }
 
   // For todo_task nodes, add height for predefined routes and generic agent indicator
@@ -415,9 +507,14 @@ function getRoutingChildren(nodeId: string, nodes: WorkflowNode[], edges: Workfl
         }
       })
 
+      const seenTargets = new Set<string>()
       return step.routes
         .map(route => stepIdToNodeId.get(route.next_step_id))
-        .filter((targetId): targetId is string => Boolean(targetId))
+        .filter((targetId): targetId is string => {
+          if (!targetId || seenTargets.has(targetId)) return false
+          seenTargets.add(targetId)
+          return true
+        })
     }
   }
 
@@ -504,10 +601,12 @@ function applyVerticalRoutingTreeLayout(nodes: WorkflowNode[], edges: WorkflowEd
   const setNodePosition = (nodeId: string, x: number, y: number) => {
     const nodeIndex = nodeIndexById.get(nodeId)
     if (nodeIndex === undefined) return
-    positionedNodes[nodeIndex] = {
+    const nextNode = {
       ...positionedNodes[nodeIndex],
       position: { x, y }
     }
+    positionedNodes[nodeIndex] = nextNode
+    nodeById.set(nodeId, nextNode)
   }
 
   const isSimpleRoutingTreeRoot = (nodeId: string, visited: Set<string> = new Set()): boolean => {
@@ -584,6 +683,175 @@ function applyVerticalRoutingTreeLayout(nodes: WorkflowNode[], edges: WorkflowEd
       const nodeDimensions = getNodeLayoutDimensions(node)
       const left = node.position.x + (nodeDimensions.width / 2) - (footprint.width / 2)
       placeBranch(node.id, left, node.position.y)
+    })
+
+  const syncNodeById = (nodeId: string) => {
+    const nodeIndex = nodeIndexById.get(nodeId)
+    if (nodeIndex === undefined) return
+    nodeById.set(nodeId, positionedNodes[nodeIndex])
+  }
+
+  const getControlOutgoingEdges = (nodeId: string): WorkflowEdge[] => (
+    (outgoingEdgesBySource.get(nodeId) || []).filter(edge => (
+      edge.target !== 'end' &&
+      edge.target !== 'start' &&
+      edge.target !== 'variables' &&
+      !edge.id.startsWith('dep-') &&
+      nodeById.has(edge.target)
+    ))
+  )
+
+  const collectReachableControlNodes = (startId: string): Set<string> => {
+    const reachable = new Set<string>()
+    const stack = [startId]
+
+    while (stack.length > 0) {
+      const nodeId = stack.pop()
+      if (!nodeId || reachable.has(nodeId) || !nodeById.has(nodeId)) continue
+
+      reachable.add(nodeId)
+      getControlOutgoingEdges(nodeId).forEach(edge => {
+        if (!reachable.has(edge.target)) {
+          stack.push(edge.target)
+        }
+      })
+    }
+
+    return reachable
+  }
+
+  const getBoundsForIds = (nodeIds: string[]) => {
+    if (nodeIds.length === 0) return null
+
+    let left = Number.POSITIVE_INFINITY
+    let top = Number.POSITIVE_INFINITY
+    let right = Number.NEGATIVE_INFINITY
+    let bottom = Number.NEGATIVE_INFINITY
+
+    nodeIds.forEach(nodeId => {
+      const node = nodeById.get(nodeId)
+      if (!node) return
+      const dimensions = getNodeLayoutDimensions(node)
+      left = Math.min(left, node.position.x)
+      top = Math.min(top, node.position.y)
+      right = Math.max(right, node.position.x + dimensions.width)
+      bottom = Math.max(bottom, node.position.y + dimensions.height)
+    })
+
+    if (!Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(right) || !Number.isFinite(bottom)) {
+      return null
+    }
+
+    return {
+      left,
+      top,
+      right,
+      bottom,
+      width: right - left,
+      height: bottom - top
+    }
+  }
+
+  const shiftNodes = (nodeIds: string[], dx: number, dy: number) => {
+    if (dx === 0 && dy === 0) return
+
+    nodeIds.forEach(nodeId => {
+      const nodeIndex = nodeIndexById.get(nodeId)
+      if (nodeIndex === undefined) return
+
+      positionedNodes[nodeIndex] = {
+        ...positionedNodes[nodeIndex],
+        position: {
+          x: positionedNodes[nodeIndex].position.x + dx,
+          y: positionedNodes[nodeIndex].position.y + dy
+        }
+      }
+      syncNodeById(nodeId)
+    })
+  }
+
+  positionedNodes
+    .filter(node => node.type === 'routing')
+    .sort((a, b) => a.position.y - b.position.y)
+    .forEach(routingNode => {
+      const currentRoutingNode = nodeById.get(routingNode.id) || routingNode
+      const routeChildIds = getRoutingChildren(currentRoutingNode.id, positionedNodes, edges)
+        .filter(childId => nodeById.has(childId))
+      if (routeChildIds.length <= 1) return
+
+      const reachableByRoute = routeChildIds.map(childId => ({
+        childId,
+        nodeIds: collectReachableControlNodes(childId)
+      }))
+      const routeCountByNode = new Map<string, number>()
+
+      reachableByRoute.forEach(route => {
+        route.nodeIds.forEach(nodeId => {
+          routeCountByNode.set(nodeId, (routeCountByNode.get(nodeId) || 0) + 1)
+        })
+      })
+
+      const lanes = reachableByRoute
+        .map(route => {
+          const privateNodeIds = Array.from(route.nodeIds)
+            .filter(nodeId => routeCountByNode.get(nodeId) === 1 && nodeId !== currentRoutingNode.id)
+            .sort((a, b) => {
+              const nodeA = nodeById.get(a)
+              const nodeB = nodeById.get(b)
+              if (!nodeA || !nodeB) return 0
+              if (Math.abs(nodeA.position.y - nodeB.position.y) > 8) {
+                return nodeA.position.y - nodeB.position.y
+              }
+              return nodeA.position.x - nodeB.position.x
+            })
+          const bounds = getBoundsForIds(privateNodeIds)
+
+          if (!bounds) return null
+
+          return {
+            childId: route.childId,
+            nodeIds: privateNodeIds,
+            bounds,
+            laneWidth: Math.max(bounds.width, ROUTING_TREE_LAYOUT.minLaneWidth)
+          }
+        })
+        .filter((lane): lane is NonNullable<typeof lane> => Boolean(lane))
+
+      if (lanes.length <= 1) return
+
+      const routingDimensions = getNodeLayoutDimensions(currentRoutingNode)
+      const routingCenterX = currentRoutingNode.position.x + routingDimensions.width / 2
+      const routingBottom = currentRoutingNode.position.y + routingDimensions.height
+      const totalLaneWidth = lanes.reduce((sum, lane) => sum + lane.laneWidth, 0) +
+        Math.max(0, lanes.length - 1) * ROUTING_TREE_LAYOUT.laneGap
+      let laneLeft = routingCenterX - totalLaneWidth / 2
+      const childTop = routingBottom + ROUTING_TREE_LAYOUT.parentGap
+
+      if (import.meta.env.DEV) {
+        console.log('[WorkflowRouteTreeLayout] routing lanes', {
+          routingNodeId: currentRoutingNode.id,
+          routeChildIds,
+          childTop,
+          totalLaneWidth,
+          lanes: lanes.map(lane => ({
+            childId: lane.childId,
+            nodeIds: lane.nodeIds,
+            laneWidth: lane.laneWidth,
+            bounds: lane.bounds
+          }))
+        })
+      }
+
+      lanes.forEach(lane => {
+        const childNode = nodeById.get(lane.childId)
+        if (!childNode) return
+
+        const targetLeft = laneLeft + (lane.laneWidth - lane.bounds.width) / 2
+        const dx = targetLeft - lane.bounds.left
+        const dy = childTop - childNode.position.y
+        shiftNodes(lane.nodeIds, dx, dy)
+        laneLeft += lane.laneWidth + ROUTING_TREE_LAYOUT.laneGap
+      })
     })
 
   return positionedNodes
@@ -1840,7 +2108,6 @@ function processSteps(
                 strokeWidth: isSelectedRoute ? 2.5 : 1.25,
                 opacity: isSelectedRoute ? 1 : 0.4
               },
-              zIndex: 2,
               animated: false
             })
           } else if (route.next_step_id === 'end') {
@@ -1868,7 +2135,6 @@ function processSteps(
                 strokeWidth: isSelectedRoute ? 2.5 : 1.25,
                 opacity: isSelectedRoute ? 1 : 0.4
               },
-              zIndex: 2,
               animated: false
             })
           }

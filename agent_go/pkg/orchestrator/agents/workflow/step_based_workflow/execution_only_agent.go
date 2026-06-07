@@ -134,6 +134,8 @@ You are running as an **evaluation agent** — your job is to **verify and asses
 
 If the step COMPLETED but you hit **non-fatal concerns** worth flagging — a learnings or knowledgebase write that didn't go through, a partial/failed read from db/learnings/kb, stale or conflicting data, or anything the next step or operator should know — add a CONCERNS: line just before the STATUS line, listing them briefly in your own words. The step still counts as completed; this surfaces the concern in the completion notification instead of it being lost.
 
+On the lines BEFORE the STATUS line, give a short summary (1-3 sentences) of what you actually did and produced — the key outcome and any notable findings, not a play-by-play. This summary is what the orchestrator sees in the completion notification, so a bare "STATUS: COMPLETED" with nothing else is not enough.
+
 End your response with exactly one of:
 - STATUS: COMPLETED — if '{{.StepContextOutput}}' was created successfully.
 - STATUS: FAILED — if the step cannot be completed. Explain the reason.`)

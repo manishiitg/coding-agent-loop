@@ -6,6 +6,8 @@ MIGRATION (one-time): Check whether builder/review.md exists. If it does, read i
 
 {{if .RunFolder}}Use the selected run folder "{{.RunFolder}}" as the primary evidence set.{{else}}If a meaningful prior run exists, use it as evidence; otherwise find the latest meaningful run first.{{end}}
 
+Anchor every judgment to the objective FIRST: read `soul/soul.md` (the workflow's goal + success criteria) and `planning/metrics.json` (+ recent `db/metrics_history.jsonl` for trend) — especially the `cost_per_run`/`total.cost_usd` metrics. A cost cut is only "safe" if it does NOT threaten a primary success or quality metric; do not label a reduction safe without checking it against these.
+
 Assess four things separately:
 1. Which steps, models, or phases are consuming the most cost?
 2. Which spend is necessary for success versus waste from retries, too many handoffs, overly expensive models, or unnecessary evaluation breadth?

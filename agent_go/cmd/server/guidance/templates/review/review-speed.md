@@ -6,6 +6,8 @@ MIGRATION (one-time): Check whether builder/review.md exists. If it does, read i
 
 {{if .RunFolder}}Use the selected run folder "{{.RunFolder}}" as the primary evidence set.{{else}}If a meaningful prior run exists, use it as evidence; otherwise find the latest meaningful run first.{{end}}
 
+Anchor every judgment to the objective FIRST: read `soul/soul.md` (the workflow's goal + success criteria) and `planning/metrics.json` (+ recent `db/metrics_history.jsonl` for trend) — especially the `run_duration_seconds`/`total.duration_seconds` metrics. A speedup is only "safe" if it does NOT threaten a primary success or quality metric; do not label a change safe without checking it against these.
+
 Assess four things separately:
 1. What is the overall workflow wall-clock, and what is the biggest bottleneck class: LLM latency, tool latency, orchestration overhead, or plan shape?
 2. Which groups and steps are consuming the most time, with the split between total time, LLM time, tool time, and unexplained overhead?

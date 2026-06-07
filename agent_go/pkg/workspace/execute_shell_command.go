@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
@@ -80,6 +83,133 @@ func redactShellCommandForLog(command string) string {
 		redacted = replacement.pattern.ReplaceAllString(redacted, replacement.replacement)
 	}
 	return redacted
+}
+
+// gitPushRe matches a `git ... push` invocation in the executable part of a
+// command (heredoc/quoted data is stripped before this runs).
+var gitPushRe = regexp.MustCompile(`(?m)\bgit\b[^\n;&|]*\bpush\b`)
+
+// isGitPushCommand reports whether cmd runs `git push` as an executable (not as
+// quoted/heredoc data — e.g. echo "git push" or a script that merely mentions it).
+func isGitPushCommand(cmd string) bool {
+	return gitPushRe.MatchString(stripShellDataRegions(cmd))
+}
+
+// isWorkflowSecretPath identifies the workflow's own secret files. Kept in sync
+// with backup-strategy.md: secrets.json, workflow_secrets/, *.key, *.pem,
+// .env*, credentials*, *.token.
+func isWorkflowSecretPath(p string) bool {
+	p = strings.TrimSpace(strings.Trim(p, `"`))
+	if p == "" {
+		return false
+	}
+	slash := filepath.ToSlash(p)
+	base := filepath.Base(slash)
+	switch {
+	case base == "secrets.json":
+		return true
+	case slash == "workflow_secrets" || strings.HasPrefix(slash, "workflow_secrets/") || strings.Contains(slash, "/workflow_secrets/"):
+		return true
+	case strings.HasSuffix(base, ".key"), strings.HasSuffix(base, ".pem"), strings.HasSuffix(base, ".token"):
+		return true
+	case base == ".env" || strings.HasPrefix(base, ".env."):
+		return true
+	case base == "credentials" || strings.HasPrefix(base, "credentials.") || strings.HasPrefix(base, "credentials_"):
+		return true
+	}
+	return false
+}
+
+// parseGitHubOwnerRepo extracts owner/repo from a GitHub remote URL (https, ssh,
+// or scp form). ok is false for non-GitHub remotes.
+func parseGitHubOwnerRepo(remoteURL string) (owner, repo string, ok bool) {
+	m := regexp.MustCompile(`github\.com[/:]+([^/]+)/(.+?)(?:\.git)?/?\s*$`).FindStringSubmatch(strings.TrimSpace(remoteURL))
+	if m == nil {
+		return "", "", false
+	}
+	return m[1], m[2], m[1] != "" && m[2] != ""
+}
+
+// githubRepoIsPublic returns true ONLY when the repo is positively confirmed
+// public via the unauthenticated GitHub API (200 + "private":false). A private
+// repo returns 404 unauthenticated; any error/ambiguity returns false. This is
+// deliberately "confirm public, else allow" so backups are never blocked on
+// uncertainty — only an unmistakable public repo blocks a secret push.
+func githubRepoIsPublic(ctx context.Context, owner, repo string) bool {
+	reqCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, repo)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false // 404 (private/missing) or other → not confirmed public → allow
+	}
+	var body struct {
+		Private *bool `json:"private"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body) != nil || body.Private == nil {
+		return false
+	}
+	return !*body.Private
+}
+
+// gitOutputInDir runs a read-only git command in workingDir via the same bridge
+// and returns trimmed stdout, or "" on any failure (callers fail open).
+func (c *Client) gitOutputInDir(ctx context.Context, workingDir, command string) string {
+	res, err := c.ExecuteShellCommand(ctx, ExecuteShellCommandParams{Command: command, WorkingDirectory: workingDir})
+	if err != nil || res.ExitCode != 0 {
+		return ""
+	}
+	return strings.TrimSpace(res.Stdout)
+}
+
+// blockSecretPushToPublicRepo refuses a `git push` that would carry the
+// workflow's own secret files to a positively-confirmed public GitHub repo.
+// Everything else — no secrets in the push, non-GitHub remote, or a private /
+// indeterminate repo — is allowed, so full backups (incl. secrets to a private
+// repo) are never blocked. Returns an error only to block.
+func (c *Client) blockSecretPushToPublicRepo(ctx context.Context, params ExecuteShellCommandParams) error {
+	if !isGitPushCommand(params.Command) {
+		return nil
+	}
+	dir := params.WorkingDirectory
+	// Files this push would carry: unpushed commits if an upstream exists, else
+	// the whole tracked set (first push).
+	listed := c.gitOutputInDir(ctx, dir, "git diff --name-only @{upstream}..HEAD 2>/dev/null || git ls-files")
+	if listed == "" {
+		return nil
+	}
+	var secrets []string
+	for _, f := range strings.Split(listed, "\n") {
+		if isWorkflowSecretPath(f) {
+			secrets = append(secrets, strings.TrimSpace(f))
+		}
+	}
+	if len(secrets) == 0 {
+		return nil // nothing sensitive in the push
+	}
+	owner, repo, ok := parseGitHubOwnerRepo(c.gitOutputInDir(ctx, dir, "git remote get-url origin 2>/dev/null"))
+	if !ok {
+		return nil // non-GitHub remote → can't be a public-GitHub leak → allow
+	}
+	if !githubRepoIsPublic(ctx, owner, repo) {
+		return nil // private or not-confirmed-public → allow full backup
+	}
+	return fmt.Errorf(
+		"access denied: refusing to push workflow secret file(s) to the PUBLIC GitHub repo %s/%s: %s. "+
+			"Secrets may only be backed up to a PRIVATE repo. Either make the repo private (gh repo edit %s/%s --visibility private), "+
+			"unstage the secret files (git rm --cached <file>), or use the workflow secret tools / a large-file backend. "+
+			"Non-secret content can still be pushed.",
+		owner, repo, strings.Join(secrets, ", "), owner, repo,
+	)
 }
 
 // ExecuteShellCommand executes a shell command using the REST API: POST /api/execute
@@ -246,6 +376,14 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			log.Printf("[FOLDER_GUARD] Blocked shell command with absolute host path: %s", redactedCommandForLog)
 			return ShellCommandResult{}, err
 		}
+	}
+
+	// Hard guard: never push the workflow's own secret files to a confirmed
+	// public GitHub repo. Private / unknown / non-GitHub remotes are allowed so
+	// full backups (incl. secrets to a private repo) are never blocked.
+	if err := c.blockSecretPushToPublicRepo(ctx, params); err != nil {
+		log.Printf("[SECRET_PUSH_GUARD] Blocked secret push to public repo: %s", redactedCommandForLog)
+		return ShellCommandResult{}, err
 	}
 
 	// Inject per-session env vars (e.g. DB_PATH, STEP_OUTPUT_DIR set by the

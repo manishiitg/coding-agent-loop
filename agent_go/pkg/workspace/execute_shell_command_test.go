@@ -329,3 +329,59 @@ func TestExecuteShellCommand_InjectsSessionEnv(t *testing.T) {
 		t.Fatalf("session DB_PATH not injected: %q", got.ExtraEnv["DB_PATH"])
 	}
 }
+
+func TestIsGitPushCommand(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want bool
+	}{
+		{"git push", true},
+		{"git push origin main", true},
+		{"cd repo && git pull --no-edit && git push", true},
+		{`git -C /x push`, true},
+		{"git status", false},
+		{"git pull", false},
+		{`echo "git push" >> notes.txt`, false},        // quoted data, not executable
+		{"python3 -c 'print(\"git push\")'", false},     // inside quotes
+		{"git commit -m 'do git push later'", false},     // mentioned in message
+	}
+	for _, c := range cases {
+		if got := isGitPushCommand(c.cmd); got != c.want {
+			t.Errorf("isGitPushCommand(%q) = %v, want %v", c.cmd, got, c.want)
+		}
+	}
+}
+
+func TestIsWorkflowSecretPath(t *testing.T) {
+	secret := []string{"secrets.json", "db/secrets.json", "workflow_secrets/x", "workflow_secrets/a/b.txt",
+		"a/workflow_secrets/c", "key.pem", "id_rsa.key", "gh.token", ".env", ".env.production", "credentials", "credentials.json"}
+	notSecret := []string{"plan.json", "planning/plan.json", "knowledgebase/notes/x.md", "report.html",
+		"keyboard.md", "credentialspolicy.md", "db/db.sqlite", "env.go"}
+	for _, p := range secret {
+		if !isWorkflowSecretPath(p) {
+			t.Errorf("isWorkflowSecretPath(%q) = false, want true", p)
+		}
+	}
+	for _, p := range notSecret {
+		if isWorkflowSecretPath(p) {
+			t.Errorf("isWorkflowSecretPath(%q) = true, want false", p)
+		}
+	}
+}
+
+func TestParseGitHubOwnerRepo(t *testing.T) {
+	cases := []struct{ url, owner, repo string; ok bool }{
+		{"https://github.com/manishiitg/mcp-agent-builder-go.git", "manishiitg", "mcp-agent-builder-go", true},
+		{"git@github.com:owner/repo.git", "owner", "repo", true},
+		{"ssh://git@github.com/owner/repo", "owner", "repo", true},
+		{"https://github.com/owner/repo", "owner", "repo", true},
+		{"https://gitlab.com/owner/repo.git", "", "", false},
+		{"https://example.com/x/y", "", "", false},
+	}
+	for _, c := range cases {
+		o, r, ok := parseGitHubOwnerRepo(c.url)
+		if ok != c.ok || o != c.owner || r != c.repo {
+			t.Errorf("parseGitHubOwnerRepo(%q) = (%q,%q,%v), want (%q,%q,%v)", c.url, o, r, ok, c.owner, c.repo, c.ok)
+		}
+	}
+}

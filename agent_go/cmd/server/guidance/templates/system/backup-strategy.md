@@ -58,6 +58,11 @@ The presence of a secret file is never a reason to abandon the backup: at
 minimum commit everything non-secret; on a confirmed-private repo, include the
 workflow's own secrets too.
 
+This is **enforced**: a `git push` carrying secret files to a confirmed-public
+GitHub repo is hard-blocked by the shell guard (private / unknown / non-GitHub
+remotes are allowed). So pushing secrets to a private repo just works; pushing
+them to a public one is refused — make the repo private or keep the secrets out.
+
 ## Git workflow per per-workflow repo
 
 Assume the workflow folder is itself a git working tree with a single

@@ -22,6 +22,11 @@ export interface ReportDataApi {
   // window.report.getHtml(path). The iframe ships a default .report-markdown prose
   // style (theme-aware, overridable).
   getHtml: (path: string) => Promise<string | null>
+  // renderMarkdown renders a markdown STRING (not a file) to the same themed HTML
+  // (<div class="report-markdown">…</div>, app markdown engine + GFM). Synchronous.
+  // Use for markdown held in data — a db/sql value, knowledgebase field, inline
+  // text: el.innerHTML = window.report.renderMarkdown(row.notes_md).
+  renderMarkdown: (md: string) => string
   // File access (parity with file widgets): fileUrl returns an authenticated
   // blob URL usable in <img src> / <a href> / <iframe src> for images, PDFs,
   // etc.; openFile opens the file in the in-report preview modal. Both scoped to

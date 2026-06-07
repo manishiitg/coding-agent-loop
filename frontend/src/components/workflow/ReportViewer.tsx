@@ -953,17 +953,26 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     // file widget: react-markdown + GFM), wrapped so an HTML report can inject a
     // rendered .md inline and the iframe's default .report-markdown prose style
     // (or the report's own) can target it.
-    const getHtml = async (path: string): Promise<string | null> => {
-      const text = await getText(path)
-      if (text == null) return null
+    // renderMarkdown renders a markdown STRING to a themed HTML string (the app's
+    // react-markdown + GFM engine), so an HTML report can render markdown it already
+    // holds — a db/sql value, a knowledgebase field, inline text — without a file:
+    //   cell.innerHTML = window.report.renderMarkdown(row.notes_md)
+    // Synchronous (no fetch). getHtml is the file-path variant built on top of it.
+    const renderMarkdown = (md: string): string => {
+      if (!md) return ''
       try {
         const body = renderToStaticMarkup(
-          createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, text),
+          createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, md),
         )
         return `<div class="report-markdown">${body}</div>`
       } catch {
-        return null
+        return ''
       }
+    }
+    const getHtml = async (path: string): Promise<string | null> => {
+      const text = await getText(path)
+      if (text == null) return null
+      return renderMarkdown(text) || null
     }
     const fileUrl = async (path: string): Promise<string | null> => {
       const n = allowed(path)
@@ -986,7 +995,7 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       if (!n) return
       useReportFilePreviewStore.getState().show({ path: `${workspacePath}/${n}` })
     }
-    return { workspacePath, query, get, getText, getHtml, fileUrl, openFile }
+    return { workspacePath, query, get, getText, getHtml, renderMarkdown, fileUrl, openFile }
   }, [workspacePath])
 
   const reportRuntime = useMemo(

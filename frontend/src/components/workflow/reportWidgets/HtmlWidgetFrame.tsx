@@ -212,6 +212,7 @@ export function HtmlReportFrame({
         get: dataApi.get,
         getText: dataApi.getText,
         getHtml: dataApi.getHtml,
+        renderMarkdown: dataApi.renderMarkdown,
         fileUrl: dataApi.fileUrl,
         openFile: dataApi.openFile,
         theme: 'light',

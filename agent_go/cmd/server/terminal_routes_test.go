@@ -135,38 +135,6 @@ func TestTerminalCollapseBlankRunsKeepsCodexSeparatorTail(t *testing.T) {
 	}
 }
 
-func TestWithTerminalRowsExtractsCompletedDirectCodexTmuxAnswer(t *testing.T) {
-	snapshot := terminals.Snapshot{
-		StepTransport: "tmux",
-		TmuxSession:   "mlp-codex-main",
-		Active:        false,
-		Status:        terminals.Status{ProviderLabel: "Codex CLI", ToolSummary: "execute_shell_command"},
-		Content: strings.Join([]string{
-			"╭─────────────────────────────────────────────────────────╮",
-			"│ >_ OpenAI Codex                                        │",
-			"╰─────────────────────────────────────────────────────────╯",
-			"Called api-bridge.execute_shell_command({\"command\":\"pwd\"})",
-			"└ {\"stdout\":\"ok\"}",
-			"──────────────────────────────────────────────────────────",
-			"Final answer:",
-			"- keep markdown",
-			"──────────────────────────────────────────────────────────",
-			"›",
-		}, "\n"),
-	}
-
-	got := withTerminalRows(snapshot)
-	if len(got.Rows) != 1 {
-		t.Fatalf("rows len = %d, want 1: %#v", len(got.Rows), got.Rows)
-	}
-	if got.Rows[0].Kind != "asst" || got.Rows[0].Text != "Final answer:\n- keep markdown" {
-		t.Fatalf("row = %#v", got.Rows[0])
-	}
-	if got.Status.ToolSummary != "execute_shell_command" {
-		t.Fatalf("tool summary should be preserved, got %q", got.Status.ToolSummary)
-	}
-}
-
 func TestTerminalCollapseBlankRunsKeepsPromptBoxTrailer(t *testing.T) {
 	input := strings.Join([]string{
 		"real terminal output",

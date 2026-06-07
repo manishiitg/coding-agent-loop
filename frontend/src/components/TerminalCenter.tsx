@@ -2386,8 +2386,6 @@ const StructuredTerminalView: React.FC<StructuredTerminalViewProps> = ({ content
 
 function isSyntheticTerminal(terminal: TerminalSnapshot): boolean {
   const transport = (terminal.step_transport || '').toLowerCase()
-  const hasStructuredRows = Array.isArray(terminal.rows) && terminal.rows.length > 0
-  if (hasStructuredRows && !terminal.active) return true
   if (transport === 'tmux') return false
   if (transport === 'api' || transport === 'structured' || transport === 'structured_cli' || transport === 'non_tmux') return true
   if (terminal.tmux_session) return false

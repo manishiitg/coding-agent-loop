@@ -364,7 +364,6 @@ func (s *Store) RefreshContent(terminalID, content string) (Snapshot, bool) {
 	}
 	previousStatus := snapshot.Status
 	snapshot.Status = DeriveStatus(content, nil)
-	snapshot.Status = s.statusWithStoredToolLinesLocked(terminalID, snapshot.Status)
 	preserveEphemeralStatusFields(&snapshot.Status, previousStatus)
 	if _, forced := s.forcedInactive[terminalID]; !forced {
 		if snapshot.Active {
@@ -527,11 +526,7 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 		stringValue(metadata, "cursor_interactive_session"),
 		current.TmuxSession,
 	)
-	if terminalShouldInjectToolLines(current) {
-		content = s.contentWithToolLinesLocked(terminalID, content)
-	} else {
-		content = stripTerminalToolLines(content)
-	}
+	content = s.contentWithToolLinesLocked(terminalID, content)
 	contentChanged := !exists || current.Content != content
 	current.Content = content
 	if rows := terminalRowsFromMetadata(metadata); len(rows) > 0 {
@@ -549,7 +544,6 @@ func (s *Store) upsertTerminal(sessionID string, event storeevents.Event, metada
 	current.RetentionSeconds = 0
 	previousStatus := current.Status
 	current.Status = DeriveStatus(content, metadata)
-	current.Status = s.statusWithStoredToolLinesLocked(terminalID, current.Status)
 	preserveEphemeralStatusFields(&current.Status, previousStatus)
 	if contentChanged || current.UpdatedAt.IsZero() {
 		current.UpdatedAt = now
@@ -650,53 +644,12 @@ func (s *Store) upsertToolLine(sessionID string, event storeevents.Event, metada
 	if !ok {
 		return
 	}
-	if terminalShouldInjectToolLines(snapshot) {
-		snapshot.Content = s.contentWithToolLinesLocked(terminalID, snapshot.Content)
-	} else {
-		snapshot.Content = stripTerminalToolLines(snapshot.Content)
-	}
+	snapshot.Content = s.contentWithToolLinesLocked(terminalID, snapshot.Content)
 	previousStatus := snapshot.Status
 	snapshot.Status = DeriveStatus(snapshot.Content, metadata)
-	snapshot.Status = s.statusWithStoredToolLinesLocked(terminalID, snapshot.Status)
 	preserveEphemeralStatusFields(&snapshot.Status, previousStatus)
 	snapshot.UpdatedAt = now
 	s.byID[terminalID] = snapshot
-}
-
-func terminalShouldInjectToolLines(snapshot Snapshot) bool {
-	if currentTerminalIsMainAgent(snapshot) && terminalUsesIdleTimeout(snapshot) {
-		return false
-	}
-	return true
-}
-
-func (s *Store) statusWithStoredToolLinesLocked(terminalID string, status Status) Status {
-	lines := s.toolLines[terminalID]
-	if lines == nil || len(lines.order) == 0 {
-		return status
-	}
-
-	latest := ""
-	count := 0
-	for _, id := range lines.order {
-		item := lines.items[id]
-		if item == nil {
-			continue
-		}
-		latest = firstNonEmpty(item.name, "tool")
-		count++
-	}
-	if latest == "" || count == 0 {
-		return status
-	}
-	status.ToolName = latest
-	status.ToolCount = count
-	if count > 1 {
-		status.ToolSummary = latest + " x" + strconv.Itoa(count)
-	} else {
-		status.ToolSummary = latest
-	}
-	return status
 }
 
 func (s *Store) contentWithToolLinesLocked(terminalID, content string) string {

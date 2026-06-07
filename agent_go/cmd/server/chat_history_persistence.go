@@ -367,14 +367,25 @@ func listWorkflowScopedChatHistorySessionsFromDisk(userID, chatHistoryRootPath, 
 	// Workflow builder files are the most precise source for /resume inside a
 	// workflow. Do not include global chat_history matches here: those can
 	// mention this workflow in pasted context while belonging to another chat.
-	if builderSessions, ok := listWorkflowBuilderHistoryFromDisk(userID, workflowPath); ok {
+	// Pass the page budget so only the requested page of conversation files is
+	// read+parsed (previews are expensive); the rest are only stat'd.
+	readBudget := 0
+	if limit > 0 {
+		readBudget = limit + offset
+	}
+	if builderSessions, ok := listWorkflowBuilderHistoryFromDisk(userID, workflowPath, readBudget); ok {
 		all = append(all, builderSessions...)
 	}
 
 	return paginateChatHistorySessions(all, limit, offset), true, nil
 }
 
-func listWorkflowBuilderHistoryFromDisk(userID, workflowPath string) ([]ChatHistorySession, bool) {
+// listWorkflowBuilderHistoryFromDisk returns builder chat sessions for a workflow.
+// readBudget caps how many conversation files are actually READ+PARSED (the costly
+// part — preview building): we stat every file (cheap) and dedupe to the latest
+// file per session by filename+mtime WITHOUT reading, sort by mtime, then read
+// only the top readBudget. readBudget<=0 reads all (unlimited list).
+func listWorkflowBuilderHistoryFromDisk(userID, workflowPath string, readBudget int) ([]ChatHistorySession, bool) {
 	workflowDir, ok := resolveLocalWorkflowDir(workflowPath)
 	if !ok {
 		return nil, false
@@ -383,29 +394,51 @@ func listWorkflowBuilderHistoryFromDisk(userID, workflowPath string) ([]ChatHist
 	if err != nil {
 		return nil, false
 	}
-	bySessionID := make(map[string]ChatHistorySession)
+
+	// Cheap pass: stat only, dedupe to the latest file per session id (parsed
+	// from the filename — no file read).
+	type fileRef struct {
+		convPath string
+		mtime    time.Time
+	}
+	latest := make(map[string]fileRef)
 	for _, convPath := range matches {
-		data, err := os.ReadFile(convPath)
-		if err != nil {
-			continue
-		}
 		info, err := os.Stat(convPath)
 		if err != nil {
 			continue
 		}
 		sessionID := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(convPath), "session-"), "-conversation.json")
-		session, ok := parseLocalChatHistorySession(userID, workflowPath, workflowPath, sessionID, string(data), info.ModTime())
+		if cur, ok := latest[sessionID]; !ok || info.ModTime().After(cur.mtime) {
+			latest[sessionID] = fileRef{convPath: convPath, mtime: info.ModTime()}
+		}
+	}
+
+	type sessionRef struct {
+		id  string
+		ref fileRef
+	}
+	refs := make([]sessionRef, 0, len(latest))
+	for id, r := range latest {
+		refs = append(refs, sessionRef{id: id, ref: r})
+	}
+	sort.Slice(refs, func(i, j int) bool { return refs[i].ref.mtime.After(refs[j].ref.mtime) })
+	if readBudget > 0 && readBudget < len(refs) {
+		refs = refs[:readBudget]
+	}
+
+	// Read+parse only the page.
+	sessions := make([]ChatHistorySession, 0, len(refs))
+	for _, sr := range refs {
+		data, err := os.ReadFile(sr.ref.convPath)
+		if err != nil {
+			continue
+		}
+		session, ok := parseLocalChatHistorySession(userID, workflowPath, workflowPath, sr.id, string(data), sr.ref.mtime)
 		if !ok {
 			continue
 		}
 		session.AgentMode = "workflow"
-		session.ConversationPath = workflowRelativeConversationPath(workflowPath, workflowDir, convPath)
-		if existing, ok := bySessionID[session.SessionID]; !ok || session.UpdatedAt > existing.UpdatedAt {
-			bySessionID[session.SessionID] = session
-		}
-	}
-	sessions := make([]ChatHistorySession, 0, len(bySessionID))
-	for _, session := range bySessionID {
+		session.ConversationPath = workflowRelativeConversationPath(workflowPath, workflowDir, sr.ref.convPath)
 		sessions = append(sessions, session)
 	}
 	return sessions, true

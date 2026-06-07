@@ -389,6 +389,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 			if preValidationPassed {
 				hcpo.GetLogger().Info("✅ Todo task step complete (pre-validation passed)")
+				hcpo.runTodoTaskContributionTurns(ctx, todoTaskStep, stepIndex, todoTaskAgent, &conversationHistory)
 				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Pre-validation passed", todoTaskStep.NextStepID)
 				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 				return true, todoTaskStep.NextStepID, nil
@@ -417,6 +418,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 		// No validation schema — execution completion is the signal
 		hcpo.GetLogger().Info("✅ Todo task step complete (execution finished)")
+		hcpo.runTodoTaskContributionTurns(ctx, todoTaskStep, stepIndex, todoTaskAgent, &conversationHistory)
 		hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Execution completed", todoTaskStep.NextStepID)
 		hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 		return true, todoTaskStep.NextStepID, nil
@@ -424,6 +426,50 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 	// Should not reach here, but handle gracefully
 	return false, todoTaskStep.NextStepID, nil
+}
+
+// runTodoTaskContributionTurns runs a trailing learnings turn and/or KB turn on
+// the orchestrator's own conversation after its work completes — the same
+// contribution model regular steps and message_sequence steps use, so learnings/KB
+// are handled identically across all step types. The orchestrator already holds
+// learnings/_global and notes/ write access via its folder guard, so the turn can
+// write. Both turns are best-effort: a failure is logged, never fatal.
+func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx context.Context, step *TodoTaskPlanStep, stepIndex int, agent orchestratoragents.OrchestratorAgent, conversationHistory *[]llmtypes.MessageContent) {
+	cfg := step.AgentConfigs
+	if cfg == nil {
+		return
+	}
+	ba := agent.GetBaseAgent()
+	if ba == nil {
+		return
+	}
+	runTurn := func(label, msg string) {
+		msg = strings.TrimSpace(msg)
+		if msg == "" {
+			return
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 Todo task %s contribution turn for step %d", label, stepIndex+1))
+		_, updated, err := ba.Execute(ctx, msg, *conversationHistory, "", false)
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Todo task %s contribution turn failed (non-fatal): %v", label, err))
+			return
+		}
+		*conversationHistory = updated
+	}
+
+	if shouldDirectWriteLearnings(cfg, step, hcpo.isEvaluationMode) {
+		runTurn("learnings", BuildLearningsContributionTurn(step.GetID(), step.GetDescription(), strings.TrimSpace(cfg.LearningObjective), false))
+	}
+
+	if contribution := strings.TrimSpace(kbContributionForPrompt(cfg)); contribution != "" && kbAccessAllowsWrite(cfg.KnowledgebaseAccess) {
+		var b strings.Builder
+		b.WriteString("## Knowledgebase Contribution (dedicated turn)\n\n")
+		b.WriteString("The step is complete. In this turn you have WRITE access to the knowledgebase. Fulfill this step's knowledgebase contribution, then stop.\n\n")
+		b.WriteString("**Contribution instruction:**\n")
+		b.WriteString(contribution)
+		b.WriteString("\n\nWrite durable, deduplicated notes under `knowledgebase/notes/`. If there is nothing new worth recording, say so explicitly and write nothing.")
+		runTurn("knowledgebase", b.String())
+	}
 }
 
 // runTodoTaskMessageSequence drives a todo_task step's optional scripted message sequence.

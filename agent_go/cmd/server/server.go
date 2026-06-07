@@ -4615,11 +4615,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[CUSTOM TOOLS] Registered %d custom tools with agent", registeredCount)
 
-			// Register memory tools in all chat modes.
+			// Register memory tools for the multi-agent personal chat ONLY.
+			// Memory is the cross-session user-model for the assistant chat; the
+			// workflow builder (workshop / workflow_phase) must NOT get memory tools,
+			// so a workflow's authoring chat never reads/writes _users/<id>/memories.
 			// In plan mode, memory tools can spawn background memory agents.
 			// The memory workspace client is scoped to the per-user memory folder so all
 			// memory file I/O lands under _users/<userID>/memories/.
 			memoryTools := virtualtools.CreateMemoryTools()
+			if isWorkflowPhase {
+				memoryTools = nil // workshop/builder chat: no personal memory
+			}
 			memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 			memoryCategory := virtualtools.GetDelegationToolCategory()
 			memoryWritePaths := []string{perUserMemoryFolder, perUserChatsFolder}

@@ -8,14 +8,30 @@ interface StartEndNodeProps {
   selected?: boolean
 }
 
-export const StartNode = memo(() => {
+export const StartNode = memo(({ data }: StartEndNodeProps) => {
+  // The orphan-section header reuses this node type; render it as a distinct
+  // amber "Orphan Steps" label instead of a green Start pill (which was the bug
+  // that made the orphan section look like a second Start node).
+  const isOrphanLabel = (data as { id?: string })?.id === 'orphan-label'
+  if (isOrphanLabel) {
+    const labelText = typeof (data as { title?: string })?.title === 'string'
+      ? (data as { title?: string }).title
+      : 'Orphan Steps'
+    return (
+      <div className="flex items-center justify-center px-3 h-10 rounded-lg bg-amber-100 dark:bg-amber-900/40 border-2 border-dashed border-amber-400 dark:border-amber-500 shadow-sm">
+        <span className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300 whitespace-nowrap">
+          {labelText}
+        </span>
+      </div>
+    )
+  }
   return (
     <div className="flex items-center justify-center w-24 h-10 rounded-full bg-green-100 dark:bg-green-900/40 border-2 border-green-400 dark:border-green-500 shadow-sm">
       <div className="flex items-center gap-1.5">
         <Play className="w-4 h-4 text-green-600 dark:text-green-400" />
         <span className="text-sm font-medium text-green-700 dark:text-green-300">Start</span>
       </div>
-      
+
       {/* Output handle */}
       <Handle
         type="source"

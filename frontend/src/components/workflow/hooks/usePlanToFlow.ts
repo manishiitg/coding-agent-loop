@@ -253,6 +253,26 @@ function getSubAgentGridMetrics(count: number, direction: 'LR' | 'TB') {
   }
 }
 
+// countOrphanStepRefs walks the plan and counts how many todo_task routes
+// reference each orphan step via `orphan_step_ref`. Used to show on an orphan
+// node whether (and how often) it is reused as a shared sub-agent definition.
+function countOrphanStepRefs(steps: PlanStep[] | undefined): Map<string, number> {
+  const counts = new Map<string, number>()
+  const visit = (list?: PlanStep[]) => {
+    if (!list) return
+    for (const s of list) {
+      if (isTodoTaskStep(s) && Array.isArray(s.predefined_routes)) {
+        for (const r of s.predefined_routes) {
+          if (r.orphan_step_ref) counts.set(r.orphan_step_ref, (counts.get(r.orphan_step_ref) || 0) + 1)
+          if (r.sub_agent_step) visit([r.sub_agent_step])
+        }
+      }
+    }
+  }
+  visit(steps)
+  return counts
+}
+
 function textReferencesKnowledgebase(text: string): boolean {
   return /\bknowledgebase[\\/]/i.test(text)
 }
@@ -2619,15 +2639,22 @@ export function usePlanToFlow(
         new Set<string>()  // no completed step IDs for orphan steps
       )
 
-      // Mark all orphan nodes and remap IDs with 'orphan-' prefix
-      orphanNodes = orphanProcessedNodes.map((node) => ({
-        ...node,
-        id: `orphan-${node.id}`,
-        data: {
-          ...node.data,
-          isOrphan: true,
+      // Mark all orphan nodes and remap IDs with 'orphan-' prefix. Attach how
+      // many routes reuse each orphan via orphan_step_ref so the node can show
+      // whether it's a shared/reused definition or genuinely unused.
+      const orphanReuseCounts = countOrphanStepRefs([...(plan.steps || []), ...(plan.orphan_steps || [])])
+      orphanNodes = orphanProcessedNodes.map((node) => {
+        const origId = (node.data as { id?: string }).id || node.id
+        return {
+          ...node,
+          id: `orphan-${node.id}`,
+          data: {
+            ...node.data,
+            isOrphan: true,
+            orphanReuseCount: orphanReuseCounts.get(origId) || 0,
+          }
         }
-      }))
+      })
     }
 
     // Add orphan section label node if there are orphan steps

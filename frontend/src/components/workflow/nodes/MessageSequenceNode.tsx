@@ -96,6 +96,7 @@ function itemPrimaryText(item: MessageSequenceItem): string {
 
 export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNodeProps) => {
   const { id, title, description, items, status, stepIndex, changeType, isOrphan, step } = data
+  const orphanReuseCount = (data as { orphanReuseCount?: number }).orphanReuseCount ?? 0
 
   const borderColor = statusBorderColors[status] || statusBorderColors.pending
   const statusIcon = statusIcons[status] || null
@@ -187,6 +188,13 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
       {changeBadge && (
         <div className={`absolute -top-2 -right-2 ${changeBadge.bg} rounded-full p-1 z-10`}>
           {changeBadge.icon}
+        </div>
+      )}
+
+      {/* Orphan badge (top-left): shows whether this orphan is reused or unused */}
+      {isOrphan && (
+        <div className="absolute top-0 left-0 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-br-lg rounded-tl-lg bg-amber-500 text-white text-[10px] font-medium shadow-lg">
+          <span>{orphanReuseCount > 0 ? `Orphan · reused ×${orphanReuseCount}` : 'Orphan · unused'}</span>
         </div>
       )}
 

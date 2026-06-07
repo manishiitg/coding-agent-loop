@@ -51,7 +51,8 @@ function textReferencesDatabase(text: string): boolean {
 
 export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   const { id, title, status, stepIndex, changeType, isOrphan, isEvaluationStep, step } = data
-  
+  const orphanReuseCount = (data as { orphanReuseCount?: number }).orphanReuseCount ?? 0
+
   // Check if this is a sub-agent (part of a routing step)
   const isSubAgent = useMemo(() => id.includes('-sub-agent-'), [id])
   const agentConfig = step?.agent_configs
@@ -234,6 +235,13 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         <div className={`absolute ${status === 'running' || status === 'failed' ? 'top-6 right-0' : 'top-0 right-0'} z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl ${changeBadgeStyles[changeType].bg} text-white text-[10px] font-medium shadow-lg`}>
           {changeBadgeStyles[changeType].icon}
           <span className="capitalize">{changeType}</span>
+        </div>
+      )}
+
+      {/* Orphan badge (top-left): shows whether this orphan is reused or unused */}
+      {isOrphan && (
+        <div className="absolute top-0 left-0 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-br-lg rounded-tl-xl bg-amber-500 text-white text-[10px] font-medium shadow-lg">
+          <span>{orphanReuseCount > 0 ? `Orphan · reused ×${orphanReuseCount}` : 'Orphan · unused'}</span>
         </div>
       )}
 

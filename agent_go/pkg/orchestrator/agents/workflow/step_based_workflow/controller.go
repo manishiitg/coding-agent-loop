@@ -232,9 +232,6 @@ func NewStepBasedWorkflowOrchestrator(
 	baseOrchestrator.SetMCPSessionID(workflowSessionID)
 	logger.Info(fmt.Sprintf("🔗 Set MCP session ID for workflow: %s (will be overridden with actual group name in batch execution)", workflowSessionID))
 
-	// NOTE: Default conditional agent is now created lazily when needed (in getConditionalAgentForStep)
-	// This ensures it's created after batch execution setup, with correct session ID and runtime overrides
-	// This matches the pattern used by execution and learning agents
 
 	hcpo := &StepBasedWorkflowOrchestrator{
 		BaseOrchestrator: baseOrchestrator,
@@ -576,66 +573,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) HasBrowserCapability() bool {
 		}
 	}
 	return false
-}
-
-// getConditionalAgentForStep returns the conditional agent to use for a specific step.
-// The LLM is selected by the tier resolver (default Tier 1); there is no step-level
-// LLM override for the conditional evaluator.
-// Uses the standard factory pattern for proper event bridge connection and context setup.
-// agentName: custom agent name for this specific use case (e.g., "conditional-step-evaluation", "decision-step-evaluation")
-// phase: orchestrator phase for context (e.g., "conditional_evaluation", "decision_evaluation")
-func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx context.Context, step PlanStepInterface, stepIndex int, agentName, phase string) *WorkflowConditionalAgent {
-	stepID := step.GetID()
-	if stepID == "" {
-		stepID = fmt.Sprintf("step-%s", step.GetTitle())
-	}
-
-	// Check if step has step-specific config
-	agentConfigs := getAgentConfigs(step)
-
-	// LLM selection via tiered mode
-	var llmConfig *orchestrator.LLMConfig
-	stepPath := fmt.Sprintf("step-%d", stepIndex+1)
-
-	// TIERED MODE: Use tier resolver for conditional agents
-	if hcpo.tierResolver != nil {
-		if agentConfigs != nil && agentConfigs.DisableTierOptimization != nil && *agentConfigs.DisableTierOptimization {
-			llmConfig = hcpo.tierResolver.ResolveTier(TierHigh)
-			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Conditional agent for step '%s' using Tier 1 (High) — tier optimization disabled", step.GetTitle()))
-		} else {
-			llmConfig, _ = hcpo.tierResolver.ResolveForConditional()
-		}
-		if llmConfig == nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Tiered mode: No valid LLM configuration for conditional agent step '%s'", step.GetTitle()))
-			return nil
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Conditional agent for step '%s' using tier-resolved LLM: %s/%s", step.GetTitle(), llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
-
-		actualAgentName := agentName
-		if actualAgentName == "" {
-			actualAgentName = fmt.Sprintf("conditional-agent-%s", stepID)
-		}
-		actualPhase := phase
-		if actualPhase == "" {
-			actualPhase = "conditional_evaluation"
-		}
-
-		agent, err := hcpo.createConditionalAgent(ctx, actualPhase, stepIndex, 0, actualAgentName, agentConfigs, llmConfig, stepPath, stepID)
-		if err != nil {
-			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create tiered conditional agent for step '%s': %v", step.GetTitle(), err), nil)
-			return nil
-		}
-		stepConditionalAgent, ok := agent.(*WorkflowConditionalAgent)
-		if !ok {
-			hcpo.GetLogger().Error(fmt.Sprintf("❌ Factory returned wrong agent type for step '%s'", step.GetTitle()), nil)
-			return nil
-		}
-		return stepConditionalAgent
-	}
-
-	// Tiered mode is required — if we reach here, tier resolver is nil.
-	hcpo.GetLogger().Warn(fmt.Sprintf("getOrCreateConditionalAgent: tier resolver is nil for step '%s' — returning nil", step.GetTitle()))
-	return nil
 }
 
 // CreateTodoList orchestrates the human-controlled todo planning process

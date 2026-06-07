@@ -633,7 +633,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 // getCodeExecutionMode determines code execution mode with priority: step config > workflow/preset default
 // Note: The workflow/preset default reflects what the user explicitly set. Server.go no longer
 // auto-enables code execution mode for the entire workflow. Provider-based auto-enable
-// (claude-code/gemini-cli) is handled per-agent in applyStepConfigToAgentConfig and createConditionalAgent.
+// (claude-code/gemini-cli) is handled per-agent in applyStepConfigToAgentConfig.
 func (hcpo *StepBasedWorkflowOrchestrator) getCodeExecutionMode(stepConfig *AgentConfigs) bool {
 	if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
 		isCodeExecutionMode := *stepConfig.UseCodeExecutionMode
@@ -985,44 +985,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareWorkspaceToolsOnly() ([]llmtyp
 	)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Prepared %d learning agent tools (execute_shell_command + diff_patch, no human tools)", len(tools)))
 	return tools, executors
-}
-
-// setupConditionalFolderGuard sets up folder guard paths for conditional agents
-// Returns readPaths and writePaths for folder guard configuration
-func (hcpo *StepBasedWorkflowOrchestrator) setupConditionalFolderGuard(stepPath string, stepID string) (readPaths, writePaths []string) {
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	// Use run folder if available, otherwise use base workspace (backward compatibility)
-	var runWorkspacePath string
-	if hcpo.selectedRunFolder != "" {
-		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
-	} else {
-		runWorkspacePath = baseWorkspacePath
-	}
-	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	// Step-specific execution folder: execution/step-{X}/ or execution/step-{X}-{branch}/ (for writing evaluation results)
-	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
-
-	// Set folder guard paths:
-	// READ: execution folder (to read all previous step results and verify conditions) + global learnings + knowledgebase folder (if enabled)
-	// WRITE: step-specific execution folder (to write evaluation results and intermediate files) + knowledgebase folder (if enabled)
-	readPaths = []string{executionWorkspacePath}
-	// Always add global learnings folder to read paths
-	globalLearningsPath2 := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, GlobalLearningID)
-	readPaths = append(readPaths, globalLearningsPath2)
-	writePaths = []string{stepFolderPath}
-
-	// Always add db/ folder to read+write paths
-	dbPath := getDBPath(baseWorkspacePath)
-	readPaths = append(readPaths, dbPath)
-	writePaths = append(writePaths, dbPath)
-
-	// Add knowledgebase folder paths only if enabled
-	if hcpo.UseKnowledgebase() {
-		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
-		readPaths = append(readPaths, knowledgebasePath)
-		writePaths = append(writePaths, knowledgebasePath)
-	}
-	return readPaths, writePaths
 }
 
 // setupKBUpdateFolderGuard grants the KB update agent read on the step's execution
@@ -1769,153 +1731,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 // stepIndex: 0-based step index for token tracking
 func (hcpo *StepBasedWorkflowOrchestrator) createSuccessLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
 	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode, stepID, stepPath, stepIndex)
-}
-
-// createConditionalAgent creates a conditional agent using the standard factory pattern
-// This ensures proper event bridge connection, context setup, and tool registration
-// stepPath: Step path identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
-// stepID: Step ID for step-specific learnings folder access (e.g., "step-3" or branch step ID)
-func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, conditionalLLMConfig *orchestrator.LLMConfig, stepPath string, stepID string) (agents.OrchestratorAgent, error) {
-	// 1. Setup folder guard
-	readPaths, writePaths := hcpo.setupConditionalFolderGuard(stepPath, stepID)
-	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for conditional agent - Read paths: %v, Write paths: %v (can write to %s)", readPaths, writePaths, stepPath))
-
-	// Determine max turns: use orchestrator default (conditional agents don't have step-specific max turns config)
-	maxTurns := hcpo.GetMaxTurns()
-	// Note: ConditionalMaxTurns doesn't exist in AgentConfigs - using orchestrator default
-
-	// Use the LLM config passed from caller. The caller resolves it from the tier
-	// resolver (see getConditionalAgentForStep); there is no step-level LLM
-	// override for conditional evaluators.
-	llmConfig := conditionalLLMConfig
-	if llmConfig == nil {
-		return nil, fmt.Errorf("no valid LLM configuration found for conditional agent: conditional override, step execution override, and tiered workflow config are unavailable")
-	}
-
-	// Create agent config with custom LLM if needed
-	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
-	forceWorkflowClaudeCodeInteractiveTransport(config)
-
-	workflowServersConditional := hcpo.GetSelectedServers()
-	// Use step-specific servers filtered against workflow-level servers (workflow is the hard cap)
-	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
-		filtered := filterServersByWorkflow(stepConfig.SelectedServers, workflowServersConditional)
-		config.ServerNames = filtered
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional servers (workflow-filtered): %v → %v", stepConfig.SelectedServers, filtered))
-	} else {
-		// Use orchestrator defaults when stepConfig is nil or SelectedServers is empty
-		config.ServerNames = normalizeServerNames(workflowServersConditional)
-		if stepConfig != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but SelectedServers is empty - using orchestrator defaults: %v", config.ServerNames))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config not found - using orchestrator defaults: %v", config.ServerNames))
-		}
-	}
-	if stepConfig != nil && len(stepConfig.SelectedTools) > 0 {
-		filtered := filterToolsByWorkflow(stepConfig.SelectedTools, workflowServersConditional)
-		config.SelectedTools = filtered
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional tools (workflow-filtered): %v → %v", stepConfig.SelectedTools, filtered))
-	} else {
-		config.SelectedTools = hcpo.GetSelectedTools()
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional tools: %v", config.SelectedTools))
-	}
-
-	// Code execution mode: 3-rule priority (same as execution agent)
-	// Rule 1: CLI providers always use code execution
-	// Rule 2: Step config if explicitly set
-	// Rule 3: Non-CLI providers default to false
-	conditionalProvider := config.LLMConfig.Primary.Provider
-	if common.IsCLIProvider(conditionalProvider) {
-		config.UseCodeExecutionMode = true
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for conditional agent CLI provider '%s'", conditionalProvider))
-	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
-		config.UseCodeExecutionMode = *stepConfig.UseCodeExecutionMode
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for conditional agent: %v", config.UseCodeExecutionMode))
-	} else {
-		config.UseCodeExecutionMode = false
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Conditional agent provider '%s': code execution mode disabled", conditionalProvider))
-	}
-	effectiveTransport := hcpo.applyWorkflowTransportToAgentConfig(config, stepConfig, "conditional agent")
-	hcpo.publishWorkflowTransportContext(effectiveTransport, stepConfig)
-
-	// Run the coding-CLI session in a fresh os.MkdirTemp dir instead of
-	// CodingAgentWorkingDir — same protection the regular execution-step
-	// path gets via applyStepConfigToAgentConfig. Without this, a
-	// conditional agent collides with any other agy-cli session already
-	// attached to the workflow folder (notably the workshop chat that
-	// triggered the run): agy-cli rejects concurrent sessions on the
-	// same dir with different MCP configs.
-	config.IsolateCodingAgentWorkspace = true
-
-	// Set EnableContextOffloading if specified
-	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
-		config.EnableContextOffloading = stepConfig.EnableContextOffloading
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
-	}
-
-	// Setup Downloads folder for browser tools (Playwright or agent-browser)
-	// CRITICAL FIX (Jan 2026): Conditional agents can use Playwright (via step-specific servers or orchestrator defaults).
-	// If the conditional agent creates the Playwright connection first, it must set the correct Downloads path override
-	// before creating the connection, otherwise all subsequent agents will reuse the wrong connection.
-	// Use shared function to ensure all agent types set the override correctly.
-	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
-
-	// Prepare custom tools and executors (same as execution agent)
-	// Filter by enabled categories and/or specific tools if specified
-	var toolsToRegister []llmtypes.Tool
-	var executorsToUse map[string]interface{}
-
-	if stepConfig != nil && len(stepConfig.EnabledCustomTools) > 0 {
-		// Filter tools based on unified format (category:tool or category:*)
-		toolsToRegister, executorsToUse = orchestrator.FilterCustomToolsByCategory(
-			hcpo.WorkspaceTools,
-			hcpo.WorkspaceToolExecutors,
-			stepConfig.EnabledCustomTools,
-		)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools for conditional agent: %d tools enabled from %d entries: %v", len(toolsToRegister), len(stepConfig.EnabledCustomTools), stepConfig.EnabledCustomTools))
-	} else {
-		// Backward compatible: use all tools if no filtering specified (default behavior)
-		toolsToRegister = hcpo.WorkspaceTools
-		executorsToUse = hcpo.WorkspaceToolExecutors
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using all workspace tools for conditional agent: %d tools", len(toolsToRegister)))
-	}
-
-	// Use standard factory pattern - this handles initialization, event bridge connection, and tool registration
-	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
-		ctx,
-		config,
-		phase,
-		step,
-		iteration,
-		stepID, // Step ID
-		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewWorkflowConditionalAgent(cfg, logger, tracer, eventBridge)
-		},
-		toolsToRegister, // Pass workspace tools (filtered by step config if specified)
-		executorsToUse,  // Pass workspace tool executors
-		false,           // Don't overwrite system prompt - conditional agent manages its own prompt
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create conditional agent: %w", err)
-	}
-
-	// 7. Post-setup: folder guard paths (conditional agents don't use code execution mode, so no registry update needed)
-	// Note: Folder guard paths are already set on orchestrator, but we need to apply them to the agent
-	if err := hcpo.applyPostSetupToAgent(agent, agentName, false); err != nil {
-		return nil, fmt.Errorf("failed to apply post-setup to conditional agent: %w", err)
-	}
-
-	// Inject supplementary prompts (skills, secrets, browser instructions)
-	effectiveSkills := GetEffectiveSkills(stepConfig, hcpo.BaseOrchestrator)
-	if baseAgent := agent.GetBaseAgent(); baseAgent != nil {
-		if mcpAgent := baseAgent.Agent(); mcpAgent != nil {
-			hcpo.appendSupplementaryPrompts(ctx, mcpAgent, config, effectiveSkills, "")
-		}
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created conditional agent using standard factory pattern: %s (step %d, phase %s)", agentName, step+1, phase))
-	return agent, nil
 }
 
 // ConversationEntry is a single flattened message in the sub-agent's conversation

@@ -115,14 +115,13 @@ func TestApplyStepConfigToAgentConfigEnablesWorkspaceIsolation(t *testing.T) {
 // TestAllWorkflowAgentFactoriesEnableWorkspaceIsolation verifies that every
 // agent factory that produces a long-lived coding-CLI session flips
 // IsolateCodingAgentWorkspace=true so the session runs in os.MkdirTemp instead
-// of CodingAgentWorkingDir. Four such factories exist today:
+// of CodingAgentWorkingDir. Three such factories exist today:
 //   - regular-step path (applyStepConfigToAgentConfig)
-//   - conditional-agent path (createConditionalAgent — also serves routing steps)
 //   - todo-task orchestrator path (createTodoTaskOrchestratorAgent)
 //   - workshop background-task agent (runBackgroundTaskAgent, invoked by the
 //     workshop chat's `run_in_background` tool)
 //
-// Without isolation on any of these, an agy-cli orchestrator / conditional /
+// Without isolation on any of these, an agy-cli orchestrator /
 // background-task agent collides with the workshop chat's agy session in the
 // same workflow folder and the step fails with "agy-cli does not support
 // concurrent sessions in working directory ... with different MCP configs".
@@ -135,7 +134,7 @@ func TestAllWorkflowAgentFactoriesEnableWorkspaceIsolation(t *testing.T) {
 		path string
 		want int
 	}{
-		{path: "controller_agent_factory.go", want: 3},     // regular + conditional + todo-task orchestrator
+		{path: "controller_agent_factory.go", want: 2},     // regular + todo-task orchestrator
 		{path: "interactive_workshop_manager.go", want: 1}, // workshop background-task agent
 	}
 	const needle = "config.IsolateCodingAgentWorkspace = true"

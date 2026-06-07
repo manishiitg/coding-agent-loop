@@ -38,7 +38,10 @@ const statusIcons: Record<string, ReactElement | null> = {
   failed: <XCircle className="w-4 h-4 text-red-500" />
 }
 
-const metadataChipBase = 'inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-gray-300/80 bg-white/80 px-1.5 text-[10px] font-medium leading-none text-gray-700 dark:border-gray-600/80 dark:bg-gray-900/90 dark:text-gray-200'
+// NOTE: uses the same colored-bg pattern as the item badges (which render
+// correctly). The previous `bg-white/80` base rendered as empty/low-contrast
+// grey boxes on the canvas.
+const metadataChipBase = 'inline-flex h-5 shrink-0 items-center gap-1 rounded-md bg-gray-100 px-1.5 text-[10px] font-medium leading-none text-gray-700 dark:bg-gray-700/60 dark:text-gray-200'
 
 function textReferencesKnowledgebase(text: string): boolean {
   return /\bknowledgebase[\\/]/i.test(text)

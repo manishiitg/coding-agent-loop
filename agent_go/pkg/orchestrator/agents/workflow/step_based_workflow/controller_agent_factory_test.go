@@ -115,14 +115,17 @@ func TestApplyStepConfigToAgentConfigEnablesWorkspaceIsolation(t *testing.T) {
 // TestAllWorkflowAgentFactoriesEnableWorkspaceIsolation verifies that every
 // agent factory that produces a long-lived coding-CLI session flips
 // IsolateCodingAgentWorkspace=true so the session runs in os.MkdirTemp instead
-// of CodingAgentWorkingDir. Three such factories exist today:
-//   - regular-step path (applyStepConfigToAgentConfig)
-//   - todo-task orchestrator path (createTodoTaskOrchestratorAgent)
-//   - workshop background-task agent (runBackgroundTaskAgent, invoked by the
-//     workshop chat's `run_in_background` tool)
+// of CodingAgentWorkingDir. These factories live in two files:
+//   - controller_agent_factory.go (2): regular-step path (applyStepConfigToAgentConfig)
+//     and the todo-task orchestrator (createTodoTaskOrchestratorAgent).
+//   - interactive_workshop_manager.go (10): the workshop background agents — the
+//     `run_in_background` task agent plus the improve-db / review-plan /
+//     review-artifact-sync / review-results / review-timing / review-costs /
+//     review-step-code / replan / harden agents — each spawns a coding-CLI
+//     session for a workflow task and must isolate its workspace.
 //
-// Without isolation on any of these, an agy-cli orchestrator /
-// background-task agent collides with the workshop chat's agy session in the
+// Without isolation on any of these, an agy-cli orchestrator / workshop
+// background agent collides with the workshop chat's agy session in the
 // same workflow folder and the step fails with "agy-cli does not support
 // concurrent sessions in working directory ... with different MCP configs".
 //
@@ -134,8 +137,8 @@ func TestAllWorkflowAgentFactoriesEnableWorkspaceIsolation(t *testing.T) {
 		path string
 		want int
 	}{
-		{path: "controller_agent_factory.go", want: 2},     // regular + todo-task orchestrator
-		{path: "interactive_workshop_manager.go", want: 1}, // workshop background-task agent
+		{path: "controller_agent_factory.go", want: 2},      // regular + todo-task orchestrator
+		{path: "interactive_workshop_manager.go", want: 10}, // run_in_background + improve/review/harden/replan/db workshop agents
 	}
 	const needle = "config.IsolateCodingAgentWorkspace = true"
 	for _, tc := range cases {

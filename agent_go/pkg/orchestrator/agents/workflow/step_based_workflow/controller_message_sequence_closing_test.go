@@ -1,6 +1,52 @@
 package step_based_workflow
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
+
+// Validates sequence-unification Stage 3: a todo_task's `messages` (old
+// TodoTaskMessage JSON shape) deserializes, back-compat, into the unified
+// []MessageSequenceItem — no plan migration needed.
+func TestTodoTaskMessagesDeserializeToUnifiedItem(t *testing.T) {
+	planJSON := `{"steps":[{
+		"type":"todo_task","id":"orch","title":"o","description":"d",
+		"predefined_routes":[{"route_id":"w","route_name":"W","condition":"c",
+			"sub_agent_step":{"type":"regular","id":"w","title":"w","description":"d"}}],
+		"messages":[
+			{"id":"m1","type":"message","message":"hello","max_corrections":2},
+			{"id":"m2","type":"foreach","source_sql":"SELECT id FROM t","max_iterations":5,"message":"row {{.id}}"},
+			{"id":"m3","type":"prevalidation","validation_schema":{"files":[]}}
+		]
+	}]}`
+	var pr PlanningResponse
+	if err := json.Unmarshal([]byte(planJSON), &pr); err != nil {
+		t.Fatalf("unmarshal plan: %v", err)
+	}
+	var todo *TodoTaskPlanStep
+	for _, s := range pr.Steps {
+		if tt, ok := s.(*TodoTaskPlanStep); ok {
+			todo = tt
+		}
+	}
+	if todo == nil {
+		t.Fatal("todo_task step not found after unmarshal")
+	}
+	// Compile-time + runtime proof the field is the unified type.
+	var msgs []MessageSequenceItem = todo.Messages
+	if len(msgs) != 3 {
+		t.Fatalf("want 3 messages, got %d", len(msgs))
+	}
+	if msgs[0].Type != "message" || msgs[0].Message != "hello" || msgs[0].MaxCorrections != 2 {
+		t.Errorf("message[0] back-compat fields lost: %+v", msgs[0])
+	}
+	if msgs[1].Type != "foreach" || msgs[1].SourceSQL != "SELECT id FROM t" || msgs[1].MaxIterations != 5 {
+		t.Errorf("foreach[1] back-compat fields lost: %+v", msgs[1])
+	}
+	if msgs[2].Type != "prevalidation" || msgs[2].ValidationSchema == nil {
+		t.Errorf("prevalidation[2] back-compat fields lost: %+v", msgs[2])
+	}
+}
 
 // Verifies a standalone message_sequence gets synthetic learnings/KB contribution
 // turns appended when (and only when) the step is configured for those writes —

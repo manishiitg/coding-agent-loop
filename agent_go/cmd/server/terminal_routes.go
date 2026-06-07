@@ -1066,6 +1066,16 @@ func withTerminalRows(snapshot terminals.Snapshot) terminals.Snapshot {
 		return snapshot
 	}
 	if strings.ToLower(strings.TrimSpace(snapshot.StepTransport)) == "tmux" {
+		if !snapshot.Active && len(snapshot.Rows) > 0 {
+			snapshot.Status = terminals.StatusWithRows(snapshot.Status, snapshot.Rows)
+			return snapshot
+		}
+		if !snapshot.Active {
+			if rows := terminals.RowsForCompletedTmuxSnapshot(snapshot); len(rows) > 0 {
+				snapshot.Rows = rows
+				return snapshot
+			}
+		}
 		snapshot.Rows = []terminals.Row{}
 		return snapshot
 	}

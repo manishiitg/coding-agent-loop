@@ -8605,7 +8605,7 @@ func buildBackgroundAgentStartSyntheticMessage(_ string, parts []string) string 
 	// renders it inline rather than as "[Pasted text +N lines]".
 	// Completion will arrive as a separate AUTO-NOTIFICATION; the agent may call
 	// query_step to inspect live progress in the meantime.
-	const trailer = "Ack only. No tools; wait."
+	const trailer = "Ack only. No tools; resume prior task if any."
 	if len(parts) == 1 {
 		return fmt.Sprintf("[AUTO-NOTIFICATION] Started: %s\n%s", strings.TrimPrefix(parts[0], "- "), trailer)
 	}

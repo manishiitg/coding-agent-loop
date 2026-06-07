@@ -3265,6 +3265,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				hcpo.SetRunSingleStepMode(false, -1)
 				break
 			}
+			// Honor next_step_id so a branch converges to its shared downstream step
+			// (skipping the sibling branches that sit after it in the list) instead of
+			// falling through in list order. Without this, after a router selected one
+			// branch the selected branch ran but then execution spilled into the next
+			// (non-selected) branch — see routing convergence.
+			if seqStep, ok := step.(*MessageSequencePlanStep); ok && strings.TrimSpace(seqStep.NextStepID) != "" {
+				if hcpo.navigateToNextStepID(ctx, seqStep.NextStepID, breakdownSteps, progress, &i, &startFromStep) == "end" {
+					hcpo.GetLogger().Info(fmt.Sprintf("🏁 message_sequence step %d next_step_id=end - terminating workflow", i+1))
+					break
+				}
+			}
 			continue
 		}
 

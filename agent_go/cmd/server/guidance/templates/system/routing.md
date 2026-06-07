@@ -56,6 +56,16 @@ Each entry in `routes[]` has:
 
 Routing routes do **not** define inline sub-agents. Unlike todo_task `predefined_routes` (which embed a `sub_agent_step`), routing `routes[]` are pointers — every `next_step_id` must reference a step that already exists in the plan. Add those downstream steps separately (as regular, message_sequence, todo_task, or human_input steps), then point the routes at their IDs.
 
+### Convergence — branches MUST rejoin via `next_step_id`
+
+A routing step jumps execution **into** the selected branch, but it does not stop the engine from continuing in list order afterwards. So each branch must explicitly route **out** to the shared continuation (or `end`), or execution will fall through into the *next* branch in the list and run a non-selected path.
+
+- Give the **terminal step of each branch** a `next_step_id` pointing to the shared downstream step (e.g. each portal branch → `normalize`), or `"end"` to finish.
+- The engine honors `next_step_id` on `routing`, `todo_task`, `human_input`, **and `message_sequence`** steps: the selected branch runs, jumps to the shared step, and the sibling branches are skipped. Multiple branches pointing at the same `next_step_id` render as a shared finish line (convergence).
+- A branch whose terminal step has **no** `next_step_id` falls through to the next step in the list — the classic "the non-selected branch also ran" bug. Always wire the convergence.
+
+If every branch is just "run one sub-agent then continue the same way," a `todo_task` orchestrator is simpler — it bundles the alternatives in one node and only the chosen one runs. Use routing when the branches lead to genuinely different downstream steps.
+
 ### Routing vs. other primitives
 
 - **Routing vs. todo_task**: todo_task can run multiple sub-tasks. Routing runs exactly one alternative.

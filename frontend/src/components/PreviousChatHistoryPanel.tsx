@@ -102,6 +102,15 @@ const latestUserPreviewMessage = (messages: ChatHistoryPreviewMessage[]): ChatHi
   })
 }
 
+// The latest assistant/ai reply — so the list shows how each chat concluded, not
+// just what was asked. preview_messages already carries the tail of the convo.
+const latestResponsePreviewMessage = (messages: ChatHistoryPreviewMessage[]): ChatHistoryPreviewMessage | undefined => {
+  return [...messages].reverse().find(message => {
+    const role = (message.role || '').toLowerCase().trim()
+    return (role === 'ai' || role === 'assistant') && message.text?.trim()
+  })
+}
+
 const sessionHasMessages = (session: ChatHistorySession): boolean => {
   return (session.message_count ?? 0) > 0 || (session.preview_messages?.length ?? 0) > 0 || !!session.query?.trim()
 }
@@ -511,6 +520,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               const firstUserText = compactSnippet(session.query, 180)
               const lastUserMessageText = compactSnippet(latestUserPreviewMessage(messages)?.text, 180)
               const showLastUserMessage = !!lastUserMessageText && lastUserMessageText !== firstUserText
+              const lastResponseText = compactSnippet(latestResponsePreviewMessage(messages)?.text, 180)
 
               return (
                 <div key={session.session_id} className="group bg-background transition-colors hover:bg-muted/20">
@@ -555,12 +565,20 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                           <span className="min-w-0 break-words font-medium text-foreground/90">{runtimeLabel}</span>
                         </div>
                       )}
-                      {!compact && showLastUserMessage && (
+                      {!compact && (showLastUserMessage || !!lastResponseText) && (
                         <div className="mt-1 space-y-0.5 text-[11px] leading-snug text-muted-foreground">
-                          <div className="flex min-w-0 gap-1">
-                            <span className="shrink-0 font-medium text-foreground/80">Last user:</span>
-                            <span className="line-clamp-1 min-w-0">{lastUserMessageText}</span>
-                          </div>
+                          {showLastUserMessage && (
+                            <div className="flex min-w-0 gap-1">
+                              <span className="shrink-0 font-medium text-foreground/80">Last user:</span>
+                              <span className="line-clamp-1 min-w-0">{lastUserMessageText}</span>
+                            </div>
+                          )}
+                          {!!lastResponseText && (
+                            <div className="flex min-w-0 gap-1">
+                              <span className="shrink-0 font-medium text-foreground/80">Last reply:</span>
+                              <span className="line-clamp-1 min-w-0">{lastResponseText}</span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </button>

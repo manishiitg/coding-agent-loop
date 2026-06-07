@@ -595,7 +595,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskMessageSequence(
 			}
 
 		default:
-			return fmt.Errorf("unsupported todo_task message type %q", mType)
+			// The orchestrator's scripted sequence runs only the conversational item
+			// kinds; it delegates real work to sub-agent routes. code/file items
+			// (which a standalone message_sequence supports) are rejected here.
+			return fmt.Errorf("orchestrator scripted message type %q is not supported — a todo_task sequence runs only conversational items (message, prevalidation, foreach); use a sub-agent route for code/file work", mType)
 		}
 	}
 	return nil

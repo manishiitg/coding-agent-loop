@@ -76,7 +76,7 @@ func TestInteractiveWorkshopPromptDocumentsMessageSequenceRouteReuse(t *testing.
 	// Detailed pattern content lives in the .md doc.
 	doc := guidance.RenderSystemDoc("message-sequence")
 	docMustContain := []string{
-		"Route sub-agents can be `regular` for stateless one-off work, `message_sequence` for a stateful specialist conversation",
+		"Route sub-agents can be `regular` for stateless one-off work or `message_sequence` for a stateful specialist conversation",
 		"Normal repeated calls reuse the route conversation",
 		"re-entry user message",
 		"As a todo_task predefined route, a message_sequence behaves like a reusable specialist sub-agent",

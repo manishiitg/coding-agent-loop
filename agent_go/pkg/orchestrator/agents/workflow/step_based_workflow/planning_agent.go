@@ -499,6 +499,10 @@ type MessageSequenceItem struct {
 	// per row. source_sql is a read-only query; each result row binds to '.'.
 	SourceSQL     string `json:"source_sql,omitempty"`     // read-only SQL against db/db.sqlite
 	MaxIterations int    `json:"max_iterations,omitempty"` // optional cap on rows (0 = all)
+	// prevalidation entries: corrective turns allowed on gate failure. Used by the
+	// orchestrator's scripted sequence (todo_task); a standalone message_sequence
+	// uses its own fixed repair cap. Default 1 when unset.
+	MaxCorrections int `json:"max_corrections,omitempty"`
 }
 
 type MessageSequencePlanStep struct {
@@ -534,27 +538,18 @@ type TodoTaskPlanStep struct {
 	CommonStepFields                          // Embeds ID, Title, Description, SuccessCriteria, ContextDependencies, ContextOutput, ValidationSchema
 	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"` // Predefined sub-agents (with learning/prevalidation)
 	NextStepID       string                   `json:"next_step_id,omitempty"`      // ID of step after todo task completes (or "end")
-	Messages         []TodoTaskMessage        `json:"messages,omitempty"`          // Optional scripted message sequence fed into the orchestrator's own conversation after its first turn
+	Messages         []MessageSequenceItem        `json:"messages,omitempty"`          // Optional scripted message sequence fed into the orchestrator's own conversation after its first turn
 	TodoTaskResponse *TodoTaskResponse        `json:"-"`                           // runtime: stores orchestrator decisions - not stored in plan.json
 	AgentConfigs     *AgentConfigs            `json:"-"`                           // runtime: per-agent configuration - not stored in plan.json
 }
 
-// TodoTaskMessage is one entry in a todo_task step's optional scripted message sequence.
-// After the orchestrator's first turn, each message is fed into the SAME orchestrator
-// conversation in order, so it keeps working through them with full memory of prior turns
-// and sub-agent results. A prevalidation entry is a hard gate between turns. The whole
-// sequence runs within one execution — there is no persistence or re-entry.
-type TodoTaskMessage struct {
-	ID               string            `json:"id,omitempty"`
-	Type             string            `json:"type,omitempty"`              // "message" (default) | "prevalidation"
-	Message          string            `json:"message,omitempty"`           // message entries: the instruction for one orchestrator turn; foreach entries: the per-row Go template
-	ValidationSchema *ValidationSchema `json:"validation_schema,omitempty"` // prevalidation entries: the gate schema
-	MaxCorrections   int               `json:"max_corrections,omitempty"`   // prevalidation only: corrective orchestrator turns allowed on failure (default 1)
-	// foreach entries: iterate db/db.sqlite table rows, one orchestrator turn per
-	// row. source_sql is a read-only query; each result row binds to '.'.
-	SourceSQL     string `json:"source_sql,omitempty"`     // read-only SQL against db/db.sqlite
-	MaxIterations int    `json:"max_iterations,omitempty"` // optional cap on rows (0 = all)
-}
+// A todo_task step's optional scripted message sequence reuses MessageSequenceItem
+// (the unified sequence-item type). The orchestrator only runs the conversational
+// kinds — user_message/message, prevalidation, foreach — and delegates real work to
+// sub-agents; code/file/write_access items are rejected at plan validation. After the
+// orchestrator's first turn each item is fed into the SAME orchestrator conversation
+// in order; a prevalidation item is a hard gate (up to MaxCorrections corrective
+// turns). The whole sequence runs within one execution — no persistence or re-entry.
 
 // TodoTaskResponse represents the structured output from the TodoTask orchestrator agent
 type TodoTaskResponse struct {
@@ -624,7 +619,7 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 			ContextToPass string          `json:"context_to_pass,omitempty"`
 		} `json:"predefined_routes,omitempty"`
 		NextStepID string            `json:"next_step_id,omitempty"`
-		Messages   []TodoTaskMessage `json:"messages,omitempty"`
+		Messages   []MessageSequenceItem `json:"messages,omitempty"`
 	}
 
 	if err := json.Unmarshal(data, &temp); err != nil {
@@ -846,7 +841,7 @@ type PartialPlanStep struct {
 	// Todo task step fields
 	TodoTaskStep     map[string]interface{}   `json:"todo_task_step,omitempty"`    // Optional: Updated todo task step - will be converted to PlanStepInterface
 	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"` // Optional: Updated predefined routes for todo task steps
-	Messages         []TodoTaskMessage        `json:"messages,omitempty"`          // Optional: Updated scripted message sequence for todo task steps
+	Messages         []MessageSequenceItem        `json:"messages,omitempty"`          // Optional: Updated scripted message sequence for todo task steps
 	// Routing fields
 	NextStepID string `json:"next_step_id,omitempty"` // Optional: Updated next_step_id (for routing steps)
 	// Routing step fields
@@ -1535,7 +1530,7 @@ func getAddTodoTaskStepSchema() string {
 					"type": "object",
 					"properties": {
 						"id": {"type": "string"},
-						"type": {"type": "string", "description": "message (default), prevalidation, or foreach"},
+						"type": {"type": "string", "description": "user_message (alias: message; default), prevalidation, or foreach. Same message_sequence item shape, but the orchestrator runs only these conversational kinds — code/file items must go to a sub-agent route."},
 						"message": {"type": "string", "description": "message entries: the instruction for one orchestrator turn (e.g. a follow-up phase, or 'now verify X and fix any gaps'). foreach entries: a Go text/template rendered once per row of source, row bound to '.' (e.g. 'Handle task {{.id}}: {{.desc}}')."},
 						"validation_schema": {"type": "object", "description": "prevalidation entries: a hard gate checked between turns. On failure the orchestrator receives the failures as a corrective turn and retries up to max_corrections."},
 						"max_corrections": {"type": "number", "description": "prevalidation entries only: corrective orchestrator turns allowed on gate failure (default 1)."},
@@ -1630,7 +1625,7 @@ func getUpdateTodoTaskStepSchema() string {
 			},
 			"messages": {
 				"type": "array",
-				"description": "OPTIONAL: Replaces the scripted message sequence. After the orchestrator's first turn, each entry is fed into the same orchestrator conversation in order. Entries are {type: message|prevalidation, message, validation_schema, max_corrections}.",
+				"description": "OPTIONAL: Replaces the scripted message sequence. After the orchestrator's first turn, each entry is fed into the same orchestrator conversation in order. Entries use the same message_sequence item shape {id, type, message, validation_schema, max_corrections, source_sql, max_iterations}, but the orchestrator runs only the CONVERSATIONAL kinds — type: user_message (or message), prevalidation, foreach. It cannot run code/file items itself; delegate that to a sub-agent route.",
 				"items": {"type": "object"}
 			},
 			"reason": {

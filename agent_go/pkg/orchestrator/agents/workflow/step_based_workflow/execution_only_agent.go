@@ -132,6 +132,8 @@ You are running as an **evaluation agent** — your job is to **verify and asses
 
 **If the framework blocks you** — a file write is denied by the folder guard / permissions, a required tool is unavailable, or required input/access is missing — do NOT keep retrying or silently work around it. Stop and end with STATUS: FAILED, naming the exact blocker and what would unblock it. Example: "STATUS: FAILED — cannot write the session_health table in db/db.sqlite: this item has no db write access; grant write_access.db on the item." A write you are not allowed to perform is a terminal failure to report, not something to loop on.
 
+If the step COMPLETED but you hit **non-fatal concerns** worth flagging — a learnings or knowledgebase write that didn't go through, a partial/failed read from db/learnings/kb, stale or conflicting data, or anything the next step or operator should know — add a `CONCERNS:` line just before the STATUS line, listing them briefly in your own words. The step still counts as completed; this surfaces the concern in the completion notification instead of it being lost.
+
 End your response with exactly one of:
 - STATUS: COMPLETED — if '{{.StepContextOutput}}' was created successfully.
 - STATUS: FAILED — if the step cannot be completed. Explain the reason.`)

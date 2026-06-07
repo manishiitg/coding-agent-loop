@@ -1066,6 +1066,14 @@ func withTerminalRows(snapshot terminals.Snapshot) terminals.Snapshot {
 		return snapshot
 	}
 	if strings.ToLower(strings.TrimSpace(snapshot.StepTransport)) == "tmux" {
+		// Completed codex panes: strip the TUI chrome/repaint clutter from the
+		// static capture while keeping ANSI colors, so xterm renders a clean,
+		// colored final answer instead of the redraw-littered scrollback. Live
+		// panes are left untouched (xterm replays them in real time); the cleanup
+		// self-guards and falls back to the original content if it removes too much.
+		if !snapshot.Active && terminals.SnapshotIsCodex(snapshot) {
+			snapshot.Content = terminals.CleanCompletedCodexContent(snapshot.Content)
+		}
 		snapshot.Rows = []terminals.Row{}
 		return snapshot
 	}

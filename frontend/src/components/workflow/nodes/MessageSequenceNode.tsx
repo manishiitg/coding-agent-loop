@@ -129,6 +129,19 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
   const dbBadgeLabel = writesDb ? 'DB write' : referencesDb ? 'Uses DB' : 'DB'
   const knowledgebaseBadgeLabel = writesKnowledgebase ? 'KB write' : referencesKnowledgebase ? 'Uses KB' : 'KB'
 
+  // Step-level config metadata (same as a regular step card): a message_sequence
+  // step can carry a learning objective + learnings/KB/DB access, not just items.
+  const agentConfig = step?.agent_configs
+  const learningObjective = typeof agentConfig?.learning_objective === 'string' ? agentConfig.learning_objective.trim() : ''
+  const learningsAccess = agentConfig?.learnings_access
+  const knowledgebaseAccess = agentConfig?.knowledgebase_access
+  const dbAccess = agentConfig?.db_access
+  const accessChips = [
+    learningsAccess ? { icon: BookOpen, label: `Learnings: ${learningsAccess}` } : null,
+    knowledgebaseAccess ? { icon: FileText, label: `KB: ${knowledgebaseAccess}` } : null,
+    dbAccess ? { icon: Database, label: `DB: ${dbAccess}` } : null,
+  ].filter((c): c is { icon: typeof BookOpen; label: string } => c !== null)
+
   useEffect(() => {
     if (!import.meta.env.DEV) return
     if (!hasDbItem && !hasKnowledgebaseItem && !writesLearnings) return
@@ -229,6 +242,22 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
                 <span>Learning write</span>
               </span>
             )}
+          </div>
+        )}
+        {learningObjective && (
+          <div className="mt-2 rounded-md bg-amber-500/10 px-2 py-1">
+            <div className="text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">Learning Objective</div>
+            <div className="text-[11px] leading-snug text-gray-700 dark:text-gray-300 line-clamp-2">{learningObjective}</div>
+          </div>
+        )}
+        {accessChips.length > 0 && (
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+            {accessChips.map(chip => (
+              <span key={chip.label} className={metadataChipBase} title={chip.label}>
+                <chip.icon className="h-3 w-3" />
+                <span>{chip.label}</span>
+              </span>
+            ))}
           </div>
         )}
       </div>

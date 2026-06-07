@@ -34,7 +34,7 @@ import { useWorkflowStore, type CanvasViewMode } from '../../../stores/useWorkfl
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useChatStore } from '../../../stores/useChatStore'
 import { agentApi } from '../../../services/api'
-import type { PlanStep } from '../../../utils/stepConfigMatching'
+import type { PlanStep, MessageSequenceItem } from '../../../utils/stepConfigMatching'
 import type { VariablesManifest } from '../../../services/api-types'
 import { buildGroupFolderPath } from '../../../utils/workflowUtils'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
@@ -45,7 +45,10 @@ const SVG_EXPORT_SCALE = 3
 const PNG_EXPORT_SCALE = 1
 const PNG_EXPORT_MAX_SIDE = 16000
 const PNG_EXPORT_MAX_PIXELS = 64_000_000
-const WORKFLOW_LAYOUT_VERSION = '2.0-tree'
+// Bump this whenever the auto-layout algorithm changes so stale saved layouts
+// (custom drag positions from the old editor) are dropped and the new computed
+// layout takes over. 2.1-dagre: dagre-only layout + routing branch-target edge fix.
+const WORKFLOW_LAYOUT_VERSION = '2.1-dagre'
 const FLOW_FIT_PADDING = 0.24
 const FLOW_FIT_MIN_ZOOM = 0.08
 const FLOW_FIT_MAX_ZOOM = 0.95
@@ -948,6 +951,7 @@ function ReadOnlyStepDetailPanel({
       ? step.predefined_routes
       : undefined
   const todoMessages = step?.type === 'todo_task' ? step.messages : undefined
+  const sequenceItems = (step ? (step as { items?: MessageSequenceItem[] }).items : undefined) || undefined
   const validationSchema = step?.validation_schema || ('validation_schema' in data ? data.validation_schema : undefined)
   const agentConfigs = step?.agent_configs
   const contextInputs = step?.context_dependencies || []
@@ -966,15 +970,6 @@ function ReadOnlyStepDetailPanel({
           </div>
           <h3 className="truncate text-sm font-semibold text-foreground">{title}</h3>
         </div>
-        <button
-          onClick={onClose}
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          aria-label="Close step details"
-          title="Close"
-        >
-          <X className="h-3.5 w-3.5" />
-          <span>Close</span>
-        </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1050,6 +1045,60 @@ function ReadOnlyStepDetailPanel({
           </DetailSection>
         ) : null}
 
+        {sequenceItems?.length ? (
+          <DetailSection icon={ListOrdered} title={`Message Sequence (${sequenceItems.length})`}>
+            <p className="mb-2 text-xs text-muted-foreground">Ordered items the step runs top to bottom.</p>
+            <ol className="space-y-2">
+              {sequenceItems.map((item, index) => {
+                const kind = item.type || 'user_message'
+                const subKind = item.kind && item.kind !== 'execution' ? item.kind : undefined
+                const chipClass =
+                  kind === 'prevalidation' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                    : kind === 'foreach' ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400'
+                      : kind === 'code' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                        : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
+                const writes = item.write_access
+                const accessBits = [
+                  writes?.db ? 'db' : null,
+                  writes?.knowledgebase ? 'kb' : null,
+                  writes?.learnings ? 'learnings' : null,
+                ].filter(Boolean) as string[]
+                return (
+                  <li key={item.id || index} className="rounded-md border border-border bg-muted/25 p-2">
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
+                      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted-foreground/20 text-[10px] font-semibold text-foreground/70">{index + 1}</span>
+                      <span className={`rounded px-1.5 py-0.5 font-mono text-[10px] uppercase ${chipClass}`}>{String(kind).replace(/_/g, ' ')}</span>
+                      {subKind && <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{subKind}</span>}
+                      {item.title && <span className="truncate text-xs font-medium text-foreground">{item.title}</span>}
+                    </div>
+                    {item.message && <div className="text-xs leading-relaxed text-foreground/85">{item.message}</div>}
+                    {item.script_path && <div className="mt-1 font-mono text-[10px] text-muted-foreground">script: {item.script_path}{item.runtime ? ` (${item.runtime})` : ''}</div>}
+                    {kind === 'foreach' && (
+                      <div className="mt-1 text-xs text-foreground/80">
+                        for each row in <span className="font-mono text-foreground">{item.source || '—'}</span>
+                        {item.source_path ? <> at <span className="font-mono text-foreground">{item.source_path}</span></> : null}
+                        {item.max_iterations ? <> (max {item.max_iterations})</> : null}
+                      </div>
+                    )}
+                    {(item.input_files?.length || item.output_files?.length) ? (
+                      <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">
+                        {item.input_files?.length ? <div>reads: <span className="font-mono">{item.input_files.join(', ')}</span></div> : null}
+                        {item.output_files?.length ? <div>writes: <span className="font-mono">{item.output_files.join(', ')}</span></div> : null}
+                      </div>
+                    ) : null}
+                    {accessBits.length > 0 && (
+                      <div className="mt-1 text-[10px] text-muted-foreground">write access: {accessBits.join(', ')}</div>
+                    )}
+                    {(item.validation_schema || item.prevalidation) && (
+                      <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-muted/40 px-2 py-1 font-mono text-[10px] leading-relaxed text-foreground/70">{formatJson(item.validation_schema || item.prevalidation)}</pre>
+                    )}
+                  </li>
+                )
+              })}
+            </ol>
+          </DetailSection>
+        ) : null}
+
         {(contextInputs.length > 0 || contextOutputs.length > 0) && (
           <DetailSection icon={FileText} title="Context">
             <div className="space-y-2 text-xs">
@@ -1092,6 +1141,18 @@ function ReadOnlyStepDetailPanel({
             </pre>
           </DetailSection>
         )}
+      </div>
+
+      <div className="shrink-0 border-t border-border bg-background/95 px-4 py-3 backdrop-blur">
+        <button
+          onClick={onClose}
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="Close step details"
+          title="Close"
+        >
+          <X className="h-3.5 w-3.5" />
+          <span>Close</span>
+        </button>
       </div>
     </aside>
   )
@@ -2719,7 +2780,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             {workspacePath && <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} />}
           </div>
         ) : <div className="h-full min-h-0 relative flex">
-          <PreviewPaneControls hasPlan={hasPlan} onExportPlan={() => { void handleExportImage('png') }} onRefreshPlan={() => { void handleRefresh() }} />
+          <PreviewPaneControls hasPlan={hasPlan} onExportPlan={() => { void handleExportImage('png') }} onRefreshPlan={() => { void handleRefresh() }} scopeId={workspacePath} />
           <div className={`min-h-0 h-full transition-all duration-300 ${showVariablesSidebar ? 'mr-[450px]' : ''} ${previewDevice === 'desktop' ? 'flex-1' : previewDeviceShellClass(previewDevice)}`}>
         <ReactFlow
           className="w-full h-full bg-gray-50 dark:bg-gray-900"

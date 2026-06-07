@@ -851,6 +851,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     focusedPane === 'chat'
       ? (previewDevice === 'mobile' ? 'mobile' : 'tablet')
       : previewDevice === 'mobile' ? 'mobile' : previewDevice === 'tablet' ? 'tablet' : 'laptop'
+  // Laptop ('desktop' device) hides the chat pane entirely for both report and
+  // plan — the workspace canvas takes the full width. (Use the raw device choice,
+  // not effectiveTier, so it holds regardless of the focus-cap.)
+  const laptopHidesChat = previewDevice === 'desktop' && showChatArea && workspacePaneVisible
   const splitGridCols =
     effectiveTier === 'mobile' ? 'md:grid-cols-[minmax(0,1fr)_480px]'
     : effectiveTier === 'tablet' ? 'md:grid-cols-[minmax(0,1fr)_880px]'
@@ -859,10 +863,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // glides — the panes just follow their grid column instead of fighting it with
   // per-tier explicit widths. (grid-template-columns animation is supported by
   // the Electron Chromium runtime.)
-  const splitLayoutClassName = !showChatArea || !workspacePaneVisible
+  const splitLayoutClassName = !showChatArea || !workspacePaneVisible || laptopHidesChat
     ? 'flex-1 min-h-0 flex flex-col'
     : `flex-1 min-h-0 flex flex-col md:grid ${splitGridCols} md:grid-rows-[auto_minmax(0,1fr)] md:transition-[grid-template-columns] md:duration-300 md:ease-in-out`
-  const canvasPaneClassName = !showChatArea
+  const canvasPaneClassName = !showChatArea || laptopHidesChat
     ? 'flex-1 min-h-0 min-w-0'
     : !workspacePaneVisible
       ? 'hidden'
@@ -2008,7 +2012,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             data-tour="workflow-chat-pane"
             data-testid="tour-workflow-chat-pane"
             onMouseDownCapture={() => setFocusedPane('chat')}
-            className={`${chatPaneVisibilityClass} min-h-0 min-w-0 overflow-hidden flex-col bg-background transition-all duration-300 ${
+            className={`${laptopHidesChat ? 'hidden' : chatPaneVisibilityClass} min-h-0 min-w-0 overflow-hidden flex-col bg-background transition-all duration-300 ${
             workspacePaneVisible
               ? `border-b border-border md:col-start-1 md:row-start-2 md:border-b-0 md:border-r ${shouldUseMobileReportPane ? 'flex-1 md:flex-[1.35]' : 'flex-1 basis-1/2'}`
               : 'flex-1'

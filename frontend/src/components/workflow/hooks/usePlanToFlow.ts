@@ -195,8 +195,11 @@ const getDagreConfig = (direction: 'LR' | 'TB') => ({
   rankdir: direction,
   // For LR: nodesep = vertical spacing, ranksep = horizontal spacing
   // For TB: nodesep = horizontal spacing, ranksep = vertical spacing
-  nodesep: direction === 'LR' ? 200 : 150,
-  ranksep: direction === 'LR' ? 150 : 200,
+  // TB nodesep is the MINIMUM horizontal gap between sibling nodes; dagre adds
+  // more automatically so each branch gets room proportional to its own subtree.
+  // Keep this a modest floor and let dagre drive the dynamic, per-subtree spread.
+  nodesep: direction === 'LR' ? 200 : 160,
+  ranksep: direction === 'LR' ? 150 : 220,
   marginx: 80,
   marginy: 80
 })
@@ -224,8 +227,8 @@ const SUB_AGENT_LAYOUT = {
 }
 
 const ROUTING_TREE_LAYOUT = {
-  parentGap: 96,
-  laneGap: 96,
+  parentGap: 120,
+  laneGap: 180,
   minLaneWidth: NODE_DIMENSIONS.routing.width
 }
 
@@ -860,10 +863,11 @@ function applyVerticalRoutingTreeLayout(nodes: WorkflowNode[], edges: WorkflowEd
 /**
  * Calculate topology metrics to adjust layout spacing
  */
-function calculateTopologyMetrics(nodes: WorkflowNode[]): { hasOrchestrator: boolean; maxOrchestratorDepth: number; maxOrchestratorSubAgents: number } {
+function calculateTopologyMetrics(nodes: WorkflowNode[]): { hasOrchestrator: boolean; maxOrchestratorDepth: number; maxOrchestratorSubAgents: number; maxRoutingBranches: number } {
   let hasOrchestrator = false
   let maxOrchestratorDepth = 0
   let maxOrchestratorSubAgents = 0
+  let maxRoutingBranches = 0
 
   nodes.forEach(node => {
     if (node.type === 'todo_task') {
@@ -871,15 +875,19 @@ function calculateTopologyMetrics(nodes: WorkflowNode[]): { hasOrchestrator: boo
       const data = node.data as TodoTaskNodeData
       const routes = (data as TodoTaskNodeData).predefined_routes
       const numRoutes = routes?.length || 0
-      
+
       // Count actual sub-agents
       maxOrchestratorSubAgents = Math.max(maxOrchestratorSubAgents, numRoutes)
-      
+
       maxOrchestratorDepth = Math.max(maxOrchestratorDepth, numRoutes)
+    }
+    if (node.type === 'routing') {
+      const routes = (node.data as RoutingStepNodeData).routes
+      maxRoutingBranches = Math.max(maxRoutingBranches, routes?.length || 0)
     }
   })
 
-  return { hasOrchestrator, maxOrchestratorDepth, maxOrchestratorSubAgents }
+  return { hasOrchestrator, maxOrchestratorDepth, maxOrchestratorSubAgents, maxRoutingBranches }
 }
 
 /**
@@ -1191,19 +1199,23 @@ function detectAndResolveCollisions(nodes: WorkflowNode[], direction: 'LR' | 'TB
  */
 function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction: 'LR' | 'TB'): { nodes: WorkflowNode[], edges: WorkflowEdge[] } {
   // Calculate topology metrics to determine spacing requirements
-  const { maxOrchestratorSubAgents } = calculateTopologyMetrics(nodes)
+  const { maxOrchestratorSubAgents, maxRoutingBranches } = calculateTopologyMetrics(nodes)
 
   // Get config based on layout direction
   const baseConfig = getDagreConfig(direction)
 
-  // Dynamic config based on topology
-  // Increase spacing if we have todo tasks with many sub-agents
-  const spacingMultiplier = maxOrchestratorSubAgents > 2 ? 1.5 : 1
-  
+  // Dynamic config based on topology. Widen spacing when the graph fans out —
+  // many todo-task sub-agents OR many routing branches — so sibling lanes stay
+  // visually distinct instead of cramming together.
+  const fanOut = Math.max(maxOrchestratorSubAgents, maxRoutingBranches)
+  const spacingMultiplier = fanOut > 3 ? 1.6 : fanOut > 2 ? 1.35 : 1
+
   const dynamicConfig = {
     ...baseConfig,
+    // nodesep (sibling/lane separation) widens most with fan-out; ranksep grows
+    // gentler so the tree doesn't become excessively tall.
     nodesep: baseConfig.nodesep * spacingMultiplier,
-    ranksep: baseConfig.ranksep * spacingMultiplier
+    ranksep: baseConfig.ranksep * Math.min(spacingMultiplier, 1.3)
   }
 
   const g = new dagre.graphlib.Graph()
@@ -1345,9 +1357,9 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
   // Position branch nodes based on direction:
   // LR: TRUE above, FALSE below
   // TB: TRUE left, FALSE right
-  const withBranches = positionBranchNodes(layoutedNodes, direction)
-
-  return { nodes: withBranches, edges }
+  // Dagre owns layout (including branch separation); the manual branch
+  // repositioning pass is disabled — see the dagre-only simplification.
+  return { nodes: layoutedNodes, edges }
 }
 
 /**
@@ -1558,6 +1570,30 @@ function processSteps(
   // Track conditional nodes with empty branches for label purposes
   const conditionalEmptyBranches = new Map<string, { trueEmpty: boolean; falseEmpty: boolean }>()
 
+  // Nodes reached by an explicit branch/route edge (routing routes, conditional
+  // if_true/if_false, human-input yes/no, todo next_step_id). These are entered
+  // ONLY via their branch edge, so they must NOT also receive an array-order
+  // sequential edge — otherwise sibling routes get cross-linked into one cramped
+  // linear chain instead of fanning out as distinct branches under the router.
+  const explicitBranchTargetNodeIds = new Set<string>()
+  const addBranchTarget = (stepId?: string) => {
+    if (!stepId || stepId === 'end') return
+    const targetNodeId = stepIdToNodeIdMap?.get(stepId)
+    if (targetNodeId) explicitBranchTargetNodeIds.add(targetNodeId)
+  }
+  steps.forEach(s => {
+    if (isRoutingStep(s) && s.routes) s.routes.forEach(r => addBranchTarget(r.next_step_id))
+    if (isConditionalStep(s)) {
+      addBranchTarget(s.if_true_next_step_id)
+      addBranchTarget(s.if_false_next_step_id)
+    }
+    if (isHumanInputStep(s)) {
+      addBranchTarget(s.if_yes_next_step_id)
+      addBranchTarget(s.if_no_next_step_id)
+    }
+    if (isTodoTaskStep(s)) addBranchTarget(s.next_step_id)
+  })
+
   const buildTodoTaskSubAgentGraph = (
     todoTaskStep: PlanStep,
     todoTaskNodeId: string,
@@ -1640,6 +1676,32 @@ function processSteps(
           )
           todoTaskSubAgentNodes.push(...nestedTodoGraph.nodes)
           todoTaskEdges.push(...nestedTodoGraph.edges)
+        } else if (isMessageSequenceStep(subAgentStep)) {
+          // A message_sequence sub-agent must render as a MessageSequenceNode so its
+          // ordered items show — not as a generic step card.
+          const seqNode: WorkflowNode = {
+            id: subAgentNodeId,
+            type: 'message_sequence',
+            position: { x: 0, y: 0 },
+            data: {
+              id: subAgentNodeId,
+              title: subAgentStep.title || `${route.route_name || route.route_id || routeId}`,
+              description: subAgentStep.description,
+              items: subAgentStep.items,
+              status,
+              stepIndex: parentStepIndex,
+              step: subAgentStep,
+              changeType,
+              validation_schema: subAgentStep.validation_schema,
+              workspacePath,
+              selectedRunFolder,
+              parentOrchestratorTitle: todoTaskTitle,
+              routeName: route.route_name || undefined,
+              routeCondition: route.condition || undefined
+            } as MessageSequenceNodeData
+          }
+
+          todoTaskSubAgentNodes.push(seqNode)
         } else {
           const subAgentNode: WorkflowNode = {
             id: subAgentNodeId,
@@ -1765,9 +1827,12 @@ function processSteps(
     const node = stepToNode(step, index, parentId, branchType, changes, stepStatusMap, workspacePath, selectedRunFolder, completedStepIds)
     nodes.push(node)
 
-    // Create edge from previous step's exit node (sequential flow)
+    // Create edge from previous step's exit node (sequential flow).
+    // Skip when this node is an explicit branch/route target — it already has an
+    // incoming edge from its router/branch, and an extra array-order edge would
+    // cross-link sibling routes into a single cramped chain.
     // If lastExitNodeId is an array, it means we're connecting from multiple branch exits
-    if (lastExitNodeId) {
+    if (lastExitNodeId && !explicitBranchTargetNodeIds.has(node.id)) {
       if (Array.isArray(lastExitNodeId)) {
         // Connect from all branch exit nodes to this step
         lastExitNodeId.forEach((exitNodeId, i) => {
@@ -2305,6 +2370,28 @@ function processSteps(
 
       // Todo task steps handle their own routing - don't connect to next sequential step
       lastExitNodeId = null
+    }
+
+    // Handle message_sequence step next_step_id: draw an EXPLICIT edge to the
+    // target. Without this, a sequence's next_step_id only connected via array
+    // order, so when several routes' sequences all point at the same downstream
+    // step (e.g. each portal -> normalize), only the last one linked and the
+    // shared step looked unconnected. Now every sequence draws its own edge, so
+    // the convergence (shared finish line) is visible.
+    if (isMessageSequenceStep(step) && step.next_step_id) {
+      const sourceNodeId = (typeof lastExitNodeId === 'string' ? lastExitNodeId : node.id)
+      const targetNodeId = step.next_step_id === 'end' ? 'end' : stepIdToNodeIdMap?.get(step.next_step_id)
+      if (targetNodeId) {
+        edges.push({
+          id: `${sourceNodeId}-msgseq-next-to-${targetNodeId}`,
+          source: sourceNodeId,
+          target: targetNodeId,
+          type: 'smoothstep',
+          animated: false,
+          style: { stroke: '#6b7280', strokeWidth: 2 }
+        })
+        lastExitNodeId = null // explicit next_step_id edge created; don't also array-chain
+      }
     }
   })
 
@@ -2856,51 +2943,40 @@ export function usePlanToFlow(
         }
 
         if (layoutDirection === 'TB') {
-          // TB mode: keep the header row above the workflow and centered over
-          // the first step instead of pushing the whole graph to the right.
-          const firstStepDims = getNodeLayoutDimensions(firstStepNode)
-          const headerRowWidth = startDims.width + HEADER_GAP + variablesDims.width
-          const firstStepTargetX = firstStepLeftEdge
-          const firstStepTargetY = headerRowBottom + HEADER_TO_WORKFLOW_GAP
+          // Start and Variables stack VERTICALLY on the left (Start on top), and
+          // the workflow graph sits to the RIGHT of that column, top-aligned with
+          // Start. This keeps the tall, expandable Variables panel beside the
+          // graph instead of on top of it, so it never overlaps workflow nodes.
+          const VERTICAL_HEADER_GAP = 24
+          const COLUMN_TO_WORKFLOW_GAP = 140
+          const headerColumnWidth = Math.max(startDims.width, variablesDims.width)
 
-          // Calculate offset to shift all workflow nodes
-          // Use firstStepLeftEdge to ensure sub-agents don't overlap with header
-          const offsetX = firstStepTargetX - firstStepLeftEdge
-          const offsetY = firstStepTargetY - firstStepNode.position.y
-          const firstStepCenterX = firstStepNode.position.x + offsetX + (firstStepDims.width / 2)
-          const headerRowStartX = firstStepCenterX - (headerRowWidth / 2)
-          startPos = { x: headerRowStartX, y: HEADER_Y }
-          varsPos = { x: headerRowStartX + startDims.width + HEADER_GAP, y: HEADER_Y }
+          startPos = { x: HEADER_START_X, y: HEADER_Y }
+          varsPos = { x: HEADER_START_X, y: HEADER_Y + startDims.height + VERTICAL_HEADER_GAP }
+          layoutedResult.nodes[startNodeIndex] = { ...layoutedResult.nodes[startNodeIndex], position: startPos }
+          layoutedResult.nodes[variablesNodeIndex] = { ...layoutedResult.nodes[variablesNodeIndex], position: varsPos }
 
-          layoutedResult.nodes[startNodeIndex] = {
-            ...layoutedResult.nodes[startNodeIndex],
-            position: startPos
-          }
-          layoutedResult.nodes[variablesNodeIndex] = {
-            ...layoutedResult.nodes[variablesNodeIndex],
-            position: varsPos
-          }
+          // Shift the whole dagre-laid workflow right of the header column and
+          // align its top with Start. Measure the workflow's bounding box first.
+          let workflowMinX = Number.POSITIVE_INFINITY
+          let workflowMinY = Number.POSITIVE_INFINITY
+          layoutedResult.nodes.forEach((node, index) => {
+            if (node.id === 'start' || node.id === 'variables') return
+            if (index === startNodeIndex || index === variablesNodeIndex) return
+            if (node.type === 'end') return
+            workflowMinX = Math.min(workflowMinX, node.position.x)
+            workflowMinY = Math.min(workflowMinY, node.position.y)
+          })
+          if (!Number.isFinite(workflowMinX)) { workflowMinX = 0; workflowMinY = 0 }
 
-          // Shift all non-header nodes by this offset
+          const offsetX = (HEADER_START_X + headerColumnWidth + COLUMN_TO_WORKFLOW_GAP) - workflowMinX
+          const offsetY = HEADER_Y - workflowMinY
+
           layoutedResult.nodes = layoutedResult.nodes.map((node, index) => {
-            // CRITICAL: Never shift header nodes - check by ID, not just index
-            if (node.id === 'start' || node.id === 'variables') {
-              return node // Keep header nodes in place
-            }
-            if (index === startNodeIndex || index === variablesNodeIndex) {
-              return node // Also check by index as backup
-            }
-            if (node.type === 'end') {
-              // End node - will be repositioned later
-              return node
-            }
-            return {
-              ...node,
-              position: {
-                x: node.position.x + offsetX,
-                y: node.position.y + offsetY
-              }
-            }
+            if (node.id === 'start' || node.id === 'variables') return node
+            if (index === startNodeIndex || index === variablesNodeIndex) return node
+            if (node.type === 'end') return node
+            return { ...node, position: { x: node.position.x + offsetX, y: node.position.y + offsetY } }
           })
         } else {
           // LR mode: workflow flows horizontally, so first step should be to the right of header
@@ -2938,9 +3014,8 @@ export function usePlanToFlow(
       }
     }
 
-    if (layoutDirection === 'TB') {
-      layoutedResult.nodes = applyVerticalRoutingTreeLayout(layoutedResult.nodes, layoutedResult.edges)
-    }
+    // Routing branches are spread by dagre (subtree-aware), not the manual
+    // lane layout — disabled as part of the dagre-only simplification.
 
     // Position sub-agents relative to their parent todo_task nodes.
     // TB is the active canvas layout: children form a vertical tree, with
@@ -3194,15 +3269,9 @@ export function usePlanToFlow(
       }
     }
 
-    // Apply global collision detection and resolution to fix any remaining overlaps
-    // This handles overlaps from todo_task sub-agents, conditional branches, loops, etc.
-    // For LR layout: prefer vertical shifts. For TB layout: prefer horizontal shifts.
-    const nodesBeforeCollision = layoutedResult.nodes.length
-    layoutedResult.nodes = detectAndResolveCollisions(layoutedResult.nodes, layoutDirection)
-    const nodesAfterCollision = layoutedResult.nodes.length
-    if (nodesBeforeCollision !== nodesAfterCollision) {
-      // Node count changed during collision detection (log removed to reduce console noise)
-    }
+    // Global collision resolution is disabled — dagre already separates nodes by
+    // their subtree extent (nodesep is the floor), so the extra shove-apart pass
+    // (which ignored tree grouping) is no longer needed.
 
     if (layoutDirection === 'TB') {
       const startHeaderNode = layoutedResult.nodes.find(node => node.id === 'start')

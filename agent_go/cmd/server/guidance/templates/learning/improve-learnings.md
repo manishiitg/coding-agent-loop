@@ -1,8 +1,6 @@
 Improve the workflow learnings so `learnings/_global/` supports the current plan and objective.
 
-Before writing builder/improve.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown.
-
-MIGRATION (one-time): Check whether builder/improve.md exists. If it does, read it, extract all unresolved entries, incorporate them into builder/improve.html, then delete builder/improve.md with execute_shell_command.
+Write to `builder/improve.html`. For the log format, the one-time `.md → .html` migration, the `I-…` decision-id scheme, and the decision-block format, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 This command maintains reusable HOW-to-run knowledge such as selectors, tool/API patterns, auth quirks, timing/wait strategies, file-format pitfalls, reusable recovery steps, and common failure signatures.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 

@@ -1,8 +1,6 @@
 Improve the workflow knowledgebase notes so they support the current plan and objective.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-Before writing builder/improve.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown.
-
-MIGRATION (one-time): Check whether builder/improve.md exists. If it does, read it, extract all unresolved entries, incorporate them into builder/improve.html, then delete builder/improve.md with execute_shell_command.
+Write to `builder/improve.html`. For the log format, the one-time `.md → .html` migration, the `I-…` decision-id scheme, and the decision-block format, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 BOUNDARIES
 

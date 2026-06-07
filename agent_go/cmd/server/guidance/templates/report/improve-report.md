@@ -26,21 +26,4 @@ When you finish, update builder/improve.html with:
 - what you recommended
 - what was applied vs deferred
 
-Each new entry that records a *proposed but not-yet-applied* report change gets a stable id of the form `I-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id.
-
-CLOSE-OUT EDITS — read this carefully.
-
-Reporting findings rarely live in builder/review.html (the /review-* commands focus on plan/eval/cost/speed, not report layout). But if you can find a matching finding (e.g. user previously flagged "the funnel chart is unreadable" and that landed in review.html), apply close-out the same way the other /improve-* commands do:
-
-1. **Edit builder/review.html** to append, on its own line immediately after each matched finding:
-   ```
-   **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
-   ```
-
-2. **Append a structured builder/improve.html decision block** for the report change (use `diff_patch_workspace_file`):
-   ```improve-decision
-{"id":"<short-id>","ts":"<ISO-8601 UTC>","source":"agent","trigger":"improve-report","applied_changes":["reports/report_plan.json"],"rationale":"<one-line>","linked_review_finding":["F-..."]}
-   ```
-   `linked_review_finding` is omitted when no matching finding exists. This improve.html decision trail is what makes report changes auditable alongside plan/eval changes.
-
-This applies to chat-intent report fixes too.
+Use the `I-…` id scheme, the `improve-decision` block, and the review.html close-out (`[RESOLVED …]` marker) per `get_reference_doc(kind="review-improve-log")` — set `trigger` to `improve-report` and `applied_changes` to the report file(s) touched (`reports/report_plan.json` or the report HTML). A matching `F-…` finding may exist to close out: `/review-plan`'s Phase 4 includes a report audit, so report findings can land in builder/review.html. This applies to chat-intent report fixes too.

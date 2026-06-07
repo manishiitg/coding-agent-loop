@@ -11,7 +11,7 @@ Both are **self-contained HTML files, not Markdown**. Call `get_reference_doc(ki
 
 ### One-time `.md → .html` migration (still live)
 
-Legacy `builder/review.md` / `builder/improve.md` may still exist in some workspaces. When you open either log, if the `.md` version exists: read it, extract unresolved `F-…` / `I-…` findings into the `.html`, then delete the `.md` with `execute_shell_command`. Do this once per workspace; after the `.md` is gone there is nothing to migrate.
+Legacy `builder/review.md` / `builder/improve.md` may still exist in some workspaces. When you open either log, if the `.md` version exists: read it in full, extract every unresolved `F-…` / `I-…` finding, any important context, and any structured `improve-decision` blocks into the corresponding `.html`, then delete the `.md` with `execute_shell_command`. Migrate both files (review and improve) when both exist. Do this once per workspace, before writing the new HTML, so nothing is lost; after the `.md` is gone there is nothing to migrate.
 
 ### Finding / decision IDs
 

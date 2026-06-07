@@ -1,8 +1,6 @@
 Set up automatic run + improve scheduling for this workflow.
 
-Before writing builder/improve.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown.
-
-MIGRATION (one-time): Check whether builder/improve.md exists. If it does, read it, extract all unresolved entries and structured blocks, incorporate them into builder/improve.html, then delete builder/improve.md with execute_shell_command. Also check for builder/review.md and migrate it to builder/review.html the same way.
+Write to `builder/improve.html`. For the log/HTML format, the one-time `.md → .html` migration (both improve and review logs, including structured decision blocks), the `I-…` id scheme, and the decision-block format, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 FIRST check what already exists before proposing or creating anything. Do this autonomously and avoid duplicate schedules.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 

@@ -12,9 +12,9 @@ Use this hierarchy when deciding harden vs replan:
 5. `planning/plan.json` is only the current implementation attempt. Judge it against `soul.md` and retained run evidence; do not treat the current plan as proof that the workflow is correct.
 6. `builder/improve.html` and `builder/review.html` are memory/audit logs: use them to avoid repeating past decisions, carry unresolved findings, and link fixes. They are not the source of truth when they conflict with `soul.md` or current run/eval/metric evidence.
 
-Before writing builder/improve.html or builder/review.html, call get_reference_doc(kind="html-output") to load the HTML style guide and quality checklist. All output to these files must follow that guide: self-contained, dark-mode styles, summary box at top, semantic badges for findings severity.
+Write to `builder/improve.html` and `builder/review.html`. For the log/HTML format, the `I-…` id scheme, and the decision-block format, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
-MIGRATION (one-time): Before reading builder/improve.html, check whether builder/improve.md also exists. If it does, read it in full, extract the Workflow Profile, Active Improvement Index, all unresolved I-... entries, open hypotheses, and any structured improve-decision blocks, incorporate them into builder/improve.html, then delete builder/improve.md with execute_shell_command. Do the same for builder/review.md → builder/review.html. Perform migration before the SETUP steps below so the HTML files are the only source of truth going forward.
+MIGRATION (one-time): if `builder/improve.md` exists, before reading the HTML logs extract its **Workflow Profile, Active Improvement Index, unresolved `I-…` entries, open hypotheses, and structured decision blocks** into `builder/improve.html` (and migrate `builder/review.md` → `builder/review.html`); migration mechanics per `get_reference_doc(kind="review-improve-log")`. Do this before SETUP so the HTML files are the only source of truth.
 
 SETUP
 1. Read soul/soul.md and extract the objective and success criteria.

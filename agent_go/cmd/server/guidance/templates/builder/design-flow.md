@@ -1,6 +1,6 @@
 Read planning/plan.json and act as a senior workflow designer reviewing this plan with the user.
 
-Before writing builder/review.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown. Use semantic badges for design issues and recommendations. Read the existing file first to carry forward prior recommendations. Your job is to make the design BETTER — not just catch what's broken. Where review-plan asks "what's wrong?", design-flow asks "what would a thoughtful designer change?"{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Write recommendations to `builder/review.html` (read it first to carry forward prior recommendations). For the log/HTML format, badges, and the `F-…` id scheme, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style). Your job is to make the design BETTER — not just catch what's broken. Where review-plan asks "what's wrong?", design-flow asks "what would a thoughtful designer change?"{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 The output has three parts: (1) a visual map so the user sees what they have, (2) integrity checks (the strict broken-chain stuff), (3) **constructive recommendations** keyed to design best-practices, even when nothing is broken.
 

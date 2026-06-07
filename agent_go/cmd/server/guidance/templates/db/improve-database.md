@@ -1,6 +1,6 @@
 Improve the workflow database so `db/db.sqlite` supports the current plan, downstream steps, and report widgets.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-Before writing builder/improve.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown.
+Write to `builder/improve.html`. For the log format, the one-time `.md → .html` migration, the `I-…` decision-id scheme, and the decision-block format, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 BOUNDARIES
 

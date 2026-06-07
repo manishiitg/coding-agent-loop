@@ -1,8 +1,6 @@
 Define what success means for this workflow before optimization.
 
-Before writing builder/improve.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown.
-
-MIGRATION (one-time): Check whether builder/improve.md exists. If it does, read it, extract all unresolved entries and structured blocks, incorporate them into builder/improve.html, then delete builder/improve.md with execute_shell_command. Also check for builder/review.md and migrate it to builder/review.html the same way.
+Write to `builder/improve.html`. For the log/HTML format, the one-time `.md → .html` migration (both improve and review logs, including structured decision blocks), the `I-…` id scheme, and the decision-block format, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 Either bootstrap the auto-improvement framework (one-time configuration: Workflow Profile + metrics) or, if the framework is already in place, audit the existing setup and surface issues.{{if .Focus}}
 

@@ -1,8 +1,6 @@
 Review and improve evaluation/evaluation_plan.json.
 
-Before writing builder/improve.html or builder/review.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown.
-
-MIGRATION (one-time): Check whether builder/improve.md exists. If it does, read it, extract all unresolved entries and structured blocks, incorporate them into builder/improve.html, then delete builder/improve.md with execute_shell_command. Also check for builder/review.md and migrate it to builder/review.html the same way.
+Write to `builder/improve.html` (and `builder/review.html` for close-out markers). For the log/HTML format, the one-time `.md → .html` migration (including structured decision blocks), the `I-…` id scheme, and the decision-block format, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 Eval is the framework's measurement layer — it bridges "the plan ran" and "the goal was met." A good eval plan covers BOTH dimensions:
 

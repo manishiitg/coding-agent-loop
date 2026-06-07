@@ -1,8 +1,6 @@
 Run the artifact drift review through the dedicated background tool. This command checks whether dependent artifacts drifted from recent plan/config changes: step config, learnings, saved main.py, KB notes, db files, reports, evaluation, and recent run outputs. It is a review command, not a fix command.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-Before writing builder/review.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown. Use .badge.fail for CRITICAL findings, .badge.warn for WARNING, .badge.pass for resolved. Read the existing file first to carry forward unresolved findings.
-
-MIGRATION (one-time): Check whether builder/review.md exists. If it does, read it, extract unresolved F-... findings, incorporate them into builder/review.html, then delete builder/review.md with execute_shell_command.
+Write findings to `builder/review.html`. For the log format + badges, the one-time `.md → .html` migration, and the `F-…` finding-id scheme, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 PROCEDURE
 

@@ -1,8 +1,6 @@
 {{if .Focus}}Run review_step_code(step_id="{{.Focus}}") to audit the saved main.py for step "{{.Focus}}".{{else}}Run review_step_code() to audit every saved main.py script across workflow steps and evaluation steps against its current description and best practices.{{end}} This is not a spell-check — it's a behavior audit.
 
-Before writing builder/review.html, call get_reference_doc(kind="html-output") to load the HTML style guide. Write a self-contained HTML file — not Markdown. Use .badge.fail for CRITICAL findings, .badge.warn for WARNING, .badge.pass for resolved. Read the existing file first to carry forward unresolved findings.
-
-MIGRATION (one-time): Check whether builder/review.md exists. If it does, read it, extract unresolved F-... findings, incorporate them into builder/review.html, then delete builder/review.md with execute_shell_command.
+Write findings to `builder/review.html`. For the log format + badges, the one-time `.md → .html` migration, and the `F-…` finding-id scheme, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
 
 The code must actually deliver what the description promises, do it dynamically (not via hardcoded shortcuts), and follow durable patterns when it touches a browser. Flag findings by severity (CRITICAL / WARNING / INFO).
 
@@ -69,5 +67,3 @@ For each step audited:
 End with a cross-step summary: which steps are clean, which need work, which are CRITICAL.
 
 REVIEW LOG: append a dated entry to builder/review.html (read it first if it exists, create it if it does not). Include: which step(s) reviewed, the drift findings, the shortcut/dynamism findings, the browser best-practice findings, the operational findings, severity verdicts, and items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply — fixes go through optimizer-mode harden/replan tools).
-
-**Finding IDs.** Every distinct finding (drift, shortcut, browser, operational) gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id> — <lens>: <finding>` so close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.

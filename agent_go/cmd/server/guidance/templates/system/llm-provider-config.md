@@ -12,7 +12,7 @@ Published LLMs and provider credentials are managed by tools. Never inspect or e
 
 ### Minimal published LLM shape
 
-Store only the routable model identity and model-specific options:
+Store only the routable model identity and model-specific options (the `name`/`model_id` below are an **example** — use a current model id from `list_llm_capabilities` / `list_provider_models`, not a hardcoded version):
 
 ```json
 {

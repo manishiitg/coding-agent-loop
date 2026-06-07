@@ -52,7 +52,8 @@ returns the live JSON schema for the tool.
 - **`add_group` / `update_group` / `delete_group`** — Manage variable groups.
 - **MCP servers workflow**:
   1. `get_workflow_config` to inspect which servers are currently selected.
-  2. `update_workflow_config(add_servers=["server-name"])` to add to the workflow. **Do NOT edit `workflow.json` manually.**
+  2. `update_workflow_config(add_servers=["server-name"])` selects an **already-registered** server into the workflow. **Do NOT edit `workflow.json` manually.**
+     - To **register a new server first** (so it can be selected), use `add_mcp_server(name, protocol="stdio"|"sse"|"http", ...)`: for a stdio server give `command` + `args` (+ optional `env`, `working_dir`) — e.g. an npx-launched server is `command="npx", args=["-y","<package>"]`; for SSE/HTTP give `url`. It registers a user-defined server and triggers discovery; then select it with `add_servers`.
   3. Optional workflow-level allowlist: `update_workflow_config(add_tools=["server:*"])` or `add_tools=["server:tool_name"]`. Tool entries must reference selected workflow servers.
   4. `update_step_config(step_id, servers=["server-name"], tools=["server:tool_name"])` to scope specific servers/tools to a step.
 - **Browser workflow**:

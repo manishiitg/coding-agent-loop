@@ -40,7 +40,7 @@ Use `execute_shell_command` to read and write the schedule file:
 cat _users/<user-id>/multiagent-schedules.json 2>/dev/null || echo '{"schedules":[],"capabilities":{}}'
 ```
 
-**Create/update schedules:** Read the file, modify the JSON (add/update/remove entries), write it back. Use `python3` or `jq` for JSON manipulation. Always generate a UUID for new schedule IDs (`python3 -c "import uuid; print(uuid.uuid4())"`).
+**Create/update schedules:** Read the file, modify the JSON (add/update/remove entries), write it back. Use `python3` or `jq` for JSON manipulation. Always generate a UUID for new schedule IDs (`python3 -c "import uuid; print(uuid.uuid4())"`). **Preserve entries you are not changing** — the file may contain built-in/system entries (e.g. a memory-enrich schedule) and disabled ones; mutate the existing array in place rather than rebuilding it from scratch, or you will silently drop them.
 
 **Cron expression examples:**
 - `0 9 * * *` — daily at 9:00 AM

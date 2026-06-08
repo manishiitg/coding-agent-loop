@@ -1,53 +1,66 @@
-Read planning/plan.json and act as a senior workflow designer reviewing this plan with the user.
+Read planning/plan.json (+ step_config.json, variables/variables.json) and act as a senior workflow designer reviewing this plan WITH the user. Your job is to make the design better and to teach the user how to use each building block well — not just catch what's broken.
 
-Write recommendations to `builder/review.html` (read it first to carry forward prior recommendations). For the log/HTML format, badges, and the `F-…` id scheme, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style). Your job is to make the design BETTER — not just catch what's broken. Where review-plan asks "what's wrong?", design-flow asks "what would a thoughtful designer change?"{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Write recommendations to `builder/review.html` (read it first to carry prior recommendations forward). For the log/HTML format, badges, and the `F-…` id scheme follow `get_reference_doc(kind="review-improve-log")` (+ `get_reference_doc(kind="html-output")` for HTML style). Canonical detail lives in the step-types / plan-design reference and `get_reference_doc(kind="stores")` — cite them; don't restate them in full.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-The output has three parts: (1) a visual map so the user sees what they have, (2) integrity checks (the strict broken-chain stuff), (3) **constructive recommendations** keyed to design best-practices, even when nothing is broken.
+## The mental model to design against (current)
+
+- **db/db.sqlite is the source of truth.** A step's real output is the rows it writes to the db (via `$DB_PATH`), not a file. Reports and downstream steps read the db.
+- **`context_output` is OPTIONAL.** Use it only for a small explicit handoff a *next step* consumes (it gets injected into that step's prompt), or a deliberate file artifact. If the result is in the db, OMIT it — a hand-written receipt file duplicates the db and drifts (the classic `status: null` while the db is perfect).
+- **Validate the source of truth.** `validation_schema` can gate **files** (`files` + json_checks) AND/OR the **db** (`db: [{sql, min_rows, max_rows, checks}]`, read-only queries against db/db.sqlite). Prefer a **db check** when the step writes to the db — gate what was actually produced.
+- **`context_dependencies`** is the *file* channel (forward-only, injected into the prompt). Use `[]` when the next step just reads the db. It is NOT required for data flow — the db always is.
 
 PART 1 — VISUAL MAP
-Draw a dependency graph from plan.json so the user can see their workflow at a glance:
+Draw the plan so the user sees it at a glance. Annotate each step with its **type**, what it **persists** (db tables and/or `context_output`), how it's **gated** (db check / file check / none), and its **stores access** (db / kb / learnings). Routing nodes show their branches and where they converge.
 
-  step-1: ingest_emails  (produces: raw_emails, sender_index)
-        ↓ raw_emails
-  step-2: classify_intent  (consumes: raw_emails; produces: classified)
-        ↓ classified
-  step-3: route_by_intent  (routing: → step-4a, step-4b, step-4c)
+```
+step-1 ingest_emails   [regular]   → db: emails           gate: db(min_rows≥1)
+step-2 classify_intent [regular]   → db: emails.intent    gate: db(no null intents)
+step-3 route_by_intent [routing]   → buyer | seller | spam   (all → step-7 normalize)
+```
 
-Use ASCII or a markdown table — whichever fits the plan size. Annotate each step with its step type (regular / todo_task / human_input / routing / orphan) and declared execution mode. In Builder mode, new executable steps should stay on agentic; scripted promotion belongs to Optimizer only after the user explicitly asks, the step is highly deterministic, and 10+ scenario-covering successful runs prove stability.
+PART 2 — INTEGRITY CHECKS (structural; severity CRITICAL/WARNING/INFO + one-line fix)
+1. **Unpersisted result** — a step does real work but writes neither db rows nor a consumed `context_output`. Its result is lost.
+2. **Ungated step** — a step produces durable output but has no `validation_schema` (file OR db check). No automated quality gate.
+3. **Stale receipt** — a step writes a `context_output` file that duplicates what it also writes to the db (drift risk). Recommend dropping the file and gating on the db, OR deriving the file from the db.
+4. **Broken handoff** — a step lists a `context_dependency` no earlier step produces, OR its description references upstream data that's neither in a declared dependency nor readable from the db.
+5. **Routing fall-through** — a routing step's branches don't all converge: a selected branch's terminal step lacks a `next_step_id` to the shared downstream step (or `"end"`), so execution falls into the next sibling branch. CRITICAL.
+6. **Routing with judgment** — a routing step has a non-empty description or implies a decision; routing is deterministic and decides nothing. Move the judgment to a prior `regular` step that writes `route_selection.json`.
+7. **Orphan reuse not wired** — an orphan step exists but isn't referenced (`orphan_step_ref`) / doesn't declare `shared_with.orchestrator_ids`.
+8. **Circular dependency** — A→B→A.
 
-PART 2 — INTEGRITY CHECKS
-Flag the strict structural issues:
+PART 3 — STEP-TYPE FITNESS (how to use each; cite the step it applies to)
+For each step, confirm it's the right type, and flag mis-modeling:
 
-1. **Broken chain** — step depends on a context_output that no earlier step produces.
-2. **Orphaned outputs** — step produces context_output that no later step consumes.
-3. **Circular dependencies** — A depends on B depends on A.
-4. **Implicit dependencies** — description references upstream data but context_dependencies doesn't list it.
-5. **Type mismatches** — upstream produces JSON, downstream expects CSV; field names don't align.
-6. **Missing validation** — steps that produce context_output but have no validation_schema.
+- **regular** — one durable unit of work (fetch/parse/transform/write/verify). The default. Persist results to the db; gate with a db check; keep `context_output` only for a real consumer.
+- **routing** — a DETERMINISTIC N-way switch: no agent, **no description**, decided upstream (a prior regular step writes `route_selection.json`, or the caller passes `route_selections`); `default_route_id` is the missing-file fallback. **Every branch must converge** to the shared downstream step via `next_step_id` (or end). "Loop/if in a description" is not routing.
+- **message_sequence** — same-context multi-turn work or a re-entrant specialist: ordered `items` (user_message / code / prevalidation / foreach), sharing one conversation. Reach for it when 2+ regular steps reread the same context and depend on each other's transient reasoning. As a top-level step the queue runs once; as a todo_task route it re-enters across calls. Learnings/KB are trailing items, not separate steps.
+- **todo_task (orchestrator)** — a dynamic agentic loop / delegation over a list the orchestrator can't enumerate at design time. It delegates real work to **sub-agent routes** (regular / message_sequence / one nested todo_task); it does not do the work inline. If you're writing detailed task instructions inside the orchestrator description, that task should be a sub-agent route. One nested orchestrator layer max.
+- **orphan** — a reusable plan-local definition or manual utility agent (data checks, env validation, one-off investigations, or a shared sub-agent several orchestrators reuse). Reuse is explicit: `shared_with.orchestrator_ids` + a route's `orphan_step_ref`.
 
-Report severity (CRITICAL / WARNING / INFO) and a one-line fix per issue.
+PART 4 — STORES FITNESS (when to use db vs kb vs learnings; cite the step)
+Wrong-store usage is the most common silent design error. Check each step's access against what it actually needs:
 
-PART 3 — DESIGN RECOMMENDATIONS (the differentiator)
-Apply these best-practice lenses and tell the user what would make the plan better. Each recommendation MUST cite the specific step(s) it applies to. Skip the lens if it doesn't fire.
+- **db/db.sqlite — WHAT this run produced.** State, results, rows, plus durable assets under `db/assets/` (with a metadata row). Every step can read+write via `$DB_PATH` (`db_access` defaults read-write; set `read` for pure readers / report-shaping / validation so an accidental write is sandbox-denied). This is the source of truth — results go here, not into files.
+- **knowledgebase/ — reusable DOMAIN knowledge across runs.** Business facts, product/catalog info, portal quirks-as-notes, and user-supplied runtime context/preferences/rules (put those in `knowledgebase/context/context.md`). Opt-in per step via `knowledgebase_access` (`read` to consume, `read-write` + `knowledgebase_contribution` to add notes). NOT for run results (db) and NOT for execution mechanics (learnings).
+- **learnings/ (SKILL.md) — HOW to run the task.** Reusable execution know-how: browser selectors/timing, auth/login flows, tool/MCP/API quirks, CLI/SDK command patterns, parsing/retry/recovery rules. `learnings_access` defaults `read` (the step sees SKILL.md); set `read-write` + a specific `learning_objective` ONLY for steps with reusable execution HOW worth capturing. Routing, validation, mechanical transforms, aggregation, pure readers, and human gates should stay read-only. Not for results (db) or domain facts (kb).
+- **soul.md** — the workflow's long-term purpose/persona (builder-maintained). Reference it for "what is this workflow for."
 
-- **Durable boundary fit**: a step is a durable workflow boundary, not a tool-call boundary. Recommend splitting only when a step mixes distinct durable outputs, validation gates, retry/failure domains, tool/security contexts, downstream contracts, persistent stores, human approvals, or routing decisions. Recommend combining adjacent steps when they share the same objective/output contract and only create pass-through artifacts or context handoff overhead.
-- **Step type fit**: regular for one-shot work, todo_task for agentic loops over a list, routing for branching, human_input for explicit human judgment, orphan for reusable manual utility agents. Steps that mention "loop over each X and do Y" are often todo_task candidates that were modeled as regular. **Routing is a DETERMINISTIC N-way switch — it runs no agent and must have no description; the branch is decided upstream (a prior regular step that writes `route_selection.json`, or the caller's `route_selections`). If a route needs judgment, model that judgment as a prior regular step, not inside the routing step.** Steps that do mechanical data shaping should still be built and debugged as agentic here; note them as possible future Optimizer candidates for scripted only if the user explicitly asks later and 10+ scenario-covering successful runs prove the shape is stable.
-- **Sequential agent steps that could collapse**: if steps N and N+1 share most of their context/objective and need each other's transient reasoning, recommend converting them to one `message_sequence` (or one stronger regular step if only one turn is needed) unless the boundary buys validation, retry isolation, auditability, downstream reuse, a persistent artifact, or tool/security separation. Do not ask by default; make the best-practice call and note the assumption. Do not collapse boundaries that protect validation, human decisions, routing decisions, tool/security isolation, or reusable outputs.
-- **Validation schemas as guard rails**: even if context flow is technically correct today, a validation_schema on every produces-context_output step catches drift the moment it lands — far cheaper than discovering it three steps downstream.
-- **Naming**: "process_data" / "do_step" are generic. Names like "classify_emails_by_buyer_intent" make plans self-documenting and audit logs readable. If you see generic names, suggest specific ones.
-- **Human-input gates**: workflows that make consequential decisions (sending messages, allocating budget, classifying medical/legal items) without a single human_input step are usually under-gated. Ask whether one belongs.
-- **Business context wiring**: if a step depends on user-supplied runtime context, preferences, constraints, examples, ICP filters, approval rules, or style requirements, recommend storing that context in `knowledgebase/context/context.md`, setting `knowledgebase_access=read` or `read-write` on the affected step, and adding a sentence to that step's description naming the relevant context section/path. Do not leave the dependency implicit in chat memory.
-- **Group separation**: if multiple variable groups exist (e.g. "saurabh" / "anika"), check whether the plan branches on group identity in places where it shouldn't (a step description that says "for Saurabh, do X, for Anika, do Y" indicates a routing step is missing).
-- **Output surface bloat**: a step with 5+ context_outputs is hard for downstream consumers to navigate. Recommend splitting into smaller steps or wrapping outputs into a single structured object.
-- **Mechanical transforms over LLM calls**: 2+ sequential regular steps that just reshape data (filter / aggregate / map fields) may deserve a clearer single agentic transform step now. Optimizer can later consider scripted only if the user explicitly asks and 10+ scenario-covering successful runs prove the transform is stable.
-- **No-op feedback loop**: workflows with consequential decisions and no human_input may be under-gated. If outcome measurement is missing or weak, flag it as an Optimizer follow-up; Builder should not draft evaluation_plan.json in this command.
+Decision rule to surface to the user: *results/state → db; cross-run business knowledge → kb; cross-run execution mechanics → learnings.* If a step writes results into kb/learnings, or tries to keep "how to log in" in the db, flag it.
 
-For each recommendation, give:
-  - **What's there now** (one sentence quoted from plan).
-  - **What to consider** (the better shape, with concrete example).
-  - **Why** (which best-practice it serves).
+PART 5 — GROUPS
+Variable groups (e.g. per-account/per-client) run the SAME plan with different variable values. The plan must NOT branch on group identity in prose ("for Saurabh do X, for Anika do Y") — that's either a variable (`$VAR_*`) or, if the flow genuinely differs, a routing step. Flag descriptions that hardcode per-group logic. Check that group-specific values are variables, not literals.
 
-PART 4 — TOP 3
-Close with a "if you change three things, change these" list — the highest-impact recommendations from PART 3, prioritized.
+PART 6 — DESIGN LENSES (recommend the better shape, even when nothing is broken)
+- **Durable-boundary fit** — a step is a durable boundary, not a tool-call boundary. Split only when it mixes distinct outputs, gates, retry/failure domains, tool/security contexts, downstream contracts, stores, human approvals, or routing. Combine adjacent steps that share an objective/output and only create pass-through artifacts.
+- **Collapse sequential turns** — 2+ regular steps that reread the same context and need each other's transient reasoning → one `message_sequence`, unless the boundary buys validation, retry isolation, auditability, reuse, a persistent artifact, or tool/security separation.
+- **Gate everything** — every produces-output step needs a `validation_schema`; prefer db checks on the source of truth. A gate catches drift the moment it lands, not three steps downstream.
+- **Human gates** — consequential actions (sending messages, spending, medical/legal/irreversible decisions) without a `human_input` step are usually under-gated. Ask whether one belongs.
+- **Naming** — "process_data"/"do_step" are generic; "classify_emails_by_buyer_intent" makes the plan self-documenting.
+- **Mode** — new executable steps stay **agentic** in Builder; scripted promotion is Optimizer-only, after the user asks + 10+ scenario-covering successful runs prove determinism.
 
-REVIEW LOG: append a dated entry to builder/review.html (read it first if it exists, create it if it does not). Include: what was reviewed, integrity issues by severity, the design recommendations grouped by lens, the top-3 list, items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply).
+For each recommendation give: **what's there now** (one quoted sentence), **what to consider** (better shape + concrete example), **why** (which practice it serves).
+
+PART 7 — TOP 3
+Close with "if you change three things, change these" — the highest-impact recommendations, prioritized.
+
+REVIEW LOG: append a dated entry to `builder/review.html` (read first; create if absent). Include what was reviewed, integrity issues by severity, recommendations grouped by part, the top-3, and follow-ups. Mark as REVIEW (recommend; do NOT apply).

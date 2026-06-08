@@ -5,7 +5,7 @@ import type { CommandContext, CommandDefinition } from './types'
 function submitGuidedWorkflowCommand(
   ctx: CommandContext,
   kind: string,
-  options: { runFolder?: string | null } = {}
+  options: { runFolder?: string | null; background?: boolean } = {}
 ) {
   const focus = ctx.beforeSlash.trim()
   const args = [
@@ -15,8 +15,25 @@ function submitGuidedWorkflowCommand(
   if (options.runFolder !== undefined) {
     args.push(`run_folder=${JSON.stringify(options.runFolder || '')}`)
   }
+  const guidanceCall = `get_workflow_command_guidance(${args.join(', ')})`
+
+  // Read-only reviews run as a background task so the chat stays responsive: the
+  // background agent (same tools) does the heavy read→analyze→write builder/review.html
+  // and auto-notifies on completion; the chat agent then surfaces the Top 3 for discussion.
+  if (options.background) {
+    const instruction =
+      `Call ${guidanceCall} and follow the returned instructions verbatim — read the plan and artifacts and write your recommendations to builder/review.html. ` +
+      `Treat focus as the request context before the slash command. The tool returns the canonical guided-flow text; do not paraphrase or skip its steps.`
+    ctx.onSubmit(
+      `Run the /${kind} review as a BACKGROUND task so this chat stays responsive. ` +
+      `If the run_in_background tool is available: call run_in_background(name=${JSON.stringify(kind + ' review')}, instruction=${JSON.stringify(instruction)}) and do NOT perform the review yourself this turn — you'll get a completion notification, then summarize its Top 3 recommendations here for discussion. ` +
+      `If run_in_background is not available, perform the review inline this turn instead.`
+    )
+    return
+  }
+
   ctx.onSubmit(
-    `Call get_workflow_command_guidance(${args.join(', ')}) and follow the returned instructions verbatim. ` +
+    `Call ${guidanceCall} and follow the returned instructions verbatim. ` +
     `Treat focus as the conversation/request context that appeared before the slash command, including the user's recent constraints and intent. ` +
     `The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`
   )
@@ -24,15 +41,15 @@ function submitGuidedWorkflowCommand(
 
 export const builtinCommands: CommandDefinition[] = [
   {
-    command: 'design-flow',
-    description: 'Review plan design: step-type & store fitness, validation, flow best-practices',
+    command: 'design-plan',
+    description: 'Review whether the plan follows design best practices',
     icon: <GitBranch className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'design-flow')
+      submitGuidedWorkflowCommand(ctx, 'design-plan', { background: true })
     }
   },
   {
@@ -44,7 +61,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: ['workshop', 'run'],
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'review-plan')
+      submitGuidedWorkflowCommand(ctx, 'review-plan', { background: true })
     }
   },
   {
@@ -57,7 +74,7 @@ export const builtinCommands: CommandDefinition[] = [
     source: 'builtin',
     execute: (ctx) => {
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      submitGuidedWorkflowCommand(ctx, 'review-speed', { runFolder })
+      submitGuidedWorkflowCommand(ctx, 'review-speed', { runFolder, background: true })
     }
   },
   {
@@ -70,7 +87,7 @@ export const builtinCommands: CommandDefinition[] = [
     source: 'builtin',
     execute: (ctx) => {
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      submitGuidedWorkflowCommand(ctx, 'review-cost', { runFolder })
+      submitGuidedWorkflowCommand(ctx, 'review-cost', { runFolder, background: true })
     }
   },
   {
@@ -82,7 +99,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: ['workshop'],
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'review-artifact-drift')
+      submitGuidedWorkflowCommand(ctx, 'review-artifact-drift', { background: true })
     }
   },
   {
@@ -191,7 +208,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'review-code')
+      submitGuidedWorkflowCommand(ctx, 'review-code', { background: true })
     }
   },
   {

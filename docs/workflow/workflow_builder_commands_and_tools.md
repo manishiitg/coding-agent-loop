@@ -37,7 +37,7 @@ The returned guidance is the source of truth for the command. Mode validation li
 Current guidance kinds:
 
 ```text
-design-flow
+design-plan
 ready-to-optimize
 review-plan
 review-speed
@@ -58,7 +58,7 @@ improve-report
 
 | Command | Mode | Purpose |
 |---|---|---|
-| `/design-flow` | Builder | Design step flow and context handoffs. |
+| `/design-plan` | Builder | Design step flow and context handoffs. |
 | `/ready-to-optimize` | Builder | Check whether the workflow is ready to hand to Optimizer. |
 | `/review-plan` | Builder, Optimizer, Run | Structural and artifact-sync review through `review_plan`. |
 | `/review-code` | Optimizer | Review all saved code artifacts, including learn-code scripts and eval code. |

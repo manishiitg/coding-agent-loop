@@ -89,7 +89,7 @@ Workflow slash commands are wrappers around the backend `get_workflow_command_gu
 | Command | Description | Workshop Modes | Backend Kind |
 |---------|-------------|----------------|--------------|
 | `/resume` | Attach a previous chat conversation as context | Builder, Optimizer, Run | N/A |
-| `/design-flow` | Validate context dependency chain between steps | Builder | `design-flow` |
+| `/design-plan` | Validate context dependency chain between steps | Builder | `design-plan` |
 | `/ready-to-optimize` | Check if workflow is ready to move to optimizer mode | Builder | `ready-to-optimize` |
 | `/review-plan` | Critically analyze the workflow plan and dependent artifacts | Builder, Optimizer, Run | `review-plan` |
 | `/review-speed` | Review workflow latency and how to make it faster | Optimizer | `review-speed` |

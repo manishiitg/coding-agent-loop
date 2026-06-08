@@ -61,7 +61,7 @@ type kindMeta struct {
 // switch.
 var allKinds = map[string]kindMeta{
 	// Design audits (only meaningful before run evidence accumulates)
-	"design-flow": {Group: "builder", Description: "Inspect context dependency / handoff design between steps", Modes: []string{"workshop"}},
+	"design-plan": {Group: "builder", Description: "Review whether the plan follows design best practices (step types, stores, validation, flow)", Modes: []string{"workshop"}},
 
 	// Reviews — recommend, don't apply; appends to builder/review.html
 	"review-plan":           {Group: "review", Description: "Comprehensive workflow audit: plan, step descriptions, learnings, KB, db/db.sqlite, reports, variables, and eval wiring", Modes: []string{"workshop", "run"}},

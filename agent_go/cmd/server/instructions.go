@@ -384,7 +384,7 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 **Kinds — match to intent:**
 
   Builder-mode audits:
-    - design-flow            → context dependency / handoff design
+    - design-flow            → design review: step-type & store fitness, validation, flow (db-as-source-of-truth)
 
   Reviews (recommend, don't apply; appends to ` + "`builder/review.html`" + `):
     - review-plan            → comprehensive plan audit (structure + per-step descriptions + todo_task orchestrators)

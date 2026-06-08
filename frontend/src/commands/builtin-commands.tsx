@@ -25,7 +25,7 @@ function submitGuidedWorkflowCommand(
 export const builtinCommands: CommandDefinition[] = [
   {
     command: 'design-flow',
-    description: 'Validate context dependency chain between steps',
+    description: 'Review plan design: step-type & store fitness, validation, flow best-practices',
     icon: <GitBranch className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',

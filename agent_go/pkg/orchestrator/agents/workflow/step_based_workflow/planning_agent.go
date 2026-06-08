@@ -1094,7 +1094,7 @@ func getAddRegularStepSchema() string {
 			},
 			"context_output": {
 				"type": "string",
-				"description": "REQUIRED: What context file this step will create for subsequent steps - e.g., 'step_1_results.json'. IMPORTANT: Execution agents work ONLY in the execution folder, so context output files will be written to the execution folder. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content (descriptions, logs, content > 1KB), store it in a separate markdown file (e.g., 'step_1_details.md') and reference it from JSON (e.g., {\"details_file\": \"step_1_details.md\"}). JSON should contain only structured data: counts, IDs, status, file references, brief summaries. Large text content belongs in markdown files."
+				"description": "OPTIONAL: The context file this step creates for subsequent steps - e.g., 'step_1_results.json'. OMIT IT when the step's real output is the db (db/db.sqlite) — then validate the step with validation_schema.db instead of a file, and downstream steps read the db; this avoids a hand-written receipt file that drifts from the db. Provide it when a downstream step needs the result injected via context_dependencies, or you want a small file artifact. Execution agents work ONLY in the execution folder, so the file is written there. Keep JSON files SMALL (< 100KB); put large text (logs, content > 1KB) in a separate markdown file and reference it from JSON. JSON should hold structured data: counts, IDs, status, file references, brief summaries."
 			},
 			"insert_after_step_id": {
 				"type": "string",
@@ -1146,7 +1146,7 @@ func getAddRegularStepSchema() string {
 				"description": "REQUIRED: One-sentence rationale for why this step is being added. Captured into the plan changelog. Be specific — 'add new step' is weak; 'add step-4 (verify-payment) — eval iteration-3 showed 30% of records skip payment verification when step-3 fails silently' is good."
 			}
 		},
-		"required": ["id", "title", "description", "context_dependencies", "context_output", "insert_after_step_id", "validation_schema", "reason"]
+		"required": ["id", "title", "description", "context_dependencies","insert_after_step_id", "validation_schema", "reason"]
 	}`
 }
 
@@ -1158,7 +1158,7 @@ func getAddMessageSequenceStepSchema() string {
 			"title": {"type": "string", "description": "REQUIRED: Short title for the message sequence step."},
 			"description": {"type": "string", "description": "REQUIRED: The opening instruction AND objective. This IS EXECUTED as the first user turn (turn 0): it leads items[0] inside the same conversation — identical to how a todo_task's description is its first turn. Write it as an actionable opening instruction, not throwaway metadata (anything you put here runs). Then split the follow-up work into items[] (turns 1..N)."},
 			"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "REQUIRED: Prior context files this sequence depends on. Use [] if none."},
-			"context_output": {"type": "string", "description": "REQUIRED: Summary/result file contract for later steps."},
+			"context_output": {"type": "string", "description": "OPTIONAL: Summary/result file for later steps. Omit when the step writes its result to the db (validate via validation_schema.db)."},
 			"items": {
 				"type": "array",
 				"description": "REQUIRED: Ordered queue of follow-up turns (turns 1..N; the step description is turn 0). Prefer multiple short user_message items over one large prompt. Use prevalidation items between turns as hard gates. Use kind=\"learning\" or write_access.learnings=true only for an intentional in-sequence learning write to learnings/_global/; the normal learning phase still runs only after the whole step based on step_config.",
@@ -1205,7 +1205,7 @@ func getAddMessageSequenceStepSchema() string {
 			"validation_schema": {"type": "object"},
 			"reason": {"type": "string", "description": "REQUIRED: One-sentence rationale for why this sequence step is being added."}
 		},
-		"required": ["id", "title", "description", "context_dependencies", "context_output", "items", "insert_after_step_id", "reason"]
+		"required": ["id", "title", "description", "context_dependencies","items", "insert_after_step_id", "reason"]
 	}`
 }
 
@@ -1505,7 +1505,7 @@ func getAddTodoTaskStepSchema() string {
 								"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
 								"description": {"type": "string", "description": "REQUIRED: What this specialized agent does AND its standing brief. This IS EXECUTED as the agent's opening instruction (turn 0) on the first call — the orchestrator's per-call call_sub_agent instructions are added on top. Write it as an actionable brief, not throwaway metadata."},
 								"context_dependencies": {"type": "array", "items": {"type": "string"}},
-								"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
+								"context_output": {"type": "string", "description": "OPTIONAL: Context file this step creates. Omit when the step writes to the db (validate via validation_schema.db)."},
 								"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
 								"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
 								"validation_schema": {
@@ -1563,7 +1563,7 @@ func getAddTodoTaskStepSchema() string {
 				"description": "REQUIRED: One-sentence rationale for why this todo-task step is being added. Captured into the plan changelog."
 			}
 		},
-		"required": ["id", "title", "description", "context_dependencies", "context_output", "next_step_id", "insert_after_step_id", "reason"]
+		"required": ["id", "title", "description", "context_dependencies","next_step_id", "insert_after_step_id", "reason"]
 	}`
 }
 
@@ -1689,7 +1689,7 @@ func getAddTodoTaskRouteSchema() string {
 							"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
 							"description": {"type": "string", "description": "REQUIRED: What this specialized agent does AND its standing brief. This IS EXECUTED as the agent's opening instruction (turn 0) on the first call — the orchestrator's per-call call_sub_agent instructions are added on top. Write it as an actionable brief, not throwaway metadata."},
 							"context_dependencies": {"type": "array", "items": {"type": "string"}},
-							"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
+							"context_output": {"type": "string", "description": "OPTIONAL: Context file this step creates. Omit when the step writes to the db (validate via validation_schema.db)."},
 							"todo_task_step": {"type": "object", "description": "When type='todo_task': the nested orchestrator's inner regular step metadata."},
 							"predefined_routes": {"type": "array", "description": "When type='todo_task': predefined routes for the nested orchestrator. Each route's sub_agent_step must be type='regular'."},
 							"validation_schema": {

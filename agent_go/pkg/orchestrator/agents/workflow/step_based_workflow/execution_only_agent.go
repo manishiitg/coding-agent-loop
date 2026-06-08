@@ -89,7 +89,7 @@ cat knowledgebase/notes/company-acme.md
 {{end}}
 {{if .KBGuidanceBlock}}{{.KBGuidanceBlock}}{{end}}
 ## EXECUTION RULES
-1. **Mandatory Output**: Create `+"`"+`{{.StepContextOutput}}`+"`"+` under `+"`"+`$STEP_OUTPUT_DIR`+"`"+` (step folder: `+"`"+`{{.StepExecutionPath}}/`+"`"+`).
+{{if .StepContextOutput}}1. **Mandatory Output**: Create `+"`"+`{{.StepContextOutput}}`+"`"+` under `+"`"+`$STEP_OUTPUT_DIR`+"`"+` (step folder: `+"`"+`{{.StepExecutionPath}}/`+"`"+`).{{else}}1. **Output to the db**: this step declares no output file — persist your results to `+"`"+`db/db.sqlite`+"`"+` via `+"`"+`$DB_PATH`+"`"+`; no `+"`"+`$STEP_OUTPUT_DIR`+"`"+` file is required (the step is validated against the db).{{end}}
 {{if .UseCodeStyleRules}}2. Derive output paths from `+"`"+`os.environ['STEP_OUTPUT_DIR']`+"`"+` in code. E.g., `+"`"+`open(os.path.join(os.environ['STEP_OUTPUT_DIR'], '{{.StepContextOutput}}'), "w")`+"`"+`.
 3. **No env var fallbacks in Python**: always `+"`"+`os.environ['KEY']`+"`"+` — never `+"`"+`os.environ.get('KEY', 'default')`+"`"+`. Variables use `+"`"+`VAR_<NAME>`+"`"+`, secrets use `+"`"+`SECRET_<NAME>`+"`"+`. Missing var must raise KeyError, not silently use a hardcoded value.
 {{else}}2. Derive output paths from `+"`"+`$STEP_OUTPUT_DIR`+"`"+` in shell commands. E.g., `+"`"+`mkdir -p "$(dirname "$STEP_OUTPUT_DIR/{{.StepContextOutput}}")" && echo '...' > "$STEP_OUTPUT_DIR/{{.StepContextOutput}}"`+"`"+`.
@@ -112,7 +112,7 @@ Skill content is guidance from previous runs, not a replacement for the current 
 
 {{if and .ValidationSchema (ne .IsScriptedMode "true")}}
 ## Validation Schema (Output Requirement)
-Your '{{.StepContextOutput}}' MUST match this structure:
+{{if .StepContextOutput}}Your '{{.StepContextOutput}}' MUST match this structure:{{else}}Your output MUST satisfy this validation schema (it may check files and/or the db):{{end}}
 {{printf "%s" .ValidationSchema}}
 {{end}}
 
@@ -137,7 +137,7 @@ If the step COMPLETED but you hit **non-fatal concerns** worth flagging — a le
 On the lines BEFORE the STATUS line, give a short summary (1-3 sentences) of what you actually did and produced — the key outcome and any notable findings, not a play-by-play. This summary is what the orchestrator sees in the completion notification, so a bare "STATUS: COMPLETED" with nothing else is not enough.
 
 End your response with exactly one of:
-- STATUS: COMPLETED — if '{{.StepContextOutput}}' was created successfully.
+{{if .StepContextOutput}}- STATUS: COMPLETED — if '{{.StepContextOutput}}' was created successfully.{{else}}- STATUS: COMPLETED — if the step's work is complete and persisted (e.g. written to the db).{{end}}
 - STATUS: FAILED — if the step cannot be completed. Explain the reason.`)
 
 var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
@@ -174,7 +174,7 @@ You MUST incorporate it into this run. It takes priority over the default step d
 {{if .StepContextDependencies}}{{.StepContextDependencies}}{{else}}None{{end}}
 
 ### Output
-- **Output File**: {{.StepContextOutput}} (Create in '{{.StepExecutionPath}}/')
+{{if .StepContextOutput}}- **Output File**: {{.StepContextOutput}} (Create in '{{.StepExecutionPath}}/'){{else}}- **No output file** — persist results to the db (`+"`"+`db/db.sqlite`+"`"+` via `+"`"+`$DB_PATH`+"`"+`).{{end}}
 
 {{if .ScriptedPriorContext}}{{.ScriptedPriorContext}}
 {{end}}### Execution Checklist

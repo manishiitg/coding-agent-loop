@@ -102,8 +102,8 @@ func RunPreValidation(
 		}, nil
 	}
 
-	// If schema is empty (no files), skip pre-validation
-	if len(validationSchema.Files) == 0 {
+	// If schema is empty (no files and no db rules), skip pre-validation
+	if len(validationSchema.Files) == 0 && len(validationSchema.DB) == 0 {
 		return &WorkspaceVerificationResult{
 			OverallPass:  true, // Pass so it doesn't block LLM validation
 			FilesChecked: []FileCheckResult{},
@@ -271,6 +271,15 @@ func validateWithSchema(
 			result.Summary.TotalChecks++
 			result.Summary.PassedChecks++
 		}
+	}
+
+	// Validate each db rule — a read-only query against db/db.sqlite (the source of
+	// truth). Reuses FileCheckResult so summary aggregation + corrective feedback
+	// work identically to file checks.
+	for _, dbRule := range schema.DB {
+		dbResult := validateDBRule(ctx, dbRule, baseOrchestrator)
+		result.FilesChecked = append(result.FilesChecked, dbResult)
+		applyCheckedToSummary(result, dbResult)
 	}
 
 	return result, nil

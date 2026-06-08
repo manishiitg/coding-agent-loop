@@ -19,8 +19,12 @@ share one conversation, or needs a specialist that remembers across calls, it is
 
 - `description` — the executable instruction/prompt for the step agent, not metadata. Resolved variable values are available as `$VAR_*`.
 - `context_dependencies` → `context_output` — forward-only context flow between steps.
-- `validation_schema` — **required**; gates the step (file checks + json_checks). On
-  failure the agent retries with the failed-check feedback.
+- `validation_schema` — **required**; gates the step. Checks **files** (file_checks +
+  json_checks) AND/OR the **db** (`db: [{sql, min_rows, max_rows, checks}]` — read-only
+  queries against `db/db.sqlite`). On failure the agent retries with the failed-check
+  feedback. Prefer **db checks** when the step writes its results to the db: they gate on
+  the source of truth, so you don't need a hand-written output file just to validate (a
+  duplicated summary file drifts from the db — e.g. a `status` that ends up null).
 - Stores: reads soul / db / knowledgebase / learnings per access; writes its own step
   folder + `db/`, plus knowledgebase notes / learnings when access is read-write
   (learnings writes happen in a dedicated post-step turn — see `get_reference_doc(kind="stores")`).

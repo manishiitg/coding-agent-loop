@@ -26,7 +26,7 @@ HTML is a superset of anything a plain document needs — prose, headings, table
 
 The viewer hands the HTML the live data and the HTML renders its own visuals (charts, custom tables, branded CSS). Inside the iframe the viewer exposes `window.report`:
 - `await window.report.query(sql)` — run a read-only SQL query against `db/db.sqlite` → array of row objects (the primary data source). Do the joining, summing, filtering, grouping, and latest-row selection in SQL (`JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, `LIMIT`).
-- `await window.report.get(path)` — fetch any `db/`/`knowledgebase/`/`docs/` file live → parsed JSON (or text); use for text/assets, not structured data
+- `await window.report.get(path)` — fetch a workflow file live → parsed JSON (or text). Reads the stores AND the operational/config data (costs, metrics, evals, groups, workflow.json, …) — see **Read scope** below. Use for files/assets/operational data; for bulk `db/` rows prefer `query`.
 - `await window.report.getText(path)` — raw file text
 - `await window.report.getHtml(path)` — render a **markdown file** to an HTML string (the app's markdown engine + GFM tables), wrapped in `<div class="report-markdown">` with a default theme-aware prose style. Use it to **embed a rendered `.md` inline inside your HTML report**: `el.innerHTML = await window.report.getHtml('db/reports/notes.md')`. Lets you keep your custom HTML design and drop a markdown-rendered section in between. Override `.report-markdown` in your CSS to restyle.
 - `window.report.renderMarkdown(md)` — same renderer, but for a markdown **string you already hold** (not a file): a `db`/`sql` value, a knowledgebase field, or inline text. **Synchronous** (no `await`), returns the same `<div class="report-markdown">…</div>`. Use it to render markdown that lives in your data, e.g. a notes column in a table: `cell.innerHTML = window.report.renderMarkdown(row.notes_md)`. This is the answer to "my content is markdown but my report is HTML" — call it from your HTML report; you do NOT need a React markdown component.
@@ -34,7 +34,16 @@ The viewer hands the HTML the live data and the HTML renders its own visuals (ch
 - `window.report.openFile(path)` — open a file in the in-report preview modal (e.g. a "view PDF" button)
 - `window.report.theme` — `'dark'`/`'light'` (the app's current mode); the `report:data` event fires on load + refresh, `report:theme` on toggle — render/restyle in their handlers
 
-(all paths scoped to `db/`/`knowledgebase/`/`docs/`)
+**Read scope — what a report can pull.** Beyond `db/`, `knowledgebase/`, `docs/`, `get`/`getText`/`getHtml` can also read the workflow's operational + config data (all stable top-level paths — read them and surface whatever the report actually needs; you do NOT have to use all of it):
+- **Costs / tokens** — `get('costs/phase/token_usage.json')`, `get('costs/execution/<group>/<date>.json')`
+- **Metrics** — `get('planning/metrics.json')`
+- **Eval results** — `get('evaluation/evaluation_plan.json')` and the `evaluation/` scores
+- **Variable groups** — `get('variables/variables.json')` → `groups: [{ name, enabled, values }]`
+- **Workflow config** — `get('workflow.json')` (id, label, schedule, …)
+- **Soul / persona** — `getHtml('soul.md')`
+- **Prior generated docs** — `getText('improve.html')`, `getText('review.html')`
+
+Use this to make reports context-aware — e.g. show this run's cost and eval score, badge the active variable group, or include the workflow's purpose from `soul.md`. (`runs/` per-run transcripts are NOT exposed: per-run paths aren't knowable at authoring time and can be sensitive.)
 
 ```html
 <h1>Portfolio Report</h1>

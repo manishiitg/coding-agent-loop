@@ -933,7 +933,14 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
     const allowed = (p: string): string => {
       const n = p.replace(/\\/g, '/').replace(/^\/+/, '')
       if (!n || n.split('/').includes('..')) return ''
-      return n.startsWith('db/') || n.startsWith('knowledgebase/') || n.startsWith('docs/') ? n : ''
+      // Read-only workflow surface a report may pull from: stores + the operational
+      // data folders (costs / evaluation / planning-metrics / variable groups) and a
+      // few stable top-level files. runs/ is intentionally excluded — per-run paths
+      // aren't knowable at report-authoring time and transcripts can be sensitive.
+      const folderPrefixes = ['db/', 'knowledgebase/', 'docs/', 'planning/', 'evaluation/', 'costs/', 'variables/']
+      const exactFiles = ['soul.md', 'workflow.json', 'improve.html', 'review.html']
+      if (folderPrefixes.some((pre) => n.startsWith(pre)) || exactFiles.includes(n)) return n
+      return ''
     }
     const getText = async (path: string): Promise<string | null> => {
       const n = allowed(path)

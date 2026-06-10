@@ -2907,6 +2907,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 		return fmt.Errorf(fmt.Sprintf("run folder not resolved - this should have been set after plan approval"), nil)
 	}
 
+	// Route conversations (msgSeqRoutes) are scoped to this execution phase.
+	// Drain them — and close their runtimes — however the phase exits, so a
+	// reused orchestrator instance starts the next iteration/run with fresh
+	// route memory instead of resuming this run's conversations.
+	defer hcpo.clearAllMsgSeqRouteSessions("execution phase finished")
+
 	if err := hcpo.seedRouteSelectionsForRun(ctx, breakdownSteps); err != nil {
 		return fmt.Errorf("failed to seed route selections: %w", err)
 	}
@@ -3109,46 +3115,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after routing evaluation: %v", err))
 			}
 
-			// Handle next step navigation
-			if nextStepID == "end" {
+			// Handle next step navigation. The per-route evaluation count above is
+			// routing's own loop guard, so the generic jump-repeat guard is disabled
+			// (maxRepeats=0).
+			outcome, navErr := hcpo.navigateToNextStepID(ctx, step.GetID(), nextStepID, breakdownSteps, progress, &i, &startFromStep, 0)
+			if navErr != nil {
+				return navErr
+			}
+			if outcome == "end" {
 				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Routing step %d specified 'end' - terminating workflow", i+1))
 				break
-			} else if nextStepID != "" {
-				targetStepIndex := -1
-				for idx, s := range breakdownSteps {
-					if s.GetID() == nextStepID {
-						targetStepIndex = idx
-						break
-					}
-				}
-				if targetStepIndex >= 0 {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Routing to step %d (ID: %s)", targetStepIndex+1, nextStepID))
-
-					if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup progress from step %d: %v", targetStepIndex+1, err))
-					}
-
-					runNumber := hcpo.getNextArchivalRunNumber(ctx, progress, targetStepIndex+1)
-					for stepNum := targetStepIndex + 1; stepNum <= len(breakdownSteps); stepNum++ {
-						if err := hcpo.archiveStepExecutionFolder(ctx, stepNum, runNumber); err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive execution folder for step %d: %v", stepNum, err))
-						}
-					}
-					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save archival counts: %v", err))
-					}
-
-					if targetStepIndex < startFromStep {
-						startFromStep = targetStepIndex
-					}
-
-					i = targetStepIndex - 1
-					continue
-				} else {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step ID '%s' not found in plan - defaulting to next sequential step", nextStepID))
-				}
 			}
-
 			continue
 		}
 
@@ -3184,55 +3161,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				break
 			}
 
-			// Handle next step navigation
-			if nextStepID == "end" {
-				// End workflow
+			// Handle next step navigation. Identical source→target jumps are capped:
+			// the orchestrator is LLM-driven, so an unbounded next_step_id cycle
+			// burns tokens on every pass.
+			outcome, navErr := hcpo.navigateToNextStepID(ctx, step.GetID(), nextStepID, breakdownSteps, progress, &i, &startFromStep, maxLLMJumpRepeats)
+			if navErr != nil {
+				return navErr
+			}
+			if outcome == "end" {
 				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Todo task step %d specified 'end' - terminating workflow", i+1))
 				break
-			} else if nextStepID != "" {
-				// Find target step by ID and jump to it
-				targetStepIndex := -1
-				for idx, s := range breakdownSteps {
-					if s.GetID() == nextStepID {
-						targetStepIndex = idx
-						break
-					}
-				}
-				if targetStepIndex >= 0 {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Jumping to step %d (ID: %s) as specified by next_step_id", targetStepIndex+1, nextStepID))
-
-					// Clean up progress and execution folders for target step and subsequent steps
-					if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup progress from step %d: %v (continuing anyway)", targetStepIndex+1, err))
-					}
-
-					// Archive execution folders for target step and all subsequent steps
-					// This preserves execution artifacts for debugging while allowing clean re-execution
-					runNumber := hcpo.getNextArchivalRunNumber(ctx, progress, targetStepIndex+1)
-					for stepNum := targetStepIndex + 1; stepNum <= len(breakdownSteps); stepNum++ {
-						if err := hcpo.archiveStepExecutionFolder(ctx, stepNum, runNumber); err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive execution folder for step %d: %v (continuing)", stepNum, err))
-						}
-					}
-					// Save updated archival counts
-					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save archival counts: %v", err))
-					}
-
-					// Update startFromStep to allow execution from target step
-					if targetStepIndex < startFromStep {
-						startFromStep = targetStepIndex
-					}
-
-					// Set loop index to jump to target step (subtract 1 because loop will increment)
-					i = targetStepIndex - 1
-					continue
-				} else {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step ID '%s' not found in plan - defaulting to next sequential step", nextStepID))
-				}
 			}
-
-			// Default: continue to next sequential step
+			// "jump" repointed i; "none" falls through to the next sequential step.
 			continue
 		}
 
@@ -3271,7 +3211,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			// branch the selected branch ran but then execution spilled into the next
 			// (non-selected) branch — see routing convergence.
 			if seqStep, ok := step.(*MessageSequencePlanStep); ok && strings.TrimSpace(seqStep.NextStepID) != "" {
-				if hcpo.navigateToNextStepID(ctx, seqStep.NextStepID, breakdownSteps, progress, &i, &startFromStep) == "end" {
+				outcome, navErr := hcpo.navigateToNextStepID(ctx, step.GetID(), seqStep.NextStepID, breakdownSteps, progress, &i, &startFromStep, maxLLMJumpRepeats)
+				if navErr != nil {
+					return navErr
+				}
+				if outcome == "end" {
 					hcpo.GetLogger().Info(fmt.Sprintf("🏁 message_sequence step %d next_step_id=end - terminating workflow", i+1))
 					break
 				}
@@ -3367,39 +3311,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				nextStepID = humanInputStep.NextStepID
 			}
 
-			// Handle next step navigation
-			if nextStepID == "end" {
-				// End workflow
+			// Handle next step navigation. This now goes through the same shared
+			// helper as routing/todo_task — human_input jumps previously skipped
+			// progress cleanup and execution-folder archival entirely, which let
+			// converged steps read stale artifacts from a prior pass. The repeat
+			// cap is generous: each pass blocks on a human response, so loops are
+			// self-limiting and the guard is only a failsafe.
+			outcome, navErr := hcpo.navigateToNextStepID(ctx, step.GetID(), nextStepID, breakdownSteps, progress, &i, &startFromStep, maxHumanJumpRepeats)
+			if navErr != nil {
+				return navErr
+			}
+			if outcome == "end" {
 				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Human input step %d specified 'end' - terminating workflow", i+1))
 				break
-			} else if nextStepID != "" {
-				// Find target step by ID and jump to it
-				targetStepIndex := -1
-				for idx, s := range breakdownSteps {
-					if s.GetID() == nextStepID {
-						targetStepIndex = idx
-						break
-					}
-				}
-				if targetStepIndex >= 0 {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Jumping to step %d (ID: %s) as specified by next_step_id", targetStepIndex+1, nextStepID))
-
-					// Update startFromStep to allow execution from target step
-					if targetStepIndex < startFromStep {
-						startFromStep = targetStepIndex
-						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Updated startFromStep to %d to allow execution from routed step", startFromStep+1))
-					}
-
-					// Set loop index to jump to target step (subtract 1 because loop will increment)
-					i = targetStepIndex - 1
-					continue
-				} else {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step ID '%s' not found in plan - defaulting to next sequential step", nextStepID))
-					// Fall through to default behavior (continue to next step)
-				}
 			}
-
-			// Default: continue to next sequential step
+			// "jump" repointed i; "none" falls through to the next sequential step.
 			continue
 		}
 

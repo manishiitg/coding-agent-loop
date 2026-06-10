@@ -118,6 +118,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill folder paths to todo task folder guard: %v", skillReadPaths))
 	}
 
+	// Snapshot the shared orchestrator-level guard and restore it on exit. The
+	// todo_task orchestrator still enforces via this shared guard (unlike
+	// execution-only agents, which carry per-agent config guards precisely to
+	// avoid sharing this state). Without the restore, a nested todo_task route
+	// leaves its narrower guard in place when it returns, and the parent
+	// orchestrator's remaining turns — including the learnings/KB contribution
+	// turns — get validated against the nested step's paths.
+	prevGuardRead, prevGuardWrite := hcpo.GetFolderGuardPaths()
+	defer hcpo.SetWorkspacePathForFolderGuard(prevGuardRead, prevGuardWrite)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for todo task orchestrator agent - Read paths: %v, Write paths: %v", readPaths, writePaths))
 
@@ -451,7 +460,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskContributionTurns(ctx cont
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Todo task %s contribution turn for step %d", label, stepIndex+1))
 		_, updated, err := ba.Execute(ctx, msg, *conversationHistory, "", false)
 		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Todo task %s contribution turn failed (non-fatal): %v", label, err))
+			// Non-fatal by design (the step's main work already succeeded and
+			// pre-validation passed), but the loss of a learnings/KB write must
+			// be visible — not just a log line — so reviewers and the workshop
+			// can see that this run contributed nothing to the store.
+			errMsg := fmt.Sprintf("%s contribution turn failed — %s write was lost for this run (step still completes): %v", label, label, err)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Todo task step %d: %s", stepIndex+1, errMsg))
+			hcpo.EmitOrchestratorAgentError(ctx, "workflow", fmt.Sprintf("todo-task-%s-contribution", label), fmt.Sprintf("Write %s for step: %s", label, step.GetTitle()), errMsg, stepIndex, 0)
 			return
 		}
 		*conversationHistory = updated

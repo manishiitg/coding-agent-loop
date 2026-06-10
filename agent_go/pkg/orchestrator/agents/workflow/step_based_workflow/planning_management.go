@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -156,8 +157,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) checkExistingPlan(ctx context.Context
 
 func validateLoadedPlanStep(typedStep PlanStepInterface, stepIndex int) error {
 	switch step := typedStep.(type) {
-	case *RegularPlanStep, *HumanInputPlanStep, *EvaluationStep:
+	case *RegularPlanStep, *EvaluationStep:
 		return nil
+
+	case *HumanInputPlanStep:
+		return validateHumanInputStepFieldsTyped(step)
 
 	case *MessageSequencePlanStep:
 		return validateMessageSequenceStepFieldsTyped(step)
@@ -295,6 +299,21 @@ func validateNextStepIDReferences(plan *PlanningResponse) error {
 				if err := ref(s.GetID(), "next_step_id", s.NextStepID); err != nil {
 					return err
 				}
+			case *HumanInputPlanStep:
+				if err := ref(s.GetID(), "next_step_id", s.NextStepID); err != nil {
+					return err
+				}
+				if err := ref(s.GetID(), "if_yes_next_step_id", s.IfYesNextStepID); err != nil {
+					return err
+				}
+				if err := ref(s.GetID(), "if_no_next_step_id", s.IfNoNextStepID); err != nil {
+					return err
+				}
+				for key, target := range s.OptionRoutes {
+					if err := ref(s.GetID(), fmt.Sprintf("option_routes[%q]", key), target); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		return nil
@@ -303,6 +322,67 @@ func validateNextStepIDReferences(plan *PlanningResponse) error {
 		return err
 	}
 	return walk(plan.OrphanSteps)
+}
+
+// validateHumanInputStepFieldsTyped enforces that a human_input step's
+// conditional-routing configuration is internally consistent. The runtime
+// (resolveHumanInputNextStep) never fails on a misconfigured step — an
+// unmatched option falls back to the default next_step_id and then to the
+// next sequential step — so a bad config doesn't error at execution, it
+// routes somewhere the builder didn't intend. Catch the unambiguous
+// misconfigurations at plan time instead.
+func validateHumanInputStepFieldsTyped(step *HumanInputPlanStep) error {
+	if strings.TrimSpace(step.Question) == "" {
+		return fmt.Errorf("human_input step (title: %q, ID: %s) is missing required question field", step.Title, step.ID)
+	}
+	responseType := strings.TrimSpace(step.ResponseType)
+	switch responseType {
+	case "", "text", "yesno", "multiple_choice":
+	default:
+		return fmt.Errorf("human_input step %q has unsupported response_type %q (use text, yesno, or multiple_choice)", step.ID, responseType)
+	}
+	if (step.IfYesNextStepID != "" || step.IfNoNextStepID != "") && responseType != "yesno" {
+		return fmt.Errorf("human_input step %q sets if_yes_next_step_id/if_no_next_step_id but response_type is %q — those fields only apply to response_type \"yesno\"", step.ID, responseType)
+	}
+	if len(step.OptionRoutes) > 0 && responseType != "multiple_choice" {
+		return fmt.Errorf("human_input step %q sets option_routes but response_type is %q — option_routes only applies to response_type \"multiple_choice\"", step.ID, responseType)
+	}
+	if responseType == "multiple_choice" {
+		if len(step.Options) == 0 {
+			return fmt.Errorf("human_input step %q has response_type \"multiple_choice\" but no options", step.ID)
+		}
+		optionValues := make(map[string]bool, len(step.Options))
+		for _, opt := range step.Options {
+			optionValues[opt] = true
+		}
+		for key := range step.OptionRoutes {
+			if idx, err := strconv.Atoi(key); err == nil {
+				if idx < 0 || idx >= len(step.Options) {
+					return fmt.Errorf("human_input step %q option_routes key %q is out of range — the step has %d option(s) (indices 0-%d)", step.ID, key, len(step.Options), len(step.Options)-1)
+				}
+				continue
+			}
+			if !optionValues[key] {
+				return fmt.Errorf("human_input step %q option_routes key %q matches neither an option index nor an option value", step.ID, key)
+			}
+		}
+		// A partial map is legal when the default next_step_id catches the
+		// rest; without one, picking an unmapped option silently continues to
+		// the next sequential step — almost always a missing mapping rather
+		// than a deliberate choice.
+		if len(step.OptionRoutes) > 0 && strings.TrimSpace(step.NextStepID) == "" {
+			for i, opt := range step.Options {
+				if _, byIdx := step.OptionRoutes[strconv.Itoa(i)]; byIdx {
+					continue
+				}
+				if _, byVal := step.OptionRoutes[opt]; byVal {
+					continue
+				}
+				return fmt.Errorf("human_input step %q option %d (%q) has no option_routes entry and the step has no default next_step_id — selecting it would silently continue to the next sequential step; map the option or set next_step_id as the fallback", step.ID, i, opt)
+			}
+		}
+	}
+	return nil
 }
 
 // populateRuntimeFields populates runtime fields (AgentConfigs, etc.) on plan steps in-place

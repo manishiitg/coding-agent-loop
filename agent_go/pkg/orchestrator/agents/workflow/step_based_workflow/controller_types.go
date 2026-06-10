@@ -37,6 +37,7 @@ type StepProgress struct {
 	BranchSteps             map[int]BranchStepProgress `json:"branch_steps,omitempty"`        // key is step index (0-based)
 	ValidationFailures      map[string]int             `json:"validation_failures,omitempty"` // key is step path, value is failure count
 	RoutingEvaluationCounts RoutingEvaluationCount     `json:"-"`                             // in-memory only: tracks routing step evaluations to prevent infinite loops (not persisted)
+	JumpCounts              map[string]int             `json:"-"`                             // in-memory only: counts identical "source->target" next_step_id jumps to prevent infinite loops (not persisted)
 	ArchivalCounts          map[int]int                `json:"archival_counts,omitempty"`     // key is stepNumber (1-based), value is archive run count
 }
 

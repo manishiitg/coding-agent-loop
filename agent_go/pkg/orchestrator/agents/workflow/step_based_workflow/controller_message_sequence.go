@@ -122,19 +122,35 @@ func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceClosingItems(seq *Mess
 	return items
 }
 
+// Jump-repeat limits for next_step_id navigation, per step kind. LLM-driven
+// steps get a tight cap because every extra cycle burns tokens; human_input
+// loops are inherently self-limiting (each pass blocks on a human response),
+// so their cap is only a failsafe against auto-responders. Routing passes 0:
+// it has its own per-route evaluation guard.
+const (
+	maxLLMJumpRepeats   = 5
+	maxHumanJumpRepeats = 25
+)
+
 // navigateToNextStepID advances the execution loop to the step whose ID matches
 // nextStepID, mirroring routing's navigation so any branch can converge to a
 // shared downstream step (sibling steps between here and the target are skipped).
+// sourceStepID identifies the jumping step for loop accounting; maxRepeats > 0
+// bounds how many times the same source→target jump may fire within one run
+// (the counter is in-memory for the run, like RoutingEvaluationCounts). Pass 0
+// to disable the guard when the caller has its own loop protection.
 // Returns: "end" (nextStepID=="end" — caller should break the loop), "jump" (i was
 // repointed to land on the target next iteration; caller should continue), or
-// "none" (empty/unknown id — caller falls through to the next sequential step).
-func (hcpo *StepBasedWorkflowOrchestrator) navigateToNextStepID(ctx context.Context, nextStepID string, breakdownSteps []PlanStepInterface, progress *StepProgress, i *int, startFromStep *int) string {
+// "none" (empty/unknown id — caller falls through to the next sequential step),
+// plus a non-nil error when the jump-repeat limit is exceeded — the workflow
+// should terminate rather than keep cycling.
+func (hcpo *StepBasedWorkflowOrchestrator) navigateToNextStepID(ctx context.Context, sourceStepID, nextStepID string, breakdownSteps []PlanStepInterface, progress *StepProgress, i *int, startFromStep *int, maxRepeats int) (string, error) {
 	nextStepID = strings.TrimSpace(nextStepID)
 	if nextStepID == "" {
-		return "none"
+		return "none", nil
 	}
 	if nextStepID == "end" {
-		return "end"
+		return "end", nil
 	}
 	targetStepIndex := -1
 	for idx, s := range breakdownSteps {
@@ -145,7 +161,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) navigateToNextStepID(ctx context.Cont
 	}
 	if targetStepIndex < 0 {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ next_step_id %q not found in plan - falling through to next sequential step", nextStepID))
-		return "none"
+		return "none", nil
+	}
+	if maxRepeats > 0 {
+		if progress.JumpCounts == nil {
+			progress.JumpCounts = make(map[string]int)
+		}
+		jumpKey := sourceStepID + "->" + nextStepID
+		progress.JumpCounts[jumpKey]++
+		if count := progress.JumpCounts[jumpKey]; count > maxRepeats {
+			errMsg := fmt.Sprintf("infinite loop detected: step %q has jumped to next_step_id %q %d times in this run (limit %d)", sourceStepID, nextStepID, count, maxRepeats)
+			hcpo.GetLogger().Error(errMsg, nil)
+			hcpo.EmitOrchestratorAgentError(ctx, "workflow", "next-step-id-loop-detection", fmt.Sprintf("Jump from step %s", sourceStepID), errMsg, *i, 0)
+			return "none", fmt.Errorf("workflow error: %s", errMsg)
+		}
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("🔗 Jumping to step %d (ID: %s) as specified by next_step_id", targetStepIndex+1, nextStepID))
 	if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
@@ -164,7 +193,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) navigateToNextStepID(ctx context.Cont
 		*startFromStep = targetStepIndex
 	}
 	*i = targetStepIndex - 1
-	return "jump"
+	return "jump", nil
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
@@ -1355,6 +1384,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) clearMsgSeqRouteSession(key string) {
 	delete(hcpo.msgSeqRoutes, key)
 	hcpo.msgSeqRoutesMu.Unlock()
 	hcpo.closeMessageSequenceRuntime(session, "message_sequence route restarted")
+}
+
+// clearAllMsgSeqRouteSessions drops every route's in-memory conversation and
+// closes the underlying runtimes. Route memory is scoped to one execution
+// phase — without this drain, a reused orchestrator instance (next iteration
+// or next run) silently resumes a prior run's route conversations and the
+// runtimes leak.
+func (hcpo *StepBasedWorkflowOrchestrator) clearAllMsgSeqRouteSessions(reason string) {
+	hcpo.msgSeqRoutesMu.Lock()
+	sessions := hcpo.msgSeqRoutes
+	hcpo.msgSeqRoutes = nil
+	hcpo.msgSeqRoutesMu.Unlock()
+	for key, session := range sessions {
+		hcpo.GetLogger().Info(fmt.Sprintf("🧹 Dropping message_sequence route session %q (%s)", key, reason))
+		hcpo.closeMessageSequenceRuntime(session, reason)
+	}
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) saveMessageSequenceSession(ctx context.Context, relPath string, session *messageSequenceSession) error {

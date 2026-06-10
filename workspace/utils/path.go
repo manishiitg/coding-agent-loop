@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -132,12 +133,25 @@ func IsPerUserPath(relPath string) bool {
 func ResolveUserPath(docsDir, requestedPath, userID string) (string, error) {
 	cleanPath := SanitizeInputPath(requestedPath, docsDir)
 
+	var resolved string
 	if IsPerUserPath(cleanPath) {
 		sanitizedUID := SanitizeUserID(userID)
-		return filepath.Join(docsDir, UsersDirectory, sanitizedUID, cleanPath), nil
+		resolved = filepath.Join(docsDir, UsersDirectory, sanitizedUID, cleanPath)
+	} else {
+		resolved = filepath.Join(docsDir, cleanPath)
 	}
 
-	return filepath.Join(docsDir, cleanPath), nil
+	// Containment: reject any request that escapes the workspace root — e.g.
+	// "../agent_go/server.go" survives filepath.Clean with its ".." intact and
+	// would otherwise resolve to a sibling of docsDir. filepath.Join cleans
+	// the result, so a prefix check against the cleaned root is sufficient.
+	// See docs/bugs/workspace_docs_path_inside_repo.md (path containment).
+	cleanRoot := filepath.Clean(docsDir)
+	if resolved != cleanRoot && !strings.HasPrefix(resolved, cleanRoot+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes the workspace root", requestedPath)
+	}
+
+	return resolved, nil
 }
 
 // ConvertToUserRelativePath converts an absolute path back to a relative path

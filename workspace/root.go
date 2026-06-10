@@ -37,10 +37,12 @@ func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.planner.yaml)")
 	rootCmd.PersistentFlags().String("port", "8080", "HTTP server port")
+	rootCmd.PersistentFlags().String("host", "", "Bind address (empty = all interfaces; set 127.0.0.1 to restrict to localhost)")
 	rootCmd.PersistentFlags().String("docs-dir", "./workspace-docs", "Documents directory")
 
 	// Bind flags to viper
 	viper.BindPFlag("port", rootCmd.PersistentFlags().Lookup("port"))
+	viper.BindPFlag("host", rootCmd.PersistentFlags().Lookup("host"))
 	viper.BindPFlag("docs-dir", rootCmd.PersistentFlags().Lookup("docs-dir"))
 
 	// Set environment variable key replacer for Viper
@@ -48,6 +50,7 @@ func init() {
 
 	// Bind environment variables with correct prefixes
 	viper.BindEnv("docs-dir", "DOCS_DIR")
+	viper.BindEnv("host", "BIND_HOST")
 
 	// Add subcommands
 	rootCmd.AddCommand(serverCmd)

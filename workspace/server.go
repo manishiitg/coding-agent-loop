@@ -163,10 +163,16 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	// Start server
-	// Use net.Listen to support dynamic port allocation (port 0)
-	listener, err := net.Listen("tcp", ":"+port)
+	// Use net.Listen to support dynamic port allocation (port 0).
+	// The workspace API has no authentication layer — every /api route is open
+	// to whoever can reach the port — so the bind address is the access
+	// control. Native mode binds 127.0.0.1 (set via BIND_HOST in
+	// run_server_with_logging.sh); Docker keeps the all-interfaces default so
+	// the agent container can reach it over the compose network.
+	host := viper.GetString("host")
+	listener, err := net.Listen("tcp", host+":"+port)
 	if err != nil {
-		fmt.Printf("Failed to listen on port %s: %v\n", port, err)
+		fmt.Printf("Failed to listen on %s:%s: %v\n", host, port, err)
 		os.Exit(1)
 	}
 

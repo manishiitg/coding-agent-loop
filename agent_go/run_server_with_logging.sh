@@ -6,6 +6,12 @@
 # Get script directory first (needed for both test and server modes)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Capture WORKSPACE_DOCS_PATH from the caller's shell BEFORE any .env sourcing.
+# .env files in this project commonly carry the Docker path (/app/workspace-docs),
+# which must not leak into native mode — but a deliberate shell export is a
+# legitimate override and must win. See docs/bugs/workspace_docs_path_inside_repo.md.
+WORKSPACE_DOCS_PATH_FROM_SHELL="${WORKSPACE_DOCS_PATH:-}"
+
 # When this script is launched from a non-login environment, system package
 # managers may not be on PATH even though they are available in the user's
 # normal terminal. Import the login-shell PATH once, then keep common host
@@ -732,8 +738,23 @@ if [ "$WITH_WORKSPACE" = true ]; then
         exit 1
     fi
 
-    # Always use local workspace-docs for native workspace (ignore Docker paths from .env)
-    WORKSPACE_DOCS_PATH="${SCRIPT_DIR}/../workspace-docs"
+    # Workspace docs path resolution (docs/bugs/workspace_docs_path_inside_repo.md, Option C):
+    #   1. A shell-exported WORKSPACE_DOCS_PATH wins (captured before .env sourcing,
+    #      so Docker paths like /app/workspace-docs in .env still can't leak in).
+    #   2. Otherwise an existing non-empty repo-local workspace-docs/ keeps working
+    #      (no surprise migration for current setups).
+    #   3. Otherwise new installs default OUTSIDE the repo, so agents can't traverse
+    #      from the workspace into project source files.
+    REPO_WORKSPACE_DOCS="${SCRIPT_DIR}/../workspace-docs"
+    if [ -n "$WORKSPACE_DOCS_PATH_FROM_SHELL" ]; then
+        WORKSPACE_DOCS_PATH="$WORKSPACE_DOCS_PATH_FROM_SHELL"
+        echo "🔧 WORKSPACE_DOCS_PATH from shell environment: $WORKSPACE_DOCS_PATH"
+    elif [ -d "$REPO_WORKSPACE_DOCS" ] && [ -n "$(ls -A "$REPO_WORKSPACE_DOCS" 2>/dev/null)" ]; then
+        WORKSPACE_DOCS_PATH="$REPO_WORKSPACE_DOCS"
+    else
+        WORKSPACE_DOCS_PATH="${HOME}/Documents/mcp-agent-workspace"
+        echo "🔧 New install: defaulting workspace docs outside the repo: $WORKSPACE_DOCS_PATH"
+    fi
     mkdir -p "$WORKSPACE_DOCS_PATH"
     WORKSPACE_DOCS_PATH="$(cd "$WORKSPACE_DOCS_PATH" && pwd)"
     export WORKSPACE_DOCS_PATH
@@ -1056,12 +1077,18 @@ start_native_workspace() {
     echo "=========================================" >> "$WORKSPACE_LOG_PATH"
     echo "" >> "$WORKSPACE_LOG_PATH"
 
+    # Bind to localhost only: the workspace API has no auth layer, so the bind
+    # address is the access control. Everything that needs it (agent server,
+    # frontend via proxy) runs on this machine in native mode. Docker keeps
+    # the all-interfaces default because the agent container connects over the
+    # compose network. Override with WORKSPACE_BIND_HOST if needed.
+    WORKSPACE_BIND_HOST="${WORKSPACE_BIND_HOST:-127.0.0.1}"
     if [ "$BACKGROUND_MODE" = true ]; then
-        nohup bash -lc "cd \"$WORKSPACE_DIR\" && exec go run . server --debug --port \"$WORKSPACE_PORT\" --docs-dir \"$WORKSPACE_DOCS_PATH\"" >> "$WORKSPACE_LOG_PATH" 2>&1 &
+        nohup bash -lc "cd \"$WORKSPACE_DIR\" && exec go run . server --debug --host \"$WORKSPACE_BIND_HOST\" --port \"$WORKSPACE_PORT\" --docs-dir \"$WORKSPACE_DOCS_PATH\"" >> "$WORKSPACE_LOG_PATH" 2>&1 &
     else
         (
             cd "$WORKSPACE_DIR" || exit 1
-            exec go run . server --debug --port "$WORKSPACE_PORT" --docs-dir "$WORKSPACE_DOCS_PATH"
+            exec go run . server --debug --host "$WORKSPACE_BIND_HOST" --port "$WORKSPACE_PORT" --docs-dir "$WORKSPACE_DOCS_PATH"
         ) >> "$WORKSPACE_LOG_PATH" 2>&1 &
     fi
 

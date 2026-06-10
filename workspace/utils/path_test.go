@@ -177,6 +177,31 @@ func TestResolveUserPath(t *testing.T) {
 			t.Errorf("got %q, want %q", resolved, expected)
 		}
 	})
+
+	t.Run("TraversalEscapeRejected", func(t *testing.T) {
+		for _, p := range []string{
+			"../sibling/source.go",
+			"..",
+			"Workflow/../../outside.txt",
+			"a/b/../../../etc/passwd",
+		} {
+			if resolved, err := ResolveUserPath(docsDir, p, "user1"); err == nil {
+				t.Errorf("path %q should be rejected (escapes workspace root), resolved to %q", p, resolved)
+			}
+		}
+	})
+
+	t.Run("InternalDotDotAllowed", func(t *testing.T) {
+		// ".." segments that stay inside the root are fine after cleaning.
+		resolved, err := ResolveUserPath(docsDir, "Workflow/demo/../other/file.md", "user1")
+		if err != nil {
+			t.Fatalf("ResolveUserPath failed: %v", err)
+		}
+		expected := filepath.Join(docsDir, "Workflow", "other", "file.md")
+		if resolved != expected {
+			t.Errorf("got %q, want %q", resolved, expected)
+		}
+	})
 }
 
 // --- ConvertToUserRelativePath ---

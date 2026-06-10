@@ -138,6 +138,23 @@ func clearCDPActiveTabForPort(port int) {
 	delete(cdpActiveTabs, port)
 }
 
+// countCDPTabAliasesForOwner counts labeled tabs an owner has created in the
+// shared CDP browser. Aliases are recorded when a labeled tab is selected or
+// created, and removed when the tab is closed, so this approximates the
+// owner's live tab count.
+func countCDPTabAliasesForOwner(port int, ownerID string) int {
+	prefix := fmt.Sprintf("cdp:%d:%s:", port, strings.TrimSpace(ownerID))
+	cdpTabSelectionsMu.RLock()
+	defer cdpTabSelectionsMu.RUnlock()
+	count := 0
+	for key := range cdpTabAliases {
+		if strings.HasPrefix(key, prefix) {
+			count++
+		}
+	}
+	return count
+}
+
 func getCDPTabAlias(port int, ownerID, alias string) string {
 	alias = strings.TrimSpace(alias)
 	if alias == "" || isCDPTabID(alias) {

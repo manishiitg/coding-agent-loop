@@ -176,7 +176,8 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	log.Printf("[BROWSER] session=%q agent=%q workflow=%q command=%q", session, agentSessionID, workflowSessionID, command)
 
 	// Track headless browser sessions to prevent unbounded growth.
-	// CDP mode connects to user's real browser — no tracking needed.
+	// CDP mode connects to the user's real browser, so it is tracked separately
+	// via the per-port owner registry (cdp_registry.go) instead of this tracker.
 	isHeadless := !isCdpMode
 	tracker := GetSessionTracker()
 
@@ -374,12 +375,23 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			return "", err
 		}
 		defer unlock()
+		touchCDPOwner(cdpPort, cdpOwner)
 
 		if command == "reset" {
+			// Reset kills the shared daemon and wipes every owner's tab state —
+			// only allowed when no other workflow is actively using this port.
+			if err := guardCDPReset(cdpPort, cdpOwner); err != nil {
+				return "", err
+			}
 			clearCDPTabSelectionsForPort(cdpPort)
 		} else if command == "tab" {
 			if _, _, err := parseTabSelection(tabArgs); err != nil {
 				return "", err
+			}
+			if len(tabArgs) > 0 && tabArgs[0] == "new" {
+				if err := guardCDPTabCreation(cdpPort, cdpOwner); err != nil {
+					return "", err
+				}
 			}
 			if isTabListRequest(tabArgs) {
 				return e.listCDPTabsForUser(ctx, session, cdpURL, opts, cdpPort, cdpOwner), nil

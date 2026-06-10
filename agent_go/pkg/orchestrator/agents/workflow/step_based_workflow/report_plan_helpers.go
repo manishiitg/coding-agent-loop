@@ -1221,6 +1221,26 @@ func reportPlanWidgetFromMap(payload map[string]interface{}) (*reportPlanDocumen
 	}
 	widget.Kind = strings.ToLower(strings.TrimSpace(widget.Kind))
 	widget.Path = normalizeReportPlanPath(widget.Path)
+	// The tool schema already constrains these enums at the call boundary;
+	// this re-check guards non-tool callers and keeps a bad value from being
+	// persisted to report_plan.json where only validate_report_plan would
+	// catch it after the fact.
+	if rf := strings.ToLower(strings.TrimSpace(widget.RenderFormat)); rf != "" {
+		switch rf {
+		case "auto", "markdown", "html", "text", "code", "json", "image", "video", "audio", "pdf", "link":
+			widget.RenderFormat = rf
+		default:
+			return nil, fmt.Errorf("unsupported renderFormat %q (use auto, markdown, html, text, code, json, image, video, audio, pdf, or link)", widget.RenderFormat)
+		}
+	}
+	if lf := strings.ToLower(strings.TrimSpace(widget.ListFormat)); lf != "" {
+		switch lf {
+		case "list", "cards", "table", "gallery":
+			widget.ListFormat = lf
+		default:
+			return nil, fmt.Errorf("unsupported listFormat %q (use list, cards, table, or gallery)", widget.ListFormat)
+		}
+	}
 	return &widget, nil
 }
 
@@ -1565,7 +1585,16 @@ func registerReportPlanManagementTools(
 				return "", err
 			}
 			if widget.ID == "" {
-				widget.ID = fmt.Sprintf("widget-%d", time.Now().UnixNano())
+				// Collision-checked against the current document: UnixNano is
+				// unique enough for sequential tool calls, but the check makes
+				// the invariant explicit and costs nothing.
+				for i := int64(0); ; i++ {
+					candidate := fmt.Sprintf("widget-%d", time.Now().UnixNano()+i)
+					if _, exists := reportPlanFindWidget(doc, candidate); !exists {
+						widget.ID = candidate
+						break
+					}
+				}
 			}
 
 			if hasBase {
@@ -1822,6 +1851,22 @@ func registerReportPlanManagementTools(
 							if s, isStr := item.(string); isStr {
 								colors.Chart = append(colors.Chart, strings.TrimSpace(s))
 							}
+						}
+					}
+					// Reject implausible colors at write time — otherwise a bad
+					// value sits in report_plan.json until validate_report_plan
+					// happens to run, and the renderer silently falls back.
+					for field, value := range map[string]string{
+						"primary": colors.Primary, "accent": colors.Accent, "card": colors.Card,
+						"muted": colors.Muted, "border": colors.Border,
+					} {
+						if value != "" && !reportPlanIsPlausibleColor(value) {
+							return "", fmt.Errorf("colors.%s %q is not a recognizable color (use #RGB / #RRGGBB / #RRGGBBAA hex or a CSS named color)", field, value)
+						}
+					}
+					for i, c := range colors.Chart {
+						if c != "" && !reportPlanIsPlausibleColor(c) {
+							return "", fmt.Errorf("colors.chart[%d] %q is not a recognizable color (use #RGB / #RRGGBB / #RRGGBBAA hex or a CSS named color)", i, c)
 						}
 					}
 					// Don't store an empty palette — it's noise on disk.

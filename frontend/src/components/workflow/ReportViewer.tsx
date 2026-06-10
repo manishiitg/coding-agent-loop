@@ -23,6 +23,7 @@ import { BarChart3, Check, ChevronDown, Download, Laptop, Loader2, RefreshCw, Sm
 import { agentApi, workspaceApi } from '../../services/api'
 import { useReportFilePreviewStore } from '../../stores/useReportFilePreviewStore'
 import { useChatStore } from '../../stores/useChatStore'
+import { useRunningWorkflowsStore } from '../../stores/useRunningWorkflowsStore'
 import {
   applyWidgetFilter,
   evaluateShowIf,
@@ -479,6 +480,30 @@ interface ReportDataSnapshot {
 const reportDataCache = new Map<string, ReportDataSnapshot>()
 const reportDataPromises = new Map<string, Promise<ReportDataSnapshot>>()
 
+// Workflow runs write the data reports read (db/db.sqlite + artifacts), so a
+// run reaching a terminal state makes this cache stale. Watch the running-
+// workflows store for transitions INTO completed/failed, drop the cached
+// snapshot for that workspace, and announce it so a mounted viewer for that
+// workspace reloads instead of showing pre-run data until a manual Refresh.
+export const REPORT_DATA_STALE_EVENT = 'workflow-report-data-stale'
+let reportTerminalRunKeys = new Set<string>()
+useRunningWorkflowsStore.subscribe((state) => {
+  const terminalNow = new Set<string>()
+  for (const wf of state.runningWorkflows) {
+    if ((wf.status === 'completed' || wf.status === 'failed') && wf.workspacePath) {
+      terminalNow.add(`${wf.id}::${wf.workspacePath}`)
+    }
+  }
+  for (const key of terminalNow) {
+    if (reportTerminalRunKeys.has(key)) continue
+    const workspacePath = key.slice(key.indexOf('::') + 2)
+    reportDataCache.delete(workspacePath)
+    reportDataPromises.delete(workspacePath)
+    window.dispatchEvent(new CustomEvent(REPORT_DATA_STALE_EVENT, { detail: { workspacePath } }))
+  }
+  reportTerminalRunKeys = terminalNow
+})
+
 // File-path sources for file/file-list/markdown widgets that point `source` at
 // a file under the workspace.
 function widgetSourcePaths(widget: ReportWidget): string[] {
@@ -793,13 +818,21 @@ function ReportViewComponent({ workspacePath, selectedRunFolder, reviewData, onC
       const p = detail?.preference
       if (p === 'mobile' || p === 'tablet' || p === 'desktop' || p === 'auto') setPreviewPreference(p)
     }
+    const onDataStale = (e: Event) => {
+      const stalePath = (e as CustomEvent).detail?.workspacePath
+      // The module-level subscriber already dropped the cache entry; this
+      // refresh only fires for the workspace currently on screen.
+      if (stalePath && stalePath === workspacePath) void refreshReportRef.current()
+    }
     window.addEventListener('workflow-report-export-requested', onExport)
     window.addEventListener('workflow-report-refresh-requested', onRefresh)
     window.addEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, onPref)
+    window.addEventListener(REPORT_DATA_STALE_EVENT, onDataStale)
     return () => {
       window.removeEventListener('workflow-report-export-requested', onExport)
       window.removeEventListener('workflow-report-refresh-requested', onRefresh)
       window.removeEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, onPref)
+      window.removeEventListener(REPORT_DATA_STALE_EVENT, onDataStale)
     }
   }, [workspacePath])
 

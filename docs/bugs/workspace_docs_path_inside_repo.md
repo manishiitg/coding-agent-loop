@@ -1,6 +1,20 @@
 # Bug: workspace-docs Lives Inside Repo, LLM Can Reach Source Files
 
-## Status: Open (design discussion — not yet implemented)
+## Status: Implemented (2026-06-10) — Option C + path containment
+
+Resolution (see `agent_go/run_server_with_logging.sh` and `workspace/utils/path.go`):
+- **Option C shipped**: shell-exported `WORKSPACE_DOCS_PATH` wins (captured before
+  `.env` sourcing, so Docker paths can't leak into native mode) → existing
+  non-empty repo-local `workspace-docs/` keeps working → new installs default to
+  `~/Documents/mcp-agent-workspace`.
+- **Path containment shipped** (open question 6): `ResolveUserPath` rejects any
+  resolution escaping the workspace root — `..` traversal through the documents
+  API is closed.
+- Also related: the workspace server now binds `127.0.0.1` in native mode
+  (`--host` / `BIND_HOST`), since the unauthenticated API's bind address is its
+  access control.
+
+The original analysis is preserved below for context.
 
 ## Problem
 

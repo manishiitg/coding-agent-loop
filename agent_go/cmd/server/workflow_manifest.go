@@ -91,18 +91,18 @@ type WorkflowSchedule struct {
 	TriggerPayload json.RawMessage        `json:"trigger_payload,omitempty"`
 	CalendarItems  []CalendarScheduleItem `json:"calendar_items,omitempty"`
 	GroupNames     []string               `json:"group_names,omitempty"`
-	Mode           string                 `json:"mode,omitempty"`          // "workflow" (default/orchestrator), "workshop" (LLM-driven), or "multi-agent"
-	Messages       []string               `json:"messages,omitempty"`      // Predefined message queue for workshop mode (sent one-by-one)
-	WorkshopMode   string                 `json:"workshop_mode,omitempty"` // Workshop builder mode for scheduled runs: "run" (default) or "optimizer" (legacy "ask"/"runner"/"debugger" auto-migrated to "run")
-	Query          string                 `json:"query,omitempty"`         // Message to execute (multi-agent mode)
-	ResumePrevious *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume the latest prior thread (same provider) instead of a fresh session each run. nil = default (resume ON); explicit false opts out.
+	Mode           string                 `json:"mode,omitempty"`            // "workshop" for workflow schedules; legacy "workflow" is normalized at runtime
+	Messages       []string               `json:"messages,omitempty"`        // Predefined message queue for workshop schedules (sent one-by-one)
+	WorkshopMode   string                 `json:"workshop_mode,omitempty"`   // Workshop builder mode for scheduled runs: "run" (default) or "optimizer" (legacy "ask"/"runner"/"debugger" auto-migrated to "run")
+	Query          string                 `json:"query,omitempty"`           // Message to execute (multi-agent mode)
+	ResumePrevious *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume the latest prior thread (same provider) instead of a fresh session each run. nil = default (fresh session); explicit true opts in.
 }
 
 // ShouldResumePrevious reports whether a scheduled run should resume the
-// workflow's latest coding-agent thread. Resume is the DEFAULT — it runs unless
-// the schedule explicitly set resume_previous=false.
+// workflow's latest coding-agent thread. Resume is opt-in: omitted/null means
+// each scheduled run starts fresh.
 func (s WorkflowSchedule) ShouldResumePrevious() bool {
-	return s.ResumePrevious == nil || *s.ResumePrevious
+	return s.ResumePrevious != nil && *s.ResumePrevious
 }
 
 type CalendarScheduleItem struct {

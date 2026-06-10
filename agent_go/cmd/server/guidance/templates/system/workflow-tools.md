@@ -65,7 +65,7 @@ returns the live JSON schema for the tool.
 ## Schedule Management (Workshop mode)
 
 For the operational cheat sheet on creating / editing / deleting schedules
-(cron syntax, modes, payload shape), see this section. For the
+(cron syntax, workshop run/optimizer payload shape), see this section. For the
 multi-agent-only schedule cron flow, see
 `get_reference_doc(kind="schedule-management")` instead.
 
@@ -76,9 +76,10 @@ multi-agent-only schedule cron flow, see
   { "id": "...", "name": "...", "description": "...",
     "cron_expression": "0 9 * * 1-5", "timezone": "UTC",
     "enabled": true, "trigger_payload": {},
-    "group_names": ["confida-prod"] }
+    "group_names": ["confida-prod"],
+    "mode": "workshop", "workshop_mode": "run" }
   ```
-  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`).
+  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`), `mode` (`workshop` for workflow schedules), `workshop_mode` (`run` or `optimizer`).
 - Schedule management is available in **builder and optimizer modes**. If the user asks in another mode, tell them to switch.
 
 ### Two schedule types: cron vs calendar
@@ -94,36 +95,37 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default) o
 
 ```
 { "name": "March content calendar", "timezone": "Asia/Kolkata",
-  "group_names": ["group-1"], "mode": "workflow",
+  "group_names": ["group-1"], "mode": "workshop", "workshop_mode": "run",
   "calendar_items": [
     { "date": "2026-03-03", "time": "09:00", "description": "Optional note" },
     { "date": "2026-03-07", "time": "18:30" }
   ] }
 ```
 
-- `calendar_items` (required): each needs `date` (`YYYY-MM-DD`) and `time` (`HH:MM`), both interpreted in the schedule's `timezone`. `description` is an optional per-item note; `messages` is an optional per-item message queue used **only** when `mode="workshop"`.
+- `calendar_items` (required): each needs `date` (`YYYY-MM-DD`) and `time` (`HH:MM`), both interpreted in the schedule's `timezone`. `description` is an optional per-item note; `messages` is an optional per-item message queue.
 - `timezone` (required, IANA — e.g. `Asia/Kolkata`, not `IST`) and `group_names` (required) work exactly as for cron schedules.
-- **Modes are the same as cron**: defaults to `mode="workflow"` (direct orchestrator, no LLM, no messages needed). Use `mode="workshop"` only for an explicit builder/optimizer/evaluation/hardening calendar — then supply per-item `messages` or a top-level default `messages` array plus `workshop_mode` (`run` or `optimizer`), following all the *Writing messages* and unattended-run rules below.
+- **Mode is the same as cron**: workflow schedules use `mode="workshop"`. Supply per-item `messages` or a top-level default `messages` array when the default full-workflow run instruction is not specific enough.
 - Past-dated items are skipped — only future items get registered. To change a calendar schedule, update its `calendar_items` (add/remove dates); editing tools (`update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs`) work on calendar schedules too.
 
 > The cron flow for **multi-agent chat** schedules (`multiagent-schedules.json`, edited via shell) is separate and cron-only — see `get_reference_doc(kind="schedule-management")`. Calendar schedules are a **workflow-schedule** feature and live in `workflow.json`.
 
-### Three ways to schedule a workflow
+### How workflow schedules execute
 
-1. **Execute** (`mode=workflow`, default) — runs the orchestrator directly, no LLM involved. Fast, no messages needed.
-2. **Run** (`mode=workshop`, `workshop_mode=run`) — LLM-driven execution with per-step notifications. Requires `messages` array (e.g. a single message: `"Run the full workflow using run_full_workflow(group_name=\"group-1\")"`).
-3. **Optimize** (`mode=workshop`, `workshop_mode=optimizer`) — LLM-driven optimizer run. Requires `messages` array with exact group scope, `runs/iteration-0` evidence scope, metric/eval/log review, and bounded stop conditions.
+Workflow schedules always use the workshop builder execution path. Do not create direct `mode="workflow"` schedules; legacy manifests with that value are normalized to workshop execution.
 
-**Default mode rule:** choose `mode="workflow"` unless the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule. Do not choose `mode="workshop"` for normal recurring business runs.
+- **Run** (`mode=workshop`, `workshop_mode=run`) — LLM-driven execution with per-step notifications. `messages` is optional; if omitted, the scheduler sends a default full-workflow run instruction. Prefer an explicit message when you need group-specific wording, backup instructions, or strict unattended behavior.
+- **Optimize** (`mode=workshop`, `workshop_mode=optimizer`) — LLM-driven optimizer run. Provide a `messages` array with exact group scope, `runs/iteration-0` evidence scope, metric/eval/log review, and bounded stop conditions.
 
-**`/auto-improve` exception**: When setting up continuous improvement, BOTH schedules must be workshop schedules. The recurring execution schedule uses `mode="workshop", workshop_mode="run"` and a message that calls `run_full_workflow(group_name="...")` for each configured group. The recurring improvement schedule uses `mode="workshop", workshop_mode="workshop"`. Do not use direct `mode="workflow"` for this command.
+**Default mode rule:** create workflow schedules with `mode="workshop"`. New schedules should never use `mode="workflow"`.
+
+**`/auto-improve` rule**: When setting up continuous improvement, BOTH schedules must be workshop schedules. The recurring execution schedule uses `mode="workshop", workshop_mode="run"` and a message that calls `run_full_workflow(group_name="...")` for each configured group. The recurring improvement schedule uses `mode="workshop", workshop_mode="optimizer"`. Do not use direct `mode="workflow"` for this command.
 
 ### Back up scheduled workflows
 
-Scheduled runs execute unattended and accumulate state (`workflow.json`, `planning/`, `knowledgebase/`, `learnings/`, `db/`, reports) that otherwise lives only on local disk. **Whenever you set up a recurring schedule, also arrange a backup** so each run persists its output off-box. Load `get_reference_doc(kind="backup-strategy")` and follow it once to initialise the workflow's backup remote, then wire the per-run backup by mode:
+Scheduled runs execute unattended and accumulate state (`workflow.json`, `planning/`, `knowledgebase/`, `learnings/`, `db/`, reports) that otherwise lives only on local disk. **Whenever you set up a recurring schedule, also arrange a backup** so each run persists its output off-box. Load `get_reference_doc(kind="backup-strategy")` and follow it once to initialise the workflow's backup remote, then wire the per-run backup into the workshop message:
 
-- **`mode="workshop"`** (has a `messages` queue): append a final backup turn, e.g. `"After the run completes, follow the backup-strategy skill to commit and push workflow.json, planning/, db/, knowledgebase/ and learnings/ to the workflow's backup remote. Do not ask for confirmation."`
-- **`mode="workflow"`** (direct orchestrator, no messages): add a backup step to the workflow plan itself — a final step that runs the backup-strategy git/CLI commands — since there is no message queue to carry the instruction.
+- Append a final backup turn to `messages`, e.g. `"After the run completes, follow the backup-strategy skill to commit and push workflow.json, planning/, db/, knowledgebase/ and learnings/ to the workflow's backup remote. Do not ask for confirmation."`
+- If you rely on the default full-workflow message, replace it with an explicit message that includes both the run instruction and backup requirement.
 
 Confirm with the user before skipping backup on a recurring schedule.
 
@@ -148,7 +150,7 @@ Confirm with the user before skipping backup on a recurring schedule.
 
 ### Workshop optimizer-style schedules
 
-When creating a schedule with `workshop_mode="workshop"`, craft the message around the exact recurring job. For `/auto-improve`, the message should:
+When creating a schedule with `workshop_mode="optimizer"`, craft the message around the exact recurring job. For `/auto-improve`, the message should:
 
 - Name the configured `group_names`.
 - Use only `runs/iteration-0` evidence for those groups.

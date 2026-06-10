@@ -26,7 +26,7 @@ Current manifest schedule fields are defined in [workflow_manifest.go](/Users/mi
 - `enabled`
 - `trigger_payload`
 - `group_ids`
-- `mode`
+- `mode` (`workshop` for workflow schedules; legacy `workflow` values are normalized)
 - `messages`
 - `workshop_mode`
 
@@ -138,29 +138,13 @@ Runtime-only state is kept in memory per schedule:
 
 That runtime state is not written back into `workflow.json`.
 
-## Execution Modes
+## Execution Mode
 
-Schedules support two execution modes.
+Workflow schedules use one execution path: the workshop builder path. The old direct orchestrator schedule mode (`mode = workflow`, `agent_mode = workflow`) is no longer generated or executed for workflow schedules. Existing manifests with `mode = workflow` are normalized to workshop execution at runtime.
 
-### `workflow` mode
-
-This is the standard orchestrator path.
-
-The scheduler builds a normal workflow request with:
-
-- `agent_mode = workflow`
-- workflow capabilities from the manifest
-- `triggered_by = cron`
-- `execution_options.run_mode = use_same_run`
-- `execution_options.selected_run_folder = iteration-0`
-- `execution_options.execution_strategy = start_from_beginning`
-- `execution_options.enabled_group_ids = schedule.group_ids`
-
-The scheduler then waits for the workflow execution to finish and captures the real run folder from the active execution registry.
+Multi-agent schedules remain separate under `_users/{userID}/multiagent-schedules.json`.
 
 ### `workshop` mode
-
-This uses the interactive builder/workshop path instead of the normal workflow executor.
 
 The scheduler builds a request with:
 
@@ -189,8 +173,7 @@ Current implications:
 
 - group IDs are required at save time
 - scheduled executions pass those group IDs into workflow execution options
-- normal workflow-mode schedules start from `iteration-0`
-- workshop-mode schedules also start from `iteration-0`
+- workflow schedules start from `iteration-0`
 
 There is helper logic for resolving a group-scoped workshop run folder, but the standard workshop scheduler request still starts from `iteration-0`.
 
@@ -202,7 +185,7 @@ Workshop schedules have one extra behavior.
 
 If:
 
-- `mode = workshop`
+- `mode = workshop` or legacy `mode = workflow` normalized to workshop
 - `workshop_mode` is `run`, legacy `runner`, or omitted
 - none of the scheduled messages explicitly invoke `run_full_report`
 

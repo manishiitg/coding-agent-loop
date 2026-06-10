@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
+	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
@@ -1144,82 +1148,16 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 // executeJob builds a session request from the manifest and runs it.
 // Returns (sessionID, runFolder, error).
 func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
-	// Dispatch to workshop or multi-agent mode if configured
-	if sctx.Schedule.Mode == "workshop" {
-		return s.executeWorkshopJob(ctx, sctx, runID)
-	}
-	if sctx.Schedule.Mode == "multi-agent" || sctx.SourceType == "multi-agent" {
+	// Multi-agent schedules live in a separate user-level schedule store. All
+	// workflow-manifest schedules execute through the workshop builder path.
+	if sctx.SourceType == "multi-agent" {
 		return s.executeMultiAgentJob(ctx, sctx, runID)
 	}
 
-	// Deprecated: headless workflow execution (running a workflow without the
-	// Workflow Builder chat). The supported path is the Workflow Builder chat
-	// (workshop mode → agent_mode "workflow_phase"); this orchestrator-only
-	// run-without-chat branch is kept for backward compatibility.
-	query := sctx.WorkflowLabel
-	if query == "" {
-		query = "Execute workflow"
+	if mode := strings.TrimSpace(sctx.Schedule.Mode); mode != "" && mode != "workshop" {
+		s.logf(sctx, "[SCHEDULER] Schedule %s uses legacy mode=%s; executing through workshop mode", sctx.Schedule.ID, mode)
 	}
-
-	reqMap := map[string]interface{}{
-		"query":                   query,
-		"agent_mode":              "workflow", // deprecated: headless run; use "workflow_phase" (builder chat)
-		"selected_folder":         sctx.WorkspacePath,
-		"triggered_by":            "cron",
-		"servers":                 sctx.Capabilities.SelectedServers,
-		"selected_tools":          sctx.Capabilities.SelectedTools,
-		"selected_skills":         sctx.Capabilities.SelectedSkills,
-		"browser_mode":            sctx.Capabilities.BrowserMode,
-		"use_code_execution_mode": sctx.Capabilities.UseCodeExecutionMode,
-	}
-
-	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
-
-	// Execution options — always use iteration-0 (controller backs up previous run automatically)
-	execOpts := map[string]interface{}{
-		"run_mode":            "use_same_run",
-		"selected_run_folder": "iteration-0",
-		"execution_strategy":  "start_from_beginning",
-	}
-	if len(sctx.Schedule.GroupNames) > 0 {
-		execOpts["enabled_group_names"] = sctx.Schedule.GroupNames
-	}
-	reqMap["execution_options"] = execOpts
-
-	// Generate session ID
-	sessionID := s.newScheduleSessionID(sctx)
-
-	// Update runtime state with session
-	state := s.getOrCreateRuntimeState(sctx.Schedule.ID)
-	state.LastSessionID = sessionID
-
-	// Update run entry with session_id immediately
-	if runID != "" {
-		_ = UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, "running", "", nil, "", sessionID)
-	}
-
-	s.sessionLogf(sctx, sessionID, "[SCHEDULER] executeJob for %s (%s): session=%s workspace=%s",
-		sctx.Schedule.ID, sctx.Schedule.Name, sessionID, sctx.WorkspacePath)
-
-	runErr := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil)
-	if runErr != nil {
-		return sessionID, "", fmt.Errorf("session execution failed: %w", runErr)
-	}
-
-	// Stamp the schedule's display name onto the tracked session so the
-	// frontend can label the reconnect tab "<Schedule Name>" instead of
-	// the generic "Workflow" fallback. QueryRequest doesn't carry a
-	// title field, so we update activeSessions directly here after the
-	// session has been tracked by handleQuery.
-	s.stampScheduleNameOnSession(sessionID, sctx)
-
-	// Wait for workflow orchestrator to finish (background goroutines)
-	detectedFolder, waitErr := s.waitForWorkflowComplete(ctx, sessionID, runID, sctx.WorkspacePath)
-	if waitErr != nil {
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] ⚠️ Workflow wait interrupted for %s: %v", sctx.Schedule.ID, waitErr)
-	}
-
-	return sessionID, detectedFolder, nil
+	return s.executeWorkshopJob(ctx, sctx, runID)
 }
 
 // executeWorkshopJob runs a workflow via the workshop builder path (workflow_phase mode).
@@ -1256,7 +1194,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		// Resume the workflow's latest thread (same CLI) on the first message
 		// only — later messages already share this run's live session.
 		if i == 0 {
-			if resumed := s.maybeResumeLatestWorkflowThread(sctx, reqMap); resumed != "" {
+			if resumed := s.maybeResumeLatestWorkflowThread(ctx, sctx, reqMap, sessionID); resumed != "" {
 				s.sessionLogf(sctx, sessionID, "[SCHEDULER] Resuming latest workflow thread %s for schedule %s", resumed, sctx.Schedule.ID)
 			}
 		}
@@ -1292,25 +1230,22 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 }
 
 // executeMultiAgentJob runs a multi-agent chat session with the configured query.
-// maxWorkflowResumeScan bounds how many of the workflow's most recent threads the
-// scheduler inspects when resuming: if a same-CLI resumable thread is among the
-// latest few, resume it; otherwise start a fresh session.
+// maxWorkflowResumeScan bounds how many of this schedule's most recent runs the
+// scheduler inspects when resume_previous=true: if a same-CLI resumable scheduled
+// chat is among the latest few, resume it; otherwise start a fresh session.
 const maxWorkflowResumeScan = 5
 
 // maybeResumeLatestWorkflowThread wires restored_conversation_session_id into reqMap
-// so a scheduled WORKFLOW run (a normal chat seeded with the schedule's message)
-// continues the workflow's most recent thread instead of starting fresh.
+// so an opt-in scheduled workflow run continues the schedule's most recent
+// scheduled chat instead of starting fresh.
 //
-// The scheduled run has no session of its own to reference — the builder only
-// creates the schedule, it doesn't run or track sessions. So we look up the
-// workflow's persisted threads (ListChatHistorySessions, newest-first, scoped to
-// the workflow workspace — this covers both interactive builder chats and prior
-// scheduled runs) and resume the latest one that ran on the SAME coding-agent CLI
-// and is resumable. A different CLI's external session ID is meaningless to the
-// new one. Prior run status (success/error) is intentionally ignored: resume
-// happens regardless so the agent can recover from a failed run.
+// We look at schedule-runs.json for this exact schedule_id first, then validate
+// the referenced chat runtime. This deliberately excludes normal user/builder
+// chats in the same workflow workspace. A different CLI's external session ID is
+// meaningless to the new one. Prior run status (success/error) is intentionally
+// ignored: resume happens regardless so the agent can recover from a failed run.
 // Returns the resumed thread's session ID, or "" when the run should start fresh.
-func (s *SchedulerService) maybeResumeLatestWorkflowThread(sctx *ScheduleContext, reqMap map[string]interface{}) string {
+func (s *SchedulerService) maybeResumeLatestWorkflowThread(ctx context.Context, sctx *ScheduleContext, reqMap map[string]interface{}, currentSessionID string) string {
 	if !sctx.Schedule.ShouldResumePrevious() {
 		return ""
 	}
@@ -1323,22 +1258,32 @@ func (s *SchedulerService) maybeResumeLatestWorkflowThread(sctx *ScheduleContext
 		return ""
 	}
 
-	sessions, err := ListChatHistorySessions(sctx.UserID, maxWorkflowResumeScan, 0, sctx.WorkspacePath)
-	if err != nil || len(sessions) == 0 {
+	runs, err := listScheduleRunsForResume(ctx, sctx.WorkspacePath, sctx.Schedule.ID)
+	if err != nil || len(runs) == 0 {
 		return ""
 	}
 
-	// Threads are newest-first. Within the latest maxWorkflowResumeScan, resume
-	// the most recent one that is a resumable coding-agent thread on the same CLI;
-	// skip any that don't qualify (e.g. an API-model thread). If none qualify,
-	// start fresh.
+	// Runs are newest-first. Within the latest maxWorkflowResumeScan scheduled
+	// chats, resume the most recent one that is a resumable coding-agent thread
+	// on the same CLI; skip any that don't qualify (e.g. an API-model thread).
+	// If none qualify, start fresh.
 	//
 	// Validate via ReadChatHistoryRuntimeForSession(sessionID, workspace) — the
 	// SAME resolver handleQuery uses when it later honors
 	// restored_conversation_session_id — so what we match here is provably what
 	// gets resumed.
-	for _, sess := range sessions {
-		rt, ok, rErr := ReadChatHistoryRuntimeForSession(sctx.UserID, sess.SessionID, sctx.WorkspacePath)
+	checked := 0
+	for _, run := range runs {
+		sessionID := strings.TrimSpace(run.SessionID)
+		if sessionID == "" || sessionID == currentSessionID {
+			continue
+		}
+		checked++
+		if checked > maxWorkflowResumeScan {
+			break
+		}
+
+		rt, ok, rErr := ReadChatHistoryRuntimeForSession(sctx.UserID, sessionID, sctx.WorkspacePath)
 		if rErr != nil || !ok || rt == nil {
 			continue
 		}
@@ -1353,10 +1298,53 @@ func (s *SchedulerService) maybeResumeLatestWorkflowThread(sctx *ScheduleContext
 		if !rt.ResumeSupported || strings.TrimSpace(rt.ExternalSessionID) == "" {
 			continue
 		}
-		reqMap["restored_conversation_session_id"] = sess.SessionID
-		return sess.SessionID
+		reqMap["restored_conversation_session_id"] = sessionID
+		return sessionID
 	}
 	return ""
+}
+
+func listScheduleRunsForResume(ctx context.Context, workspacePath, scheduleID string) ([]ScheduleRunEntry, error) {
+	if localRuns, ok, err := readLocalScheduleRuns(workspacePath); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		return filterScheduleRunsNewestFirst(localRuns, scheduleID), nil
+	}
+	runs, _, err := ListScheduleRuns(ctx, workspacePath, scheduleID, maxScheduleRuns, 0)
+	return runs, err
+}
+
+func readLocalScheduleRuns(workspacePath string) ([]ScheduleRunEntry, bool, error) {
+	localPath := filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(scheduleRunsPath(workspacePath)))
+	data, err := os.ReadFile(localPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, true, err
+	}
+	var runs []ScheduleRunEntry
+	if err := json.Unmarshal(data, &runs); err != nil {
+		return nil, true, err
+	}
+	return runs, true, nil
+}
+
+func filterScheduleRunsNewestFirst(runs []ScheduleRunEntry, scheduleID string) []ScheduleRunEntry {
+	filtered := make([]ScheduleRunEntry, 0, len(runs))
+	for _, run := range runs {
+		if run.ScheduleID == scheduleID {
+			filtered = append(filtered, run)
+		}
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].StartedAt.After(filtered[j].StartedAt)
+	})
+	if len(filtered) > maxScheduleRuns {
+		filtered = filtered[:maxScheduleRuns]
+	}
+	return filtered
 }
 
 func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
@@ -1544,62 +1532,6 @@ func (s *SchedulerService) waitForWorkshopIdle(ctx context.Context, sessionID st
 			// backed) agent is still working.
 			if !s.api.sessionIsBusy(sessionID) {
 				return nil
-			}
-		}
-	}
-}
-
-// waitForWorkflowComplete polls until all workflow orchestrator queries have finished.
-func (s *SchedulerService) waitForWorkflowComplete(ctx context.Context, sessionID string, runID string, workspacePath string) (string, error) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	runFolderWritten := false
-	detectedFolder := ""
-
-	for {
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-ticker.C:
-			// Try to capture the run folder from the unified execution tracker.
-			if !runFolderWritten {
-				if folder := s.api.latestTrackedRunFolderForSession(sessionID); folder != "" {
-					detectedFolder = folder
-					runFolderWritten = true
-					if runID != "" {
-						_ = UpdateScheduleRun(ctx, workspacePath, runID, "running", "", nil, folder, "")
-						scheduleLogf("[SCHEDULER] 📁 Detected run folder: %s (session %s)", folder, sessionID)
-					}
-				}
-			}
-
-			// Check if all queries are done
-			s.api.sessionQueryIDMux.RLock()
-			queryIDs := s.api.sessionQueryIDs[sessionID]
-			s.api.sessionQueryIDMux.RUnlock()
-
-			if len(queryIDs) == 0 {
-				// All orchestrator queries finished
-				if detectedFolder == "" {
-					detectedFolder = s.api.latestTrackedRunFolderForSession(sessionID)
-				}
-				return detectedFolder, nil
-			}
-
-			if session, exists := s.api.getActiveSession(sessionID); exists {
-				switch session.Status {
-				case "completed":
-					if detectedFolder == "" {
-						detectedFolder = s.api.latestTrackedRunFolderForSession(sessionID)
-					}
-					return detectedFolder, nil
-				case "error", "stopped", "inactive", "dismissed":
-					if detectedFolder == "" {
-						detectedFolder = s.api.latestTrackedRunFolderForSession(sessionID)
-					}
-					return detectedFolder, fmt.Errorf("session ended with status %s", session.Status)
-				}
 			}
 		}
 	}

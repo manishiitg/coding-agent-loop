@@ -1974,11 +1974,11 @@ export interface ScheduledJob {
   workflow_label?: string
   trigger_payload?: Record<string, unknown>
   group_names?: string[]  // undefined/empty = all groups
-  mode?: 'workflow' | 'workshop' | 'multi-agent'
-  messages?: string[]  // predefined messages for workshop mode
-  workshop_mode?: 'runner' | 'optimizer'  // workshop builder mode (default: runner)
+  mode?: 'workshop' | 'multi-agent'
+  messages?: string[]  // predefined messages for workflow workshop schedules
+  workshop_mode?: 'run' | 'optimizer'  // workflow workshop schedule mode (default: run)
   query?: string  // message to execute (multi-agent mode)
-  resume_previous?: boolean  // coding-agent CLI only: resume latest prior thread instead of fresh session
+  resume_previous?: boolean  // coding-agent CLI only: explicit true resumes latest prior thread; omitted/false starts fresh
   user_id?: string  // user context (multi-agent mode)
   schedule_type?: 'cron' | 'calendar'
   calendar_items?: CalendarScheduleItem[]

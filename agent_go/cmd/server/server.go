@@ -3851,14 +3851,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			ToolChoice:         "auto",
 			StreamingChunkSize: 50,
 			Timeout:            0, // No per-Invoke timeout; streamCtx is explicitly canceled when needed.
-			ToolTimeout: func() time.Duration {
-				if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
-					if timeout, err := time.ParseDuration(envVal); err == nil {
-						return timeout
-					}
-				}
-				return 0
-			}(),
 			SelectedTools: selectedTools, // NEW: Pass selected tools
 
 			// Detailed LLM configuration from frontend (unified fallback structure)
@@ -3875,152 +3867,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			OpenCodePersistentInteractiveSession:   openCodePersistentInteractive,
 			ClaudeCodeTransport:                    claudeCodeTransport,
 			CodingAgentWorkingDir:                  chatWorkingDir,
-			APIKeys:                                mergedAPIKeys,
-			// Context summarization configuration
-			// Priority: Request > Environment Variable > Default (matches orchestrator defaults)
-			EnableContextSummarization: func() bool {
-				// Priority: Request > Preset > Environment Variable > Default
-				// If explicitly set in request, use that value
-				if req.EnableContextSummarization != nil {
-					return *req.EnableContextSummarization
-				}
-				// Check preset LLM config
-				if presetLLMConfig != nil && presetLLMConfig.EnableContextSummarization != nil {
-					return *presetLLMConfig.EnableContextSummarization
-				}
-				// Check environment variable - default to enabled (true), can be disabled via "false"
-				if envVal := os.Getenv("ENABLE_CONTEXT_SUMMARIZATION"); envVal == "false" {
-					return false
-				}
-				return true // Default to enabled (matches orchestrator)
-			}(),
-			SummarizeOnTokenThreshold: func() bool {
-				// If explicitly set in request, use that value
-				if req.SummarizeOnTokenThreshold != nil {
-					return *req.SummarizeOnTokenThreshold
-				}
-				// Check environment variable - default to enabled (true), can be disabled via "false"
-				if envVal := os.Getenv("SUMMARIZE_ON_TOKEN_THRESHOLD"); envVal == "false" {
-					return false
-				}
-				return true // Default to enabled (matches orchestrator)
-			}(),
-			TokenThresholdPercent: func() float64 {
-				// Request takes highest priority
-				if req.TokenThresholdPercent > 0 {
-					return req.TokenThresholdPercent
-				}
-				// Check environment variable
-				if envVal := os.Getenv("TOKEN_THRESHOLD_PERCENT"); envVal != "" {
-					if threshold, err := strconv.ParseFloat(envVal, 64); err == nil && threshold > 0 && threshold <= 1.0 {
-						return threshold
-					}
-				}
-				// Default to 80% (0.8) - matches orchestrator
-				return 0.8
-			}(),
-			SummarizeOnFixedTokenThreshold: func() bool {
-				// If explicitly set in request, use that value
-				if req.SummarizeOnFixedTokenThreshold != nil {
-					return *req.SummarizeOnFixedTokenThreshold
-				}
-				// Check environment variable - default to enabled (true), can be disabled via "false"
-				if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "false" {
-					return false
-				}
-				return true // Default to enabled (matches orchestrator)
-			}(),
-			FixedTokenThreshold: func() int {
-				// Request takes highest priority
-				if req.FixedTokenThreshold > 0 {
-					return req.FixedTokenThreshold
-				}
-				// Check environment variable
-				if envVal := os.Getenv("FIXED_TOKEN_THRESHOLD"); envVal != "" {
-					if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
-						return threshold
-					}
-				}
-				return 200000 // Default to 200k tokens (matches orchestrator)
-			}(),
-			SummaryKeepLastMessages: func() int {
-				if req.SummaryKeepLastMessages > 0 {
-					return req.SummaryKeepLastMessages
-				}
-				// Check environment variable
-				if envVal := os.Getenv("SUMMARY_KEEP_LAST_MESSAGES"); envVal != "" {
-					if keepLast, err := strconv.Atoi(envVal); err == nil && keepLast > 0 {
-						return keepLast
-					}
-				}
-				return 4 // Default to 4 messages (matches orchestrator)
-			}(),
-			// Context editing configuration
-			// Priority: Request > Environment Variable > Default
-			EnableContextEditing: func() bool {
-				// Priority: Request > Preset > Environment Variable > Default
-				// If explicitly set in request, use that value
-				if req.EnableContextEditing != nil {
-					return *req.EnableContextEditing
-				}
-				// Check preset LLM config
-				if presetLLMConfig != nil && presetLLMConfig.EnableContextEditing != nil {
-					return *presetLLMConfig.EnableContextEditing
-				}
-				// Check environment variable
-				if envVal := os.Getenv("ENABLE_CONTEXT_EDITING"); envVal == "true" {
-					return true
-				}
-				// Default to disabled (false), can be enabled via ENABLE_CONTEXT_EDITING=true
-				return os.Getenv("ENABLE_CONTEXT_EDITING") == "true"
-			}(),
-			ContextEditingThreshold: func() int {
-				// Request takes highest priority
-				if req.ContextEditingThreshold > 0 {
-					return req.ContextEditingThreshold
-				}
-				// Check environment variable
-				if envVal := os.Getenv("CONTEXT_EDITING_THRESHOLD"); envVal != "" {
-					if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
-						return threshold
-					}
-				}
-				// Default to 0 (use default: 100)
-				return 0
-			}(),
-			ContextEditingTurnThreshold: func() int {
-				// Request takes highest priority
-				if req.ContextEditingTurnThreshold > 0 {
-					return req.ContextEditingTurnThreshold
-				}
-				// Check environment variable
-				if envVal := os.Getenv("CONTEXT_EDITING_TURN_THRESHOLD"); envVal != "" {
-					if turnThreshold, err := strconv.Atoi(envVal); err == nil && turnThreshold > 0 {
-						return turnThreshold
-					}
-				}
-				// Default to 0 (use default: 5)
-				return 0
-			}(),
-			// Context offloading: large output threshold
-			// Tool outputs larger than this threshold (in tokens) are offloaded to filesystem
-			LargeOutputThreshold: func() int {
-				// Check environment variable
-				if envVal := os.Getenv("LARGE_OUTPUT_THRESHOLD"); envVal != "" {
-					if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
-						return threshold
-					}
-				}
-				// Default to 0 (use library default: 10000 tokens)
-				return 0
-			}(),
-			// Parallel tool execution: enabled by default, can be disabled via ENABLE_PARALLEL_TOOL_EXECUTION=false
-			EnableParallelToolExecution: func() bool {
-				if envVal := os.Getenv("ENABLE_PARALLEL_TOOL_EXECUTION"); envVal == "false" {
-					return false
-				}
-				return true // Default to enabled
-			}(),
+			APIKeys: mergedAPIKeys,
+			// Tool timeout, context summarization/editing, large-output offloading,
+			// and parallel tool execution are set by applySharedLLMAgentTuning below
+			// (shared with sub-agent creation in executeDelegatedTask).
 			// MCP session ID for connection reuse (e.g., Playwright browser sharing)
 			// Use the chat session ID so all agents in the same session share MCP connections
 			SessionID: sessionID,
@@ -4028,6 +3878,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// This ensures MCP servers with OAuth use user-specific token files
 			UserID: currentUserID,
 		}
+
+		applySharedLLMAgentTuning(&agentConfig, &req, presetLLMConfig)
 
 		// Set agent mode based on request
 		agentConfig.AgentMode = mcpagent.SimpleAgent
@@ -5560,11 +5412,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			logfWithContext(queryLogCtx, "[SECRETS] Injected %d secrets as environment variables for shell execution", len(allChatSecrets))
 
 			// Only inject secret names (not values) into the system prompt — values are in env vars
-			var secretNames []string
-			for _, s := range allChatSecrets {
-				secretNames = append(secretNames, "- `SECRET_"+s.Name+"` → accessible as `os.environ[\"SECRET_"+s.Name+"\"]` in Python or `$SECRET_"+s.Name+"` in bash")
-			}
-			secretPrompt := "\n## Secrets\n\nThe following secrets are available as environment variables in execute_shell_command. Do NOT ask the user for these values — read them from the environment.\n\n" + strings.Join(secretNames, "\n")
+			secretPrompt := buildSecretNamesPrompt(allChatSecrets)
 			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 				underlyingAgent.AppendSystemPrompt(secretPrompt)
 				logfWithContext(queryLogCtx, "[SECRETS] Injected %d secret names (not values) into system prompt", len(allChatSecrets))
@@ -6238,10 +6086,12 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 func (api *StreamingAPI) handleGetBrowserSessions(w http.ResponseWriter, r *http.Request) {
 	tracker := browser.GetSessionTracker()
 	sessions := tracker.ActiveSessions()
+	cdpOwners := browser.ActiveCDPOwnersSnapshot()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"sessions": sessions,
-		"count":    len(sessions),
+		"sessions":   sessions,
+		"count":      len(sessions),
+		"cdp_owners": cdpOwners,
 	})
 }
 
@@ -6941,14 +6791,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		ToolChoice:         "", // Empty — let the library decide; Azure/OpenAI reject tool_choice when no tools are present
 		StreamingChunkSize: 1,
 		// No Timeout set — sub-agent lifetime is controlled by the parent context.
-		ToolTimeout: func() time.Duration {
-			if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
-				if timeout, err := time.ParseDuration(envVal); err == nil {
-					return timeout
-				}
-			}
-			return 0
-		}(),
 		// Sub-agent mode uses the resolved values (from delegate call, template default, or auto-enable).
 		UseCodeExecutionMode:  useCodeExec,
 		APIKeys:               apiKeys,
@@ -6956,116 +6798,11 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		SessionID:             subAgentSessionID, // Reuse parent session's MCP connections via registry, unless browser isolation requested
 		UserID:                subAgentUserID,    // Per-user OAuth token isolation
 		CodingAgentWorkingDir: codingAgentWorkspaceWorkingDir(perUserChatsFolderFor(subAgentUserID)),
-		// Context offloading: inherit from environment
-		LargeOutputThreshold: func() int {
-			if envVal := os.Getenv("LARGE_OUTPUT_THRESHOLD"); envVal != "" {
-				if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
-					return threshold
-				}
-			}
-			return 0
-		}(),
-		// Context summarization: inherit from parent request > env > defaults
-		EnableContextSummarization: func() bool {
-			if parentReq.EnableContextSummarization != nil {
-				return *parentReq.EnableContextSummarization
-			}
-			if envVal := os.Getenv("ENABLE_CONTEXT_SUMMARIZATION"); envVal == "false" {
-				return false
-			}
-			return true
-		}(),
-		SummarizeOnTokenThreshold: func() bool {
-			if parentReq.SummarizeOnTokenThreshold != nil {
-				return *parentReq.SummarizeOnTokenThreshold
-			}
-			if envVal := os.Getenv("SUMMARIZE_ON_TOKEN_THRESHOLD"); envVal == "false" {
-				return false
-			}
-			return true
-		}(),
-		TokenThresholdPercent: func() float64 {
-			if parentReq.TokenThresholdPercent > 0 {
-				return parentReq.TokenThresholdPercent
-			}
-			if envVal := os.Getenv("TOKEN_THRESHOLD_PERCENT"); envVal != "" {
-				if threshold, err := strconv.ParseFloat(envVal, 64); err == nil && threshold > 0 && threshold <= 1.0 {
-					return threshold
-				}
-			}
-			return 0.8
-		}(),
-		SummarizeOnFixedTokenThreshold: func() bool {
-			if parentReq.SummarizeOnFixedTokenThreshold != nil {
-				return *parentReq.SummarizeOnFixedTokenThreshold
-			}
-			if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "false" {
-				return false
-			}
-			return true
-		}(),
-		FixedTokenThreshold: func() int {
-			if parentReq.FixedTokenThreshold > 0 {
-				return parentReq.FixedTokenThreshold
-			}
-			if envVal := os.Getenv("FIXED_TOKEN_THRESHOLD"); envVal != "" {
-				if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
-					return threshold
-				}
-			}
-			return 200000
-		}(),
-		SummaryKeepLastMessages: func() int {
-			if parentReq.SummaryKeepLastMessages > 0 {
-				return parentReq.SummaryKeepLastMessages
-			}
-			if envVal := os.Getenv("SUMMARY_KEEP_LAST_MESSAGES"); envVal != "" {
-				if keepLast, err := strconv.Atoi(envVal); err == nil && keepLast > 0 {
-					return keepLast
-				}
-			}
-			return 4
-		}(),
-		// Context editing: inherit from parent request > env > defaults
-		EnableContextEditing: func() bool {
-			if parentReq.EnableContextEditing != nil {
-				return *parentReq.EnableContextEditing
-			}
-			if envVal := os.Getenv("ENABLE_CONTEXT_EDITING"); envVal == "true" {
-				return true
-			}
-			return false
-		}(),
-		ContextEditingThreshold: func() int {
-			if parentReq.ContextEditingThreshold > 0 {
-				return parentReq.ContextEditingThreshold
-			}
-			if envVal := os.Getenv("CONTEXT_EDITING_THRESHOLD"); envVal != "" {
-				if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
-					return threshold
-				}
-			}
-			return 0
-		}(),
-		ContextEditingTurnThreshold: func() int {
-			if parentReq.ContextEditingTurnThreshold > 0 {
-				return parentReq.ContextEditingTurnThreshold
-			}
-			if envVal := os.Getenv("CONTEXT_EDITING_TURN_THRESHOLD"); envVal != "" {
-				if turnThreshold, err := strconv.Atoi(envVal); err == nil && turnThreshold > 0 {
-					return turnThreshold
-				}
-			}
-			return 0
-		}(),
-		// Parallel tool execution: enabled by default, can be disabled via ENABLE_PARALLEL_TOOL_EXECUTION=false
-		EnableParallelToolExecution: func() bool {
-			if envVal := os.Getenv("ENABLE_PARALLEL_TOOL_EXECUTION"); envVal == "false" {
-				return false
-			}
-			return true
-		}(),
 	}
+	// Tool timeout, context summarization/editing, large-output offloading, and
+	// parallel tool execution inherit from the parent request the same way the
+	// root chat agent resolves them (no preset at delegation time).
+	applySharedLLMAgentTuning(&subAgentConfig, &parentReq, nil)
 
 	// Create sub-agent using the wrapper (same as parent agent creation)
 	subAgent, err := agent.NewLLMAgentWrapper(ctx, subAgentConfig, nil, api.logger)
@@ -7125,12 +6862,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// Merge global secrets with parent's decrypted secrets — inject names into prompt (values are in env vars)
 		allDelegationSecrets := mergeGlobalSecrets(parentReq.DecryptedSecrets, parentReq.SelectedGlobalSecrets)
 		if len(allDelegationSecrets) > 0 {
-			var secretNames []string
-			for _, s := range allDelegationSecrets {
-				secretNames = append(secretNames, "- `SECRET_"+s.Name+"` → accessible as `os.environ[\"SECRET_"+s.Name+"\"]` in Python or `$SECRET_"+s.Name+"` in bash")
-			}
-			secretPrompt := "\n## Secrets\n\nThe following secrets are available as environment variables in execute_shell_command. Do NOT ask the user for these values — read them from the environment.\n\n" + strings.Join(secretNames, "\n")
-			underlyingAgent.AppendSystemPrompt(secretPrompt)
+			underlyingAgent.AppendSystemPrompt(buildSecretNamesPrompt(allDelegationSecrets))
 			log.Printf("[DELEGATION] Injected %d secret names (not values) into sub-agent system prompt", len(allDelegationSecrets))
 		}
 
@@ -10612,6 +10344,10 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			return sb.String(), nil
 		},
 		CreateSchedule: func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupNames []string, mode string, messages []string, workshopMode string, resumePrevious *bool) (string, error) {
+			mode = scheduleModeOrDefault(mode)
+			if mode == "multi-agent" {
+				return "", fmt.Errorf("workflow schedules must use workshop mode; create multi-agent schedules in the multi-agent schedule store")
+			}
 			if err := ValidateCronExpression(cronExpr); err != nil {
 				return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
 			}
@@ -10657,6 +10393,10 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			return fmt.Sprintf("Schedule created and activated.\n- **ID**: `%s`\n- **Name**: %s\n- **Cron**: `%s`\n- **Timezone**: %s\n- **Next Run**: %s", newSched.ID, name, cronExpr, timezone, nextRunStr), nil
 		},
 		CreateCalendarSchedule: func(ctx context.Context, workspacePath, name, timezone string, groupNames []string, calendarItemsJSON string, mode string, messages []string, workshopMode string) (string, error) {
+			mode = scheduleModeOrDefault(mode)
+			if mode == "multi-agent" {
+				return "", fmt.Errorf("workflow calendar schedules must use workshop mode")
+			}
 			if err := ValidateScheduleTimezone(timezone); err != nil {
 				return "", err
 			}
@@ -10740,8 +10480,12 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			if enabled != nil {
 				sched.Enabled = *enabled
 			}
-			if mode != "" {
-				sched.Mode = mode
+			if mode != "" || sched.Mode == "" || sched.Mode == "workflow" {
+				normalizedMode := scheduleModeOrDefault(mode)
+				if normalizedMode == "multi-agent" {
+					return "", fmt.Errorf("workflow schedules must use workshop mode; create multi-agent schedules in the multi-agent schedule store")
+				}
+				sched.Mode = normalizedMode
 			}
 			if messages != nil {
 				sched.Messages = messages

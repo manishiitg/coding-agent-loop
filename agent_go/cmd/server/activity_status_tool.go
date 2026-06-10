@@ -12,12 +12,12 @@ import (
 )
 
 type activityStatusResponse struct {
-	GeneratedAt       string                         `json:"generated_at"`
-	RunningWorkflows  []activityRunningWorkflow     `json:"running_workflows"`
-	RunningSchedules  []activityRunningSchedule     `json:"running_schedules"`
-	WorkflowCount     int                            `json:"workflow_count"`
-	ScheduleCount     int                            `json:"schedule_count"`
-	IncludesSchedules []string                       `json:"includes_schedules"`
+	GeneratedAt       string                    `json:"generated_at"`
+	RunningWorkflows  []activityRunningWorkflow `json:"running_workflows"`
+	RunningSchedules  []activityRunningSchedule `json:"running_schedules"`
+	WorkflowCount     int                       `json:"workflow_count"`
+	ScheduleCount     int                       `json:"schedule_count"`
+	IncludesSchedules []string                  `json:"includes_schedules"`
 }
 
 type activityRunningWorkflow struct {
@@ -141,7 +141,7 @@ func (api *StreamingAPI) listRunningScheduleActivities(ctx context.Context, curr
 				Source:         wf.WorkspacePath,
 				WorkflowLabel:  wf.Manifest.Label,
 				WorkspacePath:  wf.WorkspacePath,
-				Mode:           scheduleModeOrDefault(sched.Mode),
+				Mode:           "workshop",
 				WorkshopMode:   sched.WorkshopMode,
 				GroupNames:     sched.GroupNames,
 				SessionID:      state.LastSessionID,

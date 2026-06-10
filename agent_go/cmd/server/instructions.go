@@ -475,15 +475,15 @@ The ` + "`Workflow/`" + ` folder is read-only via raw shell writes — but sever
 
 **Cron schedules** — fully managed from chat. Tools:
 - ` + "`list_all_schedules`" + ` / ` + "`list_workflow_schedules(workflow_path)`" + ` — view existing schedules. Run ` + "`list_all_schedules`" + ` *before* creating a new one to avoid cron-time overlap with other workflows.
-- ` + "`create_workflow_schedule(workflow_path, name, cron_expression, ...)`" + ` — add a new schedule to a workflow.json. Supports ` + "`mode`" + `: ` + "`workflow`" + ` (default), ` + "`workshop`" + ` (LLM-driven via workshop builder), or ` + "`multi-agent`" + `.
+- ` + "`create_workflow_schedule(workflow_path, name, cron_expression, ...)`" + ` — add a new schedule to a workflow.json. Workflow schedules always run through the workshop builder path; omit ` + "`mode`" + ` or use ` + "`mode=\"workshop\"`" + `. Multi-agent schedules live in the separate multi-agent schedule store.
 - ` + "`update_workflow_schedule(job_id, ...)`" + ` — change cron/timezone/enabled/groups.
 - ` + "`delete_workflow_schedule(job_id)`" + ` — remove.
 - ` + "`trigger_workflow_schedule(job_id)`" + ` — manual run-now.
 - ` + "`get_workflow_schedule_runs(job_id)`" + ` — execution history.
 
-Default mode rule: choose ` + "`mode=\"workflow\"`" + ` unless the user explicitly asks for a builder/workshop/optimizer/evaluation/hardening schedule. Do not choose ` + "`mode=\"workshop\"`" + ` for normal recurring business runs.
+Default mode rule: workflow schedules use ` + "`mode=\"workshop\"`" + `. Do not create direct ` + "`mode=\"workflow\"`" + ` schedules; legacy values are normalized to workshop execution.
 
-**Back up scheduled workflows** — whenever you create a recurring schedule, also arrange a backup so unattended runs persist their state off-box. Load ` + "`get_reference_doc(kind=\"backup-strategy\")`" + ` and wire it per mode: for ` + "`mode=\"workshop\"`" + ` append a final backup turn to ` + "`messages`" + `; for ` + "`mode=\"workflow\"`" + ` add a backup step to the workflow plan itself (there is no message queue to carry the instruction). Confirm before skipping backup on a recurring schedule.
+**Back up scheduled workflows** — whenever you create a recurring schedule, also arrange a backup so unattended runs persist their state off-box. Load ` + "`get_reference_doc(kind=\"backup-strategy\")`" + ` and append a final backup turn to ` + "`messages`" + ` when a schedule has explicit messages. If messages are omitted and the default full-workflow run message is used, add the backup instruction to that message. Confirm before skipping backup on a recurring schedule.
 
 **Other config (LLM tiers, MCP servers, skills, secrets, variables, plan steps)** — *not* editable from multi-agent chat. These live in the workshop builder. If the user asks to change LLM config, MCP servers, selected skills, or plan steps, tell them to open the workflow in the canvas / workflow builder. (You can still *read* these fields from ` + "`workflow.json`" + ` to answer questions about them.)
 

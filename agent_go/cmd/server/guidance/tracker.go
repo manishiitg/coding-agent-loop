@@ -178,7 +178,7 @@ func preconditionErrorMessage(missing []string) string {
 	}
 	return `{"error": "precondition_not_met", "message": "This tool requires reference docs that have not been loaded in this session. Call ` +
 		joinAnd(calls) +
-		` first, then retry. The reference doc explains the rules this tool's downstream agent will apply — calling without it risks producing changes that violate those rules.", "required_kinds": ` +
+		` first, then retry. The reference doc explains the rules this tool's downstream agent will apply — calling without it risks producing changes that violate those rules. Only the get_reference_doc call satisfies this gate — reading the same content from a skill's references/ folder or from disk does not register, so make the tool call even if you have already read that material.", "required_kinds": ` +
 		jsonStringList(missing) + `}`
 }
 

@@ -136,6 +136,10 @@ The on-disk report contains:
 
 There is intentionally **no `summary`, `step_title`, or `success_criteria` field on the score**. UI consumers look those up by `step_id` from `evaluation_plan.json`, which is returned alongside reports by the same API endpoint.
 
+### Top-level score vs `output_content` (what metrics read)
+
+Each eval step's `score`/`max_score` is its top-line verdict. In addition, a step may emit `output_content` — a structured JSON object with domain-specific numeric keys (e.g. `{"score": 8, "max_score": 10, "coverage": 0.95, "accuracy": 0.87}`). Metrics in `planning/metrics.json` with `source.type="eval_step"` and a non-empty `source.field` resolve from `output_content`; a metric with an empty/`score` field falls back to the top-level `score`/`max_score` as a percentage (see `metrics_snapshot.go`, `resolveMetricValueFromStep`). Rule of thumb: the top-level score summarizes the verdict for humans and the report; `output_content` carries the individual judgment dimensions that metrics track over time.
+
 ### Two scoring paths
 
 The scoring phase has two paths, controlled by an optional `__evaluation_scoring__` entry in `evaluation/step_config.json`:

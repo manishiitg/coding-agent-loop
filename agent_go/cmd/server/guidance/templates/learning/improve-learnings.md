@@ -8,7 +8,7 @@ BOUNDARIES
 
 1. The applied tool is `improve_learnings`; call it once with a concrete `instruction` string and optional `focus`.
 2. Work on `learnings/_global/` only. Do not edit `planning/`, `evaluation/`, `reports/`, `db/`, `knowledgebase/`, or per-step `learnings/{step-id}/main.py` from this command.
-3. If you discover stale per-step scripts, bad `learning_objective`, wrong `learnings_access`, or lock issues, record/recommend them; use `/review-plan`, `/review-code`, `/review-artifact-drift`, or `harden_workflow` for those applied fixes.
+3. If you discover stale per-step scripts, bad `learning_objective`, wrong `learnings_access`, or lock issues, record/recommend them; use `/review-plan`, `/review-code`, `/review-artifact-drift`, or `harden_workflow` for those applied fixes. Eval rubric, coverage, or scoring issues belong to `/improve-evaluation`, not here — if an eval change would create new reusable HOW-knowledge, let that command propose it and use this one only for the cross-step consolidation.
 4. Keep WHAT-the-workflow-discovered out of learnings. User-supplied runtime context belongs in `knowledgebase/context/`; workflow-discovered subject-matter facts belong in `knowledgebase/notes/` or `db/db.sqlite`, not `learnings/_global/`.
 5. Enforce a lean index shape: `learnings/_global/SKILL.md` should stay under roughly 80-100 lines and act as an overview plus links to focused files under `learnings/_global/references/`. Detailed selectors, API quirks, auth flows, file-format notes, retry patterns, and step-specific HOW guidance belong in reference files, not in the root `SKILL.md`.
 

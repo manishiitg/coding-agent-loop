@@ -394,17 +394,22 @@ func BuildSystemToolsSkill(mode string) *llmtypes.Skill {
 		return nil
 	}
 
-	var kindLines strings.Builder
+	// The per-kind catalog (name + description) is deliberately NOT inlined
+	// here: the workflow-reference / multiagent-reference mega-skill's TOC
+	// already lists every mode-allowed kind, and duplicating the registry in
+	// two attached skills costs prompt tokens in every session. This skill
+	// just points at that catalog.
+	hasKinds := false
 	for _, kind := range kindEnumFrom(referenceKinds) {
-		if !modeAllowedIn(kind, mode, referenceKinds) {
-			continue
+		if modeAllowedIn(kind, mode, referenceKinds) {
+			hasKinds = true
+			break
 		}
-		meta := referenceKinds[kind]
-		fmt.Fprintf(&kindLines, "- `%s` — %s\n", kind, meta.Description)
 	}
-	kindList := kindLines.String()
-	if kindList == "" {
-		kindList = "(no reference docs are available in this mode)\n"
+	kindList := "(no reference docs are available in this mode)\n"
+	if hasKinds {
+		refSkillName := referenceSkillSpecForMode(mode).Name
+		kindList = "The full catalog of kinds, each with a description of when to load it, is the `references/` list in the `" + refSkillName + "` skill. Each `references/<kind>.md` file there corresponds to a kind you can pass to `get_reference_doc`.\n"
 	}
 
 	configAccess := buildConfigurationAccessGuidance(mode)

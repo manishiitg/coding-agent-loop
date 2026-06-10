@@ -6,6 +6,7 @@ PASS 1 — VALIDATION
 Call validate_report_plan.
 - For each error: explain what's wrong in plain language, name the document/entry it refers to, and propose the exact fix.
 - For warnings: separate ones that would visibly degrade the report (a registered document missing/unreadable, wrong renderFormat) from cosmetic ones.
+- **Errors are blockers: resolve them (apply the fix after user confirmation, or get an explicit decision to defer) BEFORE moving to PASS 2.** Improvement suggestions layered on top of a structurally broken plan waste the user's attention — the rendered preview in PASS 2 won't reflect reality until the plan validates clean.
 
 PASS 2 — IMPROVEMENT SUGGESTIONS
 Call preview_report_render first so you can inspect what the report actually renders like with current data — treat that as a required input. Then call get_report_plan and read the actual document file(s) under `db/reports/`. For HTML reports, also sample the data they read: run their queries against `db/db.sqlite` (`sqlite3 db/db.sqlite ".schema"` + `SELECT ... LIMIT`), and check `db/assets/`, `knowledgebase/context/context.md`, and `knowledgebase/notes/`. Use both the rendered preview and the raw data/document to propose improvements in these categories:

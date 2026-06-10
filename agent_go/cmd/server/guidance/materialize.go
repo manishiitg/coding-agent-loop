@@ -2,6 +2,7 @@ package guidance
 
 import (
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 
@@ -154,7 +155,13 @@ func buildMegaSkill(spec buildMegaSkillSpec) *llmtypes.Skill {
 		meta := spec.Registry[k]
 		text, err := spec.Render(k, tmplData{WorkshopMode: spec.Mode})
 		if err != nil {
-			panic(fmt.Sprintf("guidance: materialize %s/%s: %v", spec.Name, k, err))
+			// A render failure is a programming error in an embedded
+			// template, but crashing the session over one bad kind is
+			// worse than attaching the skill without it — the kind is
+			// still reachable via get_reference_doc, whose render path
+			// reports its own error.
+			log.Printf("[GUIDANCE] materialize %s/%s: %v (skipping this reference)", spec.Name, k, err)
+			continue
 		}
 		files = append(files, llmtypes.SkillFile{
 			RelPath: "references/" + k + ".md",

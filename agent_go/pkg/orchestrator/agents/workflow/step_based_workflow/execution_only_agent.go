@@ -41,8 +41,10 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{.VariableNames}}
 {{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
 
-**Handling**: Step descriptions are already resolved. For code and tool calls, use the resolved values directly.
-{{if and .UseCodeStyleRules .VarMapping}}**Env var access** (VAR_* for variables, SECRET_* for credentials, never hardcode): {{.VarMapping}}{{end}}
+{{if .UseCodeStyleRules}}**Handling**: Step descriptions are already resolved. Resolved values are fine in conversation and direct tool-call arguments, but in ANY code you write (scripts, main.py, heredocs) reference the `+"`"+`VAR_<NAME>`+"`"+` / `+"`"+`SECRET_<NAME>`+"`"+` env vars instead — never paste a resolved value into code. Code can be persisted to learnings, so a pasted secret would be stored in plaintext.
+{{if .VarMapping}}**Env var access** (VAR_* for variables, SECRET_* for credentials, never hardcode): {{.VarMapping}}{{end}}
+{{else}}**Handling**: Step descriptions are already resolved. For code and tool calls, use the resolved values directly.
+{{end}}
 {{end}}
 
 ## Workspace & Paths
